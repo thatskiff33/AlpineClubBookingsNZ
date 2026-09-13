@@ -1247,30 +1247,32 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   RECORDS WHAT IT CARRIED** (#3371, owner decision 13 Sep 2026). Minting an
   ADDITIONAL PaymentIntent cancels every other live one on the payment
   ([INV-ADDPAY-023]). [INV-PAY-047] sizes an ordinary edit's ask accordingly; a
-  settled financial review's charge is the SAME rule over a different own figure
-  — that edit's settled shares ([INV-PAY-062]) — and until #3371 it passed the
-  bare sum, so a review charge deleted an earlier change's unpaid extra.
+  settled review's charge is the SAME rule over its own figure, that edit's
+  settled shares ([INV-PAY-062]). Until #3371 it passed the bare sum, deleting
+  an earlier change's unpaid extra.
   - **The carried amount is its own stored fact**,
     `PaymentTransaction.carriedAskCents`, and is a PART of `amountCents`, never
-    an addition to it. Once the retired row is cancelled it is derivable from
-    nothing, so recording it is provenance, not duplication.
+    an addition. Once the retired row is cancelled nothing can derive it, so
+    recording it is provenance, not duplication.
   - **It never joins the derived share total.** [INV-PAY-062]'s refuse-to-lower
     rule is safe only because that sum never decreases, and that monotonicity is
-    what lets this path compare-and-set with no lock across a provider call
-    ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)).
-  - **A later share reads it back off the row, never off the payment**, whose ask
-    columns mirror this request by then.
+    why this path can refuse a stale lowering with no lock across a provider
+    call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). That
+    refusal is not an atomic claim; `syncEditFinancialReviewChargeRequest` says
+    what it does not order.
+  - **A later share reads it off the row, never off the payment**, which mirrors
+    this request by then.
   - **The accounting leg never sees it.** [INV-PAY-070] bills one invoice per
-    edit and the carried money belongs to another edit with its own invoice, so
-    every figure handed to that leg has the carried part taken out.
+    edit, and this is not that edit's money, so every figure handed to that leg
+    has the carried part taken out.
   - **The obligation is structural.** `AdditionalAsk`
-    (`src/lib/additional-payment-ask.ts`) pairs amount and carried part behind a
-    module-private brand, every constructor of a positive ask takes the payment
-    being retired or the row being raised, and it is what the shared minter
-    accepts — so no writer can pass a bare figure or omit the provenance. The
-    call-site census is the backstop, not the mechanism.
-  - **A FAILED mint carries nothing**: it retired nothing, the earlier ask is
-    still live, and the replay reads it again.
+    (`src/lib/additional-payment-ask.ts`) is a module-private class holding the
+    carried part in a `#private` field, so it can be neither built nor spread
+    apart elsewhere; every constructor of a positive ask takes the payment being
+    retired or the row being raised; and the minter accepts nothing else. No type
+    refuses a deliberate assertion, so the call-site census refuses it.
+  - **A FAILED mint carries nothing**: it retired nothing, so the earlier ask is
+    still live for the replay to read.
 
 ## INV-PAY-070
 

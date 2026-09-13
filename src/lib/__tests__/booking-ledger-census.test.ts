@@ -1,7 +1,9 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { stripCommentsAndStrings } from "./support/strip-comments";
 
 import {
   BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES,
@@ -541,27 +543,98 @@ describe("every ask-minting door routes through the sizing rule (INV-PAY-047)", 
   because the alternative is a permanent obligation on every future writer and
   "the day one forgets, the money vanishes again".
 
-  The device is the `AdditionalAsk` type: the amount and the carried part are ONE
-  value, built only inside the one home, from the same inputs. The three
-  assertions below are what stop that being quietly undone - a brand made
-  exportable, a minter that goes back to taking a number, or a retirement written
-  without the provenance beside it. They are the guard the decision calls the
-  WEAKER answer, kept as a backstop to the type rather than instead of it.
+  THE DEVICE IS A CLASS WITH A `#private` FIELD, and the previous shape is why
+  the wording here is careful. `AdditionalAsk` used to be an object type carrying
+  a module-private `unique symbol` brand, and the docblock claimed "there is no
+  cast that helps". BOTH of these compiled clean against it, measured with this
+  repository's own compiler:
+
+      const spread: AdditionalAsk = { ...NO_ADDITIONAL_ASK, amountCents: 50000 };
+      const cast = { amountCents: 50000, carriedCents: 0 } as AdditionalAsk;
+
+  The first needed no cast at all - TypeScript carries a symbol-keyed property
+  through an object spread - and it is the ACCIDENT shape: a future writer adding
+  a second arm as `{ ...NO_ADDITIONAL_ASK, amountCents: priceDiffCents }` would
+  have recorded a positive ask carrying nothing. A `#private` field is dropped by
+  a spread, so that one is now a type error naming the missing member.
+
+  The second still compiles, and no type can stop it: `x as T` is permitted
+  whenever `T` is assignable to the type of `x`, and a class is always assignable
+  to the bare object type of its own public members. So the assertion is refused
+  HERE instead, by name, over comment- and string-blanked source. That split is
+  deliberate and is stated in the one home's docblock too: the type stops the
+  accident, this census stops the shortcut.
 */
+const ASK_TYPE = "AdditionalAsk";
+const ASK_CLASS = "AdditionalAskValue";
+
+/** Every tracked `.ts`/`.tsx` under `src`, which is where a forgery could live. */
+function sourceFiles(dir: string, found: string[] = []): string[] {
+  for (const entry of readdirSync(join(process.cwd(), dir), {
+    withFileTypes: true,
+  })) {
+    const relative = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules") continue;
+      sourceFiles(relative, found);
+    } else if (
+      /\.tsx?$/.test(entry.name) &&
+      !entry.name.endsWith(".d.ts")
+    ) {
+      found.push(relative);
+    }
+  }
+  return found;
+}
+
 describe("a mint cannot forget what it absorbed (INV-PAY-098)", () => {
-  it("keeps the AdditionalAsk brand private to the one home", () => {
+  it("keeps the ask unconstructible outside the one home", () => {
     const home = read(ASK_HOME);
     expect(
       home,
-      "INV-PAY-098: the brand that makes an AdditionalAsk unconstructible " +
-        "outside @/lib/additional-payment-ask is gone. Without it any caller can " +
-        "write an object literal and hand the minter a bare delta again.",
-    ).toContain("declare const additionalAskBrand: unique symbol;");
+      "INV-PAY-098: the private field that makes an AdditionalAsk unforgeable is " +
+        "gone. Without it `{ ...NO_ADDITIONAL_ASK, amountCents: someDelta }` " +
+        "type-checks again and hands the minter a positive ask carrying nothing.",
+    ).toContain("readonly #carriedCents: number;");
     expect(
       home,
-      "INV-PAY-098: the brand is EXPORTED, so an ask can be built outside the " +
-        "one home and the type no longer proves anything.",
-    ).not.toMatch(/export\s+(declare\s+)?const additionalAskBrand/);
+      `INV-PAY-098: the ${ASK_CLASS} class is EXPORTED, so any caller can reach ` +
+        "its constructor and the type no longer proves anything. Export the " +
+        "instance type alone.",
+    ).not.toMatch(/export\s+(abstract\s+)?class\s+AdditionalAskValue\b/);
+    expect(
+      home,
+      `INV-PAY-098: ${ASK_TYPE} is no longer the ${ASK_CLASS} instance type, so ` +
+        "the private field no longer stands behind the name callers use.",
+    ).toContain(`export type ${ASK_TYPE} = ${ASK_CLASS};`);
+  });
+
+  it("refuses a hand-cast ask anywhere outside the one home", () => {
+    // Comment- AND string-blanked, because this repository documents a defect at
+    // the site it removed it: the one home's own docblock quotes the forgery, and
+    // so does the block above this test.
+    //
+    // The cheap `includes` runs FIRST and is not decoration: blanking every file
+    // under `src` takes this suite past its five-second budget, while the type
+    // name appears in a couple of dozen of them. The blanking then decides those.
+    const offenders = sourceFiles("src")
+      .filter((file) => file !== ASK_HOME)
+      .map((file) => ({ file, source: read(file) }))
+      .filter((entry) => entry.source.includes(ASK_TYPE))
+      .filter((entry) =>
+        /\bas\s+(unknown\s+as\s+)?AdditionalAsk\b/.test(
+          stripCommentsAndStrings(entry.source),
+        ),
+      )
+      .map((entry) => entry.file);
+    expect(
+      offenders,
+      "INV-PAY-098: an AdditionalAsk is being ASSERTED into existence rather " +
+        "than built by a constructor from @/lib/additional-payment-ask. The type " +
+        "cannot refuse an assertion, which is why this refuses it: a hand-made " +
+        "ask can record a positive amount and a zero carried balance, which is " +
+        "the money leak #3340 and #3371 both closed.",
+    ).toEqual([]);
   });
 
   it("keeps the minter taking the value rather than a number", () => {

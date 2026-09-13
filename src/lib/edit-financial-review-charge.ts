@@ -366,14 +366,35 @@ export async function chooseEditReviewChargeRoute({
  *   * NO LOST SHARE. Whichever completion COMMITS LAST necessarily reads after
  *     both commits, so at least one run always sees the full set and derives the
  *     true total. A run that started earlier may compute a smaller, stale total.
- *   * THE STALE ONE CANNOT WIN. A settled share is terminal, so the derived total
- *     only ever grows; a smaller figure is therefore always the older answer.
- *     The write below REFUSES TO LOWER the recorded request, so whichever order
- *     the two provider calls happen to land in, the request settles at the
- *     largest - which is the newest - total. That compare-and-set is the reason
- *     this needs no advisory lock, which matters because the completion path
- *     deliberately holds none (`docs/CONCURRENCY_AND_LOCKING.md` forbids holding
- *     `lock(1)` across a provider round trip).
+ *   * A STALE REPLAY CANNOT LOWER A LIVE ASK. A settled share is terminal, so
+ *     the derived total only ever grows; a smaller figure is therefore always
+ *     the older answer, and the read below REFUSES TO LOWER the recorded
+ *     request. A replay that reads AFTER the newer write - which is every
+ *     sequential replay, and the recovery cron's whole shape - therefore leaves
+ *     it alone. That refusal is what lets this path hold no advisory lock, which
+ *     matters because `docs/CONCURRENCY_AND_LOCKING.md` forbids holding
+ *     `lock(1)` across a provider round trip.
+ *
+ * ## WHAT THAT REFUSAL IS NOT, AND THE LIMIT IT LEAVES (#3371 review round)
+ *
+ * It is NOT an atomic compare-and-set, and this docblock used to say it was.
+ * `existing` is read, the comparison happens in application code, and the write
+ * goes through an upsert keyed on the intent id with no amount predicate - three
+ * statements, with a Stripe round trip between the second and the third. Two
+ * runs that each derive a figure ABOVE the stored one therefore both proceed,
+ * and both the provider amount and the stored row settle on whichever landed
+ * last rather than on the larger. Monotonicity means neither run derives a
+ * figure that is wrong for the shares IT saw; it does not order the two.
+ *
+ * **This is unchanged from `main` and #3371 neither introduced nor repaired it**
+ * - the same unguarded read-modify-write is what `main` does with the bare share
+ * total. Making it a real claim means claiming in the database BEFORE the
+ * provider call and reconciling the provider afterwards, which trades this
+ * window for a new one (a claim recorded against an intent the provider call
+ * then failed to raise) and is a design change to a gated money path rather than
+ * a predicate on this write. It is carried forward as its own issue rather than
+ * widened into this one; the reasoning is in that issue and in this pull
+ * request's notes.
  *
  * Returns the request's intent id and the total it now asks for.
  */

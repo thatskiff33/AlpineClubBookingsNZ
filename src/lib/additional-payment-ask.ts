@@ -113,10 +113,13 @@ export function outstandingAdditionalAskCents(
  *   * the two numbers travel as ONE value, built in ONE place, from the same
  *     inputs - a mint cannot fold the balance in and forget to say so, or say so
  *     and forget to fold it in;
- *   * the brand below is a module-private `unique symbol`, so no code outside
- *     this file can write the property key and therefore no code outside this
- *     file can construct one. There is no cast that helps: the symbol is not
- *     exported;
+ *   * the class below is NOT exported, only its instance type is, so there is no
+ *     constructor to reach and no way to build one outside this file;
+ *   * `carriedCents` is held in a `#private` field. A private field is what the
+ *     brand it replaced could not be: an object spread DROPS it, so the obvious
+ *     forgery - `{ ...NO_ADDITIONAL_ASK, amountCents: someDelta }`, which needs
+ *     no cast at all and compiled clean against the earlier `unique symbol`
+ *     brand - is now a type error naming the missing member;
  *   * every constructor that can return a POSITIVE ask takes the thing that
  *     decides the carried figure - the `Payment` whose live ask the mint will
  *     retire, or the stored request row a raise reads it back off. The one
@@ -124,32 +127,58 @@ export function outstandingAdditionalAskCents(
  *     ask never reaches the mint at all (`createModificationAdditionalPaymentIntent`
  *     returns before minting), so it can retire nothing and has nothing to carry.
  *
+ * ## What this does NOT stop, said plainly
+ *
+ * A DELIBERATE type assertion. TypeScript permits `x as T` whenever `T` is
+ * assignable to the type of `x`, and every class is assignable to the bare
+ * object type of its own public members - so
+ * `{ amountCents, carriedCents } as AdditionalAsk` still compiles here, exactly
+ * as `as unknown as AdditionalAsk` would in any design. Measured against this
+ * file with the repository's own compiler, not assumed. That residue is covered
+ * by the call-site census in `__tests__/booking-ledger-census.test.ts`, which
+ * refuses the assertion by name anywhere outside this module - a guard, and
+ * named as one. The type stops the accident; the census stops the shortcut.
+ *
  * `carriedCents` is a PART OF `amountCents`, never an addition to it. Reading it
  * as a second amount would double-count the money.
  */
-declare const additionalAskBrand: unique symbol;
-
-export type AdditionalAsk = {
+class AdditionalAskValue {
   /** What the member is asked for, in integer cents. */
   readonly amountCents: number;
+
   /**
    * How much of `amountCents` was absorbed from an ask this mint will retire,
    * rather than derived from this edit's own figures. Zero when the mint
    * supersedes nothing.
+   *
+   * PRIVATE, and read back through the accessor below, because that is the part
+   * that makes the value unforgeable: a `#` field cannot survive a spread and
+   * cannot be written by a literal.
    */
-  readonly carriedCents: number;
-  readonly [additionalAskBrand]: true;
-};
+  readonly #carriedCents: number;
+
+  constructor(params: { ownCents: number; carriedCents: number }) {
+    this.amountCents = params.ownCents + params.carriedCents;
+    this.#carriedCents = params.carriedCents;
+  }
+
+  get carriedCents(): number {
+    return this.#carriedCents;
+  }
+}
+
+/**
+ * The ask type every caller names. The class itself stays module-private, so
+ * naming the type never hands anybody a constructor.
+ */
+export type AdditionalAsk = AdditionalAskValue;
 
 /** The only place an `AdditionalAsk` comes into existence. */
 function buildAdditionalAsk(params: {
   ownCents: number;
   carriedCents: number;
 }): AdditionalAsk {
-  return {
-    amountCents: params.ownCents + params.carriedCents,
-    carriedCents: params.carriedCents,
-  } as AdditionalAsk;
+  return new AdditionalAskValue(params);
 }
 
 /**
@@ -232,11 +261,23 @@ export function sizeReviewChargeAsk({
  * a number is the point - a caller cannot supply a fresh 0 and quietly write the
  * carried balance out of the ask.
  *
- * This is what keeps the compare-and-set safe. `shareTotalCents` only ever grows
- * (a settled share is terminal) and `carriedAskCents` is fixed at the mint, so
- * the amount this returns is MONOTONE, and the refuse-to-lower rule in
- * `syncEditFinancialReviewChargeRequest` stays correct without an advisory lock
- * across the provider call - which `docs/CONCURRENCY_AND_LOCKING.md` forbids.
+ * KEEPING THE CARRIED PART OUT OF THE SHARE SUM IS WHAT MAKES THIS MONOTONE.
+ * `shareTotalCents` only ever grows (a settled share is terminal) and
+ * `carriedAskCents` is fixed at the mint, so the figure this returns never
+ * falls. That is what the refuse-to-lower rule in
+ * `syncEditFinancialReviewChargeRequest` needs, and it is why folding the
+ * carried balance into the share sum was rejected on #3371 - a sum that can fall
+ * would need a lock held across the provider call, which
+ * `docs/CONCURRENCY_AND_LOCKING.md` forbids.
+ *
+ * SAID EXACTLY, because an earlier draft of this sentence claimed more than the
+ * code does. Monotone means a run that has seen MORE settled shares never
+ * derives a SMALLER figure, so a stale replay cannot lower a live ask. It does
+ * not serialise two runs: the refusal it feeds reads the row and writes it in
+ * separate statements with a provider round trip between them, which is a
+ * refusal rather than an atomic compare-and-set. What that does and does not
+ * guarantee is written out where it happens, in
+ * `syncEditFinancialReviewChargeRequest`.
  */
 export function raiseReviewChargeAsk({
   shareTotalCents,

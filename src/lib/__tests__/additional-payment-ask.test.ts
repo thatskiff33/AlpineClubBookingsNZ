@@ -237,6 +237,32 @@ describe("#3371 - the zero ask", () => {
   });
 });
 
+describe("#3371 fix round - an ask cannot be taken apart and put back together", () => {
+  /*
+    THE RUNTIME HALF OF THE STRUCTURAL DEVICE, and the reason it is worth a test
+    rather than a sentence. The forgery the type must refuse is
+    `{ ...NO_ADDITIONAL_ASK, amountCents: someDelta }` - a positive ask recording
+    a zero carried balance, which is exactly the money leak #3340 and #3371 both
+    closed. It compiled clean against the `unique symbol` brand this replaced,
+    because TypeScript carries a symbol-keyed property through a spread.
+
+    The compiler is what refuses it now (`#carriedCents` is dropped by a spread,
+    so the result is missing a member of the type), and a compile error is not
+    something a runtime suite can assert. What IS observable here is the same
+    fact from the other side: the spread really does lose the carried figure, so
+    a forgery would have been silently wrong rather than merely ill-typed.
+  */
+  it("loses the carried figure when spread, which is why the type refuses one", () => {
+    const ask = sizeReviewChargeAsk({
+      shareTotalCents: 6000,
+      payment: askPayment(20000, "PENDING"),
+    });
+    expect(ask.amountCents).toBe(26000);
+    expect(ask.carriedCents).toBe(20000);
+    expect(Object.keys({ ...ask })).toEqual(["amountCents"]);
+  });
+});
+
 describe("the two forms of the rule agree wherever the ledger is clean", () => {
   /*
     Both of the issue's acceptance criteria, and its 1a variants, computed BOTH
