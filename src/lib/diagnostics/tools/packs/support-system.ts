@@ -211,7 +211,8 @@ const deploymentTool = defineDiagnosticsTool({
 });
 
 /**
- * DIAGNOSTICS BUDGET AND USAGE health, in integer NZD cents throughout — the
+ * DIAGNOSTICS BUDGET AND USAGE health, in integer cents of the club's configured
+ * currency throughout (#3354) — the
  * platform's money rule, and the reason nothing here is a float.
  *
  * `staleReservationCount` is the operational signal #2375 asks for by name: a live
@@ -230,7 +231,7 @@ const usageHealthTool = defineDiagnosticsTool({
   },
   label: "AI Diagnostics budget and usage health",
   description:
-    "Reports this calendar month's AI Diagnostics spend and budget health in NZD cents: the configured monthly budget, settled cost, cost currently reserved by in-flight calls, remaining budget, budget status, request/roundtrip/failure counts, how many budget reservations have expired without settling, and the latest successful and failed call instants with the failure's stable code. Returns no prompt, answer, tool argument, tool result or provider error text. Use it when asked what diagnostics is costing, or why a diagnostics request was refused on budget.",
+    "Reports this calendar month's AI Diagnostics spend and budget health in integer cents of the club's configured currency: the configured monthly budget, settled cost, cost currently reserved by in-flight calls, remaining budget, budget status, request/roundtrip/failure counts, how many budget reservations have expired without settling, and the latest successful and failed call instants with the failure's stable code. Returns no prompt, answer, tool argument, tool result or provider error text. Use it when asked what diagnostics is costing, or why a diagnostics request was refused on budget.",
   requiredAreas: ["support"],
   argsSchema: NO_ARGS,
   inputSchema: NO_ARGS_SCHEMA,

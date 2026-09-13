@@ -219,8 +219,8 @@ The control plane is fail-closed and denies the paid call on any doubt
 ([ADR-005](decisions/ADR-005-budget-rate-limits-tool-loop-fail-closed.md); code in
 `src/lib/ai-diagnostics-usage.ts`):
 
-- **Budget** is a deployment-local monthly figure in NZ **integer cents**, default
-  **NZ$0 = hard-off**. Each provider roundtrip **reserves** worst-case cents under a
+- **Budget** is a deployment-local monthly figure in **integer cents** of the
+  club's configured currency (#3354), default **0 = hard-off**. Each provider roundtrip **reserves** worst-case cents under a
   per-month advisory lock before the call, and **settles** the real (usually far
   smaller) cost after it — on success and on failure alike, because an unsettled
   reservation is spend nobody can see. The money-safety property (no burst of

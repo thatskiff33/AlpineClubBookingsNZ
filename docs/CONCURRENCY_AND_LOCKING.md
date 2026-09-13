@@ -1369,9 +1369,15 @@ live reservations (`DiagnosticsBudgetReservation`) plus the settled spend
 ONLY if `settled + reserved + reserveCents <= budget`. The advisory lock
 serialises every reserve for the month, so each admitted reservation sees the
 committed reservations of all prior ones and the invariant holds for every one —
-`settled + reserved` can never exceed the budget. A lost claim (over budget)
-inserts nothing and denies the paid call (no side effect), exactly like the
-status-guarded `updateMany` claims elsewhere in this document.
+`settled + reserved` can never exceed the budget at a fixed rate. Since #3354 the
+same locked transaction also reads `AiSpendCurrencySettings` through `tx`, in the
+same snapshot as the budget, and sizes the reservation at that rate; an
+administrator changing the rate between one roundtrip's reserve and its settle
+can therefore overshoot by that one roundtrip scaled by the change (budget
+10000, settled 9000, a 900 reservation at 0.90, the rate raised to 5.00
+mid-call, a 400 NZD-cent settle books 2000 → 11000), and by nothing more. A lost
+claim (over budget) inserts nothing and denies the paid call (no side effect),
+exactly like the status-guarded `updateMany` claims elsewhere in this document.
 
 The provider call runs entirely OUTSIDE this transaction (the lock releases on
 commit). Afterwards `settleDiagnosticsRoundtrip` deletes the reservation and

@@ -7,7 +7,9 @@ import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
+import { APP_CURRENCY } from "@/config/operational";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
+import { formatCents } from "@/lib/utils";
 import { centsToDollars } from "@/app/(admin)/admin/ai-assistant/budget";
 
 /**
@@ -222,7 +224,7 @@ export function DiagnosticsBudgetCard({
     }
     if (cents > state.maxMonthlyBudgetCents) {
       setSaveError(
-        `The most that can be set is $${centsToDollars(state.maxMonthlyBudgetCents)}.`,
+        `The most that can be set is ${formatCents(state.maxMonthlyBudgetCents)}.`,
       );
       return;
     }
@@ -260,8 +262,8 @@ export function DiagnosticsBudgetCard({
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
         <dt className="text-muted-foreground">Spent this month</dt>
         <dd className="tabular-nums">
-          ${centsToDollars(state.settledCents)} of $
-          {centsToDollars(state.monthlyBudgetCents)}
+          {formatCents(state.settledCents)} of{" "}
+          {formatCents(state.monthlyBudgetCents)}
         </dd>
         <dt className="text-muted-foreground">Questions asked</dt>
         <dd className="tabular-nums">{state.requestCount}</dd>
@@ -269,7 +271,7 @@ export function DiagnosticsBudgetCard({
           <>
             <dt className="text-muted-foreground">Held for questions in flight</dt>
             <dd className="tabular-nums">
-              ${centsToDollars(state.activeReservedCents)}
+              {formatCents(state.activeReservedCents)}
             </dd>
           </>
         ) : null}
@@ -304,9 +306,9 @@ export function DiagnosticsBudgetCard({
       </div>
 
       <p id={hintId} className="mt-2 text-xs text-muted-foreground">
-        In New Zealand dollars, up to $
-        {centsToDollars(state.maxMonthlyBudgetCents)}. Zero switches off every paid
-        Diagnostics question without touching the module.
+        In {APP_CURRENCY}, up to {formatCents(state.maxMonthlyBudgetCents)}.
+        Zero switches off every paid Diagnostics question without touching the
+        module.
       </p>
 
       {/* Gated on `=== false`, never on `!canEdit`, so it does not flash while the

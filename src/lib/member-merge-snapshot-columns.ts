@@ -164,6 +164,12 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // detector cannot see it — documented here by hand. Like every actor column
   // above it keeps the loser's id as immutable history on merge.
   "DiagnosticsUsageEvent.adminMemberId",
+  // Who last set the NZD -> club-currency rate for AI spend (#3354). A bare
+  // FK-less String like the two AI settings singletons' `updatedByMemberId`,
+  // but its name appears nowhere in the schema as a Member FK, so the detector
+  // cannot see it — documented here by hand, like `adminMemberId` above. Keeps
+  // the loser's id as immutable history on merge.
+  "AiSpendCurrencySettings.rateSetByMemberId",
   // #2780: three more actor columns the detector cannot see (their names appear
   // nowhere in the schema as a Member FK). Who resolved a maintenance report,
   // who deleted its photo, and who rotated a lodge's QR-sign token — each a bare
