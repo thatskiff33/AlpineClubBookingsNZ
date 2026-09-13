@@ -9,9 +9,18 @@
   already accepted refuses the correction until it is deliberately re-opened.
 - Beds held for a request are **released when it is corrected**, because a hold is
   built out of the request's dates, party and contact — except a correction that
-  changes only the catering preference, which a hold does not depend on. A release
-  that cannot be made is reported as a correction that saved with its beds still
-  held, never as a failed save.
+  changes only the catering preference, which a hold does not depend on. Beds kept
+  that way are freed automatically once the request's last quote window lapses. A
+  release that cannot be made is reported as a correction that saved with its beds
+  still held, never as a failed save — and so is anything else that goes wrong
+  after the correction has been written, so an officer is never invited to re-type
+  a form that really did save.
+- Changing **who is in the group** clears any links between its guests and club
+  members, and says how many it cleared. Those links point at a place in the guest
+  list rather than at a name, so a rewritten list would otherwise hand one
+  member's identity — and their member rates — to whoever now stood in their
+  place. Correcting only the dates, the contact details or the catering leaves
+  every link where it was.
 - Correcting a **school's name** now says which school the club is about to
   invoice. The form asks as the name is typed whether the club already holds that
   school — with its accounting customer and its current contact people — or would

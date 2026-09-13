@@ -1,8 +1,8 @@
 # File-size allowances for #2936
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2275
-reason: nineteen lines, and the editor itself is not among them — it is
+lines: 2306
+reason: fifty lines, and the editor itself is not among them — it is
   `booking-request-correction-editor.tsx`, a new 677-line file of its own, which
   is where the split this panel could offer has already been taken. What is left
   here is the wiring only: the import, the row's `version` field so the form can
@@ -15,7 +15,18 @@ reason: nineteen lines, and the editor itself is not among them — it is
   whole-lodge request and from a row whose stored party cannot be read back —
   the two populations the service refuses anyway, which is the only record that
   the hidden control and the server refusal are the same rule stated twice on
-  purpose rather than a screen deciding policy.
+  purpose rather than a screen deciding policy. The review round added
+  thirty-one more, and they are two things this panel is the only possible home
+  for. The larger is dropping this card's own UNSAVED copy of the member links
+  when a correction lands: that copy is local state which wins over the
+  server's and survives a refetch, so without it the next "Save quote" posts
+  links keyed to a guest list that no longer exists, and puts a real member on
+  somebody else's row at member rates. The state, the reader that prefers it and
+  the advisory-conflict ref all live here, so the reset does too. The rest is
+  the school row's copy, which told officers to decline and ask the school to
+  resubmit for exactly the change the control above it now makes — and which now
+  says which of the two child-count controls on this card changes the request
+  and which changes only the booking about to be quoted.
 
 file: src/lib/booking-request.ts
 lines: 2927
@@ -29,3 +40,23 @@ reason: six lines, and five of them are the comment. The code is one field:
   the next reader treating a client-supplied counter as authority — the server
   never trusts it as anything but a fence, and that sentence is the only place
   in the tree that says so.
+
+file: src/lib/booking-request-quotes.ts
+lines: 1834
+reason: sixty-nine lines across the three quote writers, and they are not a
+  feature — they are this issue's own counterpart reconciliation, which the
+  concurrency checklist requires and which cannot be done anywhere but at each
+  writer. The correction sets a LIVE status (VERIFIED) where decline sets a
+  terminal one, so all three writers' "not declined, not cancelled" guards saw
+  nothing: the quote save restored a retired price and stale positional member
+  links over a corrected row, the quote send flipped a SUPERSEDED quote back to
+  a live SENT one with a fresh response token, and the accept re-arm wrote the
+  retired price and converted — queueing the corrected school's Xero invoice.
+  The fences are small (a version claim, a status claim, one lock plus a
+  re-read); most of the sixty-nine lines are the comments saying which writer
+  each fences against and why, because the wrong answer to that question is
+  precisely what let these three go unreconciled. Splitting this file is a real
+  option and a real piece of work — it is one module holding create, send, the
+  requester's four responses and the hold — but doing it inside a fix round on
+  three concurrency fences would put the fences in a diff nobody could review
+  against the writers they guard.

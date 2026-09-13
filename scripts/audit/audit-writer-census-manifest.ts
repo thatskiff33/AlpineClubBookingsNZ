@@ -472,7 +472,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // happens later in a different transaction and this is where the decision
   // causing it was taken. Categorised `booking` at the site, so it does not join
   // `UNCATEGORISED_AUDIT_WRITERS` below. Re-MEASURED by RUNNING
-  // `npm run audit:census` on this tree (477 sites, 2346 files scanned), never by
+  // `npm run audit:census` on this tree (477 sites, 2349 files scanned), never by
   // adding one to the literal.
   writeSites: 477,
   /**

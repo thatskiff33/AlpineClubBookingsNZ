@@ -97,10 +97,8 @@ import { cancelBooking } from "@/lib/booking-cancel";
 import { notifyMemberGuestsHoldReleased } from "@/lib/booking-request-shared";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { prisma } from "@/lib/prisma";
-import {
-  correctBookingRequest,
-  type BookingRequestCorrectionInput,
-} from "@/lib/booking-request-corrections";
+import { correctBookingRequest } from "@/lib/booking-request-corrections";
+import type { BookingRequestCorrectionInput } from "@/lib/booking-request-correction-shape";
 import { BookingRequestCorrectionCommittedError } from "@/lib/booking-request-correction-hold";
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);

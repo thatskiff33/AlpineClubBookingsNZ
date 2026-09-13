@@ -162,7 +162,19 @@ yesterday's price for today's party is exactly what this is here to prevent.
 its party and its contact, so once any of those change the hold is for the wrong
 stay. Sending the corrected quote holds beds again automatically, or you can hold
 them yourself. The one exception is a correction that changes **only** the
-catering preference — a hold does not depend on it, so the beds stay put.
+catering preference — a hold does not depend on it, so the beds stay put. Those
+kept beds are freed automatically once the request's last quote window lapses,
+the same way a hold behind a query or a change request is.
+
+**If you change who is in the group, the member links go with it.** When you
+have linked one of the guests to a club member, that link points at a PLACE in
+the list — "the second person" — not at a name. Change the group and the list
+shifts, so the second person is now somebody else. Rather than quietly hand one
+member's identity, member rates and night-conflict checks to another guest, a
+correction that changes the party clears every such link and tells you how many
+it cleared. Link the right people again before you price or quote it. A
+correction that only moves the dates, the contact details or the catering leaves
+the list exactly where it was, so it leaves the links alone.
 
 **Once the requester has accepted a quote you cannot correct it.** At that point
 you have an agreement, and changing it underneath them is a new offer rather than
@@ -550,7 +562,9 @@ cannot, so that is an ordinary bit of tidying rather than something to report.
 | A correction is refused because the requester has already accepted a quote | You have an agreement at that price for those dates; changing it is a new offer, not a correction | Decline that quote or issue a fresh one, then correct the request |
 | A correction is refused because the request "changed while you were correcting it" | Somebody else priced, quoted, declined or accepted it since your screen loaded | Reload the queue, look at the request as it is now, and correct it again |
 | A correction is refused and names the school | The club's record of that school changed while your form was open, or you edited the name after ticking the confirmation | Re-open the correction, read which school it now says the name refers to, confirm that, and save |
-| A correction says it **saved** but the held beds could not be released | The correction is real and committed; only the bed release failed — usually because the requester accepted the hold in the same moment | Do NOT correct it again. Open the request, check whether it is still holding beds, and use **Release hold** before you quote it again |
+| A correction says it **saved** but something afterwards did not finish | The correction is real and committed; what failed came after it — usually the bed release, because the requester accepted the hold in the same moment | Do NOT correct it again: a second attempt is refused anyway, because the first one really did save. Open the request, check whether it is still holding beds, and use **Release hold** before you quote it again |
+| The correction form says it **could not check which school this is** | The lookup that decides which school record the name refers to did not answer | Press **Try again**. Saving stays blocked until it answers, on purpose — the name decides which school gets invoiced, and that is not a question to answer blind |
+| The **Adjust group numbers** boxes and the correction form's child counts disagree | They do different things: the correction form changes the REQUEST — what the school asked for — while **Adjust group numbers** changes only the booking you are about to quote or approve | Correct the request when the school's numbers changed; adjust the group numbers when you are recording something about this booking alone |
 
 ## Related links
 

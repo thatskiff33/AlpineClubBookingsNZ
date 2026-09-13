@@ -109,7 +109,6 @@ import {
   BookingRequestStatus,
   BookingRequestType,
   Prisma,
-  SchoolCateringPreference,
 } from "@prisma/client";
 
 import { logAudit } from "@/lib/audit";
@@ -120,6 +119,15 @@ import {
   parseBookingRequestLinkedGuestMembers,
   type BookingRequestGuest,
 } from "@/lib/booking-request";
+import {
+  cleanCorrectionLine,
+  guestListKey,
+  normaliseCorrectedTeachers,
+  teacherListKey,
+  type BookingRequestCorrectionInput,
+  type BookingRequestCorrectionResult,
+  type CorrectedTeacher,
+} from "@/lib/booking-request-correction-shape";
 import {
   BookingRequestCorrectionCommittedError,
   reconcileCorrectedRequestHold,
@@ -137,8 +145,6 @@ import {
   assertSchoolRecordOutcomeAcknowledged,
   normaliseSchoolNameForStorage,
   previewSchoolRecordForName,
-  type SchoolRecordAcknowledgement,
-  type SchoolRecordPreview,
 } from "@/lib/school-organisation-preview";
 import { generateSchoolGuests } from "@/lib/school-booking-request";
 
@@ -162,105 +168,6 @@ export const CORRECTABLE_BOOKING_REQUEST_STATUSES = [
   BookingRequestStatus.MODIFICATION_REQUESTED,
 ] as const;
 
-/** The corrected teacher, in the shape the request stores. */
-export type CorrectedTeacher = {
-  firstName: string;
-  lastName: string;
-  email: string | null;
-};
-
-/** The school half of a correction. Required for a SCHOOL request, absent otherwise. */
-export type SchoolCorrection = {
-  schoolName: string;
-  teachers: CorrectedTeacher[];
-  childCounts: { INFANT?: number; CHILD?: number; YOUTH?: number };
-  cateringPreference: SchoolCateringPreference;
-  /** The officer's confirmation of which school record this name claims. */
-  schoolRecord: SchoolRecordAcknowledgement;
-};
-
-export type BookingRequestCorrectionInput = {
-  requestId: string;
-  adminMemberId: string;
-  ipAddress?: string;
-  /**
-   * The version the officer's screen was showing. A correction written over a
-   * request something else has moved is refused, not merged.
-   */
-  expectedVersion: number;
-  /** Why the officer is changing it. Officer-facing only; never emailed. */
-  reason: string;
-  checkIn: Date;
-  checkOut: Date;
-  contactFirstName: string;
-  contactLastName: string;
-  contactEmail: string;
-  contactPhone: string | null;
-  /** SCHOOL requests only. */
-  school?: SchoolCorrection | null;
-  /** GENERAL requests only: the corrected party, in full. */
-  guests?: BookingRequestGuest[] | null;
-};
-
-export type BookingRequestCorrectionResult = {
-  /** Field names the officer actually changed, for the panel and the audit row. */
-  changedFields: string[];
-  holdOutcome: CorrectionHoldOutcome;
-  /** How many DRAFT/SENT quotes this correction retired. */
-  supersededQuoteCount: number;
-  /**
-   * How many admin-made member links this correction cleared, because the party
-   * it rewrote is what those links were keyed to. Non-zero means the officer
-   * must re-link before quoting, and the panel says so.
-   */
-  clearedMemberLinkCount: number;
-  /** The school record the corrected name claims. Null for a GENERAL request. */
-  schoolRecord: SchoolRecordPreview | null;
-  /**
-   * Whether the lodge can take the corrected party on every corrected night,
-   * measured AFTER the correction committed and the hold was released.
-   *
-   * Advisory by construction, and labelled so everywhere it is shown: a request
-   * holds nothing, so this is what the officer would find if they held it now,
-   * not a reservation. A correction is never refused for it — the requester
-   * asked for these nights, and recording what they asked for is the officer's
-   * job whether or not the lodge can take it.
-   */
-  availability: { available: boolean; fullNights: string[] };
-};
-
-function cleanLine(value: string | null | undefined): string {
-  return (value ?? "").replace(/[\r\n]/g, " ").trim();
-}
-
-function teacherKey(teachers: CorrectedTeacher[]): string {
-  return JSON.stringify(
-    teachers.map((t) => [t.firstName, t.lastName, t.email ?? ""]),
-  );
-}
-
-function guestKey(guests: { firstName: string; lastName: string; ageTier: string }[]): string {
-  return JSON.stringify(guests.map((g) => [g.firstName, g.lastName, g.ageTier]));
-}
-
-/**
- * Normalise the teacher list the way the public form does, so a teacher typed
- * into the correction screen is stored byte-identically to one typed into the
- * school's own form. Blank rows drop out rather than becoming a guest called
- * nothing.
- */
-function normaliseTeachers(teachers: CorrectedTeacher[]): CorrectedTeacher[] {
-  return teachers
-    .map((teacher) => ({
-      firstName: cleanLine(teacher.firstName),
-      lastName: cleanLine(teacher.lastName),
-      email: cleanLine(teacher.email)
-        ? cleanLine(teacher.email).toLowerCase()
-        : null,
-    }))
-    .filter((teacher) => teacher.firstName && teacher.lastName);
-}
-
 /**
  * Correct an unconverted booking request.
  *
@@ -271,7 +178,7 @@ function normaliseTeachers(teachers: CorrectedTeacher[]): CorrectedTeacher[] {
 export async function correctBookingRequest(
   input: BookingRequestCorrectionInput,
 ): Promise<BookingRequestCorrectionResult> {
-  const reason = cleanLine(input.reason);
+  const reason = cleanCorrectionLine(input.reason);
   if (!reason) {
     throw new BookingRequestError(
       "Record why you are correcting this request.",
@@ -399,7 +306,7 @@ export async function correctBookingRequest(
     );
   }
 
-  const teachers = school ? normaliseTeachers(school.teachers) : [];
+  const teachers = school ? normaliseCorrectedTeachers(school.teachers) : [];
   if (school && teachers.length === 0) {
     throw new BookingRequestError(
       "A school request needs at least one teacher attending.",
@@ -424,10 +331,10 @@ export async function correctBookingRequest(
     );
   }
 
-  const contactFirstName = cleanLine(input.contactFirstName);
-  const contactLastName = cleanLine(input.contactLastName);
-  const contactEmail = cleanLine(input.contactEmail).toLowerCase();
-  const contactPhone = cleanLine(input.contactPhone) || null;
+  const contactFirstName = cleanCorrectionLine(input.contactFirstName);
+  const contactLastName = cleanCorrectionLine(input.contactLastName);
+  const contactEmail = cleanCorrectionLine(input.contactEmail).toLowerCase();
+  const contactPhone = cleanCorrectionLine(input.contactPhone) || null;
   if (!contactFirstName || !contactLastName || !contactEmail) {
     throw new BookingRequestError(
       "A request needs a contact name and email address.",
@@ -446,7 +353,7 @@ export async function correctBookingRequest(
   };
   mark("checkIn", request.checkIn.getTime() !== checkIn.getTime());
   mark("checkOut", request.checkOut.getTime() !== checkOut.getTime());
-  mark("guests", guestKey(storedGuests) !== guestKey(guests));
+  mark("guests", guestListKey(storedGuests) !== guestListKey(guests));
   mark("contactFirstName", request.contactFirstName !== contactFirstName);
   mark("contactLastName", request.contactLastName !== contactLastName);
   mark("contactEmail", request.contactEmail.toLowerCase() !== contactEmail);
@@ -455,8 +362,8 @@ export async function correctBookingRequest(
     mark("schoolName", request.schoolName !== schoolName);
     mark(
       "teachers",
-      teacherKey(normaliseTeachers((request.teachers as CorrectedTeacher[]) ?? [])) !==
-        teacherKey(teachers),
+      teacherListKey(normaliseCorrectedTeachers((request.teachers as CorrectedTeacher[]) ?? [])) !==
+        teacherListKey(teachers),
     );
     mark(
       "cateringPreference",

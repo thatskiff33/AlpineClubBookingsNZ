@@ -1094,7 +1094,24 @@ The hold follows decline's shape exactly: claim first, then release the
 `requireRequestHold: true`, then tell any member guests the hold had notified. A
 correction that changes ONLY the catering preference keeps the hold — that is the
 one corrected field a hold does not read. A release that fails is reported as a
-correction that SAVED with its beds still held, never as a failed save.
+correction that SAVED with its beds still held, never as a failed save, and so is
+every other post-claim failure: the whole block is wrapped the way decline's is.
+
+Beds a correction keeps, or fails to release, are swept by
+`cron-quote-expiry-reminders`' stale-hold phase, which selects `VERIFIED`
+alongside `MODIFICATION_REQUESTED` and `QUERY_PENDING` for exactly this reason —
+`VERIFIED` is where a correction leaves the request, and the expiry phase cannot
+see it because the correction has just superseded the `SENT` quote that phase
+selects on.
+
+**What a correction is NOT fenced by, and what it is.** `VERIFIED` is a LIVE
+status, not decline's terminal one, so every writer guarding on "not `DECLINED`,
+not `CANCELLED`" sees a corrected request as ordinary. The three quote writers
+are therefore fenced individually: the quote save claims on the request's
+`version`, the quote send claims the quote row while it is still `DRAFT`/`SENT`,
+and the accept re-arm takes `pg_advisory_xact_lock(1)` and re-reads the quote's
+status under it, refusing only a `SUPERSEDED`/`CANCELLED` one so #1232's
+double-accept replay still works.
 
 Because `QUOTE_SENT` (and other quote-bearing states) DO carry a live `SENT`
 quote a requester could still act on, broadening decline reintroduces a

@@ -162,29 +162,31 @@ the shape it corrects, so none of them may outlive the correction.
 
 - **Every `DRAFT` and `SENT` quote becomes `SUPERSEDED`**, `priceCents`,
   `pricedByMemberId` and `pricedAt` are cleared and the status returns to
-  `VERIFIED`, all in the transaction that claims the row. There is no edit small
-  enough to skip it. `SUPERSEDED` rather than `CANCELLED` because an officer
-  retired it, and flipping it off `SENT` is also what kills the requester's live
-  link — `loadSentQuoteByToken` requires `SENT`.
+  `VERIFIED`, in the transaction that claims the row. No edit is small enough to
+  skip it; the quote status is `SUPERSEDED`, never `CANCELLED`.
 - **An accepted quote refuses the correction (`409`) on either evidence**: a
-  quote row at `ACCEPTED`, or the request's own `acceptedQuoteId`, which the
-  accept re-arm sets before conversion runs and which therefore survives a
-  conversion that did not finish. Re-opening an agreement is the officer's
-  deliberate act — decline it or issue a fresh quote — never a side effect of an
-  edit.
+  quote row at `ACCEPTED`, or the request's own `acceptedQuoteId`.
 - **The guarded claim fences on all four together** — `version`, a correctable
-  status, `convertedBookingId: null` and `acceptedQuoteId: null` — so each
-  refusal holds under a race as well as at the guard, and a lost claim writes
-  nothing.
+  status, `convertedBookingId: null`, `acceptedQuoteId: null` — so each refusal
+  holds under a race, and a lost claim writes nothing.
 - **Correctable is the six live, undecided states**
-  (`CORRECTABLE_BOOKING_REQUEST_STATUSES`). `NEW` is excluded because the
-  requester has not confirmed their own address yet, so nobody has asked for a
-  correction.
+  (`CORRECTABLE_BOOKING_REQUEST_STATUSES`); `NEW` is excluded because the
+  requester has not confirmed their own address.
 - **A row whose stored party cannot be read back is refused, not guessed**
-  (#2342's rule): the officer's corrected list would silently become the whole
-  truth about a party nobody can compare it against.
+  (#2342's rule).
+- **A correction that rewrites the party clears `linkedGuestMembers` in the same
+  claim.** Those links are keyed by POSITION and resolved by index, so a
+  rewritten list would give one member's identity to whoever now stands in their
+  place. Cleared only when the list changed; the count is returned, audited and
+  shown, and the officer re-links before quoting.
+- **The REQUEST's type decides the shape, not the payload's.** A school half on
+  a general request, or a guest list on a school one, is refused.
+- **Every post-claim failure is reported as a correction that SAVED**, not only
+  the hold release's own: the whole block is wrapped as `declineBookingRequest`'s
+  is, because a retry would refuse on the bumped version.
 
-Pinned by `src/lib/__tests__/booking-request-corrections.test.ts`.
+Pinned by `src/lib/__tests__/booking-request-corrections.test.ts` and
+`src/lib/__tests__/admin-booking-request-correction-routes.test.ts`.
 
 ### INV-REQ-009
 
@@ -202,19 +204,24 @@ a choice about which school the club is about to invoice, not a spelling fix.
   names the school.
 - **It is checked against a preview re-read INSIDE the claim transaction**,
   under `pg_advisory_xact_lock(1)`, never against the one the screen rendered.
-  With approvals excluded by that key no record can appear in between, which is
-  what makes the confirmation a fence rather than a courtesy. It catches two
-  things: another approval minting the record while the form was open, and the
-  officer editing the name after reading the preview.
+  Approvals are the only writer of those records and take that key, so no record
+  can appear in between: that is what makes the confirmation a fence, and it is
+  what the correction holds the key FOR. It is NOT what fences the conversion's
+  own write — both approvals
+  claim on `version` (#1923) — and the counterparts a version fence did not
+  close are the three quote writers, reconciled at each writer
+  (`INV-LOCK-001`; `docs/CONCURRENCY_AND_LOCKING.md`).
 - **The preview only ever reads.** `resolveOrCreateSchoolOrganisation` may run
   only inside the approval transaction; the preview asks the same question of
-  the same filter (`schoolOrganisationNameClaim`) with the same ordering, so the
-  claim and the preview cannot drift apart.
+  the same filter (`schoolOrganisationNameClaim`) with the same ordering.
 - **The name is normalised once** (`normaliseSchoolNameForStorage`), so the
   string previewed is the string stored.
+- **The contact people it names are the ones the provider names**: the same cap
+  (`MAX_XERO_ORGANISATION_CONTACT_PERSONS`), newest-first ordering and
+  de-duplication identity as `readOrganisationForXeroContact`, borrowed rather
+  than restated (`INV-SSOT`).
 - **A correction never writes the link.** It changes what approval will resolve,
-  not what it has resolved; minting a record for a request nobody approves is
-  what moving the resolve earlier would cost.
+  not what it has resolved.
 
 Pinned by `src/lib/__tests__/school-organisation-preview.test.ts` and
 `src/lib/__tests__/organisation-reader-contract.test.ts`.
@@ -229,9 +236,9 @@ invalidates it.
 - **A catering-only correction keeps the hold**: that is the one corrected field
   a hold never reads, because it selects quote options, not beds.
 - **Every other correction releases it**, through the shared `cancelBooking`
-  path with the requester's cancellation email suppressed (an officer correcting
-  a request, not a requester cancelling a booking) and `requireRequestHold: true`,
-  so a hold a requester accepted in between is refused rather than clobbered.
+  path with the requester's cancellation email suppressed and
+  `requireRequestHold: true`, so a hold a requester accepted in between is
+  refused rather than clobbered.
 - **The release runs AFTER the claim has committed and outside every
   transaction.** `cancelBooking` takes `pg_advisory_xact_lock(1)` and opens
   transactions of its own, so nesting it self-deadlocks. This is
@@ -239,15 +246,17 @@ invalidates it.
 - **A release that fails is reported as a correction that SAVED**
   (`BookingRequestCorrectionCommittedError`), never as a failed save and never
   as a clean success, and **the audit row is written before that error is
-  rethrown** (`holdOutcome: "releaseFailed"`) — the one case where beds are left
-  held for the old shape is the one case an officer must be able to find. The
-  caller must not retry: a retry would refuse on the bumped version. The worst
-  case is a request pointing at a hold covering more than it needs, with its own
-  Release button; never one that has quietly lost beds.
+  rethrown** (`holdOutcome: "releaseFailed"`). The caller must not retry: a
+  retry would refuse on the bumped version.
 - **A pointer to a hold no longer live is detached**, the Release-hold route's
   own repair.
+- **Beds a correction KEEPS are still swept.** `VERIFIED` joins the stale-hold
+  phase of `cron-quote-expiry-reminders`: a correction leaves exactly that state
+  and both recovery phases used to miss it, so a catering-only correction — or
+  any whose release failed — sterilised its beds with no cron recovery at all.
+  The existing deadline rule still keeps a hold on a request that never had a
+  response window, which protects a deliberate "Hold slots".
 - **Availability is re-measured after the release and is ADVISORY.** A
-  correction is never refused for it: recording what the requester asked for is
-  the officer's job whether or not the lodge can take it.
+  correction is never refused for it.
 
 Pinned by `src/lib/__tests__/booking-request-corrections.test.ts`.
