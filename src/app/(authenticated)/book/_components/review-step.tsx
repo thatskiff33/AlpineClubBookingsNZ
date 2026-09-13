@@ -121,6 +121,7 @@ export function ReviewStep({
   waitlistOnly,
   capacityShortMessage,
   capacityShortNights,
+  waitlistAlternateLodges,
   handleJoinWaitlist,
   joiningWaitlist,
   savingDraft,
@@ -206,6 +207,14 @@ export function ReviewStep({
   waitlistOnly: boolean;
   capacityShortMessage: string | null;
   capacityShortNights: string[];
+  /**
+   * The cross-lodge waitlist opt-in (ADR-004), built by the route shell and
+   * rendered here as well as in the 409 refusal prompt (#2930 fix round). It
+   * arrives as a node rather than as three props because the lodge list and the
+   * opt-in state belong to the wizard hook and this component is presentational.
+   * Without it the alternates were unreachable from this path entirely.
+   */
+  waitlistAlternateLodges: React.ReactNode;
   handleJoinWaitlist: () => void | Promise<void>;
   joiningWaitlist: boolean;
   savingDraft: boolean;
@@ -978,6 +987,8 @@ export function ReviewStep({
           can confirm your booking.
         </CapacityShortNotice>
       ) : null}
+
+      {waitlistOnly ? waitlistAlternateLodges : null}
 
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={() => setStep("guests")}>

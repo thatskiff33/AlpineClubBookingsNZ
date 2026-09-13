@@ -76,6 +76,7 @@ function renderReview(
       waitlistOnly={false}
       capacityShortMessage={null}
       capacityShortNights={[]}
+      waitlistAlternateLodges={null}
       handleJoinWaitlist={vi.fn()}
       joiningWaitlist={false}
       perGuestDatesEnabled={false}
@@ -147,6 +148,43 @@ const splitHold: PriceQuote["nonMemberHoldDecision"] = {
   shouldBePending: true,
   status: "PAYMENT_PENDING",
 };
+
+/**
+ * #2930 fix round — the cross-lodge waitlist opt-in has to be reachable from
+ * the path that actually joins the waitlist.
+ *
+ * ADR-004's "Also waitlist me for ..." checkboxes lived inside the 409 refusal
+ * prompt and nowhere else, which was fine while that prompt was the only door.
+ * This step's Join Waitlist never raises it, so a member who reached the
+ * waitlist through here sent no alternates at all — and which member got the
+ * option depended on whether the availability advisory had resolved in time.
+ */
+describe("ReviewStep cross-lodge waitlist opt-in (#2930)", () => {
+  const alternates = <div data-testid="waitlist-alternates" />;
+
+  it("renders the opt-in beside the waitlist-only action", () => {
+    renderReview([memberGuest], undefined, {
+      waitlistOnly: true,
+      capacityShortMessage: "The Lodge is full on 2026-07-20.",
+      capacityShortNights: ["2026-07-20"],
+      waitlistAlternateLodges: alternates,
+    });
+
+    expect(screen.getByRole("button", { name: "Join Waitlist" })).toBeInTheDocument();
+    expect(screen.getByTestId("waitlist-alternates")).toBeInTheDocument();
+  });
+
+  it("does not offer it when the stay can be confirmed", () => {
+    // The alternates belong to a waitlist place. On a confirmable stay the
+    // primary action is Confirm Booking and there is no queue to join.
+    renderReview([memberGuest], undefined, {
+      waitlistOnly: false,
+      waitlistAlternateLodges: alternates,
+    });
+
+    expect(screen.queryByTestId("waitlist-alternates")).not.toBeInTheDocument();
+  });
+});
 
 describe("ReviewStep split provisional copy (#1942)", () => {
   it("explains the split when the party mixes member and non-member guests outside the hold window", () => {

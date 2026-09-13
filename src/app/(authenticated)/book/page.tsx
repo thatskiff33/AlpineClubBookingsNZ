@@ -4,7 +4,6 @@ import Link from "next/link";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { ExternalLink, UserMinus } from "lucide-react";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import {
@@ -15,6 +14,7 @@ import {
 import { useHelpWidgetHint } from "@/components/help-widget/help-widget-context";
 import { DatesStep } from "./_components/dates-step";
 import { GuestsStep } from "./_components/guests-step";
+import { WaitlistAlternateLodges } from "./_components/waitlist-alternate-lodges";
 import { ReviewStep } from "./_components/review-step";
 import { PayStep } from "./_components/pay-step";
 import {
@@ -154,6 +154,18 @@ export default function BookPage() {
   // subscription-status response cannot silently drop a warning that still
   // holds. See `readSubscriptionLockoutView`.
   const subscriptionLockout = readSubscriptionLockoutView(subscriptionStatus);
+
+  // Built once so the two doors to the waitlist offer the same control with the
+  // same state (#2930 fix round). Null when there is no second eligible lodge.
+  const waitlistAlternateLodges = (
+    <WaitlistAlternateLodges
+      lodges={lodges}
+      lodgeId={lodgeId}
+      waitlistAlternateLodgeIds={waitlistAlternateLodgeIds}
+      setWaitlistAlternateLodgeIds={setWaitlistAlternateLodgeIds}
+      disabled={joiningWaitlist}
+    />
+  );
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -444,6 +456,11 @@ export default function BookPage() {
         </div>
       )}
 
+      {/*
+        The cross-lodge opt-in (ADR-004), built once and rendered on BOTH doors
+        to the waitlist (#2930 fix round): the 409 refusal prompt below, and the
+        review step's primary Join Waitlist, which never raises that prompt.
+      */}
       {showWaitlistPrompt && (
         <Card className="border-cat1-6 bg-cat1-3">
           <CardContent className="pt-6 space-y-4">
@@ -480,40 +497,7 @@ export default function BookPage() {
                 </p>
               </div>
             </div>
-            {lodges.length > 1 && lodges.some((lodge) => lodge.id !== lodgeId) && (
-              <div className="rounded-md border border-cat1-6 bg-card p-4 space-y-2">
-                <p className="text-sm font-medium text-cat1-11">
-                  Happy to stay at another lodge if a spot opens there first?
-                </p>
-                {lodges
-                  .filter((lodge) => lodge.id !== lodgeId)
-                  .map((lodge) => (
-                    <label
-                      key={lodge.id}
-                      className="flex items-center gap-2 text-sm text-cat1-11 cursor-pointer"
-                    >
-                      <Checkbox
-                        checked={waitlistAlternateLodgeIds.includes(lodge.id)}
-                        onCheckedChange={(checked) =>
-                          setWaitlistAlternateLodgeIds((current) =>
-                            checked
-                              ? [...current, lodge.id]
-                              : current.filter((id) => id !== lodge.id)
-                          )
-                        }
-                        className="border-cat1-6"
-                        disabled={joiningWaitlist}
-                      />
-                      Also waitlist me for {lodge.name}
-                    </label>
-                  ))}
-                <p className="text-xs text-cat1-11">
-                  Prices can differ between lodges. If a spot opens at one of
-                  these, we&apos;ll email you that lodge&apos;s price for your
-                  stay — nothing is booked until you confirm it.
-                </p>
-              </div>
-            )}
+            {waitlistAlternateLodges}
             <div className="flex gap-3 justify-end">
               <Button
                 variant="outline"
@@ -686,6 +670,7 @@ export default function BookPage() {
           waitlistOnly={waitlistOnly}
           capacityShortMessage={capacityShortMessage}
           capacityShortNights={capacityShortNights}
+          waitlistAlternateLodges={waitlistAlternateLodges}
           handleJoinWaitlist={handleJoinWaitlist}
           joiningWaitlist={joiningWaitlist}
         />
