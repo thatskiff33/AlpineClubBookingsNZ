@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
     bookingRequest: { findMany: vi.fn() },
     organisation: { findMany: vi.fn() },
     xeroContactCache: { findMany: vi.fn() },
+    xeroGroupingSettings: { findUnique: vi.fn() },
     xeroObjectLink: { findFirst: vi.fn() },
     xeroSyncOperation: { create: vi.fn(), findFirst: vi.fn() },
     auditLog: { create: vi.fn() },
@@ -66,10 +67,16 @@ vi.mock("@/lib/xero-contacts", async (importOriginal) => {
 
 import { XeroDailyLimitError } from "@/lib/xero-api-client";
 import { XeroContactTwoHomesError } from "@/lib/xero-contact-home";
-import { XeroContactCreatePartialSuccessError } from "@/lib/xero-contacts";
 import {
+  XeroContactCreatePartialSuccessError,
+  XeroContactProviderAnswerUnavailableError,
+} from "@/lib/xero-contacts";
+import {
+  DEFAULT_SEEDING_CHUNK,
+  DEFAULT_SEEDING_CHUNK_WITH_GROUPING,
   getXeroMissingContactSnapshot,
   runXeroMissingContactSeedingChunk,
+  SeedingPlanChangedError,
 } from "@/lib/xero-missing-contact-seeding";
 
 const SYNCED_AT = new Date("2026-06-01T00:00:00.000Z");
@@ -108,6 +115,7 @@ function givenTree(input: {
   schoolBookingMemberIds?: string[];
   schoolRequestMemberIds?: string[];
   syncedAt?: Date | null;
+  groupingMode?: "NONE" | "MEMBERSHIP_TYPE" | "MEMBERSHIP_TYPE_AND_AGE";
 }) {
   mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue(
     input.syncedAt === null
@@ -115,13 +123,29 @@ function givenTree(input: {
       : { lastSuccessfulSyncAt: input.syncedAt ?? SYNCED_AT },
   );
   mocks.prisma.member.findMany.mockImplementation(async (args: {
-    where?: { xeroContactId?: { in?: string[] } };
+    where?: {
+      xeroContactId?: { in?: string[]; not?: null };
+      id?: { in?: string[] };
+    };
   }) => {
     // The held-by read is the only one keyed on a contact-id set.
     if (args?.where?.xeroContactId?.in) {
       return (input.heldByMembers ?? []).map((contactId) => ({
         xeroContactId: contactId,
       }));
+    }
+    /*
+      The run's "which reviewed members already hold a contact" read, which is
+      what separates ALREADY_DONE from NO_LONGER_PUSHABLE. Keyed on an id set
+      plus a non-null contact, and answered from the SAME fixtures rather than
+      from a second list, so the two states cannot be set independently of what
+      the population actually says.
+    */
+    if (args?.where?.id?.in) {
+      const ids = args.where.id.in;
+      return (input.members ?? [member()])
+        .filter((row) => ids.includes(row.id) && row.xeroContactId !== null)
+        .map((row) => ({ id: row.id }));
     }
     return input.members ?? [member()];
   });
@@ -152,6 +176,19 @@ function givenTree(input: {
         contact.contactStatus === args.where.contactStatus,
     ),
   );
+  mocks.prisma.xeroGroupingSettings.findUnique.mockResolvedValue(
+    input.groupingMode === undefined ? null : { mode: input.groupingMode },
+  );
+}
+
+/**
+ * The digest of the plan the census currently produces — what an operator who
+ * has just read the screen would post. Taken from the same dry run the run
+ * re-computes, so a test that passes it is asserting the guard rather than
+ * re-implementing the hash.
+ */
+async function reviewedDigest(): Promise<string> {
+  return (await getXeroMissingContactSnapshot()).plannedDigest;
 }
 
 beforeEach(() => {
@@ -415,6 +452,7 @@ describe("the run (#2939)", () => {
     expect(mocks.findOrCreateXeroContact).toHaveBeenCalledTimes(1);
     expect(mocks.findOrCreateXeroContact).toHaveBeenCalledWith("m1", {
       createdByMemberId: "admin-1",
+      requireAuthoritativeMatch: true,
     });
     expect(result.processed).toBe(1);
     expect(result.created).toBe(1);
@@ -445,6 +483,7 @@ describe("the run (#2939)", () => {
     expect(mocks.findOrCreateXeroContact).toHaveBeenCalledTimes(1);
     expect(mocks.findOrCreateXeroContact).toHaveBeenCalledWith("m1", {
       createdByMemberId: undefined,
+      requireAuthoritativeMatch: true,
     });
   });
 
@@ -458,7 +497,11 @@ describe("the run (#2939)", () => {
     });
 
     expect(mocks.findOrCreateXeroContact).not.toHaveBeenCalled();
-    expect(result.skippedNoLongerPushable).toEqual(["m1"]);
+    // ALREADY_DONE, not NO_LONGER_PUSHABLE: an earlier chunk of this same
+    // review gave them a contact, which is the expected shape of a multi-chunk
+    // run — the operator has nothing to look at here. The two were reported as
+    // one number until #2939's review.
+    expect(result.skipped).toEqual([{ memberId: "m1", reason: "ALREADY_DONE" }]);
     expect(result.processed).toBe(0);
   });
 
@@ -470,7 +513,9 @@ describe("the run (#2939)", () => {
     });
 
     expect(mocks.findOrCreateXeroContact).toHaveBeenCalledTimes(1);
-    expect(result.skippedNoLongerPushable).toEqual(["forged-id"]);
+    expect(result.skipped).toEqual([
+      { memberId: "forged-id", reason: "NO_LONGER_PUSHABLE" },
+    ]);
   });
 
   it("bounds the chunk and reports what is left", async () => {
@@ -579,5 +624,541 @@ describe("the run (#2939)", () => {
     ).rejects.toThrow("this installation is undeclared");
     expect(mocks.findOrCreateXeroContact).not.toHaveBeenCalled();
     expect(mocks.prisma.member.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("the NAME axis, which the email axis cannot see (#2939 review)", () => {
+  /*
+    Xero enforces contact-name uniqueness. A census that looks only along the
+    email axis therefore cannot see the collision the PROVIDER will raise: the
+    create is refused, the funnel's recovery adopts the existing same-named
+    contact on the normalised name alone with no email comparison, and a new
+    member is silently linked to a fifteen-year-old record at another address.
+    These pin both halves of the fix — seeing it here, and refusing it there.
+  */
+  it("hands back a member whose name an ACTIVE Xero contact already carries", async () => {
+    givenTree({
+      members: [member()],
+      contacts: [
+        cachedContact({
+          contactId: "c-old",
+          emailAddress: "someone.else@example.com",
+        }),
+      ],
+    });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.pushable).toBe(0);
+    expect(snapshot.ambiguousRows[0]).toMatchObject({
+      memberId: "m1",
+      reason: "XERO_CONTACT_ALREADY_HAS_THIS_NAME",
+      xeroContactIds: ["c-old"],
+    });
+  });
+
+  it("normalises the name the way the provider-side comparison does", async () => {
+    // Punctuation, case and accents are exactly what
+    // `normalizeXeroContactMatchValue` folds away, and the funnel's recovery
+    // compares with it — so a census using a stricter test would hand over a
+    // member the recovery would then adopt on.
+    givenTree({
+      members: [member({ firstName: "Ada", lastName: "Lovelace" })],
+      contacts: [
+        cachedContact({
+          contactId: "c-old",
+          name: "ADA  LOVELACE",
+          firstName: null,
+          lastName: null,
+          emailAddress: "other@example.com",
+        }),
+      ],
+    });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.ambiguousRows[0]?.reason).toBe(
+      "XERO_CONTACT_ALREADY_HAS_THIS_NAME",
+    );
+  });
+
+  it("sees a same-named contact that has NO email address at all", async () => {
+    /*
+      The cache read used to require a non-null address, which made every
+      blank-email contact invisible to this tool — and a blank-email contact is
+      precisely one that can only ever be matched by name.
+    */
+    givenTree({
+      members: [member()],
+      contacts: [cachedContact({ contactId: "c-old", emailAddress: null })],
+    });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.ambiguousRows[0]?.reason).toBe(
+      "XERO_CONTACT_ALREADY_HAS_THIS_NAME",
+    );
+  });
+
+  it("is NOT raised by the very contact the email axis already matched", async () => {
+    // Agreement on both axes is agreement, not collision: the same record
+    // arriving twice must still be a clean link.
+    givenTree({ members: [member()], contacts: [cachedContact()] });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.ambiguous).toBe(0);
+    expect(snapshot.pushableRows[0]).toMatchObject({
+      evidence: "CACHED_CONTACT_MATCH",
+      cachedXeroContactId: "c1",
+    });
+  });
+
+  it("ignores an ARCHIVED same-named contact, which Xero will not refuse for", async () => {
+    givenTree({
+      members: [member()],
+      contacts: [
+        cachedContact({
+          contactId: "c-old",
+          contactStatus: "ARCHIVED",
+          emailAddress: "other@example.com",
+        }),
+      ],
+    });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.ambiguous).toBe(0);
+    expect(snapshot.pushableRows[0]?.evidence).toBe("NO_CACHED_MATCH");
+  });
+});
+
+describe("nothing is done on an answer the provider did not give (#2939 review)", () => {
+  it("asks the funnel to refuse rather than fall through", async () => {
+    givenTree({ members: [member()] });
+
+    await runXeroMissingContactSeedingChunk({ reviewedMemberIds: ["m1"] });
+
+    expect(mocks.findOrCreateXeroContact).toHaveBeenCalledWith(
+      "m1",
+      expect.objectContaining({ requireAuthoritativeMatch: true }),
+    );
+  });
+
+  it("records a failed Xero search as a failure the next run retries", async () => {
+    givenTree({ members: [member()] });
+    mocks.findOrCreateXeroContact.mockRejectedValueOnce(
+      new XeroContactProviderAnswerUnavailableError({
+        phase: "EMAIL_SEARCH",
+        memberId: "m1",
+        originalError: new Error("socket hang up"),
+      }),
+    );
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1"],
+    });
+
+    expect(result.created).toBe(0);
+    expect(result.failures[0]?.kind).toBe("PROVIDER_ANSWER_UNAVAILABLE");
+    // Still outstanding, because the member is exactly where they were.
+    expect(result.outstandingPushable).toBe(1);
+  });
+
+  it("records a name collision the provider raised as its own kind", async () => {
+    givenTree({ members: [member()] });
+    mocks.findOrCreateXeroContact.mockRejectedValueOnce(
+      new XeroContactProviderAnswerUnavailableError({
+        phase: "DUPLICATE_NAME_RECOVERY",
+        memberId: "m1",
+        originalError: new Error("contact name must be unique"),
+      }),
+    );
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1"],
+    });
+
+    expect(result.failures[0]?.kind).toBe("NAME_ALREADY_IN_XERO");
+    expect(result.linkedExisting).toBe(0);
+  });
+
+  it("fails a member the funnel linked to a contact the plan did not name", async () => {
+    /*
+      The divergence a plan digest CANNOT catch, because it happens inside the
+      funnel after the plan already matched. Reported as a failure with both
+      ids, never as "linked to a contact Xero already had".
+    */
+    givenTree({ members: [member()], contacts: [cachedContact()] });
+    mocks.findOrCreateXeroContact.mockResolvedValueOnce("c-somebody-else");
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1"],
+    });
+
+    expect(result.linkedExisting).toBe(0);
+    expect(result.processed).toBe(0);
+    expect(result.failures[0]).toMatchObject({
+      memberId: "m1",
+      kind: "PLAN_DIVERGED",
+    });
+    expect(result.failures[0]?.error).toContain("c1");
+    expect(result.failures[0]?.error).toContain("c-somebody-else");
+  });
+
+  it("accepts the contact the plan DID name", async () => {
+    givenTree({ members: [member()], contacts: [cachedContact()] });
+    mocks.findOrCreateXeroContact.mockResolvedValueOnce("c1");
+    mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue({
+      metadata: { linkedVia: "email_match" },
+    });
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1"],
+    });
+
+    expect(result.failed).toBe(0);
+    expect(result.linkedExisting).toBe(1);
+  });
+});
+
+describe("the reviewed plan is checked, not just recorded (#2939 review)", () => {
+  it("runs when the plan the operator reviewed still holds", async () => {
+    givenTree({ members: [member()] });
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1"],
+      reviewedPlannedDigest: await reviewedDigest(),
+    });
+
+    expect(result.processed).toBe(1);
+  });
+
+  it("refuses when what would HAPPEN changed although the member did not", async () => {
+    /*
+      The exact hole the unchecked digest left: the operator approves "link Jane
+      to the contact Xero already has", the contact sync archives it underneath
+      them, and Jane is still pushable — now as a CREATE. A membership-only
+      guard sees nothing wrong and mints a brand-new contact.
+    */
+    givenTree({ members: [member()], contacts: [cachedContact()] });
+    const reviewed = await reviewedDigest();
+
+    givenTree({
+      members: [member()],
+      contacts: [cachedContact({ contactStatus: "ARCHIVED" })],
+    });
+
+    await expect(
+      runXeroMissingContactSeedingChunk({
+        reviewedMemberIds: ["m1"],
+        reviewedPlannedDigest: reviewed,
+      }),
+    ).rejects.toBeInstanceOf(SeedingPlanChangedError);
+    expect(mocks.findOrCreateXeroContact).not.toHaveBeenCalled();
+  });
+
+  it("refuses BEFORE any provider call, so nothing partial is left behind", async () => {
+    givenTree({ members: [member()] });
+
+    await expect(
+      runXeroMissingContactSeedingChunk({
+        reviewedMemberIds: ["m1"],
+        reviewedPlannedDigest: "a-digest-from-some-other-plan",
+      }),
+    ).rejects.toBeInstanceOf(SeedingPlanChangedError);
+    expect(mocks.findOrCreateXeroContact).not.toHaveBeenCalled();
+  });
+
+  it("does not depend on the order rows came back in", async () => {
+    givenTree({
+      members: [
+        member({ id: "m1", email: "a@example.com" }),
+        member({ id: "m2", email: "b@example.com", firstName: "Byron" }),
+      ],
+    });
+    const forwards = await reviewedDigest();
+
+    givenTree({
+      members: [
+        member({ id: "m2", email: "b@example.com", firstName: "Byron" }),
+        member({ id: "m1", email: "a@example.com" }),
+      ],
+    });
+
+    expect(await reviewedDigest()).toBe(forwards);
+  });
+});
+
+describe("the chunk is sized from what a member really costs (#2939 review)", () => {
+  it("uses the two-call size when contact grouping is off", async () => {
+    givenTree({ members: [member()], groupingMode: "NONE" });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.chunkSize).toBe(DEFAULT_SEEDING_CHUNK);
+  });
+
+  it("uses the SMALLER size when grouping is on and the funnel's tail runs", async () => {
+    /*
+      The funnel's tail runs a managed-group sync that short-circuits before any
+      provider call only when the mode is NONE; otherwise it costs a getContact
+      per member plus group calls. A flat 25 was >=75 calls against a
+      60-per-minute budget — guaranteed to trip the limit, not "far inside" it.
+    */
+    givenTree({ members: [member()], groupingMode: "MEMBERSHIP_TYPE" });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.chunkSize).toBe(DEFAULT_SEEDING_CHUNK_WITH_GROUPING);
+    expect(snapshot.chunkSize).toBeLessThan(DEFAULT_SEEDING_CHUNK);
+  });
+
+  it("keeps every size inside half a minute of Xero's budget", async () => {
+    // The arithmetic, not the literals: 60 calls a minute, half of it spent.
+    expect(DEFAULT_SEEDING_CHUNK * 2).toBeLessThanOrEqual(30);
+    expect(DEFAULT_SEEDING_CHUNK_WITH_GROUPING * 4).toBeLessThanOrEqual(30);
+  });
+
+  it("stops on its wall-clock budget and returns what it did", async () => {
+    /*
+      A route killed by its host's timeout loses the WHOLE result — the summary
+      audit row is written after the run returns — while every contact it
+      created stays in Xero. `elapsedMs` is a seam because `Date.now()` is
+      frozen for every test in this repository, so a real deadline could never
+      expire here (docs/TESTING.md).
+    */
+    givenTree({
+      members: [
+        member({ id: "m1", email: "a@example.com" }),
+        member({ id: "m2", email: "b@example.com" }),
+        member({ id: "m3", email: "c@example.com" }),
+      ],
+    });
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1", "m2", "m3"],
+      elapsedMs: () => 999_999,
+    });
+
+    expect(mocks.findOrCreateXeroContact).toHaveBeenCalledTimes(1);
+    expect(result.haltedByTimeBudget).toBe(true);
+    expect(result.done).toBe(false);
+    expect(result.processed).toBe(1);
+    expect(result.remaining).toBe(2);
+  });
+
+  it("always makes progress, however long the first member takes", async () => {
+    givenTree({ members: [member()] });
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1"],
+      elapsedMs: () => 999_999,
+    });
+
+    expect(result.processed).toBe(1);
+  });
+});
+
+describe("what the operator is told afterwards (#2939 review)", () => {
+  it("names every member it touched and the contact they ended up on", async () => {
+    givenTree({ members: [member()], contacts: [cachedContact()] });
+    mocks.findOrCreateXeroContact.mockResolvedValueOnce("c1");
+    mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue({
+      metadata: { linkedVia: "email_match" },
+    });
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1"],
+    });
+
+    expect(result.outcomes).toEqual([
+      {
+        memberId: "m1",
+        memberName: "Ada Lovelace",
+        memberEmail: "ada@example.com",
+        outcome: "linked",
+        xeroContactId: "c1",
+        plannedEvidence: "CACHED_CONTACT_MATCH",
+        kind: null,
+        error: null,
+      },
+    ]);
+  });
+
+  it("names a FAILED member, with the kind that says what to do", async () => {
+    givenTree({ members: [member()] });
+    mocks.findOrCreateXeroContact.mockRejectedValueOnce(
+      new XeroContactCreatePartialSuccessError(
+        "PROVIDER_CONTACT_CREATED",
+        "c1",
+        new Error("proof write failed"),
+      ),
+    );
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1"],
+    });
+
+    expect(result.outcomes[0]).toMatchObject({
+      memberName: "Ada Lovelace",
+      outcome: "failed",
+      kind: "PARTIAL_SUCCESS",
+    });
+  });
+
+  it("separates a member an earlier chunk did from one that stopped being pushable", async () => {
+    givenTree({
+      members: [
+        member({ id: "m1", email: "a@example.com", xeroContactId: "c-done" }),
+        member({ id: "m2", email: "b@example.com", lastName: "   " }),
+      ],
+    });
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1", "m2"],
+    });
+
+    expect(result.skipped).toEqual([
+      { memberId: "m1", reason: "ALREADY_DONE" },
+      { memberId: "m2", reason: "NO_LONGER_PUSHABLE" },
+    ]);
+  });
+
+  it("counts a failed member as still outstanding on BOTH exits", async () => {
+    /*
+      It used to be computed one way on the daily-limit halt and another way on
+      the normal path, so the same failed member was outstanding in one branch
+      and done in the other.
+    */
+    givenTree({
+      members: [
+        member({ id: "m1", email: "a@example.com" }),
+        member({ id: "m2", email: "b@example.com" }),
+      ],
+    });
+    mocks.findOrCreateXeroContact
+      .mockRejectedValueOnce(new Error("Xero said no"))
+      .mockResolvedValueOnce("c-new");
+
+    const normal = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1", "m2"],
+    });
+    expect(normal.remaining).toBe(1);
+    expect(normal.outstandingPushable).toBe(1);
+
+    vi.clearAllMocks();
+    givenTree({
+      members: [
+        member({ id: "m1", email: "a@example.com" }),
+        member({ id: "m2", email: "b@example.com" }),
+      ],
+    });
+    mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue({
+      metadata: { linkedVia: "created" },
+    });
+    mocks.assertXeroProviderWriteAllowed.mockResolvedValue(undefined);
+    mocks.findOrCreateXeroContact
+      .mockRejectedValueOnce(new Error("Xero said no"))
+      .mockRejectedValueOnce(new XeroDailyLimitError(3600));
+
+    const halted = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1", "m2"],
+    });
+    expect(halted.haltedByDailyLimit).toBe(true);
+    expect(halted.remaining).toBe(2);
+    expect(halted.outstandingPushable).toBe(2);
+  });
+
+  it("reports what is outstanding in the POPULATION, not just in the reviewed slice", async () => {
+    /*
+      Past the row limit the two are different numbers, and reporting only the
+      reviewed one is how the button said "next 25 of 900" while the result said
+      "475 still to do" on the same screen.
+    */
+    givenTree({
+      members: [
+        member({ id: "m1", email: "a@example.com" }),
+        member({ id: "m2", email: "b@example.com" }),
+        member({ id: "m3", email: "c@example.com" }),
+      ],
+    });
+
+    const result = await runXeroMissingContactSeedingChunk({
+      reviewedMemberIds: ["m1"],
+    });
+
+    expect(result.remaining).toBe(0);
+    expect(result.outstandingPushable).toBe(2);
+    expect(result.done).toBe(true);
+  });
+});
+
+describe("cache freshness is a question about AGE (#2939 review)", () => {
+  it("reports how old the cached contact list is", async () => {
+    givenTree({
+      members: [member()],
+      syncedAt: new Date(Date.now() - 5 * 60 * 60 * 1000),
+    });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.contactCacheAgeHours).toBe(5);
+    expect(snapshot.contactCacheStale).toBe(false);
+  });
+
+  it("calls a cache old enough to mislead STALE", async () => {
+    // Staleness is exactly what turns a "no cached match" row into a duplicate:
+    // a contact added in Xero since the sync looks like no contact at all.
+    givenTree({
+      members: [member()],
+      syncedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.contactCacheStale).toBe(true);
+    expect(snapshot.contactCacheAgeHours).toBe(30 * 24);
+  });
+});
+
+describe("the two exclusions that were being reported wrongly (#2939 review)", () => {
+  it("says an inheritance-lost dependant LOST their address", async () => {
+    /*
+      The general placeholder predicate accepts every address the specific one
+      does, so testing it first swallowed this reason entirely — and "lost the
+      address they used to inherit" is somebody's arrangement having broken,
+      which reads nothing like "never had one".
+    */
+    givenTree({
+      members: [member({ email: "inheritance-lost-abc@inheritance-lost.invalid" })],
+    });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.excludedRows[0]?.reason).toBe("INHERITED_ADDRESS_LOST");
+  });
+
+  it("excludes a SCHOOL request whose school name is genuinely null", async () => {
+    /*
+      The read selected converted requests by organisation-or-name, while the
+      request type enum has a school variant — so a school request carrying
+      neither column escaped the exclusion entirely, and the invented contact
+      record was offered up as an ordinary person.
+    */
+    givenTree({ members: [member()] });
+    mocks.prisma.bookingRequest.findMany.mockImplementation(async (args: {
+      where?: { OR?: Array<Record<string, unknown>> };
+    }) => {
+      const clauses = args?.where?.OR ?? [];
+      const readsTheType = clauses.some(
+        (clause) => (clause as { type?: string }).type === "SCHOOL",
+      );
+      return readsTheType ? [{ convertedMemberId: "m1" }] : [];
+    });
+
+    const snapshot = await getXeroMissingContactSnapshot();
+
+    expect(snapshot.excludedRows[0]?.reason).toBe("SCHOOL_BOOKING_CONTACT");
   });
 });
