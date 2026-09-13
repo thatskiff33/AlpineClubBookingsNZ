@@ -398,11 +398,13 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
     }
 
     try {
-      const released = await prisma.$transaction(async (tx) => {
+      // The STATUS it was released from, or `false` — the sweep now covers
+      // three states and the audit row records which one this was.
+      const releasedStatus = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
         // Re-read under the lock. Bail unless the request still points at this
-        // exact hold, is still in a modify/query state, still has no SENT quote,
+        // exact hold, is still in a sweepable state, still has no SENT quote,
         // and the hold is still an unaccepted AWAITING_REVIEW row.
         const current = await tx.bookingRequest.findUnique({
           where: { id: request.id },
@@ -447,12 +449,19 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
           where: { id: request.id },
           data: { heldBookingId: null, version: { increment: 1 } },
         });
-        return true;
+        return current.status;
       });
 
-      if (released) {
+      if (releasedStatus) {
         releasedHoldCount += 1;
         logAudit({
+          // The action name still says "modification", and is KEPT (#2936). It
+          // is this recovery's stable identity: rows written by it since #1254
+          // carry it, and splitting one sweep's history across two names to
+          // describe the third status it now covers would make "did the sweep
+          // run?" harder to answer than the field below makes it. What the name
+          // could no longer carry on its own is which state the request was
+          // actually in, so that is recorded rather than implied.
           action: "booking_request.quote_hold_released_stale_modification",
           targetId: request.id,
           entityType: "BookingRequest",
@@ -460,17 +469,20 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
           category: "booking",
           outcome: "success",
           summary:
-            "Released the bed held for a modification/query request after its last quote window lapsed with no outstanding quote",
+            "Released the bed held for a booking request after its last quote window lapsed with no outstanding quote",
           metadata: {
             releasedBookingId: heldBookingId,
             deadline: deadline.toISOString(),
+            // MODIFICATION_REQUESTED / QUERY_PENDING is the requester's
+            // bounce-back; VERIFIED is an officer's correction (#2936).
+            requestStatus: releasedStatus,
           },
         });
       }
     } catch (err) {
       logger.error(
         { err, bookingRequestId: request.id },
-        "Failed to release stale modification/query quote hold",
+        "Failed to release a stale booking-request quote hold",
       );
     }
   }

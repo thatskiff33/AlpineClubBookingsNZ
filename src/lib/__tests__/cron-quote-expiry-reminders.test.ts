@@ -587,6 +587,17 @@ describe("sendQuoteExpiryReminders — a corrected request's leftover hold (#293
     const scan = vi.mocked(prisma.bookingRequest.findMany).mock
       .calls[0][0] as { where: { status: { in: string[] } } };
     expect(scan.where.status.in).toContain(BookingRequestStatus.VERIFIED);
+    // The action name still says "modification" — it is this recovery's stable
+    // identity since #1254 — so the state it actually swept is a FIELD rather
+    // than something the reader has to infer from a name that now covers three.
+    const audit = mockLogAudit.mock.calls.at(-1)?.[0] as {
+      action: string;
+      metadata: { requestStatus: string };
+    };
+    expect(audit.action).toBe(
+      "booking_request.quote_hold_released_stale_modification",
+    );
+    expect(audit.metadata.requestStatus).toBe(BookingRequestStatus.VERIFIED);
   });
 
   it("still keeps a deliberate hold on a request that was never quoted", async () => {

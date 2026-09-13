@@ -76,11 +76,11 @@ export class BookingRequestCorrectionCommittedError extends Error {
 /**
  * Release the beds a corrected request was holding for its old shape.
  *
- * Runs AFTER the claim committed and outside every transaction, because
- * `cancelBooking` takes the global key and opens transactions of its own. The
- * shape is `declineBookingRequest`'s, including the order of the member-guest
- * read: the people the hold told they were on a lodge booking are collected
- * while that booking still describes them.
+ * The composition — after the claim, outside every transaction, decline's shape
+ * including the order of the member-guest read — is in this module's docblock
+ * and is not repeated here. What matters at the call site is the returned
+ * outcome: it is what the correction's audit row records as having become of the
+ * beds, and a failure is raised as a correction that SAVED.
  */
 export async function reconcileCorrectedRequestHold(params: {
   requestId: string;
