@@ -1069,6 +1069,33 @@ cancellation email suppressed (an admin decision, not a requester cancellation).
 A held pointer that is stale or no longer a live `AWAITING_REVIEW` hold is simply
 detached. SCHOOL requests use the same function (no type branch).
 
+Correction and the quote (#2936): an officer may **correct** an unconverted
+request — its dates, its party, its catering preference, its school name and its
+contact details — from the same six states decline claims
+(`CORRECTABLE_BOOKING_REQUEST_STATUSES`), and correcting it **re-opens** it. Every
+`DRAFT` and `SENT` quote flips to `SUPERSEDED` in the same transaction as the
+correction's status-and-version-guarded claim, `priceCents` is cleared and the
+request returns to `VERIFIED`, so no price or quote can outlive the shape it was
+computed from. `SUPERSEDED` again rather than `CANCELLED` — an officer retired
+it — and again it is what kills the requester's live link, since
+`loadSentQuoteByToken` requires `SENT`.
+
+An **accepted** quote blocks the correction outright (`409`), on either
+evidence: a quote row at `ACCEPTED`, or the request's own `acceptedQuoteId`,
+which is set by the accept re-arm before conversion runs and therefore survives a
+conversion that did not finish. Re-opening the agreement is the officer's
+deliberate act — decline it or issue a fresh quote — not a side effect of an
+edit. The claim itself additionally fences on `convertedBookingId: null` and
+`acceptedQuoteId: null`, so the refusal holds under a race as well as at the
+guard.
+
+The hold follows decline's shape exactly: claim first, then release the
+`AWAITING_REVIEW` hold through the shared cancel path with
+`requireRequestHold: true`, then tell any member guests the hold had notified. A
+correction that changes ONLY the catering preference keeps the hold — that is the
+one corrected field a hold does not read. A release that fails is reported as a
+correction that SAVED with its beds still held, never as a failed save.
+
 Because `QUOTE_SENT` (and other quote-bearing states) DO carry a live `SENT`
 quote a requester could still act on, broadening decline reintroduces a
 decline-vs-requester race. A DECLINED request is made untouchable by every other

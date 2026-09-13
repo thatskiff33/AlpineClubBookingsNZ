@@ -3278,6 +3278,33 @@ left unapplied and raises an operator refund alert. Provider calls remain
 outside the transaction. Per-child cancellation is also a status-guarded claim,
 so a stale child snapshot can never overwrite a terminal transition.
 
+**#2936 adds one that holds the key for a REQUEST rather than a booking.**
+`correctBookingRequest` (`src/lib/booking-request-corrections.ts`) is the officer's
+one write for correcting an unconverted school or public `BookingRequest` — its
+dates, its party, its catering preference, its school name and contact. It takes
+`lock(1)` and **nothing else**, and the counterpart it needs excluded is
+**approval**: `approveBookingRequest` and `approveSchoolBookingRequest` both take
+this key first thing in their own transaction, and without it a correction can
+interleave with a conversion. The conversion reads the old envelope, the
+correction writes the new one, and the request commits `CONVERTED` while claiming
+dates its booking does not have. The status-and-version-guarded claim cannot close
+that on its own, because the conversion's own final write is not version-guarded.
+
+It joins no capacity tier because it creates no booking and claims no bed. The
+`AWAITING_REVIEW` hold a corrected request may still be carrying is released
+AFTER this transaction commits, through the shared `cancelBooking` path, which
+takes `lock(1)` and then the booking's lodge key itself — so the correction never
+nests a self-locking call inside its own transaction. That claim-first ordering
+is `declineBookingRequest`'s, deliberately: its worst case is a request still
+pointing at a hold covering more than it needs, visible on the officer's screen
+with its own Release button, rather than a request that has silently lost beds.
+
+While it holds the key it also re-asks which `Organisation` the corrected school
+name claims (#3367), read-only. With approvals excluded, no school record can be
+created between that read and the claim, which is what makes the officer's
+on-screen confirmation of "this is that school" / "add it as a new school" a
+fence rather than a courtesy.
+
 ### Writer doing both → `lock(1)` first, then per-lodge
 
 The Stripe capture (`markBookingPaymentSucceeded`), the confirm-pending-guests
