@@ -1247,6 +1247,632 @@ export const REVIEWED_ADMIN_CATEGORIES_2730: Readonly<Record<string, string>> = 
 };
 
 /**
+ * How one row of `HISTORICAL_NULL_CATEGORY_MAP_2581` was proven.
+ *
+ *  - `current-writer`  the tree still writes this exact action as a string
+ *                      literal at one or more sites, every one of which carries
+ *                      the mapped category. The contract test re-derives this
+ *                      from `scanAuditWriterCensus()` on every run.
+ *  - `current-writer-dynamic`  the tree writes this exact action from a
+ *                      `(dynamic)` site — a conditional between literals or a
+ *                      template — named in `site`. The site's literal category
+ *                      is the evidence; the test checks the site exists, carries
+ *                      that category, and (for the template families) that the
+ *                      route's own closed input set really produces the name.
+ *  - `history`         nothing in the tree writes it any more. `commit` names
+ *                      the commit that removed the writer, so a reviewer can
+ *                      `git show` it; the test asserts no current site writes
+ *                      the action, so a resurrected writer with a different
+ *                      answer is a named failure rather than a silent split.
+ */
+type HistoricalNullActionEvidence =
+  | { kind: "current-writer" }
+  | { kind: "current-writer-dynamic"; site: string }
+  | { kind: "history"; commit: string; note: string };
+
+/**
+ * One reviewed exact-action mapping for the rows written with no category
+ * before #2581 child 2 made the category mandatory.
+ */
+export type HistoricalNullActionMapping = {
+  /** The canonical category the backfill writes. Never `split`. */
+  category: Exclude<ProposedCategory, "split">;
+  /**
+   * Null rows carrying this action on the reference deployment, measured
+   * read-only on 13 September 2026 (#2581). DOCUMENTATION, not a pin: a null
+   * row count can only fall, and a different club holds different history.
+   */
+  rowsMeasured: number;
+  evidence: HistoricalNullActionEvidence;
+  /**
+   * Whether giving these rows this category moves them across the member
+   * self-timeline boundary (`INV-PRIV-012`, `INV-OPS-012`). A null row is on a
+   * member's own timeline today only through `buildMemberVisibleAuditLogWhere`'s
+   * legacy action-name leg; afterwards visibility follows the stored category.
+   *
+   *  - `none`   visible before and after, or hidden before and after;
+   *  - `loses`  visible today through the legacy guess, hidden once categorised;
+   *  - `gains`  hidden today, visible once categorised.
+   *
+   * DERIVED, NOT DECLARED: `historical-audit-category-backfill.test.ts`
+   * evaluates the real where-builders against a row of this action with and
+   * without the category and fails if this field disagrees. `whoIsAffected`
+   * says which member it is, read from the writer's actor/subject fields.
+   */
+  memberBoundary: "none" | "loses" | "gains";
+  whoIsAffected?: string;
+};
+
+/**
+ * The reviewed EXACT-ACTION -> CANONICAL-CATEGORY map for #2581's third child:
+ * the 83 distinct `action` values carried by the 1,885 `AuditLog` rows that
+ * still had `category IS NULL` on 13 September 2026, and the category each one
+ * receives from `prisma/migrations/20260923010000_backfill_historical_audit_categories`.
+ *
+ * WHY THE MAP LIVES HERE. It is the same kind of record as
+ * `REVIEWED_ADMIN_CATEGORIES_2730` above: a per-action decision that a stored
+ * row's category is being REWRITTEN on the strength of, and the census is the
+ * only tree-wide measurement it can be checked against. The migration's own
+ * `VALUES` list is parsed and compared to this map in both directions by
+ * `src/lib/__tests__/historical-audit-category-backfill.test.ts`, so a pair
+ * added to one and not the other fails by name.
+ *
+ * HOW EACH ROW WAS PROVEN, in the order the issue requires (#2581 decision 4,
+ * "exact, reviewed mapping; no fuzzy prefix/substr/file-name inference"):
+ *
+ *  1. The CURRENT WRITER of the same exact action carries an explicit category
+ *     (`scanAuditWriterCensus()`, never a grep). 80 of the 83 resolve this way,
+ *     including the four families written from a `(dynamic)` site whose
+ *     literals the census names.
+ *  2. The corrected runtime has ALREADY WRITTEN that exact action with a
+ *     category on the reference deployment (28 of the 83; the read-only
+ *     preflight on the issue, section F). Every one of the 28 agrees with (1).
+ *     `promo.update -> booking` was checked against the taxonomy rather than
+ *     accepted from the table: `APPLIED_AUDIT_CATEGORIES` records the decision
+ *     (#2581 decision 4, a promotional code is a booking-eligibility rule).
+ *  3. REPOSITORY HISTORY, for the three `COMMITTEE_MEMBER_*` actions that
+ *     nothing writes any more (`git log -S`).
+ *
+ * NOTHING IS MAPPED BY PREFIX, FOLDER OR ACTOR, and nothing falls back to
+ * `admin`/`system`. Every `admin` row below is `admin` because its current or
+ * successor writer says so.
+ *
+ * THE MEMBER-BOUNDARY COLUMN IS THE PART THE OWNER DECIDES. 27 of the 83
+ * actions cross the member self-timeline boundary in one direction or the
+ * other (841 of the 1,885 rows). `INV-OPS-012` reserves that crossing to the
+ * owner, so the migration carries those 27 in a physically separate block
+ * (`member_boundary_crossings`) that can be removed without touching the other
+ * 56, and this map marks them `loses`/`gains`. If the owner declines a group,
+ * its entries move to `WITHHELD_HISTORICAL_NULL_ACTIONS_2581` below and out of
+ * the migration's second block; the contract test holds the two sides equal.
+ *
+ * WHAT "LOSES" MEANS HERE, because 632 of the 841 rows are one case.
+ * `member.bulk-deactivate` / `member.bulk-reactivate` are on the deactivated
+ * member's own timeline TODAY through the legacy `member.` -> `account` guess,
+ * and their current writer is `admin` (#2755). Categorising them withdraws a
+ * member's sight of their own deactivation — the exact withdrawal the owner
+ * declined for these actions' `account`/`security` twins on #2763 (10 Aug 2026,
+ * "leave the stored rows alone"). It is listed, not decided.
+ *
+ * WHAT "GAINS" MOSTLY MEANS: the ACTING OFFICER. Most gaining rows are
+ * booking-rule and fee-configuration settings whose writer passes
+ * `memberId: <officer>` and a non-member `targetId`, so the only timeline they
+ * reach is the officer's own. Three actions publish to somebody else:
+ * `fee-configuration.set_member_billing_family` (targetId is the billed
+ * member — the writer's own comment accepts this for NEW rows), and
+ * `issue.reported` (the reporter). Both are noted per row.
+ */
+export const HISTORICAL_NULL_CATEGORY_MAP_2581: Readonly<
+  Record<string, HistoricalNullActionMapping>
+> = {
+  // ─── account (membership applications) ─────────────────────────────────────
+  "MEMBERSHIP_APPLICATION_APPROVED": {
+    category: "account", rowsMeasured: 4,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "MEMBERSHIP_APPLICATION_CREATED": {
+    category: "account", rowsMeasured: 8,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "MEMBERSHIP_APPLICATION_NOMINATION_CONFIRMED": {
+    category: "account", rowsMeasured: 12,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+
+  // ─── admin ──────────────────────────────────────────────────────────────────
+  "ADMIN_NOTIFICATION_PREFERENCES_UPDATED": {
+    category: "admin", rowsMeasured: 48,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  // The legacy CommitteeMember model. Its three writers (`logAudit`, no
+  // category, `memberId: <officer>`, `targetId: <committee row>`) were added in
+  // 64199fca9 (9 Apr 2026) and removed with the model in e6b143436 (14 Jul
+  // 2026). The successor family for the same objects — committee assignments
+  // — is written at three sites, all `admin`; a committee roster is
+  // platform-wide administrative configuration and belongs to no narrower
+  // domain (#2581 classification principles). Tier-3 evidence: a reviewer who
+  // disagrees strikes these three and they stay null.
+  "COMMITTEE_MEMBER_CREATED": {
+    category: "admin", rowsMeasured: 7,
+    evidence: {
+      kind: "history", commit: "e6b143436b7159d605e6c38d2c62a7e371d1ab61",
+      note: "writer removed with the CommitteeMember model; successor COMMITTEE_ASSIGNMENT_* writers are admin",
+    },
+    memberBoundary: "none",
+  },
+  "COMMITTEE_MEMBER_DELETED": {
+    category: "admin", rowsMeasured: 7,
+    evidence: {
+      kind: "history", commit: "e6b143436b7159d605e6c38d2c62a7e371d1ab61",
+      note: "writer removed with the CommitteeMember model; successor COMMITTEE_ASSIGNMENT_* writers are admin",
+    },
+    memberBoundary: "none",
+  },
+  "COMMITTEE_MEMBER_UPDATED": {
+    category: "admin", rowsMeasured: 8,
+    evidence: {
+      kind: "history", commit: "e6b143436b7159d605e6c38d2c62a7e371d1ab61",
+      note: "writer removed with the CommitteeMember model; successor COMMITTEE_ASSIGNMENT_* writers are admin",
+    },
+    memberBoundary: "none",
+  },
+
+  // ─── booking (lifecycle) ────────────────────────────────────────────────────
+  "booking.cancel": {
+    category: "booking", rowsMeasured: 19,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "booking.created_on_behalf": {
+    category: "booking", rowsMeasured: 8,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "booking.modify.batch": {
+    category: "booking", rowsMeasured: 14,
+    evidence: {
+      kind: "current-writer-dynamic",
+      site: "src/lib/booking-batch-modification-service.ts::dispatchBatchPostTransactionSideEffects#0",
+    },
+    memberBoundary: "none",
+  },
+  "booking.modify.guests.add": {
+    category: "booking", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "booking.modify.guests.remove": {
+    category: "booking", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+
+  // ─── communication ──────────────────────────────────────────────────────────
+  // The null-row twin of the two `EMAIL` rows corrected by
+  // `HISTORICAL_NON_CANONICAL_CATEGORY_CORRECTIONS_2581`. On the member
+  // timeline today through the legacy `EMAIL_` -> account guess, and
+  // `communication` is member-visible, so no crossing.
+  "EMAIL_SUPPRESSION_CLEARED": {
+    category: "communication", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+
+  // ─── family ─────────────────────────────────────────────────────────────────
+  "FAMILY_GROUP_CHILD_REQUEST": {
+    category: "family", rowsMeasured: 2,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "FAMILY_GROUP_CHILD_REQUEST_REJECTED": {
+    category: "family", rowsMeasured: 1,
+    evidence: {
+      kind: "current-writer-dynamic",
+      site: "src/lib/admin-family-group-requests-service.ts::reviewAdminFamilyGroupRequest#1",
+    },
+    memberBoundary: "none",
+  },
+  "FAMILY_GROUP_CREATED": {
+    category: "family", rowsMeasured: 10,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "FAMILY_GROUP_CREATED_FROM_SUGGESTION": {
+    category: "family", rowsMeasured: 10,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "FAMILY_GROUP_DELETED": {
+    category: "family", rowsMeasured: 4,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "FAMILY_GROUP_JOIN_APPROVED": {
+    category: "family", rowsMeasured: 3,
+    evidence: {
+      kind: "current-writer-dynamic",
+      site: "src/lib/admin-family-group-requests-service.ts::reviewAdminFamilyGroupRequest#0",
+    },
+    memberBoundary: "none",
+  },
+  "FAMILY_GROUP_JOIN_REQUESTED": {
+    category: "family", rowsMeasured: 3,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "FAMILY_GROUP_UPDATED": {
+    category: "family", rowsMeasured: 38,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "FAMILY_MEMBER_DETAILS_DELEGATED_CONFIRMED": {
+    category: "family", rowsMeasured: 18,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "family-group.login-holder-swapped": {
+    category: "family", rowsMeasured: 8,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "member.dependent.link": {
+    category: "family", rowsMeasured: 29,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "member.dependent.unlink": {
+    category: "family", rowsMeasured: 24,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+
+  // ─── lodge (displays and the lodge record) ──────────────────────────────────
+  "DISPLAY_DEVICE_TEMPLATE_ASSIGNED": {
+    category: "lodge", rowsMeasured: 3,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "DISPLAY_LAYOUT_CREATED": {
+    category: "lodge", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "DISPLAY_LAYOUT_UPDATED": {
+    category: "lodge", rowsMeasured: 17,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "DISPLAY_TEMPLATE_CREATED": {
+    category: "lodge", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "DISPLAY_TEMPLATE_UPDATED": {
+    category: "lodge", rowsMeasured: 17,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "LODGE_ACCOUNT_UPDATED": {
+    category: "lodge", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+
+  // ─── payment (booking payments and refunds) ─────────────────────────────────
+  "booking.modification.payment.failed": {
+    category: "payment", rowsMeasured: 4,
+    evidence: {
+      kind: "current-writer-dynamic",
+      site: "src/lib/stripe-webhook-service.ts::handlePaymentIntentFailed#0",
+    },
+    memberBoundary: "none",
+  },
+  "booking.payment.confirmed": {
+    category: "payment", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "booking.payment.failed": {
+    category: "payment", rowsMeasured: 7,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "refund-request.approve": {
+    category: "payment", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "refund-request.create": {
+    category: "payment", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+
+  // ─── privacy ────────────────────────────────────────────────────────────────
+  "member.deletion_rejected": {
+    category: "privacy", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "member.deletion_requested": {
+    category: "privacy", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+
+  // ─── security (credential delivery, #2581 decision 3) ───────────────────────
+  "member.password-reset-sent": {
+    category: "security", rowsMeasured: 25,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "member.setup-invite-sent": {
+    category: "security", rowsMeasured: 515,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+
+  // ─── xero ───────────────────────────────────────────────────────────────────
+  "XERO_FORCE_SYNC_CONTACT": {
+    category: "xero", rowsMeasured: 2,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_GROUPING_BULK_RESYNC": {
+    category: "xero", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_GROUPING_RULE_CREATED": {
+    category: "xero", rowsMeasured: 7,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_GROUPING_RULE_DELETED": {
+    category: "xero", rowsMeasured: 11,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_GROUPING_RULE_TOGGLED": {
+    category: "xero", rowsMeasured: 3,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_IMPORT_MEMBER_CONTACT": {
+    category: "xero", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_INBOUND_EVENT_REPLAY": {
+    category: "xero", rowsMeasured: 2,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_LINK": {
+    category: "xero", rowsMeasured: 59,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_LINK_LEDGER_MAINTENANCE": {
+    category: "xero", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_OPERATIONS_RESET_STALE_RUNNING": {
+    category: "xero", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_OPERATION_RETRY": {
+    category: "xero", rowsMeasured: 15,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_OPERATION_RETRY_ALL": {
+    category: "xero", rowsMeasured: 8,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_PUSH": {
+    category: "xero", rowsMeasured: 5,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "XERO_UNLINK": {
+    category: "xero", rowsMeasured: 29,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "xero_account_mappings_updated": {
+    category: "xero", rowsMeasured: 10,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+  "xero_item_code_mappings_updated": {
+    category: "xero", rowsMeasured: 5,
+    evidence: { kind: "current-writer" }, memberBoundary: "none",
+  },
+
+  // ═══ MEMBER-BOUNDARY CROSSINGS — the owner's decision, INV-OPS-012 ═════════
+  // Everything below this line is in the migration's SEPARATE
+  // `member_boundary_crossings` block. Each group can be declined on its own.
+
+  // ─── B1. Bulk member-record actions → `admin` — LOSES, 632 rows ─────────────
+  // Writer: `member.bulk-${action}` at the bulk-update route, `admin` (#2755),
+  // `memberId: <officer>`, `targetId: <member>`. On the deactivated member's own
+  // timeline today via the legacy `member.` guess; `admin` withdraws it. The
+  // owner declined this same withdrawal for the `account`/`security` twins on
+  // #2763.
+  "member.bulk-deactivate": {
+    category: "admin", rowsMeasured: 300,
+    evidence: {
+      kind: "current-writer-dynamic",
+      site: "src/app/api/admin/members/bulk-update/route.ts::POST#0",
+    },
+    memberBoundary: "loses",
+    whoIsAffected: "the deactivated member (targetId) and the acting officer",
+  },
+  "member.bulk-reactivate": {
+    category: "admin", rowsMeasured: 332,
+    evidence: {
+      kind: "current-writer-dynamic",
+      site: "src/app/api/admin/members/bulk-update/route.ts::POST#0",
+    },
+    memberBoundary: "loses",
+    whoIsAffected: "the reactivated member (targetId) and the acting officer",
+  },
+
+  // ─── B2. Two Xero invoice actions → `xero` — LOSES, 3 rows ──────────────────
+  // Visible today only because the legacy `payment` guess matches "INVOICE";
+  // both writers pass `memberId: <officer>` and no member subject, so the only
+  // timeline withdrawn is the officer's own.
+  "XERO_INVOICE_GENERATED": {
+    category: "xero", rowsMeasured: 2,
+    evidence: { kind: "current-writer" }, memberBoundary: "loses",
+    whoIsAffected: "the acting officer only (targetId is a booking id)",
+  },
+  "XERO_TRIGGER_MISSING_INVOICES": {
+    category: "xero", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "loses",
+    whoIsAffected: "the acting officer only",
+  },
+
+  // ─── B3. Booking rules and promotions → `booking` — GAINS, 147 rows ─────────
+  // `APPLIED_AUDIT_CATEGORIES` classified every one of these `booking` (#2581
+  // decision 4). Hidden today (the legacy `admin` guess is not member-visible,
+  // and the policy actions match no guess at all); `booking` is. Every writer
+  // passes `memberId: <officer>` and a settings/promo/season id as `targetId`,
+  // so the officer's own timeline is the only one that gains.
+  "AGE_TIER_SETTINGS_UPDATED": {
+    category: "booking", rowsMeasured: 8,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+  "booking-period.update": {
+    category: "booking", rowsMeasured: 4,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+  "cancellation-policy.update": {
+    category: "booking", rowsMeasured: 15,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+  "group-discount.update": {
+    category: "booking", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+  "minimum-stay-policy.create": {
+    category: "booking", rowsMeasured: 3,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+  "minimum-stay-policy.update": {
+    category: "booking", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+  "promo.archive": {
+    category: "booking", rowsMeasured: 3,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+  "promo.create": {
+    category: "booking", rowsMeasured: 10,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+  "promo.delete": {
+    category: "booking", rowsMeasured: 6,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+  "promo.update": {
+    category: "booking", rowsMeasured: 77,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+  "season.update": {
+    category: "booking", rowsMeasured: 19,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only",
+  },
+
+  // ─── B4. Fee configuration and subscription billing → `payment` — GAINS, 57 rows
+  // The fee-configuration route writes `fee-configuration.${action.toLowerCase()}`
+  // over a closed eight-value discriminated union; the test reads those
+  // literals from the route. Hidden today (no legacy guess matches);
+  // `payment` is member-visible. Officer-only, with ONE exception the writer's
+  // own comment already accepts for new rows: `set_member_billing_family`
+  // passes the billed member as `targetId`.
+  "fee-configuration.create_joining_fee": {
+    category: "payment", rowsMeasured: 1,
+    evidence: { kind: "current-writer-dynamic", site: "src/app/api/admin/fee-configuration/route.ts::POST#0" },
+    memberBoundary: "gains", whoIsAffected: "the acting officer only",
+  },
+  "fee-configuration.create_membership_fee": {
+    category: "payment", rowsMeasured: 12,
+    evidence: { kind: "current-writer-dynamic", site: "src/app/api/admin/fee-configuration/route.ts::POST#0" },
+    memberBoundary: "gains", whoIsAffected: "the acting officer only",
+  },
+  "fee-configuration.delete_joining_fee": {
+    category: "payment", rowsMeasured: 19,
+    evidence: { kind: "current-writer-dynamic", site: "src/app/api/admin/fee-configuration/route.ts::POST#0" },
+    memberBoundary: "gains", whoIsAffected: "the acting officer only",
+  },
+  "fee-configuration.delete_membership_fee": {
+    category: "payment", rowsMeasured: 4,
+    evidence: { kind: "current-writer-dynamic", site: "src/app/api/admin/fee-configuration/route.ts::POST#0" },
+    memberBoundary: "gains", whoIsAffected: "the acting officer only",
+  },
+  "fee-configuration.set_family_billing_member": {
+    category: "payment", rowsMeasured: 7,
+    evidence: { kind: "current-writer-dynamic", site: "src/app/api/admin/fee-configuration/route.ts::POST#0" },
+    memberBoundary: "gains", whoIsAffected: "the acting officer only (targetId is a family-group id)",
+  },
+  "fee-configuration.set_member_billing_family": {
+    category: "payment", rowsMeasured: 3,
+    evidence: { kind: "current-writer-dynamic", site: "src/app/api/admin/fee-configuration/route.ts::POST#0" },
+    memberBoundary: "gains",
+    whoIsAffected: "the billed member (targetId) and the acting officer",
+  },
+  "fee-configuration.update_joining_fee": {
+    category: "payment", rowsMeasured: 2,
+    evidence: { kind: "current-writer-dynamic", site: "src/app/api/admin/fee-configuration/route.ts::POST#0" },
+    memberBoundary: "gains", whoIsAffected: "the acting officer only",
+  },
+  "fee-configuration.update_membership_fee": {
+    category: "payment", rowsMeasured: 4,
+    evidence: { kind: "current-writer-dynamic", site: "src/app/api/admin/fee-configuration/route.ts::POST#0" },
+    memberBoundary: "gains", whoIsAffected: "the acting officer only",
+  },
+  "membership-subscription-billing.confirm": {
+    category: "payment", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the confirming officer only (targetId is a season year)",
+  },
+  "membership-subscription-billing.reconcile": {
+    category: "payment", rowsMeasured: 1,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only (targetId is a season year)",
+  },
+  "membership-subscription-billing.settings.update": {
+    category: "payment", rowsMeasured: 3,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the acting officer only (targetId is 'default')",
+  },
+
+  // ─── B5. Issue reports → `privacy` — GAINS, 2 rows ──────────────────────────
+  // The writer passes `memberId: <reporter>` and its own comment says the
+  // reporter is MEANT to see it. #2581 child 1 refused `admin` for this action
+  // as a widening. Hidden today (no legacy guess matches).
+  "issue.reported": {
+    category: "privacy", rowsMeasured: 2,
+    evidence: { kind: "current-writer" }, memberBoundary: "gains",
+    whoIsAffected: "the reporting member (memberId)",
+  },
+};
+
+/**
+ * Actions from the 13 September 2026 census that the owner has decided must
+ * STAY NULL — a declined member-boundary crossing, or an action whose category
+ * could not be proven. Empty at the time of writing: every one of the 83 has
+ * proven evidence, and the 27 crossings are listed in the map above pending
+ * the owner's answer. An entry here has no row in the migration, keeps its
+ * legacy action-name fallback in Admin > Audit Log, and stays invisible to
+ * every Diagnostics correlation entry — which the guide discloses.
+ */
+export const WITHHELD_HISTORICAL_NULL_ACTIONS_2581: Readonly<
+  Record<string, { rowsMeasured: number; reason: string }>
+> = {};
+
+/**
+ * The FOUR rows whose stored category was a string outside the taxonomy, and
+ * the canonical value each is corrected to (#2581 owner decision, 13 September
+ * 2026: "corrected in the same migration, as an explicitly listed exception to
+ * decision 6"). Not null rows — decision 6 ("existing explicit non-null
+ * categories are never rewritten") otherwise stands — and they were invisible
+ * to every category-keyed reader, because nothing asks for `EMAIL` or
+ * `membership`. The migration names each by prior string AND exact action, and
+ * counts them separately in its record.
+ *
+ * MEMBER BOUNDARY, stated because the decision comment did not: none of the
+ * four is member-visible today (a non-null, non-canonical category satisfies
+ * neither leg of `buildMemberVisibleAuditLogWhere`). `communication` and
+ * `account` both are. `EMAIL_SUPPRESSION_CLEARED` reaches only the acting
+ * officer; `membership_application.nominator_replaced` passes the replacement
+ * nominator as `subjectMemberId`, so that member gains sight of one row;
+ * `nomination_workflow_refreshed` reaches only the acting officer.
+ */
+export const HISTORICAL_NON_CANONICAL_CATEGORY_CORRECTIONS_2581: readonly {
+  action: string;
+  from: string;
+  to: Exclude<ProposedCategory, "split">;
+  rowsMeasured: number;
+}[] = [
+  { action: "EMAIL_SUPPRESSION_CLEARED", from: "EMAIL", to: "communication", rowsMeasured: 2 },
+  { action: "membership_application.nominator_replaced", from: "membership", to: "account", rowsMeasured: 1 },
+  { action: "membership_application.nomination_workflow_refreshed", from: "membership", to: "account", rowsMeasured: 1 },
+];
+
+/**
  * Every writer of the SIX MEMBER-RECORD ACTIONS below — an officer editing,
  * activating, deactivating or re-roling a member's record — and the single
  * category all of them file (#2755).
