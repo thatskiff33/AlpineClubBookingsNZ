@@ -309,9 +309,9 @@ describe("a declared local capture mailbox", () => {
       "sent" on a copy is never mistaken for "sent to a member".
 
       AT INFO, and the level is the point (#3035 review). This assertion used to
-      pin `logger.debug` while the staging and measurement stacks both run
-      `LOG_LEVEL: info` — so the line the claim rested on was one nobody ever saw,
-      and the test certified a claim that was false in the shipped configuration.
+      pin `logger.debug` while the staging stack runs `LOG_LEVEL: info` — so the
+      line the claim rested on was one nobody ever saw, and the test certified a
+      claim that was false in the shipped configuration.
       Only the CAPTURE case is raised: an info line per message on the live site
       would be thousands a day.
     */
