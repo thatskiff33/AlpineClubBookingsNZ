@@ -987,15 +987,11 @@ The rules are:
   on an email-only PARTIAL: every one of them is an Internet Banking booking
   whose Xero payment is deliberately skipped, so recording a payment would
   falsely settle an unpaid invoice. That repair is refused for email-only
-  PARTIALs. **The #1705 carve-out is now superseded a SECOND time, by #2929**:
-  with this switch off, the invoice email is still always sent EXCEPT on the one
-  create that raised it, where an on-behalf officer chose "do not email the
-  member". That choice withholds that one invoice email and nothing else; it is
-  a separate mechanism with a separate record (`XeroSyncOperation
-  .invoiceEmailDelivery`), it sets nothing persistent, and it is reported under
-  its own key so it can never be read as this switch. `INV-LOCKOUT-041` states
-  it in full. Every other later booking email, and every invoice email raised by
-  any other path, is unaffected. The group settlement invoice is
+  PARTIALs. **#2929 supersedes the #1705 carve-out a SECOND time**: with this
+  switch off the invoice email is still always sent, EXCEPT on the create that
+  raised it where an on-behalf officer declined to email the member. Separate
+  mechanism, separate record, reported under its own key, nothing persistent
+  set; `INV-LOCKOUT-041` states it in full. The group settlement invoice is
   one combined bill addressed to and paid by the **organiser**, so it is gated on
   the organiser's own booking and on nothing else — a joiner's switch does not
   suppress the organiser's bill, and each joiner's own group emails are gated on
@@ -1229,29 +1225,16 @@ The member confirmation / hold email is an **explicit per-create choice**
 `confirmOverCapacity`, and `capacityOverridden`; `sendAdminNewBookingAlert` is
 unaffected by the choice.
 **The Xero invoice email raised by that same create is NOT** (#2929): declining
-withholds it for that one invoice creation. The invoice is still raised and
-AUTHORISED; only the send is skipped, recorded as a `SKIPPED_NO_EMAILS` row
-naming this reason and reported on the sync operation under its own key.
-Nothing persistent moves — `Booking.noEmails`, the Xero contact's address and
-every later booking email are untouched. The instruction is **persisted** on
+withholds that one send. The invoice is still raised and AUTHORISED, the
+withhold is a `SKIPPED_NO_EMAILS` row naming this reason under its own sync-
+operation key, and nothing persistent moves. The instruction is **persisted** on
 `XeroSyncOperation.invoiceEmailDelivery`, written once at enqueue like
-`queueType` and never updated, so an outbox retry days later still withholds
-deliberately rather than sending because a caller flag is gone.
-**Every booking-invoice enqueuer must state its instruction**, and the option is
-required-and-nullable so that a new one is a compile error until its author
-does. Only the on-behalf create has a choice to express; the other fourteen pass
-`null`, meaning "no choice here". `null` **inherits** the most recent instruction
-recorded against the same correlation key — which is the same invoice — so a
-RE-MINT of a failed booking-invoice operation by the admin missing-invoices
-sweep, force-sync or the repair pass keeps the withhold instead of quietly
-sending. A booking nobody withheld has no prior instruction and inherits
-nothing.
-**The withhold does NOT reach a booking left `PAYMENT_PENDING` behind a
-non-member hold**, whose invoice the confirm cron (or an officer's
-confirm-pending-guests) enqueues days later. The creation choice is spent by
-then — that later confirmation emails the member its own booking-confirmed mail
-regardless of it — and `confirm-pending-guests` asks the officer again at that
-point.
+`queueType` and never updated, so a retry still withholds deliberately. **Every
+booking-invoice enqueuer must state it** — required-and-nullable, so a new one
+cannot compile until its author answers — and a `null` **inherits** the last
+instruction under the same correlation key, so a re-mint cannot forget it. It
+does **not** reach a booking confirmed later from a non-member hold, where that
+confirmation emails the member anyway.
 
 ### INV-LOCKOUT-042
 
