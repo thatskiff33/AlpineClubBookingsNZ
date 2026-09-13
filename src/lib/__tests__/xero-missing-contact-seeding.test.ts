@@ -555,7 +555,8 @@ describe("the run (#2939)", () => {
       ],
     });
     mocks.findOrCreateXeroContact.mockRejectedValueOnce(
-      new XeroDailyLimitError("daily limit"),
+      // The constructor takes a retry-after, not a message.
+      new XeroDailyLimitError(3600),
     );
 
     const result = await runXeroMissingContactSeedingChunk({
