@@ -411,7 +411,74 @@ describe("audit writer census TSV (#2695)", () => {
     const site = lines[1]?.split("\t") ?? [];
     expect(site[header.indexOf("memberDisclosure")]).toBe("member-facing");
     expect(site[header.indexOf("detailsText")]).toBe("dynamic");
+    expect(site[header.indexOf("detailsShape")]).toBe("text");
     expect(site[header.indexOf("summaryText")]).toBe("constant");
     expect(site[header.indexOf("omitsRetentionInputs")]).toBe("true");
+  });
+});
+
+/**
+ * RE-CENSUSING THE DETAIL SHAPES (#2704).
+ *
+ * The issue asks for the legacy and current `details` shapes to be re-censused,
+ * and this is the column that makes that reproducible instead of a hand count:
+ * a payload written as `JSON.stringify(…)` is governed by the structural
+ * reduction, a sentence keeps the honest text clip, and the two are now
+ * distinguishable in the artifact a human reads.
+ *
+ * PINNED AS BEHAVIOUR, NOT AS A POPULATION, and that is a deliberate choice.
+ * The reduction lives at the write boundary and covers every site
+ * automatically, so a new payload writer needs no per-site review — an exact
+ * 104-entry pin would cost every future lane a manifest edit and buy nothing.
+ * It would also mint one more count for two branches to collide on
+ * byte-identically, which the manifest records happening five separate times.
+ * What has to be true is that the scanner can TELL the shapes apart, and these
+ * fixtures are what says so.
+ *
+ * Measured on this tree the day it was written: 104 payload sites, 167 text,
+ * 195 absent, 8 unreadable. The 104 agrees with an independent
+ * `grep -c "details: JSON.stringify"` over `src/` and `scripts/`, which is the
+ * point of measuring it two ways.
+ */
+describe("audit writer census detail shapes (#2704)", () => {
+  it("tells a JSON payload apart from a sentence, and from no details at all", () => {
+    const census = tree({
+      "src/lane.ts": `
+        export async function write(logAudit: any, note: string, payload: any) {
+          logAudit({
+            action: "booking.period.update",
+            category: "booking",
+            details: JSON.stringify({ before: 1, after: 2 }),
+          });
+          logAudit({
+            action: "booking.review.reject",
+            category: "booking",
+            details: \`Declined. \${note}\`,
+          });
+          logAudit({
+            action: "booking.confirm_pending_guests",
+            category: "booking",
+            summary: "Confirmed",
+          });
+          logAudit({
+            action: "booking.forwarded",
+            category: "booking",
+            details: payload,
+          });
+        }
+      `,
+    });
+
+    const shapeByAction = new Map(
+      census.sites.map((site) => [site.action, site.detailsShape.kind]),
+    );
+
+    expect(shapeByAction.get("booking.period.update")).toBe("payload");
+    expect(shapeByAction.get("booking.review.reject")).toBe("text");
+    expect(shapeByAction.get("booking.confirm_pending_guests")).toBe("absent");
+    // A payload assembled elsewhere reads as `text`. That UNDER-counts, which is
+    // the safe direction for a measurement nobody gates on: it can understate
+    // how many payload writers exist and can never invent one.
+    expect(shapeByAction.get("booking.forwarded")).toBe("text");
   });
 });
