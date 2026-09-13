@@ -117,6 +117,11 @@ export function ReviewStep({
   handleSaveAsDraft,
   handleSubmit,
   submitting,
+  waitlistOnly,
+  capacityShortMessage,
+  capacityShortNights,
+  handleJoinWaitlist,
+  joiningWaitlist,
   savingDraft,
   memberGuestPendingHoldExpiryDays,
   exceptionOffer,
@@ -183,6 +188,25 @@ export function ReviewStep({
   handleSaveAsDraft: () => void | Promise<void>;
   handleSubmit: () => void | Promise<void>;
   submitting: boolean;
+  /**
+   * The stay cannot be confirmed as it stands, so the honest primary action is
+   * a waitlist place rather than a booking (#2930, settled contract point 5).
+   *
+   * When it is set, the payment-method chooser is already withheld upstream
+   * (`showPaymentMethodChoice` is false) and the confirm button is replaced by
+   * the waitlist join, which posts the same proposal and lets the SERVER decide:
+   * a booking if beds turned out to be free, a waitlist place otherwise. A
+   * waitlist place takes no money and stores no payment method, so asking for
+   * one here would be asking for something that cannot be used or kept.
+   *
+   * A held night reaches this exactly as a full one does and is described in
+   * the same words (`INV-CAP-021`, ADR-001 decision 6).
+   */
+  waitlistOnly: boolean;
+  capacityShortMessage: string | null;
+  capacityShortNights: string[];
+  handleJoinWaitlist: () => void | Promise<void>;
+  joiningWaitlist: boolean;
   savingDraft: boolean;
   /** D-4: the club's own configured hold length, for the explainer's sentence 1. */
   memberGuestPendingHoldExpiryDays: number;
@@ -941,6 +965,27 @@ export function ReviewStep({
         />
       ) : null}
 
+      {waitlistOnly ? (
+        <div
+          className="rounded-md border border-warning/20 bg-warning-muted p-4 text-sm text-warning"
+          role="status"
+        >
+          <p>
+            <strong>This stay can only go on the waitlist.</strong>{" "}
+            {capacityShortMessage}
+          </p>
+          {capacityShortNights.length > 1 ? (
+            <p className="mt-2">Full nights: {capacityShortNights.join(", ")}.</p>
+          ) : null}
+          <p className="mt-2">
+            The price above is what your stay would cost and is held for you. No
+            bed is reserved and nothing is charged now, so we are not asking how
+            you want to pay yet &mdash; we will do that if a place opens up and
+            we can confirm your booking.
+          </p>
+        </div>
+      ) : null}
+
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={() => setStep("guests")}>
           Back
@@ -949,25 +994,36 @@ export function ReviewStep({
           <Button
             variant="outline"
             onClick={handleSaveAsDraft}
-            disabled={savingDraft || submitting}
+            disabled={savingDraft || submitting || joiningWaitlist}
             className="w-full sm:w-auto"
           >
             {savingDraft ? "Saving draft..." : "Save as Draft"}
           </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={submitting || savingDraft}
-            size="lg"
-            className="w-full sm:w-auto"
-          >
-            {submitting
-              ? "Creating booking..."
-              : requiresAdminReviewLocal
-                ? "Submit for Review"
-                : remainingToPay > 0
-                  ? "Continue to Payment"
-                  : "Confirm Booking"}
-          </Button>
+          {waitlistOnly ? (
+            <Button
+              onClick={handleJoinWaitlist}
+              disabled={submitting || savingDraft || joiningWaitlist}
+              size="lg"
+              className="w-full sm:w-auto"
+            >
+              {joiningWaitlist ? "Joining waitlist..." : "Join Waitlist"}
+            </Button>
+          ) : (
+            <Button
+              onClick={handleSubmit}
+              disabled={submitting || savingDraft}
+              size="lg"
+              className="w-full sm:w-auto"
+            >
+              {submitting
+                ? "Creating booking..."
+                : requiresAdminReviewLocal
+                  ? "Submit for Review"
+                  : remainingToPay > 0
+                    ? "Continue to Payment"
+                    : "Confirm Booking"}
+            </Button>
+          )}
         </div>
       </div>
     </div>

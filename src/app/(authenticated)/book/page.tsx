@@ -47,6 +47,9 @@ export default function BookPage() {
     setShowWaitlistPrompt,
     waitlistFullNights,
     joiningWaitlist,
+    waitlistOnly,
+    capacityShortNights,
+    capacityShortMessage,
     perGuestDatesEnabled,
     handlePerGuestDatesEnabledChange,
     multiDateRangesEnabled,
@@ -457,11 +460,23 @@ export default function BookPage() {
                     : "Lodge is fully booked"}
                 </h2>
                 <p className="text-sm text-cat1-11 mt-1">
-                  {lodgeLabel} is at capacity on{" "}
-                  {waitlistFullNights.length === 1
-                    ? waitlistFullNights[0]
-                    : `${waitlistFullNights.length} nights`}
-                  . You can join the waitlist and we&apos;ll email you when a spot opens up.
+                  {/*
+                    #2930: the server now names every night the party cannot
+                    occupy, INCLUDING the ones a whole-lodge hold blocks. Those
+                    used to be absent from `fullNights` (a held night's available
+                    beds are pinned to 0, never negative, so the old filter
+                    skipped it), which rendered here as the literal sentence
+                    "is at capacity on 0 nights" — a tell that distinguished a
+                    held lodge from a full one in plain sight, and ungrammatical
+                    besides. The empty arm below is now only reachable if the
+                    server sends no list at all, and says nothing about why.
+                  */}
+                  {waitlistFullNights.length === 0
+                    ? `${lodgeLabel} is at capacity on your dates.`
+                    : waitlistFullNights.length === 1
+                      ? `${lodgeLabel} is at capacity on ${waitlistFullNights[0]}.`
+                      : `${lodgeLabel} is at capacity on ${waitlistFullNights.length} of your nights.`}{" "}
+                  You can join the waitlist and we&apos;ll email you when a spot opens up.
                 </p>
               </div>
             </div>
@@ -596,6 +611,8 @@ export default function BookPage() {
           memberGuestOpenSearchEnabled={memberGuestConfig.openSearchEnabled}
           addMemberGuest={addMemberGuest}
           memberGuestAddError={memberGuestAddError}
+          capacityShortNights={capacityShortNights}
+          capacityShortMessage={capacityShortMessage}
         />
       )}
 
@@ -666,6 +683,11 @@ export default function BookPage() {
           exceptionOffer={exceptionOffer}
           replaceExceptionRequestId={replaceExceptionRequestId}
           submitExceptionRequest={submitExceptionRequest}
+          waitlistOnly={waitlistOnly}
+          capacityShortMessage={capacityShortMessage}
+          capacityShortNights={capacityShortNights}
+          handleJoinWaitlist={handleJoinWaitlist}
+          joiningWaitlist={joiningWaitlist}
         />
       )}
 

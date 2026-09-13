@@ -310,7 +310,23 @@ export function useBookingWizard() {
   // Cross-lodge waitlist opt-in (ADR-004): other eligible lodges the member
   // would also accept. Only offered when a second eligible lodge exists.
   const [waitlistAlternateLodgeIds, setWaitlistAlternateLodgeIds] = useState<string[]>([]);
-  const [availableBeds, setAvailableBeds] = useState(lodgeCapacity);
+  // `availableBeds` (the range-wide minimum) is gone with the client hard stop
+  // it existed for (#2930). Every remaining capacity judgement is PER NIGHT,
+  // from `availabilityNightDetails`: a range-wide minimum cannot tell a member
+  // which of their nights is short, and a single night at zero used to condemn
+  // the whole stay — including nights with beds to spare.
+  /**
+   * The SELECTED lodge's effective capacity, as `/api/availability/check`
+   * resolved it (#2930, `INV-CAP-003`).
+   *
+   * Seeded from the club-identity figure, which is the pre-selection FALLBACK
+   * only — exactly the arrangement `admin/book` already documents. That figure
+   * is one lodge's bed count, so at a capped or secondary lodge it is simply
+   * another lodge's number; every party-size ceiling below is therefore read
+   * from this state, which the date step replaces with the right lodge's value
+   * before the guests step it gates can be reached.
+   */
+  const [resolvedLodgeCapacity, setResolvedLodgeCapacity] = useState(lodgeCapacity);
   const [availabilityNightDetails, setAvailabilityNightDetails] = useState<AvailabilityNightDetail[]>([]);
   const [perGuestDatesEnabled, setPerGuestDatesEnabled] = useState(false);
   // Issue #713 — per-guest non-contiguous night grid.
@@ -513,13 +529,35 @@ export function useBookingWizard() {
     return null;
   }
 
-  function getCapacityExceededNights(guestList: GuestData[]): string[] {
+  /**
+   * The nights this party will not fit on, per the server's own per-night
+   * figures — ADVISORY SINCE #2930, never a client stop.
+   *
+   * It used to block `handleGuestsDone`, and that block is what made the
+   * waitlist unreachable. The refusal it raised was purely client-side, so a
+   * member whose dates were full never reached the server, never got the 409
+   * that carries `canWaitlist`, and therefore never saw the waitlist prompt the
+   * product has had all along — the one door out of a full lodge was shut by
+   * the screen in front of it. The server remains the authority on capacity
+   * (that is the whole shape of the chosen approach); this tells the member
+   * what to expect on the way there.
+   *
+   * A HELD NIGHT LOOKS EXACTLY LIKE A FULL ONE HERE, and cannot look like
+   * anything else: `/api/availability/check` pins a held night to zero
+   * available beds and sends no hold flag (`INV-CAP-021`, `INV-CAP-038`,
+   * ADR-001 decision 6), so this arithmetic has nothing to tell apart.
+   */
+  function getCapacityShortNights(guestList: GuestData[]): string[] {
     const dateStrings = getBookingDateStrings();
     if (!dateStrings) {
       return [];
     }
     if (availabilityNightDetails.length === 0) {
-      return guestList.length > availableBeds ? [dateStrings.checkIn] : [];
+      // No per-night figures — the check failed or has not answered. Say
+      // nothing rather than guess: an advisory built on absent data would
+      // either invent a shortfall or hide a real one, and the server decides
+      // either way.
+      return [];
     }
 
     return availabilityNightDetails
@@ -534,12 +572,18 @@ export function useBookingWizard() {
       .map((night) => night.date);
   }
 
-  function formatCapacityExceededMessage(fullNights: string[]) {
-    if (fullNights.length === 1) {
-      return `${lodgeLabel} does not have enough beds on ${fullNights[0]}`;
+  /**
+   * What the member is told about a party that will not fit. Deliberately the
+   * same sentence whatever the reason — a lodge full of bookings and a lodge
+   * held for one group are both "no beds", and naming the difference is the one
+   * thing decision 6 forbids.
+   */
+  function formatCapacityShortMessage(shortNights: string[]) {
+    if (shortNights.length === 1) {
+      return `${lodgeLabel} is full on ${shortNights[0]}. You can still continue and join the waitlist.`;
     }
 
-    return `${lodgeLabel} does not have enough beds on ${fullNights.length} nights`;
+    return `${lodgeLabel} is full on ${shortNights.length} of your nights. You can still continue and join the waitlist.`;
   }
 
   useEffect(() => {
@@ -635,7 +679,7 @@ export function useBookingWizard() {
     // Only a fresh, bookable, within-capacity party gets self injected. Case (a)
     // (a non-empty party) falls through here having spent the opportunity.
     if (guests.length > 0) return;
-    if (guests.length >= lodgeCapacity) return;
+    if (guests.length >= resolvedLodgeCapacity) return;
     setGuests([
       {
         firstName: self.firstName,
@@ -649,7 +693,7 @@ export function useBookingWizard() {
     setPriceQuote(null);
     setUseCredit(false);
     setMemberNightConflicts([]);
-  }, [familyMembers, guests, lodgeCapacity]);
+  }, [familyMembers, guests, resolvedLodgeCapacity]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -837,7 +881,7 @@ export function useBookingWizard() {
 
   function addFamilyMemberAsGuest(fm: FamilyMember) {
     if (guests.some((g) => g.memberId === fm.id)) return;
-    if (guests.length >= lodgeCapacity) return;
+    if (guests.length >= resolvedLodgeCapacity) return;
     if (fm.canBeBooked === false) return;
     const dateStrings = getBookingDateStrings();
     setAppliedPromo(null);
@@ -880,7 +924,7 @@ export function useBookingWizard() {
    */
   function addMemberGuest(candidate: MemberGuestCandidate) {
     if (guests.some((g) => g.memberId === candidate.memberId)) return;
-    if (guests.length >= lodgeCapacity) return;
+    if (guests.length >= resolvedLodgeCapacity) return;
     const dateStrings = getBookingDateStrings();
     setMemberGuestAddError(null);
     setAppliedPromo(null);
@@ -1121,8 +1165,13 @@ export function useBookingWizard() {
       if (res.ok) {
         const data = await res.json();
         if (lostSelectionOwnership()) return;
-        setAvailableBeds(data.minAvailable);
         setAvailabilityNightDetails(data.nightDetails || []);
+        // The selected lodge's own capacity (#2930). Only ever overwritten by a
+        // real number, so a malformed response leaves the previous value rather
+        // than collapsing the party ceiling to zero or NaN.
+        if (typeof data.lodgeCapacity === "number") {
+          setResolvedLodgeCapacity(data.lodgeCapacity);
+        }
       } else {
         setAvailabilityNightDetails([]);
       }
@@ -1196,11 +1245,10 @@ export function useBookingWizard() {
       return;
     }
 
-    const fullNights = getCapacityExceededNights(guestPayload);
-    if (fullNights.length > 0) {
-      setError(formatCapacityExceededMessage(fullNights));
-      return;
-    }
+    // #2930: NO capacity stop here. A known-full range must be able to reach the
+    // server, because the server's 409 is what offers the waitlist. The
+    // per-night shortfall is surfaced as advisory copy on the guests and review
+    // steps instead (`capacityShortNights` below).
 
     setError("");
     setMemberNightConflicts([]);
@@ -1746,13 +1794,51 @@ export function useBookingWizard() {
     (subscriptionStatus.status === "UNPAID" || subscriptionStatus.status === "OVERDUE");
   const showInviteFamilyGroupMembersLink =
     shouldShowInviteFamilyGroupMembersLink(familyMembers);
+  /**
+   * The nights this party does not fit on, recomputed as the party changes
+   * (#2930). Empty whenever the server's per-night figures are unavailable, so
+   * an unknown capacity never presents itself as a known refusal.
+   */
+  const capacityShortNights = getCapacityShortNights(guests);
+  /**
+   * The stay cannot be confirmed as it stands, so the realistic outcome of
+   * pressing the button is a waitlist place rather than a booking.
+   *
+   * ADVISORY, AND ONLY ADVISORY. The server still decides: the waitlist join
+   * posts the same proposal and takes whatever answer comes back, including a
+   * real booking if beds freed up in between. What this changes is what the
+   * member is ASKED for on the way — see `showPaymentMethodChoice` below.
+   */
+  const waitlistOnly = capacityShortNights.length > 0;
+  const capacityShortMessage = waitlistOnly
+    ? formatCapacityShortMessage(capacityShortNights)
+    : null;
+
+  /**
+   * #2930, settled contract point 5: a waitlist-only flow neither asks for nor
+   * stores a payment-method choice.
+   *
+   * A waitlist place is not a booking and takes no money — `createWaitlistedBooking`
+   * accepts no `paymentMethod` at all and never has. Asking the member to pick
+   * between Card and Internet Banking at that point offers a choice that cannot
+   * be acted on and will not be remembered, and the Internet Banking arm quotes
+   * a payment deadline against a stay that has not been granted. The choice is
+   * obtained later, on the booking itself, when a promotion makes confirmation
+   * possible.
+   */
   const showPaymentMethodChoice =
-    remainingToPay > 0 && !requiresAdminReviewLocal;
+    remainingToPay > 0 && !requiresAdminReviewLocal && !waitlistOnly;
 
   useEffect(() => {
     if (
       paymentMethod === "internet_banking" &&
-      (!internetBankingEnabled || remainingToPay <= 0 || requiresAdminReviewLocal)
+      // `waitlistOnly` joins the existing reasons the choice is withdrawn
+      // (#2930), so a method picked before the party grew past the beds cannot
+      // survive into a waitlist join as remembered state.
+      (!internetBankingEnabled ||
+        remainingToPay <= 0 ||
+        requiresAdminReviewLocal ||
+        waitlistOnly)
     ) {
       setPaymentMethod("stripe");
     }
@@ -1761,6 +1847,7 @@ export function useBookingWizard() {
     paymentMethod,
     remainingToPay,
     requiresAdminReviewLocal,
+    waitlistOnly,
   ]);
 
   // Apply or refresh the working bee discount preview when a work party
@@ -1858,6 +1945,11 @@ export function useBookingWizard() {
     setShowWaitlistPrompt,
     waitlistFullNights,
     joiningWaitlist,
+    // #2930 advisory surface: what the member is told about a party that will
+    // not fit, and whether the realistic outcome is a waitlist place.
+    waitlistOnly,
+    capacityShortNights,
+    capacityShortMessage,
     perGuestDatesEnabled,
     handlePerGuestDatesEnabledChange,
     multiDateRangesEnabled,
@@ -1937,7 +2029,9 @@ export function useBookingWizard() {
     showPaymentMethodChoice,
     wizardSteps,
     activeStepIndex,
-    lodgeCapacity,
+    // #2930: the SELECTED lodge's capacity, not the club-identity figure, so
+    // the guests step's party ceiling belongs to the lodge being booked.
+    lodgeCapacity: resolvedLodgeCapacity,
     lodges,
     lodgeId,
     lodgeScope,

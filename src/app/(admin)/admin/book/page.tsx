@@ -400,15 +400,15 @@ export default function AdminBookPage() {
         const data = await res.json();
         if (!ownsCurrentLodge()) return;
         setAvailableBeds(data.minAvailable);
-        const night = Array.isArray(data.nightDetails)
-          ? data.nightDetails[0]
-          : null;
-        if (
-          night &&
-          typeof night.occupiedBeds === "number" &&
-          typeof night.availableBeds === "number"
-        ) {
-          setResolvedCapacity(night.occupiedBeds + night.availableBeds);
+        // #2930: read the lodge's capacity from the field the route now states,
+        // rather than re-deriving it from the first night's
+        // `occupiedBeds + availableBeds`. The derivation was correct — the #155
+        // payload contract guarantees that sum on every night — but it was a
+        // SECOND way of answering "how many beds has this lodge", computed from
+        // a row that is absent whenever `nightDetails` is empty, which left the
+        // previous lodge's capacity standing (`INV-SSOT-001`).
+        if (typeof data.lodgeCapacity === "number") {
+          setResolvedCapacity(data.lodgeCapacity);
         }
       }
 
