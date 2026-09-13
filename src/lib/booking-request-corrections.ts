@@ -74,14 +74,26 @@
  * makes the conversion's claim miss, and a conversion landing mid-correction
  * makes this claim miss.
  *
- * **The counterparts a version fence did NOT close** are the three quote
- * writers in `booking-request-quotes.ts`. None of them takes a lock, and each
- * fenced only on "not declined, not cancelled" — a set that this writer's
- * VERIFIED is squarely inside, because a correction RE-OPENS a request where
- * decline TERMINATES one. They are reconciled at each writer, per the
- * concurrency checklist: the quote save claims on the request version, the
- * quote send claims the quote row while it is still DRAFT/SENT, and the accept
- * re-arm takes this key and re-reads the quote's status under it.
+ * **The counterparts a version fence did NOT close** are the FOUR quote writers
+ * in `booking-request-quotes.ts`. None of them took a lock, and each fenced only
+ * on "not declined, not cancelled" — a set that this writer's VERIFIED is
+ * squarely inside, because a correction RE-OPENS a request where decline
+ * TERMINATES one. Three are reconciled at the writer, per the concurrency
+ * checklist: the quote save claims on the request version, the quote send claims
+ * the quote row while it is still DRAFT/SENT, and the accept re-arm takes this
+ * key and re-reads the quote's status under it.
+ *
+ * **The fourth is deliberately left, and saying which one is the point of this
+ * paragraph.** `respondToBookingRequestQuote`'s MODIFY/QUERY branch still opens
+ * a bare transaction with that same insufficient guard, so a requester pressing
+ * "ask for changes" on a quote link that was live a moment ago can still flip a
+ * freshly corrected request to MODIFICATION_REQUESTED or QUERY_PENDING. What it
+ * writes is a status and the requester's own message — no price, no accepted
+ * snapshot, no hold, no conversion — and both states it can reach are
+ * correctable and swept exactly as VERIFIED is, so fencing it would buy a
+ * cosmetic status at the cost of discarding a message from the person whose
+ * booking it is. Its quote write IS narrowed to DRAFT/SENT, so it can no longer
+ * overwrite the supersede mark this correction made.
  *
  * It takes no per-lodge key: it creates no booking and claims no bed.
  * Registered in `advisory-lock-guard.test.ts`.
@@ -522,10 +534,23 @@ export async function correctBookingRequest(
    * correction whose beds could not be freed is precisely the one an officer has
    * to be able to find later.
    */
-  try {
+  /**
+   * Declared OUTSIDE the wrapper, so the catch below can read what actually
+   * happened to the beds. Inside it, the catch could not see this binding at
+   * all and fell back to `request.heldBookingId` — the pre-claim pointer, which
+   * still says "held" about beds this correction had just released — so a
+   * failure anywhere after the release told the officer to go and check a hold
+   * that was already gone. Exactly the noise the message beside it exists to
+   * avoid.
+   */
   let hold:
     | { released: true; outcome: CorrectionHoldOutcome }
-    | { released: false; error: unknown };
+    | { released: false; error: unknown }
+    | undefined;
+  try {
+
+  // The inner capture, whose whole job is to let the audit row be written with
+  // what happened to the beds before the error is rethrown.
   try {
     hold = {
       released: true,
@@ -627,8 +652,14 @@ export async function correctBookingRequest(
     const holdReleasePending = isHostingCoverageParticipantRetry(error);
     // Only a request that HAD a hold can have left one behind. Saying "check
     // the held beds" to an officer correcting a request that never held any is
-    // how a clear message becomes noise.
-    const holdUnresolved = holdReleasePending || request.heldBookingId !== null;
+    // how a clear message becomes noise — and so is saying it about beds this
+    // correction released a moment ago, which is why the outcome is read here
+    // rather than the pre-claim pointer. `undefined` means the failure beat the
+    // reconcile to it, which nothing between them can currently do; the pointer
+    // is the conservative answer if something ever does.
+    const holdUnresolved =
+      holdReleasePending ||
+      (hold ? !hold.released : request.heldBookingId !== null);
     throw new BookingRequestCorrectionCommittedError(
       holdUnresolved
         ? "The correction was saved, but this request's held beds could not be confirmed. Open the request and check its hold before quoting again."

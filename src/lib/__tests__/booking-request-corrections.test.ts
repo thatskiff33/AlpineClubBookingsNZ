@@ -1040,6 +1040,45 @@ describe("everything after the claim is a SAVED correction, whatever went wrong"
     expect(error.message).toMatch(/held beds could not be confirmed/i);
   });
 
+  it("does not send the officer after beds this correction already released", async () => {
+    // The wrapper used to decide "are the beds still held?" from
+    // `request.heldBookingId` — the PRE-CLAIM pointer — because the binding
+    // holding the real answer was declared inside the block it catches. So a
+    // release that worked perfectly, followed by any later failure, told the
+    // officer to go and check a hold that had just gone. Exactly the noise the
+    // message beside it exists to avoid.
+    stubRequest(
+      schoolRequestRow({
+        heldBookingId: "held-1",
+        status: BookingRequestStatus.QUOTE_SENT,
+      }),
+    );
+    (prisma.booking.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    });
+    // The release itself succeeds — including the notice to the member guests,
+    // which the case above deliberately breaks and this one must not inherit.
+    (notifyMemberGuestsHoldReleased as ReturnType<typeof vi.fn>).mockResolvedValue(
+      undefined,
+    );
+    // What fails is the advisory availability measure, after the beds have gone.
+    (checkCapacityForGuestRanges as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("capacity read blew up"),
+    );
+
+    const error = await correctBookingRequest(schoolInput()).catch((err) => err);
+    expect(error).toBeInstanceOf(BookingRequestCorrectionCommittedError);
+    expect(error.message).toMatch(/correction was saved/i);
+    expect(error.message).toMatch(/could not be read back/i);
+    expect(error.message).not.toMatch(/held beds/i);
+    expect(error.holdReleasePending).toBe(false);
+    // The beds really did go, which is what makes that message the true one.
+    expect(cancelBooking).toHaveBeenCalled();
+    const entry = (logAudit as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(entry.metadata.holdOutcome).toBe("released");
+  });
+
   it("passes the reconcile's own refusal through untouched", async () => {
     // It already says the right thing — and it knows whether the beds are still
     // held, which the generic wrapper can only guess at.
