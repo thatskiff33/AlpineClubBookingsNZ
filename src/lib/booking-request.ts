@@ -2274,9 +2274,9 @@ export async function approveBookingRequest(input: {
         // back to a fresh non-login contact (the pre-#1255 default owner) and
         // flag an admin. Auto-created owners always pass this guard, so it is a
         // no-op except for a changed-state mapped contact.
-        let ownerId = held.memberId;
+        let ownerId = bookingOwner(held).memberId;
         try {
-          await assertMappableOwnerContact(tx, held.memberId);
+          await assertMappableOwnerContact(tx, bookingOwner(held).memberId);
         } catch (err) {
           // Only recover from validation failures; a real DB/other error must
           // still abort so we never silently substitute on a transient fault.
@@ -2298,7 +2298,7 @@ export async function approveBookingRequest(input: {
           });
           ownerId = substitute.id;
           ownerSubstitution = {
-            invalidMemberId: held.memberId,
+            invalidMemberId: bookingOwner(held).memberId,
             substituteMemberId: substitute.id,
             reason: err.message,
           };

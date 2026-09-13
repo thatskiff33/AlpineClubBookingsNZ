@@ -128,7 +128,7 @@ export async function consumeStoredCreditElection(
 
   if (!lockTarget || lockTarget.creditElectionCents == null) return null;
 
-  await lockMemberCreditLedger(lockTarget.memberId, tx);
+  await lockMemberCreditLedger(bookingOwner(lockTarget).memberId, tx);
 
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },

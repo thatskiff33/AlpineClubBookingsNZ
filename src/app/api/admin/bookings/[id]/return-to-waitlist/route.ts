@@ -253,7 +253,7 @@ export async function POST(
             action: RETURN_TO_WAITLIST_AUDIT_ACTION,
             memberId: session.user.id,
             actorMemberId: session.user.id,
-            subjectMemberId: key.memberId,
+            subjectMemberId: bookingOwner(key).memberId,
             targetId: bookingId,
             entityType: "Booking",
             entityId: bookingId,
@@ -305,7 +305,7 @@ export async function POST(
 
         return {
           success: true as const,
-          memberId: key.memberId,
+          memberId: bookingOwner(key).memberId,
           lodgeId: key.lodgeId,
           email: bookingOwner(booking).member.email,
           firstName: bookingOwner(booking).member.firstName,

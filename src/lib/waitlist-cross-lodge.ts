@@ -142,7 +142,7 @@ export async function quoteWaitlistEntryAtLodge(
 
   try {
     const price = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-      ownerMemberId: entry.memberId,
+      ownerMemberId: bookingOwner(entry).memberId,
       checkIn: entry.checkIn,
       checkOut: entry.checkOut,
       guests: toGuestPricingInputs(
