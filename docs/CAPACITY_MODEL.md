@@ -346,6 +346,31 @@ every member-facing surface still sees a full lodge (ADR-001 decision 6) and
 is still hard-blocked at zero beds for everyone else. What it removes is the
 double claim, and with it the contention this section used to describe.
 
+**The night list a refusal names is part of the same disclosure rule (#2930).**
+A capacity refusal tells the caller which nights did not fit, and for a long
+time it built that list by filtering `availableBeds < 0`. A held night is pinned
+to exactly 0 and never goes negative — the pin above is deliberate and is what
+keeps it out of the admin confirmable set — so a hold-only refusal produced an
+EMPTY list where genuine fullness produced a populated one. The member wizard
+renders whatever it is handed, so this surfaced as "the lodge is at capacity on
+**0 nights**": a tell, in plain sight, in the one place decision 6 is about.
+
+`getCapacityFullNights` (`src/lib/capacity-full-nights.ts`) now counts a held
+night as a full night, so both refusals carry the same list. It is the mirror of
+`overCapacityNights()`, which excludes held nights precisely because an admin
+override may never reach one: never negotiable, and never distinguishable. The
+helper had FIVE byte-identical copies when the defect was found, which is how one
+mistake reached five refusal paths at once; it is now one module with a census
+test (`INV-SSOT-001`).
+
+**A member may waitlist over a held night, and cannot be promoted off it.**
+Since #2930 a full future night is selectable in the member calendar — that is
+how the waitlist is reached at all — so an entry can now legitimately sit over a
+held range. Promotion is gated on `checkCapacityForGuestRanges(...).available`,
+which a hold forces false whatever the bed arithmetic says, so the entry keeps
+its queue position until the hold is released rather than being offered or
+dropped.
+
 **Whole-lodge flat pricing is untouched.** `priceWholeLodgeFlat`
 (`src/lib/policies/pricing.ts`) sums a flat per-night season rate and never
 reads a bed count, so a hold whose represented set narrows costs the holding
