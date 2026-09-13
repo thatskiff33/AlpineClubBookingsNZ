@@ -298,11 +298,11 @@ const FIGURES = {
    * One component rendered on two pages is ONE file to this census. MEASURED by
    * re-running it.
    *
-   * 347/349 -> 350 (sync of `main` into `epic/2725-mad`): both lanes' new
+   * 347/349 -> 351 (sync of `main` into `epic/2725-mad`): both lanes' new
    * call sites are disjoint files, so neither classification moved. MEASURED on
    * the MERGED tree by re-running this census, never by adding the deltas.
    */
-  callSites: 350,
+  callSites: 351,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -312,10 +312,10 @@ const FIGURES = {
    * 293 -> 294 (#2698): so does the custodian/whole-lodge-hold amendment
    * control, whose Accept sits under the hut-leaders page's own banner.
    * 293 -> 296 (#3354): so do the AI spend currency card's three.
-   * 294/296 -> 297 (sync of `main` into `epic/2725-mad`): both lanes' opt-outs
+   * 294/296 -> 298 (sync of `main` into `epic/2725-mad`): both lanes' opt-outs
    * are disjoint. MEASURED on the MERGED tree, never added together.
    */
-  optOuts: 297,
+  optOuts: 298,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -331,11 +331,11 @@ const FIGURES = {
    * 259 -> 260 (#2698, carried in from `epic/2725-mad`, which moved the literal
    * without a bump line): the custodian/whole-lodge-hold amendment Accept sits
    * in the same file as the hut-leaders page's own banner, so it is static.
-   * 260/262 -> 263 (sync of `main` into `epic/2725-mad`): the two are in
+   * 260/262 -> 264 (sync of `main` into `epic/2725-mad`): the two are in
    * different files and neither classification moved. MEASURED on the MERGED
    * tree by re-running this census, never by adding the deltas together.
    */
-  staticOptOuts: 263,
+  staticOptOuts: 264,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -1142,7 +1142,7 @@ describe("view-only section banner coverage (#2160)", () => {
         The delta chain from upstream, so the figures reconcile rather than
         merely being asserted. Every step is a MEASURED re-run, not arithmetic:
 
-          263  upstream.
+          264  upstream.
           264  +1  member-photos (hoppers#171) adds the committee photo-display
                control — a leaf exception that keeps its own reason.
           268  +4  the Member Notices feature (#2238) adds banner-bearing admin
@@ -1151,7 +1151,7 @@ describe("view-only section banner coverage (#2160)", () => {
           269  +1  commit 427200eb ("Build Fix") re-measured after that merge
                and found one call site and one banner component MORE than the
                +4/+2 written above — so the Notices feature really contributed
-               5 call sites and 3 banner components (263 -> 269, 75 -> 78), and
+               5 call sites and 3 banner components (264 -> 269, 75 -> 78), and
                the prose deltas for it undercount by one. Recorded here rather
                than silently corrected, because 427200eb is the commit that
                made these numbers true and the earlier prose is what a reader
@@ -1261,8 +1261,8 @@ describe("view-only section banner coverage (#2160)", () => {
                Re-measured on the merged tree rather than added to either
                side's figure: #2286 and #2307 landed in the same window and
                both moved the count.
-          297      Re-measured on the merged tree: #2262's +4 and #2307's +2 are
-               independent, so 291 -> 295 -> 297. Neither side's number is
+          298      Re-measured on the merged tree: #2262's +4 and #2307's +2 are
+               independent, so 291 -> 295 -> 298. Neither side's number is
                taken as-is.
           299  +2  the Mountain Conditions "Source & selectors" panel adds
                Preview and Save configuration ViewOnlyActionButtons — two static
@@ -1304,7 +1304,7 @@ describe("view-only section banner coverage (#2160)", () => {
                cannot reach — so all five controls are static opt-outs in the
                same file: Edit, Save, "Restore the suggested wording", and the
                two halves of the confirm-gated "Ask visitors to choose again"
-               action. optOuts 258 -> 263, staticOptOuts 232 -> 237 and
+               action. optOuts 258 -> 264, staticOptOuts 232 -> 237 and
                bannerComponents 82 -> 83 move together; the vouched split,
                exceptions and the leaf bucket are untouched, because nothing
                here is gated on anything narrower than the finance area the
@@ -1314,7 +1314,7 @@ describe("view-only section banner coverage (#2160)", () => {
                one staged whole-roster Edit control. That child control is
                vouched by the roster page's unconditional lodge-access banner,
                so static opt-outs move 237 -> 234, render-site vouches move
-               21 -> 22, and total opt-outs move 263 -> 261.
+               21 -> 22, and total opt-outs move 264 -> 261.
           311  +1  #2593 replaces the old Save Mode site with two Edit/Save
                sites in the per-lodge allocation-preferences card. It owns a
                banner for standalone reuse, while the bed-allocation page
@@ -1347,7 +1347,7 @@ describe("view-only section banner coverage (#2160)", () => {
                opt-out under the page's own unconditional
                AdminViewOnlySectionBanner, which the sibling Approve/Reject/
                Resume controls already opt out under, so static opt-outs move
-               235 -> 236 and total opt-outs 262 -> 263. Nothing else moves: no
+               235 -> 236 and total opt-outs 262 -> 264. Nothing else moves: no
                new banner component, and the Full-Admin gate it additionally
                carries is applied by NOT RENDERING the control at all rather
                than by disabling it with a narrower per-button reason, so it
@@ -1359,7 +1359,7 @@ describe("view-only section banner coverage (#2160)", () => {
           313  +1  #2352 MC-03D adds the per-page Delete control to the Page
                Content cards, beside the Hide/Publish toggle it sits with and
                under the banner that file already renders. Static opt-outs move
-               236 -> 237 and total opt-outs 263 -> 264; the vouched split,
+               236 -> 237 and total opt-outs 264 -> 264; the vouched split,
                the exceptions and the banner count are untouched, because the
                control is gated on the same content area the banner states.
           313      THE COLLISION THIS LEDGER EXISTS FOR, and it fired. This

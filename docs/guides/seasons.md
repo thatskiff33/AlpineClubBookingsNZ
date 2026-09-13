@@ -34,8 +34,58 @@ inspect the windows but not change them. Dates are NZ date-only lodge nights.
 
    ![Seasons page: Summer 2026-27 and Winter 2026 season cards with type and Active badges, and the "add seasons in Fees → Hut Fees" notice](../images/admin/admin-seasons.png)
 
+   The cards are in **date order, earliest first** — the schedule as it actually
+   runs. *The screenshot above was captured before that ordering and before the
+   gap warnings described below, so it shows neither; it will be refreshed with
+   the next capture run.*
+
 2. If the club runs more than one lodge, use the lodge selector to switch which
    lodge's seasons you see.
+
+### Check for gaps in the schedule
+
+A season prices every night from its start date to its end date, **including
+both**. So one season runs straight on from the last if it starts the day after
+the previous one ends — 1 October following a season that ends on 30 September
+leaves nothing uncovered.
+
+If any nights in between are left over, the page says so where they fall,
+between the two seasons either side of them, and counts them above the list.
+For example, a club whose winter ends on 30 September and whose next season does
+not start until 1 December would see this between those two cards, with its own
+two season names where the italics are:
+
+> **No season covers 1 Oct 2026 to 30 Nov 2026 — 61 nights**
+>
+> *The season before it* ends the day before, and *the season after it* starts
+> the day after. A booking for one of these nights is refused because nothing
+> prices it — nothing is charged at zero and no neighbouring season's rates are
+> used instead. Extend one of the two windows, or add a season to cover the
+> nights.
+
+Those nights cannot be booked: nothing prices them, so a member's booking that
+includes one is refused. **The page only tells you — it never fills the hole
+in.** Nothing is charged at zero, and neither neighbouring season's rates are
+used instead. To close it, move one of the two windows here, or add a season in
+**Fees → Hut Fees**.
+
+Two things worth knowing:
+
+- **A deactivated season does not count as cover.** If a window sits exactly in
+  a gap and the page still reports the gap, check its Active badge — a season
+  that is switched off prices nothing, and a booking for those nights is refused
+  as if the window were not there at all. It is still listed, just above the
+  warning, because it is usually the explanation.
+- **Gaps that are entirely in the past are not reported**, and neither is the
+  open-ended stretch after your last season — every club has one of those, and
+  it is the end of the schedule rather than a mistake in it.
+- **A newly set-up club sees one of these before it has configured anything,
+  and that is correct.** First-run setup creates two sample seasons — a winter
+  running June to September and a summer running November to March — with
+  October deliberately left between them. So the very first visit to this page
+  reports October as uncovered, which is true: nothing prices those nights.
+  Replace the sample windows with your club's real ones (or extend one to meet
+  the other) and the warning goes with them.
 
 ### Edit a season window
 
@@ -55,6 +105,9 @@ inspect the windows but not change them. Dates are NZ date-only lodge nights.
 1. To add a new season or change nightly rates, go to **Fees → Hut Fees** — the
    in-page notice links there. This Seasons page cannot create seasons or edit
    rates.
+2. If the new season should charge what an existing one charges, use **New
+   season from this** on that season in Fees → Hut Fees rather than retyping the
+   grid. See [Fees](fees.md).
 
 ## Settings reference
 

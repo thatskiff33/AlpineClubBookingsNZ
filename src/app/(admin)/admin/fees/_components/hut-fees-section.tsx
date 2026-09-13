@@ -20,8 +20,22 @@ import {
   selectTypesRequiringHutRates,
   type MembershipTypeRateGap,
 } from "@/lib/membership-type-rate-coverage";
+import {
+  FLAT_RATE_CELL_KEY as FLAT_KEY,
+  amountFieldValue,
+  copySeasonConfiguration,
+  emptyRateCells as emptyRates,
+  rateCellKey as rateKey,
+  rateCellsFromSeason as seasonToRatesMap,
+  rateRowsFromCells,
+  resolvedTierRate,
+  type RateCells,
+} from "@/lib/season-rate-grid";
+import {
+  SeasonCoverageGapNotice,
+  SeasonCoverageGapSummary,
+} from "@/components/admin/season-coverage-warning";
 import { useClubTime } from "@/components/club-time-provider";
-import { must } from "@/lib/indexed-access";
 import {
   AdminViewOnlyNotice,
   AdminViewOnlySectionBanner,
@@ -39,6 +53,7 @@ import {
   calendarDayFromPayload,
   formatPayloadCalendarDay,
 } from "../../_lib/calendar-day";
+import { readSeasonSchedule } from "../../_lib/season-schedule";
 import { MissingHutRatesNotice } from "./missing-hut-rates-notice";
 
 // The Hut Fees section of the consolidated /admin/fees console (#1933, E7):
@@ -91,8 +106,6 @@ const FALLBACK_TIERS: AgeTierSetting[] = [
   { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
 ];
 
-const FLAT_KEY = "FLAT";
-
 // CT-4 (#2870): a season edge is a CALENDAR DATE and calendar dates take no
 // timezone — the API serialises the `@db.Date` column as UTC midnight, and the
 // kernel's calendar-date formatter pins "UTC" over that encoding, so the
@@ -100,10 +113,6 @@ const FLAT_KEY = "FLAT";
 // APP_TIME_ZONE, which for a club behind UTC named the previous day.
 function formatSeasonEdge(value: string): string {
   return formatPayloadCalendarDay(value, value);
-}
-
-function rateKey(membershipTypeId: string, ageTier: AgeTier | typeof FLAT_KEY): string {
-  return `${membershipTypeId}::${ageTier}`;
 }
 
 /*
@@ -133,91 +142,6 @@ function withoutKey(
   const next = { ...errors };
   delete next[key];
   return next;
-}
-
-/**
- * The text an amount box shows: what was typed, else the stored cents.
- *
- * `null` cents means the cell HAS NO RATE and the box is empty; a stored `0`
- * means somebody set this rate to $0.00 and the box says `0.00`. Those used to
- * be the same empty box (`cents ? … : ""`), which is what made "never had a
- * row" indistinguishable from "typed zero" — and an indistinguishable pair is
- * why the form could not tell which cells it was safe to leave out of a save
- * (#2933 review).
- */
-function amountFieldValue(draft: string | undefined, cents: number | null | undefined): string {
-  if (draft !== undefined) return draft;
-  return cents == null ? "" : (cents / 100).toFixed(2);
-}
-
-/**
- * What a guest of `tier` is actually charged for this type on this season, and
- * whether the amount came from the type's flat all-ages row.
- *
- * The engine prefers an exact tier row and falls back to the flat row
- * (`INV-MOD-007`), and this table used to read the exact row alone — so a type
- * priced entirely by one flat rate was shown as "Not set" on every tier, which
- * is the same misreading as a missing rate nobody is warned about, pointing the
- * other way (#2933).
- */
-function resolvedTierRate(
-  rows: MembershipTypeRate[],
-  membershipTypeId: string,
-  tier: AgeTier,
-): { pricePerNightCents: number; fromFlatRate: boolean } | null {
-  const exact = rows.find(
-    (row) => row.membershipTypeId === membershipTypeId && row.ageTier === tier,
-  );
-  if (exact) {
-    return { pricePerNightCents: exact.pricePerNightCents, fromFlatRate: false };
-  }
-  const flat = rows.find(
-    (row) => row.membershipTypeId === membershipTypeId && row.ageTier === null,
-  );
-  return flat
-    ? { pricePerNightCents: flat.pricePerNightCents, fromFlatRate: true }
-    : null;
-}
-
-function cellsForType(type: RateType, tiers: AgeTierSetting[]): Array<AgeTier | typeof FLAT_KEY> {
-  return type.ageGroupsApply ? tiers.map((t) => t.tier) : [FLAT_KEY];
-}
-
-/**
- * Every cell this season could hold a rate for, all of them ABSENT.
- *
- * `null`, not `0`. These cells used to be seeded to zero and `handleSubmit`
- * sent every one of them, so creating or editing a season through this form
- * wrote a real $0.00 nightly rate for each blank box — and because
- * `membershipTypeRates` is a replace-all payload, an officer who opened the
- * season the missing-rates panel had just warned them about and pressed Save
- * closed the gap by charging those guests nothing. The panel, the badge and the
- * count all went away, because coverage reads row keys and the rows now existed
- * (#2933 review).
- *
- * The flat whole-lodge field below has always held absence as `null` for the
- * same reason, with the same comment: never charge nothing for the building.
- */
-function emptyRates(types: RateType[], tiers: AgeTierSetting[]): Record<string, number | null> {
-  const rates: Record<string, number | null> = {};
-  for (const type of types) {
-    for (const cell of cellsForType(type, tiers)) {
-      rates[rateKey(type.id, cell)] = null;
-    }
-  }
-  return rates;
-}
-
-function seasonToRatesMap(
-  rows: MembershipTypeRate[],
-  types: RateType[],
-  tiers: AgeTierSetting[],
-): Record<string, number | null> {
-  const map = emptyRates(types, tiers);
-  for (const row of rows) {
-    map[rateKey(row.membershipTypeId, row.ageTier ?? FLAT_KEY)] = row.pricePerNightCents;
-  }
-  return map;
 }
 
 export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
@@ -254,6 +178,29 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const sectionRef = useRef<HTMLDivElement>(null);
   const { scrollToTop } = useScrollToFeedback();
+  /*
+    #2938 review — which season the open form was pre-filled from, and a
+    counter so copying twice from the same one re-announces it.
+
+    `null` means "this form was not pre-filled": a fresh Add season, an Edit, or
+    a closed form. Only the name is held, because the name is the ONLY thing the
+    officer needs back — everything else about the copy is in the boxes in front
+    of them, and deliberately not the source's identity.
+  */
+  const [copiedFrom, setCopiedFrom] = useState<string | null>(null);
+  const [copyAttention, setCopyAttention] = useState(0);
+  const copyNoticeRef = useRef<HTMLParagraphElement>(null);
+  /*
+    A PASSIVE effect, for the reason `FocusedActionError` writes out in full:
+    focus has to land strictly AFTER the commit that puts the paragraph in the
+    DOM, or there is nothing to focus. `copyAttention` is in the dependency list
+    so a second copy from the SAME season re-announces rather than sitting
+    silent because the name did not change.
+  */
+  useEffect(() => {
+    if (copiedFrom === null) return;
+    copyNoticeRef.current?.focus({ preventScroll: true });
+  }, [copiedFrom, copyAttention]);
   const {
     lodges,
     loading: lodgesLoading,
@@ -305,7 +252,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   const [endDate, setEndDate] = useState("");
   const [active, setActive] = useState(true);
   // A cell with no rate is `null`, never `0` — see `emptyRates` (#2933).
-  const [rates, setRates] = useState<Record<string, number | null>>({});
+  const [rates, setRates] = useState<RateCells>({});
   /*
     #2685: what the admin has actually TYPED into each amount box, and the
     complaint for any box whose text is not a dollar amount.
@@ -448,6 +395,21 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     return byId;
   }, [ageTiers, clubToday, rateTypes, seasons]);
 
+  /*
+    #2938 — the schedule IN ORDER, with the nights nothing prices marked where
+    they fall.
+
+    Seasons arrive from the API in whatever order the query returned, which is
+    not chronological and is not stable between refreshes. The decode-and-order
+    policy is `readSeasonSchedule`, shared with the Seasons page because both
+    screens answer the same question from the same payload and a rule typed
+    twice drifts; the date arithmetic under it lives in `@/lib/season-timeline`.
+  */
+  const { timeline, coverageGaps, undatedSeasons } = useMemo(
+    () => readSeasonSchedule({ seasons, today: clubToday }),
+    [clubToday, seasons],
+  );
+
   /** The club's own label for an age tier, falling back to the tier's name. */
   const tierLabel = useCallback(
     (tier: string) =>
@@ -456,6 +418,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   );
 
   function resetForm() {
+    setCopiedFrom(null);
     setName("");
     setType("WINTER");
     setStartDate("");
@@ -479,6 +442,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
 
   function startEdit(season: Season) {
     if (!lodgeScopeReady) return;
+    setCopiedFrom(null);
     setEditingId(season.id);
     setName(season.name);
     setType(season.type);
@@ -497,10 +461,58 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
 
   function startCreate() {
     if (!lodgeScopeReady) return;
+    setCopiedFrom(null);
     setRates(emptyRates(rateTypes, ageTiers));
     clearAmountDrafts();
     setFlatWholeLodgeCents(null);
     setShowForm(true);
+  }
+
+  /*
+    #2938 — "Copy/Create from this season": a NEW season pre-loaded with an
+    existing one's configuration, so a club that runs the same shape of winter
+    every year sets its rates once.
+
+    `copySeasonConfiguration` decides what crosses, and its return type is what
+    keeps the copy honest — it has no id, no name and no dates, so there is
+    nothing here for a new season to inherit the source's identity through.
+    Three consequences, all of them the issue's binding contract:
+
+    - `editingId` stays NULL, so Save is a POST of a brand-new season. The
+      source cannot be overwritten by this action because the form holds no id
+      to PUT to.
+    - Name and dates are left EMPTY and are `required` on the form, so the
+      officer must give the new season its own identity and window, and the POST
+      route then applies its ordinary overlap and shape validation.
+    - Amounts cross as the integer cents the API returned. The boxes are drawn
+      from those cents by `amountFieldValue`, and `rateDrafts` is cleared, so an
+      amount the officer does not touch is never parsed back out of the text it
+      is displayed as (#2932). A cell the source has no rate for arrives absent,
+      not zero — copying a hole as a $0.00 row would manufacture exactly what
+      the missing-rates panel above exists to prevent (#2933).
+  */
+  function startCopyFrom(season: Season) {
+    if (!lodgeScopeReady) return;
+    const copied = copySeasonConfiguration(season, rateTypes, ageTiers);
+    setEditingId(null);
+    setName("");
+    setStartDate("");
+    setEndDate("");
+    setType(copied.type);
+    setActive(copied.active);
+    setRates(copied.rateCells);
+    clearAmountDrafts();
+    setFlatWholeLodgeCents(copied.flatWholeLodgeNightCents);
+    setShowForm(true);
+    setError("");
+    // What was copied, and from what — said on screen and taken to by focus,
+    // because the copy carries no name or dates and so confirms itself nowhere
+    // else. The effect above does the focusing; see the paragraph it focuses.
+    setCopiedFrom(season.name);
+    setCopyAttention((version) => version + 1);
+    // Same reason as `startEdit`: the button is at the bottom of the list and
+    // the form it opens renders at the top of the section.
+    scrollToTop(sectionRef);
   }
 
   /** Drop every typed-but-unsaved amount and its complaint. */
@@ -528,32 +540,15 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     }
 
     /*
-      #2933 review: a cell with NO rate is not sent. `membershipTypeRates` is a
-      replace-all payload, so an unsent cell is a cell with no row — which is
-      exactly the state the missing-rates panel above is warning about, and the
-      state the pricing engine refuses on rather than guesses at. Sending a zero
-      for it would silence the warning by charging those guests nothing.
-
-      A cell holding `0` IS sent: a rate somebody typed as 0.00 is real
-      configuration, and the club that means it keeps it.
+      #2933 review, now stated once in `@/lib/season-rate-grid`: a cell with NO
+      rate is not sent, and a cell holding `0` is. `membershipTypeRates` is a
+      replace-all payload, so an unsent cell is a cell with no row — the state
+      the missing-rates panel above is warning about, and the state the pricing
+      engine refuses on rather than guesses at. Sending a zero for it would
+      silence the warning by charging those guests nothing. The copy action
+      below reads that same rule, which is why it moved out of this function.
     */
-    const membershipTypeRates: MembershipTypeRate[] = Object.entries(rates)
-      .filter((entry): entry is [string, number] => entry[1] !== null)
-      .map(([key, price]) => {
-        const [membershipTypeId, tierPart] = key.split("::");
-        return {
-          // `String.prototype.split` always yields at least one element, so
-          // the id half is present for every rate key this component builds.
-          // `must` names that once rather than letting a missing membership
-          // type id ride into a saved rate row (#2801).
-          membershipTypeId: must(
-            membershipTypeId,
-            `hut fees: rate key "${key}" carries no membership type id`,
-          ),
-          ageTier: tierPart === FLAT_KEY ? null : (tierPart as AgeTier),
-          pricePerNightCents: price,
-        };
-      });
+    const membershipTypeRates: MembershipTypeRate[] = rateRowsFromCells(rates);
 
     /*
       `membershipTypeSeasonRateInputSchema` requires at least one rate, so a
@@ -711,6 +706,145 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   }
 
   /*
+    One season's card. Lifted out of the list so the timeline below can render
+    it in two places — in chronological order, and again for a season whose
+    dates this screen could not decode — without a second copy of eighty lines
+    of grid markup drifting away from the first.
+  */
+  function renderSeasonCard(season: Season) {
+    return (
+      <Card key={season.id}>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <CardTitle headingLevel={3} className="text-xl">
+                {season.name}
+              </CardTitle>
+              <Badge variant={season.type === "WINTER" ? "default" : "secondary"}>{season.type}</Badge>
+              <Badge variant={season.active ? "default" : "outline"}>{season.active ? "Active" : "Inactive"}</Badge>
+              {gapsBySeason.has(season.id) && (
+                <Badge variant="destructive">Missing rates</Badge>
+              )}
+            </div>
+            {canEdit && (
+              <div className="flex space-x-2">
+                {/*
+                  #2938 review — every one of these names its SEASON.
+
+                  Four identically-named buttons per card means a club with five
+                  seasons offers a screen reader five entries reading "New season
+                  from this", with nothing to tell them apart; the same holds for
+                  a voice-control user saying the label out loud. Each accessible
+                  name still STARTS with the visible text, so the visible label
+                  remains a valid way to address the control (WCAG 2.5.3).
+                  `ViewOnlyActionButton` spreads its caller's props onto `Button`
+                  first, so `aria-label` reaches the element untouched.
+                */}
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" aria-label={`${season.active ? "Deactivate" : "Activate"} ${season.name}`} onClick={() => handleToggleActive(season)}>
+                  {season.active ? "Deactivate" : "Activate"}
+                </ViewOnlyActionButton>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" aria-label={`Edit ${season.name}`} onClick={() => startEdit(season)}>
+                  Edit
+                </ViewOnlyActionButton>
+                {/* #2938: the label says what it MAKES — a new season — rather
+                    than "Copy", which reads as putting something on a clipboard
+                    and says nothing about what happens to the season clicked. */}
+                <ViewOnlyActionButton
+                  canEdit={canEdit}
+                  describeReason={false}
+                  variant="outline"
+                  size="sm"
+                  aria-label={`New season from this: ${season.name}`}
+                  onClick={() => startCopyFrom(season)}
+                >
+                  New season from this
+                </ViewOnlyActionButton>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" aria-label={`Delete ${season.name}`} onClick={() => handleDelete(season.id)}>
+                  Delete
+                </ViewOnlyActionButton>
+              </div>
+            )}
+          </div>
+          <CardDescription>
+            {formatSeasonEdge(season.startDate)} &mdash;{" "}
+            {formatSeasonEdge(season.endDate)}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <MissingHutRatesNotice
+            gaps={gapsBySeason.get(season.id) ?? []}
+            tierLabel={tierLabel}
+          />
+          {/* #2338: the season's flat whole-lodge rate, shown only
+              when one is set. Absence reads as "priced per guest". */}
+          <p className="mb-4 text-sm">
+            <span className="font-semibold">Flat whole-lodge night rate: </span>
+            {season.flatWholeLodgeNightCents != null ? (
+              <span className="font-mono">
+                {formatCents(season.flatWholeLodgeNightCents)} per night
+              </span>
+            ) : (
+              <span className="text-muted-foreground">
+                Not set (whole-lodge bookings priced per guest)
+              </span>
+            )}
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {rateTypes.map((rt) => (
+              <div key={rt.id}>
+                <h4 className="text-sm font-semibold mb-2">{rt.name}</h4>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Age Group</TableHead>
+                      <TableHead className="text-right">Price/Night</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rt.ageGroupsApply ? (
+                      ageTiers.map((t) => {
+                        const rate = resolvedTierRate(
+                          season.membershipTypeRates,
+                          rt.id,
+                          t.tier,
+                        );
+                        return (
+                          <TableRow key={t.tier}>
+                            <TableCell>{t.label}</TableCell>
+                            <TableCell className="text-right font-mono">
+                              {rate
+                                ? `${formatCents(rate.pricePerNightCents)}${rate.fromFlatRate ? " (flat rate)" : ""}`
+                                : "Not set"}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    ) : (
+                      (() => {
+                        const rate = season.membershipTypeRates.find(
+                          (r) => r.membershipTypeId === rt.id && r.ageTier === null,
+                        );
+                        return (
+                          <TableRow>
+                            <TableCell>All ages (flat)</TableCell>
+                            <TableCell className="text-right font-mono">
+                              {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })()
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  /*
     #2160: the view-only explanation lives here, once, at the top of the section —
     announced on arrival and ahead of the controls it explains — instead of on
     each disabled button below. The `role="status"` wrapper is permanently
@@ -732,7 +866,18 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     <Card ref={sectionRef}>
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
-          <CardTitle>Hut fees</CardTitle>
+          {/*
+            #2938: the page's <h1> is "Fees" (`AdminPageHeader` in
+            `fees-page-client.tsx`), so this section is level 2 and everything
+            this card renders below — the season form, every season card — is
+            level 3. Levels are said at the CALL SITE and never skipped;
+            `docs/ARCHITECTURE.md` -> "Card titles and heading semantics (#2796)"
+            is the convention and is not restated here. Without them the whole
+            schedule is a headingless run of cards with note blocks interleaved,
+            which removes one of the two ways an assistive-technology user
+            navigates it.
+          */}
+          <CardTitle headingLevel={2}>Hut fees</CardTitle>
           <CardDescription>
             Nightly hut rates per lodge, season, membership type, and age tier. Season windows
             (dates/active) are also editable on <Link href="/admin/seasons" className="underline">Seasons</Link>.
@@ -795,10 +940,51 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
             {showForm && canEdit && (
               <Card>
                 <CardHeader>
-                  <CardTitle>{editingId ? "Edit Season" : "New Season"}</CardTitle>
+                  <CardTitle headingLevel={3}>
+                    {editingId ? "Edit Season" : "New Season"}
+                  </CardTitle>
                   <CardDescription>
                     Configure the season period and set rates for each membership type
                   </CardDescription>
+                  {copiedFrom !== null && editingId === null && (
+                    /*
+                      #2938 review — what a copy carried, said where the officer
+                      can act on it.
+
+                      The heading above says "New Season" and nothing else on
+                      the screen says it was pre-filled, from WHICH season, or
+                      what did and did not cross. That matters most for the
+                      officer who cannot see the list: the copy deliberately
+                      carries no name and no dates — which is what stops it
+                      overwriting its source — so without this line there is no
+                      confirmation of which season was copied, and picking the
+                      wrong button produces a season carrying last summer's
+                      rates under a name the officer types themselves.
+
+                      It takes FOCUS rather than a live region. Opening the form
+                      scrolled the section, which moves no focus and speaks
+                      nothing, leaving a keyboard user on the button at the
+                      bottom of the list; a Tab from there lands on the next
+                      season's card, not in the form that just opened. Focusing
+                      this paragraph announces it, puts the caret at the top of
+                      the form, and makes the next Tab reach Season Name — the
+                      one field the officer must fill in. A live region ON TOP
+                      of that would announce the same sentence twice.
+                    */
+                    <p
+                      ref={copyNoticeRef}
+                      tabIndex={-1}
+                      className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground outline-none"
+                    >
+                      Pre-filled from <strong>{copiedFrom}</strong>. Its type,
+                      Active setting, flat whole-lodge rate and every nightly
+                      rate came across exactly as they stand. Its name and dates
+                      did not — give this season its own below. A rate{" "}
+                      {copiedFrom} does not set arrives blank here rather than as
+                      0.00. Saving creates a new season and does not change{" "}
+                      {copiedFrom}.
+                    </p>
+                  )}
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={handleSubmit} className="space-y-6">
@@ -956,12 +1142,16 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                           id="flat-whole-lodge-rate"
                           {...MONEY_INPUT_PROPS}
                           className="pl-7"
-                          value={
-                            flatWholeLodgeDraft ??
-                            (flatWholeLodgeCents != null
-                              ? (flatWholeLodgeCents / 100).toFixed(2)
-                              : "")
-                          }
+                          // The same absence-versus-zero display rule the rate
+                          // boxes above use, from its one home: a draft wins,
+                          // absent cents render as an EMPTY box, and a stored
+                          // zero renders as "0.00" (#2938 review). `??
+                          // undefined` only bridges this field's `string |
+                          // null` draft to the shared `string | undefined`.
+                          value={amountFieldValue(
+                            flatWholeLodgeDraft ?? undefined,
+                            flatWholeLodgeCents,
+                          )}
                           onChange={(e) => handleFlatWholeLodgeChange(e.target.value)}
                           aria-invalid={flatWholeLodgeError ? true : undefined}
                           aria-describedby={describedByFieldHint(
@@ -1021,6 +1211,13 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
               </div>
             )}
 
+            {/*
+              #2938: the nights nothing prices, counted before the officer
+              scrolls, beside the missing-rates count above. A booking is
+              refused either way, so the two belong together.
+            */}
+            <SeasonCoverageGapSummary gaps={coverageGaps} />
+
             {seasons.length === 0 ? (
               <Card>
                 <CardContent className="py-8 text-center text-muted-foreground">
@@ -1029,109 +1226,18 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
               </Card>
             ) : (
               <div className="space-y-4">
-                {seasons.map((season) => (
-                  <Card key={season.id}>
-                    <CardHeader>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-3">
-                          <CardTitle className="text-xl">{season.name}</CardTitle>
-                          <Badge variant={season.type === "WINTER" ? "default" : "secondary"}>{season.type}</Badge>
-                          <Badge variant={season.active ? "default" : "outline"}>{season.active ? "Active" : "Inactive"}</Badge>
-                          {gapsBySeason.has(season.id) && (
-                            <Badge variant="destructive">Missing rates</Badge>
-                          )}
-                        </div>
-                        {canEdit && (
-                          <div className="flex space-x-2">
-                            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
-                              {season.active ? "Deactivate" : "Activate"}
-                            </ViewOnlyActionButton>
-                            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEdit(season)}>
-                              Edit
-                            </ViewOnlyActionButton>
-                            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
-                              Delete
-                            </ViewOnlyActionButton>
-                          </div>
-                        )}
-                      </div>
-                      <CardDescription>
-                        {formatSeasonEdge(season.startDate)} &mdash;{" "}
-                        {formatSeasonEdge(season.endDate)}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <MissingHutRatesNotice
-                        gaps={gapsBySeason.get(season.id) ?? []}
-                        tierLabel={tierLabel}
-                      />
-                      {/* #2338: the season's flat whole-lodge rate, shown only
-                          when one is set. Absence reads as "priced per guest". */}
-                      <p className="mb-4 text-sm">
-                        <span className="font-semibold">Flat whole-lodge night rate: </span>
-                        {season.flatWholeLodgeNightCents != null ? (
-                          <span className="font-mono">
-                            {formatCents(season.flatWholeLodgeNightCents)} per night
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">
-                            Not set (whole-lodge bookings priced per guest)
-                          </span>
-                        )}
-                      </p>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {rateTypes.map((rt) => (
-                          <div key={rt.id}>
-                            <h4 className="text-sm font-semibold mb-2">{rt.name}</h4>
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>Age Group</TableHead>
-                                  <TableHead className="text-right">Price/Night</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {rt.ageGroupsApply ? (
-                                  ageTiers.map((t) => {
-                                    const rate = resolvedTierRate(
-                                      season.membershipTypeRates,
-                                      rt.id,
-                                      t.tier,
-                                    );
-                                    return (
-                                      <TableRow key={t.tier}>
-                                        <TableCell>{t.label}</TableCell>
-                                        <TableCell className="text-right font-mono">
-                                          {rate
-                                            ? `${formatCents(rate.pricePerNightCents)}${rate.fromFlatRate ? " (flat rate)" : ""}`
-                                            : "Not set"}
-                                        </TableCell>
-                                      </TableRow>
-                                    );
-                                  })
-                                ) : (
-                                  (() => {
-                                    const rate = season.membershipTypeRates.find(
-                                      (r) => r.membershipTypeId === rt.id && r.ageTier === null,
-                                    );
-                                    return (
-                                      <TableRow>
-                                        <TableCell>All ages (flat)</TableCell>
-                                        <TableCell className="text-right font-mono">
-                                          {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
-                                        </TableCell>
-                                      </TableRow>
-                                    );
-                                  })()
-                                )}
-                              </TableBody>
-                            </Table>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                {timeline.map((entry) =>
+                  entry.kind === "gap" ? (
+                    <SeasonCoverageGapNotice
+                      key={`gap-${entry.gap.afterSeasonId}-${entry.gap.beforeSeasonId}`}
+                      gap={entry.gap}
+                    />
+                  ) : (
+                    renderSeasonCard(entry.season)
+                  ),
+                )}
+                {/* Dates this screen could not read: listed, never judged. */}
+                {undatedSeasons.map((season) => renderSeasonCard(season))}
               </div>
             )}
           </>
