@@ -320,3 +320,105 @@ describe("availability state: months accumulate and missing is not zero (#2930)"
     );
   });
 });
+
+
+describe("what is on screen belongs to the lodge on screen (#2930 fix round)", () => {
+  it("discards the previous lodge's numbers when the new lodge's fetch is REFUSED", async () => {
+    /*
+      A member who is not eligible to book a lodge gets a refusal on every month,
+      so the "different lodge -> discard" branch inside the response handler
+      never runs. The grid went on rendering lodge A's free-bed counts, heat
+      colours and full/not-full decisions over lodge B's dates — and a night HELD
+      at lodge B could therefore be drawn as free, which is the one thing the
+      hold rules exist to prevent.
+
+      Mutation-verified: deleting the synchronous reset makes this test read
+      "18 of 20 beds free" for lodge-b.
+    */
+    const fetchMock = vi.fn(async (url: string) => {
+      const lodge = new URL(url, "http://localhost").searchParams.get("lodgeId");
+      if (lodge === "lodge-b") {
+        // Refused: not eligible. No response body ever arrives.
+        return { ok: false, json: async () => ({}) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          lodgeCapacity: CAPACITY,
+          availability: { [ARRIVE.iso]: 2 },
+          seasons: {},
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(
+      <BookingCalendar onDateSelect={() => {}} lodgeId="lodge-a" />,
+    );
+    await goForwardMonths(1);
+    await waitFor(() =>
+      expect(dayButton(1, ARRIVE.day).getAttribute("aria-label")).toContain(
+        `${CAPACITY - 2} of ${CAPACITY} beds free`,
+      ),
+    );
+
+    rerender(<BookingCalendar onDateSelect={() => {}} lodgeId="lodge-b" />);
+
+    await waitFor(() => {
+      const label = dayButton(1, ARRIVE.day).getAttribute("aria-label") ?? "";
+      expect(label).toContain("availability not loaded");
+      expect(label).not.toContain("beds free");
+    });
+  });
+
+  it("drops a season label the month no longer carries", async () => {
+    /*
+      Season labels are SPARSE — only a day inside a season gets a key — so
+      merging each month's answer over the accumulated map could add a label but
+      never remove one. A season deactivated or re-dated by an officer kept
+      showing on the member's grid until the lodge changed. The nights do not
+      have this problem: the month endpoint returns a key for every night, so a
+      merge overwrites all of them.
+    */
+    let seasonActive = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          lodgeCapacity: CAPACITY,
+          availability: { [ARRIVE.iso]: 2 },
+          seasons: seasonActive
+            ? { [ARRIVE.iso]: { name: "Winter", type: "WINTER" } }
+            : {},
+        }),
+      })),
+    );
+
+    render(<BookingCalendar onDateSelect={() => {}} />);
+    await goForwardMonths(1);
+    await waitFor(() =>
+      expect(dayButton(1, ARRIVE.day).getAttribute("aria-label")).toContain(
+        "Winter season",
+      ),
+    );
+
+    // The officer deactivates it, and the member pages away and back.
+    seasonActive = false;
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    await waitFor(() => expect(screen.getByText(monthHeading(2))).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /Prev/ }));
+    await waitFor(() => expect(screen.getByText(monthHeading(1))).toBeTruthy());
+
+    await waitFor(() =>
+      expect(dayButton(1, ARRIVE.day).getAttribute("aria-label")).not.toContain(
+        "Winter season",
+      ),
+    );
+    // And the night itself is still loaded: evicting a stale label must not
+    // evict the occupancy the same response carried.
+    expect(dayButton(1, ARRIVE.day).getAttribute("aria-label")).toContain(
+      `${CAPACITY - 2} of ${CAPACITY} beds free`,
+    );
+  });
+});

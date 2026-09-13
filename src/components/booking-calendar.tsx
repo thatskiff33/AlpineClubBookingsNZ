@@ -242,7 +242,27 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
               capacity: loadedCapacity,
             },
       );
-      setSeasons((current) => ({ ...current, ...(data.seasons ?? {}) }));
+      // Seasons accumulate across months like the nights do, but they are SPARSE
+      // — only a day inside a season gets a key — so a blanket merge could never
+      // remove one. A season that was deactivated or re-dated kept its label on
+      // the grid until the lodge changed (#2930 fix round). This month's keys are
+      // dropped before the fresh answer is merged, which makes the refetch
+      // authoritative for the month it asked about and leaves every other month
+      // standing.
+      const monthPrefix = formatCalendarDayOnly(
+        currentMonth.year,
+        currentMonth.month,
+        1,
+      ).slice(0, "yyyy-MM-".length);
+      const loadedSeasons: Record<string, SeasonInfo> =
+        data.seasons && typeof data.seasons === "object" ? data.seasons : {};
+      setSeasons((current) => {
+        const kept: Record<string, SeasonInfo> = {};
+        for (const [date, season] of Object.entries(current)) {
+          if (!date.startsWith(monthPrefix)) kept[date] = season;
+        }
+        return { ...kept, ...loadedSeasons };
+      });
     }
 
     void loadAvailability();
@@ -252,11 +272,24 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     };
   }, [currentMonth.month, currentMonth.year, lodgeId]);
 
-  // Seasons are per lodge too (`lodgeNullTolerantScope`), so the accumulated
-  // labels are dropped the moment the lodge changes rather than surviving into
-  // the next lodge's grid until its own months are paged through again.
+  /**
+   * Everything accumulated belongs to the lodge it was counted for, so changing
+   * lodge discards it SYNCHRONOUSLY (#2930 fix round).
+   *
+   * The load effect above discards on a lodge mismatch too, but only on the
+   * branch where a response arrives. A member who is not eligible to book a
+   * lodge gets a refused fetch on every month, so that branch never ran and the
+   * grid went on rendering the PREVIOUS lodge's free-bed counts, heat colours
+   * and full/not-full decisions against the new lodge's dates — including
+   * drawing a held night at the new lodge as free. That is exactly the
+   * confidently-wrong denominator this file's own comments forbid, and unknown
+   * already has an honest rendering.
+   *
+   * Seasons are per lodge for the same reason (`lodgeNullTolerantScope`).
+   */
   useEffect(() => {
     setSeasons({});
+    setAvailability({ ...EMPTY_AVAILABILITY, lodgeId: lodgeId ?? null });
   }, [lodgeId]);
 
   // The grid's two facts are calendar-day facts, so the kernel answers both and
