@@ -51,15 +51,47 @@
 #
 # CALL IT IMMEDIATELY BEFORE THE BUILD, not at job start, so it also clears
 # whatever earlier steps in the same job left behind.
+#
+# WHY IT IS CONDITIONAL, AND WHERE THE THRESHOLD COMES FROM. Measured on this
+# repository's own runners, 13 Sep 2026, on all three jobs that build an image:
+# `/dev/root 145G ... 84G avail` before reclaim, 108G after. Upstream is on a
+# LARGER runner tier than the fork that reported the failure, and the reclaim
+# itself took 4m41s - so run unconditionally it would cost roughly five minutes
+# per build, six times over, to free 24 GB on a machine with 84 GB spare.
+#
+# So it reclaims only when space is actually short. The default threshold is
+# 40 GB, and that number is evidence rather than taste: the fork's runner had
+# ~14 GB free when it died, and the same build SUCCEEDED there after this
+# reclaim freed ~25 GB - i.e. at roughly 39 GB. 40 GB is therefore just above
+# the lowest level at which a build of this image is known to have completed.
+# Override with RECLAIM_DISK_THRESHOLD_GB if a future image needs more.
+#
+# The skip path SAYS SO in the log, with the numbers. A step that silently did
+# nothing would be indistinguishable from a step that ran and freed nothing,
+# which is the same failure this file's `df` lines exist to prevent.
 
 # No `set -e`: every reclaim below is best-effort by design (see above), and a
 # failure to delete something must not fail the build. `-u` still catches a typo
 # in a variable name, and every optional variable is defaulted explicitly.
 set -uo pipefail
 
+threshold_gb="${RECLAIM_DISK_THRESHOLD_GB:-40}"
+avail_gb="$(df -BG --output=avail / | tail -1 | tr -dc '0-9')"
+
 echo "::group::Disk before reclaim"
 df -h /
+echo "Threshold: ${threshold_gb}G. Available: ${avail_gb}G."
 echo "::endgroup::"
+
+# `-lt` on an empty string would be a syntax error, so an unreadable `df` is
+# treated as "reclaim anyway": failing safe here means doing the work, not
+# skipping it.
+if [ -n "$avail_gb" ] && [ "$avail_gb" -ge "$threshold_gb" ] 2>/dev/null; then
+  echo "Skipping reclaim: ${avail_gb}G available is at or above the ${threshold_gb}G threshold."
+  exit 0
+fi
+
+echo "Reclaiming: ${avail_gb:-unknown}G available is below the ${threshold_gb}G threshold."
 
 # Preinstalled toolchains none of these jobs use. Roughly 25 GB in total on a
 # current `ubuntu-latest` image; see the note above about why none of this is
