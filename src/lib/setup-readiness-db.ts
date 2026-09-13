@@ -16,6 +16,21 @@ import { type SetupDatabaseSnapshot } from "@/lib/setup-readiness";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
+import {
+  ACCOUNT_MAPPING_FALLBACK_KEYS,
+  isCodeExplicitlyConfigured,
+  MAPPING_LABELS,
+  type AccountMappingKey,
+} from "@/lib/xero-account-mapping-keys";
+
+/**
+ * The mapping keys that keep working off another key's mapping while they are
+ * unset (`INV-INT-021`). Straight off the registry, so a second such key is
+ * surfaced in the setup checklist without anybody remembering to add it.
+ */
+const ACCOUNT_MAPPING_KEYS_WITH_FALLBACK = Object.keys(
+  ACCOUNT_MAPPING_FALLBACK_KEYS,
+) as AccountMappingKey[];
 
 /**
  * The sentinel a failed `ClubTimeSettings` read resolves to, so "the read did
@@ -96,6 +111,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     membershipCancellationSettings,
     operationalXeroToken,
     xeroAccountMappingCount,
+    xeroFallbackMappingRows,
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     clubIdentity,
@@ -135,6 +151,16 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
       where: {
         OR: [{ code: { not: null } }, { itemCode: { not: null } }],
       },
+    }),
+    // #2717, `INV-INT-021`: a mapping key with a registered fallback is asking
+    // to be configured while it is unset, and the mappings step above counts
+    // ANY row with a code — so an upgrading club reads "configured" on the very
+    // day a new key ships. Read the rows, not a count, so the step can name the
+    // key. Codes are compared after normalisation, because blank is not a
+    // choice.
+    prisma.xeroAccountMapping.findMany({
+      where: { key: { in: [...ACCOUNT_MAPPING_KEYS_WITH_FALLBACK] } },
+      select: { key: true, code: true },
     }),
     prisma.xeroItemCodeMapping.count({
       where: {
@@ -456,6 +482,12 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     stripeWebhookSecretSet,
     stripeNeedsReentry,
     xeroAccountMappingCount,
+    xeroUnsetFallbackMappingLabels: ACCOUNT_MAPPING_KEYS_WITH_FALLBACK.filter(
+      (key) =>
+        !isCodeExplicitlyConfigured(
+          xeroFallbackMappingRows.find((row) => row.key === key) ?? null,
+        ),
+    ).map((key) => MAPPING_LABELS[key] ?? key),
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     membershipTypeRateGaps,

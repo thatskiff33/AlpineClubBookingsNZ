@@ -14,6 +14,7 @@ import { clubSeasonYear } from "../src/lib/financial-year";
 import { decideClubTimeZoneBackfill } from "../src/lib/config-self-heal-steps";
 import { slugifyLodgeName } from "../src/lib/lodges";
 import { CLUB_CONFIG_LODGE_CAPACITY } from "../src/lib/lodge-capacity";
+import { XERO_ACCOUNT_MAPPING_DEFINITIONS } from "../src/lib/xero-account-mapping-keys";
 import {
   CLUB_THEME_ID,
   DEFAULT_CLUB_THEME_VALUES,
@@ -626,15 +627,13 @@ async function main() {
     console.log("Group discount substitution target seeded");
   }
 
-  // Seed Xero account mappings with current defaults (create-if-missing).
-  const accountMappings = [
-    { key: "hutFeesIncome", code: "200" },
-    { key: "hutFeeRefunds", code: "200" },
-    { key: "stripeBankAccount", code: "606" },
-    { key: "stripeFees", code: null },
-    { key: "subscriptionIncome", code: "203" },
-    { key: "membershipCancellationCredit", code: "203" },
-  ];
+  // Seed Xero account mappings with current defaults (create-if-missing). The
+  // key set and its defaults come from the ONE registry (#2717), so a new
+  // mapping key cannot be added to the resolver, the API and the picker and
+  // then quietly missed here.
+  const accountMappings = XERO_ACCOUNT_MAPPING_DEFINITIONS.map(
+    ({ key, defaultCode }) => ({ key, code: defaultCode }),
+  );
   for (const mapping of accountMappings) {
     await prisma.xeroAccountMapping.upsert({
       where: { key: mapping.key },

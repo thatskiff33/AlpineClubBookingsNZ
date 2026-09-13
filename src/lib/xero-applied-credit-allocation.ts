@@ -19,7 +19,7 @@
  * (remaining = lot.amountCents − Σ its allocation rows). Provider calls run in the
  * outbox worker, outside the ledger transactions.
  */
-import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
+import { CreditNote, LineAmountTypes } from "xero-node";
 import { CreditType, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { lockMemberCreditLedger } from "./member-credit";
@@ -31,7 +31,13 @@ import {
   startXeroSyncOperation,
 } from "@/lib/xero-sync";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
-import { getResolvedAccountMapping } from "./xero-mappings";
+import { getResolvedAccountMappingWithFallback } from "./xero-mappings";
+import {
+  codeMintLine,
+  mintLineItems,
+  planMintGroups,
+  type PlannedMintGroup,
+} from "./xero-applied-credit-mint-accounts";
 import {
   findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
@@ -58,6 +64,16 @@ export interface AppliedCreditLot {
   /** The lot's floating Xero note, or null for a noteless lot (admin adjustment
    * or #1547-restored credit) that must be covered by a freshly minted note. */
   xeroCreditNoteId: string | null;
+  /**
+   * The ledger row's own credit type. REQUIRED (#2717): it is what decides
+   * which Xero mapping a MINTED slice of this lot posts to, and "noteless"
+   * does not answer that — an admin adjustment and #1547-restored cancellation
+   * credit are both noteless and are opposite accounting events. Making it a
+   * required field rather than an optional hint is deliberate: a caller that
+   * forgets it cannot compile, so a new lot loader cannot silently book a
+   * member's own refunded money as a discretionary club expense.
+   */
+  creditType: CreditType;
   /** lot.amountCents − Σ already-allocated slices (>= 0). */
   remainingCents: number;
 }
@@ -70,6 +86,8 @@ export interface PlannedNoteAllocation {
 
 export interface PlannedMintSlice {
   memberCreditId: string;
+  /** Carried from the lot — see `AppliedCreditLot.creditType` (#2717). */
+  creditType: CreditType;
   amountCents: number;
 }
 
@@ -114,7 +132,11 @@ export function planAppliedCreditAllocation(
         amountCents: slice,
       });
     } else {
-      mintSlices.push({ memberCreditId: lot.memberCreditId, amountCents: slice });
+      mintSlices.push({
+        memberCreditId: lot.memberCreditId,
+        creditType: lot.creditType,
+        amountCents: slice,
+      });
     }
     outstanding -= slice;
   }
@@ -160,7 +182,14 @@ async function gatherAppliedCreditLots(
 ): Promise<AppliedCreditLot[]> {
   const positiveLots = await tx.memberCredit.findMany({
     where: { memberId, amountCents: { gt: 0 } },
-    select: { id: true, amountCents: true, xeroCreditNoteId: true },
+    // `type` is read for the mint's account mapping (#2717) — see
+    // `mintSliceMappingKey`. Blue/green runtime-prep: name only what is read.
+    select: {
+      id: true,
+      amountCents: true,
+      type: true,
+      xeroCreditNoteId: true,
+    },
     orderBy: { createdAt: "asc" },
   });
 
@@ -184,6 +213,7 @@ async function gatherAppliedCreditLots(
     }
     lots.push({
       memberCreditId: lot.id,
+      creditType: lot.type,
       xeroCreditNoteId: lot.xeroCreditNoteId,
       remainingCents,
     });
@@ -211,25 +241,50 @@ async function unallocatedAppliedCents(
 // ---------------------------------------------------------------------------
 
 /**
- * Mint a fresh ACCRECCREDIT note for the admin-adjustment / restored-credit
- * remainder that has no existing floating note. Idempotent: reuses an existing
- * `APPLIED_CREDIT_REMAINDER_NOTE` link for the payment. Returns the note id.
+ * Mint a fresh ACCRECCREDIT note for the noteless remainder. Idempotent: reuses
+ * an existing `APPLIED_CREDIT_REMAINDER_NOTE` link for the payment. Returns the
+ * note id.
  *
- * ACCOUNTING-POLICY FLAG (#1620): the minted note uses the shared hutFeeRefunds
- * account mapping. Whether admin-granted / goodwill credit applied to an IB
- * booking should post to a distinct goodwill/write-off account is an open
- * accounting-policy question for the owner (see PR body); it does not change the
- * money math (the note is fully allocated to the invoice immediately).
+ * ACCOUNTING POLICY, SETTLED (#2717; owner, 10 Aug 2026). "Noteless" is not the
+ * accounting question and was never the owner's: the decision is about
+ * DISCRETIONARY GOODWILL — credit a club chose to grant and was never owed —
+ * which is a cost the club bears rather than a reduction of what it billed.
+ * Revenue stays at the billed figure and the goodwill shows as its own expense
+ * line, so a committee can say at year end that it billed one amount and chose
+ * not to collect another. That is an `ADMIN_ADJUSTMENT` lot, and only that, so
+ * only that share posts to `goodwillWriteOffs` (the EXPENSE mapping the admin
+ * picker offers expense accounts for).
+ *
+ * The rest of a noteless remainder is the MEMBER'S OWN MONEY — #1547-restored
+ * cancellation credit whose funding note a prior cancel consumed, a downward
+ * reprice, or an ordinary refund whose note has not arrived from the outbox
+ * worker yet — and it stays on `hutFeeRefunds`, where it went before #2717.
+ * `mintSliceMappingKey` is the one rule; see its docblock for why each type
+ * lands where it does.
+ *
+ * A note therefore carries ONE LINE PER DISTINCT DESTINATION, normally one. The
+ * note's total, its immediate full allocation to the invoice and its
+ * idempotency key are untouched by the split, and the amounts stay in integer
+ * cents. While `goodwillWriteOffs` is unset both shares resolve to the
+ * `hutFeeRefunds` mapping verbatim (`INV-INT-021`) — identical coding, so they
+ * merge back into the single line an upgrading club has always had.
  */
 async function mintAppliedCreditRemainderNote(params: {
   bookingId: string;
   memberId: string;
   paymentId: string;
   amountCents: number;
+  mintGroups: readonly PlannedMintGroup[];
   createdByMemberId?: string;
 }): Promise<string> {
-  const { bookingId, memberId, paymentId, amountCents, createdByMemberId } =
-    params;
+  const {
+    bookingId,
+    memberId,
+    paymentId,
+    amountCents,
+    mintGroups,
+    createdByMemberId,
+  } = params;
 
   const existingLink = await prisma.xeroObjectLink.findFirst({
     where: {
@@ -247,25 +302,18 @@ async function mintAppliedCreditRemainderNote(params: {
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = await findOrCreateXeroContact(memberId, { createdByMemberId });
-  const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
-  const accountCode = refundMapping.code ?? "200";
 
-  const lineItem: LineItem = {
-    description: `Account credit applied to booking ${bookingId.slice(0, 8)}`,
-    quantity: 1,
-    unitAmount: amountCents / 100,
-    taxType: "OUTPUT2",
-  };
-  if (refundMapping.itemCode) {
-    lineItem.itemCode = refundMapping.itemCode;
+  // Resolve each destination once; `mintLineItems` merges shares whose coding is
+  // identical, which is what makes an unset `goodwillWriteOffs` a no-op.
+  const codings = [];
+  for (const group of mintGroups) {
+    const mapping = await getResolvedAccountMappingWithFallback(group.mappingKey);
+    codings.push(codeMintLine(mapping, group.amountCents));
   }
-  if (
-    !refundMapping.itemCode ||
-    accountCode !== "200" ||
-    refundMapping.codeExplicitlyConfigured
-  ) {
-    lineItem.accountCode = accountCode;
-  }
+  const lineItems = mintLineItems(
+    codings,
+    `Account credit applied to booking ${bookingId.slice(0, 8)}`,
+  );
 
   // Club calendar day: the note's date decides its GST period, and the UTC day
   // is still yesterday all New Zealand morning (INV-DATE-019, #2834). Read once,
@@ -277,7 +325,7 @@ async function mintAppliedCreditRemainderNote(params: {
     contact: { contactID: resolvedContactId },
     date: remainderNoteDate,
     lineAmountTypes: LineAmountTypes.Inclusive,
-    lineItems: [lineItem],
+    lineItems,
     reference: `Applied credit - Booking ${bookingId.slice(0, 8)}`,
     status: CreditNote.StatusEnum.AUTHORISED,
   });
@@ -505,6 +553,10 @@ export async function allocateAppliedCreditForBooking(
       memberId: booking.memberId,
       paymentId: payment.id,
       amountCents: plan.mintTotalCents,
+      // Goodwill and a member's own refunded money post to different Xero
+      // mappings (#2717); the groups sum to mintTotalCents, so nothing about
+      // the note's total or its allocation below changes.
+      mintGroups: planMintGroups(plan.mintSlices),
       createdByMemberId,
     });
     const mintedNoteId = remainderNoteId;

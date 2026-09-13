@@ -820,6 +820,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-018` | A Xero contact id has at most one local home |
 | `INV-INT-019` | A Xero link that cannot be made fails loudly and stays replayable |
 | `INV-INT-020` | A school Xero contact transfers once, to its Organisation, on proof |
+| `INV-INT-021` | A new Xero account mapping is type-filtered, falls back, and prompts |
 
 ## Operations
 

@@ -24,17 +24,24 @@ import {
 } from "./hut-fee-grid"
 import { useClubTime } from "@/components/club-time-provider"
 import {
+  ACCOUNT_MAPPING_DEFAULTS,
   ACCOUNT_MAPPING_KEYS,
-  CREDIT_ITEM_MAPPING_KEYS,
-  formatReferenceCacheLabel,
+  accountsForMappingKey,
+  describeMappingAccountFilter,
+  describeMappingUnsetEntries,
+  isCodeExplicitlyConfigured,
   MAPPING_DESCRIPTIONS,
   MAPPING_LABELS,
-  MAPPING_TYPE_FILTER,
+  resolveAccountMappingSource,
+  type AccountMappingKey,
+} from "@/lib/xero-account-mapping-keys"
+import {
+  CREDIT_ITEM_MAPPING_KEYS,
+  formatReferenceCacheLabel,
   SectionCard,
   type ToggleSection,
 } from "./shared"
 import type {
-  AccountMappingKey,
   AccountMappings,
   CreditItemMappingKey,
   EntranceFeeMap,
@@ -322,6 +329,11 @@ export function MappingsPanel({
   )
 }
 
+/** "an expense", "a revenue" — vowel rule only, which is all these nouns need. */
+function anIndefiniteArticle(noun: string): "a" | "an" {
+  return "aeiou".includes(noun[0] ?? "") ? "an" : "a"
+}
+
 function AccountMappingRow({
   mappingKey,
   mappings,
@@ -335,10 +347,43 @@ function AccountMappingRow({
   accounts: XeroAccount[]
   isEditingMappings: boolean
 }) {
-  const typeFilter = MAPPING_TYPE_FILTER[mappingKey]
-  const filtered = accounts.filter((account) => account.type === typeFilter)
+  const accountNoun = describeMappingAccountFilter(mappingKey)
+  // INV-INT-021: the offered accounts come from the registry's filter, so this
+  // picker cannot offer a kind of account the key did not declare.
+  const filtered = accountsForMappingKey(mappingKey, accounts)
   const currentCode = mappings[mappingKey]?.code
-  const matchedAccount = filtered.find((account) => account.code === currentCode)
+  // Looked up in the WHOLE chart, not in the filtered list. A stored code can
+  // arrive from a config-transfer bundle or a direct API call, which the server
+  // does not check against this filter (INV-INT-021), and a code shown as a
+  // bare number with no name — in a picker whose current value is not among its
+  // options — is how such a row goes unnoticed.
+  const matchedAccount = accounts.find((account) => account.code === currentCode)
+  const currentIsOutsideFilter =
+    currentCode != null &&
+    currentCode !== "" &&
+    !filtered.some((account) => account.code === currentCode)
+  // INV-INT-021: while a mapping with a registered fallback is unset, say so
+  // here and name where its entries are going. Both halves come from the server's
+  // own rules — `isCodeExplicitlyConfigured` is the one definition of a club
+  // having CHOSEN a code, and `resolveAccountMappingSource` is the resolver the
+  // runtime path uses — so the notice cannot claim a destination the server
+  // would not pick. It is applied to the STAGED code rather than to a flag the
+  // server sent, which is what makes the notice appear the moment an officer
+  // clears a previously-configured mapping: a server flag would still say
+  // "configured" and they would never be told that saving sends goodwill back
+  // to the revenue account.
+  const { sourceKey, usingFallback } = resolveAccountMappingSource(
+    mappingKey,
+    isCodeExplicitlyConfigured({ code: currentCode ?? null }),
+  )
+  // The RESOLVED fallback code, not the raw row. Where the fallback key has no
+  // code of its own the entries go to the application default, and showing the
+  // empty row would tell a treasurer that two mappings are unconfigured while
+  // naming no account at all.
+  const fallbackCode = usingFallback
+    ? mappings[sourceKey]?.code ?? ACCOUNT_MAPPING_DEFAULTS[sourceKey] ?? null
+    : null
+  const fallbackAccount = accounts.find((account) => account.code === fallbackCode)
   return (
     <div className="grid grid-cols-3 items-start gap-4">
       <div>
@@ -352,12 +397,35 @@ function AccountMappingRow({
             <SelectContent>
               <SelectItem value="__none__"><span className="text-muted-foreground">Not configured (use default)</span></SelectItem>
               {filtered.map((account) => <SelectItem key={account.code} value={account.code}>{account.code} - {account.name}</SelectItem>)}
-              {filtered.length === 0 ? <SelectItem value="__empty__" disabled>No {typeFilter.toLowerCase()} accounts found</SelectItem> : null}
+              {currentIsOutsideFilter ? (
+                <SelectItem value={currentCode!}>
+                  {matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode} (not {anIndefiniteArticle(accountNoun)} {accountNoun} account)
+                </SelectItem>
+              ) : null}
+              {filtered.length === 0 ? <SelectItem value="__empty__" disabled>No {accountNoun} accounts found &mdash; check the chart of accounts is up to date</SelectItem> : null}
             </SelectContent>
           </Select>
         ) : (
           <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm">{matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode || <span className="text-muted-foreground">Not configured (using default)</span>}</p>
         )}
+        {currentIsOutsideFilter ? (
+          <p className="mt-1 text-xs text-amber-700 dark:text-amber-500">
+            This code is not {anIndefiniteArticle(accountNoun)} {accountNoun} account in the connected
+            Xero organisation. It is still what entries post to &mdash; the server does not
+            second-guess a stored code (<code>INV-INT-021</code>) &mdash; so check it, or refresh the
+            chart of accounts if it is simply out of date.
+          </p>
+        ) : null}
+        {usingFallback ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Not set, so {describeMappingUnsetEntries(mappingKey)} keep posting to the{" "}
+            <span className="font-medium">{MAPPING_LABELS[sourceKey]}</span> mapping
+            {fallbackAccount ? ` (${fallbackAccount.code} - ${fallbackAccount.name})` : fallbackCode ? ` (${fallbackCode})` : ""}
+            , exactly as they did before this setting existed. Choosing a{" "}
+            {accountNoun} account here changes where new entries post; entries
+            already in Xero are never reclassified.
+          </p>
+        ) : null}
       </div>
     </div>
   )
