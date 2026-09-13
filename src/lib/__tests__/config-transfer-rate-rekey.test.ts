@@ -33,6 +33,9 @@ function makeTx(captures: {
   // Optional: the FULL create args (not just `data`), so a test can assert the
   // explicit `select` narrowing the implicit RETURNING (#2130 runtime-prep).
   itemCreateArgs?: Record<string, unknown>[];
+  // Optional: the installation's membership types, for a test about a type
+  // whose own row an officer has edited.
+  membershipTypes?: typeof MEMBERSHIP_TYPES;
 }): TxDb {
   const noopDelegate = {
     findMany: async () => [],
@@ -84,7 +87,10 @@ function makeTx(captures: {
         return { id: "i-new" };
       },
     },
-    membershipType: { ...noopDelegate, findMany: async () => MEMBERSHIP_TYPES },
+    membershipType: {
+      ...noopDelegate,
+      findMany: async () => captures.membershipTypes ?? MEMBERSHIP_TYPES,
+    },
   };
   return new Proxy({} as Record<string, unknown>, {
     get: (_t, prop) => specific[prop as string] ?? noopDelegate,
@@ -208,6 +214,62 @@ describe("config-transfer D2 + shape import validation (#1930, E4 review F9)", (
       "main/Winter/SCHOOL_GROUP/",
       "main/Winter/FULL/ADULT",
     ]);
+  });
+
+  it("accepts rows for a key-resolved built-in whose booking behaviour was edited", async () => {
+    /*
+      A bundle exported from an install whose officer had re-answered `FULL`'s
+      booking behaviour must still round-trip. `FULL` is resolved BY KEY for an
+      unplaceable member and for every other-lodge guest, so the source install
+      legitimately holds those rate rows and those hut-fee item codes — and if
+      the importer asked the behaviour question alone it would reject them as
+      "does not carry its own hut rates", silently dropping real pricing on the
+      way in (#2933).
+    */
+    const membershipTypes = MEMBERSHIP_TYPES.map((type) =>
+      type.key === "FULL" ? { ...type, bookingBehavior: "NON_MEMBER_RATE" } : type,
+    );
+    const rateCaptures = {
+      rateCreates: [] as Record<string, unknown>[],
+      itemCreates: [] as Record<string, unknown>[],
+      membershipTypes,
+    };
+    const ratePlan = await lodgeConfigImporter.plan(
+      planCtx(
+        lodgeFiles(
+          "seasonName,membershipTypeKey,ageTier,pricePerNightCents\n" +
+          "Winter,FULL,ADULT,5000\n",
+        ),
+        makeTx(rateCaptures),
+      ) as never,
+    );
+    expect(ratePlan.errors).toEqual([]);
+    expect(
+      ratePlan.items.filter((item) => item.entity === "season-rate"),
+    ).toHaveLength(1);
+
+    const itemCaptures = {
+      rateCreates: [] as Record<string, unknown>[],
+      itemCreates: [] as Record<string, unknown>[],
+      membershipTypes,
+    };
+    const itemPlan = await xeroConfigImporter.plan(
+      planCtx(
+        new Map<string, Uint8Array>([
+          ["xero-config/item-code-mappings.csv", strToU8(
+            "category,membershipTypeKey,ageTier,seasonType,entranceFeeCategory,itemCode,amountCents\n" +
+            "HUT_FEE,FULL,ADULT,WINTER,,HUT-OK,\n",
+          )],
+        ]),
+        makeTx(itemCaptures),
+      ) as never,
+    );
+    expect(itemPlan.errors).toEqual([]);
+    expect(
+      itemPlan.items
+        .filter((item) => item.entity === "xero-item-code-mapping")
+        .map((item) => item.key),
+    ).toEqual(["HUT_FEE/FULL/ADULT/WINTER/-"]);
   });
 
   it("xero HUT_FEE: rejects non-rate-bearing types and shape mismatches as blocking errors", async () => {

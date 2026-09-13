@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
+import { holdsHutRateRows } from "@/lib/membership-type-rate-coverage";
 
 const AGE_TIERS = ["INFANT", "CHILD", "YOUTH", "ADULT"] as const;
 const SEASON_TYPES = ["WINTER", "SUMMER"] as const;
@@ -227,9 +228,10 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    // Referenced membership types must exist and be rate-bearing: every
-    // MEMBER_RATE type plus the built-in NON_MEMBER type (D2 invariant —
-    // NON_MEMBER_RATE/BLOCK_BOOKING types never own hut-fee item codes).
+    // Referenced membership types must exist and must own hut rate rows: every
+    // MEMBER_RATE type plus the two the engine resolves BY KEY (NON_MEMBER,
+    // FULL), whose rows are read whatever the row itself says (D2 invariant,
+    // `INV-MOD-007`; one home, `holdsHutRateRows`, #2933).
     const referencedTypeIds = [
       ...new Set(hutFeeWrites.map((write) => write.key.membershipTypeId)),
     ];
@@ -247,9 +249,7 @@ export async function PUT(request: NextRequest) {
             { status: 400 }
           );
         }
-        const rateBearing =
-          type.bookingBehavior === "MEMBER_RATE" || type.key === "NON_MEMBER";
-        if (!rateBearing) {
+        if (!holdsHutRateRows(type)) {
           return NextResponse.json(
             { error: `Membership type "${type.name}" does not carry its own hut fees, so it cannot have hut fee item codes.` },
             { status: 400 }
