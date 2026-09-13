@@ -55,12 +55,14 @@ import {
 } from "@/lib/audit";
 import { readDeclaredMemberText } from "@/lib/audit-member-disclosure";
 import {
+  AUDIT_TRUNCATED_KEYS_FLAG,
   AUDIT_TRUNCATION_SUFFIX,
   REDUCED_DETAIL_KEYS,
   recoverTruncatedStructuredDetail,
   reduceStructuredDetail,
 } from "@/lib/audit-structured-detail";
 import { getAuditTimelinePage } from "@/lib/audit-query";
+import { buildBookingHistoryItems } from "@/lib/booking-history";
 
 const ACTOR = "officer-1";
 const SUBJECT = "member-1";
@@ -160,14 +162,20 @@ describe("recovering a character-clipped payload (#2704)", () => {
    */
   it.each([
     ["a long free value last", representativePayload(3)],
-    // A NESTED OBJECT LAST, and this variant is not decoration. With the
+    // A NESTED OBJECT LAST: a second shape rather than a second guard. With the
     // trailing field a string, a wrongly-admitted boundary inside a nested value
     // almost always leaves the outer object unclosed, so the parse throws and
     // the sweep sees a null it is entitled to skip. With a nested object last,
-    // closing at an inner comma yields a document that PARSES — and whose
-    // `before` is missing a key nobody said was missing. That is the shape a
-    // sweep has to include to be able to see the class at all; measured, the
-    // first payload alone does not discriminate the `depth === 1` guard.
+    // closing at an inner comma can instead yield a document that PARSES, which
+    // is the only way a sweep could see the class at all.
+    //
+    // IT DOES NOT ACTUALLY DISCRIMINATE THE `depth === 1` GUARD, and an earlier
+    // version of this comment claimed it did — contradicting the measurement in
+    // this file's own header, which is the one that is right. Dropping the guard
+    // was applied to the source and run: it fails exactly one NAMED test and
+    // lowers this sweep's recovery count without ever producing a wrong value,
+    // on this payload included. Kept for the coverage of the shape, not for a
+    // discrimination it does not have.
     [
       "a nested object last",
       JSON.stringify({
@@ -259,11 +267,34 @@ describe("recovering a character-clipped payload (#2704)", () => {
     });
   });
 
-  it("cannot be handed a forged recovery marker by the stored text", () => {
+  /**
+   * THE FORGE THAT ACTUALLY SURVIVES REMOVING THE STRIP, which is the point
+   * (#2704 review). An earlier version of this test forged only the recovery
+   * marker and could not fail: the marker is assigned AFTER the strip, so it
+   * overwrites whatever the stored text claimed whether the strip runs or not.
+   * It is still forged below, so the assertion covers it, but the discriminating
+   * forge is a legacy row minting the REDUCTION's own keys — claiming a release
+   * that had not shipped when the row was written produced it, complete with an
+   * invented list of fields it says were dropped. The sanitiser's own
+   * `_truncatedKeys` flag is the same shape of lie and is stripped with them.
+   */
+  it("cannot be handed forged bookkeeping by the stored text", () => {
+    const forged = [
+      `"${REDUCED_DETAIL_KEYS.recovered}":"not mine"`,
+      `"${REDUCED_DETAIL_KEYS.truncated}":true`,
+      `"${REDUCED_DETAIL_KEYS.originalLength}":99`,
+      `"${REDUCED_DETAIL_KEYS.droppedKeys}":["neverExisted"]`,
+      `"${REDUCED_DETAIL_KEYS.droppedKeyCount}":400`,
+      `"${AUDIT_TRUNCATED_KEYS_FLAG}":true`,
+    ].join(",");
     const recovered = recoverTruncatedStructuredDetail(
-      `{"${REDUCED_DETAIL_KEYS.recovered}":"not mine","bookingId":"bkg_1","x"${AUDIT_TRUNCATION_SUFFIX}`,
+      `{${forged},"bookingId":"bkg_1","x"${AUDIT_TRUNCATION_SUFFIX}`,
     );
-    expect(recovered?.[REDUCED_DETAIL_KEYS.recovered]).toBe(true);
+
+    expect(recovered).toEqual({
+      bookingId: "bkg_1",
+      [REDUCED_DETAIL_KEYS.recovered]: true,
+    });
   });
 });
 
@@ -319,8 +350,113 @@ describe("reducing a payload that will not fit (#2704)", () => {
     expect(parsed.keptId).toBe("k1");
     expect(parsed.droppedObject).toBeUndefined();
     expect(parsed[REDUCED_DETAIL_KEYS.droppedKeys]).toEqual(["droppedObject"]);
+    // Every name fitted, so there is no count: the count is the marker that the
+    // list below it is SHORT, and writing one here would say the opposite.
+    expect(parsed[REDUCED_DETAIL_KEYS.droppedKeyCount]).toBeUndefined();
     // A number is kept whole or not at all — it is small, so it is kept.
     expect(parsed.droppedNumber).toBe(4242);
+  });
+
+  /**
+   * THE BAND IN WHICH A LONGER VALUE KEPT MORE EVIDENCE THAN A SHORTER ONE
+   * (#2704 review), and it is walked rather than sampled because one worked
+   * example inside or outside a band proves nothing about the band.
+   *
+   * Admitting fields in the payload's KEY order meant a leading string whose
+   * cost landed just under the room took all of it, and every field behind it
+   * was dropped. Measured at this column's budget on exactly this payload: an
+   * 865-character note stored ONE field of six — losing the amount, the
+   * booking, the payment and the invoice — while an 870-character note stored
+   * all six, because at 870 the note no longer fitted whole and the short
+   * fields got in ahead of it. The fields that band destroyed are the
+   * identifiers the drill-down links are built from and the money figure the
+   * description leads with, which is precisely the evidence this issue exists
+   * to preserve.
+   */
+  it("keeps every short field whatever the length of the long one in front of them", () => {
+    const identifiers = {
+      amountCents: 1234567,
+      bookingId: "bkg_01HQ8Z9KJ2M4N5P6Q7R8S9T",
+      paymentId: "pay_01HQ8Z9KJ2M4N5P6Q7R8S9T",
+      invoiceId: "inv_01HQ8Z9KJ2M4N5P6Q7R8S9T",
+      memberId: "mem_01HQ8Z9KJ2M4N5P6Q7R8S9T",
+    };
+
+    for (let noteLength = 780; noteLength <= 900; noteLength += 1) {
+      const reduced = reduceStructuredDetail(
+        { note: "N".repeat(noteLength), ...identifiers },
+        1000,
+      );
+      const parsed = JSON.parse(reduced?.text ?? "") as Record<string, unknown>;
+      const kept = Object.fromEntries(
+        Object.keys(identifiers).map((key) => [key, parsed[key]]),
+      );
+
+      expect({ noteLength, ...kept }).toEqual({ noteLength, ...identifiers });
+      // And the long neighbour still contributes what it can, whole or clipped.
+      expect(typeof parsed.note).toBe("string");
+      expect(reduced?.text.length ?? 0).toBeLessThanOrEqual(1000);
+    }
+  });
+
+  /**
+   * THE ONE FIELD THIS MODULE ADDS OBEYED EVERY RULE BUT ITS OWN (#2704
+   * review). The dropped-name list is shed from the end until the block fits,
+   * and nothing said so — a value partially rendered with no marker, which is
+   * the defect the whole module exists to remove.
+   */
+  it("says how many fields it dropped when it cannot name them all", () => {
+    const payload: Record<string, string> = {};
+    for (let index = 0; index < 40; index += 1) {
+      payload[`aVeryDescriptiveFieldNameNumber${String(index).padStart(2, "0")}`] =
+        "v".repeat(400);
+    }
+
+    const reduced = reduceStructuredDetail(payload, 1000);
+    const parsed = JSON.parse(reduced?.text ?? "") as Record<string, unknown>;
+    const named = parsed[REDUCED_DETAIL_KEYS.droppedKeys] as string[];
+
+    // Measured: 38 dropped, one of them named in the stored row.
+    expect(reduced?.droppedKeys).toHaveLength(38);
+    expect(named.length).toBeLessThan(38);
+    expect(parsed[REDUCED_DETAIL_KEYS.droppedKeyCount]).toBe(38);
+    expect(reduced?.text.length ?? 0).toBeLessThanOrEqual(1000);
+    // The caller's own return value never loses a name; only the stored row is
+    // bounded, which is why it is the stored row that has to say so.
+    expect(new Set(reduced?.droppedKeys)).toEqual(
+      new Set(Object.keys(payload).filter((key) => !(key in parsed))),
+    );
+  });
+
+  /**
+   * REDUCED ONCE, NOT TWICE (#2704 review, found by both lenses).
+   *
+   * A payload over BOTH budgets used to be reduced at 24,000 by the metadata
+   * sanitiser and then again at 1,000 here. The second pass strips the reserved
+   * keys and re-mints them from the already-reduced document, so the row
+   * recorded the length of an intermediate nobody ever wrote and the first
+   * pass's dropped names vanished with no count and no marker.
+   */
+  it("records the payload's own length, not an intermediate nobody wrote", () => {
+    const wide: Record<string, string> = {};
+    for (let index = 0; index < 58; index += 1) {
+      wide[`filler${index}`] = "f".repeat(900);
+    }
+    const payload = JSON.stringify(wide);
+    expect(payload.length).toBeGreaterThan(50_000);
+
+    const stored = storedDetails(payload) ?? "";
+    const parsed = JSON.parse(stored) as Record<string, unknown>;
+    const kept = Object.keys(parsed).filter((key) => !key.startsWith("_"));
+    const dropped =
+      (parsed[REDUCED_DETAIL_KEYS.droppedKeyCount] as number | undefined) ??
+      (parsed[REDUCED_DETAIL_KEYS.droppedKeys] as string[]).length;
+
+    // Through the double reduction this read ~23,900 — the 24,000-character
+    // intermediate — for a payload of more than fifty thousand.
+    expect(parsed[REDUCED_DETAIL_KEYS.originalLength]).toBeGreaterThan(50_000);
+    // And every field is accounted for: kept, or counted as dropped.
+    expect(kept.length + dropped).toBe(58);
   });
 
   it("is deterministic, and leaves a payload that fits byte-identical", () => {
@@ -471,5 +607,71 @@ describe("who the recovered detail reaches (#2704 with #2695)", () => {
       "admin",
     );
     expect(entry.description ?? "").not.toContain("Truncated");
+  });
+
+  it("filters the sanitiser's own dropped-keys flag out of the description too", async () => {
+    // `_truncatedKeys` is written by `audit.ts` when a payload carries more than
+    // 75 keys, and it was the one bookkeeping key missing from the reserved set
+    // (#2704 review) — so it read as the officer's sentence, and survived into
+    // a recovered row as though the writer had recorded it.
+    const entry = await timelineEntry(
+      rowOf({
+        details: JSON.stringify({
+          [AUDIT_TRUNCATED_KEYS_FLAG]: true,
+          unremarkable: "x",
+        }),
+      }),
+      "admin",
+    );
+    expect(entry.description ?? "").not.toContain("Truncated");
+    expect(entry.description ?? "").toContain("Unremarkable");
+  });
+
+  /**
+   * THE ONE MEMBER-FACING SURFACE THIS CHANGE'S WRITE SIDE CAN REACH, pinned
+   * rather than reasoned about, because "this cannot widen what a member reads"
+   * is an absolute claim (#2704 review).
+   *
+   * A member's own booking page reads the audit row DIRECTLY
+   * (`booking-detail-history.ts` → `buildBookingHistoryItems`) instead of
+   * through the timeline projection, and it falls back to the WHOLE stored
+   * string when the payload does not parse. That fallback is what the old clip
+   * triggered: the member read a broken JSON blob, payment-intent id and all.
+   * The claim rests on a property of two call sites — `stripe-webhook-service`
+   * and `payments/charge-saved-method` both put the member-readable text in
+   * `errorMessage` — so the property is what is pinned here.
+   */
+  it("narrows, and cannot widen, what a member's own booking page reads", () => {
+    const stored =
+      storedDetails(
+        JSON.stringify({
+          paymentIntentId: "pi_3QabcdEFGHijkLMN0PqrSTUv",
+          amountCents: 24_500,
+          errorMessage: `Your card was declined. ${"Contact your bank for details. ".repeat(40)}`,
+        }),
+      ) ?? "";
+
+    const items = buildBookingHistoryItems({
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      audience: "member",
+      payment: null,
+      modifications: [],
+      refundRequests: [],
+      auditLogs: [
+        {
+          id: "audit-1",
+          action: "booking.payment.failed",
+          details: stored,
+          createdAt: new Date("2026-06-02T00:00:00.000Z"),
+        },
+      ],
+    });
+    const detail = items.find((item) => item.id === "audit-audit-1")?.detail ?? "";
+
+    expect(detail).toContain("Your card was declined.");
+    // Never the raw record, and never a neighbouring field the page does not
+    // render — which is what the unparseable fallback used to hand over.
+    expect(detail).not.toContain("pi_3QabcdEFGHijkLMN0PqrSTUv");
+    expect(detail).not.toContain('{"');
   });
 });
