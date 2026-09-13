@@ -135,10 +135,19 @@ function withoutKey(
   return next;
 }
 
-/** The text an amount box shows: what was typed, else the stored cents. */
-function amountFieldValue(draft: string | undefined, cents: number | undefined): string {
+/**
+ * The text an amount box shows: what was typed, else the stored cents.
+ *
+ * `null` cents means the cell HAS NO RATE and the box is empty; a stored `0`
+ * means somebody set this rate to $0.00 and the box says `0.00`. Those used to
+ * be the same empty box (`cents ? … : ""`), which is what made "never had a
+ * row" indistinguishable from "typed zero" — and an indistinguishable pair is
+ * why the form could not tell which cells it was safe to leave out of a save
+ * (#2933 review).
+ */
+function amountFieldValue(draft: string | undefined, cents: number | null | undefined): string {
   if (draft !== undefined) return draft;
-  return cents ? (cents / 100).toFixed(2) : "";
+  return cents == null ? "" : (cents / 100).toFixed(2);
 }
 
 /**
@@ -174,11 +183,26 @@ function cellsForType(type: RateType, tiers: AgeTierSetting[]): Array<AgeTier | 
   return type.ageGroupsApply ? tiers.map((t) => t.tier) : [FLAT_KEY];
 }
 
-function emptyRates(types: RateType[], tiers: AgeTierSetting[]): Record<string, number> {
-  const rates: Record<string, number> = {};
+/**
+ * Every cell this season could hold a rate for, all of them ABSENT.
+ *
+ * `null`, not `0`. These cells used to be seeded to zero and `handleSubmit`
+ * sent every one of them, so creating or editing a season through this form
+ * wrote a real $0.00 nightly rate for each blank box — and because
+ * `membershipTypeRates` is a replace-all payload, an officer who opened the
+ * season the missing-rates panel had just warned them about and pressed Save
+ * closed the gap by charging those guests nothing. The panel, the badge and the
+ * count all went away, because coverage reads row keys and the rows now existed
+ * (#2933 review).
+ *
+ * The flat whole-lodge field below has always held absence as `null` for the
+ * same reason, with the same comment: never charge nothing for the building.
+ */
+function emptyRates(types: RateType[], tiers: AgeTierSetting[]): Record<string, number | null> {
+  const rates: Record<string, number | null> = {};
   for (const type of types) {
     for (const cell of cellsForType(type, tiers)) {
-      rates[rateKey(type.id, cell)] = 0;
+      rates[rateKey(type.id, cell)] = null;
     }
   }
   return rates;
@@ -188,7 +212,7 @@ function seasonToRatesMap(
   rows: MembershipTypeRate[],
   types: RateType[],
   tiers: AgeTierSetting[],
-): Record<string, number> {
+): Record<string, number | null> {
   const map = emptyRates(types, tiers);
   for (const row of rows) {
     map[rateKey(row.membershipTypeId, row.ageTier ?? FLAT_KEY)] = row.pricePerNightCents;
@@ -280,7 +304,8 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [active, setActive] = useState(true);
-  const [rates, setRates] = useState<Record<string, number>>({});
+  // A cell with no rate is `null`, never `0` — see `emptyRates` (#2933).
+  const [rates, setRates] = useState<Record<string, number | null>>({});
   /*
     #2685: what the admin has actually TYPED into each amount box, and the
     complaint for any box whose text is not a dollar amount.
@@ -502,10 +527,19 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       return;
     }
 
-    setSaving(true);
+    /*
+      #2933 review: a cell with NO rate is not sent. `membershipTypeRates` is a
+      replace-all payload, so an unsent cell is a cell with no row — which is
+      exactly the state the missing-rates panel above is warning about, and the
+      state the pricing engine refuses on rather than guesses at. Sending a zero
+      for it would silence the warning by charging those guests nothing.
 
-    const membershipTypeRates: MembershipTypeRate[] = Object.entries(rates).map(
-      ([key, price]) => {
+      A cell holding `0` IS sent: a rate somebody typed as 0.00 is real
+      configuration, and the club that means it keeps it.
+    */
+    const membershipTypeRates: MembershipTypeRate[] = Object.entries(rates)
+      .filter((entry): entry is [string, number] => entry[1] !== null)
+      .map(([key, price]) => {
         const [membershipTypeId, tierPart] = key.split("::");
         return {
           // `String.prototype.split` always yields at least one element, so
@@ -519,8 +553,22 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
           ageTier: tierPart === FLAT_KEY ? null : (tierPart as AgeTier),
           pricePerNightCents: price,
         };
-      },
-    );
+      });
+
+    /*
+      `membershipTypeSeasonRateInputSchema` requires at least one rate, so a
+      season with every box empty is refused by the API as "Validation failed" —
+      true, and no use to the officer who cleared the last box. Say it here, in
+      this screen's own words, and send nothing. It is a refusal and not a
+      silent zero: the answer to "no rates" is still no rates.
+    */
+    if (membershipTypeRates.length === 0) {
+      raiseError(
+        "Set at least one nightly rate before saving this season.",
+      );
+      setSaving(false);
+      return;
+    }
 
     const payload = {
       name,
@@ -609,13 +657,19 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     became `0`, which saved as "this membership type stays here for free" with
     nothing on screen to say so.
 
-    An empty box is still a deliberate clear, not an error: it means no rate.
+    An empty box is still a deliberate clear, not an error: it means NO RATE,
+    which is `null` and not `0` (#2933 review). Clearing a box used to store
+    zero, so "I do not charge this type on this season" and "I charge them
+    nothing" were the same saved row — and the second is the one that gets
+    written, because a zero-cent row prices every such guest at $0.00 instead of
+    refusing the booking. This is the rule the flat whole-lodge handler below
+    already followed.
   */
   function handleRateChange(key: string, value: string) {
     setRateDrafts((prev) => ({ ...prev, [key]: value }));
 
     if (value.trim() === "") {
-      setRates((prev) => ({ ...prev, [key]: 0 }));
+      setRates((prev) => ({ ...prev, [key]: null }));
       setRateErrors((prev) => withoutKey(prev, key));
       return;
     }

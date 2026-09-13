@@ -19,7 +19,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/components/lodge-select", async (importOriginal) => {
@@ -274,5 +274,171 @@ describe("Hut Fees warns about missing required rates (#2933)", () => {
     ).toBeInTheDocument();
     // Exactly one season carries the badge, and it is not the closed one.
     expect(screen.getAllByText("Missing rates")).toHaveLength(1);
+  });
+});
+
+/**
+ * The screen must not close the gap it just warned about by writing a zero.
+ *
+ * `membershipTypeRates` is a REPLACE-ALL payload, so whatever this form submits
+ * becomes the season's entire rate table. Until #2933's fix round the form held
+ * every cell as a number and seeded the unset ones to `0`, so an officer who
+ * opened the warned-about season and pressed Save — to fix the gap, or to change
+ * the dates, or for no reason at all — wrote a real $0.00 row for every blank
+ * cell. The gap check reads row keys rather than amounts, so the badge, the
+ * count and the panel all disappeared, and every guest of that type was then
+ * charged NOTHING instead of being refused.
+ *
+ * The fix is to hold "no rate" apart from "zero", which is what the flat
+ * whole-lodge field two handlers below has always done. These cases pin both
+ * halves: a blank cell is not submitted, and a zero somebody typed is.
+ */
+describe("Hut Fees never invents a rate on save (#2933)", () => {
+  /** Every season write this form made, newest last. */
+  function savedPayloads(): Array<Record<string, unknown>> {
+    const calls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock
+      .calls as Array<[string, RequestInit | undefined]>;
+    return calls
+      .filter(([, init]) => init?.method === "PUT" || init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>);
+  }
+
+  function ratesOf(payload: Record<string, unknown>) {
+    return payload.membershipTypeRates as Array<{
+      membershipTypeId: string;
+      ageTier: string | null;
+      pricePerNightCents: number;
+    }>;
+  }
+
+  /**
+   * One type's flat rate box in the open editor, by id rather than by label:
+   * the label text repeats once per membership type, and the id carries the
+   * `::` separator the form keys its cells with, which is not a valid CSS
+   * selector.
+   */
+  function flatRateBox(membershipTypeId: string): HTMLInputElement {
+    const box = document.getElementById(`rate-${membershipTypeId}::FLAT`);
+    if (!(box instanceof HTMLInputElement)) {
+      throw new Error(`no flat rate box for ${membershipTypeId}`);
+    }
+    return box;
+  }
+
+  async function openTheSeasonEditor() {
+    await screen.findByText("Winter 2026");
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await screen.findByText("Edit Season");
+  }
+
+  it("leaves a cell the panel warned about unset when the officer saves", async () => {
+    mockApi({
+      seasons: [
+        season({
+          membershipTypeRates: [
+            { membershipTypeId: FULL.id, ageTier: null, pricePerNightCents: 4500 },
+          ],
+        }),
+      ],
+    });
+    renderSection();
+    await screen.findByText("Missing nightly rates");
+
+    await openTheSeasonEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Update Season" }));
+
+    await waitFor(() => expect(savedPayloads()).toHaveLength(1));
+    const rates = ratesOf(savedPayloads()[0]!);
+    // The Non-Member cell was blank and stays absent. A zero-cent row here is
+    // the defect: it prices every non-member guest at nothing and silences the
+    // warning that said they would be refused.
+    expect(rates).toEqual([
+      { membershipTypeId: FULL.id, ageTier: null, pricePerNightCents: 4500 },
+    ]);
+  });
+
+  it("keeps a $0.00 rate somebody deliberately typed", async () => {
+    mockApi({
+      seasons: [
+        season({
+          membershipTypeRates: [
+            { membershipTypeId: FULL.id, ageTier: null, pricePerNightCents: 4500 },
+            {
+              membershipTypeId: NON_MEMBER.id,
+              ageTier: null,
+              pricePerNightCents: 0,
+            },
+          ],
+        }),
+      ],
+    });
+    renderSection();
+    await openTheSeasonEditor();
+
+    // A stored zero is configuration and the box must SHOW it — rendering it as
+    // an empty box is what made "never had a row" and "typed 0.00" the same
+    // state, and it is the reason omitting blanks would have deleted it.
+    expect(
+      flatRateBox(NON_MEMBER.id).value,
+    ).toBe("0.00");
+
+    fireEvent.click(screen.getByRole("button", { name: "Update Season" }));
+    await waitFor(() => expect(savedPayloads()).toHaveLength(1));
+    expect(ratesOf(savedPayloads()[0]!)).toContainEqual({
+      membershipTypeId: NON_MEMBER.id,
+      ageTier: null,
+      pricePerNightCents: 0,
+    });
+  });
+
+  it("clears a rate rather than zeroing it when the officer empties the box", async () => {
+    mockApi({
+      seasons: [
+        season({
+          membershipTypeRates: [
+            { membershipTypeId: FULL.id, ageTier: null, pricePerNightCents: 4500 },
+            {
+              membershipTypeId: NON_MEMBER.id,
+              ageTier: null,
+              pricePerNightCents: 6500,
+            },
+          ],
+        }),
+      ],
+    });
+    renderSection();
+    await openTheSeasonEditor();
+
+    fireEvent.change(flatRateBox(NON_MEMBER.id), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update Season" }));
+
+    await waitFor(() => expect(savedPayloads()).toHaveLength(1));
+    expect(ratesOf(savedPayloads()[0]!)).toEqual([
+      { membershipTypeId: FULL.id, ageTier: null, pricePerNightCents: 4500 },
+    ]);
+  });
+
+  it("refuses a save that would leave the season with no rates at all", async () => {
+    mockApi({
+      seasons: [
+        season({
+          membershipTypeRates: [
+            { membershipTypeId: FULL.id, ageTier: null, pricePerNightCents: 4500 },
+          ],
+        }),
+      ],
+    });
+    renderSection();
+    await openTheSeasonEditor();
+
+    fireEvent.change(flatRateBox(FULL.id), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update Season" }));
+
+    // Said in this screen's own words rather than as the API's "Validation
+    // failed", and nothing is sent.
+    expect(
+      await screen.findByText(/at least one nightly rate/i),
+    ).toBeInTheDocument();
+    expect(savedPayloads()).toEqual([]);
   });
 });
