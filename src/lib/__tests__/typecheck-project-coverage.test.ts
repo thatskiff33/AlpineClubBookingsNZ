@@ -280,25 +280,28 @@ describe("typecheck project coverage", () => {
   // diagnostics, sees `false` one file away in tsconfig.test.json with a
   // fully-reasoned comment beside it, and copies the pattern up. This is what
   // makes that a red test instead of a silent regression.
-  it("keeps noUncheckedIndexedAccess on for application code, and off only where #3363 says", () => {
+  it("keeps noUncheckedIndexedAccess on for application code and the Playwright suite, and off only where #3363 says", () => {
     expect(
       app.options.noUncheckedIndexedAccess,
       "tsconfig.json must keep noUncheckedIndexedAccess ON — it is the entire enforcement of programme #2694, and switching it off only removes diagnostics, so nothing else in this repository would notice",
     ).toBe(true);
 
-    // The other two are off deliberately, not by omission, and #3363 owns the
-    // measurement and the plan. Pinned so that turning either ON is also a
-    // decision somebody makes on purpose: it would put thousands of
+    // #3363 cleared the Playwright project's diagnostics and removed its
+    // override, so it inherits ON; a `false` reappearing there would be the
+    // same invisible revert as in tsconfig.json.
+    expect(
+      e2e.options.noUncheckedIndexedAccess,
+      "tsconfig.e2e.json inherits noUncheckedIndexedAccess ON since #3363; turning it back off only removes diagnostics and nothing else would notice",
+    ).toBe(true);
+
+    // The unit-test project is off deliberately, not by omission, and #3363
+    // owns the measurement and the decision. Pinned so that turning it ON is
+    // also a decision somebody makes on purpose: it would put thousands of
     // pre-existing diagnostics into `npm run typecheck` at once.
-    for (const [name, project] of [
-      ["tsconfig.test.json", test],
-      ["tsconfig.e2e.json", e2e],
-    ] as const) {
-      expect(
-        project.options.noUncheckedIndexedAccess,
-        `${name} opts out of noUncheckedIndexedAccess on purpose (#2802, measured in #3363); change it there and here together`,
-      ).toBe(false);
-    }
+    expect(
+      test.options.noUncheckedIndexedAccess,
+      "tsconfig.test.json opts out of noUncheckedIndexedAccess on purpose (#2802, measured in #3363); change it there and here together",
+    ).toBe(false);
   });
 
   it("puts every supported TypeScript Vitest extension in the test project only", () => {
