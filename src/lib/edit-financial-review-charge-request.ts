@@ -3,6 +3,7 @@ import "server-only";
 import { type PaymentStatus, type Prisma } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
+import { measureCarriedAskShortfall } from "@/lib/edit-financial-review-carried-balance";
 import {
   editReviewChargeRequestCriteria,
   editReviewChargeShareTaskSelect,
@@ -64,6 +65,9 @@ export type EditReviewChargeRequest = {
   paymentTransactionId: string;
   stripePaymentIntentId: string | null;
   amountCents: number;
+  /** #3371 (`INV-PAY-098`): the part of `amountCents` absorbed from a retired
+   * ask; subtract it for this edit's own shares. */
+  carriedAskCents: number;
   status: PaymentStatus;
 };
 
@@ -98,6 +102,7 @@ export async function findEditReviewChargeRequest({
       id: true,
       stripePaymentIntentId: true,
       amountCents: true,
+      carriedAskCents: true,
       status: true,
     },
   });
@@ -106,6 +111,7 @@ export async function findEditReviewChargeRequest({
     paymentTransactionId: row.id,
     stripePaymentIntentId: row.stripePaymentIntentId,
     amountCents: row.amountCents,
+    carriedAskCents: row.carriedAskCents,
     status: row.status,
   };
 }
@@ -563,6 +569,7 @@ export async function recordUncollectedEditReviewChargeShare({
   memberId,
   derivedTotalCents,
   requestedTotalCents,
+  carriedAskCents = 0,
 }: {
   leg: UncollectedEditReviewChargeLeg;
   /**
@@ -595,11 +602,13 @@ export async function recordUncollectedEditReviewChargeShare({
    * state" rather than inventing one.
    */
   requestedTotalCents: number | null;
+  /** #3371: the part of `requestedTotalCents` carried in from another edit's
+   * ask. Defaulted - the Xero leg supersedes nothing, nor did any pre-#3371 row. */
+  carriedAskCents?: number;
 }) {
-  const shortfallCents =
-    requestedTotalCents === null
-      ? null
-      : Math.max(derivedTotalCents - requestedTotalCents, 0);
+  // #3371: net of anything carried in, plus the sentence that says so.
+  const { requestedForThisEditCents, shortfallCents, carriedSentence } =
+    measureCarriedAskShortfall({ derivedTotalCents, requestedTotalCents, carriedAskCents });
   const invoiceNeverRaised = leg === "xero-invoice" && cause === "ask-not-raised";
   const invoiceOwedUnknown =
     leg === "xero-invoice" && cause === "ask-owed-unknown";
@@ -628,6 +637,7 @@ export async function recordUncollectedEditReviewChargeShare({
       bookingModificationId,
       derivedTotalCents,
       requestedTotalCents,
+      carriedAskCents,
     },
     leg === "payment-request"
       ? "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand"
@@ -661,7 +671,7 @@ export async function recordUncollectedEditReviewChargeShare({
                 : `This booking change's Xero invoice could not be raised to the settled total of ${formatCents(derivedTotalCents)}`,
       details:
         leg === "payment-request"
-          ? `An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so ${formatCents(shortfallCents ?? derivedTotalCents)} was not added to it. The reviews settled to ${formatCents(derivedTotalCents)} in total and the member was asked for ${formatCents(requestedTotalCents ?? 0)}. Collect the difference another way and record what was collected.`
+          ? `An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so ${formatCents(shortfallCents ?? derivedTotalCents)} was not added to it. The reviews settled to ${formatCents(derivedTotalCents)} in total and the member was asked for ${formatCents(requestedForThisEditCents ?? 0)} of it.${carriedSentence} Collect the difference another way and record what was collected.`
           : invoiceOwedUnknown
             ? `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The member has been asked for it. Whether a Xero supplementary invoice was owed for the charge was never recorded, so none was raised - and one may not have been needed: if the booking's main Xero invoice had not yet been sent when the change was made, that invoice bills this charge itself, and adding a supplementary invoice on top would bill the member twice. Do not raise one by hand on the strength of this note. Run the booking-vs-Xero repair for this booking, which compares the booking against Xero and will say whether an invoice is actually missing, and record what was done.`
             : invoiceNeverRaised
@@ -676,6 +686,7 @@ export async function recordUncollectedEditReviewChargeShare({
         bookingModificationId,
         derivedTotalCents,
         requestedTotalCents,
+        carriedAskCents,
         uncollectedCents: shortfallCents,
       },
     });

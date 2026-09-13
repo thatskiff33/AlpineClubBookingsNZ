@@ -1325,7 +1325,27 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // reason as the row above, and named in none of the four per-site maps.
     // 474 sites MEASURED with `npm run audit:census` minus 127 pinned;
     // `pinned` is unchanged, so no existing classification moved.
-    ).toEqual({ pinned: 127, unpinned: 347 });
+    // 343 -> 344 (#3354): the AI spend currency-rate writer in
+    // `/api/admin/ai-spend-currency`. Categorised `admin` at the site and named
+    // in none of the four per-site maps, like the two sibling AI settings
+    // writers, so it lands unpinned. 471 sites MEASURED on this branch by
+    // running this suite minus 127 pinned; `pinned` is unchanged, so no
+    // existing classification moved.
+    // 344 -> 345 (#3371): the carried-unpaid-balance record, declared as
+    // `recordCarriedEditReviewChargeBalance` in
+    // `edit-financial-review-carried-balance.ts` and called post-commit from
+    // `edit-financial-review-charge.ts` - not from
+    // `edit-financial-review-charge-request.ts`, which imports only the pure
+    // `measureCarriedAskShortfall`. Categorised `payment` at the site and
+    // named in none of the four per-site maps, so it lands unpinned.
+    // 472 sites MEASURED on this branch with `npm run audit:census` minus 127
+    // pinned; `pinned` is unchanged, so no existing classification moved.
+    // 345/347 -> 349 (sync of `main` into `epic/2725-mad`): the two lanes'
+    // four new writers are disjoint and every one of them is categorised at the
+    // site and named in none of the four per-site maps, so all four land
+    // unpinned and `pinned` does not move. RE-MEASURED on the MERGED tree with
+    // `npm run audit:census`, never by adding the two branches' deltas together.
+    ).toEqual({ pinned: 127, unpinned: 349 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
