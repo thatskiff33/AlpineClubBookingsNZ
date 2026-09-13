@@ -421,7 +421,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // opening the earlier change finds its ask gone with no explanation on it, and
   // this is what answers them. Categorised `payment` at the site, so it does not
   // join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
-  // `npm run audit:census` on this tree (471 sites, 2318 files scanned), not by
+  // `npm run audit:census` on this tree (471 sites, 2319 files scanned), not by
   // adding one to the literal.
   writeSites: 471,
   /**
@@ -521,9 +521,13 @@ export const AUDIT_CENSUS_TOTALS = {
     // not be withdrawn from Stripe. #3214 landed on `main` first, so this
     // branch's own delta was 120 -> 121 before the merge and is 121 -> 122
     // after it - re-measured, never re-derived by arithmetic.
-    // 122 -> 123 (#3371): the carried-unpaid-balance record in
-    // `edit-financial-review-charge-request.ts`, beside the two review-charge
-    // writers it belongs with and awaited the same best-effort way.
+    // 122 -> 123 (#3371): the carried-unpaid-balance record, declared as
+    // `recordCarriedEditReviewChargeBalance` in
+    // `edit-financial-review-carried-balance.ts` and called post-commit from
+    // `edit-financial-review-charge.ts`, awaited the same best-effort way as
+    // the two review-charge writers it belongs with.
+    // NOT `edit-financial-review-charge-request.ts`, which imports only the
+    // pure `measureCarriedAskShortfall` from that module and writes no row.
     createAuditLog: { total: 123, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.

@@ -1294,9 +1294,13 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // land unpinned. 470 sites MEASURED on this branch with
     // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
     // existing classification moved.
-    // 343 -> 344 (#3371): the carried-unpaid-balance record in
-    // `edit-financial-review-charge-request.ts`. Categorised `payment` at the
-    // site and named in none of the four per-site maps, so it lands unpinned.
+    // 343 -> 344 (#3371): the carried-unpaid-balance record, declared as
+    // `recordCarriedEditReviewChargeBalance` in
+    // `edit-financial-review-carried-balance.ts` and called post-commit from
+    // `edit-financial-review-charge.ts` - not from
+    // `edit-financial-review-charge-request.ts`, which imports only the pure
+    // `measureCarriedAskShortfall`. Categorised `payment` at the site and
+    // named in none of the four per-site maps, so it lands unpinned.
     // 471 sites MEASURED on this branch with `npm run audit:census` minus 127
     // pinned; `pinned` is unchanged, so no existing classification moved.
     ).toEqual({ pinned: 127, unpinned: 344 });
