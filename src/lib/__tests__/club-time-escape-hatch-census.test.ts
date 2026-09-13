@@ -604,8 +604,19 @@ const CENSUS_CEILING = {
    * function on the same values — and the group settlement path gained one it
    * should always have made. Re-measured against the branch base, not
    * subtracted from.
+   *
+   * 221 -> 223 (#2936): the officer's booking-request correction adds two
+   * importers, and both are the benign direction this docblock describes. The
+   * correction route imports `isDateOnlyString` and `parseDateOnly` to turn the
+   * posted `yyyy-MM-dd` strings into date-only lodge nights per INV-DATE-001;
+   * the correction form imports `dateOnlyFromIsoString` to seed its two date
+   * inputs from the serialised request. All three are zone-free — none of them
+   * takes a `timeZone` parameter at all — so neither file consults a timezone,
+   * and the correction service itself derives the club's today through
+   * `club-time` rather than through this adapter. Re-measured by RUNNING this
+   * suite on this tree, not by adding two to the literal.
    */
-  dateOnlyImporters: 221,
+  dateOnlyImporters: 223,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

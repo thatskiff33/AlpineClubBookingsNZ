@@ -47,6 +47,7 @@ import {
   BookingRequestContactPicker,
   type OwnerContactChoice,
 } from "@/components/admin/booking-requests/booking-request-contact-picker";
+import { BookingRequestCorrectionEditor } from "@/components/admin/booking-requests/booking-request-correction-editor";
 import {
   MemberWholeLodgeApprovalFields,
   WholeLodgeAvailabilityStrip,
@@ -239,6 +240,10 @@ interface PublicBookingRequestData {
   attendeesConfirmedAt: string | null;
   convertedMemberId: string | null;
   heldBookingId: string | null;
+  // #2936: the row's optimistic-concurrency counter, sent back with a
+  // correction so the server refuses one written over a request an accept or a
+  // decline has moved underneath the officer.
+  version: number;
   acceptedQuoteOptionId: string | null;
   acceptedPriceCents: number | null;
   acceptedAt: string | null;
@@ -1558,6 +1563,46 @@ export function PublicBookingRequestsPanel({
                   {LINKING_EDITOR_STATUSES.has(request.status) ? (
                     canEdit ? (
                     <div className="space-y-3 rounded-md border border-border p-3">
+                      {/* #2936: correcting what was asked for comes BEFORE
+                          pricing it — a price or a quote built from the wrong
+                          dates is the thing this exists to stop. Hidden for a
+                          member whole-lodge request, which has no quote stage,
+                          and for a row whose stored party cannot be read back,
+                          which is repaired or declined rather than guessed at;
+                          the service refuses both anyway. */}
+                      {memberWholeLodge || dataNeedsAttention ? null : (
+                        <BookingRequestCorrectionEditor
+                          request={request}
+                          disabled={isActioning}
+                          onCorrected={(summary) => {
+                            // #2936: the member links are keyed by POSITION in
+                            // the guest list, so a correction that moves the
+                            // party clears them server-side. This card keeps an
+                            // UNSAVED local copy that wins over the server's
+                            // (`activeMemberLinks`) and survives a refetch — so
+                            // without dropping it here, the next "Save quote"
+                            // would post the stale links straight back and put
+                            // a member on somebody else's row. Dropped whatever
+                            // the correction changed: re-linking is cheap, and
+                            // a wrong link is priced, invoiced and emailed.
+                            setMemberLinks((prev) => {
+                              const next = { ...prev };
+                              delete next[request.id];
+                              return next;
+                            });
+                            setLinkConflicts((prev) => ({
+                              ...prev,
+                              [request.id]: [],
+                            }));
+                            // Let the advisory pre-check fire again for whatever
+                            // links the corrected row comes back with.
+                            linkConflictLoadedRef.current.delete(request.id);
+                            toast.success(summary);
+                            void fetchRequests();
+                          }}
+                          onError={showActionError}
+                        />
+                      )}
                       {/* #2263: a member whole-lodge booking is owned by the
                           member's own login account, so there is no non-login
                           contact to map or create, and no hold to release. */}
@@ -1666,11 +1711,20 @@ export function PublicBookingRequestsPanel({
                               </div>
                             ))}
                           </div>
+                          {/* #2936: this said "Decline and ask the school to
+                              resubmit" — the destructive instruction the
+                              correction editor above exists to retire, sitting
+                              directly beneath it and contradicting the guide
+                              added with it. It also left two child-count
+                              controls on one card with very different
+                              consequences and nothing to tell them apart, so
+                              each now says what it changes. */}
                           <p className="text-xs text-muted-foreground">
                             {request.teachers.length} teachers &amp; helpers + children ={" "}
-                            {plannedGuestTotal(request)} total. Teachers &amp; parent helpers
-                            can&apos;t be changed here. Decline and ask the school to resubmit if
-                            those change.
+                            {plannedGuestTotal(request)} total. These boxes change only the
+                            booking you are about to quote or approve, not what the school
+                            asked for. To change the request itself — its dates, its teachers
+                            or its catering — use &ldquo;Correct this request&rdquo; above.
                           </p>
                           {plannedGuestTotal(request) > request.schoolGroupSoftCap ? (
                             <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">

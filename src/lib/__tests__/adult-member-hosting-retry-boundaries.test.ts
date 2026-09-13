@@ -65,6 +65,7 @@ describe("adult-member hosting participant retry responses (#2597)", () => {
     expect(sourceFilesNaming("hostingCoverageParticipantRetryResponse")).toEqual([
       "src/app/api/admin/booking-exception-requests/[id]/route.ts",
       "src/app/api/admin/booking-requests/[id]/approve/route.ts",
+      "src/app/api/admin/booking-requests/[id]/correct/route.ts",
       "src/app/api/admin/booking-requests/[id]/decline/route.ts",
       "src/app/api/admin/booking-requests/[id]/hold/route.ts",
       "src/app/api/admin/booking-requests/[id]/release-hold/route.ts",
