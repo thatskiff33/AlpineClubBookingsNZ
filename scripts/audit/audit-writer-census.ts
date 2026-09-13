@@ -323,10 +323,24 @@ type TopLevelProperty =
  * `exclusivity-request-write-sites.test.ts` reads its own payloads. A spread of
  * anything opaque — an identifier, a call result — still fails closed, because
  * its keys are decided somewhere a reviewer cannot see.
+ *
+ * `unreadableKeys` ALSO covers a property whose NAME the parser cannot resolve,
+ * and that is not hypothetical tidiness (#2695 review). A computed key —
+ * `{ [SOME_CONSTANT]: … }`, or even `{ ["memberDisclosure"]: … }` — and a getter
+ * (`{ get memberDisclosure() { … } }`) both compile, both set the key at run
+ * time, and both used to be DROPPED here: the walk skipped what it could not
+ * name, so the object measured as though the key were absent. For `category`
+ * that reported an omission that is not one; for `memberDisclosure` it was
+ * worse, because `absent` is the safe answer and therefore the unpinned one —
+ * a real member-facing declaration would have measured as neither declared nor
+ * forwarded, i.e. invisible to the census while the reader honoured it and the
+ * member read the text. Anything this walk cannot name now marks the whole
+ * object unreadable, which puts every lookup on it into the pinned `forwarded`
+ * population instead.
  */
 type ResolvedObject = {
   keys: Map<string, TopLevelProperty>;
-  opaqueSpread: boolean;
+  unreadableKeys: boolean;
 };
 
 function spreadLiterals(expression: ts.Expression): ts.ObjectLiteralExpression[] | null {
@@ -349,12 +363,20 @@ function spreadLiterals(expression: ts.Expression): ts.ObjectLiteralExpression[]
 
 function resolveObjectLiteral(literal: ts.ObjectLiteralExpression): ResolvedObject {
   const keys = new Map<string, TopLevelProperty>();
-  let opaqueSpread = false;
+  let unreadableKeys = false;
 
   for (const property of literal.properties) {
     if (ts.isPropertyAssignment(property)) {
       const name = propertyName(property.name);
-      if (name) keys.set(name, { kind: "assignment", value: property.initializer });
+      if (!name) {
+        // A COMPUTED key: `{ [KEY]: … }`, or a numeric one. It sets some key at
+        // run time and the parser cannot say which, so every lookup on this
+        // object has to fail closed rather than report the key it asked for as
+        // absent.
+        unreadableKeys = true;
+        continue;
+      }
+      keys.set(name, { kind: "assignment", value: property.initializer });
       continue;
     }
     if (ts.isShorthandPropertyAssignment(property)) {
@@ -367,12 +389,12 @@ function resolveObjectLiteral(literal: ts.ObjectLiteralExpression): ResolvedObje
     if (ts.isSpreadAssignment(property)) {
       const branches = spreadLiterals(property.expression);
       if (!branches) {
-        opaqueSpread = true;
+        unreadableKeys = true;
         continue;
       }
       for (const branch of branches) {
         const resolved = resolveObjectLiteral(branch);
-        opaqueSpread = opaqueSpread || resolved.opaqueSpread;
+        unreadableKeys = unreadableKeys || resolved.unreadableKeys;
         for (const [name, value] of resolved.keys) {
           // A key that arrives through a spread may or may not be present at
           // runtime, so its VALUE is not readable even when its name is.
@@ -380,10 +402,16 @@ function resolveObjectLiteral(literal: ts.ObjectLiteralExpression): ResolvedObje
           void value;
         }
       }
+      continue;
     }
+    // A getter, a setter, a method, or whatever the language adds next. Each
+    // can name a key this census reads and none of them holds an initialiser
+    // expression to read, so the object is unreadable rather than short of one
+    // property.
+    unreadableKeys = true;
   }
 
-  return { keys, opaqueSpread };
+  return { keys, unreadableKeys };
 }
 
 function findTopLevelProperty(
@@ -504,8 +532,8 @@ function resolveMemberDisclosure(
 ): AuditMemberDisclosureEvidence {
   const property = findTopLevelProperty(event, "memberDisclosure");
   if (!property) {
-    return event.opaqueSpread
-      ? { kind: "forwarded", expression: "opaque spread" }
+    return event.unreadableKeys
+      ? { kind: "forwarded", expression: "unreadable keys" }
       : { kind: "absent" };
   }
   if (property.kind === "opaque") {
@@ -588,7 +616,7 @@ function resolveFreeText(
 ): AuditFreeTextEvidence {
   const property = findTopLevelProperty(event, key);
   if (!property) {
-    return event.opaqueSpread ? { kind: "forwarded" } : { kind: "absent" };
+    return event.unreadableKeys ? { kind: "forwarded" } : { kind: "absent" };
   }
   if (property.kind === "opaque") return { kind: "forwarded" };
 
@@ -614,8 +642,8 @@ function combineFreeText(
 function resolveCategory(event: ResolvedObject): AuditCategoryEvidence {
   const property = findTopLevelProperty(event, "category");
   if (!property) {
-    return event.opaqueSpread
-      ? { kind: "forwarded", expression: "opaque spread" }
+    return event.unreadableKeys
+      ? { kind: "forwarded", expression: "unreadable keys" }
       : { kind: "absent" };
   }
   if (property.kind === "opaque") {
@@ -1373,7 +1401,21 @@ export function describeMemberDisclosure(
       : evidence.kind;
 }
 
-const TSV_HEADER = [
+/**
+ * The column names, IN THE ORDER THE ROW BUILDERS BELOW WRITE THEM.
+ *
+ * A human reads this file to perform "re-census every event currently rendered
+ * to members" (#2695's acceptance criterion), so a header that has drifted from
+ * the rows is worse than no header at all: three columns were added to both row
+ * builders and not to this list, which left the ninth column named
+ * `omitsRetentionInputs` while carrying a disclosure, and three columns with no
+ * name whatever. Nothing tested the renderer, so nothing said so.
+ *
+ * `renderCensusTsv`'s contract test now counts every row's fields against this
+ * list, so the next column added to a builder and not named here fails offline
+ * instead of mislabelling the artifact an acceptance criterion depends on.
+ */
+const TSV_COLUMNS = [
   "id",
   "file",
   "symbol",
@@ -1382,9 +1424,17 @@ const TSV_HEADER = [
   "producesRow",
   "action",
   "category",
+  "memberDisclosure",
+  "detailsText",
+  "summaryText",
   "omitsRetentionInputs",
   "hasEntityIdentifier",
-].join("\t");
+] as const;
+
+/** The column names, for the contract test that counts them against the rows. */
+export const AUDIT_CENSUS_TSV_COLUMNS: readonly string[] = TSV_COLUMNS;
+
+const TSV_HEADER = TSV_COLUMNS.join("\t");
 
 /** A deterministic TSV of the whole census, newest analysis first in id order. */
 export function renderCensusTsv(census: AuditWriterCensus): string {
