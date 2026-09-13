@@ -47,6 +47,15 @@
  * claim has to take — one worked example proves nothing about the offsets the
  * example did not land on.
  *
+ * WHAT THE READ SIDE DELIBERATELY DOES NOT FEED. `audit-query.ts` uses recovery
+ * for the row's metadata panel and its one-line description, and NOT for
+ * `getSummary`, which reaches into a clean parse for two actions'
+ * `recipientEmail`. That asymmetry is unreachable rather than tolerated: both
+ * writers store `{recipientEmail, recipientName, kind, expiryLabel}` — an email,
+ * a name, `"invite"` and `"14 days"` — which cannot approach the limit, so no
+ * row of those two actions is ever clipped. Said here because it is the first
+ * thing a reader notices and the last thing the code explains.
+ *
  * RECOVERY IS A DERIVED VIEW AND NEVER REPLACES THE RECORD. A recovered row
  * keeps its raw stored text on screen alongside the recovered fields, so the
  * officer reads the club's actual history and a convenience rendering of it,
