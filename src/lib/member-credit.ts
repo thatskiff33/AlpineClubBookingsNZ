@@ -11,6 +11,7 @@ import { recordBookingEvent } from "./booking-events";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
 import { applyLocalRefundAllocation } from "./payment-transactions";
 import logger from "@/lib/logger";
+import { formatCents } from "@/lib/utils";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
@@ -893,6 +894,28 @@ export async function reviewAdminAdjustmentRequest(
         memberId: adminId,
         targetId: memberId,
         details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
+        // #2695 — DECLARED MEMBER-FACING, owner decision of 9 August 2026. This
+        // is the ONE audit row whose text a member is meant to keep: it is the
+        // only explanation they ever get for why their credit balance moved, and
+        // both fixes the issue originally sketched would have taken it away.
+        //
+        // It is written out here rather than reusing `details` above, and the
+        // difference is the point. `details` is the officers' record and names
+        // the adjustment request, the credit row and the member who asked for
+        // it — three internal identifiers and a second person, none of which may
+        // cross to the member (`INV-PRIV-012`). What the member gets is the
+        // amount, the direction, and the reason an officer wrote for them.
+        //
+        // `formatAdjustmentAmount` renders raw cents (`+2500 cents`) for an
+        // operator reading the trail; a member reads money (`$25.00`), so the
+        // direction is a word and the amount is unsigned.
+        memberDisclosure: {
+          visibility: "member-facing",
+          text:
+            request.amountCents >= 0
+              ? `Credit of ${formatCents(request.amountCents)} added to your account. Reason: ${request.description}`
+              : `Credit of ${formatCents(Math.abs(request.amountCents))} deducted from your account. Reason: ${request.description}`,
+        },
         ipAddress,
       },
       tx

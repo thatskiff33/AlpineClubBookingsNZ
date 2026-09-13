@@ -607,6 +607,17 @@ export async function POST(
         entityType: "Member",
         entityId: member.id,
         details: body.note ? `Note: ${body.note}` : "No note",
+        // #2695 — DECLARED INTERNAL, owner decision of 9 August 2026. The note
+        // above is what an administrator types into the rejection form, on the
+        // same screen as the "do not notify the member" tick at `:607`. Until
+        // this declaration existed the member read it on their own activity
+        // timeline whenever it was prose rather than JSON, which made that tick
+        // mean the opposite of what the administrator ticking it believes: no
+        // email, and the note published anyway. The member still sees that their
+        // request was declined — this row stays `privacy` and stays on their
+        // timeline — and the reason reaches them through the rejection email, or
+        // deliberately does not.
+        memberDisclosure: { visibility: "internal" },
         ipAddress: ip,
         ...(Object.keys(rejectAuditMetadata).length > 0
           ? { metadata: rejectAuditMetadata }
