@@ -255,7 +255,14 @@ function declarationMatchesACollision(
   );
 }
 
-const UNRESOLVED_ERROR =
+/**
+ * The one sentence a member is told when a collision is unanswered. EXPORTED so
+ * the wizard's own stop and the server's refusal read identically: the wizard
+ * asks the question first, and a member who reached the refusal anyway (a stale
+ * tab, a second device) must not be told something different about the same
+ * state.
+ */
+export const DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE =
   "One of the guests you have typed has the same name as somebody recorded as your dependant. Say whether that is your dependant or a different person with the same name before continuing.";
 
 const INVALID_DECLARATION_ERROR =
@@ -308,7 +315,7 @@ export function checkOwnDependantIdentity(params: {
     return {
       code: DEPENDANT_IDENTITY_UNRESOLVED_CODE,
       status: 409,
-      error: UNRESOLVED_ERROR,
+      error: DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
       collisions: unresolved,
     };
   }

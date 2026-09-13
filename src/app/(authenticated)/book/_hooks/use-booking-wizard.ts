@@ -30,6 +30,15 @@ import {
   MEMBER_GUEST_NOT_ADDABLE_CODE,
 } from "@/lib/booking-guests";
 import { MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE } from "@/lib/member-guest-refusal";
+import {
+  DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
+  DIFFERENT_PERSON_SAME_NAME,
+  findOwnDependantNameCollisions,
+  type BookerDependant,
+  type DependantIdentityDeclaration,
+  type OwnDependantCollision,
+} from "@/lib/booking-dependant-identity";
+import { normalizePersonFullName } from "@/lib/person-name-normalization";
 import type { MemberGuestCandidate } from "@/lib/member-guest-find";
 import { predictMemberGuestConsent } from "../_components/member-guest-preview";
 import {
@@ -405,6 +414,25 @@ export function useBookingWizard() {
   const [bookingMessageTokens, setBookingMessageTokens] =
     useState<BookingMessageClubTokens | null>(null);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  /**
+   * The booker's OWN recorded dependants (#2721), served by `/api/members/family`
+   * from the same loader `POST /api/bookings` re-runs. Empty until it answers,
+   * and empty is the safe direction here: the wizard simply does not ask the
+   * collision question yet, and the server — which never trusts this list —
+   * still refuses the create.
+   */
+  const [ownDependants, setOwnDependants] = useState<BookerDependant[]>([]);
+  /**
+   * "That is a different person who happens to share the name", once per
+   * dependant the booker was asked about.
+   *
+   * Kept keyed by dependant and normalised name, NEVER by a position in the
+   * party: the party is an array the member reorders, deletes from and adds to
+   * while this is on screen, and an index stored here would answer for whoever
+   * later occupied that slot.
+   */
+  const [dependantIdentityDeclarations, setDependantIdentityDeclarations] =
+    useState<DependantIdentityDeclaration[]>([]);
   // Whether `/api/members/family` has answered at all — see the note in the
   // fetch below and in `predictMemberGuestConsent`.
   const [familyMembersLoaded, setFamilyMembersLoaded] = useState(false);
@@ -631,6 +659,9 @@ export function useBookingWizard() {
           // `predictMemberGuestConsent`.
           if (!data) return;
           setFamilyMembers(data.familyMembers || []);
+          setOwnDependants(
+            Array.isArray(data.ownDependants) ? data.ownDependants : [],
+          );
           setFamilyMembersLoaded(true);
         })
         .catch(() => {});
@@ -911,6 +942,140 @@ export function useBookingWizard() {
     ]);
   }
 
+  /* ---- Own-dependant identity (#2721, `INV-GUEST-019`) ------------------
+   *
+   * Every exact collision between a free-text guest name and one of the
+   * booker's own recorded dependants, recomputed from the live party on every
+   * render. Both halves come from `booking-dependant-identity.ts`, which the
+   * create route runs again against authenticated data — so the wizard asks the
+   * question early and the server, not this, decides the answer.
+   */
+  const dependantIdentityCollisions = findOwnDependantNameCollisions(
+    guests,
+    ownDependants,
+  );
+  /**
+   * The declarations that still describe a collision this party actually has.
+   *
+   * Filtering here rather than pruning the state is what keeps the wizard from
+   * ever POSTing a stale declaration: edit a colliding name and the answer stops
+   * being sent, fix the typo back and it applies again, all without the member
+   * being asked the same question twice. The server refuses a stale declaration
+   * regardless — this is the client behaving, not the guarantee.
+   */
+  const liveDependantIdentityDeclarations = dependantIdentityDeclarations.filter(
+    (declaration) =>
+      dependantIdentityCollisions.some(
+        (collision) =>
+          collision.normalizedName === declaration.normalizedName &&
+          collision.dependants.some(
+            (dependant) => dependant.id === declaration.dependantMemberId,
+          ),
+      ),
+  );
+  const declaredDependantMemberIds = liveDependantIdentityDeclarations.map(
+    (declaration) => declaration.dependantMemberId,
+  );
+  /** Collisions with at least one dependant the booker has not answered for. */
+  const unresolvedDependantIdentityCollisions =
+    dependantIdentityCollisions.filter((collision) =>
+      collision.dependants.some(
+        (dependant) => !declaredDependantMemberIds.includes(dependant.id),
+      ),
+    );
+
+  /**
+   * "This is my dependant" — move the colliding free-text row onto the member
+   * path, keeping whatever nights the member had already chosen for it.
+   *
+   * MATCHED BY NORMALISED NAME, NEVER BY INDEX. The button was drawn from a
+   * render of an older party; by the time it is pressed a row may have been
+   * removed above it, and converting "the row that was at position 2" would put
+   * this dependant's member link on somebody else's row. The first free-text row
+   * whose name still collides is the one that changes, and if none does any more
+   * nothing happens at all.
+   *
+   * The invalidation list is the live one from `addFamilyMemberAsGuest` — the
+   * party just changed in exactly the ways that reprice it.
+   */
+  function bookCollidingGuestAsDependant(
+    normalizedName: string,
+    familyMember: FamilyMember,
+  ) {
+    if (familyMember.canBeBooked === false) return;
+    if (guests.some((guest) => guest.memberId === familyMember.id)) return;
+    let converted = false;
+    const next = guests.map((guest) => {
+      if (converted || guest.memberId) return guest;
+      if (
+        normalizePersonFullName(guest.firstName, guest.lastName) !==
+        normalizedName
+      ) {
+        return guest;
+      }
+      converted = true;
+      return {
+        ...guest,
+        firstName: familyMember.firstName,
+        lastName: familyMember.lastName,
+        ageTier: familyMember.ageTier,
+        isMember: true,
+        memberId: familyMember.id,
+      };
+    });
+    if (!converted) return;
+    setGuests(next);
+    setAppliedPromo(null);
+    setPriceQuote(null);
+    setUseCredit(false);
+    setMemberNightConflicts([]);
+  }
+
+  /**
+   * "This is a different person with the same name" — record the one declaration
+   * shape the server accepts, bound to the dependant the collision was with.
+   *
+   * Not a checkbox and not an override: it names a dependant, so it can only
+   * ever resolve the collision the booker was actually shown.
+   */
+  function declareDependantDifferentPerson(
+    collision: OwnDependantCollision,
+    dependantMemberId: string,
+  ) {
+    setDependantIdentityDeclarations((current) =>
+      current.some(
+        (declaration) =>
+          declaration.dependantMemberId === dependantMemberId &&
+          declaration.normalizedName === collision.normalizedName,
+      )
+        ? current
+        : [
+            ...current,
+            {
+              kind: DIFFERENT_PERSON_SAME_NAME,
+              dependantMemberId,
+              normalizedName: collision.normalizedName,
+            },
+          ],
+    );
+  }
+
+  /** Take back a "different person" answer, putting the question back. */
+  function withdrawDependantDeclaration(
+    collision: OwnDependantCollision,
+    dependantMemberId: string,
+  ) {
+    setDependantIdentityDeclarations((current) =>
+      current.filter(
+        (declaration) =>
+          !(
+            declaration.dependantMemberId === dependantMemberId &&
+            declaration.normalizedName === collision.normalizedName
+          ),
+      ),
+    );
+  }
+
   /**
    * Add a member the booker found through MG3's finder (#2308).
    *
@@ -1061,6 +1226,29 @@ export function useBookingWizard() {
       return;
     }
     setMemberGuestAddError(null);
+    if (
+      data.code === "DEPENDANT_IDENTITY_UNRESOLVED" ||
+      data.code === "DEPENDANT_IDENTITY_DECLARATION_INVALID"
+    ) {
+      /*
+        #2721. The wizard asks this question on the guests step and will not
+        leave it unanswered, so reaching here means the client's picture went
+        stale — a tab left open while the dependant was recorded or renamed, a
+        second device, or a request that never came from this wizard at all.
+
+        Send the member back to the step that can actually answer it, and say
+        the server's sentence rather than a second wording of the same state.
+        Nothing is re-derived here from the response body: the collisions are
+        recomputed from `/api/members/family` on that step, which is the same
+        authority the server just used.
+      */
+      setGuestProfileBlocks([]);
+      setMemberNightConflicts([]);
+      setErrorPaymentTargets([]);
+      setStep("guests");
+      setError(typeof data.error === "string" ? data.error : fallback);
+      return;
+    }
     if (data.code === "GUEST_PROFILE_REQUIRED") {
       handleGuestProfileRequired(data as {
         error?: string;
@@ -1250,6 +1438,20 @@ export function useBookingWizard() {
       }
     }
 
+    /*
+      #2721: stop BEFORE the guest split, not after it.
+
+      An own recorded dependant typed as free text is heading for the non-member
+      guest path — provisional, bumpable, invoiced as deferred guest portion —
+      and the whole point of the rule is that they never get there. The block on
+      the guests step renders the choice; this refuses to leave the step while
+      any of it is unanswered, in the SAME words the server would refuse in.
+    */
+    if (unresolvedDependantIdentityCollisions.length > 0) {
+      setError(DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE);
+      return;
+    }
+
     const guestPayload = buildGuestPayload();
     const stayRangeError = validateGuestStayRanges(guestPayload);
     if (stayRangeError) {
@@ -1422,6 +1624,12 @@ export function useBookingWizard() {
         checkOut: checkOutStr,
         lodgeId: scopedLodgeId,
         guests: guestPayload,
+        // #2721: only the declarations that still describe a live collision
+        // travel; see `liveDependantIdentityDeclarations`.
+        dependantIdentityDeclarations:
+          liveDependantIdentityDeclarations.length > 0
+            ? liveDependantIdentityDeclarations
+            : undefined,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
@@ -1549,6 +1757,12 @@ export function useBookingWizard() {
         checkIn: checkInStr,
         checkOut: checkOutStr,
         guests: guestPayload,
+        // #2721: only the declarations that still describe a live collision
+        // travel; see `liveDependantIdentityDeclarations`.
+        dependantIdentityDeclarations:
+          liveDependantIdentityDeclarations.length > 0
+            ? liveDependantIdentityDeclarations
+            : undefined,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
@@ -1628,6 +1842,12 @@ export function useBookingWizard() {
         checkIn: checkInStr,
         checkOut: checkOutStr,
         guests: guestPayload,
+        // #2721: only the declarations that still describe a live collision
+        // travel; see `liveDependantIdentityDeclarations`.
+        dependantIdentityDeclarations:
+          liveDependantIdentityDeclarations.length > 0
+            ? liveDependantIdentityDeclarations
+            : undefined,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
@@ -2037,6 +2257,15 @@ export function useBookingWizard() {
     internetBankingUnavailableReason,
     internetBankingHoldSummary,
     familyMembers,
+    // #2721 — the own-dependant identity question and its two answers. ALL live
+    // collisions, not only the unanswered ones: a collision every dependant has
+    // been answered for still renders, settled, so the member can take an answer
+    // back. The gate on Continue uses the unanswered subset, in the hook.
+    dependantIdentityCollisions,
+    declaredDependantMemberIds,
+    bookCollidingGuestAsDependant,
+    declareDependantDifferentPerson,
+    withdrawDependantDeclaration,
     subscriptionStatus,
     subscriptionLoading,
     availablePromoCodes,
