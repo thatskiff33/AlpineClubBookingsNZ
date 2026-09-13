@@ -96,8 +96,8 @@ import {
   describeBedAllocationDrop,
 } from "./_components/allocation-drag-feedback";
 import { useSyncedScroll } from "./_components/use-synced-scroll";
-import { AllocationPreferencesSection } from "@/components/admin/allocation-preferences-section";
 import { useScopedDashboard } from "./_components/use-scoped-dashboard";
+import { ALLOCATION_PREFERENCES_HREF } from "@/components/admin/allocation-preferences-section";
 import {
   bedAllocationRemovalCategoryForAnchor,
   useBedAllocationRemovalDialog,
@@ -668,19 +668,6 @@ export default function AdminBedAllocationPage() {
    * that clears the focus.
    */
   const focusedBookingOwnsLodge = highlightedBookingId !== "";
-
-  /**
-   * Narrower, and only for COPY: the board is focused on a booking and has not
-   * yet been told which lodge that is. "Told" means the server ANSWERED —
-   * `scopedLodgeId` present, whether an id or an explicit null. A payload
-   * without the field is the deploy-drain case (an old-colour server that
-   * cannot answer), and there the board stays honestly unresolved rather than
-   * guessing.
-   */
-  const awaitingFocusedBookingLodge =
-    focusedBookingOwnsLodge &&
-    lodgeSelection === null &&
-    !(payload !== null && payload.scopedLodgeId !== undefined);
 
   // A refused window has NO columns. Enumerating it anyway would build a column
   // per night for whatever the admin typed — a year, a century — and the board
@@ -1603,43 +1590,42 @@ export default function AdminBedAllocationPage() {
         </Alert>
       ) : null}
 
-      {lodgeId ? (
-        <AllocationPreferencesSection
-          key={lodgeId}
-          lodgeId={lodgeId}
-          canEdit={canEditBookings}
-          renderViewOnlyBanner={false}
-          onSaved={async () => {
-            // Preferences change both the header state and the planner output;
-            // reload the complete dashboard instead of patching one field.
-            await loadDashboard();
-          }}
-        />
-      ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Allocation preferences</CardTitle>
-          </CardHeader>
-          {/*
-            One card, one honest message per scope state (#2701). This used to
-            say "Choose a lodge to continue" in every state, including the three
-            where there is nothing to choose from.
-          */}
-          <CardContent className="text-sm text-muted-foreground">
-            {lodgeScope.kind === "all"
-              ? lodgeScope.reason === "chosen"
-                ? "Preferences are set per lodge. Choose a single lodge to see and edit them."
-                : "Preferences are set per lodge, and your admin role cannot choose one."
-              : lodgeScope.kind === "unavailable"
-                ? "The lodge list could not be loaded, so preferences cannot be shown. Retry above."
-                : lodgeScope.kind === "empty"
-                  ? "This club has no active lodge, so there are no preferences to show."
-                  : lodgesLoading || awaitingFocusedBookingLodge
-                    ? "Loading lodge…"
-                    : "Choose a lodge to continue."}
-          </CardContent>
-        </Card>
-      )}
+      {/*
+        #2937: the editor itself no longer lives on this board. It is
+        configuration an operator revisits rarely, and it now sits beside the
+        rooms and beds it orders guests into, in Bookings Setup -> Rooms & Beds.
+        What stays here is the signpost, because this board is where an officer
+        is standing when they notice the ordering is wrong.
+
+        The link carries the board's own lodge when it has one (ADR-003), so the
+        officer lands on the same lodge they were looking at rather than
+        whichever one Rooms & Beds would have defaulted to. In every other scope
+        state there is no lodge to carry and the plain link is the honest one:
+        this page must never invent a lodge id for a link any more than for a
+        write.
+      */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Allocation preferences</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            Auto allocation and the order the preferences are applied in are set
+            per lodge, in{" "}
+            <Link
+              className="underline"
+              href={
+                lodgeId
+                  ? `${ALLOCATION_PREFERENCES_HREF}?lodgeId=${encodeURIComponent(lodgeId)}`
+                  : ALLOCATION_PREFERENCES_HREF
+              }
+            >
+              Bookings Setup &rarr; Rooms &amp; Beds
+            </Link>
+            . Changes there apply to the next allocation run on this board.
+          </p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

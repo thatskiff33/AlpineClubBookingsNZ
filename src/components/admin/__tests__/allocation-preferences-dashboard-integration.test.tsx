@@ -9,7 +9,14 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AllocationPreferencesSection } from "../allocation-preferences-section";
-import { useScopedDashboard } from "../use-scoped-dashboard";
+// The bed-allocation board's own dashboard hook, used here as a REALISTIC
+// consumer of `onSaved` rather than as live wiring: since #2937 the editor is
+// hosted by Bookings Setup -> Rooms & Beds, which has nothing to recompute
+// after a preferences save. What this file still proves is the callback's
+// contract — a save reports itself as saved even when the consumer's own
+// refresh fails, and the failed refresh says so separately instead of being
+// folded into the save's result.
+import { useScopedDashboard } from "@/app/(admin)/admin/bed-allocation/_components/use-scoped-dashboard";
 
 interface DashboardSummary {
   autoAllocationEnabled: boolean;
@@ -48,7 +55,6 @@ function Harness({
       <AllocationPreferencesSection
         lodgeId="lodge-1"
         canEdit
-        renderViewOnlyBanner={false}
         onSaved={async () => {
           await dashboard.reload();
         }}

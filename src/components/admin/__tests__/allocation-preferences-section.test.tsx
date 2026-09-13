@@ -60,7 +60,6 @@ async function renderLoaded(
   options: {
     canEdit?: boolean;
     onSaved?: (settings: SavedSettings) => Promise<void> | void;
-    renderViewOnlyBanner?: boolean;
   } = {},
 ) {
   const onSaved = options.onSaved ?? vi.fn();
@@ -69,9 +68,6 @@ async function renderLoaded(
       lodgeId="lodge-1"
       canEdit={options.canEdit ?? true}
       onSaved={onSaved}
-      {...(options.renderViewOnlyBanner === undefined
-        ? {}
-        : { renderViewOnlyBanner: options.renderViewOnlyBanner })}
     />,
   );
   await waitFor(() =>
@@ -159,11 +155,26 @@ describe("AllocationPreferencesSection", () => {
     ]);
   });
 
-  it("suppresses its banner when the page vouches and still gates view-only Edit", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => response()));
-    await renderLoaded({ canEdit: false, renderViewOnlyBanner: false });
+  /*
+    #2937: the card used to be able to SUPPRESS its own banner, because the
+    bed-allocation page it sat on already carried one for the bookings area and
+    two banners in a row said the same thing twice. Its host is now Bookings
+    Setup -> Rooms & Beds, which states its view-only position for the rooms
+    inventory rather than for this card, so the section states its own — and the
+    suppression prop is gone rather than left as an option nothing passes.
 
-    expect(screen.queryByText(ADMIN_VIEW_ONLY_SECTION_HEADING)).toBeNull();
+    The rule that makes this load-bearing is `view-only-banner-contract`: both
+    control sites here pass `describeReason={false}`, which is only allowed
+    where a banner renders in the SAME FILE. An unconditional banner is what
+    keeps that true no matter who mounts the card.
+  */
+  it("states its own view-only reason and gates Edit on it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response()));
+    await renderLoaded({ canEdit: false });
+
+    expect(
+      screen.getByText(`${ADMIN_VIEW_ONLY_SECTION_HEADING}.`),
+    ).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: "Edit" }) as HTMLButtonElement)
         .disabled,
@@ -353,7 +364,14 @@ describe("AllocationPreferencesSection", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(authoritative));
+    // The draft carries the lodge it was loaded from (#2937), so `onSaved`
+    // reports WHICH lodge was written as well as what was written.
+    await waitFor(() =>
+      expect(onSaved).toHaveBeenCalledWith({
+        lodgeId: "lodge-1",
+        ...authoritative,
+      }),
+    );
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(
       screen.queryByRole("button", { name: "Cancel" }),
