@@ -317,16 +317,54 @@ export function useBookingWizard() {
   // the whole stay — including nights with beds to spare.
   /**
    * The SELECTED lodge's effective capacity, as `/api/availability/check`
-   * resolved it (#2930, `INV-CAP-003`).
+   * resolved it (#2930, `INV-CAP-003`), or null when nothing has resolved it
+   * for the lodge now selected.
    *
    * Seeded from the club-identity figure, which is the pre-selection FALLBACK
    * only — exactly the arrangement `admin/book` already documents. That figure
    * is one lodge's bed count, so at a capped or secondary lodge it is simply
-   * another lodge's number; every party-size ceiling below is therefore read
-   * from this state, which the date step replaces with the right lodge's value
-   * before the guests step it gates can be reached.
+   * another lodge's number.
+   *
+   * NULL IS "NOT KNOWN FOR THIS LODGE", and it is a real state rather than a
+   * defensive one. Switching lodges clears it, and a REFUSED availability check
+   * clears it too — a member who is not eligible to book a lodge gets a refusal
+   * on every date they pick, and the guests step is reachable through that
+   * branch, so an earlier statement that "the date step replaces this with the
+   * right lodge's value before the guests step can be reached" was not true. A
+   * stale denominator is a confidently wrong number; null is an honestly unknown
+   * one, and `partySizeCeiling` below says what is done about it.
    */
-  const [resolvedLodgeCapacity, setResolvedLodgeCapacity] = useState(lodgeCapacity);
+  const [resolvedLodgeCapacity, setResolvedLodgeCapacity] = useState<number | null>(
+    lodgeCapacity,
+  );
+  /**
+   * The most guests the wizard will let a member ADD, or null for no ceiling at
+   * all (#2930 fix round).
+   *
+   * ZERO IS NOT A CEILING OF ZERO. A lodge with no configured capacity resolves
+   * to 0 beds by design (`getLodgeCapacityStatus`, source `unconfigured_lodge`),
+   * precisely so it can never be overbooked before somebody configures it. Read
+   * as a ceiling, that disabled every add-guest control at zero guests while the
+   * guests step still needs at least one guest to continue — and since #2930 the
+   * calendar shows every night at that lodge as full and INVITES the member onto
+   * the waitlist. Invitation followed by a step with no way forward is the exact
+   * shape this issue exists to remove, re-created at a different lodge. The
+   * previous code divided by the club-identity figure, which is some other
+   * lodge's bed count and always positive, so the state could not arise.
+   *
+   * Null when the capacity is unknown for the same reason: the server is the
+   * authority on capacity (settled contract point 3, "party-size capacity is
+   * advisory rather than a client hard stop"), it refuses, and the refusal is
+   * what offers the waitlist. A positive capacity still caps the party, because
+   * a party larger than the lodge's beds cannot be satisfied even by a promotion.
+   */
+  const partySizeCeiling =
+    resolvedLodgeCapacity !== null && resolvedLodgeCapacity > 0
+      ? resolvedLodgeCapacity
+      : null;
+  /** Is the party already at whatever ceiling applies? False when none does. */
+  const partyAtCeiling = (party: readonly unknown[]) =>
+    partySizeCeiling !== null && party.length >= partySizeCeiling;
   const [availabilityNightDetails, setAvailabilityNightDetails] = useState<AdvisoryNight[]>([]);
   const [perGuestDatesEnabled, setPerGuestDatesEnabled] = useState(false);
   // Issue #713 — per-guest non-contiguous night grid.
@@ -423,6 +461,10 @@ export function useBookingWizard() {
     setUseCredit(false);
     setRequestedRoomId(null);
     setAvailabilityNightDetails([]);
+    // #2930 fix round: the capacity belongs to the lodge it was counted for, so
+    // it is discarded here rather than left standing until a response arrives —
+    // which, for a lodge the member cannot book, never does.
+    setResolvedLodgeCapacity(null);
     setShowWaitlistPrompt(false);
     setActiveWorkPartyEvents([]);
     setSelectedWorkPartyEventId(null);
@@ -622,7 +664,7 @@ export function useBookingWizard() {
     // Only a fresh, bookable, within-capacity party gets self injected. Case (a)
     // (a non-empty party) falls through here having spent the opportunity.
     if (guests.length > 0) return;
-    if (guests.length >= resolvedLodgeCapacity) return;
+    if (partyAtCeiling(guests)) return;
     setGuests([
       {
         firstName: self.firstName,
@@ -636,7 +678,7 @@ export function useBookingWizard() {
     setPriceQuote(null);
     setUseCredit(false);
     setMemberNightConflicts([]);
-  }, [familyMembers, guests, resolvedLodgeCapacity]);
+  }, [familyMembers, guests, partySizeCeiling]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -824,7 +866,7 @@ export function useBookingWizard() {
 
   function addFamilyMemberAsGuest(fm: FamilyMember) {
     if (guests.some((g) => g.memberId === fm.id)) return;
-    if (guests.length >= resolvedLodgeCapacity) return;
+    if (partyAtCeiling(guests)) return;
     if (fm.canBeBooked === false) return;
     const dateStrings = getBookingDateStrings();
     setAppliedPromo(null);
@@ -867,7 +909,7 @@ export function useBookingWizard() {
    */
   function addMemberGuest(candidate: MemberGuestCandidate) {
     if (guests.some((g) => g.memberId === candidate.memberId)) return;
-    if (guests.length >= resolvedLodgeCapacity) return;
+    if (partyAtCeiling(guests)) return;
     const dateStrings = getBookingDateStrings();
     setMemberGuestAddError(null);
     setAppliedPromo(null);
@@ -1116,7 +1158,11 @@ export function useBookingWizard() {
           setResolvedLodgeCapacity(data.lodgeCapacity);
         }
       } else {
+        // Refused or failed: BOTH halves of the subtraction become unknown. The
+        // night details already did; the capacity used to keep whatever was
+        // last resolved, for whichever lodge that was (#2930 fix round).
         setAvailabilityNightDetails([]);
+        setResolvedLodgeCapacity(null);
       }
 
       const policyRes = await fetch(
@@ -1491,6 +1537,24 @@ export function useBookingWizard() {
             ? true
             : undefined,
         lodgeId: scopedLodgeId,
+        /**
+         * #2930 fix round: the credit the member applied on the review step
+         * travels with the waitlist post too.
+         *
+         * THIS POST CAN CREATE A REAL BOOKING. `POST /api/bookings` runs the
+         * ordinary create first and only falls through to
+         * `createWaitlistedBooking` when capacity refuses — `waitlist: true`
+         * says "and if it refuses, waitlist me", not "do not book me". Since
+         * this became the review step's PRIMARY action rather than a fallback
+         * after a 409, the member reaches it with the credit control on screen
+         * and the total reading as covered; if beds freed up between the
+         * advisory and the press, they got the booking without the credit and
+         * owed more than the screen quoted. `handleSubmit` has always sent it.
+         *
+         * On the waitlist arm it is simply ignored: `createWaitlistedBooking`
+         * takes no `applyCreditCents` and a waitlist place moves no money.
+         */
+        applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         waitlist: true,
         alternateLodgeIds:
           waitlistAlternateLodgeIds.length > 0
@@ -1977,8 +2041,9 @@ export function useBookingWizard() {
     wizardSteps,
     activeStepIndex,
     // #2930: the SELECTED lodge's capacity, not the club-identity figure, so
-    // the guests step's party ceiling belongs to the lodge being booked.
-    lodgeCapacity: resolvedLodgeCapacity,
+    // the guests step's party ceiling belongs to the lodge being booked. Null
+    // means no ceiling — see `partySizeCeiling` for the two ways that happens.
+    lodgeCapacity: partySizeCeiling,
     lodges,
     lodgeId,
     lodgeScope,

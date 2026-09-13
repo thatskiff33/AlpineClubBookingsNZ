@@ -52,7 +52,12 @@ export interface GuestData {
 interface GuestFormProps {
   guests: GuestData[];
   onGuestsChange: (guests: GuestData[]) => void;
-  maxGuests: number;
+  /**
+   * The party ceiling, or null for none (#2930). Null is how a lodge with no
+   * configured capacity — 0 beds by design — stops reading as "you may add zero
+   * guests"; the server remains the authority on capacity either way.
+   */
+  maxGuests: number | null;
   bookingCheckIn?: string;
   bookingCheckOut?: string;
   perGuestDatesEnabled?: boolean;
@@ -161,8 +166,10 @@ export function GuestForm({
     onMultiDateRangesEnabledChange?.(enabled);
   }
 
+  const atMaxGuests = maxGuests !== null && guests.length >= maxGuests;
+
   function addGuest() {
-    if (guests.length >= maxGuests) return;
+    if (atMaxGuests) return;
     onGuestsChange([
       ...guests,
       { firstName: "", lastName: "", ageTier: "ADULT", isMember: false },
@@ -189,7 +196,8 @@ export function GuestForm({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-lg font-semibold">
-          Guests ({guests.length}/{maxGuests} max)
+          Guests ({guests.length}
+          {maxGuests !== null ? `/${maxGuests} max` : ""})
         </h3>
         <div className="flex flex-wrap gap-2">
           {headerActions}
@@ -198,7 +206,7 @@ export function GuestForm({
             variant="outline"
             size="sm"
             onClick={addGuest}
-            disabled={guests.length >= maxGuests}
+            disabled={atMaxGuests}
           >
             + Add Non-Member Guest
           </Button>

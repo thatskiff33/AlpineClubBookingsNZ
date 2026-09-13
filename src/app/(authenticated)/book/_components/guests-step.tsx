@@ -32,7 +32,16 @@ interface GuestsStepProps {
   nights: number;
   familyMembers: FamilyMember[];
   guests: GuestData[];
-  lodgeCapacity: number;
+  /**
+   * The most guests this party may hold at the SELECTED lodge, or null for no
+   * ceiling (#2930). Null has two causes and one answer: the lodge has no
+   * configured capacity (0 beds by design, so a ceiling of zero would disable
+   * every control below at zero guests and strand a member the calendar has just
+   * invited onto the waitlist), or the availability check was refused and the
+   * denominator is simply unknown. Either way the server decides — the settled
+   * contract makes party-size capacity advisory rather than a client hard stop.
+   */
+  lodgeCapacity: number | null;
   addFamilyMemberAsGuest: (fm: FamilyMember) => void;
   showInviteFamilyGroupMembersLink: boolean;
   handleGuestsChange: (nextGuests: GuestData[]) => void;
@@ -103,6 +112,8 @@ export function GuestsStep({
   capacityShortNights,
   capacityShortMessage,
 }: GuestsStepProps) {
+  /** Derived once, so the three add-guest affordances cannot disagree. */
+  const atPartyCeiling = lodgeCapacity !== null && guests.length >= lodgeCapacity;
   // The find panel opens INLINE, underneath the Guests heading (owner sign-off
   // answer 3) — never a dialog.
   const [findPanelOpen, setFindPanelOpen] = useState(false);
@@ -261,7 +272,7 @@ export function GuestsStep({
                         type="button"
                         variant={alreadyAdded ? "secondary" : fm.relationship === "self" ? "default" : "outline"}
                         size="sm"
-                        disabled={alreadyAdded || guests.length >= lodgeCapacity || blocked}
+                        disabled={alreadyAdded || atPartyCeiling || blocked}
                         onClick={() => addFamilyMemberAsGuest(fm)}
                       >
                         {alreadyAdded ? "\u2713 " : "+ "}
@@ -321,7 +332,7 @@ export function GuestsStep({
                 type="button"
                 variant={findPanelOpen ? "secondary" : "outline"}
                 size="sm"
-                disabled={guests.length >= lodgeCapacity}
+                disabled={atPartyCeiling}
                 onClick={() => setFindPanelOpen((open) => !open)}
               >
                 + Add Member Guest
@@ -335,7 +346,7 @@ export function GuestsStep({
                 existingMemberIds={guests
                   .map((g) => g.memberId)
                   .filter((id): id is string => Boolean(id))}
-                atCapacity={guests.length >= lodgeCapacity}
+                atCapacity={atPartyCeiling}
                 addError={memberGuestAddError}
                 refusedCandidate={memberGuestAddError ? lastAddAttempt : null}
                 onAdd={(candidate) => {
