@@ -43,6 +43,10 @@ import {
   sendXeroInvoiceEmail,
 } from "@/lib/xero-invoice-email";
 import {
+  readXeroInvoiceEmailInstruction,
+  xeroInvoiceEmailIsWithheldAtCreation,
+} from "@/lib/xero-invoice-email-instruction";
+import {
   describeGuestRateMembershipLabel,
   getAccountMapping,
   getHutFeeItemCodeMap,
@@ -481,6 +485,39 @@ export async function createXeroInvoiceForBooking(
     return null;
   }
 
+  /*
+    #2929 — THE CREATION-TIME DELIVERY INSTRUCTION, read from the operation that
+    asked for this invoice.
+
+    Read HERE, before the first provider round-trip, and deliberately not from a
+    parameter. The officer who chose "create without emailing" did so in a
+    request that ended long before this ran: the create enqueued an operation and
+    returned, a worker picked it up, and an operator retry may be picking it up
+    now, hours later. A flag passed down the call chain is gone by then, and a
+    retry that cannot tell a deliberate withhold from a lost flag sends the
+    member the very email the officer chose to withhold.
+
+    Read from `options.syncOperationId` — the row a dispatcher CLAIMED — rather
+    than from the operation this function may mint for itself a few lines below.
+    A self-minted operation has no enqueuer and therefore no instruction, so
+    reading it back would be asking a row what we just wrote into it.
+
+    NOT wrapped in a try/catch, and that is the fail-closed choice: if this read
+    throws, the whole invoice creation fails before any invoice exists and
+    before any email could be sent. There is no path here on which an unreadable
+    instruction results in a send.
+  */
+  const queuedInvoiceEmailInstruction = options?.syncOperationId
+    ? readXeroInvoiceEmailInstruction(
+        (
+          await prisma.xeroSyncOperation.findUnique({
+            where: { id: options.syncOperationId },
+            select: { invoiceEmailDelivery: true },
+          })
+        )?.invoiceEmailDelivery,
+      )
+    : null;
+
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   // Ensure the invoiced party has a Xero contact.
@@ -840,7 +877,7 @@ export async function createXeroInvoiceForBooking(
     // function, because invoice creation involves several provider round-trips
     // and an admin can flip the switch in between.
     //
-    // The two non-send decisions are kept STRICTLY apart, because conflating
+    // The gate's own two answers are kept STRICTLY apart, because conflating
     // them is money-adjacent (#1705): a deliberate `withhold` is a terminal,
     // intended outcome, while `unknown` means the switch could not be READ. Both
     // fail closed and send nothing, but an `unknown` is a FAULT — it must not be
@@ -885,6 +922,55 @@ export async function createXeroInvoiceForBooking(
       );
     }
 
+    /*
+      #2929 — THE ADMINISTRATOR'S CREATION-TIME CHOICE, and it is a THIRD reason
+      an invoice email does not go out. Kept strictly apart from its two
+      neighbours, because an operator reading a booking has to be able to tell
+      them apart:
+
+        - the per-booking "No emails" SWITCH above is persistent and withholds
+          everything about the booking for as long as it is on (#2258);
+        - THIS is one creation's decision, spent the moment this invoice is
+          raised. It changes nothing else: `Booking.noEmails` is untouched, the
+          Xero contact keeps its address, and every later reminder, change and
+          cancellation email is decided by the ordinary rules;
+        - the ENVIRONMENT-SAFETY suppression below is not the club's decision at
+          all, is not recorded as one, and writes no withheld row (#3035).
+
+      ONE WITHHOLD REASON PER EVENT (`INV-CONFIG-004`): this is asked only when
+      the switch neither withheld nor failed to read, so a silenced booking
+      records the switch's withhold and this one stays silent rather than
+      claiming the same non-send twice.
+
+      Like the switch, it withholds the EMAILING only. The invoice is already
+      raised in Xero and stays AUTHORISED, so an officer can still send it from
+      Xero by hand — which is the only way it ever goes out, because a re-drive
+      short-circuits on `payment.xeroInvoiceId` and the per-invoice idempotency
+      key would no-op anyway.
+    */
+    const invoiceEmailWithheldByCreationChoice =
+      shouldEmailInvoice &&
+      !invoiceEmailWithheld &&
+      !invoiceEmailGateUnreadable &&
+      xeroInvoiceEmailIsWithheldAtCreation(queuedInvoiceEmailInstruction);
+
+    if (invoiceEmailWithheldByCreationChoice) {
+      await recordWithheldBookingEmail({
+        bookingId,
+        templateName: XERO_BOOKING_INVOICE_EMAIL_TEMPLATE,
+        subject: `Xero invoice ${
+          createdInvoice.invoiceNumber ?? createdInvoice.invoiceID ?? "(unnumbered)"
+        } for your Internet Banking booking payment`,
+        to: bookingOwner(booking).member.email,
+        detail:
+          "Withheld: the administrator who created this booking chose not to email the member. The invoice exists in Xero but was not emailed.",
+      });
+      logger.warn(
+        { bookingId, invoiceId: createdInvoice.invoiceID },
+        "Skipped the Xero invoice email because the booking was created with \"do not email the member\"",
+      );
+    }
+
     if (invoiceEmailGateUnreadable) {
       // NOT a withhold: no SKIPPED_NO_EMAILS row is written, because the switch
       // may well be off and the member is simply owed their invoice email.
@@ -919,7 +1005,10 @@ export async function createXeroInvoiceForBooking(
       by hand.
     */
     const invoiceEmailPolicy =
-      shouldEmailInvoice && !invoiceEmailWithheld && !invoiceEmailGateUnreadable
+      shouldEmailInvoice &&
+      !invoiceEmailWithheld &&
+      !invoiceEmailGateUnreadable &&
+      !invoiceEmailWithheldByCreationChoice
         ? await resolveXeroInvoiceEmailPolicy()
         : null;
     const invoiceEmailWithheldForEnvironment =
@@ -1008,12 +1097,18 @@ export async function createXeroInvoiceForBooking(
         invoiceEmailSkipped:
           !shouldEmailInvoice ||
           invoiceEmailWithheld ||
+          invoiceEmailWithheldByCreationChoice ||
           invoiceEmailGateUnreadable ||
           invoiceEmailPolicy?.kind === "withhold",
         // #2258: a DELIBERATE withhold only. An unreadable switch is a fault and
         // is reported through invoiceEmailError above (status PARTIAL), never
         // here — the two must stay distinguishable to an operator.
         invoiceEmailWithheldByNoEmails: invoiceEmailWithheld,
+        // #2929: the administrator's creation-time "do not email the member"
+        // choice, which is the club's own decision like the switch above but
+        // spent on this one invoice creation. Reported as its own key so an
+        // operator is never told the persistent switch is on when it is not.
+        invoiceEmailWithheldByCreationChoice,
         // #3035: the environment-safety suppression, which is a THIRD reason and
         // must not be read as either of the two above. A confirmed copy did not
         // email the invoice; nothing failed and nobody asked for silence.

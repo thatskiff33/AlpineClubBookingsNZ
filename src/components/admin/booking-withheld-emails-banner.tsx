@@ -20,6 +20,12 @@
  *    never told. This is the case a "show it only while the switch is on"
  *    banner would quietly drop.
  *
+ * THE SECOND SHAPE NO LONGER MEANS "THE SWITCH WAS ON EARLIER" (#2929). A
+ * creation-time "do not email the member" choice withholds that booking's Xero
+ * invoice email on a booking whose switch has never been on, so this banner's
+ * wording says the messages were deliberately withheld and stops short of
+ * naming a cause it cannot know. What withheld each one is on its own row.
+ *
  * Presentational and admin-only: the booking page mounts it inside its
  * admin-tools gate and never computes the withheld list for a member. Nothing
  * here is safe to show a member — a member must never learn the switch exists.
@@ -47,12 +53,16 @@ export interface WithheldEmailGroupView {
 }
 
 /**
- * The per-kind remedy line. Only two kinds need one, and they need DIFFERENT
+ * The per-kind remedy line. Three kinds need one and all three need DIFFERENT
  * ones — treating them alike is what made the first version of this banner
  * tell an officer to clear the switch and wait for a chore link that nothing
- * regenerates.
+ * regenerates, and it would tell the same officer to "relay" an invoice they
+ * cannot reproduce (#2929).
  */
 function remedyNote(remedy: WithheldEmailRemedy): string | null {
+  if (remedy === "resend-from-xero") {
+    return "The invoice exists in Xero and is still owed — only the email was withheld. Nothing here re-sends it and there is nothing to forward: send that one invoice from Xero.";
+  }
   if (remedy === "auto-regenerates") {
     return "Nothing was created to forward — clear the switch and it is re-sent automatically.";
   }
@@ -113,7 +123,7 @@ export async function BookingWithheldEmailsBanner({
         <p>
           {noEmails
             ? "Nothing is being sent to the member about this booking — confirmations, changes, payments, reminders, arrival information, cancellations, chore rosters and the Xero invoice email are all withheld."
-            : "Emails are on again, but the messages below were withheld while the switch was on and are not re-sent."}{" "}
+            : "Emails are on for this booking, but the messages below were deliberately withheld and are not re-sent."}{" "}
           <span className="font-medium">
             Telling the member about these is your responsibility, not the
             system&apos;s.

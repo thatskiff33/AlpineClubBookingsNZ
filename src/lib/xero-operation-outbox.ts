@@ -50,6 +50,7 @@ import {
   voidXeroInvoiceForCancelledGroupSettlement,
 } from "@/lib/xero-group-settlement-invoices";
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
+import type { XeroInvoiceEmailInstruction } from "@/lib/xero-invoice-email-instruction";
 import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,
@@ -326,7 +327,24 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
 
 export async function enqueueXeroBookingInvoiceOperation(
   bookingId: string,
-  options?: { createdByMemberId?: string }
+  options?: {
+    createdByMemberId?: string;
+    /**
+     * The creation-time Xero-invoice-email delivery instruction (#2929).
+     *
+     * Passed ONLY by a booking create that had an on-behalf "email the member?"
+     * choice to make. Every other enqueuer here -- confirm-draft,
+     * waitlist-confirm, charge-saved-method, switch-to-internet-banking,
+     * confirm-pending-guests, cron-confirm-pending, group settlement, the
+     * school-booking-request conversion, the booking-edit settlement, the admin
+     * payment-invoice service, the invoice queue and the admin
+     * missing-invoices / force-sync / repair surfaces -- omits it, records NULL,
+     * and behaves exactly as it did before. It is recorded on the operation row
+     * rather than carried in the call because the invoice is raised by a worker
+     * later, and possibly by an operator retry later still.
+     */
+    invoiceEmailDelivery?: XeroInvoiceEmailInstruction;
+  }
 ) {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -459,6 +477,7 @@ export async function enqueueXeroBookingInvoiceOperation(
       queueType: XERO_OUTBOX_BOOKING_INVOICE_TYPE,
       bookingId,
     },
+    invoiceEmailDelivery: options?.invoiceEmailDelivery ?? null,
     createdByMemberId: options?.createdByMemberId ?? null,
   });
 
