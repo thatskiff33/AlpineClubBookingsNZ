@@ -102,14 +102,25 @@ year in one go).
    the saved snapshot. A successful save reloads the board because its header
    mode and suggestions may both have changed.
 
-   **If a save is refused, the card says why** and keeps your staged changes in
-   edit mode, so you can correct the problem and click **Save** again. It
-   repeats the club system's own explanation — for example that the lodge is no
-   longer active. Two refusals have their own wording: an admin role that can
-   view bookings but not change them is told its role cannot make changes, and a
-   club with the Bed Allocation module switched off is told the module is off.
-   If the reply cannot be read at all, the card falls back to "Failed to save
-   allocation preferences" rather than showing raw technical output.
+   **If a save is refused, the card says why**, and your staged changes stay in
+   edit mode so you can correct the problem and click **Save** again. It repeats
+   the club system's own explanation — for example that the lodge is no longer
+   active. Four refusals have their own wording:
+
+   - An admin role that can view bookings but not change them is told its role
+     cannot make changes. On a failed **load**, a role that cannot even view
+     bookings is told that instead.
+   - If your sign-in has expired while this page sat open, the card says so and
+     tells you to sign in again — in another tab is fine — rather than blaming
+     anything about the club's settings.
+   - If somebody switches **Bed Allocation** off while you have the board open,
+     the card says the module is switched off and that someone who can manage
+     Feature modules can turn it on. This is the only way you can see that
+     message: the whole Bed Allocation area is hidden while the module is off,
+     so with it already off this page is simply not there to open.
+   - If the reply cannot be read at all — a gateway error page rather than an
+     answer from the club system — the card falls back to "Failed to save
+     allocation preferences" rather than showing raw technical output.
 5. In the separate **Board drag controls** card, optionally tick
    **Single-night drag mode**. This remains browser-only and is not saved: when
    on, dragging a guest allocates only the night you drop on; when off, dropping

@@ -16,14 +16,19 @@
   The second fault is why nobody could tell. The server explains every refusal
   in a plain sentence, and the screen was throwing that sentence away and showing
   the same generic failure for all of them. It now shows what the server said —
-  "Lodge not found or not active", for instance — while keeping the two cases
-  that need their own wording: an administrator whose role can view bookings but
-  not change them is told exactly that, and a club that has bed allocation
-  switched off is told the module is off rather than being shown a bare "Not
-  found". If the reply is unreadable — a gateway error page rather than an answer
-  from the club system — the screen falls back to its own wording instead of
-  putting raw technical output on the page, and it never shows the internal
-  detail that sits alongside the explanation.
+  "Lodge not found or not active", for instance — while giving the refusals that
+  need their own wording their own wording. An administrator whose role can view
+  bookings but not change them is told exactly that. An administrator whose
+  sign-in expired while the page sat open is told to sign in again, rather than
+  being told, as an earlier draft of this fix would have, to go and switch on a
+  module — the club system answers those two cases identically on purpose, so
+  the screen now asks which one it is instead of guessing from the reply's
+  number. And if bed allocation really is switched off underneath an open board,
+  the card says so and says that someone who can manage Feature modules can turn
+  it on, rather than telling a bookings officer to do something their role
+  cannot do.
 
-  A failed save now leaves the changes staged and the screen still in edit mode,
-  so the fix is one click away rather than a re-entry.
+  If the reply is unreadable — a gateway error page rather than an answer from
+  the club system — the screen falls back to its own wording instead of putting
+  raw technical output on the page, and it never shows the internal detail that
+  sits alongside the explanation.
