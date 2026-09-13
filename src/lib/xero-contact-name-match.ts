@@ -1,6 +1,6 @@
 /**
  * THE one rule by which a Xero contact NAME is compared with anything
- * (`INV-SSOT`, `INV-INT-018`).
+ * (`INV-SSOT`, `INV-INT-020`).
  *
  * It lives in a module of its own, with no imports, for one reason: the rule is
  * needed both by the Xero client code that SEARCHES for a contact by name and

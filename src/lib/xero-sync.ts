@@ -51,9 +51,10 @@ export interface XeroObjectLinkInput {
    * reconcile is the original case because it writes half of a shape somebody
    * else wrote.
    *
-   * The exception is OUTBOUND and deliberate (#3367):
-   * `upsertOrganisationContactLink` sets this because a school's contact link
-   * carries two facts written at two different times — `linkedVia`, recorded
+   * The exception is OUTBOUND and deliberate (#3367): the school contact-link
+   * writer in `organisation-xero-contact-persons.ts` sets this, because a
+   * school's contact link carries two facts written at two different times —
+   * `linkedVia`, recorded
    * once when the link is first made, and the contact-persons fingerprint,
    * rewritten on every refresh. Replacing would mean the FIRST refresh silently
    * dropped the provenance the adopted-contact reshape depends on, and the

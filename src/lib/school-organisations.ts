@@ -38,7 +38,7 @@
  * called those two different schools would refuse the very row the search
  * accepted, and school names are full of apostrophes and full stops. Coarser is
  * safe — every name that claims a record also satisfies the proof — whereas
- * stricter re-opens exactly the defect `INV-INT-018` exists to close. The
+ * stricter re-opens exactly the defect `INV-INT-020` exists to close. The
  * folding itself lives in `xero-contact-name-match.ts`, in ONE place, so the
  * search and the proof cannot drift apart (`INV-SSOT`).
  *

@@ -258,33 +258,23 @@ legitimately depend on being offered an out-of-service lodge.
 
 - **A Xero contact id has at most ONE local home.** Two unique columns can hold
   one (#3366) — `Member.xeroContactId`, `Organisation.xeroContactId` — with no
-  constraint spanning tables. Both holding it means the books say a school and a
-  person are one customer.
+  constraint spanning tables. Both holding it makes a school and a person one
+  customer.
 - **Every writer refuses rather than guesses**, throwing
   `XeroContactTwoHomesError` naming the holder. `xero-contact-home.ts` holds the
   check, the lock and the transfer. Guarded writers: `findOrCreateXeroContact`
   phase 2, `commitManualXeroContactLink`, the organisation resolve,
   `POST /api/admin/xero/import-member-contact`.
-- **The refusal is SYMMETRIC**, because a collision is reachable without a race:
-  the member resolve searches Xero by email, and a school's contact carries the
-  same address its invented member does.
+- **The refusal is SYMMETRIC**: the member resolve searches Xero by email and a
+  school's contact carries its invented member's address, so a collision needs
+  no race.
 - **Serialised by `hashtext('xero-contact-home:<contactId>')`**, its own
   keyspace, taken after the writer's entity advisory key and BEFORE any `Member`
-  row lock (`INV-LOCK-002`) — outer-to-the-row-lock, because the transfer takes a
-  member row while holding it. No provider call inside.
-- **ONE exception: a contact changes hands exactly once, only to its
-  Organisation** (owner, 13 Sep 2026, #3367). A returning school's contact is
-  held by the invented school member of an earlier booking; the organisation
-  takes it, that member's link and its `CONTACT` ledger rows are released in the
-  same transaction, and the hand-over is audited
-  (`xero.contact.moved_to_organisation`, category `xero`). Four legs read under
-  the lock establish the member is this school's own: this school's history
-  resolves to it, no other school's does, it cannot sign in, it is not a named
-  contact person of the school. The first two read BOTH `Booking.organisationId`
-  AND the `BookingRequest` that minted the member (`convertedMemberId` with
-  `organisationId`, or a matching `schoolName`) — the organisation column is
-  written only from this release, so a returning school's earlier booking has
-  none. The refusal then runs unchanged.
+  row lock (`INV-LOCK-002`), because the transfer takes a member row while
+  holding it. No provider call inside.
+- **ONE exception, and only one: `INV-INT-020`** — a school takes the contact
+  its own invented member holds. The refusal above then runs unweakened, so a
+  transfer that declines to fire can only ever produce a refusal.
 - **Bounded.** #3369 removes the invented member, the other home. Pinned by
   `organisation-reader-contract.test.ts`.
 
@@ -317,3 +307,30 @@ legitimately depend on being offered an out-of-service lodge.
   contact. `createXeroContactForMember` needs no guard: a contact Xero minted a
   moment ago can have no other home. Pinned by
   `src/lib/__tests__/organisation-reader-contract.test.ts`.
+
+### INV-INT-020
+
+- **A school's Xero contact changes hands exactly ONCE, and only to its
+  Organisation** (owner, 13 Sep 2026, #3367). The single exception to
+  `INV-INT-018`, which then runs unweakened immediately after it. Nothing moves
+  at Xero: the contact keeps its id, its history and every invoice raised
+  against it.
+- **The holder is a returning school's own invented school member**, minted for
+  an earlier booking. Its link and its `CONTACT` ledger rows are released in the
+  same transaction that claims the id for the organisation, and the hand-over is
+  audited (`xero.contact.moved_to_organisation`, `xero`).
+- **Four legs, all read from the database under the contact-home lock**, never
+  from a caller's argument: this school's history resolves to the member, no
+  other school's positively does, it cannot sign in, it is not one of the
+  school's named contact people. The first two read `Booking.organisationId` AND
+  the `BookingRequest` that minted the member (`convertedMemberId`, with
+  `organisationId` or a `schoolName`), because that column is written only from
+  this release and a returning school's earlier booking carries none.
+- **A proof may never be stricter than the match that produced it.** Names use
+  the folding Xero's own contact-name search uses (`xero-contact-name-match.ts`,
+  one home); stricter refuses the very contact the provider matched, and the
+  school is then never invoiced at all.
+- **Leg 2 refuses only on EVIDENCE**: another organisation id, or a name
+  resolving to a different existing `Organisation`. An unresolvable name is
+  ambiguity, not evidence, and must not out-vote history that positively
+  resolves. Pinned by `organisation-reader-contract.test.ts`.

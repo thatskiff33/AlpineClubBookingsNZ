@@ -438,7 +438,7 @@ export async function findOrCreateXeroContactForOrganisation(
       }
 
       /*
-        INV-INT-018, in the order that makes the refusal safe.
+        INV-INT-018 and INV-INT-020, in the order that makes the refusal safe.
 
         FIRST the one transfer: where the contact is held by this school's OWN
         invented member — the record an earlier booking of this same school
@@ -511,7 +511,7 @@ export async function findOrCreateXeroContactForOrganisation(
           fromMemberId: transferredFrom.fromMemberId,
         },
         "This school's Xero customer moved from its own invented member record " +
-          "to the school (#3367, INV-INT-018). Nothing changed in Xero.",
+          "to the school (#3367, INV-INT-020). Nothing changed in Xero.",
       );
     }
     await completeXeroSyncOperation(operation.id, {

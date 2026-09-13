@@ -23,6 +23,10 @@
   every invoice already on it — and the hand-over is recorded in the audit log.
   The contact also stops being shown as a person at that point: the invented
   first name and blank surname are cleared, so it reads as the school it is.
+  A school is recognised as the same school even where its name was typed
+  differently the second time — a full stop dropped, a hyphen added, a macron
+  written or left off — because that is exactly how Xero itself matched the
+  contact back to the school in the first place.
 - A booking that is not a school's is unaffected in every respect.
 
 ### Fixed

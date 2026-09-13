@@ -1,6 +1,6 @@
 /**
  * A Xero contact id has AT MOST ONE local home (#3367, stage 2 of programme
- * #2912). `INV-INT-018`.
+ * #2912). `INV-INT-018`, and `INV-INT-020` for the ONE transfer.
  *
  * ## The problem this module exists for, in one paragraph
  *
@@ -69,7 +69,7 @@
  *
  * No provider call may run inside the transaction that holds this key.
  *
- * ## The ONE exception: a school taking its own contact (owner, 13 Sep 2026)
+ * ## The ONE exception: a school taking its own contact (`INV-INT-020`; owner, 13 Sep 2026)
  *
  * A school that has booked before already has a Xero contact, held by the
  * invented school member of that earlier booking. Refusing there would leave
@@ -500,7 +500,7 @@ export async function takeXeroContactFromSchoolsOwnMember(
         `The Xero customer for "${input.organisationName}" now belongs to the ` +
         "school's own record rather than to the booking contact that was " +
         "invented for it. Nothing changed in Xero: the contact keeps its id, " +
-        "its history and every invoice raised against it (INV-INT-018).",
+        "its history and every invoice raised against it (INV-INT-020).",
       metadata: {
         xeroContactId: input.xeroContactId,
         fromMemberId: holder.id,
