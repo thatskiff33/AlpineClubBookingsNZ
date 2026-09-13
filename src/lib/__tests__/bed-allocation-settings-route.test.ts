@@ -183,6 +183,45 @@ describe("bed-allocation settings route lodge validation", () => {
     });
   });
 
+  /**
+   * #2931 — the write contract is exactly three fields, and stays that way.
+   *
+   * `GET` answers with the EFFECTIVE settings view, which carries six read-only
+   * provenance fields beside the two editable ones. The editor used to send
+   * that whole object back, and this `.strict()` schema refused it with 400
+   * "Invalid input" — so no save from Allocation preferences ever landed. The
+   * fix narrows the client; this pins the server half of that seam, so a future
+   * caller that spreads a GET response into a PUT is refused loudly here
+   * instead of silently in a browser.
+   */
+  it("refuses a PUT body carrying the read-only provenance fields", async () => {
+    const effective = {
+      autoAllocationEnabled: true,
+      allocationPriorityOrder: ["BOOKING_COHESION"],
+      authoritativeLodgeId: "lodge-1",
+      settingsId: "lodge-1",
+      source: "LODGE",
+      fallback: "NONE",
+      updatedByMemberId: "admin-1",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    };
+    mocks.parseJsonBody.mockResolvedValue({
+      ok: true,
+      body: { ...effective, lodgeId: "lodge-1" },
+    });
+
+    const response = await PUT(
+      new Request("http://localhost/api/admin/bed-allocation/settings", {
+        method: "PUT",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid input" });
+    expect(mocks.updateSettings).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["an unknown value", ["UNKNOWN_PRIORITY"]],
     ["a duplicate value", ["BOOKING_COHESION", "BOOKING_COHESION"]],

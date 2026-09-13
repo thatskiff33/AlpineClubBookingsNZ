@@ -11,16 +11,45 @@ import {
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ADMIN_VIEW_ONLY_SECTION_HEADING } from "@/components/admin/view-only-action";
-import { AllocationPreferencesSection } from "../allocation-preferences-section";
+import {
+  ALLOCATION_PREFERENCES_MODULE_OFF_REASON,
+  AllocationPreferencesSection,
+} from "../allocation-preferences-section";
 
+/**
+ * The EDITABLE half of a settings payload — what the draft is, what a PUT body
+ * carries, and what `onSaved` receives.
+ */
 const LOADED = {
   autoAllocationEnabled: true,
   allocationPriorityOrder: ["BOOKING_COHESION", "STAY_CONTINUITY"],
 };
 type SavedSettings = typeof LOADED;
 
+/**
+ * #2931 — the read-only provenance the server ACTUALLY sends alongside those
+ * two fields (`EffectiveBedAllocationSettings`). Every fixture here used to be
+ * the two editable fields alone, and that omission is what hid the defect: the
+ * section spread its whole draft into the save body, the route's `.strict()`
+ * schema refused the six extra keys with 400 "Invalid input", and the fixture
+ * that never carried them made the PUT-body assertions below pass anyway. Every
+ * response in this file is built through `response`, so the provenance is now
+ * present in all of them and no future fixture can quietly drop it.
+ */
+const PROVENANCE = {
+  authoritativeLodgeId: "lodge-1",
+  settingsId: "lodge-1",
+  source: "LODGE",
+  fallback: "NONE",
+  updatedByMemberId: "admin-1",
+  updatedAt: "2026-07-01T00:00:00.000Z",
+};
+
 function response(settings = LOADED) {
-  return new Response(JSON.stringify({ settings }), { status: 200 });
+  return new Response(
+    JSON.stringify({ settings: { ...settings, ...PROVENANCE } }),
+    { status: 200 },
+  );
 }
 
 async function renderLoaded(
@@ -425,5 +454,131 @@ describe("AllocationPreferencesSection", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(onSaved).not.toHaveBeenCalled();
+  });
+  /**
+   * #2931 — the save body is the route's write contract and nothing else.
+   *
+   * The sibling assertions above check the three VALUES; this one checks that
+   * there is no fourth key, which is the half that actually broke. The PUT
+   * schema is `.strict()`, so one stray field from the loaded payload is the
+   * difference between a save and a 400.
+   */
+  it("PUTs exactly the three fields of the write contract", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      response(init?.method === "PUT" ? { ...LOADED, autoAllocationEnabled: false } : LOADED),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Auto allocation enabled" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const putCall = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === "PUT",
+    );
+    expect(
+      Object.keys(JSON.parse(String(putCall?.[1]?.body))).sort(),
+    ).toEqual([
+      "allocationPriorityOrder",
+      "autoAllocationEnabled",
+      "lodgeId",
+    ]);
+  });
+
+  /**
+   * #2931 — a failed save says WHY. Each row is a state an admin has to be able
+   * to tell apart, and the last two are the ones that must never leak: a body
+   * that is not our JSON refusal falls back to the section's own sentence
+   * rather than putting a proxy's HTML or a blank alert on the screen.
+   */
+  it.each([
+    [
+      "a permission refusal",
+      new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
+      /your admin role can view this area but cannot make changes/,
+    ],
+    [
+      "the module being switched off",
+      new Response(JSON.stringify({ error: "Not found" }), { status: 404 }),
+      new RegExp(ALLOCATION_PREFERENCES_MODULE_OFF_REASON.slice(0, 60)),
+    ],
+    [
+      "the server's own sentence",
+      new Response(
+        JSON.stringify({ error: "Lodge not found or not active" }),
+        { status: 400 },
+      ),
+      /^Lodge not found or not active$/,
+    ],
+    [
+      "a zod refusal, without its details",
+      new Response(
+        JSON.stringify({
+          error: "Invalid input",
+          details: { fieldErrors: { lodgeId: ["Required"] } },
+        }),
+        { status: 400 },
+      ),
+      /^Invalid input$/,
+    ],
+    [
+      "a non-JSON body",
+      new Response("<html><body>502 Bad Gateway</body></html>", {
+        status: 502,
+      }),
+      /^Failed to save allocation preferences$/,
+    ],
+    [
+      "a blank error string",
+      new Response(JSON.stringify({ error: "   " }), { status: 500 }),
+      /^Failed to save allocation preferences$/,
+    ],
+  ])("reports %s when the save fails", async (_case, failure, expected) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === "PUT" ? failure : response(),
+      ),
+    );
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Auto allocation enabled" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const alert = await screen.findByText(expected);
+    expect(alert.textContent ?? "").not.toMatch(/<html|fieldErrors|Bad Gateway/);
+    // The refusal leaves the admin in edit mode with the draft they staged, so
+    // the fix is one click away rather than a re-stage.
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("names the switched-off module when the load 404s", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "Not found" }), { status: 404 }),
+      ),
+    );
+    render(
+      <AllocationPreferencesSection
+        lodgeId="lodge-1"
+        canEdit
+        onSaved={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        new RegExp(ALLOCATION_PREFERENCES_MODULE_OFF_REASON.slice(0, 60)),
+      ),
+    ).toBeTruthy();
   });
 });
