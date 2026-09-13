@@ -30,7 +30,7 @@ import {
   // Type-only, so it adds nothing to this module's runtime import graph.
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
-import { sizeAdditionalAskCents } from "@/lib/additional-payment-ask";
+import { sizeAdditionalAsk } from "@/lib/additional-payment-ask";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
@@ -481,6 +481,7 @@ import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
+  stripeIdempotencyKeyForAskAmount,
 } from "./payment-recovery-keys";
 export {
   buildBookingCancellationRefundMetadata,
@@ -2712,30 +2713,35 @@ async function processCreateAdditionalPaymentIntentOperation(
       "Additional intent recovery could not re-derive the ask (the modification's net is not positive); replaying the frozen amount",
     );
   }
-  const askCents =
+  const ask =
     modificationToBill && editNetCents > 0
-      ? sizeAdditionalAskCents({
+      ? sizeAdditionalAsk({
           priceDiffCents: modificationToBill.priceDiffCents,
           changeFeeCents: modificationToBill.changeFeeCents,
           payment,
         })
-      : operation.amountCents;
+      : // #3371: the frozen fallback carried nothing that this replay can name.
+        // The row records an amount and no provenance, and inventing one here
+        // would be worse than recording none - a 0 says "nothing known to have
+        // been absorbed", which is the truth about a figure frozen before this
+        // column existed.
+        { amountCents: operation.amountCents, carriedCents: 0 };
+  const askCents = ask.amountCents;
 
   /**
    * The Stripe key still pins a replay of the SAME ask to the same intent, and
-   * gains the amount only when the re-derivation moved. Stripe refuses a key
-   * reused with different parameters, so a bare `operation.paymentIntentId`
-   * would turn a re-derived amount into a permanent `idempotency_error` on every
-   * remaining attempt. A changed amount is a different request and gets a
-   * different key; the intent the previous attempt minted carries no
-   * `PaymentTransaction` row (this attempt is only here because the last one
-   * died before writing one), so it was never reachable by anybody and expires
-   * at Stripe.
+   * gains the amount only when the re-derivation moved. The rule and the reasons
+   * are `stripeIdempotencyKeyForAskAmount`'s, which the edit-review charge's own
+   * re-derived mint reaches too (#3371 fix round) rather than spelling the
+   * suffix a second time. Here the base key is the ORIGINAL inline attempt's,
+   * frozen on the row, so an unmoved amount must keep it bare to converge on
+   * that attempt; the review path builds its base fresh at every attempt and has
+   * no bare form to preserve.
    */
   const stripeIdempotencyKey =
     askCents === operation.amountCents
       ? operation.paymentIntentId
-      : `${operation.paymentIntentId}_${askCents}`;
+      : stripeIdempotencyKeyForAskAmount(operation.paymentIntentId, askCents);
   const pi = await createPaymentIntent({
     amountCents: askCents,
     customerId,
@@ -2756,6 +2762,9 @@ async function processCreateAdditionalPaymentIntentOperation(
     kind: PaymentTransactionKind.ADDITIONAL,
     paymentIntentId: pi.id,
     amountCents: askCents,
+    // #3371: the same value that sized the amount says what it absorbed, so the
+    // replay's row carries the provenance the inline mint would have written.
+    carriedAskCents: ask.carriedCents,
     status: PaymentStatus.PENDING,
     reason: "modification_additional_recovery",
     stripeCustomerId: customerId,

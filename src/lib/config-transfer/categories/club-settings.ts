@@ -188,14 +188,14 @@ export function excludedColumnsFor(spec: SingletonSpec): Record<string, string> 
 // AiAssistantSettings (the AI spend-cap singleton, id="default"). The monthly
 // budget is a deployment-specific operational spend control, not portable club
 // configuration — a source club's cap should never silently reset a target's.
-// A fresh import gets the schema default (NZ$10) and the target operator sets
-// their own. (Recorded epic decision.)
+// A fresh import keeps the target's own cap in its configured currency. (Epic
+// decision; reasoning stated once on the entries in `singleton-models.ts`.)
 //
 // SAME DISPOSITION, DELIBERATELY, for AI Diagnostics (AID-2, #2371): none of the
 // four Diagnostics tables travels. DiagnosticsSettings holds a deployment-local
 // spend budget (same reasoning as AiAssistantSettings, and stricter — it defaults
-// to NZ$0 hard-off so an import can never plant a spend cap a target did not
-// choose). DiagnosticsUsageMonthly / DiagnosticsBudgetReservation /
+// to 0 = hard-off in the target's configured currency, so an import can never
+// plant a spend cap a target did not choose). DiagnosticsUsageMonthly / DiagnosticsBudgetReservation /
 // DiagnosticsUsageEvent are runtime metering/audit records, never configuration.
 // The DEDICATED Anthropic credential lives in the encrypted IntegrationCredential
 // store (provider "anthropic-diagnostics"), which is outside config-transfer

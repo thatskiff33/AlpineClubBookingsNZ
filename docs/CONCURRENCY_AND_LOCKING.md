@@ -1388,9 +1388,15 @@ live reservations (`DiagnosticsBudgetReservation`) plus the settled spend
 ONLY if `settled + reserved + reserveCents <= budget`. The advisory lock
 serialises every reserve for the month, so each admitted reservation sees the
 committed reservations of all prior ones and the invariant holds for every one —
-`settled + reserved` can never exceed the budget. A lost claim (over budget)
-inserts nothing and denies the paid call (no side effect), exactly like the
-status-guarded `updateMany` claims elsewhere in this document.
+`settled + reserved` can never exceed the budget at a fixed rate. Since #3354 the
+same locked transaction also reads `AiSpendCurrencySettings` through `tx`, in the
+same snapshot as the budget, and sizes the reservation at that rate; an
+administrator changing the rate between one roundtrip's reserve and its settle
+can therefore overshoot by that one roundtrip scaled by the change (budget
+10000, settled 9000, a 900 reservation at 0.90, the rate raised to 5.00
+mid-call, a 400 NZD-cent settle books 2000 → 11000), and by nothing more. A lost
+claim (over budget) inserts nothing and denies the paid call (no side effect),
+exactly like the status-guarded `updateMany` claims elsewhere in this document.
 
 The provider call runs entirely OUTSIDE this transaction (the lock releases on
 commit). Afterwards `settleDiagnosticsRoundtrip` deletes the reservation and
@@ -3062,7 +3068,7 @@ a sum. So a later share RAISES the existing intent's amount instead of minting,
 and both the Stripe key and the recovery key name the edit.
 
 **Two officers settling two shares at once is made safe by DERIVATION plus a
-compare-and-set, not by a lock** — which matters here because this path still has
+refusal to lower, not by a lock** — which matters here because this path still has
 none, for the reason above. The combined total is summed from the settled task
 rows (`sumEditReviewChargeSharesCents`) at execution time, after the caller's
 transaction has committed, so:
@@ -3071,10 +3077,41 @@ transaction has committed, so:
   status-fenced claim wrote, and never as an increment of a running figure;
 - **no lost share** — whichever completion commits LAST necessarily reads after
   both commits, so at least one run always derives the true total;
-- **the stale run cannot win** — a settled share is terminal, so the derived total
-  only ever grows and a smaller figure is always the older answer. The write
-  REFUSES TO LOWER the recorded request, which makes the outcome independent of
-  the order the two provider calls happen to land in.
+- **a stale replay cannot lower a live ask** — a settled share is terminal, so the
+  derived total only ever grows and a smaller figure is always the older answer,
+  and the write REFUSES TO LOWER the recorded request. Since #3371 a balance
+  carried in from another edit is stored apart from that sum
+  ([`INV-PAY-098`](invariants/payment-and-settlement.md)) precisely so the sum
+  stays monotone; folding it in would make the figure fall when the member paid,
+  and repairing that would need the lock this path may not hold.
+
+**THAT REFUSAL IS NOT AN ATOMIC CLAIM, and this section used to say it was**
+(corrected in the #3371 review round). `syncEditFinancialReviewChargeRequest`
+reads the existing `ADDITIONAL` row, compares in application code, calls Stripe,
+and then upserts on the intent id with **no amount predicate**. Two runs that
+each derive a figure ABOVE the stored one therefore both proceed, and both the
+provider amount and the stored row settle on whichever landed last rather than on
+the larger: shares of $60 and $100 against a stored $50 can end at $60, and the
+second officer's $40 is never asked for. What monotonicity buys is that neither
+run derives a figure that is wrong for the shares IT saw, and that a REPLAY —
+which reads after the newer write, and is the recovery cron's whole shape —
+leaves a larger recorded ask alone. It does not order two concurrent runs.
+
+This is `main`'s own shape and #3371 neither introduced nor repaired it; #3371
+changed what the figure is made of, not how it is written. **The repair is not a
+predicate on that upsert.** A `where amountCents < raised` claim would stop the
+STORED row being lowered, but the money moves at Stripe, and the Stripe call
+already happened by then — so the row and the intent would disagree instead, on a
+path whose whole point is that the row is what the member's pay page shows. Doing
+it properly means claiming BEFORE the provider call and reconciling the provider
+afterwards, which buys a new failure mode (a claim recorded against an intent the
+provider then refused to raise) and is a design change to a gated money path.
+It is carried forward as #3402 rather than widened into #3371.
+
+The contrast is instructive and it is one paragraph down: the refund leg's
+`applyLocalRefundAllocation` on this same lockless path IS a real compare-and-set,
+because there the write is the whole movement and no provider round trip sits in
+front of it.
 
 The recovery replay is the same function, so a crash between the commit and the
 Stripe call costs a delay rather than a share: the row's stored `amountCents` is
