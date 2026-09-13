@@ -58,6 +58,33 @@ const dbShape = mocks.dbShape;
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.dbShape }));
 vi.mock("@/lib/observability-bridge", () => ({ reportAiError: mocks.reportAiError }));
 
+// #3354: the NZD -> club-currency rate, identity unless a test sets otherwise.
+// Mocked at the reader so the conversion seam is exercised without a currency
+// env; the reader itself has its own suites.
+const rateMocks = vi.hoisted(() => ({
+  loadAiSpendCurrency: vi.fn(),
+  identity: () => ({
+    clubCurrency: "NZD",
+    isNzd: true,
+    clubUnitsPerNzdMicros: 1_000_000,
+    rateSetAt: null,
+    rateSetByMemberId: null,
+    isConfigured: false,
+  }),
+  aud: (micros: number) => ({
+    clubCurrency: "AUD",
+    isNzd: false,
+    clubUnitsPerNzdMicros: micros,
+    rateSetAt: new Date("2026-06-01T00:00:00.000Z"),
+    rateSetByMemberId: "admin-1",
+    isConfigured: true,
+  }),
+}));
+vi.mock("@/lib/ai-spend-currency-settings", () => ({
+  AI_SPEND_CURRENCY_SETTINGS_ID: "default",
+  loadAiSpendCurrency: rateMocks.loadAiSpendCurrency,
+}));
+
 import {
   AI_DIAGNOSTICS_PRICE_TABLE_NZ_CENTS_PER_MTOK,
   DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS,
@@ -76,6 +103,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   resetDiagnosticsMeteringHealthForTests();
+  rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.identity());
   mocks.execRaw.mockResolvedValue(1);
   mocks.resvDeleteMany.mockResolvedValue({ count: 0 });
   mocks.resvAggregate.mockResolvedValue({ _sum: { reservedCents: 0 } });
@@ -632,5 +660,83 @@ describe("real-Postgres read-only SEAM proof stays wired into CI (AID-8 F2)", ()
     // privileges would otherwise permit it. A rewrite that dropped this would make
     // the suite pass without proving the READ ONLY fence takes at the server.
     expect(seamTest).toContain("25006");
+  });
+});
+
+describe("club-currency conversion (#3354)", () => {
+  it("reserves the worst-case roundtrip CONVERTED at the rate, read inside the transaction", async () => {
+    rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.aud(500_000));
+    mocks.settingsFindUnique.mockResolvedValue({ monthlyBudgetCents: 100_000 });
+    const result = await reserveDiagnosticsBudget();
+    const expected = Math.ceil(WORST_CASE_ROUNDTRIP_CENTS / 2);
+    expect(result).toMatchObject({ ok: true, reserveCents: expected });
+    expect(mocks.resvCreate.mock.calls[0][0].data.reservedCents).toBe(expected);
+    // The rate is read through the SAME transaction client as the budget, so
+    // both come from one snapshot under the per-month lock.
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledTimes(1);
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledWith(dbShape);
+  });
+
+  it("reserves the NZD worst case unchanged at the identity rate", async () => {
+    mocks.settingsFindUnique.mockResolvedValue({ monthlyBudgetCents: 100_000 });
+    const result = await reserveDiagnosticsBudget();
+    expect(result).toMatchObject({ ok: true, reserveCents: WORST_CASE_ROUNDTRIP_CENTS });
+  });
+
+  it("a converted reserve moves the admission boundary with the rate", async () => {
+    // At 0.5 the reserve halves; a budget that admits it must deny the unconverted one.
+    rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.aud(500_000));
+    const half = Math.ceil(WORST_CASE_ROUNDTRIP_CENTS / 2);
+    mocks.settingsFindUnique.mockResolvedValue({ monthlyBudgetCents: half });
+    expect((await reserveDiagnosticsBudget()).ok).toBe(true);
+    rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.identity());
+    expect(half).toBeLessThan(WORST_CASE_ROUNDTRIP_CENTS);
+    expect((await reserveDiagnosticsBudget()).ok).toBe(false);
+  });
+
+  it("fails closed to metering_unavailable when the rate cannot be read", async () => {
+    rateMocks.loadAiSpendCurrency.mockRejectedValue(new Error("db down"));
+    mocks.settingsFindUnique.mockResolvedValue({ monthlyBudgetCents: 100_000 });
+    const result = await reserveDiagnosticsBudget();
+    expect(result).toMatchObject({ ok: false, reason: "metering_unavailable" });
+    expect(mocks.resvCreate).not.toHaveBeenCalled();
+  });
+
+  it("settles the CONVERTED cost, rounded up, inside the locked transaction", async () => {
+    // opus-5 at 1M input = 900c NZD; x 0.92 = 828c exactly.
+    rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.aud(920_000));
+    await settleDiagnosticsRoundtrip({
+      reservationId: "resv_1",
+      surface: "admin",
+      model: "claude-opus-5",
+      success: true,
+      usage: { inputTokens: 1_000_000, outputTokens: 1, cacheWriteTokens: 0, cacheReadTokens: 0 },
+    });
+    // 900c + ceil(4500 x 1 / 1M) = 901c NZD; x 0.92 = 828.92 -> 829c AUD.
+    expect(mocks.eventCreate.mock.calls[0][0].data.costCents).toBe(829);
+    expect(mocks.monthlyUpsert.mock.calls[0][0].update.settledCents).toEqual({
+      increment: 829,
+    });
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledWith(dbShape);
+    // Lock first, then the rate read, then the writes.
+    const lockOrder = mocks.execRaw.mock.invocationCallOrder[0];
+    const rateOrder = rateMocks.loadAiSpendCurrency.mock.invocationCallOrder[0];
+    const writeOrder = mocks.eventCreate.mock.invocationCallOrder[0];
+    expect(lockOrder).toBeLessThan(rateOrder);
+    expect(rateOrder).toBeLessThan(writeOrder);
+  });
+
+  it("a failed rate read fails the settle and trips the breaker, booking nothing", async () => {
+    rateMocks.loadAiSpendCurrency.mockRejectedValue(new Error("db down"));
+    await settleDiagnosticsRoundtrip({
+      reservationId: "resv_1",
+      surface: "admin",
+      model: "claude-opus-5",
+      success: true,
+      usage: { inputTokens: 1_000_000, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0 },
+    });
+    expect(mocks.eventCreate).not.toHaveBeenCalled();
+    expect(mocks.monthlyUpsert).not.toHaveBeenCalled();
+    expect(mocks.reportAiError).toHaveBeenCalledTimes(1);
   });
 });
