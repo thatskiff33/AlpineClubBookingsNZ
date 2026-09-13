@@ -131,8 +131,8 @@ AI settings pages.
    example `0.92` — and save. Support-edit access is required.
 3. **Check the rate now and then.** Nothing updates it for you; a rate that
    drifts makes the caps silently too loose or too tight, which is why the card
-   shows when it was last set. The rate is rounded in the club's favour of
-   caution: every converted estimate is rounded **up** to the next cent.
+   shows when it was last set. The rate itself is stored exactly; each
+   converted estimate is rounded **up** to the next cent.
 
 A New Zealand club sees a one-sentence note that no conversion applies and no
 rate editor. Past usage is never re-priced: each recorded call keeps the

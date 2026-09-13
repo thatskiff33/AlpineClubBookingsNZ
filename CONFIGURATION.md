@@ -2422,7 +2422,7 @@ question text is ever stored). The whole page 404s while the module is off.
    spending if it can no longer record usage ("can't-meter ⇒ don't-spend"). The
    cap is a deployment-specific control and does **not** travel in a
    config-transfer bundle — a fresh import gets the default.
-4. **If `CURRENCY` is not `NZD`, set the conversion rate** (#3354). AI usage is
+4. **If `CURRENCY` / `NEXT_PUBLIC_CURRENCY` is not `NZD`, set the conversion rate** (#3354). AI usage is
    priced in New Zealand dollars; the **Currency for AI spend** card on both AI
    settings pages takes **how many units of the club's currency one New Zealand
    dollar buys** (for example `0.92`), stores it as an integer in parts per
