@@ -593,8 +593,19 @@ export async function createBookingRequestQuote(input: {
     // BookingRequestQuote row (matching decline's claim-first order) so a
     // concurrent decline + quote-create on the same request cannot deadlock.
     // Pure statement reorder — same writes, same transaction.
-    await tx.bookingRequest.update({
-      where: { id: request.id },
+    //
+    // #2936 version fence, and it is a CLAIM rather than the plain update this
+    // used to be. Correcting a request (`booking-request-corrections.ts`)
+    // rewrites its dates, its party and its member links and drops it back to
+    // VERIFIED — which is a LIVE status, so the pre-transaction status check
+    // above passes both before and after one. A plain overwrite would restore
+    // the retired price, the retired option totals and the stale positional
+    // member links over the corrected row. The fence is the request's own
+    // version, which every writer of that row bumps, so a correction landing
+    // between the read above and this write claims nothing and 409s. Same
+    // shape as `holdBookingRequestSlots`' claim and the approvals' (#1923).
+    const claimed = await tx.bookingRequest.updateMany({
+      where: { id: request.id, version: request.version },
       data: {
         status: BookingRequestStatus.QUOTED,
         priceCents:
@@ -607,6 +618,14 @@ export async function createBookingRequestQuote(input: {
         version: { increment: 1 },
       },
     });
+    if (claimed.count === 0) {
+      // Thrown BEFORE any quote row is touched, so the losing save leaves the
+      // corrected request exactly as the correction left it.
+      throw new BookingRequestError(
+        "This booking request changed while the quote was being saved; review it and quote again",
+        409
+      );
+    }
 
     const latest = await tx.bookingRequestQuote.findFirst({
       where: { bookingRequestId: request.id },
@@ -768,8 +787,23 @@ export async function sendBookingRequestQuote(input: {
       );
     }
 
-    const saved = await tx.bookingRequestQuote.update({
-      where: { id: quote.id },
+    // #2936 resurrection guard, on the QUOTE this time. The request-status
+    // claim above cannot speak for a correction: a correction drops the request
+    // to VERIFIED, which is in `quoteableStatuses`, so the claim passes — while
+    // the same transaction SUPERSEDED this very quote. A plain update would
+    // flip a retired quote back to SENT and mint it a live response token, so
+    // the requester would hold an acceptable quote priced on the party BEFORE
+    // the correction, against the dates AFTER it, with no beds held — the
+    // correction's hold release runs after this. Claim the quote only while it
+    // is still the live one; count 0 rolls the whole transaction back (request
+    // status included) and no email is sent, because the send is outside it.
+    const saved = await tx.bookingRequestQuote.updateMany({
+      where: {
+        id: quote.id,
+        status: {
+          in: [BookingRequestQuoteStatus.DRAFT, BookingRequestQuoteStatus.SENT],
+        },
+      },
       data: {
         status: BookingRequestQuoteStatus.SENT,
         responseTokenHash: tokenHash,
@@ -779,8 +813,16 @@ export async function sendBookingRequestQuote(input: {
         createdByMemberId: quote.createdByMemberId ?? input.adminMemberId,
       },
     });
+    if (saved.count === 0) {
+      throw new BookingRequestQuoteError(
+        "This quote can no longer be sent — it was withdrawn while it was being sent. Re-price the request and quote it again.",
+        409
+      );
+    }
 
-    return saved;
+    // Re-read rather than reshape the pre-claim row: the caller's contract is
+    // "the quote as it now stands", and `quote` above carries its request too.
+    return tx.bookingRequestQuote.findUniqueOrThrow({ where: { id: quote.id } });
   });
 
   let emailDelivered = true;
@@ -1142,29 +1184,64 @@ export async function respondToBookingRequestQuote(input: {
   // replay (booking-request.ts ~900-919 — reads the still-set convertedBookingId
   // and returns the existing booking) keeps returning the one real booking. Only
   // a decline/cancel finalisation blocks the re-arm.
-  const rearmed = await prisma.bookingRequest.updateMany({
-    where: {
-      id: quote.bookingRequestId,
-      status: {
-        notIn: [BookingRequestStatus.DECLINED, BookingRequestStatus.CANCELLED],
+  //
+  // #2936: the request-status guard above cannot see a CORRECTION. Correcting a
+  // request drops it back to VERIFIED — neither DECLINED nor CANCELLED — while
+  // SUPERSEDING every DRAFT/SENT quote in the same transaction. Left as a bare
+  // update this accept would write the RETIRED quote's price and snapshot onto
+  // the corrected envelope and then convert it: a booking for the corrected
+  // dates and party at yesterday's price, resolved to the corrected school's
+  // organisation, with that organisation's invoice queued to Xero. Money and
+  // the provider. So the re-arm now runs in a transaction that takes the global
+  // key the correction holds — every other branch of this function already
+  // does — and re-reads the quote under it. The quote's own status is the exact
+  // evidence: a correction retires it, and nothing else moves a SENT quote out
+  // of the live set beneath a token that loaded it as SENT.
+  //
+  // The live set is deliberately "not retired" rather than "still SENT": a
+  // double-accept (#1232) finds the quote already ACCEPTED and must STILL
+  // re-arm, so approve's idempotency replay keeps returning the one real
+  // booking. Only SUPERSEDED and CANCELLED block it.
+  const rearmed = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const live = await tx.bookingRequestQuote.findUnique({
+      where: { id: quote.id },
+      select: { status: true },
+    });
+    if (
+      !live ||
+      live.status === BookingRequestQuoteStatus.SUPERSEDED ||
+      live.status === BookingRequestQuoteStatus.CANCELLED
+    ) {
+      return { count: 0, retired: true as const };
+    }
+    const claimed = await tx.bookingRequest.updateMany({
+      where: {
+        id: quote.bookingRequestId,
+        status: {
+          notIn: [BookingRequestStatus.DECLINED, BookingRequestStatus.CANCELLED],
+        },
       },
-    },
-    data: {
-      status: BookingRequestStatus.PRICED,
-      priceCents: option.totalCents,
-      acceptedQuoteId: quote.id,
-      acceptedQuoteOptionId: option.id,
-      acceptedQuoteSnapshot: option as unknown as Prisma.InputJsonValue,
-      acceptedPriceCents: option.totalCents,
-      acceptedAt: respondedAt,
-      responseMessage: message,
-      responseMessageAt: message ? respondedAt : null,
-      version: { increment: 1 },
-    },
+      data: {
+        status: BookingRequestStatus.PRICED,
+        priceCents: option.totalCents,
+        acceptedQuoteId: quote.id,
+        acceptedQuoteOptionId: option.id,
+        acceptedQuoteSnapshot: option as unknown as Prisma.InputJsonValue,
+        acceptedPriceCents: option.totalCents,
+        acceptedAt: respondedAt,
+        responseMessage: message,
+        responseMessageAt: message ? respondedAt : null,
+        version: { increment: 1 },
+      },
+    });
+    return { count: claimed.count, retired: false as const };
   });
   if (rearmed.count === 0) {
     throw new BookingRequestQuoteError(
-      "This quote can no longer be accepted — the booking request has been declined or cancelled.",
+      rearmed.retired
+        ? "This quote can no longer be accepted — the booking team changed this request and withdrew it. They will send you a new one."
+        : "This quote can no longer be accepted — the booking request has been declined or cancelled.",
       409
     );
   }

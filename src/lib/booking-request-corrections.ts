@@ -51,18 +51,40 @@
  * approval transaction's own global lock, and moving it earlier would mint
  * records for requests that are never approved.
  *
- * ## Locking (`INV-LOCK-001`, `INV-LOCK-002`)
+ * ## Locking (`INV-LOCK-001`)
  *
  * The claim below takes the canonical global `pg_advisory_xact_lock(1)` and
- * nothing else. It needs the global tier for one concrete reason: **approval is
- * its counterpart.** Both school and general approval take that key first thing
- * in their own transaction, and without it a correction can interleave with a
- * conversion — the conversion reads the old envelope, this writes the new one,
- * and the request ends up CONVERTED while claiming dates the booking does not
- * have. The status-and-version-guarded claim alone cannot close that, because
- * the conversion's own write is not version-guarded. It takes no per-lodge key:
- * it creates no booking and claims no bed. Registered in
- * `advisory-lock-guard.test.ts`.
+ * nothing else, and the reason is narrower than "it excludes approval" — which
+ * is what an earlier version of this comment said, and is what sent the first
+ * reviewer looking at the wrong counterpart.
+ *
+ * **The key is what makes the school-record re-read inside the claim a fence.**
+ * `previewSchoolRecordForName` is asked again under the lock, and the officer's
+ * acknowledgement is checked against THAT answer rather than the one the screen
+ * rendered. The only writer of those records is
+ * `resolveOrCreateSchoolOrganisation`, whose unique-name claim IS the approval
+ * transaction's hold of this same key — so excluding approval is exactly what
+ * lets the re-read promise that no record appeared in between. Without it the
+ * acknowledgement would describe a school that may already have been minted,
+ * and a correction could quietly join an invoice to the wrong Xero customer.
+ *
+ * **It is NOT what fences the conversion's own write.** Both approvals claim on
+ * `version: request.version` (#1923), so the version fence below already
+ * settles that race in both directions: a correction landing mid-conversion
+ * makes the conversion's claim miss, and a conversion landing mid-correction
+ * makes this claim miss.
+ *
+ * **The counterparts a version fence did NOT close** are the three quote
+ * writers in `booking-request-quotes.ts`. None of them takes a lock, and each
+ * fenced only on "not declined, not cancelled" — a set that this writer's
+ * VERIFIED is squarely inside, because a correction RE-OPENS a request where
+ * decline TERMINATES one. They are reconciled at each writer, per the
+ * concurrency checklist: the quote save claims on the request version, the
+ * quote send claims the quote row while it is still DRAFT/SENT, and the accept
+ * re-arm takes this key and re-reads the quote's status under it.
+ *
+ * It takes no per-lodge key: it creates no booking and claims no bed.
+ * Registered in `advisory-lock-guard.test.ts`.
  *
  * ## The capacity hold, and why the release is not inside that transaction
  *

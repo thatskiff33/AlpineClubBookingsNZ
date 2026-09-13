@@ -3282,13 +3282,40 @@ so a stale child snapshot can never overwrite a terminal transition.
 `correctBookingRequest` (`src/lib/booking-request-corrections.ts`) is the officer's
 one write for correcting an unconverted school or public `BookingRequest` — its
 dates, its party, its catering preference, its school name and contact. It takes
-`lock(1)` and **nothing else**, and the counterpart it needs excluded is
-**approval**: `approveBookingRequest` and `approveSchoolBookingRequest` both take
-this key first thing in their own transaction, and without it a correction can
-interleave with a conversion. The conversion reads the old envelope, the
-correction writes the new one, and the request commits `CONVERTED` while claiming
-dates its booking does not have. The status-and-version-guarded claim cannot close
-that on its own, because the conversion's own final write is not version-guarded.
+`lock(1)` and **nothing else**.
+
+**What the key buys is the school-record fence.** While it holds the key the
+claim re-asks which `Organisation` the corrected school name claims (#3367),
+read-only, and checks the officer's on-screen acknowledgement against THAT
+answer rather than against the one the form rendered. `resolveOrCreateSchoolOrganisation`
+is the only writer of those records, and its unique-name claim is the approval
+transaction's hold of this very key — so excluding approval is precisely what
+lets the re-read promise that no record appeared in between. That is what turns
+"this is that school" / "add it as a new school" into a fence rather than a
+courtesy tick, and it is why the correction cannot simply drop the key.
+
+**What the key is NOT for: the conversion's own write.** An earlier version of
+this section said the claim could not close the correction-versus-conversion
+race because the conversion's final write is not version-guarded. That was
+wrong, and it is worth correcting rather than quietly deleting, because a
+registry entry is what the next writer reasons from. Both
+`approveBookingRequest` and `approveSchoolBookingRequest` claim on
+`version: request.version` (#1923). The correction's version bump therefore
+settles that race in both directions on its own.
+
+**The counterparts that a version fence did NOT close** are the three quote
+writers in `src/lib/booking-request-quotes.ts`, and they are the ones this
+writer actually had to be reconciled against. A **decline** sets a TERMINAL
+status, so a guard reading "not declined, not cancelled" was a complete fence
+against it. A **correction sets a LIVE one** — `VERIFIED`, still quoteable,
+still acceptable, still correctable — so that same guard sees nothing. Each is
+reconciled at the writer, per the checklist in `AGENTS.md`:
+
+| Writer | What a correction did to it | How it is fenced now |
+| --- | --- | --- |
+| `createBookingRequestQuote` | a plain update restored the retired price, option totals and stale positional member links over the corrected row | claims on `version: request.version`, and throws before any quote row is touched |
+| `sendBookingRequestQuote` | an unguarded quote flip turned a `SUPERSEDED` quote back into a live `SENT` one with a fresh response token — priced on the pre-correction party, against the post-correction dates, with no beds held, because the correction's release runs afterwards | claims the quote row while it is still `DRAFT`/`SENT`; count 0 rolls the whole transaction back, and the email is outside it |
+| `respondToBookingRequestQuote` (the accept re-arm) | a bare unlocked update wrote the retired quote's price and snapshot and then converted — the corrected school resolved to an organisation and that organisation's invoice queued to Xero at yesterday's price | takes `lock(1)` itself and re-reads the quote's status under it; only `SUPERSEDED`/`CANCELLED` block the re-arm, so #1232's double-accept replay still works |
 
 It joins no capacity tier because it creates no booking and claims no bed. The
 `AWAITING_REVIEW` hold a corrected request may still be carrying is released
@@ -3298,12 +3325,6 @@ nests a self-locking call inside its own transaction. That claim-first ordering
 is `declineBookingRequest`'s, deliberately: its worst case is a request still
 pointing at a hold covering more than it needs, visible on the officer's screen
 with its own Release button, rather than a request that has silently lost beds.
-
-While it holds the key it also re-asks which `Organisation` the corrected school
-name claims (#3367), read-only. With approvals excluded, no school record can be
-created between that read and the claim, which is what makes the officer's
-on-screen confirmation of "this is that school" / "add it as a new school" a
-fence rather than a courtesy.
 
 ### Writer doing both → `lock(1)` first, then per-lodge
 
