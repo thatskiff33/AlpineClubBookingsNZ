@@ -361,7 +361,6 @@ function BudgetCard() {
             <div className="grid gap-2 sm:max-w-xs">
               <Label htmlFor="ai-budget">Monthly cap ({APP_CURRENCY})</Label>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">$</span>
                 <Input
                   id="ai-budget"
                   inputMode="decimal"

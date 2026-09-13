@@ -4459,7 +4459,8 @@ model SetupProgress {
 
 // Per-month rolled-up AI help usage. Mirrors the XeroApiUsageDaily pattern:
 // atomic upsert-with-increments alongside each event write. All token counts are
-// integers; costCents is NZD integer cents (never floats — money stays in cents).
+// integers; costCents is integer cents of the club's configured currency (#3354;
+// never floats — money stays in cents).
 model AiAssistantUsageMonthly {
   id               String   @id @default(cuid())
   // Calendar month in Pacific/Auckland, "YYYY-MM".
@@ -4507,7 +4508,8 @@ model AiAssistantUsageEvent {
 }
 
 // Deployment-specific AI spend control singleton (id="default"). The monthly
-// budget is a hard cutoff in NZD integer cents (default NZ$10 = 1000c).
+// budget is a hard cutoff in integer cents of the club's configured currency
+// (#3354; default 1000c).
 // updatedByMemberId is a PLAIN STRING with NO foreign key (audit-only; the id
 // need not resolve to a live Member row).
 model AiAssistantSettings {
@@ -4545,10 +4547,12 @@ model AiSpendCurrencySettings {
 // credential (IntegrationCredential provider "anthropic-diagnostics" — NEVER the
 // page-help "anthropic" key), its own deployment-local budget, and its own
 // concurrency-safe metering. NONE of these tables is shared with the page-help
-// AiAssistant* tables. All money is NZD integer cents.
+// AiAssistant* tables. All money is integer cents of the club's configured
+// currency (#3354).
 
 // Deployment-local Diagnostics spend control singleton (id="default"). The
-// monthly budget is a HARD cutoff in NZD integer cents and defaults to 0 =
+// monthly budget is a HARD cutoff in integer cents of the club's configured
+// currency (#3354) and defaults to 0 =
 // hard-off: no paid diagnostics call can be reserved until an admin sets a
 // positive budget (fail-closed, deliberate opt-in for a paid product). This
 // singleton deliberately does NOT travel in config-transfer bundles (mirrors
@@ -4567,7 +4571,8 @@ model DiagnosticsSettings {
 // RESERVATIONS live in DiagnosticsBudgetReservation, so a burst of paid calls
 // cannot overspend the monthly budget (the budget gate sums live reservations +
 // settledCents under an advisory lock before it inserts a reservation). All
-// token counts are integers; settledCents is NZD integer cents (never floats).
+// token counts are integers; settledCents is integer cents of the club's
+// configured currency (#3354; never floats).
 model DiagnosticsUsageMonthly {
   id               String   @id @default(cuid())
   // Calendar month in Pacific/Auckland, "YYYY-MM".

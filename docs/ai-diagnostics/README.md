@@ -176,9 +176,8 @@ nothing is read.
 - A **dedicated Anthropic credential** — provider `anthropic-diagnostics`, key
   `api_key`, in the encrypted `IntegrationCredential` store. NEVER the page-help
   `anthropic` key, and no fallback to it.
-- A **deployment-local monthly budget** in NZ integer cents
-  (`DiagnosticsSettings`, ships at **0 = hard-off** in the club's configured
-  currency).
+- A **deployment-local monthly budget** in integer cents of the club's
+  configured currency (`DiagnosticsSettings`, ships at **0 = hard-off**).
 - **Concurrency-safe budget reservation** that reserves per provider roundtrip
   and bounds the multi-tool loop.
 - **Fail-closed metering** with a circuit breaker.
@@ -320,7 +319,8 @@ Every gate denies the paid call on doubt — the concrete realisation of ADR-005
   either of those: `moduleEnabled: null` with a `module_flags_unreadable` blocker,
   which blocks like any other but says *we could not tell* rather than *it is off*
   (#2803). A surface rendering readiness must never show `null` as "off".
-- **Budget** defaults to NZ$0, so enabling the module alone authorises nothing.
+- **Budget** defaults to 0 in the club's configured currency, so enabling the
+  module alone authorises nothing.
 - The **rate limiters** are all `authSensitive`, so a degraded shared-store
   fallback runs at limit/4 — a store outage tightens, never loosens, the
   paid-call backstop.

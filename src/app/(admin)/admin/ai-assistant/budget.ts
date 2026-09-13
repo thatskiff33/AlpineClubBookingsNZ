@@ -1,5 +1,5 @@
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
-import { formatCentsPlain } from "@/lib/utils";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
 
 // Money helpers for the AI assistant monthly spend cap. All money is integer
 // cents of the club's configured currency (#3354); the editor shows a plain
@@ -57,7 +57,7 @@ export function parseDollarsToCents(input: string): ParseBudgetResult {
   if (cents > MAX_BUDGET_CENTS) {
     return {
       ok: false,
-      error: `The monthly cap cannot exceed $${centsToDollars(MAX_BUDGET_CENTS)}.`,
+      error: `The monthly cap cannot exceed ${formatCents(MAX_BUDGET_CENTS)}.`,
     };
   }
   return { ok: true, cents };
