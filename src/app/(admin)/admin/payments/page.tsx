@@ -26,6 +26,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { FieldHint, describedByFieldHint } from "@/components/ui/field-hint";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import {
   Select,
   SelectContent,
@@ -928,7 +929,7 @@ export default function PaymentsPage() {
                   <Label className="text-xs" htmlFor="payment-amount-exact">Gross amount exact</Label>
                   <Input
                     id="payment-amount-exact"
-                    inputMode="decimal"
+                    {...MONEY_INPUT_PROPS}
                     value={amountExact}
                     onChange={(event) => {
                       setAmountExact(event.target.value);
@@ -942,7 +943,7 @@ export default function PaymentsPage() {
                   <Label className="text-xs" htmlFor="payment-amount-min">Gross amount min</Label>
                   <Input
                     id="payment-amount-min"
-                    inputMode="decimal"
+                    {...MONEY_INPUT_PROPS}
                     value={amountMin}
                     onChange={(event) => {
                       setAmountMin(event.target.value);
@@ -956,7 +957,7 @@ export default function PaymentsPage() {
                   <Label className="text-xs" htmlFor="payment-amount-max">Gross amount max</Label>
                   <Input
                     id="payment-amount-max"
-                    inputMode="decimal"
+                    {...MONEY_INPUT_PROPS}
                     value={amountMax}
                     onChange={(event) => {
                       setAmountMax(event.target.value);
