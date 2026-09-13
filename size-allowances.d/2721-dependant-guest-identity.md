@@ -19,24 +19,25 @@ Both new modules are far inside their own budgets, and
 the import and the one payload field.
 
 file: src/app/api/bookings/route.ts
-lines: 1453
-reason: seventy lines, and forty-one of them are one comment block. The code is
-  a single guarded call — load the booker's dependants, check the normalised
-  party against them, answer the refusal — and it cannot move out of this
-  handler, because everything it reads is decided in this handler and nowhere
-  else: `guestInputs` only exists after `normalizeBookingGuestInputs` has
-  stripped an unresolved member link, and `isAuthorizedOnBehalf` is the same
-  local flag that decides `skipAuthorization` thirty lines above. Lifting it to
-  a module would mean passing both back out and would put the exemption in a
-  different file from the exemption it has to agree with, which is exactly the
-  drift `INV-SSOT-001` is about. The comment is load-bearing three times over:
-  it is the only record that the guard reads the NORMALISED party, which is what
-  makes a forged `isMember: true` irrelevant rather than a hole; the only record
-  that it sits before the person-night, hosting and capacity pre-flights on
-  purpose, so a party about to put a member on the bumpable non-member queue is
-  stopped while it is still a proposal; and the only statement of why an
-  authorised on-behalf create is exempt, which a reader who deletes it will
-  otherwise read as an oversight and "fix". This route is already a 1383-line
-  sequence of such guards; splitting one of them out because it is the newest
-  would make the order they run in — which is the whole contract — impossible to
-  read in one place.
+lines: 1466
+reason: eighty-odd lines, roughly half of them comment. The code is a single
+  guarded call — load the booker's dependants, check the party against them,
+  answer the refusal — and it cannot move out of this handler, because
+  everything it reads is decided in this handler and nowhere else: the resolved
+  member ids come out of the linked-member map built thirty lines above, and
+  `isAuthorizedOnBehalf` is the same local flag that decides `skipAuthorization`
+  beside it. Lifting it to a module would put the exemption in a different file
+  from the exemption it has to agree with, which is exactly the drift
+  `INV-SSOT-001` is about. The comment is load-bearing twice: it is the only
+  record that the guard sits before the person-night, hosting and capacity
+  pre-flights on purpose, so a party about to put a member on the bumpable
+  non-member queue is stopped while it is still a proposal; and the only
+  statement of why an authorised on-behalf create is exempt, which a reader who
+  deletes it will otherwise read as an oversight and "fix". The review round
+  made it SHORTER than first written: forty-one lines used to argue that the
+  guard must be handed the normalised party, and that argument is now a required
+  argument instead of a comment — the guard takes the ids that really resolved
+  and works the member path out itself, so there is no precondition left to
+  explain. This route is already a long sequence of such guards; splitting one
+  out because it is the newest would make the order they run in — which is the
+  whole contract — impossible to read in one place.

@@ -8,12 +8,27 @@
 
   The wizard now stops on an exact name match and asks which person you mean.
   **This is my dependant** moves them onto the member side of the party, or says
-  what has to happen first and links you to your Family Group when they are not
-  yet ready to be booked from that screen. **This is a different person with the
-  same name** lets the guest stay a guest, and is asked once per dependant, so two
-  dependants who share a name are answered for separately. The server checks the
-  answer again when the booking is made, so a stale browser tab or a request that
-  never came from the wizard cannot slip one through.
+  what has to happen first and who can do it when they are not yet ready to be
+  booked from that screen — sometimes that is your own profile, and sometimes it
+  is the club, because a dependant can be recorded as yours without being in your
+  family group. **This is a different person with the same name** lets the guest
+  stay a guest, and is asked once per dependant, so two dependants who share a
+  name are answered for separately. The server checks the answer again when the
+  booking is made, so a stale browser tab or a request that never came from the
+  wizard cannot slip one through.
+
+  The same question is asked when you send the club a booking request that needs
+  an officer's approval, because approving one makes a real booking. The officer
+  cannot answer it for you — the whole point is that a name is not proof of who
+  somebody is — so if your dependant is recorded after you send the request, the
+  officer is asked to send it back rather than book your child as a guest without
+  you there.
+
+  Names that look identical on screen are now treated as identical: a macron
+  typed on one keyboard and the same macron typed on another are the same letter,
+  and used to be read as two different names. Near misses are still different
+  names — a curly apostrophe is not a straight one, a hyphen is not a space, and
+  a middle name on one side is a different name.
 
   Nothing is compared against anybody else's family. The check looks only at your
   own recorded dependants, and only at names that match exactly — no near

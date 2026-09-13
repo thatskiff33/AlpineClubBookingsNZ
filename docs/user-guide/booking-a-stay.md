@@ -57,23 +57,30 @@ full booking state machine is in
    it books them at the member rate with a bed held (no provisional hold).
 4. If the name you type is **exactly** the name of one of **your own recorded
    dependants**, that is not a suggestion but a question you have to answer
-   before you can go on. Your dependant is a member of the club and should have
-   a bed held at the member rate; booking them as a guest would instead leave
-   them with no bed until the stay is nearly here, and could see them bumped if
-   the lodge fills. So the wizard asks which person you mean:
+   before you can go on. Your dependant is a member of the club and should have a
+   bed held at the member rate; booked as a guest they may instead be held
+   provisionally, depending on how far ahead you are booking — no bed reserved
+   until the booking is confirmed and paid closer to your stay, and members have
+   priority if the lodge fills. So the wizard asks which person you mean:
 
    - **This is my dependant** — they move onto the member side of the party. If
-     they are not yet ready to be booked from this screen, it says what to do
-     first and links you to your Family Group.
+     they cannot be added from this screen yet, it says what has to happen
+     first, and who can do it: sometimes that is something you finish in your
+     own profile, and sometimes it is the club, because a dependant can be
+     recorded as yours without being in your family group.
    - **This is a different person with the same name** — the guest stays a
-     guest, and the club records that you said so about that particular
-     dependant. You are asked once per dependant, so if two of your dependants
-     share a name you answer for each of them.
+     guest. You are asked once per dependant, so if two of your dependants share
+     a name you answer for each of them; and because the question is about the
+     name, answering once covers every guest on the booking with that name.
 
    The club only ever compares what you type against **your own** recorded
    dependants, and only when the name matches exactly. It never searches other
    families or the membership list, so this cannot be used to find out whether
    somebody is a member.
+
+   Your answer is used to let this booking go through, and is **not** kept as a
+   record afterwards. If you want the club to know about it, say so in the notes
+   or tell them.
 5. **Adding another member who is not in your family group** (only if your club
    has turned this on): a **+ Add Member Guest** button sits beside **+ Add
    Non-Member Guest**. Most clubs ask you for the person's **exact email

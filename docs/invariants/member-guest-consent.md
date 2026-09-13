@@ -287,28 +287,29 @@ leave a stale row here.
 ## INV-GUEST-019
 
 - **A booker's own recorded dependant belongs on the member path, and the app
-  never guesses which person a typed name is** (#2721, owner rule). A party row
-  with no `memberId` is a non-member guest: provisional under the hold policy —
-  no bed reserved until the booking is confirmed and paid nearer the stay —
-  bumpable when the lodge fills, and invoiced as the deferred guest portion. A
-  recorded dependant put there is a member of this club standing behind the
-  members.
-- **The candidate set is the booker's own parent links and nothing wider**, and
-  that is the privacy half of the rule: free-text guest entry must never become a
-  way to ask the club whether a name is a member. Not the family group, not the
-  lodge, not the membership database. Matching is **exact on the normalised name**
-  (trim, lowercase, collapse whitespace, `person-name-normalization.ts`) — nothing
-  fuzzy, phonetic or partial, because a false collision is a question about
-  somebody the booker never mentioned.
+  never guesses which person a typed name is** (#2721, owner rule). A row with no
+  `memberId` is a non-member guest: provisional under the hold policy, bumpable
+  when the lodge fills, invoiced as the deferred guest portion. A dependant put
+  there stands behind their own club's members.
+- **The candidate set is the booker's own parent links and nothing wider** — the
+  privacy half of the rule: free-text guest entry must never become a way to ask
+  the club whether a name is a member. Not the family group, the lodge or the
+  membership database. Matching is **exact on the normalised name** (trim,
+  lowercase, collapse whitespace, canonical Unicode composition:
+  `person-name-normalization.ts`), nothing fuzzy, phonetic or partial.
 - **A collision is resolved explicitly, per dependant.** Either the row moves to
   the member path, or the guest path continues behind a declaration naming the
-  exact dependant it is not. A generic override is prohibited and is not a shape
-  the field can hold. Two dependants whose names normalise alike are two people
-  and need two answers.
-- **The server re-resolves both** from authenticated data on the create path,
-  after guest normalisation and before any create service, so a forged member
-  link, a fabricated or unrelated dependant id, and a stale declaration are all
-  refused. An authorised on-behalf create is exempt, exactly as the member-guest
-  boundary check and the member profile gate are.
-- **Identity is keyed by the normalised name, never by a party position.** Home:
+  exact dependant it is not; a generic override is prohibited and is not a shape
+  the field can hold. Two dependants whose names normalise alike need two
+  answers, and one answer covers **every row carrying that name** — the question
+  is about the name rather than the row.
+- **Which doors this holds on, and which it does not.** The create route, and the
+  policy-exception request — at submit, and again at approval, where that door
+  really creates the booking. Not the edit doors (add-guest, modify-quote), and
+  an authorised on-behalf create is exempt exactly as the member-guest boundary
+  check is.
+- **The server re-resolves both from authenticated data**, taking the member ids
+  that really resolved rather than trusting a row, so a forged member link, a
+  fabricated or unrelated dependant id and a stale declaration are refused.
+  **Identity is keyed by the normalised name, never a party position.** Home:
   `src/lib/booking-dependant-identity.ts`.

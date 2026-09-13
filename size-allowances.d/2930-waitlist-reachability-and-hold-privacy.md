@@ -28,7 +28,7 @@ page, which the second fix round reached: it was the one caller still opting out
 of the shared guest form's absent-ceiling shape.
 
 file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2341
+lines: 2449
 reason: the hook is the wizard's single state machine, and this change alters
   what that machine decides rather than adding a feature beside it — the
   advisory replaces a hard stop, `waitlistOnly` becomes an input to
@@ -60,6 +60,10 @@ reason: the hook is the wizard's single state machine, and this change alters
   is here is the part that cannot leave — the derivation from the live party,
   the gate on Continue, the two answers, and the note on why each is keyed by
   normalised name rather than by a position in an array the member is editing.
+  #2721's review round then added its own-dependant identity state, the two
+  answers, and the refusal handler that re-reads the family list before
+  deciding what to tell the member — so the length recorded here is the length
+  after that; the reasoning above is unchanged.
 
 file: src/app/(authenticated)/book/_components/review-step.tsx
 lines: 1065

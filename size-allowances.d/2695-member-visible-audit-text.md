@@ -34,13 +34,18 @@ reason: two declarations, approve and reject, three lines each with the
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/app/api/admin/booking-exception-requests/[id]/route.ts
-lines: 792
+lines: 810
 reason: the same, for the refuse and approve decisions. The approval's note is
   the longer of the two because its `details` falls back to the reviewed policy
   codes when an officer writes nothing, and the declaration deliberately does
   NOT follow that fallback — a code is an internal identifier for the rule that
   was waived, not a sentence written for a member, and the comment is what stops
   the next reader restoring the symmetry.
+  #2721 then added eighteen lines: the officer-facing answer when an approval
+  is refused because the frozen party names the requester's own recorded
+  dependant. It belongs beside the other approval refusals, which is the whole
+  point of this catch — an officer reading one needs to see how it differs from
+  the kept-pending ones. The length recorded here is the length after that.
 
 file: src/app/api/member/data-export/route.ts
 lines: 352
