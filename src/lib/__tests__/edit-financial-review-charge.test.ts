@@ -192,6 +192,7 @@ import {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentStripeKey,
   buildEditFinancialReviewChargeReason,
+  stripeIdempotencyKeyForAskAmount,
 } from "@/lib/payment-recovery-keys";
 
 const tx = {
@@ -467,7 +468,22 @@ describe("a completed review that asks the member for money (#3170)", () => {
     // EDIT-scoped on both keys, which inverts the first #3170 round. The request
     // belongs to the edit, not to the task, so a second review's settlement joins
     // this one rather than minting a rival the mint would then cancel.
+    //
+    // #3371 fix round: the Stripe key also NAMES THE AMOUNT. The mint's figure is
+    // re-derived on every attempt - the share sum can grow and, since #3371, the
+    // carried balance can fall - and Stripe answers `idempotency_error` to a key
+    // replayed with different parameters, which would strand the ask for good.
+    // Built through the shared helper rather than restated, so this asserts the
+    // production rule and not a second spelling of it.
     expect(call.idempotencyKey).toBe(
+      stripeIdempotencyKeyForAskAmount(
+        buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
+        20000,
+      ),
+    );
+    // A CONTROL on that: the amount is genuinely IN the key, so a revert to the
+    // bare edit-scoped key fails here rather than passing on a substring.
+    expect(call.idempotencyKey).not.toBe(
       buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
     );
     expect(call.recoveryIdempotencyKey).toBe(
@@ -1832,6 +1848,67 @@ describe("#3371: a review charge carries the unpaid ask its mint retires", () =>
       mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
     expect(call.result.additionalAsk.amountCents).toBe(6000);
     expect(call.result.additionalAsk.carriedCents).toBe(0);
+  });
+
+  /*
+    #3371 fix round - THE REPLAY HAZARD THE CARRIED BALANCE ADDS, and the reason
+    the Stripe key moved.
+
+    The mint's amount is re-derived on every attempt. Before #3371 the only thing
+    that could move it between a failed mint and its recovery replay was a second
+    review task settling; #3371 adds a second mover, and it is the commoner one -
+    the member paying the earlier change's ask, which they can do at any point in
+    the days the chase reminders run.
+
+    Stripe refuses a key replayed with different parameters. On a FIXED key the
+    replay would answer `idempotency_error`, the catch would re-enqueue, and every
+    later replay would fail identically - the review charge never raised at all.
+
+    Both halves are asserted: the same figure keeps the same key (so a genuine
+    replay still converges on the one intent, which is #3170's whole point), and a
+    moved figure gets a different one.
+  */
+  it("keeps the Stripe key stable across a replay of the SAME figure", async () => {
+    await charge({ confirmedAmountCents: 6000 });
+    await charge({ confirmedAmountCents: 6000 });
+
+    const keys = (
+      mocks.createModificationAdditionalPaymentIntent.mock
+        .calls as { idempotencyKey: string }[][]
+    ).map((args) => args[0]?.idempotencyKey);
+    // A CONTROL on the comparison: two calls really happened, so this cannot
+    // pass by comparing one call with itself.
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it("moves the Stripe key when the carried balance is paid off between attempts", async () => {
+    await charge({ confirmedAmountCents: 6000 });
+    const minted =
+      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+
+    // The member pays the earlier change's $200 before the replay reaches this.
+    mocks.createModificationAdditionalPaymentIntent.mockClear();
+    mocks.paymentFindUnique.mockResolvedValue(
+      paymentCarrying(20000, PaymentStatus.SUCCEEDED),
+    );
+    await charge({ confirmedAmountCents: 6000 });
+    const replayed =
+      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+
+    expect(minted.result.additionalAsk.amountCents).toBe(26000);
+    expect(replayed.result.additionalAsk.amountCents).toBe(6000);
+    expect(
+      replayed.idempotencyKey,
+      "INV-PAY-098: a re-derived amount under the same Stripe key is a permanent " +
+        "idempotency_error, and the charge is then never raised at all.",
+    ).not.toBe(minted.idempotencyKey);
+    expect(replayed.idempotencyKey).toBe(
+      stripeIdempotencyKeyForAskAmount(
+        buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
+        6000,
+      ),
+    );
   });
 
   it("carries an extra the member's card DECLINED, which is still owed", async () => {

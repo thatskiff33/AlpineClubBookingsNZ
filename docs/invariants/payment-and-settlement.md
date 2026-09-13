@@ -1216,15 +1216,17 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 - **ONE BOOKING EDIT RAISES ONE CHARGE REQUEST, for the total of its shares**
   (#3170, owner decision 30 Aug 2026). One edit raises one review task per guest
   strand whose history could not be read, and an officer may settle both as
-  money owed to the club; two separate requests LOSE MONEY, because minting an
-  additional PaymentIntent queues every OTHER outstanding `ADDITIONAL`
-  transaction for cancellation and `reconcilePaymentAggregates` carries a single
+  money owed; two separate requests LOSE MONEY, because minting an additional
+  PaymentIntent queues every OTHER outstanding `ADDITIONAL` transaction for
+  cancellation and `reconcilePaymentAggregates` carries a single
   `additionalAmountCents`. So:
   - **The REQUEST is anchored to the `BookingModification`** — one intent, one
     `ADDITIONAL` row, one figure on the member's pay link — and BOTH the Stripe
-    idempotency key and the recovery operation are scoped to it. A later share
-    RAISES that intent's amount rather than minting a second. (The REFUND keys
-    stay TASK-scoped: two refunds of one edit are two movements that must never
+    idempotency key and the recovery operation are scoped to it. The Stripe key
+    also names the AMOUNT (#3371): the figure is re-derived each attempt, and
+    Stripe refuses a key reused with different parameters. A later share RAISES
+    that intent's amount rather than minting a second. (The REFUND keys stay
+    TASK-scoped: two refunds of one edit are two movements that must never
     converge.)
   - **The SHARE stays anchored to the task** — its `amountCents`,
     `settlementDirection` and audit entry — so the combined figure remains
@@ -1233,10 +1235,9 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     task contributes exactly once, from the row its own status-fenced claim
     wrote; whichever completion commits LAST derives the true total, and
     **neither leg may LOWER what is recorded**. On the Stripe leg that is a
-    compare-and-set on the request, which is why it needs no advisory lock.
-    A balance CARRIED IN from another edit ([INV-PAY-098]) is stored apart from
-    this total and never joins the sum, which is what keeps the sum monotone and
-    the compare-and-set correct.
+    refusal, not an atomic claim, and it is why no advisory lock is held.
+    A balance CARRIED IN from another edit ([INV-PAY-098]) is stored apart, so
+    the sum stays monotone and the refusal stays correct.
   - **A share may not be added to a request the member has already paid, or to
     one whose supplementary invoice has already been issued.** Both are REFUSED
     before the claim with the task left OPEN. The Xero leg is `INV-PAY-070`.

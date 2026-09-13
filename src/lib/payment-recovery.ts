@@ -481,6 +481,7 @@ import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
+  stripeIdempotencyKeyForAskAmount,
 } from "./payment-recovery-keys";
 export {
   buildBookingCancellationRefundMetadata,
@@ -2729,19 +2730,18 @@ async function processCreateAdditionalPaymentIntentOperation(
 
   /**
    * The Stripe key still pins a replay of the SAME ask to the same intent, and
-   * gains the amount only when the re-derivation moved. Stripe refuses a key
-   * reused with different parameters, so a bare `operation.paymentIntentId`
-   * would turn a re-derived amount into a permanent `idempotency_error` on every
-   * remaining attempt. A changed amount is a different request and gets a
-   * different key; the intent the previous attempt minted carries no
-   * `PaymentTransaction` row (this attempt is only here because the last one
-   * died before writing one), so it was never reachable by anybody and expires
-   * at Stripe.
+   * gains the amount only when the re-derivation moved. The rule and the reasons
+   * are `stripeIdempotencyKeyForAskAmount`'s, which the edit-review charge's own
+   * re-derived mint reaches too (#3371 fix round) rather than spelling the
+   * suffix a second time. Here the base key is the ORIGINAL inline attempt's,
+   * frozen on the row, so an unmoved amount must keep it bare to converge on
+   * that attempt; the review path builds its base fresh at every attempt and has
+   * no bare form to preserve.
    */
   const stripeIdempotencyKey =
     askCents === operation.amountCents
       ? operation.paymentIntentId
-      : `${operation.paymentIntentId}_${askCents}`;
+      : stripeIdempotencyKeyForAskAmount(operation.paymentIntentId, askCents);
   const pi = await createPaymentIntent({
     amountCents: askCents,
     customerId,

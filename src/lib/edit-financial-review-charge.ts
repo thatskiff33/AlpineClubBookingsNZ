@@ -31,6 +31,7 @@ import {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentStripeKey,
   buildEditFinancialReviewChargeReason,
+  stripeIdempotencyKeyForAskAmount,
 } from "@/lib/payment-recovery-keys";
 import {
   isCapturedTransactionStatus,
@@ -575,8 +576,21 @@ export async function syncEditFinancialReviewChargeRequest({
     // (request vs share) each key belongs to. In short: the request is the thing
     // being identified, there is one per edit, and a replay converging on the
     // first intent is now the point rather than the hazard.
-    idempotencyKey:
+    //
+    // #3371 fix round: AND THE AMOUNT, for the same reason the ordinary edit's
+    // replay does it. The edit-scoped key was already replayed against a
+    // RE-DERIVED share sum - a second task settling after a failed mint moves
+    // that sum, which `payment-recovery.ts` says in as many words - and the
+    // carried balance is a second thing that can move, because the member can
+    // pay the earlier ask in between. Same key, different amount, is a permanent
+    // `idempotency_error` at Stripe and the ask never gets raised. A genuine
+    // replay of the SAME figure still converges on the one intent, which is what
+    // the paragraph above is about; only a re-derived figure diverges, and it
+    // SHOULD.
+    idempotencyKey: stripeIdempotencyKeyForAskAmount(
       buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
+      ask.amountCents,
+    ),
     recoveryIdempotencyKey:
       buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
         bookingModificationId,

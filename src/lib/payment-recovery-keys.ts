@@ -174,6 +174,33 @@ export function buildEditFinancialReviewAdditionalIntentStripeKey(
   return `edit_financial_review_additional_${bookingModificationId}`;
 }
 
+/**
+ * A STRIPE IDEMPOTENCY KEY THAT NAMES THE AMOUNT IT WAS MINTED FOR.
+ *
+ * Stripe REFUSES a key replayed with different parameters, answering
+ * `idempotency_error`. So any key pinned to a request whose amount can be
+ * RE-DERIVED between attempts has to move when that amount moves, or the first
+ * re-derivation turns every remaining attempt into the same permanent failure
+ * and the ask is never raised at all.
+ *
+ * Two paths need it and it is one rule, so it is spelled once (`INV-SSOT-001`).
+ * The ordinary edit's recovery replay re-derives against the payment as it
+ * stands now (#3340), and the edit-review charge re-derives its share sum
+ * (#3170) and, since #3371, the carried balance with it - a member who pays the
+ * earlier ask between a failed mint and its replay moves the second figure.
+ *
+ * A changed amount is a different request and gets a different key. The intent a
+ * previous attempt may have minted at Stripe carries no `PaymentTransaction`
+ * row - an attempt is only replayed because the last one died before writing
+ * one - so it was never reachable by anybody and expires at Stripe.
+ */
+export function stripeIdempotencyKeyForAskAmount(
+  baseKey: string,
+  askCents: number,
+) {
+  return `${baseKey}_${askCents}`;
+}
+
 // #3170: the `reason` stamped on the combined request's `ADDITIONAL`
 // PaymentTransaction, and the way a later share FINDS that request.
 //
