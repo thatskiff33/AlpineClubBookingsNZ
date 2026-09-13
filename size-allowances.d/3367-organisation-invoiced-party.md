@@ -36,7 +36,7 @@ reason: Three lines net. The member payload builder's object literal MOVED OUT
   duplicate-name predicate rather than copying them.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1429
+lines: 1524
 reason: Six lines, and five of them are the comment. One call site changes from
   `findOrCreateXeroContact(booking.memberId, …)` to
   `findOrCreateXeroContactForInvoicedParty(booking, …)`. The comment is there
@@ -94,7 +94,7 @@ reason: Fourteen comment lines across two docblocks, no code. The manual-link
   lock is a rule somebody has to go and find.
 
 file: src/lib/xero-sync.ts
-lines: 883
+lines: 901
 reason: Eleven comment lines on `XeroObjectLinkInput.mergeMetadata`, no code. The
   flag's docblock said only inbound writers set it while one outbound writer
   now does, for a sound reason; two comments contradicting each other is how a

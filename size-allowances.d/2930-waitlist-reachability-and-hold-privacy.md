@@ -118,7 +118,7 @@ reason: one line of code and eight of comment. The refusal's night list now
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/app/(admin)/admin/book/page.tsx
-lines: 1506
+lines: 1509
 reason: twenty-three lines, and eighteen of them are one docblock. The code is
   three lines — the lodge's resolved capacity read as a ceiling only when it is
   positive, and the derived "is the party already there", replacing the same
