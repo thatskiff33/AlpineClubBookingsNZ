@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
@@ -31,9 +31,14 @@ import {
 } from "@/lib/booking-guests";
 import { MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE } from "@/lib/member-guest-refusal";
 import {
+  declarationMatchesACollision,
+  DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
+  DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_CODE,
   DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
   DIFFERENT_PERSON_SAME_NAME,
   findOwnDependantNameCollisions,
+  unresolvedOwnDependantCollisions,
   type BookerDependant,
   type DependantIdentityDeclaration,
   type OwnDependantCollision,
@@ -640,40 +645,69 @@ export function useBookingWizard() {
   }, [session, router]);
 
   const familyLoadSeqRef = useRef(0);
+  /**
+   * Fetch `/api/members/family` and fold it into state, RESOLVING with the own
+   * dependant list it carried — or with `null` when the load failed.
+   *
+   * Hoisted out of the mount effect (#2721 review) because one caller needs the
+   * answer rather than the side effect. The server's own-dependant refusal sends
+   * the member back to the guests step to answer a question the step draws from
+   * THIS list; when the list is the stale one that caused the refusal, the step
+   * draws nothing and the member is told to answer a question that is not on the
+   * screen. Pressing Continue reproduces it exactly, so the only escapes were a
+   * full page reload or deleting the guest — and the copy suggested neither.
+   *
+   * `useCallback` with no dependencies: the identity is stable, so the mount
+   * effect below still runs once and the event listener it registers is the same
+   * function it removes.
+   */
+  const loadFamilyMembers = useCallback(async (): Promise<{
+    ownDependants: BookerDependant[];
+  } | null> => {
+    // Monotonic request sequence: a slow mount fetch (self blocked) must not
+    // clobber a newer onboarding-confirmed refetch (self bookable) if it
+    // resolves out of order — that would revert the list and render the
+    // seeded ✓ button alongside the amber blocked warning.
+    const seq = (familyLoadSeqRef.current += 1);
+    try {
+      const res = await fetch("/api/members/family");
+      const data = res.ok ? await res.json() : null;
+      // MG3 (#2308): a FAILED load is distinguished from an EMPTY one, and
+      // only the success sets `familyMembersLoaded`. The consent prediction
+      // below decides "is this person my own family?" from this list, so an
+      // empty list that really means "we could not ask" would predict
+      // "Waiting for Mia to approve" over the booker's own child. See
+      // `predictMemberGuestConsent`.
+      if (!data) return null;
+      const ownDependantsFromServer: BookerDependant[] = Array.isArray(
+        data.ownDependants,
+      )
+        ? data.ownDependants
+        : [];
+      // A SUPERSEDED response still reports what it read, and the caller above
+      // uses it only to decide what to say about the request it just made. What
+      // it must not do is write stale state — that is the race this guard has
+      // always existed for.
+      if (seq !== familyLoadSeqRef.current) {
+        return { ownDependants: ownDependantsFromServer };
+      }
+      setFamilyMembers(data.familyMembers || []);
+      setOwnDependants(ownDependantsFromServer);
+      setFamilyMembersLoaded(true);
+      return { ownDependants: ownDependantsFromServer };
+    } catch {
+      return null;
+    }
+  }, []);
   useEffect(() => {
-    const loadFamilyMembers = () => {
-      // Monotonic request sequence: a slow mount fetch (self blocked) must not
-      // clobber a newer onboarding-confirmed refetch (self bookable) if it
-      // resolves out of order — that would revert the list and render the
-      // seeded ✓ button alongside the amber blocked warning.
-      const seq = (familyLoadSeqRef.current += 1);
-      fetch("/api/members/family")
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (seq !== familyLoadSeqRef.current) return;
-          // MG3 (#2308): a FAILED load is distinguished from an EMPTY one, and
-          // only the success sets `familyMembersLoaded`. The consent prediction
-          // below decides "is this person my own family?" from this list, so an
-          // empty list that really means "we could not ask" would predict
-          // "Waiting for Mia to approve" over the booker's own child. See
-          // `predictMemberGuestConsent`.
-          if (!data) return;
-          setFamilyMembers(data.familyMembers || []);
-          setOwnDependants(
-            Array.isArray(data.ownDependants) ? data.ownDependants : [],
-          );
-          setFamilyMembersLoaded(true);
-        })
-        .catch(() => {});
-    };
-    loadFamilyMembers();
+    void loadFamilyMembers();
     // The confirm-details wizard overlays this page on a member's first visit;
     // completing it flips canBeBookedAsMember, so the cached list must refetch
     // or the member's own quick-add button stays disabled until a reload.
     window.addEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, loadFamilyMembers);
     return () =>
       window.removeEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, loadFamilyMembers);
-  }, []);
+  }, [loadFamilyMembers]);
 
   // Pre-select the booker by default (#1680). The signed-in member is the
   // `relationship === "self"` entry; seed them as a guest when the family list
@@ -965,24 +999,22 @@ export function useBookingWizard() {
    */
   const liveDependantIdentityDeclarations = dependantIdentityDeclarations.filter(
     (declaration) =>
-      dependantIdentityCollisions.some(
-        (collision) =>
-          collision.normalizedName === declaration.normalizedName &&
-          collision.dependants.some(
-            (dependant) => dependant.id === declaration.dependantMemberId,
-          ),
-      ),
+      declarationMatchesACollision(declaration, dependantIdentityCollisions),
   );
   const declaredDependantMemberIds = liveDependantIdentityDeclarations.map(
     (declaration) => declaration.dependantMemberId,
   );
-  /** Collisions with at least one dependant the booker has not answered for. */
-  const unresolvedDependantIdentityCollisions =
-    dependantIdentityCollisions.filter((collision) =>
-      collision.dependants.some(
-        (dependant) => !declaredDependantMemberIds.includes(dependant.id),
-      ),
-    );
+  /**
+   * Collisions with at least one dependant the booker has not answered for —
+   * from the module the server guard answers this with, not a second copy of
+   * the rule (#2721 review). A copy here would agree with the server only by
+   * hand: relax the rule in the module and the server would start accepting a
+   * party this wizard still refused to submit.
+   */
+  const unresolvedDependantIdentityCollisions = unresolvedOwnDependantCollisions(
+    dependantIdentityCollisions,
+    liveDependantIdentityDeclarations,
+  );
 
   /**
    * "This is my dependant" — move the colliding free-text row onto the member
@@ -1168,6 +1200,72 @@ export function useBookingWizard() {
     setErrorPaymentTargets([]);
   }
 
+  /**
+   * The server refused the create over own-dependant identity (#2721).
+   *
+   * The wizard asks this question on the guests step and will not leave it
+   * unanswered, so reaching here means the client's picture went STALE — a tab
+   * left open while the dependant was recorded or renamed, a second device, one
+   * swallowed failure of `/api/members/family`, or a request that never came
+   * from this wizard at all.
+   *
+   * WHY THIS REFETCHES, which is the whole point of the function (#2721 review).
+   * Sending the member back to the guests step is only useful if that step can
+   * now draw the question, and the step draws it from the family list. That list
+   * is loaded once on mount and refreshed on one unrelated event, so returning
+   * to the step re-fetched NOTHING: the collisions were recomputed from the same
+   * stale snapshot that caused the refusal, no question rendered, and the member
+   * was told to answer something that was not on the screen. Pressing Continue
+   * reproduced it exactly — a loop whose only escapes were a full page reload or
+   * deleting the guest, neither of which the copy suggested.
+   *
+   * WHY AN INVALID DECLARATION CLEARS THE ANSWERS. The server refuses the whole
+   * party if ANY declaration fails and does not say which, so keeping them is how
+   * the mirror loop happens: the same payload is rebuilt and refused again.
+   * Clearing them re-asks the question, which is exactly what the server's own
+   * sentence tells the member to do, and it is the only answer that terminates.
+   *
+   * WHY THE MESSAGE CAN CHANGE AFTERWARDS. The server's sentence is shown at
+   * once, because the member is waiting. If the refreshed list still leaves the
+   * step with nothing to ask — the fetch failed, or this really was somebody
+   * else's request — it is replaced with copy that names something the member
+   * can actually do, rather than leaving them pressing Continue.
+   */
+  function handleDependantIdentityRefusal(
+    declarationInvalid: boolean,
+    serverMessage: string,
+  ) {
+    setGuestProfileBlocks([]);
+    setMemberNightConflicts([]);
+    setErrorPaymentTargets([]);
+    setStep("guests");
+    setError(serverMessage);
+    // The party as it was submitted — the one the server actually refused.
+    const refusedParty = guests;
+    const declarationsAfterRefusal = declarationInvalid
+      ? []
+      : dependantIdentityDeclarations;
+    if (declarationInvalid) setDependantIdentityDeclarations([]);
+    void loadFamilyMembers().then((fresh) => {
+      if (!fresh) {
+        setError(DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE);
+        return;
+      }
+      // Exactly the gate the guests step will render against, computed from the
+      // refreshed list rather than predicted.
+      const collisions = findOwnDependantNameCollisions(
+        refusedParty,
+        fresh.ownDependants,
+      );
+      const live = declarationsAfterRefusal.filter((declaration) =>
+        declarationMatchesACollision(declaration, collisions),
+      );
+      if (unresolvedOwnDependantCollisions(collisions, live).length === 0) {
+        setError(DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE);
+      }
+    });
+  }
+
   function handleBookingApiError(data: Record<string, unknown>, fallback: string) {
     // MG3 (#2308) / D-8. The server collapses every cross-family refusal to one
     // neutral sentence, and the wizard's job here is to NOT dress it up: the two
@@ -1227,26 +1325,13 @@ export function useBookingWizard() {
     }
     setMemberGuestAddError(null);
     if (
-      data.code === "DEPENDANT_IDENTITY_UNRESOLVED" ||
-      data.code === "DEPENDANT_IDENTITY_DECLARATION_INVALID"
+      data.code === DEPENDANT_IDENTITY_UNRESOLVED_CODE ||
+      data.code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE
     ) {
-      /*
-        #2721. The wizard asks this question on the guests step and will not
-        leave it unanswered, so reaching here means the client's picture went
-        stale — a tab left open while the dependant was recorded or renamed, a
-        second device, or a request that never came from this wizard at all.
-
-        Send the member back to the step that can actually answer it, and say
-        the server's sentence rather than a second wording of the same state.
-        Nothing is re-derived here from the response body: the collisions are
-        recomputed from `/api/members/family` on that step, which is the same
-        authority the server just used.
-      */
-      setGuestProfileBlocks([]);
-      setMemberNightConflicts([]);
-      setErrorPaymentTargets([]);
-      setStep("guests");
-      setError(typeof data.error === "string" ? data.error : fallback);
+      handleDependantIdentityRefusal(
+        data.code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
+        typeof data.error === "string" ? data.error : fallback,
+      );
       return;
     }
     if (data.code === "GUEST_PROFILE_REQUIRED") {

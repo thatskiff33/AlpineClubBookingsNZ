@@ -239,6 +239,11 @@ export function findOwnDependantNameCollisions(
 /**
  * Is this declaration one the party and the booker's own records still support?
  *
+ * EXPORTED because the wizard needs the identical predicate to decide which of
+ * its stored answers still travel on the next submit (#2721 review). It had a
+ * second, hand-written copy there: the two agreed by hand, so relaxing the rule
+ * here would have let the server accept a party the wizard still refused.
+ *
  * Answered against the collisions computed from CURRENT data, which is what
  * makes every tampering case one check: a fabricated or unrelated
  * `dependantMemberId` is not in any collision because it is not in the booker's
@@ -247,7 +252,7 @@ export function findOwnDependantNameCollisions(
  * declaration made before the dependant was renamed is not in any collision
  * because the dependant's normalised name moved.
  */
-function declarationMatchesACollision(
+export function declarationMatchesACollision(
   declaration: DependantIdentityDeclaration,
   collisions: ReadonlyArray<OwnDependantCollision>,
 ): boolean {
@@ -257,6 +262,36 @@ function declarationMatchesACollision(
   if (!collision) return false;
   return collision.dependants.some(
     (dependant) => dependant.id === declaration.dependantMemberId,
+  );
+}
+
+/**
+ * The collisions with at least one dependant the booker has not answered for.
+ *
+ * EVERY dependant behind a collision must be answered for, not just one of
+ * them: two dependants whose names normalise alike are two different people,
+ * and "this is not Sam" says nothing about the other Sam.
+ *
+ * The ONE definition of "what is still unanswered", used by the server guard
+ * below and by the wizard's own gate on Continue (#2721 review). The wizard held
+ * a second copy, so the client's picture and the server's agreed only by hand.
+ *
+ * Pass the declarations that are still LIVE — ones {@link declarationMatchesACollision}
+ * accepts against these same collisions. A stale declaration left in is ignored
+ * here rather than refused; refusing it is {@link checkOwnDependantIdentity}'s
+ * job, and it does that first.
+ */
+export function unresolvedOwnDependantCollisions(
+  collisions: ReadonlyArray<OwnDependantCollision>,
+  declarations: ReadonlyArray<DependantIdentityDeclaration>,
+): OwnDependantCollision[] {
+  const declaredDependantIds = new Set(
+    declarations.map((declaration) => declaration.dependantMemberId),
+  );
+  return collisions.filter((collision) =>
+    collision.dependants.some(
+      (dependant) => !declaredDependantIds.has(dependant.id),
+    ),
   );
 }
 
@@ -272,6 +307,21 @@ export const DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE =
 
 const INVALID_DECLARATION_ERROR =
   "The confirmation about a guest sharing a dependant's name no longer matches this booking. Go back to the guest list and answer the question again.";
+
+/**
+ * What the member is told when the wizard is sent back to answer the question
+ * and, after re-reading the authoritative list, STILL cannot draw it (#2721
+ * review).
+ *
+ * That is a real state, not a theoretical one: `/api/members/family` can fail,
+ * and a request can reach the refusal from a tab or a device this wizard is not.
+ * Telling somebody to answer a question that is not on their screen is a dead
+ * end they press Continue against forever, so the copy names the two things that
+ * actually help. It is the same shape the module-turned-off refusal above it in
+ * the wizard uses, deliberately.
+ */
+export const DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE =
+  "One of the guests on this booking shares a name with somebody recorded as your dependant, and we could not load the question to ask you about it. Refresh the page and try again — if it keeps happening, ask the club.";
 
 /**
  * The whole guard: given a proposed party, the booker's own dependants and
@@ -305,17 +355,7 @@ export function checkOwnDependantIdentity(params: {
     }
   }
 
-  const declaredDependantIds = new Set(
-    declarations.map((declaration) => declaration.dependantMemberId),
-  );
-  // EVERY dependant behind a collision must be answered for, not just one of
-  // them: two dependants whose names normalise alike are two different people,
-  // and "this is not Sam" says nothing about the other Sam.
-  const unresolved = collisions.filter((collision) =>
-    collision.dependants.some(
-      (dependant) => !declaredDependantIds.has(dependant.id),
-    ),
-  );
+  const unresolved = unresolvedOwnDependantCollisions(collisions, declarations);
   if (unresolved.length > 0) {
     return {
       code: DEPENDANT_IDENTITY_UNRESOLVED_CODE,
