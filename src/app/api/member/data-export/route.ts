@@ -14,6 +14,7 @@ import logger from "@/lib/logger";
 import { formatDateOnly } from "@/lib/date-only";
 import { clubTime } from "@/lib/club-time/server";
 import { seasonSelectLabel } from "@/lib/season-label";
+import { readDeclaredMemberText } from "@/lib/audit-member-disclosure";
 
 export async function GET() {
   const session = await auth();
@@ -198,7 +199,14 @@ export async function GET() {
       take: 500, // Cap at 500 entries to keep export manageable
       select: {
         action: true,
-        details: true,
+        // `metadata`, NOT `details` (#2695, `INV-PRIV-017`). This file is a
+        // member-facing channel like the member's own timeline, so it reads the
+        // same declaration and nothing else: the sentence the writing site
+        // declared for this member, or nothing. `details` is the officers'
+        // record — a deletion-decline note typed under "do not notify the
+        // member", the credit approval's internal ids — and it used to arrive
+        // here verbatim, with no category filter and no audience test.
+        metadata: true,
         createdAt: true,
       },
     });
@@ -316,7 +324,12 @@ export async function GET() {
       })),
       auditLog: auditEntries.map((a) => ({
         action: a.action,
-        details: a.details ?? null,
+        // The field keeps its name and its place: what changed is that its
+        // value is now the DECLARED sentence rather than the stored column
+        // (#2695). A row that declares nothing — every row written before this
+        // release included — exports `null` here, which is what the member's
+        // own timeline shows them for the same row.
+        details: readDeclaredMemberText(a.metadata),
         createdAt: a.createdAt.toISOString(),
       })),
     };
