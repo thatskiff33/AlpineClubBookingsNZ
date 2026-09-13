@@ -91,7 +91,7 @@ export const AUDIT_TRUNCATION_MARKER = "[TRUNCATED]";
 export const AUDIT_TRUNCATION_SUFFIX = `...${AUDIT_TRUNCATION_MARKER}`;
 
 /**
- * Reserved keys the reduction adds. Underscore-prefixed, matching the
+ * Reserved keys this module MINTS. Underscore-prefixed, matching the
  * `_truncated` / `_truncatedKeys` vocabulary `audit.ts` already stores, and
  * always re-written from scratch so a caller's payload cannot forge one.
  */
@@ -102,18 +102,52 @@ export const REDUCED_DETAIL_KEYS = {
   originalLength: "_originalLength",
   /** The names of the fields that did not fit — shape, never values. */
   droppedKeys: "_droppedKeys",
+  /**
+   * How many fields were dropped ALTOGETHER, written only when `_droppedKeys`
+   * could not name them all (#2704 review). The one thing this module adds to
+   * a row was breaking its own headline rule: the name list was shed from the
+   * end until the block fitted, and nothing said so — measured at the column's
+   * budget, thirty-seven fields dropped and two named. A list that has been
+   * shortened now says it has, which is the same rule every other value here
+   * obeys.
+   */
+  droppedKeyCount: "_droppedKeyCount",
   /** Set by the READ side only: these fields were rebuilt from clipped text. */
   recovered: "_recoveredFromTruncatedText",
 } as const;
 
-const RESERVED_KEY_VALUES: readonly string[] = Object.values(REDUCED_DETAIL_KEYS);
+/**
+ * The sanitiser's own "there were more keys than I kept" flag, spelled here
+ * because two spellings of one sentinel is the drift `INV-SSOT-001` prevents —
+ * `audit.ts` writes it and this module has to recognise it. It is NOT minted
+ * here, so the reduction passes it through as an ordinary field rather than
+ * re-writing it; what this module owes it is the two READER behaviours below.
+ */
+export const AUDIT_TRUNCATED_KEYS_FLAG = "_truncatedKeys";
+
+const MINTED_KEY_VALUES: readonly string[] = Object.values(REDUCED_DETAIL_KEYS);
+
+/**
+ * Every bookkeeping key a READER should not quote back as evidence: the ones
+ * minted above plus the sanitiser's flag. Wider than the minted set on purpose.
+ * The reduction strips only what it mints, because stripping the sanitiser's
+ * flag on the write side would delete a true marker; a reader filters both,
+ * because neither is a field the writer recorded.
+ */
+const RESERVED_KEY_VALUES: readonly string[] = [
+  ...MINTED_KEY_VALUES,
+  AUDIT_TRUNCATED_KEYS_FLAG,
+];
 
 /**
  * Room set aside for the reserved block before any field is measured.
  *
  * `{"_truncated":true,"_originalLength":<n>,"_droppedKeys":[…]}` with a
- * generous number and a few names. Names are shed afterwards if the real block
- * still overruns, so this is a starting reservation and not an assumption.
+ * generous number, a few names, and room for `_droppedKeyCount` if the names
+ * have to be shed. Names are shed afterwards if the real block still overruns,
+ * so this is a starting reservation and not an assumption — the empty-list
+ * floor is 84 characters, which is what makes the shedding loop terminate with
+ * room spare.
  */
 const RESERVED_BLOCK_RESERVE = 120;
 
@@ -151,21 +185,43 @@ export function parseStructuredDetail(value: string | null | undefined): PlainJs
   }
 }
 
-function withoutReservedKeys(value: PlainJsonObject): PlainJsonObject {
+function without(value: PlainJsonObject, keys: readonly string[]): PlainJsonObject {
   const copy: PlainJsonObject = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (!RESERVED_KEY_VALUES.includes(key)) {
+    if (!keys.includes(key)) {
       copy[key] = entry;
     }
   }
   return copy;
 }
 
-/** The cost in characters of adding one more pair to a non-empty object. */
+/**
+ * The cost in characters of adding one more pair to a non-empty object.
+ *
+ * Safe for every value the callers hand it because they drop the ones
+ * `JSON.stringify` writes NOTHING for first — see `serialisableFields`.
+ */
 function pairCost(key: string, value: unknown): number {
   // `,"key":value` — the leading comma is what an added pair actually costs
   // inside an object that already has one.
   return JSON.stringify(key).length + 1 + JSON.stringify(value).length + 1;
+}
+
+/**
+ * The payload's own pairs, in its own order, minus any `JSON.stringify` writes
+ * nothing for — `undefined`, a function, a symbol.
+ *
+ * Those are not fields: `JSON.stringify({ a: undefined })` is `{}`, so they are
+ * absent from `originalLength` and from every serialisation below. Dropping
+ * them here is what lets `pairCost` measure rather than throw on
+ * `undefined.length`. Unreachable from the two production callers — one parses
+ * its input from JSON, the other takes the sanitiser's output, and neither can
+ * produce such a value — but this function is exported and takes `unknown`.
+ */
+function serialisableFields(value: PlainJsonObject): Array<[string, unknown]> {
+  return Object.entries(value).filter(
+    ([, entry]) => JSON.stringify(entry) !== undefined
+  );
 }
 
 /**
@@ -201,7 +257,11 @@ function clipStringValueToFit(key: string, text: string, room: number): string |
 export type StructuredDetailReduction = {
   /** Valid JSON object text, within budget. */
   text: string;
-  /** Names of the fields that did not fit, in the payload's own order. */
+  /**
+   * Names of the fields that did not fit, in the payload's own order — ALL of
+   * them, even when `text` had room to name only some. The stored row says so
+   * with `_droppedKeyCount`; this list never needs to.
+   */
   droppedKeys: readonly string[];
 };
 
@@ -209,15 +269,31 @@ export type StructuredDetailReduction = {
  * Reduce an already-sanitised payload to a VALID JSON object within `budget`.
  *
  * Two passes, and the order is the point. The first takes every field that fits
- * whole, skipping the ones that do not; the second goes back for the skipped
- * ones and clips those whose value is a string. Done in one pass instead, a
- * single long value at the front — `issue.reported` carries a page URL the
- * schema caps at 2048 characters — would eat the whole budget and starve the
- * three short fields behind it. This way the short fields are never lost to a
- * long neighbour, and the long neighbour still contributes what it can.
+ * whole, CHEAPEST FIRST; the second goes back for the skipped ones and clips
+ * those whose value is a string. Done in one pass instead, a single long value
+ * at the front — `issue.reported` carries a page URL the schema caps at 2048
+ * characters — would eat the whole budget and starve the three short fields
+ * behind it. This way the short fields are never lost to a long neighbour, and
+ * the long neighbour still contributes what it can.
  *
- * Returns null when the caller's own value is not a plain object; the caller
- * then keeps whatever it already had, because this module never invents a shape.
+ * CHEAPEST FIRST rather than the payload's own key order, and the difference is
+ * not a refinement (#2704 review). Admitting in key order left a band in which a
+ * LONGER value preserved more evidence than a shorter one: measured at this
+ * column's budget on a note plus five identifiers, an 865-character note stored
+ * ONE field of six — dropping the amount, the booking, the payment and the
+ * invoice — while an 870-character note stored all six, because at 870 the note
+ * no longer fitted whole and the short fields got in ahead of it. The fields
+ * that band destroyed are exactly the identifiers the drill-down links are built
+ * from and the money figure the description leads with. Ordering by cost makes a
+ * cheap field's survival independent of what sits in front of it.
+ *
+ * The STORED key order does not move: the output is rebuilt from the payload's
+ * own entries below, never from the order the passes admitted them.
+ *
+ * Returns null when the caller's own value is not a plain object, and when the
+ * budget is too small to hold even the reserved block (about sixty characters);
+ * the caller then keeps whatever it already had, because this module never
+ * invents a shape and never hands back text over the budget it was given.
  */
 export function reduceStructuredDetail(
   value: unknown,
@@ -227,8 +303,13 @@ export function reduceStructuredDetail(
     return null;
   }
 
-  const source = withoutReservedKeys(value);
-  const entries = Object.entries(source);
+  // Only the keys this module MINTS are stripped and re-written. The
+  // sanitiser's `_truncatedKeys` flag rides through as an ordinary field: it
+  // records that keys beyond the object cap were dropped before this ran, and
+  // deleting it here would lose a true marker to protect against forging a
+  // self-deprecating one.
+  const source = without(value, MINTED_KEY_VALUES);
+  const entries = serialisableFields(source);
   const originalLength = JSON.stringify(source).length;
 
   // ALREADY FITS, so say nothing. Reachable because the caller decides to come
@@ -242,20 +323,25 @@ export function reduceStructuredDetail(
   }
 
   const kept = new Map<string, unknown>();
-  const skipped: Array<[string, unknown]> = [];
   // `{}` is two characters; each pair adds its own cost on top.
   let used = 2;
   const room = Math.max(0, budget - RESERVED_BLOCK_RESERVE);
 
-  for (const [key, entry] of entries) {
-    const cost = pairCost(key, entry);
-    if (used + cost <= room) {
-      kept.set(key, entry);
-      used += cost;
-    } else {
-      skipped.push([key, entry]);
+  // Ties broken by the payload's own position, so the result stays a function
+  // of the payload rather than of the sort's stability.
+  const byCost = entries
+    .map(([key, entry], index) => ({ key, entry, index, cost: pairCost(key, entry) }))
+    .sort((a, b) => a.cost - b.cost || a.index - b.index);
+
+  for (const field of byCost) {
+    if (used + field.cost <= room) {
+      kept.set(field.key, field.entry);
+      used += field.cost;
     }
   }
+
+  // Back in the payload's order, which is the order the dropped names report in.
+  const skipped = entries.filter(([key]) => !kept.has(key));
 
   const dropped: string[] = [];
   for (const [key, entry] of skipped) {
@@ -289,12 +375,26 @@ export function reduceStructuredDetail(
   // describe shape, so losing them costs the reader context, where losing a
   // field would cost them evidence. `_truncated` and `_originalLength` together
   // are well inside the reserve, so the loop always terminates with room spare.
+  //
+  // AND IT SAYS SO WHEN IT DOES (#2704 review). A silently shortened list is
+  // the very defect this module exists to remove — a value partially rendered
+  // with no marker — committed by the one field the module adds. `_droppedKeys`
+  // shorter than `_droppedKeyCount` is the marker: whatever it could not name,
+  // it still counts.
   let names = [...dropped];
   let text = JSON.stringify(reduced);
   while (text.length > budget && names.length > 0) {
     names = names.slice(0, -1);
     reduced[REDUCED_DETAIL_KEYS.droppedKeys] = names;
+    reduced[REDUCED_DETAIL_KEYS.droppedKeyCount] = dropped.length;
     text = JSON.stringify(reduced);
+  }
+
+  if (text.length > budget) {
+    // Only a budget too small for the reserved block at all reaches this; both
+    // production callers pass 1000 or 24,000. Null rather than over-budget
+    // text, so "within budget" in the return type is unconditional.
+    return null;
   }
 
   return { text, droppedKeys: dropped };
@@ -371,7 +471,11 @@ export function recoverTruncatedStructuredDetail(
     return null;
   }
 
-  const marked = withoutReservedKeys(recovered);
+  // The WIDER set here: a legacy row is stored TEXT, so every bookkeeping key
+  // in it was written by whoever wrote the row. Stripping them is what stops a
+  // pre-#2704 payload claiming this release produced it — or claiming the
+  // sanitiser dropped keys it never saw.
+  const marked = without(recovered, RESERVED_KEY_VALUES);
   marked[REDUCED_DETAIL_KEYS.recovered] = true;
   return marked;
 }
