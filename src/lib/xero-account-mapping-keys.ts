@@ -67,6 +67,14 @@ export type XeroAccountMappingDefinition = {
    * less than it could at no cost.
    */
   readonly unsetEntriesLabel?: string;
+  /**
+   * Whether this key's `itemCode` column is READ at runtime. A Xero Item
+   * carries its own account and wins over a line's account code, so an item
+   * code set on a key nothing reads it from is not merely inert — on a key that
+   * DID read it, it would silently re-route the line. The write path refuses
+   * one on a key that does not declare this.
+   */
+  readonly carriesItemCode?: true;
 };
 
 export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
@@ -77,6 +85,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     accountClass: "REVENUE",
     accountTypes: ["REVENUE"],
     defaultCode: "200",
+    carriesItemCode: true,
   },
   {
     key: "hutFeeRefunds",
@@ -85,6 +94,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     accountClass: "REVENUE",
     accountTypes: ["REVENUE"],
     defaultCode: "200",
+    carriesItemCode: true,
   },
   {
     key: "goodwillWriteOffs",
@@ -125,6 +135,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     accountClass: "REVENUE",
     accountTypes: ["REVENUE"],
     defaultCode: "203",
+    carriesItemCode: true,
   },
   {
     key: "membershipCancellationCredit",
@@ -134,6 +145,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     accountClass: "REVENUE",
     accountTypes: ["REVENUE"],
     defaultCode: "203",
+    carriesItemCode: true,
   },
 ] as const satisfies readonly XeroAccountMappingDefinition[];
 
@@ -312,6 +324,48 @@ export function isCodeExplicitlyConfigured(
   row: { code: string | null } | null | undefined,
 ): boolean {
   return normalizeMappingCode(row?.code) != null;
+}
+
+/** Every writable key whose `itemCode` column is read at runtime. */
+const ITEM_BEARING_KEYS: ReadonlySet<string> = new Set<string>([
+  ...XERO_ACCOUNT_MAPPING_DEFINITIONS.filter(
+    (definition) => "carriesItemCode" in definition,
+  ).map((definition) => definition.key),
+  ...XERO_ITEM_ONLY_MAPPING_DEFINITIONS.map((definition) => definition.key),
+]);
+
+const ITEM_ONLY_KEYS: ReadonlySet<string> = new Set<string>(
+  XERO_ITEM_ONLY_MAPPING_DEFINITIONS.map((definition) => definition.key),
+);
+
+/**
+ * Why a write to one mapping key is not allowed, or `null` when it is (#2717).
+ *
+ * The registry says which keys hold an ACCOUNT code and which hold an ITEM
+ * code, so the write path can refuse the mix-up instead of storing an edit that
+ * silently does nothing — the same reason `entranceFeeAmountCents` is not
+ * writable at all (#1931, E5). The goodwill key is the case that forced it: an
+ * item code set there while its account code was unset was discarded whole,
+ * because the resolver returns the FALLBACK key's resolution verbatim.
+ *
+ * It judges VALUES, never the account behind them: nothing here can say whether
+ * a code names an expense account in the connected Xero organisation, because
+ * that needs the chart. `INV-INT-021` states that limit plainly.
+ */
+export function mappingWriteViolation(
+  key: string,
+  write: { code?: string | null; itemCode?: string | null },
+): string | null {
+  if (!(XERO_MAPPING_WRITABLE_KEYS as readonly string[]).includes(key)) {
+    return `${key} is not a Xero mapping key`;
+  }
+  if (normalizeMappingCode(write.code) != null && ITEM_ONLY_KEYS.has(key)) {
+    return `${key} selects a Xero Item, not an account: an account code set here is never read`;
+  }
+  if (normalizeMappingCode(write.itemCode) != null && !ITEM_BEARING_KEYS.has(key)) {
+    return `${key} does not carry a Xero Item code: one set here is never read`;
+  }
+  return null;
 }
 
 export function isAccountMappingKey(key: string): key is AccountMappingKey {

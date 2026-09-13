@@ -40,6 +40,7 @@ import {
   XERO_ITEM_ONLY_MAPPING_DEFINITIONS,
   XERO_MAPPING_WRITABLE_KEYS,
   isAccountMappingKey,
+  mappingWriteViolation,
   normalizeMappingCode,
   resolveAccountMappingSource,
   type AccountMappingKey,
@@ -347,5 +348,70 @@ describe("INV-SSOT-001: one reading of a Xero account's class", () => {
         "normalizeXeroAccountClass so the admin pickers and these reports " +
         "cannot drift apart (INV-SSOT-001, #2717)",
     ).toBe(false);
+  });
+});
+
+/**
+ * What the write path refuses, and what `INV-INT-021` does NOT claim.
+ *
+ * The registry knows which keys hold an account code and which hold an item
+ * code, so the mix-up is refused rather than stored as an edit that does
+ * nothing. It does NOT know a club's chart of accounts, so it cannot say
+ * whether a code names an expense account — the invariant states that limit
+ * plainly rather than claiming a guarantee the mechanism does not hold.
+ */
+describe("mappingWriteViolation (#2717)", () => {
+  it("refuses an account code on an item-only key", () => {
+    expect(mappingWriteViolation("hutFeeItem", { code: "200" })).toMatch(
+      /never read/,
+    );
+  });
+
+  it("refuses an item code on a key that does not carry one", () => {
+    expect(
+      mappingWriteViolation("goodwillWriteOffs", { itemCode: "REFUND-ITEM" }),
+    ).toMatch(/never read/);
+    expect(mappingWriteViolation("stripeFees", { itemCode: "X" })).not.toBeNull();
+  });
+
+  it("refuses a key the registry does not know", () => {
+    expect(mappingWriteViolation("entranceFeeAmountCents", { code: "5000" }))
+      .toMatch(/not a Xero mapping key/);
+  });
+
+  it("allows the writes each key really supports", () => {
+    expect(mappingWriteViolation("goodwillWriteOffs", { code: "429" })).toBeNull();
+    expect(
+      mappingWriteViolation("membershipCancellationCredit", {
+        code: "203",
+        itemCode: "CANCEL-CREDIT",
+      }),
+    ).toBeNull();
+    expect(mappingWriteViolation("hutFeeItem", { itemCode: "HUT" })).toBeNull();
+  });
+
+  it("always allows clearing a column, on every key", () => {
+    for (const key of XERO_MAPPING_WRITABLE_KEYS) {
+      expect(mappingWriteViolation(key, { code: null, itemCode: null })).toBeNull();
+    }
+  });
+
+  it("does NOT judge whether a code names the right kind of account", () => {
+    // Stated, not hidden: a revenue code on the goodwill key is accepted here,
+    // because answering needs the connected org's chart. INV-INT-021 says so,
+    // and the setup screen flags a stored code that is outside the filter.
+    expect(mappingWriteViolation("goodwillWriteOffs", { code: "200" })).toBeNull();
+  });
+});
+
+describe("the picker's credit-item rows stay anchored to the registry (#2717)", () => {
+  it("lists only writable keys that really carry an item code", async () => {
+    const { CREDIT_ITEM_MAPPING_KEYS } = await import(
+      "@/app/(admin)/admin/xero/_components/shared"
+    );
+    for (const key of CREDIT_ITEM_MAPPING_KEYS) {
+      expect(XERO_MAPPING_WRITABLE_KEYS).toContain(key);
+      expect(mappingWriteViolation(key, { itemCode: "SOME-ITEM" })).toBeNull();
+    }
   });
 });

@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import {
   XERO_MAPPING_WRITABLE_KEYS,
+  mappingWriteViolation,
   normalizeMappingCode,
   type XeroMappingWritableKey,
 } from "@/lib/xero-account-mapping-keys";
@@ -80,11 +81,25 @@ const MappingValueSchema = z.object({
   itemCode: z.string().trim().min(1).nullable().optional(),
 });
 
-const UpdateMappingsSchema = z.object(
-  Object.fromEntries(
-    VALID_KEYS.map((key) => [key, MappingValueSchema.optional()]),
-  ) as Record<XeroMappingWritableKey, z.ZodOptional<typeof MappingValueSchema>>,
-);
+const UpdateMappingsSchema = z
+  .object(
+    Object.fromEntries(
+      VALID_KEYS.map((key) => [key, MappingValueSchema.optional()]),
+    ) as Record<XeroMappingWritableKey, z.ZodOptional<typeof MappingValueSchema>>,
+  )
+  // #2717, `INV-INT-021`: a key holds an ACCOUNT code or an ITEM code, and the
+  // registry says which. Refusing the mix-up here is what stops an edit being
+  // accepted that the runtime then discards — the goodwill key's item code was
+  // exactly that, because the resolver returns the fallback's resolution whole.
+  .superRefine((updates, ctx) => {
+    for (const [key, value] of Object.entries(updates)) {
+      if (!value) continue;
+      const violation = mappingWriteViolation(key, value);
+      if (violation) {
+        ctx.addIssue({ code: "custom", path: [key], message: violation });
+      }
+    }
+  });
 
 /**
  * PUT /api/admin/xero/account-mappings

@@ -246,6 +246,44 @@ describe("PUT /api/admin/xero/account-mappings", () => {
     expect(mockPrisma.xeroAccountMapping.upsert).not.toHaveBeenCalled();
   });
 
+  it("refuses an ACCOUNT code on an item-only key (#2717)", async () => {
+    // hutFeeItem selects a Xero Item; a code stored here is never read, so
+    // accepting the write would report success for an edit that does nothing.
+    const res = await putMappings(makePutRequest({ hutFeeItem: { code: "200" } }));
+    expect(res.status).toBe(400);
+    expect(mockPrisma.xeroAccountMapping.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses an ITEM code on a key that does not carry one (#2717)", async () => {
+    // The goodwill key is the case that forced this: while its account code is
+    // unset the resolver returns the fallback's resolution WHOLE, so an item
+    // code set here is silently discarded.
+    const res = await putMappings(
+      makePutRequest({ goodwillWriteOffs: { itemCode: "REFUND-ITEM" } }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockPrisma.xeroAccountMapping.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still accepts an item code on a key that DOES carry one", async () => {
+    const res = await putMappings(
+      makePutRequest({ membershipCancellationCredit: { itemCode: "CANCEL-CREDIT" } }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { key: "membershipCancellationCredit" } }),
+    );
+  });
+
+  it("still accepts clearing either column with null", async () => {
+    // Clearing is null, and it must stay possible for every key — including the
+    // columns the refusals above cover, whose rows may already hold a value.
+    const res = await putMappings(
+      makePutRequest({ goodwillWriteOffs: { code: null, itemCode: null } }),
+    );
+    expect(res.status).toBe(200);
+  });
+
   it("ignores unknown keys (they fail Zod schema)", async () => {
     const req = makePutRequest({ unknownKey: { code: "999" }, hutFeesIncome: { code: "201" } });
     const res = await putMappings(req);
