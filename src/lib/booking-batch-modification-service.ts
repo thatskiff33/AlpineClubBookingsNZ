@@ -144,6 +144,13 @@ export const LINKED_MOVE_CHANGE_FEE_WAIVED_REASON =
 
 type BatchModificationTransactionResult =
   BookingModificationPaymentContext & {
+    /**
+     * The plain figure the emails, the response body and the Xero leg read.
+     * Inherited from `BookingModificationPaymentContext` until #3371 replaced
+     * that field with `additionalAsk`; it is restated here because those
+     * consumers want a number and the minter must not be handed one.
+     */
+    additionalAmountCents: number;
     booking: ModifiedBooking;
     /** #3232: the deferred hosting reconciliation, when the caller asked for it. */
     pendingHostingReconcile?: () => Promise<void>;
@@ -1984,6 +1991,10 @@ export async function modifyBookingBatch({
       refundAmountCents: payments.refundAmountCents,
       accountCreditAmountCents: payments.accountCreditAmountCents,
       additionalAmountCents: payments.additionalAmountCents,
+      // #3371: the minter's own parameter, carried rather than re-derived. The
+      // plain figure above is the emails' and the Xero leg's; they are not
+      // interchangeable.
+      additionalAsk: payments.additionalAsk,
       pendingRefundAmountCents: payments.pendingRefundAmountCents,
       promoRemoved: promo.promoRemoved,
       promoChanged: promo.promoChanged,

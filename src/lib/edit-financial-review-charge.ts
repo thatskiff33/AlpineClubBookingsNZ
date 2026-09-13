@@ -6,6 +6,7 @@ import {
   PaymentTransactionKind,
 } from "@prisma/client";
 
+import { raiseReviewChargeAsk, sizeReviewChargeAsk } from "@/lib/additional-payment-ask";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
@@ -14,6 +15,7 @@ import {
   REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
 } from "@/lib/edit-financial-review-charge-refusals";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { recordCarriedEditReviewChargeBalance } from "@/lib/edit-financial-review-carried-balance";
 import {
   findEditReviewChargeRequest,
   hasIssuedSupplementaryInvoice,
@@ -29,6 +31,7 @@ import {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentStripeKey,
   buildEditFinancialReviewChargeReason,
+  stripeIdempotencyKeyForAskAmount,
 } from "@/lib/payment-recovery-keys";
 import {
   isCapturedTransactionStatus,
@@ -88,6 +91,15 @@ import { updatePaymentIntentAmount } from "@/lib/stripe";
  *     `syncEditFinancialReviewChargeRequest` for why neither of them can lose a
  *     share either.
  *
+ * ## AND IT CARRIES WHAT ITS MINT RETIRES (#3371, owner decision 13 Sep 2026)
+ *
+ * Those bullets cover two shares of ONE edit, the only case #3170 saw. A booking
+ * can also carry an unpaid ask raised by a DIFFERENT edit, and minting this one
+ * cancels it - which is how $260 across two parked edits collected $60. The ask
+ * is now the share sum PLUS that balance, built by the module the ordinary path
+ * has used since #3340 and stored beside the sum, never inside it. The rule is
+ * `INV-PAY-098` and is not restated here.
+ *
  * ## What it is NOT
  *
  * It is not a fourth settlement mechanism, which the epic forbids outright.
@@ -145,7 +157,12 @@ export type EditReviewChargeSyncOutcome =
 export type EditReviewChargeSyncResult = {
   outcome: EditReviewChargeSyncOutcome;
   paymentIntentId: string | null;
+  /** THIS EDIT'S OWN MONEY - its settled shares, nothing else. `INV-PAY-070`
+   * bills it one invoice per edit, so another edit's carried balance must never
+   * reach it - and says how that other invoice can be orphaned by this mint. */
   totalCents: number;
+  /** #3371: the carried part; the member is asked `totalCents + carriedCents`. */
+  carriedCents: number;
 };
 
 /**
@@ -349,14 +366,14 @@ export async function chooseEditReviewChargeRoute({
  *   * NO LOST SHARE. Whichever completion COMMITS LAST necessarily reads after
  *     both commits, so at least one run always sees the full set and derives the
  *     true total. A run that started earlier may compute a smaller, stale total.
- *   * THE STALE ONE CANNOT WIN. A settled share is terminal, so the derived total
- *     only ever grows; a smaller figure is therefore always the older answer.
- *     The write below REFUSES TO LOWER the recorded request, so whichever order
- *     the two provider calls happen to land in, the request settles at the
- *     largest - which is the newest - total. That compare-and-set is the reason
- *     this needs no advisory lock, which matters because the completion path
- *     deliberately holds none (`docs/CONCURRENCY_AND_LOCKING.md` forbids holding
- *     `lock(1)` across a provider round trip).
+ *   * A STALE REPLAY CANNOT LOWER A LIVE ASK. A settled share is terminal, so
+ *     the derived total only ever grows and a smaller figure is always the
+ *     older answer; the read below REFUSES TO LOWER the recorded request, so a
+ *     replay reading after the newer write leaves it alone. That is why no
+ *     advisory lock is held here - `docs/CONCURRENCY_AND_LOCKING.md` forbids
+ *     one across a provider round trip. It is NOT an atomic claim, and two
+ *     CONCURRENT runs both proceed: that doc's edit-financial-review section
+ *     has the limit, why a predicate here is no repair, and whose it is.
  *
  * Returns the request's intent id and the total it now asks for.
  */
@@ -389,8 +406,14 @@ export async function syncEditFinancialReviewChargeRequest({
   if (totalCents <= 0) {
     // No settled share to ask for. Reachable only from a recovery replay of an
     // operation whose task was never claimed; minting for zero would be the
-    // magic-value failure this epic exists to remove.
-    return { outcome: "nothing-owed", paymentIntentId: null, totalCents: 0 };
+    // magic-value failure this epic exists to remove. Nothing is minted, so
+    // nothing is superseded and nothing carried (#3371).
+    return {
+      outcome: "nothing-owed",
+      paymentIntentId: null,
+      totalCents: 0,
+      carriedCents: 0,
+    };
   }
 
   const existing = await findEditReviewChargeRequest({
@@ -427,14 +450,23 @@ export async function syncEditFinancialReviewChargeRequest({
         memberId: member?.id ?? null,
         derivedTotalCents: totalCents,
         requestedTotalCents: existing.amountCents,
+        // #3371: so the shortfall is measured against what this EDIT was asked
+        // for. Left in, the record understates it by the carried amount.
+        carriedAskCents: existing.carriedAskCents,
       });
       return {
         outcome: "already-paid",
         paymentIntentId: existing.stripePaymentIntentId,
-        totalCents: existing.amountCents,
+        // #3371: the SHARE part alone; unchanged where nothing was carried.
+        totalCents: existing.amountCents - existing.carriedAskCents,
+        carriedCents: existing.carriedAskCents,
       };
     }
-    if (totalCents <= existing.amountCents) {
+    // #3371: shares PLUS whatever the mint absorbed, read back off the ROW -
+    // never from the payment, which by now mirrors this request. Monotone,
+    // which is what keeps the compare-and-set below lock-free.
+    const raised = raiseReviewChargeAsk({ shareTotalCents: totalCents, request: existing });
+    if (raised.amountCents <= existing.amountCents) {
       // Either an exact replay (equal), which must change nothing at all, or a
       // stale, smaller total, which must never lower a live ask. Either way the
       // ask that already exists covers the total this run derived, so this is
@@ -442,22 +474,22 @@ export async function syncEditFinancialReviewChargeRequest({
       return {
         outcome: "raised",
         paymentIntentId: existing.stripePaymentIntentId,
-        totalCents: existing.amountCents,
+        totalCents: existing.amountCents - existing.carriedAskCents,
+        carriedCents: existing.carriedAskCents,
       };
     }
     // The one write that makes a second share join the first: the SAME intent,
     // asking for more. Nothing is minted, so nothing is superseded, so
     // `queueSupersededAdditionalIntentCancellations` never fires between two
     // shares of one edit.
-    await updatePaymentIntentAmount(
-      existing.stripePaymentIntentId,
-      totalCents,
-    );
+    await updatePaymentIntentAmount(existing.stripePaymentIntentId, raised.amountCents);
     await upsertPaymentIntentTransaction({
       paymentId,
       kind: PaymentTransactionKind.ADDITIONAL,
       paymentIntentId: existing.stripePaymentIntentId,
-      amountCents: totalCents,
+      amountCents: raised.amountCents,
+      // Re-stated from the ONE value that computed both (#3371).
+      carriedAskCents: raised.carriedCents,
       status: PaymentStatus.PENDING,
       reason,
     });
@@ -465,6 +497,7 @@ export async function syncEditFinancialReviewChargeRequest({
       outcome: "raised",
       paymentIntentId: existing.stripePaymentIntentId,
       totalCents,
+      carriedCents: raised.carriedCents,
     };
   }
 
@@ -483,8 +516,17 @@ export async function syncEditFinancialReviewChargeRequest({
       refundedAmountCents: true,
       source: true,
       stripeCustomerId: true,
+      // #3371: the live ask the mint below retires. `existing` being null
+      // above is what proves it belongs to another edit.
+      additionalAmountCents: true,
+      additionalPaymentStatus: true,
     },
   });
+  // THE FIX (#3371, `INV-PAY-098`). This used to pass the bare share total, so a
+  // review charge raised while an earlier change's extra was unpaid DELETED it.
+  // `sizeReviewChargeAsk` is the rule the ordinary path already uses
+  // (`sizeAdditionalAsk`, #3340) over this path's own figure.
+  const ask = sizeReviewChargeAsk({ shareTotalCents: totalCents, payment });
   const minted = await createModificationAdditionalPaymentIntent({
     bookingId,
     result: {
@@ -493,7 +535,7 @@ export async function syncEditFinancialReviewChargeRequest({
       // (`pendingRefundAmountCents` 0) and a settlement it does not choose.
       pendingRefundAmountCents: 0,
       paymentId,
-      additionalAmountCents: totalCents,
+      additionalAsk: ask,
       hasSucceededPayment:
         hasCapturedPayment(payment) && payment?.source === PaymentSource.STRIPE,
       paymentCustomerId: payment?.stripeCustomerId ?? null,
@@ -511,9 +553,13 @@ export async function syncEditFinancialReviewChargeRequest({
     // `payment-recovery-keys.ts` for the full reasoning and for which of the two
     // (request vs share) each key belongs to. In short: the request is the thing
     // being identified, there is one per edit, and a replay converging on the
-    // first intent is now the point rather than the hazard.
-    idempotencyKey:
+    // first intent is now the point rather than the hazard. #3371 adds THE
+    // AMOUNT, because this figure is RE-DERIVED on every attempt and a fixed key
+    // would then answer `idempotency_error` for ever - see that helper.
+    idempotencyKey: stripeIdempotencyKeyForAskAmount(
       buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
+      ask.amountCents,
+    ),
     recoveryIdempotencyKey:
       buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
         bookingModificationId,
@@ -548,21 +594,32 @@ export async function syncEditFinancialReviewChargeRequest({
         buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
           bookingModificationId,
         ),
-      // Advisory only, exactly as in `executeEditReviewCharge`: the replay
-      // re-derives the total from the settled shares.
-      amountCents: totalCents,
+      // Advisory only: the replay re-derives the total, and re-reads the
+      // carried balance off a payment the failed mint never touched (#3371).
+      amountCents: ask.amountCents,
       stripeIdempotencyKey:
         buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
       // #3181: NOT advisory. The replay reads this back to decide whether the
       // edit had an invoice to supplement at all.
       hadIssuedXeroInvoice: hasIssuedXeroInvoice,
     });
-    return { outcome: "not-raised", paymentIntentId: null, totalCents };
+    return { outcome: "not-raised", paymentIntentId: null, totalCents, carriedCents: 0 };
+  }
+  if (ask.carriedCents > 0) {
+    // Only after a SUCCESSFUL mint: a failed one retired nothing.
+    await recordCarriedEditReviewChargeBalance({
+      bookingId,
+      bookingModificationId,
+      memberId: member?.id ?? null,
+      shareTotalCents: totalCents,
+      carriedCents: ask.carriedCents,
+    });
   }
   return {
     outcome: "raised",
     paymentIntentId: minted.additionalPaymentIntentId,
     totalCents,
+    carriedCents: ask.carriedCents,
   };
 }
 

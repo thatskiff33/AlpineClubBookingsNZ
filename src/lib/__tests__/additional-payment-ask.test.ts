@@ -6,8 +6,11 @@ import {
   bookingLedgerResidualCents,
   bookingLedgerResidualSql,
   bookingLedgerVerdict,
+  NO_ADDITIONAL_ASK,
   outstandingAdditionalAskCents,
-  sizeAdditionalAskCents,
+  raiseReviewChargeAsk,
+  sizeAdditionalAsk,
+  sizeReviewChargeAsk,
   type BookingLedgerIdentityRow,
 } from "@/lib/additional-payment-ask";
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
@@ -72,56 +75,191 @@ describe("outstandingAdditionalAskCents", () => {
   });
 });
 
-describe("sizeAdditionalAskCents", () => {
+describe("sizeAdditionalAsk", () => {
   it("is the bare net when no ask is being superseded (pre-#3340 behaviour)", () => {
     expect(
-      sizeAdditionalAskCents({
+      sizeAdditionalAsk({
         priceDiffCents: 7000,
         changeFeeCents: 0,
         payment: askPayment(0, null),
-      }),
+      }).amountCents,
     ).toBe(7000);
   });
 
   it("folds in the unpaid balance of the ask the mint is about to retire", () => {
     // The completed-booking shape from acceptance criterion 1.
     expect(
-      sizeAdditionalAskCents({
+      sizeAdditionalAsk({
         priceDiffCents: 7000,
         changeFeeCents: 0,
         payment: askPayment(7000, "PENDING"),
-      }),
+      }).amountCents,
     ).toBe(14000);
   });
 
   it("does not double-ask when the first extra was already paid (AC 1a)", () => {
     expect(
-      sizeAdditionalAskCents({
+      sizeAdditionalAsk({
         priceDiffCents: 7000,
         changeFeeCents: 0,
         payment: askPayment(7000, "SUCCEEDED"),
-      }),
+      }).amountCents,
     ).toBe(7000);
   });
 
   it("folds in an ask the member's card DECLINED, which is still owed", () => {
     expect(
-      sizeAdditionalAskCents({
+      sizeAdditionalAsk({
         priceDiffCents: 7000,
         changeFeeCents: 0,
         payment: askPayment(6500, "FAILED"),
-      }),
+      }).amountCents,
     ).toBe(13500);
   });
 
   it("adds the change fee, which joins an ask but never the price", () => {
     expect(
-      sizeAdditionalAskCents({
+      sizeAdditionalAsk({
         priceDiffCents: 7000,
         changeFeeCents: 1500,
         payment: askPayment(7000, "PENDING"),
-      }),
+      }).amountCents,
     ).toBe(15500);
+  });
+});
+
+describe("#3371 - a review charge is the SAME rule with a different own figure", () => {
+  it("carries the unpaid extra an ordinary edit left behind (ordering 1)", () => {
+    const ask = sizeReviewChargeAsk({
+      shareTotalCents: 6000,
+      payment: askPayment(7000, "PENDING"),
+    });
+    expect(ask.amountCents).toBe(13000);
+    expect(ask.carriedCents).toBe(7000);
+  });
+
+  it("carries an EARLIER REVIEW's unpaid charge - the proved sequence", () => {
+    // The #3371 proof: $200 priced and unpaid, then $60 priced. Before the fix
+    // the mint asked $60 and the $200 simply ceased to be owed.
+    const ask = sizeReviewChargeAsk({
+      shareTotalCents: 6000,
+      payment: askPayment(20000, "PENDING"),
+    });
+    expect(ask.amountCents).toBe(26000);
+    expect(ask.carriedCents).toBe(20000);
+  });
+
+  it("carries nothing once the earlier charge has been paid", () => {
+    const ask = sizeReviewChargeAsk({
+      shareTotalCents: 6000,
+      payment: askPayment(20000, "SUCCEEDED"),
+    });
+    expect(ask.amountCents).toBe(6000);
+    expect(ask.carriedCents).toBe(0);
+  });
+
+  it("carries nothing when there was no ask to retire", () => {
+    const ask = sizeReviewChargeAsk({
+      shareTotalCents: 20000,
+      payment: askPayment(0, null),
+    });
+    expect(ask.amountCents).toBe(20000);
+    expect(ask.carriedCents).toBe(20000 - 20000);
+    expect(ask.carriedCents).toBe(0);
+  });
+
+  it("carries a DECLINED earlier charge, which is still owed", () => {
+    const ask = sizeReviewChargeAsk({
+      shareTotalCents: 6000,
+      payment: askPayment(20000, "FAILED"),
+    });
+    expect(ask.amountCents).toBe(26000);
+    expect(ask.carriedCents).toBe(20000);
+  });
+});
+
+describe("#3371 - a later share reads the carried figure back off the row", () => {
+  /*
+    THE TRAP THIS EXISTS TO AVOID, and the reason the raise takes the ROW rather
+    than the payment. By the time a second share settles, the payment's ask
+    column mirrors THIS request - so re-deriving the carried part from the
+    payment would fold the request into itself and bill the carried money twice.
+  */
+  it("re-derives the total from the shares and keeps the carried part fixed", () => {
+    const minted = sizeReviewChargeAsk({
+      shareTotalCents: 6000,
+      payment: askPayment(20000, "PENDING"),
+    });
+    expect(minted.amountCents).toBe(26000);
+
+    // A second task of the SAME edit settles for another $40.
+    const raised = raiseReviewChargeAsk({
+      shareTotalCents: 10000,
+      request: { carriedAskCents: minted.carriedCents },
+    });
+    expect(raised.amountCents).toBe(30000);
+    expect(raised.carriedCents).toBe(20000);
+  });
+
+  it("is MONOTONE, which is what makes the lock-free compare-and-set safe", () => {
+    // The share sum only grows (a settled share is terminal) and the carried
+    // part is fixed at the mint, so a stale run can only ever compute a SMALLER
+    // figure - never a larger one that would raise a live intent wrongly.
+    const request = { carriedAskCents: 20000 };
+    const stale = raiseReviewChargeAsk({ shareTotalCents: 6000, request });
+    const fresh = raiseReviewChargeAsk({ shareTotalCents: 10000, request });
+    expect(stale.amountCents).toBeLessThan(fresh.amountCents);
+  });
+
+  it("re-reading the PAYMENT instead would double-count - measured, not asserted", () => {
+    // What the ledger looks like a moment after the mint above: the payment's
+    // ask column now mirrors the request's own $260.
+    const afterMint = askPayment(26000, "PENDING");
+    const wrong = sizeReviewChargeAsk({
+      shareTotalCents: 10000,
+      payment: afterMint,
+    });
+    // $100 of shares plus the $260 that already contains them: the request would
+    // be raised to $360 for $300 of real debt.
+    expect(wrong.amountCents).toBe(36000);
+    const right = raiseReviewChargeAsk({
+      shareTotalCents: 10000,
+      request: { carriedAskCents: 20000 },
+    });
+    expect(right.amountCents).toBe(30000);
+  });
+});
+
+describe("#3371 - the zero ask", () => {
+  it("asks for nothing and carries nothing, so it can never mint", () => {
+    expect(NO_ADDITIONAL_ASK.amountCents).toBe(0);
+    expect(NO_ADDITIONAL_ASK.carriedCents).toBe(0);
+  });
+});
+
+describe("#3371 fix round - an ask cannot be taken apart and put back together", () => {
+  /*
+    THE RUNTIME HALF OF THE STRUCTURAL DEVICE, and the reason it is worth a test
+    rather than a sentence. The forgery the type must refuse is
+    `{ ...NO_ADDITIONAL_ASK, amountCents: someDelta }` - a positive ask recording
+    a zero carried balance, which is exactly the money leak #3340 and #3371 both
+    closed. It compiled clean against the `unique symbol` brand this replaced,
+    because TypeScript carries a symbol-keyed property through a spread.
+
+    The compiler is what refuses it now (`#carriedCents` is dropped by a spread,
+    so the result is missing a member of the type), and a compile error is not
+    something a runtime suite can assert. What IS observable here is the same
+    fact from the other side: the spread really does lose the carried figure, so
+    a forgery would have been silently wrong rather than merely ill-typed.
+  */
+  it("loses the carried figure when spread, which is why the type refuses one", () => {
+    const ask = sizeReviewChargeAsk({
+      shareTotalCents: 6000,
+      payment: askPayment(20000, "PENDING"),
+    });
+    expect(ask.amountCents).toBe(26000);
+    expect(ask.carriedCents).toBe(20000);
+    expect(Object.keys({ ...ask })).toEqual(["amountCents"]);
   });
 });
 
@@ -201,12 +339,12 @@ describe("the two forms of the rule agree wherever the ledger is clean", () => {
 
   for (const shape of shapes) {
     it(`${shape.name}`, () => {
-      const sized = sizeAdditionalAskCents({
+      const sized = sizeAdditionalAsk({
         priceDiffCents: shape.priceDiffCents,
         changeFeeCents: shape.changeFeeCents,
         payment: shape.ask,
       });
-      expect(sized).toBe(shape.expected);
+      expect(sized.amountCents).toBe(shape.expected);
       expect(priceDerivedOutstandingCents(shape.ledger)).toBe(shape.expected);
     });
   }
@@ -232,12 +370,12 @@ describe("where the two forms part company, and why this one is right", () => {
       creditAppliedCents: 0,
     };
     // A later +$30 edit. Nothing is being superseded — no ask is outstanding.
-    const sized = sizeAdditionalAskCents({
+    const sized = sizeAdditionalAsk({
       priceDiffCents: 3000,
       changeFeeCents: 0,
       payment: askPayment(0, null),
     });
-    expect(sized).toBe(3000);
+    expect(sized.amountCents).toBe(3000);
 
     const priceDerived = priceDerivedOutstandingCents({
       ...afterReduction,
@@ -255,12 +393,12 @@ describe("where the two forms part company, and why this one is right", () => {
       refundedAmountCents: 0,
       creditAppliedCents: 0,
     };
-    const sized = sizeAdditionalAskCents({
+    const sized = sizeAdditionalAsk({
       priceDiffCents: 3000,
       changeFeeCents: 0,
       payment: askPayment(0, null),
     });
-    expect(sized).toBe(3000);
+    expect(sized.amountCents).toBe(3000);
     expect(
       priceDerivedOutstandingCents({
         ...afterCreditSettledReduction,
@@ -280,11 +418,11 @@ describe("where the two forms part company, and why this one is right", () => {
       creditAppliedCents: 0,
     };
     expect(
-      sizeAdditionalAskCents({
+      sizeAdditionalAsk({
         priceDiffCents: 1000,
         changeFeeCents: 0,
         payment: askPayment(7000, "SUCCEEDED"),
-      }),
+      }).amountCents,
     ).toBe(1000);
     // The price-derived form would ask for the $70 as well — a retro-correction.
     expect(priceDerivedOutstandingCents(short)).toBe(8000);

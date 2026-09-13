@@ -250,7 +250,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
     stopped rendering the payment card and the reminder cron stopped, so the
     shortfall became unreachable from every member- and officer-facing surface.
     The ask is therefore the edit's own net PLUS the unpaid balance of the ask it
-    supersedes, which is `sizeAdditionalAskCents` in
+    supersedes, which is `sizeAdditionalAsk` in
     `src/lib/additional-payment-ask.ts` — the one home for all of this
     arithmetic, and the module the census guard and the operator SQL are both
     folded from.
@@ -1216,15 +1216,17 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 - **ONE BOOKING EDIT RAISES ONE CHARGE REQUEST, for the total of its shares**
   (#3170, owner decision 30 Aug 2026). One edit raises one review task per guest
   strand whose history could not be read, and an officer may settle both as
-  money owed to the club; two separate requests LOSE MONEY, because minting an
-  additional PaymentIntent queues every OTHER outstanding `ADDITIONAL`
-  transaction for cancellation and `reconcilePaymentAggregates` carries a single
+  money owed; two separate requests LOSE MONEY, because minting an additional
+  PaymentIntent queues every OTHER outstanding `ADDITIONAL` transaction for
+  cancellation and `reconcilePaymentAggregates` carries a single
   `additionalAmountCents`. So:
   - **The REQUEST is anchored to the `BookingModification`** — one intent, one
     `ADDITIONAL` row, one figure on the member's pay link — and BOTH the Stripe
-    idempotency key and the recovery operation are scoped to it. A later share
-    RAISES that intent's amount rather than minting a second. (The REFUND keys
-    stay TASK-scoped: two refunds of one edit are two movements that must never
+    idempotency key and the recovery operation are scoped to it. The Stripe key
+    also names the AMOUNT (#3371): the figure is re-derived each attempt, and
+    Stripe refuses a key reused with different parameters. A later share RAISES
+    that intent's amount rather than minting a second. (The REFUND keys stay
+    TASK-scoped: two refunds of one edit are two movements that must never
     converge.)
   - **The SHARE stays anchored to the task** — its `amountCents`,
     `settlementDirection` and audit entry — so the combined figure remains
@@ -1233,10 +1235,45 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     task contributes exactly once, from the row its own status-fenced claim
     wrote; whichever completion commits LAST derives the true total, and
     **neither leg may LOWER what is recorded**. On the Stripe leg that is a
-    compare-and-set on the request, which is why it needs no advisory lock.
+    refusal, not an atomic claim, and it is why no advisory lock is held.
+    A balance CARRIED IN from another edit ([INV-PAY-098]) is stored apart, so
+    the sum stays monotone and the refusal stays correct.
   - **A share may not be added to a request the member has already paid, or to
     one whose supplementary invoice has already been issued.** Both are REFUSED
     before the claim with the task left OPEN. The Xero leg is `INV-PAY-070`.
+
+## INV-PAY-098
+
+- **A REPLACEMENT ASK CARRIES THE UNPAID BALANCE OF THE ONE IT RETIRES, AND
+  RECORDS WHAT IT CARRIED** (#3371, owner decision 13 Sep 2026). Minting an
+  ADDITIONAL PaymentIntent cancels every other live one on the payment
+  ([INV-ADDPAY-023]). [INV-PAY-047] sizes an ordinary edit's ask accordingly; a
+  settled review's charge is the SAME rule over its own figure, that edit's
+  settled shares ([INV-PAY-062]). Until #3371 it passed the bare sum, deleting
+  an earlier change's unpaid extra.
+  - **The carried amount is its own stored fact**,
+    `PaymentTransaction.carriedAskCents`, and is a PART of `amountCents`, never
+    an addition. Once the retired row is cancelled nothing can derive it, so
+    recording it is provenance, not duplication.
+  - **It never joins the derived share total.** [INV-PAY-062]'s refuse-to-lower
+    rule is safe only because that sum never decreases, and that monotonicity is
+    why this path can refuse a stale lowering with no lock across a provider
+    call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). That
+    refusal is not an atomic claim; `syncEditFinancialReviewChargeRequest` says
+    what it does not order.
+  - **A later share reads it off the row, never off the payment**, which mirrors
+    this request by then.
+  - **The accounting leg never sees it.** [INV-PAY-070] bills one invoice per
+    edit, and this is not that edit's money, so every figure handed to that leg
+    has the carried part taken out.
+  - **The obligation is structural.** `AdditionalAsk`
+    (`src/lib/additional-payment-ask.ts`) is a module-private class holding the
+    carried part in a `#private` field, so it can be neither built nor spread
+    apart elsewhere; every constructor of a positive ask takes the payment being
+    retired or the row being raised; and the minter accepts nothing else. No type
+    refuses a deliberate assertion, so the call-site census refuses it.
+  - **A FAILED mint carries nothing**: it retired nothing, so the earlier ask is
+    still live for the replay to read.
 
 ## INV-PAY-070
 
@@ -1261,6 +1298,16 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   invoice behind the first and RECORDS the shortfall:
   `outcome: "short-sent"` when the invoice exists, `"short-in-flight"` when the
   worker has merely claimed the row. What happens next is `INV-PAY-063`.
+- **AND A SUPERSEDED EDIT'S INVOICE CAN BE ORPHANED** (#3371 review round;
+  pre-existing since #3340). A card booking's supplementary invoice waits
+  `WAITING_PAYMENT` on its own PaymentIntent, released only by a confirmed
+  payment on it. A later mint CANCELS that intent ([INV-ADDPAY-023]), so it is
+  never released and `reapStaleWaitingPaymentXeroOutboxOperations` retires it a
+  day later — while the replacement ask still COLLECTS that money
+  ([INV-PAY-098]). The backstop is the booking-vs-Xero repair pass's
+  `MISSING_SUPPLEMENTARY_INVOICE`. Folding the carried balance onto the
+  replacement's invoice is NOT the repair: it double-bills wherever the earlier
+  invoice DID issue.
 
 ## INV-PAY-063
 

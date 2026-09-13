@@ -1,7 +1,9 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { stripCommentsAndStrings } from "./support/strip-comments";
 
 import {
   BOOKING_LEDGER_CENSUS_CAPTURED_PAYMENT_STATUSES,
@@ -12,7 +14,8 @@ import {
   bookingLedgerResidualSql,
   bookingLedgerVerdict,
   describeBookingLedgerResidual,
-  sizeAdditionalAskCents,
+  sizeAdditionalAsk,
+  sizeReviewChargeAsk,
   type BookingLedgerIdentityRow,
 } from "@/lib/additional-payment-ask";
 
@@ -28,22 +31,24 @@ import {
   ARITHMETIC guard: it replays edits through the production sizing function and
   checks the identity. It reads no fixture and no seed data, so it proves the
   sizing RULE and says nothing whatever about which call sites use it — a door
-  that never calls `sizeAdditionalAskCents` is invisible to it by construction,
+  that never calls the one home is invisible to it by construction,
   and one such door (`guests/route.ts`) was open when this file was first
   written. The second half is therefore a CALL-SITE census over the source tree,
   which is the half that can see a new door.
 
   WHAT MAKES THE FIRST HALF A GUARD AND NOT A TABLE OF NUMBERS I CHOSE. The fixtures are
   not hand-written ledgers; each is BUILT by replaying booking edits through the
-  production sizing function, `sizeAdditionalAskCents`, and then paying (or not
-  paying) the ask it produced. So the identity is being asked of what the real
+  production sizing functions, `sizeAdditionalAsk` and `sizeReviewChargeAsk`,
+  and then paying (or not paying) the ask each produced. So the identity is being asked of what the real
   code decides, and a regression in the sizing rule — a revert to the bare
   per-modification delta, say — makes a fixture stop balancing rather than making
   a literal stop matching a literal.
 
   Mutation-verified per `docs/TESTING.md`: dropping the superseded term from
-  `sizeAdditionalAskCents` fails `two consecutive increases, the first left
-  unpaid` with a residual of +7000 cents and the invariant id in the message.
+  `sizeAdditionalAsk` fails `two consecutive increases, the first left unpaid`
+  with a residual of +7000 cents and the invariant id in the message, and
+  dropping it from `sizeReviewChargeAsk` fails the #3371 shape below with
+  +20000.
 
   Frozen clock inherited and never consulted: every figure here is integer cents.
 */
@@ -68,7 +73,7 @@ function newBooking(params: {
 
 /**
  * One price-increasing edit against a captured card payment, written the way the
- * production path writes it: the ask comes from `sizeAdditionalAskCents`, and
+ * production path writes it: the ask comes from `sizeAdditionalAsk`, and
  * minting it RETIRES whatever ask was there before (which is the whole defect —
  * `queueSupersededAdditionalIntentCancellations` cancels the old intent, so the
  * new figure is the only one anybody will ever collect).
@@ -78,7 +83,7 @@ function applyPriceIncrease(
   params: { priceDiffCents: number; changeFeeCents?: number },
 ): Ledger {
   const changeFeeCents = params.changeFeeCents ?? 0;
-  const ask = sizeAdditionalAskCents({
+  const ask = sizeAdditionalAsk({
     priceDiffCents: params.priceDiffCents,
     changeFeeCents,
     payment: ledger,
@@ -87,7 +92,60 @@ function applyPriceIncrease(
     ...ledger,
     finalPriceCents: ledger.finalPriceCents + params.priceDiffCents,
     changeFeeCents: ledger.changeFeeCents + changeFeeCents,
-    additionalAmountCents: ask,
+    additionalAmountCents: ask.amountCents,
+    additionalPaymentStatus: "PENDING",
+  };
+}
+
+/**
+ * #3371 - AN OFFICER SETTLES A PARKED FINANCIAL REVIEW AS MONEY OWED.
+ *
+ * Written the way that production path writes it, which is the whole point of
+ * putting it in this file: the ask comes from `sizeReviewChargeAsk`, and minting
+ * it RETIRES whatever ask was there before, whoever raised it. `shareTotalCents`
+ * is the sum of the shares settled against THIS edit; the price term rises by
+ * the same figure and NOT by the carried part - the carried part is money the
+ * price already names, owed from an earlier change.
+ *
+ * ## WHY THE PRICE RISES HERE, since the park deliberately FROZE it (#3371 fix
+ * round)
+ *
+ * A review round read this fixture as modelling a rise production never makes,
+ * on the ground that a parked edit writes the total back unchanged. The park
+ * does exactly that - and the CLOSURE undoes it. Traced through the writers
+ * rather than assumed:
+ *
+ *   * `recordReviewClosurePricing` (`stored-night-price-repair-store.ts`) runs
+ *     inside the settlement's own claim on EVERY parked-review closure, and it
+ *     calls `rebaseBookingPriceFromStrands`;
+ *   * that writer (`booking-review-price-rebase.ts`, #3219/#3257) re-prices the
+ *     booking from its strands and WRITES `finalPriceCents`;
+ *   * and the officer's per-night figures are not free: `unpricedNightTargetCents`
+ *     (`stored-night-price-repair.ts`) requires the blanks to sum to
+ *     `storedGuestTotal + settlementDelta - knownNightTotal`, so the strand ends
+ *     at `storedGuestTotal + delta` and the re-based booking rises by exactly the
+ *     settled charge.
+ *
+ * All of it commits before the mint, which happens after the transaction. So the
+ * ask really is raised against a price that already names it.
+ *
+ * `repriced: false` is the OTHER shape, and it is a real one - see the fixture
+ * that uses it.
+ */
+function applyReviewCharge(
+  ledger: Ledger,
+  params: { shareTotalCents: number; repriced?: boolean },
+): Ledger {
+  const ask = sizeReviewChargeAsk({
+    shareTotalCents: params.shareTotalCents,
+    payment: ledger,
+  });
+  return {
+    ...ledger,
+    finalPriceCents:
+      ledger.finalPriceCents +
+      (params.repriced === false ? 0 : params.shareTotalCents),
+    additionalAmountCents: ask.amountCents,
     additionalPaymentStatus: "PENDING",
   };
 }
@@ -210,6 +268,101 @@ const SCENARIOS: Scenario[] = [
     expectedResidualCents: 0,
   },
   {
+    label: "#3371: two parked edits settled as review charges, $200 then $60",
+    // THE #3371 SHAPE. Before the fix the second review charge asked $60 and the
+    // first $200 ceased to be owed: $260 priced, $60 collected, +20000 here for
+    // ever and no surface reporting it.
+    build: () => {
+      let ledger = newBooking({ finalPriceCents: 13000, paidCents: 13000 });
+      ledger = applyReviewCharge(ledger, { shareTotalCents: 20000 });
+      ledger = applyReviewCharge(ledger, { shareTotalCents: 6000 });
+      return ledger;
+    },
+    verdict: "balanced",
+    expectedResidualCents: 0,
+  },
+  {
+    label: "#3371: an ordinary unpaid extra, then a review charge (ordering 1)",
+    build: () => {
+      let ledger = newBooking({ finalPriceCents: 13000, paidCents: 13000 });
+      ledger = applyPriceIncrease(ledger, { priceDiffCents: 7000 });
+      ledger = applyReviewCharge(ledger, { shareTotalCents: 6000 });
+      return ledger;
+    },
+    verdict: "balanced",
+    expectedResidualCents: 0,
+  },
+  {
+    label: "#3371: a review charge, then an ordinary edit, then both paid",
+    build: () => {
+      let ledger = newBooking({ finalPriceCents: 13000, paidCents: 13000 });
+      ledger = applyReviewCharge(ledger, { shareTotalCents: 20000 });
+      ledger = applyPriceIncrease(ledger, { priceDiffCents: 7000 });
+      return payOutstandingAsk(ledger);
+    },
+    verdict: "balanced",
+    expectedResidualCents: 0,
+  },
+  {
+    label: "#3371: the first review charge was PAID before the second",
+    build: () => {
+      let ledger = newBooking({ finalPriceCents: 13000, paidCents: 13000 });
+      ledger = applyReviewCharge(ledger, { shareTotalCents: 20000 });
+      ledger = payOutstandingAsk(ledger);
+      ledger = applyReviewCharge(ledger, { shareTotalCents: 6000 });
+      return ledger;
+    },
+    verdict: "balanced",
+    expectedResidualCents: 0,
+  },
+  {
+    label: "#3371: the closure's re-price DECLINED, so the price never moved",
+    /*
+      THE OTHER SHAPE THE REVIEW PATH REALLY PRODUCES, added by the #3371 fix
+      round because a review lens was right that it existed even though it was
+      wrong about which one was the fiction.
+
+      `rebaseBookingPriceFromStrands` REFUSES to re-price where a surviving
+      strand's nights cannot be read back as exact, reconciling evidence
+      (`INV-MOD-028`) - its own docblock names that decline as the thing that
+      makes re-pricing on any closure safe rather than reckless. The settlement
+      still charges, so the club ends up asking for money the frozen headline
+      does not name.
+
+      The census REPORTS that and does not fail it, which is the right answer:
+      `retained` is "the club holds more than the price says", and the repair for
+      it is the frozen price, not the ask. The #3340 class - money the price says
+      is owed that nothing is asking for - is `unasked`, and no shape on this path
+      produces one. This fixture and the one after it pin that difference rather
+      than leaving it to be inferred from the carried-balance fixtures above.
+    */
+    build: () => {
+      let ledger = newBooking({ finalPriceCents: 13000, paidCents: 13000 });
+      ledger = applyReviewCharge(ledger, {
+        shareTotalCents: 6000,
+        repriced: false,
+      });
+      return ledger;
+    },
+    verdict: "retained",
+    expectedResidualCents: -6000,
+  },
+  {
+    label: "#3371: a declined re-price, then the member pays the ask",
+    // The same shape once the money lands: the club has $60 the price does not
+    // name, which is what an operator reading the census needs to see.
+    build: () => {
+      let ledger = newBooking({ finalPriceCents: 13000, paidCents: 13000 });
+      ledger = applyReviewCharge(ledger, {
+        shareTotalCents: 6000,
+        repriced: false,
+      });
+      return payOutstandingAsk(ledger);
+    },
+    verdict: "retained",
+    expectedResidualCents: -6000,
+  },
+  {
     label: "a policy-tiered reduction kept a slice the price no longer names",
     // `INV-MOD-011`: $200 paid, reduced to $100, only the tiered $50 refunded.
     // The club holds $150 against a $100 price, which is the policy working.
@@ -269,85 +422,97 @@ describe("INV-PAY-047: every live booking's money balances", () => {
 });
 
 /*
-  #3340 fix round — THE CALL-SITE CENSUS.
+  #3340 fix round - THE CALL-SITE CENSUS. Widened by #3371.
 
-  ENFORCES `INV-PAY-047` and `INV-ADDPAY-023`. Minting an ADDITIONAL
-  PaymentIntent RETIRES every other outstanding ask on the payment
+  ENFORCES `INV-PAY-047`, `INV-PAY-098` and `INV-ADDPAY-023`. Minting an
+  ADDITIONAL PaymentIntent RETIRES every other outstanding ask on the payment
   (`queueSupersededAdditionalIntentCancellations`), so every door that mints one
   is a door that can delete money. The arithmetic guard above cannot see them:
-  it replays the sizing function, so a door that never calls it is invisible.
+  it replays the sizing functions, so a door that never calls one is invisible.
 
   This half scans the tree instead. Every file that calls the shared minter must
-  reach its figure through `sizeAdditionalAskCents` — directly, or through
-  `applyPaymentAdjustments`, which is the one place three of them share — or be
-  named below with the issue that owns it. A sixth door added later fails here
-  with the invariant id rather than being noticed in a review two rounds on,
-  which is how the fifth one was found.
+  reach its figure through a constructor exported by `@/lib/additional-payment-ask`
+  - directly, or through `applyPaymentAdjustments`, which is the one place three
+  of them share. A sixth door added later fails here with the invariant id rather
+  than being noticed in a review two rounds on, which is how the fifth one was
+  found.
+
+  #3371 REMOVED THE ONE EXEMPTION AND THE MACHINERY THAT CARRIED IT. The review
+  charge sized itself from its own settled shares and was exempt while nobody had
+  ruled on how the two rules compose; the owner ruled on 13 Sep 2026, and the
+  answer is that they are ONE rule - a replacement ask carries the unpaid balance
+  of the ask it supersedes. There is no exempt door now and no field to declare
+  one, deliberately: a future exemption should be a visible change to this
+  manifest's shape rather than a string somebody adds.
 
   It has no import edge to the files it scans, so `vitest related` cannot select
   it from a diff; that is deliberate and it is CI-caught by design
   (`AGENTS.md`, "What `test:related` does NOT cover").
 */
 /**
- * Every door that mints an ADDITIONAL PaymentIntent, and the MODULE that sizes
- * its figure. Three of them share `booking-modify-settlement`'s
- * `applyPaymentAdjustments`; one sizes for itself; one is exempt.
+ * Every door that mints an ADDITIONAL PaymentIntent, the MODULE that sizes its
+ * figure, and the CONSTRUCTOR it is built with. Three of them share
+ * `booking-modify-settlement`'s `applyPaymentAdjustments`; two size for
+ * themselves.
  *
- * `sizedIn` is a tracked file that must call `sizeAdditionalAskCents`, and the
- * door must reference it (its own path, or the module specifier it imports it
- * by) - so the chain is checked rather than assumed.
+ * `sizedIn` is a tracked file that must call `builtWith`, and the door must
+ * reference `reachedBy` (its own path, or the module specifier it imports it by)
+ * - so the chain is checked rather than assumed.
  */
 const ASK_MINTING_DOORS: readonly {
   door: string;
   sizedIn: string;
   reachedBy: string;
-  exemptIssue?: string;
+  builtWith: string;
 }[] = [
   {
     // Settles for itself, so it calls the one home directly (#3340 fix round).
     door: "src/app/api/bookings/[id]/guests/route.ts",
     sizedIn: "src/app/api/bookings/[id]/guests/route.ts",
-    reachedBy: "sizeAdditionalAskCents",
+    reachedBy: "sizeAdditionalAsk",
+    builtWith: "sizeAdditionalAsk",
   },
   {
     door: "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
     sizedIn: "src/lib/booking-modify-settlement.ts",
     reachedBy: "@/lib/booking-guest-removal-service",
+    builtWith: "sizeAdditionalAsk",
   },
   {
     door: "src/lib/booking-batch-modification-service.ts",
     sizedIn: "src/lib/booking-modify-settlement.ts",
     reachedBy: "applyPaymentAdjustments",
+    builtWith: "sizeAdditionalAsk",
   },
   {
     door: "src/lib/booking-date-modification-service.ts",
     sizedIn: "src/lib/booking-modify-settlement.ts",
     reachedBy: "applyPaymentAdjustments",
+    builtWith: "sizeAdditionalAsk",
   },
   {
     /**
-     * THE ONE EXEMPTION, and the reason it cannot simply be routed.
-     *
-     * `syncEditFinancialReviewChargeRequest` derives this ask as the SUM of one
-     * edit's settled shares, and compares that sum against the recorded
-     * request's amount to decide whether a later share needs a raise
-     * (`totalCents <= existing.amountCents` writes nothing). Folding a
-     * superseded balance into the first mint corrupts that yardstick: a second
-     * share smaller than the folded-in balance reads as already covered and is
-     * DROPPED, and re-folding on the later run double-counts, because by then
-     * the payment's ask column mirrors the review's own intent. The fix needs
-     * the folded amount tracked apart from the share total, which is a design
-     * change rather than a call swap.
+     * WAS THE ONE EXEMPTION (#3371). Its ask is the SUM of one edit's settled
+     * shares rather than a price delta, so it has its own constructor - but it
+     * is the same rule, and it now folds in the unpaid balance of the ask its
+     * mint is about to retire exactly as the other four do.
      */
     door: "src/lib/edit-financial-review-charge.ts",
     sizedIn: "src/lib/edit-financial-review-charge.ts",
-    reachedBy: "sumEditReviewChargeSharesCents",
-    exemptIssue: "#3371",
+    reachedBy: "sizeReviewChargeAsk",
+    builtWith: "sizeReviewChargeAsk",
   },
 ];
 
-const SIZING_FUNCTION = "sizeAdditionalAskCents";
+/** Every constructor the one home exports. Nothing else may build an ask. */
+const ASK_CONSTRUCTORS: readonly string[] = [
+  "sizeAdditionalAsk",
+  "sizeReviewChargeAsk",
+  "raiseReviewChargeAsk",
+];
+const ASK_HOME = "src/lib/additional-payment-ask.ts";
 const MINTER = "createModificationAdditionalPaymentIntent";
+const RETIRER = "queueSupersededAdditionalIntentCancellations";
 
 function read(relativePath: string): string {
   return readFileSync(join(process.cwd(), relativePath), "utf8");
@@ -369,35 +534,32 @@ describe("every ask-minting door routes through the sizing rule (INV-PAY-047)", 
   });
 
   for (const entry of ASK_MINTING_DOORS) {
-    if (entry.exemptIssue) {
-      it(`${entry.door} is exempt, and its exemption is still true (${entry.exemptIssue})`, () => {
-        // The day this door DOES size through the rule, the manifest entry must
-        // go - and this fails until it does, so an exemption cannot outlive its
-        // reason.
-        expect(
-          read(entry.door).includes(SIZING_FUNCTION),
-          `INV-PAY-047: ${entry.door} now calls ${SIZING_FUNCTION}. ` +
-            `Delete its exemption (${entry.exemptIssue}) from ASK_MINTING_DOORS.`,
-        ).toBe(false);
-      });
-      continue;
-    }
-
     it(`${entry.door} sizes through the one home`, () => {
       expect(
         read(entry.door).includes(entry.reachedBy),
         `INV-PAY-047: ${entry.door} mints an ADDITIONAL PaymentIntent, which retires ` +
           "every other outstanding ask on the payment, and no longer reaches its " +
           `sizing through ${entry.reachedBy}. A bare delta there deletes the unpaid ` +
-          "balance of the ask it replaces (#3340).",
+          "balance of the ask it replaces (#3340, #3371).",
       ).toBe(true);
       expect(
-        read(entry.sizedIn).includes(`${SIZING_FUNCTION}({`),
+        read(entry.sizedIn).includes(`${entry.builtWith}({`),
         `INV-PAY-047 / INV-ADDPAY-023: ${entry.sizedIn} sizes the ask for ` +
-          `${entry.door} and no longer calls ${SIZING_FUNCTION}.`,
+          `${entry.door} and no longer calls ${entry.builtWith}.`,
       ).toBe(true);
     });
   }
+
+  it("leaves no door exempt (#3371 closed the only one)", () => {
+    expect(
+      ASK_MINTING_DOORS.filter(
+        (entry) => !ASK_CONSTRUCTORS.includes(entry.builtWith),
+      ).map((entry) => entry.door),
+      "INV-PAY-098: every ask-minting door must build its figure with a " +
+        "constructor from @/lib/additional-payment-ask. The review-charge " +
+        "exemption was closed by #3371 and no replacement was reviewed.",
+    ).toEqual([]);
+  });
 
   /*
     The guest-add door carries TWO arms over one variable, and they must stay
@@ -411,9 +573,9 @@ describe("every ask-minting door routes through the sizing rule (INV-PAY-047)", 
     expect(
       source,
       "INV-PAY-047: the guest-add door's STRIPE arm must size through " +
-        `${SIZING_FUNCTION} (#3340).`,
+        "sizeAdditionalAsk (#3340, #3371).",
     ).toMatch(
-      /if \(hasSucceededPayment && priceDiffCents > 0\) \{\s*additionalAmountCents = sizeAdditionalAskCents\(\{/,
+      /if \(hasSucceededPayment && priceDiffCents > 0\) \{\s*additionalAsk = sizeAdditionalAsk\(\{/,
     );
     expect(
       source,
@@ -426,18 +588,167 @@ describe("every ask-minting door routes through the sizing rule (INV-PAY-047)", 
   });
 
   it("keeps the sizing rule itself in one module (INV-SSOT-001)", () => {
-    expect(read("src/lib/additional-payment-ask.ts")).toContain(
-      `export function ${SIZING_FUNCTION}`,
-    );
+    const home = read(ASK_HOME);
+    for (const constructor of ASK_CONSTRUCTORS) {
+      expect(home).toContain(`export function ${constructor}`);
+    }
     const redefined = [
       ...new Set(
         ASK_MINTING_DOORS.flatMap((entry) => [entry.door, entry.sizedIn]),
       ),
-    ].filter((file) => read(file).includes(`function ${SIZING_FUNCTION}`));
+    ].filter((file) =>
+      ASK_CONSTRUCTORS.some((constructor) =>
+        read(file).includes(`function ${constructor}`),
+      ),
+    );
     expect(
       redefined,
-      `INV-SSOT-001: ${SIZING_FUNCTION} is defined outside its one home.`,
+      "INV-SSOT-001: an ask constructor is defined outside its one home.",
     ).toEqual([]);
+  });
+});
+
+/*
+  #3371 - THE STRUCTURAL DEVICE, ASSERTED RATHER THAN TRUSTED.
+
+  ENFORCES `INV-PAY-098`. The owner's 13 Sep 2026 decision is that recording what
+  a mint absorbed must be STRUCTURALLY HARD TO OMIT rather than merely required,
+  because the alternative is a permanent obligation on every future writer and
+  "the day one forgets, the money vanishes again".
+
+  THE DEVICE IS A CLASS WITH A `#private` FIELD, and the previous shape is why
+  the wording here is careful. `AdditionalAsk` used to be an object type carrying
+  a module-private `unique symbol` brand, and the docblock claimed "there is no
+  cast that helps". BOTH of these compiled clean against it, measured with this
+  repository's own compiler:
+
+      const spread: AdditionalAsk = { ...NO_ADDITIONAL_ASK, amountCents: 50000 };
+      const cast = { amountCents: 50000, carriedCents: 0 } as AdditionalAsk;
+
+  The first needed no cast at all - TypeScript carries a symbol-keyed property
+  through an object spread - and it is the ACCIDENT shape: a future writer adding
+  a second arm as `{ ...NO_ADDITIONAL_ASK, amountCents: priceDiffCents }` would
+  have recorded a positive ask carrying nothing. A `#private` field is dropped by
+  a spread, so that one is now a type error naming the missing member.
+
+  The second still compiles, and no type can stop it: `x as T` is permitted
+  whenever `T` is assignable to the type of `x`, and a class is always assignable
+  to the bare object type of its own public members. So the assertion is refused
+  HERE instead, by name, over comment- and string-blanked source. That split is
+  deliberate and is stated in the one home's docblock too: the type stops the
+  accident, this census stops the shortcut.
+*/
+const ASK_TYPE = "AdditionalAsk";
+const ASK_CLASS = "AdditionalAskValue";
+
+/** Every tracked `.ts`/`.tsx` under `src`, which is where a forgery could live. */
+function sourceFiles(dir: string, found: string[] = []): string[] {
+  for (const entry of readdirSync(join(process.cwd(), dir), {
+    withFileTypes: true,
+  })) {
+    const relative = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules") continue;
+      sourceFiles(relative, found);
+    } else if (
+      /\.tsx?$/.test(entry.name) &&
+      !entry.name.endsWith(".d.ts")
+    ) {
+      found.push(relative);
+    }
+  }
+  return found;
+}
+
+describe("a mint cannot forget what it absorbed (INV-PAY-098)", () => {
+  it("keeps the ask unconstructible outside the one home", () => {
+    const home = read(ASK_HOME);
+    expect(
+      home,
+      "INV-PAY-098: the private field that makes an AdditionalAsk unforgeable is " +
+        "gone. Without it `{ ...NO_ADDITIONAL_ASK, amountCents: someDelta }` " +
+        "type-checks again and hands the minter a positive ask carrying nothing.",
+    ).toContain("readonly #carriedCents: number;");
+    expect(
+      home,
+      `INV-PAY-098: the ${ASK_CLASS} class is EXPORTED, so any caller can reach ` +
+        "its constructor and the type no longer proves anything. Export the " +
+        "instance type alone.",
+    ).not.toMatch(/export\s+(abstract\s+)?class\s+AdditionalAskValue\b/);
+    expect(
+      home,
+      `INV-PAY-098: ${ASK_TYPE} is no longer the ${ASK_CLASS} instance type, so ` +
+        "the private field no longer stands behind the name callers use.",
+    ).toContain(`export type ${ASK_TYPE} = ${ASK_CLASS};`);
+  });
+
+  it("refuses a hand-cast ask anywhere outside the one home", () => {
+    // Comment- AND string-blanked, because this repository documents a defect at
+    // the site it removed it: the one home's own docblock quotes the forgery, and
+    // so does the block above this test.
+    //
+    // The cheap `includes` runs FIRST and is not decoration: blanking every file
+    // under `src` takes this suite past its five-second budget, while the type
+    // name appears in a couple of dozen of them. The blanking then decides those.
+    const offenders = sourceFiles("src")
+      .filter((file) => file !== ASK_HOME)
+      .map((file) => ({ file, source: read(file) }))
+      .filter((entry) => entry.source.includes(ASK_TYPE))
+      .filter((entry) =>
+        /\bas\s+(unknown\s+as\s+)?AdditionalAsk\b/.test(
+          stripCommentsAndStrings(entry.source),
+        ),
+      )
+      .map((entry) => entry.file);
+    expect(
+      offenders,
+      "INV-PAY-098: an AdditionalAsk is being ASSERTED into existence rather " +
+        "than built by a constructor from @/lib/additional-payment-ask. The type " +
+        "cannot refuse an assertion, which is why this refuses it: a hand-made " +
+        "ask can record a positive amount and a zero carried balance, which is " +
+        "the money leak #3340 and #3371 both closed.",
+    ).toEqual([]);
+  });
+
+  it("keeps the minter taking the value rather than a number", () => {
+    const minter = read("src/lib/booking-modification-settlement.ts");
+    expect(
+      minter,
+      "INV-PAY-098: `createModificationAdditionalPaymentIntent` no longer reads " +
+        "its figure from an AdditionalAsk. A plain `additionalAmountCents: number` " +
+        "on its context is the shape the money leaked through in #3340 and #3371.",
+    ).toContain("additionalAsk: AdditionalAsk;");
+    expect(
+      minter,
+      "INV-PAY-098: the minter no longer records what it absorbed. The ADDITIONAL " +
+        "row must be written with `carriedAskCents` from the SAME value that sized " +
+        "the amount - once the retired rows are cancelled the figure is not " +
+        "recoverable from anything.",
+    ).toContain("carriedAskCents: result.additionalAsk.carriedCents,");
+  });
+
+  it("makes every retirement site record what it absorbed", () => {
+    // The two sites that mint an ADDITIONAL intent and then retire the others.
+    // `booking-payment-cleanup.ts` DEFINES the retirement and writes no ask, so
+    // it is excluded by name rather than by a pattern that could drift.
+    const retirers = [
+      "src/lib/booking-modification-settlement.ts",
+      "src/lib/payment-recovery.ts",
+    ];
+    for (const file of retirers) {
+      const source = read(file);
+      expect(
+        source.includes(`${RETIRER}({`),
+        `INV-PAY-098: ${file} no longer retires superseded asks. Update this ` +
+          "list in the same change.",
+      ).toBe(true);
+      expect(
+        source.includes("carriedAskCents:"),
+        `INV-PAY-098: ${file} retires other asks and no longer records what the ` +
+          "replacement absorbed. Once those rows are cancelled, what they were " +
+          "owed for is not derivable from anything (#3371).",
+      ).toBe(true);
+    }
   });
 });
 
