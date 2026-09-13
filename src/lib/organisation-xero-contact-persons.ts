@@ -147,14 +147,19 @@ export type OrganisationContactSnapshot = {
  * it has stopped being true.
  *
  * Returns how many associations it removed, so the caller can log or audit a
- * departure rather than have it happen silently.
+ * departure rather than have it happen silently — and how many it KEPT, which
+ * is the de-duplicated count rather than the caller's raw list. The de-duplication
+ * happens here, so the count has to come from here too: a request naming one
+ * teacher twice produces two entries and ONE association, and an audit row
+ * built from the caller's list would claim more contact people than the school
+ * has (`INV-SSOT`).
  */
 export async function reconcileOrganisationTeachers(
   tx: Prisma.TransactionClient,
   input: { organisationId: string; teacherMemberIds: readonly string[] },
-): Promise<{ removedCount: number }> {
+): Promise<{ removedCount: number; keptCount: number }> {
   const keep = [...new Set(input.teacherMemberIds)];
-  if (keep.length === 0) return { removedCount: 0 };
+  if (keep.length === 0) return { removedCount: 0, keptCount: 0 };
 
   const removed = await tx.organisationContact.deleteMany({
     where: {
@@ -163,7 +168,7 @@ export async function reconcileOrganisationTeachers(
       memberId: { notIn: keep },
     },
   });
-  return { removedCount: removed.count };
+  return { removedCount: removed.count, keptCount: keep.length };
 }
 
 /**

@@ -1468,7 +1468,9 @@ export async function approveSchoolBookingRequest(input: {
               organisationId: organisation.id,
               bookingId: booking.id,
               removedCount: reconciledTeachers.removedCount,
-              keptCount: teacherAssignments.length,
+              // The reconcile's own count, not this list's length: a request
+              // naming one teacher twice is two entries and one association.
+              keptCount: reconciledTeachers.keptCount,
             },
           },
           tx,

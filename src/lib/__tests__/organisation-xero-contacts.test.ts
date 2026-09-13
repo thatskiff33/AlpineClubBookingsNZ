@@ -129,6 +129,7 @@ import {
   invoicedPartyContactRepair,
 } from "@/lib/organisation-xero-contacts";
 import { XeroContactTwoHomesError } from "@/lib/xero-contact-home";
+import { reconcileOrganisationTeachers } from "@/lib/organisation-xero-contact-persons";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 import {
   declareEnvironmentRole,
@@ -1345,3 +1346,55 @@ async function fingerprintOfCurrentContactPersons(): Promise<string> {
     ],
   });
 }
+
+describe("#3367: the reconcile reports the set it actually kept", () => {
+  /**
+   * The audit row on approval says how many contact people the school is left
+   * with. The de-duplication happens inside the reconcile, so the count has to
+   * come from there: a request that names one teacher twice — the same human
+   * resolved to one `Member` — produces two entries in the caller's list and
+   * ONE association, and a count taken from the caller's list would audit a
+   * school as having more contact people than it has.
+   */
+  function fakeTx(removedCount: number) {
+    const deleteMany = vi.fn(async () => ({ count: removedCount }));
+    return {
+      tx: { organisationContact: { deleteMany } } as unknown as Parameters<
+        typeof reconcileOrganisationTeachers
+      >[0],
+      deleteMany,
+    };
+  }
+
+  it("counts one teacher named twice ONCE", async () => {
+    const { tx, deleteMany } = fakeTx(2);
+
+    await expect(
+      reconcileOrganisationTeachers(tx, {
+        organisationId: "org-1",
+        teacherMemberIds: ["teacher-a", "teacher-a", "teacher-b"],
+      }),
+    ).resolves.toEqual({ removedCount: 2, keptCount: 2 });
+
+    // And the delete keeps the same de-duplicated set it counted.
+    expect(deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          memberId: { notIn: ["teacher-a", "teacher-b"] },
+        }),
+      }),
+    );
+  });
+
+  it("reconciles nothing, and keeps nothing, on a request with no teachers", async () => {
+    const { tx, deleteMany } = fakeTx(3);
+
+    await expect(
+      reconcileOrganisationTeachers(tx, {
+        organisationId: "org-1",
+        teacherMemberIds: [],
+      }),
+    ).resolves.toEqual({ removedCount: 0, keptCount: 0 });
+    expect(deleteMany).not.toHaveBeenCalled();
+  });
+});
