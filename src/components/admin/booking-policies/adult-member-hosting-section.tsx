@@ -13,6 +13,7 @@ import {
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Label } from "@/components/ui/label"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import { responseErrorMessage } from "@/lib/api-error-message"
 import {
   ForbiddenSaveError,
   useSectionEditState,
@@ -199,15 +200,6 @@ function parsePolicy(value: unknown): AdultMemberHostingPolicy | null {
   return row as unknown as AdultMemberHostingPolicy
 }
 
-async function responseMessage(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  const body = (await response.json().catch(() => null)) as
-    | { error?: unknown }
-    | null
-  return typeof body?.error === "string" ? body.error : fallback
-}
 
 export function AdultMemberHostingSection() {
   // Booking-policy config gates on the bookings area, whose write route enforces
@@ -296,7 +288,7 @@ export function AdultMemberHostingSection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const message = await responseMessage(res, "Failed to save")
+        const message = await responseErrorMessage(res, "Failed to save")
         if (res.status === 409) {
           // Somebody else moved the row. Drop this scope back to UNKNOWN so no
           // further write can be sent from a stale token, then pull the current
