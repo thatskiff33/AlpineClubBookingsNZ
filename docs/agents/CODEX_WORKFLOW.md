@@ -40,12 +40,10 @@ conditions. Planning mode must not edit app logic.
 
 The shared quota, context, risk-tiered blueprint, proportional-validation and
 two-attempt failure controls live once in root `AGENTS.md`. Apply them before
-expanding a plan or delegating work. In Codex, pick the tier at dispatch rather
-than from a name written here: run a local repository tool when it answers the
-question exactly, otherwise take the cheapest tier you would trust without
-re-checking its work, and raise reasoning effort before reaching for a larger
-model. Preserve the strongest-model high/xhigh handling for gated areas, state
-the model and effort when you delegate, keep subagent prompts bounded, and clear
+expanding a plan or delegating work. In Codex, pick the tier at dispatch from the
+shape in `AGENTS.md` → "Model selection" and the dated names in
+`docs/agents/SUBAGENT_GUIDE.md` → "Model routing table", rather than from a
+name written here; state the model and effort when you delegate, keep subagent prompts bounded, and clear
 issue-specific context before switching lanes.
 
 When the routed docs are known but the code neighbourhood is not, generate the
@@ -327,12 +325,15 @@ docker run --label agent-lane.shared=true ...   # deliberately shared, not per-i
 
 Two rules make the check trustworthy rather than merely convenient:
 
-- **Never give per-issue infrastructure a shared name.** `tacbookings`,
-  `tacbookings-staging` and `tacbookings-measure` are reserved Compose projects —
-  production/local, the E2E stack, and #2663's measurement stack. The reporter
-  treats all three as shared and will never offer them for removal, and it adds
-  this host's own `COMPOSE_PROJECT_NAME` and `E2E_COMPOSE_PROJECT` to that set,
-  because both defaults are environment-configurable.
+- **Never give per-issue infrastructure a shared name.** `tacbookings` and
+  `tacbookings-staging` are reserved Compose projects — production/local and
+  the E2E stack. The reporter treats both as shared and will never offer them
+  for removal, and it adds this host's own `COMPOSE_PROJECT_NAME` and
+  `E2E_COMPOSE_PROJECT` to that set, because both defaults are
+  environment-configurable. (`tacbookings-measure`, #2663's measurement stack,
+  was a third reserved name here until the tree it belonged to was removed
+  whole by #3382 — that Compose project can no longer exist, so the reservation
+  went with it.)
 - **If a stack is deliberately shared across lanes, label it
   `agent-lane.shared=true`** and say so in the issue, rather than letting it look
   like debris somebody may eventually clear. Surrounding whitespace and casing are

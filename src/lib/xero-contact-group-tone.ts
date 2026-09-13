@@ -1,6 +1,9 @@
 import type { CategoricalScale } from "@/lib/chip-tones";
 
-const XERO_GROUP_TONES: readonly CategoricalScale[] = [
+// A NON-EMPTY tuple type, so `XERO_GROUP_TONES[0]` is a tone rather than a
+// maybe-tone: the modulo below then has a proven member of this very list to
+// fall back on, instead of a colour invented at the call site (#2800).
+const XERO_GROUP_TONES: readonly [CategoricalScale, ...CategoricalScale[]] = [
   "cat1",
   "cat2",
   "cat3",
@@ -24,5 +27,10 @@ export function getXeroContactGroupTone(groupId: string): CategoricalScale {
     hash ^= groupId.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193);
   }
-  return XERO_GROUP_TONES[(hash >>> 0) % XERO_GROUP_TONES.length];
+  // The modulo is by this list's own length, so the position is always inside
+  // it; `[0]` is the same list's first tone and is proven present by the type.
+  return (
+    XERO_GROUP_TONES[(hash >>> 0) % XERO_GROUP_TONES.length] ??
+    XERO_GROUP_TONES[0]
+  );
 }

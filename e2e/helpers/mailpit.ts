@@ -59,12 +59,12 @@ function toMatches(message: MailpitSummary, recipient: string): boolean {
 // text part.
 function extractSixDigitCode(message: MailpitMessage): string | null {
   const html = message.HTML ?? "";
-  const tagMatch = html.match(/<strong[^>]*>\s*(\d{6})\s*<\/strong>/);
-  if (tagMatch) return tagMatch[1];
+  const tagCode = html.match(/<strong[^>]*>\s*(\d{6})\s*<\/strong>/)?.[1];
+  if (tagCode) return tagCode;
 
   const text = message.Text ?? "";
-  const textMatch = text.match(/(?:^|[^\d])(\d{6})(?:[^\d]|$)/);
-  if (textMatch) return textMatch[1];
+  const textCode = text.match(/(?:^|[^\d])(\d{6})(?:[^\d]|$)/)?.[1];
+  if (textCode) return textCode;
 
   return null;
 }

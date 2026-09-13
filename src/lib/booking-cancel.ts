@@ -10,6 +10,7 @@ import {
 import { sendAdminManualRefundTaskAlert, sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { recordBookingEvent } from "./booking-events";
+import { formatCents } from "./utils";
 import {
   BookingEventType,
   BookingStatus,
@@ -1807,7 +1808,7 @@ async function performBookingCancellation(
         refundMethod: "manual",
         creditRestoredCents: creditRestoredCents || undefined,
         manualRefundTaskId: manualRefundTaskId ?? undefined,
-        message: `Booking cancelled. This booking was settled in cash, so a manual refund task for $${(refundAmountCents / 100).toFixed(2)} has been raised for an admin to pay back by hand.`,
+        message: `Booking cancelled. This booking was settled in cash, so a manual refund task for ${formatCents(refundAmountCents)} has been raised for an admin to pay back by hand.`,
       },
     };
   }
@@ -1899,7 +1900,7 @@ async function performBookingCancellation(
         refundMethod: "credit",
         creditAmountCents: refundAmountCents,
         creditRestoredCents: creditRestoredCents || undefined,
-        message: `Booking cancelled. ${refundPercentage}% credit of $${(refundAmountCents / 100).toFixed(2)} added to your account.`,
+        message: `Booking cancelled. ${refundPercentage}% credit of ${formatCents(refundAmountCents)} added to your account.`,
       },
     };
   }
@@ -2070,7 +2071,7 @@ async function performBookingCancellation(
         refundMethod: "card",
         creditRestoredCents: creditRestoredCents || undefined,
         stripeRefundId,
-        message: `Booking cancelled. ${refundPercentage}% refund of $${(refundAmountCents / 100).toFixed(2)} processed.`,
+        message: `Booking cancelled. ${refundPercentage}% refund of ${formatCents(refundAmountCents)} processed.`,
       },
     };
   }
@@ -2347,13 +2348,13 @@ async function paymentHasCaptureEvidence(
 // #1547: every cancel branch that restores applied credit appends this line to
 // the CANCELLED narrative event when a positive amount was returned, so the
 // member/admin story reflects the restore. Money stays in cents internally; the
-// sentence renders NZ dollars for humans.
+// sentence renders the club's configured currency (#3325).
 function appendReturnedCreditSentence(
   reason: string,
   creditRestoredCents: number
 ): string {
   return creditRestoredCents > 0
-    ? `${reason} NZ$${(creditRestoredCents / 100).toFixed(2)} of applied account credit was returned.`
+    ? `${reason} ${formatCents(creditRestoredCents)} of applied account credit was returned.`
     : reason;
 }
 

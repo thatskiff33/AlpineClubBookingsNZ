@@ -158,7 +158,7 @@ export type GuestProfileRequiredMember = {
 
 // test seam
 export class BookingGuestProfileRequiredError extends BookingGuestValidationError {
-  public code = GUEST_PROFILE_REQUIRED_ERROR_CODE;
+  public override code = GUEST_PROFILE_REQUIRED_ERROR_CODE;
 
   constructor(public members: GuestProfileRequiredMember[]) {
     super(

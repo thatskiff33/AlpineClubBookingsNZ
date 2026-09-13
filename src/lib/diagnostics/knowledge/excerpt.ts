@@ -12,6 +12,7 @@
 
 import { normalizeContent, sha256Hex } from "./hash";
 import type { KnowledgeExcerpt } from "./types";
+import { must } from "@/lib/indexed-access";
 
 /** Max lines per excerpt; larger sections are split into consecutive windows. */
 export const MAX_EXCERPT_LINES = 200;
@@ -64,16 +65,18 @@ const TS_TOP_LEVEL_EXPORT =
 function findBoundaries(language: string, lines: string[]): Boundary[] {
   const boundaries: Boundary[] = [];
   for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
+    const line = must(lines[i], `findBoundaries: no line at index ${i} within lines.length`);
     if (language === "markdown") {
       const m = MARKDOWN_HEADING.exec(line);
-      if (m) boundaries.push({ index: i, label: m[1].trim() });
+      // Group 1 is mandatory (no trailing `?`), so a match always captures it.
+      if (m) boundaries.push({ index: i, label: must(m[1], "findBoundaries: markdown heading match has no capture group").trim() });
     } else if (language === "prisma") {
       const m = PRISMA_BLOCK.exec(line);
       if (m) boundaries.push({ index: i, label: `${m[1]} ${m[2]}` });
     } else if (language === "typescript" || language === "javascript") {
       const m = TS_TOP_LEVEL_EXPORT.exec(line);
-      if (m) boundaries.push({ index: i, label: m[1] });
+      // Group 1 is mandatory, so a match always captures it.
+      if (m) boundaries.push({ index: i, label: must(m[1], "findBoundaries: TS export match has no capture group") });
     }
   }
   return boundaries;
@@ -148,15 +151,20 @@ export function buildExcerpts(path: string, rawContent: string): ExcerptedFile {
   }
 
   // Content before the first boundary is its own unlabelled leading section.
-  if (boundaries[0].index > 0) {
-    excerptSection(path, null, 1, boundaries[0].index, lines, excerpts);
+  // `boundaries.length === 0` was handled above, so element 0 exists here.
+  const firstBoundary = must(boundaries[0], "buildExcerpts: boundaries is non-empty but has no element 0");
+  if (firstBoundary.index > 0) {
+    excerptSection(path, null, 1, firstBoundary.index, lines, excerpts);
   }
 
   for (let b = 0; b < boundaries.length; b += 1) {
-    const start = boundaries[b].index + 1; // 1-based
+    const boundary = must(boundaries[b], `buildExcerpts: no boundary at index ${b} within boundaries.length`);
+    const start = boundary.index + 1; // 1-based
     const end =
-      b + 1 < boundaries.length ? boundaries[b + 1].index : lines.length;
-    excerptSection(path, boundaries[b].label, start, end, lines, excerpts);
+      b + 1 < boundaries.length
+        ? must(boundaries[b + 1], `buildExcerpts: no boundary at index ${b + 1} within boundaries.length`).index
+        : lines.length;
+    excerptSection(path, boundary.label, start, end, lines, excerpts);
   }
 
   excerpts.sort((a, b) => a.startLine - b.startLine);

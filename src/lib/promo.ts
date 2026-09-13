@@ -1027,12 +1027,57 @@ export async function validateAndCalculatePromoDiscount(
           nightWindow,
           guest.nightDates
         );
+        // BOTH vectors are built by mapping over `kept`, so both are exactly
+        // `kept.length` long and position n of one is position n of the other.
+        // That is the parallelism the comment above requires, and it is the one
+        // thing this block may not get wrong: a date that has slipped by one
+        // attributes a discount to a night it was not taken off.
+        //
+        // NOT `filter` (#3374 review). Filtering each vector independently
+        // makes each one's length depend on ITS OWN contents, and `filter`
+        // skips holes -- so a sparse or short `nightDates` yields a dates
+        // vector SHORTER than the rates vector, silently shifted. That is the
+        // hole-skipping class this repository has already shipped once, where
+        // `every` and `reduce` passed a vector with a gap (#3167). Mapping over
+        // `kept` cannot shorten: a missing entry stays a hole-shaped
+        // `undefined` AT ITS OWN POSITION, and `resolveTargets` refuses a
+        // night-scope target with no date rather than writing the wrong one.
+        //
+        // A missing RATE is different and refuses here, because the type has
+        // always claimed `number[]`: passing `undefined` on would be a lie the
+        // compiler stopped accepting, and there is no rate to fall back to that
+        // is not invented money.
+        const keptRates = kept.map((index) => {
+          const rate = guest.perNightRates[index];
+          if (rate === undefined) {
+            throw new Error(
+              `Work-party promo window kept night index ${index} for a guest whose per-night rates have no entry there (#3276).`,
+            );
+          }
+          return rate;
+        });
+        // Built by POSITION, so a source date that is missing stays missing at
+        // its own index rather than pulling the rest forward. The result is
+        // still `Date[]` — a hole reads as `undefined`, which is exactly what
+        // `nightTarget` turns into a `null` `stayDate` and `resolveTargets`
+        // then refuses. Setting `length` last matters: without it a missing
+        // FINAL date would shorten the vector, which is the same shift by
+        // another route.
+        const sourceDates = guest.nightDates;
+        let keptDates: Date[] | typeof sourceDates = sourceDates;
+        if (sourceDates) {
+          const positioned: Date[] = [];
+          kept.forEach((index, position) => {
+            const date = sourceDates[index];
+            if (date !== undefined) positioned[position] = date;
+          });
+          positioned.length = kept.length;
+          keptDates = positioned;
+        }
         return {
           ...guest,
-          perNightRates: kept.map((index) => guest.perNightRates[index]),
-          nightDates: guest.nightDates
-            ? kept.map((index) => guest.nightDates![index])
-            : guest.nightDates,
+          perNightRates: keptRates,
+          nightDates: keptDates,
         };
       });
     }
@@ -1084,8 +1129,14 @@ export async function validateAndCalculatePromoDiscount(
       };
     }
   }
+  // `filterGuestsByIndexes` maps selected indexes back through `detailGuests`
+  // and drops any that came up empty (out of range); `PromoDiscountGuest` is
+  // always an object (never falsy), so this type predicate proves the same
+  // thing its `.filter(Boolean)` already guarantees at runtime.
   const guestsForPromo = requiresGuestSelection
-    ? filterGuestsByIndexes(detailGuests, selectedGuestIndexes.indexes)
+    ? filterGuestsByIndexes(detailGuests, selectedGuestIndexes.indexes).filter(
+        (guest): guest is PromoDiscountGuest => guest !== undefined
+      )
     : detailGuests;
   const assignedGuestScopeMemberIds = scopedAssignmentMemberIds(
     promoCode,

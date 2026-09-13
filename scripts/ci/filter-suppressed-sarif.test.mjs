@@ -81,14 +81,29 @@ describe("isSuppressedInSource", () => {
     ).toBe(false);
   });
 
-  it("honours an accepted or under-review suppression", () => {
-    for (const status of ["accepted", "underReview"]) {
+  it("keeps a result whose suppression is still UNDER REVIEW", () => {
+    // `underReview` means the suppression has NOT been accepted — the decision
+    // is open. Honouring it would withhold a result nobody has agreed to
+    // suppress, which #2842's security review named as the only path by which
+    // this filter could hide something that is not actually suppressed.
+    expect(
+      isSuppressedInSource({
+        ruleId: "x",
+        suppressions: [{ kind: "inSource", status: "underReview" }],
+      }),
+    ).toBe(false);
+  });
+
+  it("honours an accepted suppression, and one with no status at all", () => {
+    // An absent status defaults to `accepted` in SARIF 2.1.0, which is what
+    // Semgrep emits today.
+    for (const suppression of [
+      { kind: "inSource", status: "accepted" },
+      { kind: "inSource" },
+    ]) {
       expect(
-        isSuppressedInSource({
-          ruleId: "x",
-          suppressions: [{ kind: "inSource", status }],
-        }),
-        status,
+        isSuppressedInSource({ ruleId: "x", suppressions: [suppression] }),
+        JSON.stringify(suppression),
       ).toBe(true);
     }
   });

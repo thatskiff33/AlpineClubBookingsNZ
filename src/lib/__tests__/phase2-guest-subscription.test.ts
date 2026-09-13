@@ -176,7 +176,7 @@ vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: vi.fn().mockR
 // (Xero-off bypass); default to Xero on so guest checks behave as before.
 const mockLoadEffectiveModuleFlags = vi.fn();
 vi.mock("@/lib/module-settings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/module-settings");
   return {
     ...actual,
     loadEffectiveModuleFlags: (...args: unknown[]) =>

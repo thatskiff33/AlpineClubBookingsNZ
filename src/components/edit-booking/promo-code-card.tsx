@@ -3,7 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
-import { formatCents } from "@/lib/utils";
+import { formatSignedCents } from "@/lib/utils";
 import type { PromoAction } from "@/components/edit-booking/hooks/use-promo-selection";
 import type {
   AvailablePromoCode,
@@ -12,11 +12,6 @@ import type {
   PromoInfo,
   QuoteResult,
 } from "@/components/edit-booking/types";
-
-function formatSignedCents(cents: number) {
-  const prefix = cents > 0 ? "+" : "-";
-  return `${prefix}${formatCents(Math.abs(cents))}`;
-}
 
 /**
  * The booking's promo code: keep it, drop it, or apply a different one.

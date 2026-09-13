@@ -18,7 +18,6 @@ import {
 
 import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
 import { ApiError } from "@/lib/api-error";
-import type { EditFinancialReviewOccurrence } from "@/lib/edit-financial-review-context";
 import {
   OtherLodgeRateInProgressError,
   requestCarriesOtherLodgeElection,

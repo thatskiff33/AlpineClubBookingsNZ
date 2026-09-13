@@ -4212,13 +4212,17 @@ export async function loadSameOwnerCoverageDependentIds(
   work: { memberId: string; lodgeId: string; nights: readonly string[] },
   db: AdultMemberHostingReviewDb,
 ): Promise<string[]> {
+  // Both ends of the night list, read where the envelope is derived: no night
+  // is no envelope and nothing to load (#2800).
   const nights = [...new Set(work.nights)].sort();
-  if (nights.length === 0) return [];
-  const first = parseDateOnly(nights[0]);
+  const firstNightKey = nights[0];
+  const lastNightKey = nights.at(-1);
+  if (firstNightKey === undefined || lastNightKey === undefined) return [];
+  const first = parseDateOnly(firstNightKey);
   // The night AFTER the last one is the exclusive checkout bound, so a booking
   // arriving on the last night is included and one arriving the morning after is
   // not — the same half-open convention as everywhere else.
-  const lastExclusive = addDaysDateOnly(parseDateOnly(nights[nights.length - 1]), 1);
+  const lastExclusive = addDaysDateOnly(parseDateOnly(lastNightKey), 1);
 
   const dependents = await db.booking.findMany({
     where: sameOwnerCoverageDependentWhere({

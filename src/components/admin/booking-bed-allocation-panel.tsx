@@ -554,6 +554,13 @@ export function BookingBedAllocationPanel({
       ];
       const row = byId.get(guestId);
       if (!row) continue;
+      const [firstAllocation] = group;
+      // `group` is never empty: `nightsByGuestBed` is only ever populated by
+      // `.set(key, [allocation])` or a push onto an existing bucket, so every
+      // entry this `for...of` visits holds at least the allocation that
+      // created it. Every item in the bucket shares the same bed (bedId is
+      // part of `key`), so the first one stands for the whole group/run.
+      if (!firstAllocation) continue;
       const byNight = new Map(group.map((item) => [item.stayDate, item]));
       for (const run of collapseNightRuns(group.map((it) => it.stayDate))) {
         const items = run.nights
@@ -561,9 +568,9 @@ export function BookingBedAllocationPanel({
           .filter((item): item is PanelAllocation => Boolean(item));
         row.runs.push({
           key: `${key}:${run.firstNight}`,
-          bedId: group[0].bedId,
-          bedName: group[0].bedName,
-          roomName: group[0].roomName,
+          bedId: firstAllocation.bedId,
+          bedName: firstAllocation.bedName,
+          roomName: firstAllocation.roomName,
           firstNight: run.firstNight,
           lastNight: run.lastNight,
           nightCount: items.length,

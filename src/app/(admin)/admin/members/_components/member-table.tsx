@@ -197,11 +197,16 @@ export function MemberTable({
               />
             </TableHead>
           ) : null}
-          {[
-            ["name", "Name"],
-            ["email", "Email"],
-            ["access", "Access"],
-          ].map(([column, label]) => (
+          {/* `as const` makes each row a 2-tuple of literals, so the column
+              key reaches `onToggleSort` as a `string` rather than a lookup
+              (#2801). */}
+          {(
+            [
+              ["name", "Name"],
+              ["email", "Email"],
+              ["access", "Access"],
+            ] as const
+          ).map(([column, label]) => (
             <SortHeader
               key={column}
               active={sortBy === column}

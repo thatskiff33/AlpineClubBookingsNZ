@@ -159,35 +159,48 @@ RTL window forced back to its 1,000ms default** — the same both-directions pro
 
 ## Which project typechecks a test
 
-`npm run typecheck` runs two TypeScript projects, and between them they must
+`npm run typecheck` runs three TypeScript projects, and between them they must
 read every tracked `.ts`, `.tsx`, `.mts` and `.cts` file in the repository
 except `.semgrep/tests/acb-client-server-boundary.tsx` and
 `.semgrep/tests/acb-unsafe-raw-sql.ts`. Those two files are deliberately broken
 samples read only by Semgrep's `--test` runner; typechecking them would defeat
-their purpose:
+their purpose. Every other file is a root of exactly one project:
 
-- **`tsconfig.json`** — the app. It excludes Vitest test/spec files under
-  `src/` and `scripts/`, plus everything under `__tests__/`, so that test code
-  stays out of the app's type surface.
-- **`tsconfig.test.json`** — the Vitest project under `src/` and `scripts/`.
-  Its broad test/spec patterns deliberately cover TypeScript's `.ts`, `.tsx`,
-  `.mts` and `.cts` forms, and it supplies `vitest/globals`.
+- **`tsconfig.json`** — the app, and the canonical compiler baseline the other
+  two extend (#2693): `target` and `lib` at ES2022, `strict`,
+  `noImplicitOverride`, `noUnusedLocals`, `noUnusedParameters`, and
+  `allowJs: false`. It excludes Vitest test/spec files under `src/` and
+  `scripts/`, everything under `__tests__/`, the Playwright suite, and the
+  Vitest config and setup files, so none of that is in the app's type surface.
+- **`tsconfig.test.json`** — the Vitest project: every `.ts`, `.tsx`, `.mts`
+  and `.cts` test/spec file and `__tests__/` directory under `src/` and
+  `scripts/`, plus `vitest.config.mts` and the two setup files. It supplies
+  `vitest/globals` and Node's types.
+- **`tsconfig.e2e.json`** — the Playwright suite: `e2e/**/*.ts` and
+  `playwright.config.ts`, with Node's types and nothing from Vitest. Specs
+  reach application code through imports (`@/lib/...`), never by listing it.
 
-Vitest also collects JavaScript test/spec forms. The existing `.js`, `.jsx`,
-`.mjs` and `.cjs` files are loaded by `tsconfig.test.json` while `allowJs`
-remains on, but `checkJs` is explicitly off: they execute in Vitest, but this
-document does **not** claim TypeScript statically checks their bodies. MEP-E1
-(#2693) owns converting the remaining JavaScript dependencies, setting
-`allowJs: false`, and giving Playwright its deliberate long-term project.
+Vitest also collects JavaScript test files. The `scripts/**/*.test.mjs`
+suites — each the test of a tool that runs under a bare `node`, so both stay
+`.mjs` — execute in Vitest and are typechecked by **no** project.
+That is not a loss: before #2693 they were loaded with `allowJs: true,
+checkJs: false`, which produced no diagnostics either. Their names are pinned in
+`src/lib/__tests__/typecheck-project-coverage.test.ts`, so a new JavaScript
+test fails that contract until it is either written in TypeScript (the default)
+or named there deliberately. Four JavaScript modules that TypeScript tests
+import — `eslint.config.mjs`, `scripts/ci/server-only-boundary-selftest.mjs`,
+`scripts/sync-user-guide-wiki.mjs` and `load/lib/contention-invariant.js` —
+carry a sibling `.d.mts` / `.d.ts` declaring their exports; the same contract
+pins each pair.
 
 Put a supported new Vitest test under `src/` or `scripts/` and the existing
 patterns cover it; put one somewhere else and you must add the pattern.
-`src/lib/__tests__/typecheck-project-coverage.test.ts` fails if any other
-tracked TypeScript file ends up in neither project. It also pins Vitest's actual
-default extension glob, requires every supported Vitest file in the test
-project, and refuses compound JSX extensions that Vitest would collect but
-TypeScript cannot load. It asks TypeScript itself which files each project
-resolves rather than reimplementing tsconfig's glob rules.
+`typecheck-project-coverage.test.ts` fails if any tracked TypeScript file ends
+up in no project or in more than one. It also pins Vitest's actual default
+extension glob, requires every TypeScript Vitest file in the test project only,
+requires `allowJs` off in every project, and refuses compound JSX extensions
+that Vitest would collect but TypeScript cannot load. It asks TypeScript itself
+which files each project lists rather than reimplementing tsconfig's glob rules.
 
 That guard exists because the gap was real and silent (#2875): `tsconfig.json`
 excluded the test files and `tsconfig.test.json` re-included only the `src/`
@@ -195,10 +208,86 @@ half, so everything under `scripts/__tests__/` was typechecked by neither
 project. Deliberate `const x: number = "string"` errors planted in those files
 produced a completely green `npm run typecheck`.
 
-Playwright specs under `e2e/` are not Vitest and are not in that project. They
-remain in the app project because the Vitest exclusions are scoped to `src/`
-and `scripts/`, leaving `e2e/` untouched. That home is still incidental rather
-than deliberate; choosing the long-term Playwright project is MEP-E1 (#2693).
+Two habits the baseline depends on. Delete `tsconfig*.tsbuildinfo` before
+trusting a clean run after a compiler-option change — `incremental` build info
+has false-passed a config change here before. And `useDefineForClassFields` is
+pinned `false` on purpose. Next's SWC reads only that explicit key (never the
+target), so the pin governs the whole production build; Vite/Vitest apply the
+resolved `tsconfig.json` to the files it includes and derive `true` from an
+ES2022 target when the key is absent, so the pin also governs every app module
+a test imports. Classes declared inside test files — excluded from
+`tsconfig.json` — are transformed with the default [[Define]] semantics, as
+they were before #2693. The tree has some eighty `Error` subclasses that
+declare fields and assign them after `super()`; flipping the pin is a runtime
+change to decide separately, not a tidy-up.
+
+## `noUncheckedIndexedAccess`
+
+Plain English: TypeScript can be told that looking something up by index or by
+key — `rows[0]`, `byId[memberId]` — might find nothing. That rule
+(`noUncheckedIndexedAccess`) is permanently on in `tsconfig.json`, because a
+lookup that quietly pretends to have found a value is how a missing tier
+becomes a silent zero. It got there in stages (programme #2694, issues
+#2799-#2802): the errors were recorded behind a temporary ratchet, paid down a
+slice at a time, and the ratchet was deleted once the count reached zero — a
+ratchet whose baseline is empty is a compiler option with extra steps. From
+here it is an ordinary compiler error like any other, caught by
+`npm run typecheck` and in the editor.
+
+The Playwright project (`tsconfig.e2e.json`) inherits the flag and has been
+held to it since #3363, so anything that project includes (`e2e/**`, including
+`e2e/setup` and `e2e/tools`, and `playwright.config.ts`) that indexes into
+an array or a keyed record must prove the element is there the same way
+application code does. Only `tsconfig.test.json` — the Vitest project — still
+extends `tsconfig.json` and explicitly turns the flag back off (see the comment
+there). Programme #2694 was scoped to `tsconfig.json` throughout — "application
+code before tests" — and forcing the flag on across the unit tests surfaces a
+large number of pre-existing diagnostics that stage never measured or budgeted.
+The owner parked that as a separate decision on #3363; until it is taken on
+deliberately, new unit-test code is not held to this rule.
+
+**#3363 is the one home for how many.** The count is a measurement rather than
+a fact about the design, so a second copy goes stale silently and nobody can
+tell which copy is wrong — this page deliberately does not restate it, and
+neither should anything else.
+
+**What counts as a fix**, for new code that trips this. A batch with a
+meaningful count of new `!` non-null assertions is a failed batch, not a
+finding to negotiate; the same goes for casts, broad `any`, and suppression
+comments — they spend the effort and buy nothing. A lookup that cannot miss is
+restructured so the type says so:
+
+- read the first element once and let its absence be the emptiness check
+  (`const [first] = xs; if (!first) …`) instead of a separate `length` check
+  followed by an index;
+- `entries()` instead of a counting loop, wherever the index was only ever
+  wanted for a row number or a `sortOrder`;
+- walk adjacent pairs instead of indexing `i + 1`, and iterate `slice(0, n)`
+  instead of counting to `n`;
+- carry a value alongside the object it belongs to instead of in a parallel
+  array read back by position — one array of records instead of two arrays
+  correlated by index;
+- a fixed `slice` (or destructure) where the string's shape is already
+  validated — `YYYY-MM`, `yyyy-MM-dd` — gives a plain `string` with no new
+  refusal, and a malformed value still becomes `NaN` exactly as before;
+- a regex's mandatory capture group: destructure it and let its absence be the
+  pattern's own rejection, rather than indexing the match array;
+- `as const` on a table of `[key, label]` rows — a `string[][]` literal
+  destructures to `string | undefined`, which a computed property name
+  (`{ [key]: … }`, TS2464) and a form lookup both reject; the tuple form also
+  retires the casts often built up around it.
+
+A lookup that can genuinely miss is handled the way the domain says: a missing
+tier is a policy error to surface, a missing capacity row means the lodge has
+no capacity. Where it is genuinely reachable, a test pins the chosen behaviour;
+where it is unreachable, a comment says why in terms a reviewer can check.
+
+Where the type truly cannot carry the proof, the shared guard is `must` in
+`src/lib/indexed-access.ts` — a named throw at the point the invariant is
+assumed, not a fallback value. It is for a lookup the surrounding code already
+guarantees (a fixed-size colour scale, a loop's own bound, a `length === 1`
+check just above it) — reach for it sparingly, after the restructures above
+have been ruled out, and say at the call site why the miss cannot happen.
 
 ## The frozen test clock
 
@@ -1002,6 +1091,41 @@ So:
    entries by name puts two concurrent additions on the same lines, so git
    raises a conflict and a human classifies both — which is exactly the review a
    bare integer skipped.
+
+### Selecting the censuses a change can reach
+
+A census reads source from disk, so it has no import edge to what it scans and
+`npm run test:related` can never select it from a diff — `AGENTS.md` says so, and
+says the class stays CI-caught by design. A lane that wants to catch one *before*
+CI has to pick the set by grep, and **grepping for the paths your diff changed
+under-selects**. #2958 measured how (#3323).
+
+That lane split an oversized route page into twenty modules and derived its set
+three ways: tests naming the route path, tests rooted at `src`, and tests walking
+a directory. All three missed
+[`additional-payment-card-gate.test.ts`](../src/components/__tests__/additional-payment-card-gate.test.ts),
+and CI failed on it. Two reasons, both general:
+
+- **The path can be in the file without being on any line of it.** That census
+  composed its target segment by segment — `join(process.cwd(), "src", "app",
+  "(authenticated)", "bookings", "[id]", "page.tsx")` — across seven lines, so a
+  line-oriented grep for `(authenticated)/bookings/[id]` matched nothing. Read
+  each candidate **whole-file** instead; the same fix finds a `join(` whose
+  `process.cwd()` sits on the next line, which a one-line
+  `join(process.cwd(), "src")` pattern skips.
+- **A census is named after the rule it polices, not after the file that rule
+  currently lives in.** This one is named for `AdditionalPaymentCard`, a
+  component that predates the change entirely, so no grep for the new modules or
+  their exports would have found it either. Add an arm that selects every
+  disk-reading test naming **any component the changed surface renders**.
+
+And when you move a census's target, **widen the census to the directory rather
+than re-pointing it at the new file**. The one that failed here named a single
+file and checked only the *first* render site — while the surface was one file
+those were the same sentence, and after a split they are not. It now walks the
+route directory and asserts the guard on every site it finds, with a vacuity
+check so an empty scan fails rather than passes. A count is not the only thing a
+merge or a move can quietly disarm; a hard-coded path is the other.
 
 ## Mocking `requireAdmin`: reference the helper, never wrap it
 

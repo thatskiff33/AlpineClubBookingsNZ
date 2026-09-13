@@ -41,9 +41,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 // resolver so each case re-reads the prisma mock — the real cache would otherwise
 // memoise the first case's value across the two club-name assertions below.
 vi.mock("@/lib/public-layout-config", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/club-identity-settings")
-  >("@/lib/club-identity-settings");
+  const actual = (await vi.importActual("@/lib/club-identity-settings")) as typeof import("@/lib/club-identity-settings");
   return { getCachedClubIdentity: actual.getClubIdentity };
 });
 vi.mock("@/lib/module-settings", () => ({

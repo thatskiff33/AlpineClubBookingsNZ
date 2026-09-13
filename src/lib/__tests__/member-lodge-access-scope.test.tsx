@@ -15,12 +15,12 @@ type LodgeOptions = {
 let lodgeOptions: LodgeOptions
 
 vi.mock("@/components/lodge-select", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/components/lodge-select")>()),
+  ...((await importOriginal()) as typeof import("@/components/lodge-select")),
   useLodgeOptions: () => lodgeOptions,
 }))
 
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>()),
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
 }))
 

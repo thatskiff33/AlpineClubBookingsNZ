@@ -40,7 +40,6 @@ import {
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
@@ -116,10 +115,8 @@ function createTempMigration(
 ) {
   const tempDir = mkdtempSync(path.join(tmpdir(), "tac-migration-safety-"));
   // Test fixture: joins a freshly created temp dir with a test-controlled migration name; no user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const migrationDir = path.join(tempDir, migrationName);
   // Test fixture: appends the hardcoded "migration.sql" filename to the temp migration dir.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const migrationPath = path.join(migrationDir, "migration.sql");
   const ledgerPath = path.join(tempDir, "safety.tsv");
 
@@ -260,11 +257,9 @@ function createTempMigrationsTree(
 
   for (const migration of migrations) {
     // Test fixture: joins the temp migrations dir with a test-controlled migration name; no user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const dir = path.join(migrationsDir, migration.name);
     mkdirSync(dir, { recursive: true });
     // Test fixture: appends the hardcoded "migration.sql" filename to the temp migration dir.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     writeFileSync(path.join(dir, "migration.sql"), migration.sql);
   }
   writeFileSync(ledgerPath, ledger);
@@ -301,7 +296,6 @@ function personNightGuardCallers(): string[] {
     const dir = roots.pop()!;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       // Test helper: walks the repo's own src tree; no user input.
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (entry.name === "__tests__" || entry.name === "node_modules") continue;
@@ -311,7 +305,6 @@ function personNightGuardCallers(): string[] {
       if (!/\.tsx?$/.test(entry.name)) continue;
       if (/\.test\.tsx?$/.test(entry.name)) continue;
       // Test helper: reads a file discovered by walking the repo's src tree.
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const source = readFileSync(full, "utf8");
       if (
         source.includes("findBookingMemberNightConflicts(") ||
@@ -1284,6 +1277,39 @@ describe("review finding source/schema contracts", () => {
     // And the advisory lock, which is the module's PRIMARY fence and the half a
     // mocked $executeRaw can say nothing about.
     expect(suite).toContain("SELECT pg_advisory_xact_lock(1)");
+  });
+
+  it("no longer runs the retired noUncheckedIndexedAccess ratchet in the verify job (#2802)", () => {
+    // #2799-#2801 pinned the ratchet step BELOW Typecheck here because it
+    // attributed every diagnostic to the flag only while the plain project
+    // was already green. #2802 turned the flag on in tsconfig.json itself and
+    // deleted the ratchet script, its baseline and this step together: a
+    // ratchet whose baseline is empty is a compiler option with extra steps.
+    // This guard now pins the deletion instead of the ordering, so the step
+    // cannot quietly come back without this test noticing.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const job = jobBlock(workflow, "verify");
+    expect(job, "ci.yml has no verify job").not.toBe("");
+    expect(
+      job,
+      "the noUncheckedIndexedAccess ratchet step should stay removed (#2802): " +
+        "the compiler now enforces the flag directly in tsconfig.json"
+    ).not.toContain("noUncheckedIndexedAccess ratchet");
+    expect(job).not.toContain("typecheck:nuia");
+
+    // The step this one replaced also asserted, incidentally, that `verify`
+    // RUNS Typecheck at all — and that was the only assertion in the tree doing
+    // so. Kept, because losing it here is how it would go unnoticed: `next
+    // build` type-checks the app project on its own (no `ignoreBuildErrors`),
+    // so deleting this step would still fail on an app error. What would vanish
+    // silently is `tsconfig.test.json` and `tsconfig.e2e.json`, the two
+    // projects the build never reads — which is precisely the gap #2875 was
+    // filed about.
+    expect(
+      job,
+      "the verify job must still run Typecheck (#2875): it is the only gate that " +
+        "reads the test and e2e projects, which `next build` never compiles"
+    ).toContain("- name: Typecheck");
   });
 
   it("wraps age-up membership upgrades and token issuance in a transaction", () => {
@@ -3785,15 +3811,57 @@ describe("review finding source/schema contracts", () => {
       "No payment has been received for this booking, so no refund",
     );
 
+    // The page RENDERS the render-null leaf, and that is a fact about the page
+    // shell rather than about the surface: #2958 left the section rail and the
+    // help leaf on the shell deliberately, so this one stays pinned to the file.
     const bookingDetail = readRepoFile(
       "src/app/(authenticated)/bookings/[id]/page.tsx",
     );
     expect(bookingDetail).toContain("<BookingHelpExtras");
-    expect(bookingDetail).toContain("describeCancellationSchedule");
+
+    /*
+      The other three are facts about the booking-detail SURFACE, not about one
+      file in it, so they are checked over the whole route directory (#2958,
+      #3323). They all still sit on the shell today, which is why this contract
+      survived the split — but only because the cancellation-schedule read was
+      left beside the section rail. Had it gone into a `_components/` module
+      instead, a perfectly reasonable placement, two of these would have moved
+      and this suite would have reddened exactly as
+      `additional-payment-card-gate.test.ts` did. Reading the directory removes
+      that dependence on where a later change happens to put them.
+    */
+    const routeDir = path.resolve(
+      process.cwd(),
+      "src/app/(authenticated)/bookings/[id]",
+    );
+    const routeSurface = (function readRouteSurface(dir: string): string[] {
+      return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          return entry.name === "__tests__" ? [] : readRouteSurface(full);
+        }
+        if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) {
+          return [];
+        }
+        /*
+          CODE ONLY. The three pins below are `toContain` over a concatenation
+          of 23 files, and the neighbouring `booking-no-emails-ui-contract.test.ts`
+          carries the postmortem for reading that raw: a gate was deleted while
+          the paragraph naming it stayed in the prose above, and the guard went
+          on passing. The canonical stripper is already imported at the top of
+          this file — use it.
+        */
+        return [stripComments(readFileSync(full, "utf8"))];
+      });
+    })(routeDir).join("\n");
+    // Guards against a directory move making the three assertions below vacuous.
+    expect(routeSurface.length).toBeGreaterThan(1000);
+
+    expect(routeSurface).toContain("describeCancellationSchedule");
     // The refund schedule is gated on a captured payment; unpaid bookings get the
     // no-refund message instead.
-    expect(bookingDetail).toContain("originalPaymentCaptured");
-    expect(bookingDetail).toContain("cancellationHasNoPayment");
+    expect(routeSurface).toContain("originalPaymentCaptured");
+    expect(routeSurface).toContain("cancellationHasNoPayment");
   });
 
   it("removes the E2E ride-through allowances for the two fixed races (F28)", () => {

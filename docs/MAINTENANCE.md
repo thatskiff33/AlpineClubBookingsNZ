@@ -72,6 +72,10 @@ CI also runs independent static and container checks:
   `scripts/ci/gitleaks-selftest.sh`, which plants a credential and proves the
   scanner still reports it. `Secret scan (gitleaks)` (#2686; **pending** as a
   required check, see `AGENTS.md` for the rollout order)
+- the same pinned gitleaks over **every** branch's history, weekly and
+  non-blocking, as `Scheduled secret sweep` (#2852). It is advisory by
+  construction rather than by configuration — see "The repository-wide secret
+  sweep" below for which of the two is responsible for what
 - TypeScript, test, and Docker image build validation
 - Migration drift check (`migration-drift` job) running `db:check-drift` against
   a throwaway Postgres, so schema-vs-migration drift fails the PR rather than the
@@ -292,32 +296,273 @@ rather than inferred:
 
 - **`Static analysis gate`** (`ci.yml` → `static-analysis`) is the blocking one.
   It runs `p/nextjs`, `p/typescript`, `p/javascript`, `p/react` and
-  `.semgrep/rules/`, and nothing else.
+  `.semgrep/rules/`, and nothing else. **This is the policy**: the ruleset is
+  versioned in this repository and changes only through a reviewed diff.
 - **`semgrep-cloud-platform/scan`** is a Semgrep AppSec Platform GitHub App
-  check. Its ruleset is configured at semgrep.dev, not in this repository, it
-  costs no GitHub Actions time, and it is advisory.
+  check. It costs no GitHub Actions time and it is advisory. Its ruleset is
+  configured at semgrep.dev, so it is an **execution and reporting surface, not
+  a second policy** — the owner's decision on #2842.
 
-Measured at 527eb74fc by re-running the exact blocking invocation with
-`--disable-nosem`: **the blocking rule set produces exactly ONE finding in the
-whole repository**, `acb-unsafe-raw-sql` at `src/lib/audit-retention.ts`. So
-exactly one of this repository's `nosemgrep` annotations is live against the
-gate that can stop a merge. The other 87 name ids from `p/default` /
-`p/security-audit` — packs the blocking scan does not run — and serve the cloud
-scan.
+#### Keeping Semgrep Cloud aligned to this repository (owner UI checklist)
 
-They are deliberately **not** pruned. Their effect is only observable in a scan
-whose ruleset this repository does not control, so "these suppress nothing"
-cannot be verified from here, and deleting 87 annotations on that assumption
-would be a blind change to a security surface. Two things follow for anyone
-adding or reading one:
+Nothing in this repository can read what semgrep.dev is configured to run, so
+this alignment cannot be enforced by a check — it is a documented control, and
+saying so plainly is the honest version. Whenever `.semgrep/rules/` changes, or
+after any Semgrep Cloud policy edit, the owner re-walks this list at
+[semgrep.dev](https://semgrep.dev) → the `AlpineClubBookingsNZ` project:
 
-- say which scan an annotation is for. If it names a `javascript.…` /
-  `generic.…` registry id, it is for the cloud scan and the blocking gate will
-  never emit it;
+1. **Rules → Policies.** Turn OFF every managed policy the repository does not
+   run — in particular `p/default` and `p/security-audit`, which are the two
+   that produced the split-brain #2842 measured.
+2. **Turn ON exactly the four packs the blocking gate runs**: `p/nextjs`,
+   `p/typescript`, `p/javascript`, `p/react`.
+3. **Enable scanning of the repository's own rules** so `.semgrep/rules/` is
+   picked up from the checkout rather than from a Cloud-side copy.
+4. **Settings → confirm the scan excludes** `node_modules`, `.next` and
+   `.semgrep/tests`, matching the blocking invocation. Every file in
+   `.semgrep/tests` is a deliberate violation and will otherwise be reported.
+5. **Re-read the two counts below.** If Cloud reports findings the blocking gate
+   does not, the two have drifted again and step 1 is the usual cause.
+
+If the club ever decides the Cloud scan is not worth this recurring step, the
+supported answer is to remove the GitHub App outright rather than to let it
+drift — an advisory scanner running an unknown ruleset is worse than none,
+because its green is read as evidence.
+
+#### What the suppressions actually suppress (re-measured for #2842)
+
+Measured on the pinned CI image `semgrep/semgrep:1.161.0` by re-running the
+exact blocking invocation with `--disable-nosem`, **three** findings exist in
+the whole repository:
+
+| Rule | Site |
+| --- | --- |
+| `semgrep.rules.acb-unsafe-raw-sql` | `src/lib/audit-retention.ts` |
+| `semgrep.rules.acb-unsafe-raw-sql` | `src/lib/booking-envelope-invariants.ts` |
+| `typescript.react.security.audit.react-dangerouslysetinnerhtml` | `src/components/club-post-editor.tsx` |
+
+**This corrected the count #2686 recorded, and corrected it in a way that
+mattered.** That measurement found one finding and concluded that every
+annotation not naming an `acb-` rule served the cloud scan. It does not:
+`react-dangerouslysetinnerhtml` comes from `p/typescript`, which the blocking
+gate **does** run. One of the six annotations naming that rule was live; the
+other five sat on call sites the rule never flags.
+
+So the tree carried 120 id-bearing `nosemgrep` annotations and exactly 3 of them
+suppressed anything the blocking gate can emit. #2842 deleted the other 117
+— the evidence being that `--disable-nosem` reports no finding at any of those
+sites — and the scan is still findings-free with them gone. Each of the three
+retained annotations names its rule and carries the reason at the call site.
+
+Two things follow for anyone adding one:
+
+- **Measure before you write one.** Run the invocation below; if it reports
+  nothing at your line, a `nosemgrep` there suppresses nothing and is noise that
+  the next census has to re-disprove.
 - Semgrep matches `nosemgrep: <id>` by **exact suffix**, so a rule-id variant is
-  a different id. The 41 `path-traversal.path-join-resolve-traversal`
-  annotations do not suppress an `express-path-join-resolve-traversal` finding,
-  and a rename upstream silently un-suppresses every one of them.
+  a different id. A `path-traversal.path-join-resolve-traversal` annotation does
+  not suppress an `express-path-join-resolve-traversal` finding, and a rename
+  upstream silently un-suppresses every annotation naming the old id.
+
+```bash
+# What the blocking gate would report with every suppression ignored.
+docker run --rm -v "$PWD:/src:ro" -w /src semgrep/semgrep:1.161.0 \
+  semgrep scan --config .semgrep/rules \
+    --config p/nextjs --config p/typescript --config p/javascript --config p/react \
+    --disable-nosem --metrics=off \
+    --exclude node_modules --exclude .next --exclude .semgrep/tests
+```
+
+### Semgrep parse coverage
+
+`semgrep scan --error` exits 0 on findings-free code **even when it could not
+parse some of that code**. Parse failures are reported at `warn` level in the
+JSON `errors` array and nowhere in the exit status, so a file the scanner cannot
+read has looked exactly like a file the scanner read and cleared.
+
+Measured for #2842 on the same pinned image: 177 of 4,219 scanned files carried
+a parse error behind a green gate, and **three were whole-file failures where no
+rule ran at all**. **Three families** of parser fault cause all of them, and
+every one fires on valid TypeScript that `tsc` and the build accept.
+
+Those three families are stated once, as the rule rather than as a spelling, in
+`KNOWN_CONSTRUCTS` in `scripts/ci/check-semgrep-coverage.mjs` — which is also
+the text the gate hands you when it fires, so it is the copy that has to be
+right. They are deliberately not restated here.
+
+**Two of the three are banned by lint, for the positions the rule reaches — and
+that qualifier is the whole point.** #3318 added
+`scan/no-semgrep-unparsable-import-type` to `eslint.config.mjs`, rewrote the 307
+call sites that carried the first, named the five types that carried the second,
+and took the allowlist from 169 entries to 3. **This paragraph is the one home
+for those four numbers.** They are measurements taken at that change rather than
+facts about the design, so a second copy goes stale silently and nobody notices
+which copy is wrong — `INV-SSOT-004`. The rule's own comments and its guard suite
+therefore describe the rewrite without counting it, and a later change
+re-measures here rather than stating a number of its own. It then said the two shapes
+"cannot come back", which #3345 measured as false: roughly a dozen further
+positions fail and the rule was silent on every one, including two members of
+the call family. The rule is now wider — the whole call family including the
+instantiation shapes, every **decorated** `import()` type wherever it appears,
+and an undecorated one in a parameter position — and the claim is narrower.
+**The gate remains the backstop for anything the rule does not reach**, which
+is the arrangement rather than a failure of it. So a partial parse of a shape
+the rule DOES reach means the rule was bypassed or the file is outside its
+globs; a partial parse of anything else is a real finding, and the response is
+to measure the construct and widen the rule rather than to add an entry.
+
+The description of those faults has now been wrong four times, each time by
+being narrower than the fault, and each correction cost somebody a wrong turn.
+Worth knowing before you reach for a remedy, all measured:
+
+- **the call fault is about the SHAPE, not the name.** 143 files spelled it
+  `importOriginal`, 22 spelled it `vi.importActual` or a destructured
+  `importActual`, and grepping for the first name finds nothing in those;
+- **and it is not only the empty argument list.** #2842 corrected the
+  description to "an EMPTY argument list", measured on a single-line repro:
+  `f<typeof import("x")>()` fails and `f<typeof import("x")>("x")` parses. That
+  correction is also incomplete — a **trailing comma** breaks it just as
+  reliably: the multi-line form, with a comma after the last argument, fails
+  with "`,` was unexpected". It appeared at 12 call sites, and for 10 of the
+  169 entries it was the only cause: a formatter split a long argument list
+  across lines and added the comma with the reflow. So which side of the line a
+  call sits on is decided by **print width**, which is why
+  #3318's rule reports the whole class: 23 files held the "parses today"
+  spelling and every one of them was one rename away from an entry of its own;
+- **a third fault exists that neither description reached**: a **decorated**
+  `import()` type — one carrying a type-argument list, an indexed access, a
+  `keyof` or a wrapping parenthesis. One allowlisted file carried this and no
+  call shape at all, so its entry read as unexplained for as long as the
+  description named only the call;
+- **and #3318 described that third fault as a PARAMETER fault, which was the
+  fourth time the description was too narrow.** It measured
+  `(i: import("x").A<null>)` and generalised from the position. Re-measured for
+  #3345, the position is nearly irrelevant: the same type fails in a type alias,
+  an interface property, a return annotation, a class property, a generic
+  constraint or default, a nested type argument and an `extends` or `implements`
+  clause. The boundary INSIDE the family is incoherent, which is why the rule
+  reports the decoration rather than a spelling —
+  `import("x").A<null>["k"]` parses in an alias and deleting the index makes it
+  fail, `keyof import("x")` fails while `keyof typeof import("x")` parses,
+  `(import("x").A)` fails while `(typeof import("x"))` parses, and `x as
+  import("x").A<null>` parses;
+- **the remedy for that third fault is a top-level `import type`, not a named
+  alias**, and getting this wrong is what #3345 was filed to fix. #3318's rule
+  printed "give the type a name and use the name", which produces
+  `type P = import("x").A<null>;` — measured to FAIL, with the rule silent on
+  it. A guard printing an instruction that creates the hole it exists to close
+  is the worst failure mode available to one. Use
+  `import type { A } from "@/lib/x";` and then `A<null>["k"]`, or root the type
+  at `typeof`: `typeof import("@/lib/x").k` and `(typeof import("@/lib/x"))["k"]`
+  parse everywhere outside a call. A type-only import is erased at compile time,
+  so a dynamically-loaded module stays dynamically loaded;
+- **two members of the CALL family were silent too** (#3345): a bare
+  instantiation expression `f<typeof import("x")>` with no call, and
+  `f<typeof import("x")>?.()`, where the type arguments hang off the callee
+  rather than the optional call. A second type argument also fails even with an
+  ordinary argument list. `new`, by contrast, is genuinely unaffected — every
+  argument-list variant of `new K<typeof import("x")>` parses, including the
+  trailing-comma reflow, which is why the rule leaves it alone;
+- **the `&amp;` remedy is for JSX text only.** The same fault fires on a `&`
+  inside a string literal — a URL query such as
+  `href="/admin/bookings?sortBy=member&sortDir=asc"` — where rewriting it
+  changes the value, and in one case the value a test asserts. The **three**
+  files left on the allowlist are there precisely because they have no safe
+  rewrite. It was reported here as four until #3318 re-measured it: the fourth
+  was unparsed for the call shape, and its own `&` never tripped anything.
+
+Each surviving entry carries its own `reason`, and the gate **refuses** an entry
+without one. The reasons used to sit in a composition summary beside the list,
+and both of that summary's clauses had gone false — a summary of a list is a
+second statement of the list (`INV-SSOT-001`).
+
+#### The coverage gate
+
+`scripts/ci/check-semgrep-coverage.mjs` runs in the same job and fails on four
+things:
+
+- a **whole-file** parse failure, always, with no way to allowlist it. Coverage
+  there is zero, and a file nothing scans must never be signed off as scanned;
+- a partially-unparsed file absent from `.semgrep/unparsed-allowlist.json`, so
+  coverage cannot quietly shrink;
+- an allowlist entry whose file now parses, or no longer exists. **An entry
+  cannot outlive its evidence** — whoever fixes a file deletes its entry in
+  the same change, so the list cannot rot into an exemption roster nobody
+  rechecks. Note which direction is mechanical: deletion is forced by the
+  gate, while an addition only has to survive review, so the guarantee is
+  that the list never grows *silently*, not that it never grows;
+- an `errors[].type` it does not recognise. Fail-closed: a scanner that starts
+  reporting a new kind of failure must not reduce coverage silently just because
+  the gate predates the name;
+- a scan that read nothing, or fewer files than `minimumScannedFiles`.
+
+**The allowlist doubles as the canary.** A report only passes if it names
+exactly those files as partially parsed *and* clears the file floor, and a
+broken, truncated or forged scan cannot satisfy both — too few files fails the
+floor, a missing entry reads as stale, an extra one as newly unparsed. #2842's
+security review attacked precisely this, forging reports that clear the floor
+with no failures, and could not construct one.
+
+The floor is a **tripwire, not a ratchet**, and worth stating as the limit it
+is: it sits at 4,000 against roughly 4,250 targets, so a change that excludes a
+directory *and* lowers the floor in the same commit passes everything. Review
+holds that direction, exactly as it holds an addition to the allowlist. The
+floor catches the accident, not the intent.
+
+Every entry in the allowlist is a **test file**: the production files and all
+three whole-file failures the measurement found were fixed rather than listed.
+The file itself is the count — the numbers above are dated facts about what
+#3318 removed, not a running total, because the gate exists to drive the list
+down and a copied total is wrong on the first success. Run it locally against a
+scan you produced yourself, and note that the scan reads the whole worktree:
+a stray `.ts` file under `.artifacts/` is scanned and will be reported as a new
+unparsed region, which is not something CI can see.
+
+```bash
+docker run --rm -v "$PWD:/src:ro" -v "$PWD/.semgrep-out:/out" -w /src \
+  semgrep/semgrep:1.161.0 \
+  semgrep scan --config .semgrep/rules \
+    --config p/nextjs --config p/typescript --config p/javascript --config p/react \
+    --metrics=off --exclude node_modules --exclude .next --exclude .semgrep/tests \
+    --json-output /out/semgrep-results.json
+node scripts/ci/check-semgrep-coverage.mjs .semgrep-out/semgrep-results.json
+```
+
+#### Both lists are living worklists, not a finished cleanup
+
+The unparsed allowlist and the suppression census are **populations that
+regrow**, and #2842 measured how fast — over three separate batches during one
+issue's delivery:
+
+| Merge | New unparsed files | New dead suppressions |
+| --- | --- | --- |
+| `main` sync into the epic | 4 | 1 |
+| one child merge (#3214) | — | 1 |
+| four children at once (#3307 et al) | 2 | — |
+
+**So it is not only a `main` sync that regrows these lists — it is anything
+landing at all**, including a sibling child on the same epic. Nobody did
+anything wrong in any of those: `importOriginal<typeof import("...")>()` is the
+idiomatic partial mock, and `path.resolve(process.cwd(), …)` in a test helper
+reads as exactly the thing that deserves an exemption comment.
+
+Two consequences worth holding on to.
+
+- **A one-time sweep cannot hold either population, so neither is "done".**
+  #2842 swept both, and both had regrown before the branch merged — the first
+  time with nobody noticing, which is why the count in this document was wrong
+  for a fortnight. The instruments are what hold the line now: the coverage
+  gate for the first list and `semgrep-suppression-census.test.ts` for the
+  second, and each caught its regrowth on the very first merge that produced
+  one, before any human read the diff.
+- **The first list's recurrence is closed, and the second's is not.**
+  [#3318](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3318)
+  banned both call-site shapes with `scan/no-semgrep-unparsable-import-type`,
+  which removes that growth at the source rather than catching it after the
+  fact — the structural fix `INV-SSOT-001` prefers over a policed one. Write a
+  new partial mock as `(await importOriginal()) as typeof import("@/lib/x")` and
+  lint will tell you if you forget. The **suppression census** has no equivalent
+  and still regrows on merges, so expect to prune it after a sync.
 
 ### Break-glass: a new CRITICAL image finding with no code change
 
@@ -359,12 +604,68 @@ materialised, so one leak on anybody's abandoned branch would turn a REQUIRED
 check red on every open pull request, unfixable from the author's own branch.
 A wider sweep is still worth running — a secret on an unmerged branch is public
 on a public repository — but it belongs in a scheduled, non-blocking job where a
-finding is a task rather than a merge freeze. Until that job exists, run it by
-hand when a branch is abandoned:
+finding is a task rather than a merge freeze. That job is
+`Scheduled secret sweep` (#2852), in `.github/workflows/gitleaks-scheduled.yml`.
+
+**Which one is responsible for what.** The two are not alternatives and the
+difference is the scope, not the scanner:
+
+| | `Secret scan (gitleaks)` | `Scheduled secret sweep` |
+| --- | --- | --- |
+| Runs on | every pull request and push | weekly, plus `workflow_dispatch` |
+| Scope | this pull request's commits, the history of `main`, the checked-out tree | **every** branch's history (`--all`), plus the tree |
+| A finding | blocks the merge | opens a task; blocks nothing |
+| Branch protection | required context | no context at all — it has no `pull_request` or `push` trigger |
+
+What they share is deliberate and enforced. The pinned scanner version lives in
+`scripts/ci/gitleaks-image.sh` and nowhere else; the invocation lives in
+`scripts/ci/gitleaks-scan.sh`, which both workflows call; the rule set and the
+allowlists are `.gitleaks.toml` and `.gitleaksignore`, which gitleaks discovers
+from the scan root. `deployment-image-contracts.test.ts` fails if either
+workflow names a gitleaks container of its own. #2686 is why: the two jobs that
+used to sit in `ci.yml` ran 8.24.3 and 8.28.0 over the same commits for months,
+and nothing said so.
+
+**A scanner that failed is not a clean scan.** gitleaks exits 1 both when it
+finds a leak and when it cannot run at all, so `gitleaks-scan.sh` asks for
+`--exit-code=2` and treats every other non-zero as a scanner failure, saying so
+in the log. Both still fail the job — the discrimination is about the message,
+not about what blocks a merge.
+
+**And a successful exit is not a clean scan either, on its own.** When the git
+source itself fails — an unresolvable commit range, or a repository-ownership
+refusal — gitleaks logs the git error, concludes it finished, and exits **0**
+with `0 commits scanned … no leaks found`. `--exit-code` never applies, because
+from the scanner's point of view there was nothing to find. Measured on
+v8.28.0, and it lands on the REQUIRED gate rather than only on the sweep: the
+pull-request scope resolves `<base>..<head>`, which is unresolvable whenever
+the base commit is missing from the checkout. So a `git`-mode scan that walked
+zero commits is treated as the scanner failure it is. Zero commits is never a
+legitimate answer for any scope this repository scans.
+
+The same failure has a second, quieter shape: the git error need not happen at
+the START of the walk. gitleaks streams commits to its detector, and any
+unrecognised line on git's stderr both stops that stream and gets logged with a
+`[git] ` tag — so a bad object twenty percent into an `--all` sweep prints
+`1500 commits scanned … no leaks found` and exits 0, having silently skipped the
+other eighty percent. A tagged line therefore fails the scan on its own,
+whatever it says. Benign git messages are not tagged: gitleaks allowlists five
+of them and emits those as untagged `WRN` lines, which is what makes the tag a
+usable signal rather than noise.
+
+**Triaging a sweep finding.** The run summary lists the rule, the file, the line
+and the commit for each finding, and the run keeps a `gitleaks-sweep-reports`
+artifact for fourteen days with the same detail plus the fingerprint. Every
+value is `--redact`ed, so neither republishes the secret. A finding on a branch
+that was never merged is still a disclosure on a public repository: rotate the
+credential first, and only then decide what to do with the branch.
+
+Run the sweep yourself, exactly as the scheduled job does:
 
 ```bash
-docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.28.0 \
-  git /repo --log-opts="--diff-merges=first-parent --all" --exit-code=1 --redact
+GITLEAKS_SCAN_LABEL="every branch's history" \
+GITLEAKS_LOG_OPTS="--diff-merges=first-parent --all" \
+  bash scripts/ci/gitleaks-scan.sh git
 ```
 
 Accepted residual risk:
@@ -552,10 +853,12 @@ unrepresentable.
 
 **Scope.** Tracked source under `src/` only, tests excluded, in any of
 `.ts .tsx .mts .cts .js .jsx .mjs .cjs`. Everything outside `src/` —
-`scripts/`, `prisma/`, `e2e/`, `load/`, and a temporary `measurement/` tree —
-is outside the file-size policy by definition. That scope is stated once, in
-the tool, rather than as a per-issue exemption; adding or deleting a
-measurement tree is a non-event for this gate.
+`scripts/`, `prisma/`, `e2e/`, `load/` — is outside the file-size policy by
+definition. That scope is stated once, in the tool, rather than as a
+per-issue exemption; adding or deleting a directory out there is a non-event
+for this gate, which is what the temporary `measurement/` tree (#2663) was:
+present, then removed whole by #3382, without ever moving this gate's
+baseline.
 
 An **untracked** new file under `src/` is judged too, even before `git add`.
 `git diff` cannot see one, so without that a brand-new 900-line module would be
@@ -692,10 +995,13 @@ were off by two orders of magnitude.
 | `src/lib/email-templates.ts` (deleted) | Split (#2689) into 19 cohesive family/content modules under `src/lib/email-templates/`, plus the shared `layout` shell and `escape` leaf (21 files altogether), with **no compatibility barrel** — callers import the family module directly. Fourteen modules mirror sender families in `src/lib/email/`; `communications` and `refunds` cover senders outside that tree; and `booking-reminders`, `booking-exceptions`, and `admin-xero-reports` keep large families within budget. The domain-only money rows and netting arithmetic live separately at `src/lib/booking-money-lines.ts`, shared by renderers, booking settlement reads, and the Xero drift checker. Largest rendering module 581 LOC, inside the 700 budget. The render-equivalence gate pins 219 complete outputs and discovers template modules from the directory, so a new renderer cannot arrive uncovered. Three former send-site bodies under two registry keys (`website-contact` and `admin-email-failure`) were brought under that gate, then deliberately moved onto the standard club shell; recipient, template, and booking values are escaped at the rendering edge. The old `adminXeroRepeatedFailureTemplate:minimal` pin was stale: the exact pre-split head renders 5,799 bytes with sha256 `f7a72f30fc8250c8ff75ca1417b9251541f5a06664e7d5c4fe3b8b171b9f6d4d`, byte-identical to the split head, rather than its recorded 5,802-byte hash. The split corrected that one pin row; it did not change that body. Mutation proofs cover byte-neutral body drift, module omissions, duplicate export names, duplicate case and pin IDs, and removed escaping. |
 | `src/lib/contextual-help.ts` (deleted) | Split (#2689) into 16 modules under `src/lib/contextual-help/`. `index.ts` **is** the registry (path matching, longest-prefix resolution, fallbacks, question attachment) rather than a barrel, and keeps the same three exported accessors; entry content sits in one module per **admin sidebar section** (`admin/*.ts`, matching `buildAdminNavSections` in `admin-sidebar.tsx`) — plus one `appearance-and-website` module split off Setup & Configuration, because `/admin/appearance` is an item in that section rather than a section of its own and folding its seven pages back would take that module to ~810 lines, over budget — with `finance.ts`, `questions-*.ts`, `fallbacks.ts`, and the two leaves `types.ts` and `booking-status-glossary.ts`. Content stayed TypeScript by owner decision — the typed shape is the schema check. Largest module 580 LOC. The structural move was proved value-for-value for every one of the 68 resolved paths: a JSON dump keyed by path — both scopes, both fallbacks, nested resolution and `normalisePath` — was byte-identical before and after (106,917 bytes, same sha256). The same PR then reconciled the shadowed second `/admin/notifications` entry against the live page and folded its accurate delivery-mode field into the surviving entry. The registry now has 68 entries with 68 unique paths (67 admin, one finance), and a permanent test rejects any future duplicate as unreachable text. |
 | `src/lib/admin-bed-allocation.ts` (deleted) | Split (#2688) into eighteen modules named for one responsibility each, all under the 700-LOC budget, with **no barrel** — every one of its 31 non-test importers names the module it depends on, because a re-export facade would have left the monolith in place under a new name and recreated the same dependency magnet. The two barrel rows in this table are precedents for a *published API*, not for hiding a split. It had grown to 55 exports over 80 functions covering room and bed inventory, board assembly, allocation writing, range assignment, audit recording and date arithmetic. The modules, by concern: leaves `-admin-contract` (shared error and db-client types), `-display-names` (how a member and a guest are named), `-admin-settings` (the settings read/write bound to `prisma`), `-date-range` (the board's lodge-night range and its parse); wire shapes `-board-payload` (types only) and `-range-report` (client-safe); pure `-warnings` (the board's warnings); reads `-board-records` (queries and DTO serialisers) and `-board` (payload assembly, officer-card counter); writers `-placement` (the shared write chokepoint all three manual paths pass through, carrying the D-12 consent refusal and the ADR-001 whole-lodge-hold refusal), `-manual-writes` (single night, bulk nights, same-date move, delete), `-range-assign` (#2251 range assignment) with `-range-audit` (its audit record, which stores counts, night runs and booking ids but never other bookings' guest or member names), `-auto-allocate` ("Run auto allocation"), `-approval` (approval plus the #776 booking row lock), `-bunk-pairing` (the #1675 bunk rule and its room-row lock), `-rooms` (room inventory, config import, delete guards) and `-beds` (bed inventory, retire/delete guards). Every function body moved verbatim; the live sizes are whatever the tree currently carries, not a number recorded here. |
+| `src/lib/payment-link.ts` | Split (#2956) by responsibility into the core record module — token resolution, the refusal vocabulary, the payable/paid status tests and the two revocation helpers — plus `payment-link-context` (what the public pay page shows), `payment-link-intent` (the Stripe intent a token may mint, and its recovery error), `payment-link-reissue` (the expired-link "email me a fresh one" mint) and `payment-link-split-guest` (the split non-member child's mint and on-demand issue). **No compatibility barrel**, on the `admin-bed-allocation` precedent above: the core imports none of the four, each flow module imports the core, and every caller names the module it depends on. Every function body moved verbatim; the one deliberate unification was the born-expired test, which two mint sites had written with different operators and which now lives once in `payment-link-expiry.ts`. Live sizes are whatever the tree carries. |
 | `src/lib/bed-allocation.ts` | **Accepted, oversized, and deliberately not split** (owner decision, 9 Aug 2026, #2688). It is 13 exports across 69 functions: a small public surface around one first-fit allocation algorithm whose function bodies are long because the algorithm is. That is cohesion, not sprawl, and the budget is a signal about sprawl. Splitting it would produce files that must be read together to follow one algorithm, which makes capacity code — money code — harder to reason about, not easier. The sibling that WAS split, `admin-bed-allocation.ts`, was the opposite shape: 55 exports over 80 functions of unrelated responsibilities. Grow this file only with the algorithm; a genuinely independent concern with its own API and tests may still be extracted, and anything else is a reason to re-read this row rather than to add here. The ratchet holds its ceiling at whatever length `origin/main` currently carries for it. |
 | `src/lib/email.ts` | Split (#1137) into a re-export facade over cohesive `src/lib/email/` modules (`core`, `admin-alerts`, `account`, `booking`, `membership`, `family`, `waitlist`, `groups`, `booking-requests`, `chores`, `ses-feedback`, plus non-re-exported `internal` plumbing). The `admin-alerts` surface was itself split (#1210) by **domain/source** — `admin-alerts.ts` is now a barrel re-exporting `admin-alerts-shared` (plumbing + `getAdminEmails`), `admin-alerts-booking`, `admin-alerts-membership`, `admin-alerts-finance`, and `admin-alerts-ops`. When an alerts/email module next exceeds the ~700 LOC soft cap, split it along the **domain axis** (booking/capacity, membership lifecycle, finance/Xero/payments, ops) — not by audience, which is fuzzy because most alerts fan out to all admins — and keep the facade barrel's exports byte-identical so `src/lib/email.ts` and every importer keep resolving. |
 | `src/lib/xero-hardening.ts` | Accepted as-is for now: central Xero hardening policy and diagnostics boundary. The `xero-hardening-canonical-links.ts` ↔ `xero-hardening-report.ts` clone pair (112 duplicated lines / 2 clones, jscpd 2026-07-07) is recorded as accepted under this same disposition (#1524 C4, owner-ticked 2026-07; same subsystem call as #1208 items 5/6). |
 | `src/lib/finance-sync-xero-datasets.ts` | Split (#1531, #1524 C3) into a re-export barrel over cohesive `src/lib/finance-sync-xero-datasets/` modules (`constants`, `types`, `date-format`, `report-snapshot`, `invoice-helpers`, `open-invoices`, `aged-invoices-snapshot`, `open-invoices-snapshot`, `report-sync`, `monthly-facts`, `chart-of-accounts`, `invoice-sync`). Behavior-preserving verbatim motion with an acyclic import graph (`constants`/`types`/`date-format` are leaves; the sync orchestrators sit on top); the barrel re-exports the unchanged public surface (29 functions/consts + the `FinanceMonthlyFactsWindowInput` type). The self-duplicated clone regions were deduped: the accounts-receivable and accounts-payable invoice builders now share one generic `buildFinanceOpenInvoicesSnapshot` (each snapshot's persisted invoice shape is supplied verbatim by the caller, keeping `expectedPaymentDate`/`plannedPaymentDate` divergent), and the aged + open-invoice builders share `updateContactDueDateRange`/`compareOpenInvoicePayloadsByDueDate`/`deriveSnapshotCurrency`. jscpd (min-tokens 70) dropped from 186 duplicated lines / 7 clones to 38 / 3 (2026-07-08); the 3 residual clones are the intentionally-separate AR-vs-AP payload literals plus two short prefix regions whose further extraction would over-abstract. |
+| `src/lib/finance-dashboard-page.ts` | Split (#2957) by **view**: the file keeps only the page-level loading (club zone, lodges, seasons, sync status), the selection labels and the `view` dispatch, and one module per dashboard view sits under `src/lib/finance-dashboard-page/` (`bookings-view`, `pnl-view` for revenue and costs, `ratios-view`, `pricing-sensitivity-view`, `balance-sheet-views` for cash, balance sheet and working capital, `sync-health-view`), with the shared view-model shapes and the projection helpers every view uses in `model.ts` and the derived chart palette in `series-colors.ts`. Every builder body moved verbatim, and there is **no barrel re-export**: the client, the route and the tests import the module that owns the symbol, so the old file cannot quietly become the dependency magnet again. A later view goes in its own module beside these; anything that two views need goes in `model.ts` (or a small named leaf, as the Xero reports source note does), never back into the facade. |
+| `src/app/(authenticated)/bookings/[id]/page.tsx` | Split (#2958) by **domain responsibility**, on the #2957/#2956 shape: the page keeps only the shell — auth, the club clock, the read, the viewer gate and redirect, the D-12 arrival-instructions gate, and the composition of sections — and everything else moved verbatim into two route-local directories. `_lib/` holds the server-side loading, projection and orchestration, one module per domain seam: `load-booking-detail` (the one `findUnique` and its `BookingDetailRecord`), `booking-detail-viewer` (who is looking), `booking-detail-consent` (the #2250 self-removal and #2307 consent cards), `booking-detail-history` (audit rows, events, the once-read #3033 review flag, narrative, timeline), `booking-detail-edit-access` (cancel/modify/override/room/name gates and the two panel gates), `booking-detail-linked-party` (split children and the organiser group), `booking-detail-payment` (the money projection and the pay-door gates), `booking-detail-editor-data` (the `BookingEditorData` payload with its admin-only spreads), `booking-detail-messages` (merge data and the rendered booking messages) and `booking-detail-admin-tools` (every admin-gated read the tools card is fed). `_components/` holds one server section per cohesive render block (`booking-status-banners`, `booking-admin-tools-section`, `booking-consent-cards`, `booking-linked-party-sections`, `booking-review-notices`, `booking-stay-preferences`, `booking-payment-cards`, `booking-lifecycle-actions`, `booking-cancellation-outcome`, `booking-notes-and-history`), each taking the projection groups it names and destructuring them at its top so the JSX moved byte-for-byte. **No barrel**; each module exports its result type and the page composes them in the order the section rail declares. Canonical booking lifecycle, settlement and authorization services stayed where they were and are called exactly as before. The thirteen source-contract suites that read the page were pointed at the module that now owns each pinned symbol, with no assertion changed in meaning. A new section goes in its own `_components/` module and a new server-side read in the `_lib/` module for its domain (or a new one), never back into the page. **Measured against the base at merge time: `page.tsx` went 2,792 -> 388 LOC** (route-page-shell budget 500), and the route directory's production files went 3 files / 2,915 LOC -> 23 files / 3,933 LOC. **This row is the one home for those numbers.** They are measurements rather than facts about the design, so a second copy goes stale silently: the branch first recorded 2,761, which was the page's length at the *branch point* and stopped being true once the branch merged the epic twice and took #3269's thirty-line addition into `load-booking-detail`. Nothing else states them — the changelog fragment and the split's own census docblock point here instead — and a later change re-measures here rather than adding a number of its own. |
 | `src/app/(admin)/admin/members/[id]/page.tsx` | Queued for future route-shell thinning as member-detail sections continue to move local state out. |
 | `src/app/(admin)/admin/family-groups/page.tsx` | Route-shell thinning completed (#1530, closes the #1524 C2 carry-over). The request-review duplication with `src/components/admin/family-group-editor.tsx` was extracted to a shared `FamilyGroupRequestReviewSection` (`src/components/admin/family-groups/request-review-section.tsx`) that both the admin page and the editor render; the per-request state and the approve/reject/search handlers now live there once (behaviour-preserving — the two prior copies differed only by a `member`/`adult` noun and their refresh callback, now props). jscpd (min-tokens 70) across the pair drops from the catalogued 225 duplicated lines / 7 clones to 29 lines / 3 clones — the residue is the unavoidable shared UI-import block plus the create/edit member-search combobox, left inline because its surrounding selected-member badges differ between the two forms. page.tsx thinned 786 → 565 LOC; editor 715 → 499 LOC. |
 

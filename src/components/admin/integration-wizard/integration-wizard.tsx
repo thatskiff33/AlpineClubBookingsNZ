@@ -53,34 +53,34 @@ export function IntegrationWizard<Ctx>({
 }: IntegrationWizardProps<Ctx>) {
   const cursor = useWizardCursor(wizardId);
 
-  // Derived gating from live server truth (never from a persisted flag).
-  const verifiedFlags = useMemo(
-    () => steps.map((step) => step.isVerified(context)),
-    [steps, context],
-  );
   const acknowledgedSet = useMemo(
     () => new Set(cursor.acknowledged),
     [cursor.acknowledged],
   );
-  // A step is acknowledged-only when it was skipped but has NOT since verified;
-  // verification supersedes the acknowledgement, so a verified step never counts
-  // here (its stepper mark stays the green "verified" tick, not amber "skipped").
-  const acknowledgedOnlyFlags = useMemo(
+  // Derived gating from live server truth (never from a persisted flag), one
+  // entry per step carrying its own `step` alongside its flags. `steps`,
+  // "which steps are verified" and "which steps are passed" used to be three
+  // arrays correlated by position and read back with a shared index; every
+  // one of those reads is a lookup that noUncheckedIndexedAccess cannot prove
+  // succeeds for an arbitrary `index`/`i`, and there is exactly one such
+  // lookup below now instead of four.
+  //
+  // A step is acknowledged-only when it was skipped but has NOT since
+  // verified; verification supersedes the acknowledgement, so a verified step
+  // never counts here (its stepper mark stays the green "verified" tick, not
+  // amber "skipped").
+  const stepStates = useMemo(
     () =>
-      steps.map(
-        (step, i) =>
-          !verifiedFlags[i] &&
-          isWizardStepOptional(step) &&
-          acknowledgedSet.has(step.id),
-      ),
-    [steps, verifiedFlags, acknowledgedSet],
+      steps.map((step) => {
+        const verified = step.isVerified(context);
+        const acknowledgedOnly =
+          !verified && isWizardStepOptional(step) && acknowledgedSet.has(step.id);
+        return { step, verified, acknowledgedOnly, passed: verified || acknowledgedOnly };
+      }),
+    [steps, context, acknowledgedSet],
   );
-  const passedFlags = useMemo(
-    () => steps.map((_, i) => verifiedFlags[i] || acknowledgedOnlyFlags[i]),
-    [steps, verifiedFlags, acknowledgedOnlyFlags],
-  );
-  const firstUnpassed = passedFlags.indexOf(false);
-  const maxReachable = firstUnpassed === -1 ? steps.length - 1 : firstUnpassed;
+  const firstUnpassed = stepStates.findIndex((s) => !s.passed);
+  const maxReachable = firstUnpassed === -1 ? stepStates.length - 1 : firstUnpassed;
   const allPassed = firstUnpassed === -1;
 
   // The step cursor, tagged with WHO placed it. The tag is what keeps the resume
@@ -183,22 +183,32 @@ export function IntegrationWizard<Ctx>({
     // stops a persisted cursor moving them elsewhere. Bailing out to save the
     // one wasted render would re-open #2781 for that click. (`cursor.persist`
     // already dedupes the POST, so the waste is a render, not a request.)
+    const target = stepStates[clamped]?.step;
+    // Unreachable while `stepStates` is non-empty: `clamped` is clamped into
+    // `[0, maxReachable]` and `maxReachable <= stepStates.length - 1`. Only a
+    // caller passing zero steps (no real provider config does) could miss
+    // here, and there is nothing to navigate to in that case.
+    if (!target) return;
     setStep({ index: clamped, owner: "operator" });
-    cursor.persist(steps[clamped].id, cursor.acknowledged);
+    cursor.persist(target.id, cursor.acknowledged);
   }
 
   // Skip an optional, unverified step: acknowledge it (persist its id so gating
   // passes it) and advance. A no-op for a required or already-verified step.
   function skipCurrent() {
-    const step = steps[index];
-    if (!isWizardStepOptional(step) || verifiedFlags[index]) return;
+    const current = stepStates[index];
+    if (!current) return; // see the unreachable note in `goTo` above
+    const { step, verified } = current;
+    if (!isWizardStepOptional(step) || verified) return;
     const nextAcknowledged = acknowledgedSet.has(step.id)
       ? cursor.acknowledged
       : [...cursor.acknowledged, step.id];
     // On the last step there is nowhere to advance to; acknowledging it there
     // flips the wizard into its complete state in place.
-    const nextIndex = Math.min(index + 1, steps.length - 1);
-    cursor.persist(steps[nextIndex].id, nextAcknowledged);
+    const nextIndex = Math.min(index + 1, stepStates.length - 1);
+    const nextTarget = stepStates[nextIndex]?.step;
+    if (!nextTarget) return; // see the unreachable note in `goTo` above
+    cursor.persist(nextTarget.id, nextAcknowledged);
     setStep({ index: nextIndex, owner: "operator" });
   }
 
@@ -221,14 +231,24 @@ export function IntegrationWizard<Ctx>({
     );
   }
 
-  const activeStep = steps[index];
+  const current = stepStates[index];
+  if (!current) {
+    // Unreachable in real use for the same reason as `goTo`'s guard above:
+    // `index` is clamped into `[0, maxReachable]` by the effects earlier in
+    // this component, and `maxReachable <= stepStates.length - 1`. The only
+    // way to reach here is a caller passing zero steps, which no real
+    // provider config (Xero/Stripe/Google) does — nothing meaningful renders
+    // below the banner in that case, so this is the documented empty state.
+    return <div>{viewOnlyBanner}</div>;
+  }
+  const { step: activeStep, verified: isVerified, acknowledgedOnly } = current;
   const helpers: WizardStepHelpers = {
     canEdit,
     refresh: onRefresh,
     goNext: () => goTo(index + 1),
-    isVerified: verifiedFlags[index],
+    isVerified,
     optional: isWizardStepOptional(activeStep),
-    acknowledged: acknowledgedOnlyFlags[index],
+    acknowledged: acknowledgedOnly,
     skip: skipCurrent,
     // The shell's vouch (#2324): `viewOnlyBanner` above is rendered in EVERY
     // branch of this component — the loading early-return included — so a step's
@@ -237,12 +257,11 @@ export function IntegrationWizard<Ctx>({
     // get wrong, and the type in `types.ts` forbids anything else.
     ancestorRendersViewOnlyBanner: true,
   };
-  const isLast = index === steps.length - 1;
-  const currentPassed = passedFlags[index];
+  const isLast = index === stepStates.length - 1;
+  const currentPassed = current.passed;
   // A skip action shows only while an optional step is neither verified nor yet
   // acknowledged (an acknowledged step is already passed and stays re-enterable).
-  const canSkip =
-    helpers.optional && !verifiedFlags[index] && !acknowledgedOnlyFlags[index];
+  const canSkip = helpers.optional && !isVerified && !acknowledgedOnly;
   const skipCopy = getWizardStepSkipCopy(activeStep);
   const completionBadgeLabel = completion?.badgeLabel ?? "Complete";
 
@@ -271,11 +290,9 @@ export function IntegrationWizard<Ctx>({
               on mobile; on wider screens the tracks auto-fit to the step count
               so 2-, 3- and 4-step wizards (C4/C5) all lay out correctly. */}
           <ol className="grid grid-cols-1 gap-2 sm:[grid-template-columns:repeat(auto-fit,minmax(11rem,1fr))]">
-            {steps.map((step, i) => {
+            {stepStates.map(({ step, verified, acknowledgedOnly }, i) => {
               const reachable = i <= maxReachable;
               const active = i === index;
-              const verified = verifiedFlags[i];
-              const acknowledgedOnly = acknowledgedOnlyFlags[i];
               return (
                 <li key={step.id}>
                   <button

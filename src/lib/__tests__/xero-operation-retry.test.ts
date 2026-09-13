@@ -91,7 +91,7 @@ vi.mock("@/lib/xero-applied-credit-deallocation", () => ({
 }));
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
 
   return {
     ...actual,

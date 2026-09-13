@@ -205,7 +205,11 @@ const MAX_BOOKING_MESSAGE_LENGTH = 4000;
 export function extractBookingMessageTokens(template: string): string[] {
   const tokens = new Set<string>();
   for (const match of template.matchAll(TOKEN_PATTERN)) {
-    tokens.add(match[1]);
+    // The pattern's one capture group is the token name; a match without it
+    // would mean the pattern stopped capturing, not that a template names an
+    // empty token (#2800).
+    const token = match[1];
+    if (token !== undefined) tokens.add(token);
   }
   return Array.from(tokens);
 }

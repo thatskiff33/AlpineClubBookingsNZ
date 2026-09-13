@@ -68,7 +68,7 @@ describe("level 1 — the enqueueXeroBookingInvoiceOperation choke point", () =>
 
   async function enqueue() {
     vi.doMock("@/lib/xero-sync", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("@/lib/xero-sync")>()),
+      ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
       startXeroSyncOperation: mocks.startXeroSyncOperation,
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,
     }));
@@ -130,7 +130,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     vi.clearAllMocks();
 
     vi.doMock("@/lib/xero-sync", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("@/lib/xero-sync")>()),
+      ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
       startXeroSyncOperation: mocks.startXeroSyncOperation,
       completeXeroSyncOperation: mocks.completeXeroSyncOperation,
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,
@@ -186,7 +186,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     vi.clearAllMocks();
 
     vi.doMock("@/lib/xero-sync", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("@/lib/xero-sync")>()),
+      ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
       startXeroSyncOperation: mocks.startXeroSyncOperation,
       completeXeroSyncOperation: mocks.completeXeroSyncOperation,
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,
@@ -277,7 +277,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     vi.clearAllMocks();
 
     vi.doMock("@/lib/xero-sync", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("@/lib/xero-sync")>()),
+      ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
       startXeroSyncOperation: mocks.startXeroSyncOperation,
       completeXeroSyncOperation: mocks.completeXeroSyncOperation,
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,

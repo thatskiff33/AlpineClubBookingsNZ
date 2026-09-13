@@ -879,7 +879,11 @@ function parseSingleton(
   const record = spec.reconcile
     ? spec.reconcile(incoming as Record<string, unknown>)
     : (incoming as Record<string, unknown>);
-  const modelName = spec.delegate[0].toUpperCase() + spec.delegate.slice(1);
+  const delegateInitial = spec.delegate[0];
+  if (delegateInitial === undefined) {
+    throw new Error(`Singleton spec for ${file} has an empty delegate name`);
+  }
+  const modelName = delegateInitial.toUpperCase() + spec.delegate.slice(1);
   const model = Prisma.dmmf.datamodel.models.find((m) => m.name === modelName);
   let ok = true;
   for (const field of spec.fields) {
@@ -955,7 +959,11 @@ function parseSingleton(
 }
 
 function delegateOf(db: ReadDb | TxDb, name: string): SingletonDelegate {
-  return (db as unknown as Record<string, SingletonDelegate>)[name];
+  const delegate = (db as unknown as Record<string, SingletonDelegate>)[name];
+  if (!delegate) {
+    throw new Error(`No Prisma delegate named "${name}" on this client`);
+  }
+  return delegate;
 }
 
 /** Fields to serialise, dropping opt-in fields unless the admin opted in. */

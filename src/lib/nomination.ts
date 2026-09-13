@@ -643,8 +643,9 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
       ? []
       : [`Dependent ${index + 1} date of birth must be a real date`],
   );
-  if (dependentDayErrors.length > 0) {
-    throw new MembershipApplicationError(dependentDayErrors[0], 422, {
+  const [firstDependentDayError] = dependentDayErrors;
+  if (firstDependentDayError) {
+    throw new MembershipApplicationError(firstDependentDayError, 422, {
       familyMembers: dependentDayErrors,
     });
   }
@@ -1450,7 +1451,18 @@ export async function approveMemberApplication(
       400
     );
   }
-  const applicantDecision = decisions[0].decision;
+  // `resolvePersonDecisions` always unshifts the applicant's own decision
+  // first, in both the default-CREATE branch and the supplied-decisions
+  // branch, so `decisions` is never empty. The type can't carry that, so a
+  // missing head is a named refusal rather than a guessed decision.
+  const [applicantEntry] = decisions;
+  if (!applicantEntry) {
+    throw new MembershipApplicationError(
+      "The application's person decisions are missing the applicant entry",
+      500
+    );
+  }
+  const applicantDecision = applicantEntry.decision;
   const applicantMapped = applicantDecision.mode === "MAP";
   const applicantMapTargetId = applicantMapped ? applicantDecision.memberId : null;
 
@@ -1843,13 +1855,37 @@ export async function approveMemberApplication(
       });
     }
 
-    for (let index = 0; index < familyMembers.length; index += 1) {
-      const familyMember = familyMembers[index];
-      const familyDecision = decisions[index + 1].decision;
+    // One array of pairs rather than three parallel arrays read back by
+    // position: `decisions` and `dependentDaysOfBirth` are each built 1:1
+    // against `familyMembers` above, but the type can't carry that alignment,
+    // so a divergence is a named refusal here rather than a silent crash
+    // further down the loop.
+    const familyEntries = familyMembers.map((familyMember, index) => {
+      const decisionEntry = decisions[index + 1];
       // The day decoded once above, so the tier and the stored date can never
       // come from two readings of one string.
-      const { day: dependentDayOfBirth, instant: dependentDateOfBirth } =
-        dependentDaysOfBirth[index];
+      const dependentDay = dependentDaysOfBirth[index];
+      if (!decisionEntry || !dependentDay) {
+        throw new MembershipApplicationError(
+          "A family member's decision or date of birth could not be resolved",
+          500
+        );
+      }
+      return {
+        familyMember,
+        familyDecision: decisionEntry.decision,
+        dependentDayOfBirth: dependentDay.day,
+        dependentDateOfBirth: dependentDay.instant,
+      };
+    });
+
+    for (const [index, familyEntry] of familyEntries.entries()) {
+      const {
+        familyMember,
+        familyDecision,
+        dependentDayOfBirth,
+        dependentDateOfBirth,
+      } = familyEntry;
       const dependentAgeTier = mappingAgeTierSettings
         ? computeAgeTierWithSettings(
             dependentDateOfBirth,

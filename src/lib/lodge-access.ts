@@ -119,7 +119,10 @@ export async function getStaffLodgeBinding(
   // @@unique([memberId, lodgeId, kind]) guarantees two rows = two distinct
   // lodges, so a length of 2 is genuinely ambiguous, not a duplicate.
   if (grants.length === 0) return { kind: "none" };
-  if (grants.length === 1) return { kind: "bound", lodgeId: grants[0].lodgeId };
+  const [onlyGrant] = grants;
+  if (grants.length === 1 && onlyGrant) {
+    return { kind: "bound", lodgeId: onlyGrant.lodgeId };
+  }
   return { kind: "ambiguous" };
 }
 

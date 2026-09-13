@@ -214,7 +214,9 @@ export function extractImageIds(html: string): string[] {
   const re = /\/api\/images\/([A-Za-z0-9_-]+)/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(html)) !== null) {
-    ids.add(match[1]);
+    // The capture group has no `?` quantifier, so it is always present.
+    const id = match[1];
+    if (id !== undefined) ids.add(id);
   }
   return [...ids];
 }

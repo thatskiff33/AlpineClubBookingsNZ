@@ -1,0 +1,25 @@
+{
+  // #2693: the Playwright suite's own typecheck project. Before this file the
+  // specs were reached by `tsconfig.json`'s bare `**/*.ts` glob — an incidental
+  // home that gave them the app's Next plugin and route typegen, and gave the
+  // app project a dependency on `@playwright/test`. Here they get Node's types
+  // and nothing from Vitest, and the app project no longer lists them.
+  //
+  // Specs import application modules (`@/lib/...`, `../../src/...`) and the
+  // paths alias is inherited for that, so a schema or helper change the suite
+  // depends on still fails `npm run typecheck` — the property
+  // `docs/AUTHORITATIVE_FEES.md` relies on for `e2e/setup/seed-second-lodge.ts`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+    // `noUncheckedIndexedAccess` is inherited ON from tsconfig.json since
+    // #3363. #2802 had turned it back off here, alongside tsconfig.test.json,
+    // under programme #2694's "application code before tests" scoping; #3363
+    // cleared the Playwright suite's diagnostics and removed the override, so
+    // the browser suite is under the same rule as the application. The
+    // unit-test project (tsconfig.test.json) is the one that stays off, and
+    // #3363 is the one home for how many diagnostics it holds.
+  },
+  "include": ["e2e/**/*.ts", "playwright.config.ts"],
+  "exclude": ["node_modules"]
+}

@@ -172,7 +172,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     }
   }
 
-  function getDayClass(day: number, available: number, isPast: boolean, isRetroPast: boolean, dateStr: string) {
+  function getDayClass(available: number, isPast: boolean, isRetroPast: boolean, dateStr: string) {
     const season = seasons[dateStr];
 
     let classes = "relative flex h-12 w-10 flex-col items-center justify-center rounded-md text-sm font-medium transition-colors ";
@@ -320,7 +320,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
             <button
               key={day}
               onClick={() => handleDayClick(day)}
-              className={getDayClass(day, available, isPast, isRetroPast, dateStr)}
+              className={getDayClass(available, isPast, isRetroPast, dateStr)}
               // Full nights stay clickable under the retroactive or admin
               // over-capacity flags — over-capacity is warn-and-confirm at
               // submit, not a hard block.

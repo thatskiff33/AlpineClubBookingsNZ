@@ -17,6 +17,7 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
+import { must } from "../src/lib/indexed-access";
 
 const DEFAULT_MAX_CHARS = 32_000;
 const DEFAULT_DEPTH = 1;
@@ -440,6 +441,11 @@ function parsePrismaModels(schema: string): Map<string, PrismaModel> {
   const models = new Map<string, PrismaModel>();
   const pattern = /^model\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/gm;
   for (const match of schema.matchAll(pattern)) {
+    // The pattern's own capture group is mandatory, so its absence means the
+    // pattern itself did not really match; that is the rejection, not a
+    // fallback name.
+    const [, modelName] = match;
+    if (!modelName) continue;
     const start = match.index!;
     let cursor = start;
     let depth = 0;
@@ -456,15 +462,15 @@ function parsePrismaModels(schema: string): Map<string, PrismaModel> {
         }
       }
     }
-    if (depth !== 0) throw new AgentContextError(`Unclosed Prisma model block: ${match[1]}`);
+    if (depth !== 0) throw new AgentContextError(`Unclosed Prisma model block: ${modelName}`);
     const block = schema.slice(start, cursor).trim();
     const fields = block
       .split(/\r?\n/)
       .slice(1, -1)
       .map((line) => line.trim())
       .filter((line) => /^[A-Za-z_][A-Za-z0-9_]*\s+/.test(line));
-    models.set(match[1], {
-      name: match[1],
+    models.set(modelName, {
+      name: modelName,
       block,
       fieldCount: fields.length,
       relations: new Set<string>(),
@@ -704,7 +710,8 @@ const USAGE =
 export function parseAgentContextArgs(args: string[]): CliOptions {
   const parsed: CliOptions = { base: "", entries: [], models: [] };
   for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index];
+    // The loop condition just above is exactly what makes this in range.
+    const flag = must(args[index], `parseAgentContextArgs: index ${index} out of range`);
     if (flag === "--") continue;
     if (flag === "--help") {
       throw new AgentContextError(USAGE);

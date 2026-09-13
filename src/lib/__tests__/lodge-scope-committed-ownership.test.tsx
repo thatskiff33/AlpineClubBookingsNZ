@@ -52,7 +52,7 @@ const LODGE_B = { id: "lodge-b", name: "Lodge B" }
 let lodgeOptions: LodgeOptionState
 
 vi.mock("@/components/lodge-select", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/components/lodge-select")>()
+  const actual = (await importOriginal()) as typeof import("@/components/lodge-select")
   return {
     ...actual,
     initialLodgeIdFromLocation: () => null,
@@ -71,7 +71,7 @@ vi.mock("@/components/lodge-select", async (importOriginal) => {
 })
 
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>()),
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
 }))
 

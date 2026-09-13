@@ -24,9 +24,7 @@ vi.mock("@/components/club-identity-provider", () => ({
 // is pinned against here — and stub the data-fetching panels, which are not.
 vi.mock("../_components/panels", async () => {
   const actual =
-    await vi.importActual<typeof import("../_components/go-to-xero-button")>(
-      "../_components/go-to-xero-button",
-    );
+    (await vi.importActual("../_components/go-to-xero-button")) as typeof import("../_components/go-to-xero-button");
   const stub = () => null;
   return {
     GoToXeroButton: actual.GoToXeroButton,

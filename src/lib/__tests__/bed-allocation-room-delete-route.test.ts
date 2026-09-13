@@ -32,7 +32,7 @@ vi.mock("@/lib/public-content-revalidation", () => ({
 
 vi.mock("@/lib/bed-allocation-rooms", async (importActual) => {
   const actual =
-    await importActual<typeof import("@/lib/bed-allocation-rooms")>();
+    (await importActual()) as typeof import("@/lib/bed-allocation-rooms");
   return {
     ...actual,
     deleteBedAllocationRoom: (...args: unknown[]) =>

@@ -1062,17 +1062,24 @@ function buildForwardMetrics(
     lodgeCapacity,
   );
 
-  const byDate = dates.map((date, index) => ({
-    date,
-    committed: committedByDate[index],
-    atRisk: atRiskByDate[index],
-    totalPipeline: combineDailyMetrics(
+  // Both series are built one entry per date, in this order. A date with no
+  // entry would be a hole in a finance series read as a chart, and there is no
+  // metric to invent for it, so it refuses (#2800).
+  const byDate = dates.map((date, index) => {
+    const committed = committedByDate[index];
+    const atRisk = atRiskByDate[index];
+    if (committed === undefined || atRisk === undefined) {
+      throw new Error(
+        `Booking pipeline metrics have no daily entry for ${date} (${committedByDate.length} committed, ${atRiskByDate.length} at-risk, ${dates.length} date(s)).`,
+      );
+    }
+    return {
       date,
-      committedByDate[index],
-      atRiskByDate[index],
-      lodgeCapacity,
-    ),
-  }));
+      committed,
+      atRisk,
+      totalPipeline: combineDailyMetrics(date, committed, atRisk, lodgeCapacity),
+    };
+  });
 
   const committedTotals = finalizeBucketSummary(
     committedBucket,

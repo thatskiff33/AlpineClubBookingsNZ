@@ -627,9 +627,12 @@ function describeHostScopes(scopes: AdultMemberHostScopeSet): string {
         "in the same Group Trip",
     );
   }
-  if (parts.length === 0) return "an adult member";
-  if (parts.length === 1) return parts[0];
-  return `${parts.slice(0, -1).join(", ")} or ${parts[parts.length - 1]}`;
+  // The last clause doubles as the emptiness check: no last clause means no
+  // scope is enabled, and the generic wording applies (#2799).
+  const last = parts.at(-1);
+  if (last === undefined) return "an adult member";
+  if (parts.length === 1) return last;
+  return `${parts.slice(0, -1).join(", ")} or ${last}`;
 }
 
 /**

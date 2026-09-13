@@ -162,7 +162,7 @@ vi.mock("@/lib/payment-transactions", () => ({
 }));
 const mockLoadEffectiveModuleFlags = vi.fn();
 vi.mock("@/lib/module-settings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/module-settings");
 
   return {
     ...actual,

@@ -72,8 +72,7 @@ function normalizedClass(record: FinanceMonthlyFactRecord): string {
 }
 
 export async function buildFinanceMonthlyBalanceSeries(
-  window: Pick<FinanceDashboardDateWindow, "fromMonth" | "toMonth">,
-  input?: { currentMonth?: string }
+  window: Pick<FinanceDashboardDateWindow, "fromMonth" | "toMonth">
 ): Promise<FinanceMonthlyBalanceSeries> {
   const facts = await listMonthlyFacts({
     statementKind: FinanceMonthlyStatementKind.BALANCE_SHEET,

@@ -929,9 +929,12 @@ export function calculatePromoDiscount(
       const usedByMemberId = new Map<string, number>();
       const allocations = new Map<string, PromoDiscountAllocation>();
       const targets: PromoDiscountTarget[] = [];
-      for (let i = 0; i < usedCount; i++) {
-        const { rate, memberId, guest, nightIndex } = candidates[i];
-
+      // `usedCount` never exceeds `candidates.length`, and `slice` clamps
+      // anyway, so iterating the prefix says in the type what the counter
+      // loop this replaces only knew by arithmetic (#2799). #3276 added
+      // `guest` and `nightIndex` to the same destructure, for the per-night
+      // build-up rows below; nothing in the body reads the index itself.
+      for (const { rate, memberId, guest, nightIndex } of candidates.slice(0, usedCount)) {
         if (remainingFreeNightsByMemberId) {
           if (!memberId) continue;
           const memberCap = Math.max(

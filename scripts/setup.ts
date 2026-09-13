@@ -195,10 +195,13 @@ async function collectAgeTiers(
     });
   }
 
-  return result.map((tier, index) => ({
-    ...tier,
-    maxAge: result[index + 1] ? result[index + 1].minAge - 1 : null,
-  }));
+  return result.map((tier, index) => {
+    const nextTier = result[index + 1];
+    return {
+      ...tier,
+      maxAge: nextTier ? nextTier.minAge - 1 : null,
+    };
+  });
 }
 
 async function runWizard() {

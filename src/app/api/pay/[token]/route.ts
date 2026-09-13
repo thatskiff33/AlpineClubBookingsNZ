@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
-import { getPaymentLinkContext, PaymentLinkError } from "@/lib/payment-link";
+import { PaymentLinkError } from "@/lib/payment-link";
+import { getPaymentLinkContext } from "@/lib/payment-link-context";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 /**
@@ -11,8 +12,8 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
  *
  * `bookingHasOpenFinancialReview` is the one canonical answer to "is this
  * booking's money still with the office", and it carries `import "server-only"`.
- * `payment-link.ts` cannot import it: that module is written to stay importable
- * outside a React server — it reads the club's timezone through
+ * `payment-link-context.ts` does not import it: that module is written to stay
+ * importable outside a React server — it reads the club's timezone through
  * `readClubTimeZoneOutsideRequest` for exactly that reason, and
  * `cli-server-only-reach-census.test.ts` fails any operator script that gains
  * such an edge. This route handler has no such constraint, so it does the read

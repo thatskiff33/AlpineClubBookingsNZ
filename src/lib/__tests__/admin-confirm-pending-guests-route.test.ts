@@ -108,7 +108,7 @@ vi.mock("@/lib/email", () => ({
 // and re-derives the aggregate through `reconcilePaymentAggregates`, the one
 // export replaced (the real one needs a Payment row to read).
 vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/payment-transactions")>()),
+  ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
   upsertPaymentIntentTransaction: mocks.upsertPaymentIntentTransaction,
   reconcilePaymentAggregates: mocks.reconcilePaymentAggregates,
 }));
