@@ -646,13 +646,10 @@ function parseLodgeFolder(
 
     // D2 invariant + shape validation (#1930, E4). Both are blocking errors,
     // exactly like an unknown membership type: a NON_MEMBER_RATE or
-    // BLOCK_BOOKING type owns ZERO rate rows — unless it is one of the two
-    // built-ins the engine resolves by key (NON_MEMBER, FULL), whose rows are
-    // read whatever the row itself says, which is why this asks
-    // holdsHutRateRows rather than the behaviour question alone (#2933). A
-    // row's ageTier must match the type's
-    // ageGroupsApply shape (per-tier rows for age-keyed types, one blank-tier
-    // flat row for flat types).
+    // BLOCK_BOOKING type owns ZERO rate rows unless the engine resolves it BY
+    // KEY (NON_MEMBER, FULL — `holdsHutRateRows`, #2933), and a row's ageTier
+    // must match the type's ageGroupsApply shape (per-tier rows for age-keyed
+    // types, one blank-tier flat row for flat types).
     let rowShapeValid = true;
     if (membershipType) {
       if (

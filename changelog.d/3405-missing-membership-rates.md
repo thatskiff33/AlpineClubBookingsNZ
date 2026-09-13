@@ -19,14 +19,18 @@
   now read one rule, so they agree about which types owe a rate, which seasons
   still matter, and what today's date is at the club.
 
-  **A second silent gap goes with it.** Archiving the built-in **Non-Member** or
-  **Full** membership type does not stop it pricing — non-member guests still
-  price from the Non-Member rates, and a member the system cannot otherwise place
-  still prices from the Full rates — but it used to remove the type from the rate
-  grid, so nobody could set those rates and nothing warned that they were
-  missing. Both types now stay in the grid and in the warning while they are
-  archived. A club's own retired membership type is unaffected: it is left alone,
-  as before.
+  **A second silent gap goes with it.** Nothing you can do to the built-in
+  **Non-Member** or **Full** membership type on the Membership types page stops
+  it pricing — non-member guests still price from the Non-Member rates, and a
+  member the system cannot otherwise place, or a guest recognised as another
+  lodge's member, still prices from the Full rates. Archive one, or change its
+  booking behaviour, and it used to drop out of the rate grid, so nobody could
+  set those rates and nothing warned they were missing, while bookings that
+  needed them were still being refused. Both types now stay in the grid and in
+  the warning whatever you do to them — and, just as important, a season save,
+  a Xero hut-fee item code and a configuration bundle all still accept their
+  rates, so following the warning actually works. A club's own retired
+  membership type is unaffected: it is left alone, as before.
 
   Nothing is flagged that an officer cannot act on, or should not act on. A
   closed season that has already ended is left alone. A membership type that

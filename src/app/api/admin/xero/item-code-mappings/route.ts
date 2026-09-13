@@ -229,11 +229,9 @@ export async function PUT(request: NextRequest) {
 
   try {
     // Referenced membership types must exist and must own hut rate rows: every
-    // MEMBER_RATE type, plus the two built-ins the engine resolves by key
-    // (NON_MEMBER and FULL), whose rows are read whatever the row itself says
-    // (D2 invariant, `INV-MOD-007` — every other NON_MEMBER_RATE type and every
-    // BLOCK_BOOKING type never owns hut-fee item codes). The rule is asked in
-    // one place, `holdsHutRateRows` (#2933).
+    // MEMBER_RATE type plus the two the engine resolves BY KEY (NON_MEMBER,
+    // FULL), whose rows are read whatever the row itself says (D2 invariant,
+    // `INV-MOD-007`; one home, `holdsHutRateRows`, #2933).
     const referencedTypeIds = [
       ...new Set(hutFeeWrites.map((write) => write.key.membershipTypeId)),
     ];

@@ -222,10 +222,8 @@ function parseItemRow(
 
   // D2 invariant + shape validation for HUT_FEE rows (#1930, E4), blocking
   // errors exactly like an unknown membership type: item codes may only key a
-  // type that owns rate rows — MEMBER_RATE, or one of the two built-ins the
-  // engine resolves by key (NON_MEMBER, FULL), whose rows are read whatever the
-  // row itself says (`holdsHutRateRows`, #2933) — and the row's ageTier must
-  // match the type's ageGroupsApply shape.
+  // type owning rate rows (MEMBER_RATE, or NON_MEMBER/FULL, resolved BY KEY —
+  // `holdsHutRateRows`, #2933); the row's ageTier must match ageGroupsApply.
   if (category === "HUT_FEE" && membershipTypeKey !== null && membershipType) {
     if (
       !holdsHutRateRows({
