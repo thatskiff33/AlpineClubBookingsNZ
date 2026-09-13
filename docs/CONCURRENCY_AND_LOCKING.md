@@ -3989,7 +3989,7 @@ reasoning that gave `lockBookingMemberNights` its own family.
 
 | Key | Minted in | Taken by |
 | --- | --- | --- |
-| `pg_advisory_xact_lock(hashtext('xero-contact-home:<contactId>'))` | `src/lib/xero-contact-home.ts` (`lockXeroContactHome`) | all four contact-linking writers |
+| `pg_advisory_xact_lock(hashtext('xero-contact-home:<contactId>'))` | `src/lib/xero-contact-home.ts` (`lockXeroContactHome`) | every contact-linking writer — six since #2939 |
 | `pg_advisory_xact_lock(hashtext('xero-organisation-contact:<organisationId>'))` | `src/lib/organisation-xero-contacts.ts` | the organisation resolve only |
 
 Both are domain-keyed `hashtext` locks in their own namespaces. Neither joins the
@@ -4000,7 +4000,7 @@ status transition and not a bed.
 ### Acquisition order (`INV-LOCK-002`)
 
 **Entity ADVISORY key first, then the contact-home key, and only then any
-`Member` ROW lock.** The four writers:
+`Member` ROW lock.** The six writers:
 
 | Writer | Order |
 | --- | --- |
@@ -4008,9 +4008,16 @@ status transition and not a bed.
 | `commitManualXeroContactLink` (`xero-manual-contact-link.ts`) | `xero-contact-home:<contactId>` → member `FOR UPDATE` fence |
 | `findOrCreateXeroContactForOrganisation` phase 2 | `xero-organisation-contact:<organisationId>` → `xero-contact-home:<contactId>` → member row `UPDATE` (only when the transfer fires) |
 | `POST /api/admin/xero/import-member-contact` | `xero-contact-home:<contactId>` → `Member` INSERT |
+| `applyInboundMemberContactPatch` (`xero-contact-create-recovery.ts`, #2939) | `xero-contact-home:<contactId>` → member `FOR UPDATE` fence. The refusal runs only where the patch CLAIMS the link; a blank-field backfill onto the record that already holds the contact claims nothing |
+| the bulk member import's two member creates (`xero-member-import.ts`, #2939) | `xero-contact-home:<contactId>` → `Member` INSERT → refusal inside the same transaction, so a contact an `Organisation` holds takes the new row down with it |
 
 Because every participant reaches a `Member` row only with the contact-home key
-already held, the wait graph has no cycle. Only ONE contact key is ever taken per
+already held, the wait graph has no cycle. The last two rows arrived with
+[#2939](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2939), which
+closed the two paths `INV-INT-019` had exempted; the bulk person-contact seeding
+that issue built needs no row of its own, because it holds no transaction across
+contacts — it calls `findOrCreateXeroContact` once per member, so the first row
+above is taken and released once per member exactly as for a single invoice. Only ONE contact key is ever taken per
 transaction, so the sorted-key discipline the member families need does not
 apply here.
 

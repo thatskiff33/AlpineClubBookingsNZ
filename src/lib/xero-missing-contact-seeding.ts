@@ -1,8 +1,9 @@
 /**
  * Bulk seeding of the MISSING Xero contacts for unlinked person members
  * (#2939, a child of MAD programme #2725). The rule is `INV-INT-022`; the rule
- * this must not break is `INV-INT-018`; the operator guide and the longer
- * design rationale are `docs/guides/xero-missing-contacts.md`.
+ * this must not break is `INV-INT-018`; the operator guide is
+ * `docs/guides/xero.md` -> "Create the missing Xero contacts in bulk" and the
+ * longer design rationale is `docs/xero/ARCHITECTURE.md`.
  *
  * ## What this is for
  *

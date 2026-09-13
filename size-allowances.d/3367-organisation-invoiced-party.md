@@ -84,14 +84,20 @@ the invariant and the lock-guard test and left these two sentences teaching the
 order that produced the deadlock, which is exactly how the rule stops holding.
 
 file: src/lib/xero-contact-create-recovery.ts
-lines: 844
+lines: 879
 reason: Fourteen comment lines across two docblocks, no code. The manual-link
   fence called the target `Member` row the transaction's FIRST lock; the
   contact-home key is taken before it, and the sentence as written described the
   deadlock `INV-LOCK-002` now forbids. Both the shared row fence and the
   manual-link fence say the order, because a fifth linker reads whichever one it
   calls. The docblock cannot move: a lock-order rule stated anywhere but at the
-  lock is a rule somebody has to go and find.
+  lock is a rule somebody has to go and find. #2939 then added thirty-five more
+  lines to the same file, twenty-eight of them comment: the contact-home lock,
+  the two-homes refusal at the moment `applyInboundMemberContactPatch` CLAIMS a
+  link, and why each of those two things is where it is. The number here is the
+  file's real length rather than two entries the gate cannot choose between —
+  one file, one allowance — and the #2939 reasoning is in
+  `size-allowances.d/2939-bulk-create-missing-contacts.md` beside it.
 
 file: src/lib/xero-sync.ts
 lines: 883
