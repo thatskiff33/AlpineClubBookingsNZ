@@ -574,13 +574,11 @@ describe("every service that runs the app is given the declaration", () => {
 
 describe("EVERY compose file that runs the app declares the role", () => {
   it("finds the compose files by scanning, not from a list in this test", () => {
-    // The three that exist today. A new one appears here automatically, which is
-    // the point: it then has to satisfy the cases below or fail.
-    expect(composeFiles).toEqual([
-      "docker-compose.staging.yml",
-      "docker-compose.yml",
-      "measurement/stack/docker-compose.measure.yml",
-    ]);
+    // The two that exist today. A new one appears here automatically, which is
+    // the point: it then has to satisfy the cases below or fail. A third,
+    // the measurement stack's own Compose file, was here until #3382 removed
+    // the tree whole.
+    expect(composeFiles).toEqual(["docker-compose.staging.yml", "docker-compose.yml"]);
   });
 
   it("scans Compose's own modern default filenames too", () => {
@@ -660,7 +658,7 @@ describe("EVERY compose file that runs the app declares the role", () => {
     ]);
     const base = composeServices(BASE_COMPOSE);
     for (const name of NON_APP_COMPOSE_SERVICES) {
-      if (name === "mailpit") continue; // staging/measure only
+      if (name === "mailpit") continue; // staging only
       expect(base.has(name), `${name} must be a real service`).toBe(true);
     }
   });
@@ -670,9 +668,9 @@ describe("EVERY compose file that runs the app declares the role", () => {
       The base file interpolates `${APP_ENVIRONMENT_ROLE}` with no default,
       because it is the file the club's live deployment uses and only the
       deployment can know. Every OTHER compose file exists to stand up something
-      that is by construction NOT the live site — a staging stack, an E2E stack, a
-      measurement harness — so each must hard-code `non-production` on every
-      service it touches that runs app code. Interpolated is not good enough
+      that is by construction NOT the live site — a staging stack, an E2E stack —
+      so each must hard-code `non-production` on every service it touches that
+      runs app code. Interpolated is not good enough
       there: a stray value in whatever env file that stack is given must not be
       able to make it claim to be the club's live site.
 
@@ -919,54 +917,19 @@ describe("the boot advisory reaches the containers that serve traffic", () => {
     expect(args).not.toContain("declaration.raw");
   });
 
-  it("keeps that line at a level the log-noise measurement does not count", () => {
-    /*
-      MEASURED, not preferred (owner instruction). MC-09 in
-      `measurement/current-main-refresh/run-log-noise.sh` fails any
-      warning-or-error signature that repeats three times across the producer
-      logs, and eight of that harness's eleven producers `--force-recreate app`
-      INSIDE their own `docker logs --since` window — so a once-per-boot line is
-      once per producer. Running `bin/analyse-log-noise.mjs` over eleven producer
-      logs each holding this exact line: at level 40 it reports `count: 11` and
-      throws `sustained/fatal log noise detected`; at level 30 it passes with zero
-      classified lines.
-
-      The analyser ALSO text-classifies a line by its WORDS, whatever its level,
-      so the sentence itself has to avoid them — which is why it says "held back".
-
-      THE THREE REGEXES BELOW ARE COPIED FROM THE ANALYSER, not paraphrased. A
-      third review lens found the first version listed only
-      error/failed/warning/exception/fatal and so missed `panic`, `uncaught`,
-      `unhandled` and a BARE `warn`: measured, rewording the sentence to contain
-      "unhandled" or "warn" trips MC-09 while that guard stayed green. Copying the
-      patterns means the guard cannot drift from the thing it is protecting
-      against, and a substring list cannot silently omit an alternative again.
-    */
-    const block = bootAdvisoryBlock();
-    const nonProduction = block.slice(
-      block.indexOf('resolution.role === "NON_PRODUCTION"'),
-    );
-    const call = nonProduction.slice(nonProduction.indexOf("logger."));
-    const args = call.slice(0, call.indexOf("\n        );"));
-
-    expect(call.startsWith("logger.info(")).toBe(true);
-
-    // Verbatim from measurement/current-main-refresh/bin/analyse-log-noise.mjs.
-    const ANALYSER_CLASSIFIERS: [string, RegExp][] = [
-      ["fatal", /\b(fatal|panic|uncaught|unhandled)\b/],
-      ["error", /\b(error|exception|failed)\b/],
-      ["warning", /\bwarn(?:ing)?\b/],
-    ];
-    for (const [level, pattern] of ANALYSER_CLASSIFIERS) {
-      const hit = args.toLowerCase().match(pattern);
-      expect(
-        hit?.[0] ?? null,
-        `the copy-at-boot line contains a word analyse-log-noise.mjs classifies ` +
-          `as ${level}, whatever the log level — so MC-09 would count it eleven ` +
-          `times and fail. Reword it (say "held back", not "failed").`,
-      ).toBeNull();
-    }
-  });
+  // A case named "keeps that line at a level the log-noise measurement does
+  // not count" lived here until #3382. It copied three regexes verbatim from
+  // `measurement/current-main-refresh/bin/analyse-log-noise.mjs` (MC-09) and
+  // asserted the copy-at-boot line below contained none of the words that
+  // analyser classified as a warning or an error, because eight of that
+  // harness's eleven producers `--force-recreate app`d inside their own
+  // `docker logs --since` window and would otherwise have counted a
+  // once-per-boot line eleven times and failed the run. That analyser is gone
+  // with the rest of the harness, and nothing will ever run it against this
+  // log line again, so the case was retired rather than narrowed. The word
+  // choice it protected — "held back", not "failed" — is unchanged in the
+  // source and is worth keeping on its own merits; see the docblock above the
+  // `NON_PRODUCTION` branch in `src/instrumentation.node.ts`.
 
   it("logs at error level only for UNKNOWN, and never blocks startup", () => {
     const advisory = instrumentation.indexOf(

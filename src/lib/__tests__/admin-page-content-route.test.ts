@@ -428,8 +428,8 @@ describe("PATCH /api/admin/page-content (publish toggle)", () => {
   #2352 MC-03D. The supported hard delete for CMS page content.
 
   What these cases are FOR, stated once so a later reader does not loosen them:
-  the measurement gate needs a supported writer whose invalidation can be proved,
-  and the writer is only safe because of four properties — it refuses anyone
+  the measurement gate needed a supported writer whose invalidation could be
+  proved, and the writer is only safe because of four properties — it refuses anyone
   without content edit, it refuses a page the product itself links, the row and
   its audit snapshot move together, and nothing is written on any refused path.
   So every case below asserts what the database and the response DID, not that a

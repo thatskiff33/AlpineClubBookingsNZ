@@ -651,7 +651,8 @@ handed an epic-with-children or asked to run several related issues at once.
   (label them, e.g. `D-R1..D-Rn`) in the epic body. The refreshed issue bodies
   then supersede any earlier plan document.
 - The epic body carries: the source items, the owner decisions, the child list
-  grouped into **lanes** with an explicit **morning merge order**, cross-lane
+  grouped into **lanes** with an explicit **morning merge order** ending in the
+  compose-and-review child (`ISSUE_WORKFLOW.md`), cross-lane
   **watchpoints** (files touched by more than one issue, and who rebases), and
   any frozen contracts (e.g. "do not change this Xero reference string").
 

@@ -71,23 +71,24 @@ import { fetchIssueState } from "./lib/github-cli.mjs";
 /**
  * Compose projects that are shared infrastructure, never per-issue debris.
  *
- * `tacbookings` is the production/local compose project (`docker-compose.yml`),
- * `tacbookings-staging` is the E2E stack's default project
- * (`E2E_COMPOSE_PROJECT` in `scripts/e2e-stack.sh`), and `tacbookings-measure`
- * is #2663's measurement stack — the very stack this tool exists to stop
- * blocking. Reporting any of them as removable debris would be the worst
- * possible failure of this tool, so the check runs before issue extraction and
- * matches the project name exactly rather than by prefix.
+ * `tacbookings` is the production/local compose project (`docker-compose.yml`)
+ * and `tacbookings-staging` is the E2E stack's default project
+ * (`E2E_COMPOSE_PROJECT` in `scripts/e2e-stack.sh`). Reporting either as
+ * removable debris would be the worst possible failure of this tool, so the
+ * check runs before issue extraction and matches the project name exactly
+ * rather than by prefix.
+ *
+ * `tacbookings-measure` — #2663's measurement stack, the very stack this tool
+ * was written to stop blocking — was a third reserved name here until the
+ * `measurement/` tree was removed whole by #3382. That Compose project's own
+ * definition no longer exists anywhere in this repository, so it can never be
+ * created again and the reservation protected nothing left to protect.
  *
  * These are the DEFAULTS only. Every one of them is environment-configurable, so
  * see `reservedProjects` below — a hard-coded list on its own left the shared
  * stack unprotected under any non-default name.
  */
-export const RESERVED_PROJECTS = new Set([
-  "tacbookings",
-  "tacbookings-staging",
-  "tacbookings-measure",
-]);
+export const RESERVED_PROJECTS = new Set(["tacbookings", "tacbookings-staging"]);
 
 /** Environment variables a deployment uses to name its Compose project. */
 const RESERVED_PROJECT_ENV_KEYS = ["COMPOSE_PROJECT_NAME", "E2E_COMPOSE_PROJECT"];

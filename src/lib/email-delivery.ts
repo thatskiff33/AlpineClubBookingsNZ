@@ -204,9 +204,9 @@ function isPrivateIpv4([a, b]: number[]): boolean {
  *
  * WHY A BARE SINGLE-LABEL NAME COUNTS AS PRIVATE. `mailpit` is what every capture
  * stack in this repository actually uses — the browser suite, the staging stack,
- * `.env.staging.example` and the measurement stack all set
- * `EMAIL_SERVER_HOST=mailpit` — because a Compose service name is how one
- * container reaches another. A name with no dot in it cannot be a public FQDN, so
+ * and `.env.staging.example` all set `EMAIL_SERVER_HOST=mailpit` — because a
+ * Compose service name is how one container reaches another. A name with no
+ * dot in it cannot be a public FQDN, so
  * accepting it costs nothing that a public relay could exploit. The stated limit
  * is a resolver search domain (`smtp` plus a search suffix of `sendgrid.net`),
  * which needs the host's own resolver configuration to collude and which no
