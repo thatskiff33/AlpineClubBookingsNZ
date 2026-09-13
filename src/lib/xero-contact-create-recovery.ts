@@ -266,6 +266,11 @@ async function lockMemberRowForXeroFence(
  * Account deletion takes the same row FOR UPDATE, so either it commits first
  * and this writer observes the canonical anonymisation marker, or this short
  * local-link transaction commits before deletion can continue.
+ *
+ * **A caller linking a Xero CONTACT id must already hold that contact's home
+ * key** (`lockXeroContactHome`), the OUTER lock relative to any `Member` row
+ * lock (`INV-LOCK-002`): the school transfer holds it while taking a row lock of
+ * its own. Deletion and merge, which link no contact, simply take the row.
  */
 export async function lockMemberForXeroContactLink(
   db: ContactLinkMemberFenceDb,
@@ -442,10 +447,19 @@ export async function applyInboundMemberContactPatch(
  * Fence a manual Xero link against an ambiguous provider create.
  *
  * Provider contact verification happens before the caller's short transaction.
- * Inside it, this exact target Member row is the first lock. The active create
+ * Inside it, this exact target Member row is locked and the active create
  * reservation is then re-read under that lock, so either the reservation wins
  * and manual linking refuses, or the manual link commits before a later create
  * reservation can re-read the authoritative `xeroContactId`.
+ *
+ * **THIS IS NOT THE TRANSACTION'S FIRST LOCK, AND MUST NOT BE MADE ONE
+ * (`INV-LOCK-002`, `INV-INT-020`).** The caller takes the contact-home key
+ * first, because the school transfer takes a `Member` ROW lock while holding
+ * it: a writer that took the row first and then waited for the key would close
+ * a deadlock cycle, which Postgres aborts as `40P01`. An earlier revision of
+ * this docblock called the target row the first lock — it was describing that
+ * deadlock. `docs/CONCURRENCY_AND_LOCKING.md` → "One Xero contact, one local
+ * home" has the order for all four linkers.
  */
 export async function lockMemberForManualXeroContactLink(
   db: ManualContactLinkFenceDb,
