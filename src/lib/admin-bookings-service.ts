@@ -12,6 +12,7 @@ import {
   type XeroActivitySummary,
   type XeroState,
 } from "@/lib/admin-operational-state";
+import { bookingOwner } from "@/lib/booking-owner";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
 import {
@@ -313,7 +314,7 @@ export function getDefaultAdminBookingSortDir(sortBy: BookingSortBy): SortDir {
 }
 
 function memberSortValue(booking: BookingCandidate) {
-  return `${booking.member.lastName} ${booking.member.firstName}`.toLowerCase();
+  return `${bookingOwner(booking).member.lastName} ${bookingOwner(booking).member.firstName}`.toLowerCase();
 }
 
 function compareValues(left: string | number | Date | null, right: string | number | Date | null) {

@@ -5,6 +5,7 @@ import {
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
@@ -109,7 +110,7 @@ export async function POST(request: NextRequest) {
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
-  if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
+  if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (booking.organiserSettled) {
@@ -231,7 +232,7 @@ export async function POST(request: NextRequest) {
     // Credit writers serialize on a per-member key, not lock(1). Compose all
     // three tiers in the global -> lodge -> member order before aggregating so
     // this read cannot race an applied-credit writer.
-    await lockMemberCreditLedger(locked.memberId, tx);
+    await lockMemberCreditLedger(bookingOwner(locked).memberId, tx);
 
     if (holdBedSlots) {
       const capacity = await checkCapacityForGuestRanges(

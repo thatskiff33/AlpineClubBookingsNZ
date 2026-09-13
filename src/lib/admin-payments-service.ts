@@ -14,6 +14,7 @@ import {
   type XeroActivitySummary,
   type XeroState,
 } from "@/lib/admin-operational-state";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
@@ -262,7 +263,7 @@ function latestPaymentActivityAt(payment: PaymentCandidate) {
 }
 
 function memberSortValue(payment: PaymentCandidate) {
-  return `${payment.booking.member.lastName} ${payment.booking.member.firstName}`.toLowerCase();
+  return `${bookingOwner(payment.booking).member.lastName} ${bookingOwner(payment.booking).member.firstName}`.toLowerCase();
 }
 
 function settlementSortValue(payment: PaymentCandidate) {

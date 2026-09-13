@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { HOSTING_COVERAGE_SOURCE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { clubToday, dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -170,7 +171,7 @@ export async function enqueueActiveHostingIncidentPolicyReconciliation(
     );
     if (nights.length === 0) continue;
     queueRows.push({
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       lodgeId: booking.lodgeId,
       nights,
       cause: "SYSTEM_CHANGE",

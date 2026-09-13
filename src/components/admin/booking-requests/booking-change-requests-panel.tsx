@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { bookingOwner } from "@/lib/booking-owner";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -434,7 +435,7 @@ export function BookingChangeRequestsPanel({
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">
-                        {request.booking.member.firstName} {request.booking.member.lastName}
+                        {bookingOwner(request.booking).member.firstName} {bookingOwner(request.booking).member.lastName}
                       </CardTitle>
                       <p className="text-sm text-muted-foreground">
                         Requested by {request.requestedBy.firstName} {request.requestedBy.lastName} on{" "}
@@ -495,7 +496,7 @@ export function BookingChangeRequestsPanel({
                     </Link>
                     <Link
                       href={buildHrefWithReturnTo(
-                        `/admin/members/${request.booking.member.id}`,
+                        `/admin/members/${bookingOwner(request.booking).member.id}`,
                         currentPath
                       )}
                       className="text-info-11 hover:underline"

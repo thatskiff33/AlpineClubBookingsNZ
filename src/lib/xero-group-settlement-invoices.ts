@@ -20,6 +20,7 @@ import {
 } from "xero-node";
 import { BookingStatus, GroupBookingStatus } from "@prisma/client";
 import { prisma } from "./prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import {
@@ -558,7 +559,7 @@ export async function createXeroInvoiceForGroupSettlement(
             environmentPolicy: null,
             organiserBookingId: fresh.groupBooking
               .organiserBookingId as string | null,
-            organiserEmail: fresh.groupBooking.organiserBooking.member
+            organiserEmail: bookingOwner(fresh.groupBooking.organiserBooking).member
               .email as string | null,
           };
         }

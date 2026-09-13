@@ -1,4 +1,5 @@
 import type { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 import { prisma } from "@/lib/prisma";
 import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
@@ -131,9 +132,9 @@ function formatBookingSnapshot(input: {
   return {
     bookingId: input.id,
     paymentId: input.payment.id,
-    memberId: input.member.id,
-    memberName: `${input.member.firstName} ${input.member.lastName}`,
-    memberEmail: input.member.email,
+    memberId: bookingOwner(input).member.id,
+    memberName: `${bookingOwner(input).member.firstName} ${bookingOwner(input).member.lastName}`,
+    memberEmail: bookingOwner(input).member.email,
     status: input.status as "PAID",
     checkIn: input.checkIn.toISOString(),
     checkOut: input.checkOut.toISOString(),
@@ -293,10 +294,13 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
     formatted.push({
       paymentId: payment.id,
       bookingId: payment.bookingId,
-      memberName: payment.booking?.member
-        ? `${payment.booking.member.firstName} ${payment.booking.member.lastName}`
+      memberName:
+        payment.booking && bookingOwner(payment.booking).member
+        ? `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`
         : "Unknown",
-      memberEmail: payment.booking?.member?.email ?? "",
+      memberEmail: payment.booking
+        ? (bookingOwner(payment.booking).member?.email ?? "")
+        : "",
       refundedAmountCents: payment.refundedAmountCents,
       cashRefundedCents: evidence.cashRefundCents,
       uncoveredCents: evidence.cashRefundCents - coveredCents,

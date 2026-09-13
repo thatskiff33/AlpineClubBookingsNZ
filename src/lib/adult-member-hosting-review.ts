@@ -23,6 +23,7 @@ import {
   tryLockHostingCoverageOwner,
   tryLockHostingCoverageOwners,
 } from "@/lib/adult-member-hosting-coverage-lock";
+import { bookingOwner } from "@/lib/booking-owner";
 import { lockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
 import { enqueueHostingCoverageReevaluation } from "@/lib/adult-member-hosting-coverage-queue";
 import {
@@ -396,7 +397,7 @@ function hostingSiblingWhere(
 
   return {
     OR: relatedIds,
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
     ...HOSTING_SIBLING_LIFECYCLE_WHERE,
     id: { not: booking.id },
   };
@@ -1154,10 +1155,10 @@ export async function evaluateBookingAdultMemberHosting(
     db,
     async () => {
       if (!failFastCoverageOwner) {
-        await lockHostingCoverageOwner(db, booking.memberId);
+        await lockHostingCoverageOwner(db, bookingOwner(booking).memberId);
         return;
       }
-      if (!(await tryLockHostingCoverageOwner(db, booking.memberId))) {
+      if (!(await tryLockHostingCoverageOwner(db, bookingOwner(booking).memberId))) {
         throw new HostingCoverageParticipantRetryError();
       }
     },
@@ -1867,7 +1868,7 @@ export async function reconcileAdultMemberHostingReview(
   }
   if (participantContext) {
     assertHostingCoverageQueueParticipantsLocked(participantContext.proof, {
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       lodgeId: booking.lodgeId,
       sourceBookingId: booking.id,
       actorMemberId: participantContext.actorMemberId,
@@ -2460,7 +2461,7 @@ export function sourceParticipant(
 ): HostingCoverageSourceParticipant {
   return {
     bookingId: booking.id,
-    ownerMemberId: booking.memberId,
+    ownerMemberId: bookingOwner(booking).memberId,
     lodgeId: booking.lodgeId,
   };
 }
@@ -2655,7 +2656,7 @@ async function enqueueSameOwnerDependentItems(
     }
     const id = await enqueueHostingCoverageReevaluation(
       {
-        memberId: dependent.memberId,
+        memberId: bookingOwner(dependent).memberId,
         lodgeId: dependent.lodgeId,
         nights: coverageNightsOf(dependent),
         // A BOOKING NOBODY NAMED GETS NO STORY (#3241): not the member's decision,
@@ -2751,7 +2752,7 @@ async function settleSameOwnerDependentCoverage(
   // Booking FK and must never be substituted for a missing coverage-change actor.
   const actorMemberId = options.coverageChange?.actorMemberId ?? null;
   assertHostingCoverageQueueParticipantsLocked(participantProof, {
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
     lodgeId: booking.lodgeId,
     sourceBookingId: booking.id,
     actorMemberId,
@@ -2780,7 +2781,7 @@ async function settleSameOwnerDependentCoverage(
     );
     await enqueueHostingCoverageReevaluation(
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         lodgeId: booking.lodgeId,
         nights,
         cause: context.cause,
@@ -2795,10 +2796,10 @@ async function settleSameOwnerDependentCoverage(
   }
 
   // Before any cross-booking coverage read, and held to commit.
-  if (!(await tryLockHostingCoverageOwner(db, booking.memberId))) {
+  if (!(await tryLockHostingCoverageOwner(db, bookingOwner(booking).memberId))) {
     throw new HostingCoverageParticipantRetryError();
   }
-  await lockHostingCoverageOwner(db, booking.memberId);
+  await lockHostingCoverageOwner(db, bookingOwner(booking).memberId);
 
   // #3232: the plan becomes a fact HERE, under the owner key, or the whole
   // transaction is a safe retry. Unlocked, the plan is a hypothesis — at READ
@@ -2827,7 +2828,7 @@ async function settleSameOwnerDependentCoverage(
     if (verifiedDependents.length === 0) return;
     await enqueueHostingCoverageReevaluation(
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         lodgeId: booking.lodgeId,
         nights,
         cause: "SYSTEM_CHANGE",
@@ -2871,7 +2872,7 @@ async function settleSameOwnerDependentCoverage(
   // on somebody else's booking.
   if (
     context.strandingAcceptedByOwner === true &&
-    (context.actorMemberId ?? null) !== booking.memberId
+    (context.actorMemberId ?? null) !== bookingOwner(booking).memberId
   ) {
     throw new Error(
       "INV-HOST-050: a linked-move answer can only be honoured for the member " +
@@ -3031,7 +3032,7 @@ async function settleSameOwnerDependentCoverage(
   const ownerDeclined = context.cause === "OWNER_DECLINED_LINKED_MOVE";
   await enqueueHostingCoverageReevaluation(
     {
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       lodgeId: booking.lodgeId,
       // The nights this booking covers, and no others (§10). A change to this
       // booking cannot affect a night it never touched, so this IS the bound —
@@ -3111,7 +3112,7 @@ function resolveDependentDisposition(
   const disposition = options.dependentCoverage ?? "ESCALATE";
   if (disposition !== "BLOCK") return disposition;
   const actorMemberId = options.coverageActorMemberId ?? null;
-  return actorMemberId !== null && actorMemberId === booking.memberId
+  return actorMemberId !== null && actorMemberId === bookingOwner(booking).memberId
     ? "BLOCK"
     : "ESCALATE";
 }
@@ -3240,7 +3241,7 @@ function coverageBookingSetFingerprint(
   bookings: readonly Pick<CoverageOwnerFacts, "id" | "memberId" | "lodgeId">[],
 ): string {
   return bookings
-    .map((booking) => `${booking.id}:${booking.memberId}:${booking.lodgeId}`)
+    .map((booking) => `${booking.id}:${bookingOwner(booking).memberId}:${booking.lodgeId}`)
     .join("\n");
 }
 
@@ -3382,7 +3383,7 @@ async function settleGroupTripDependentCoverage(
     if (alreadyQueuedBookingIds?.has(dependent.id)) continue;
     const id = await enqueueHostingCoverageReevaluation(
       {
-        memberId: dependent.memberId,
+        memberId: bookingOwner(dependent).memberId,
         lodgeId: dependent.lodgeId,
         nights: coverageNightsOf(dependent),
         cause: "SYSTEM_CHANGE",
@@ -3605,7 +3606,7 @@ export async function enqueueOwnHostingCoverageReevaluation(
   })) as GroupTripCoverageSourceFacts | null;
   if (!booking) throw new HostingCoverageParticipantRetryError();
   assertHostingCoverageQueueParticipantsLocked(participantProof, {
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
     lodgeId: booking.lodgeId,
     sourceBookingId: booking.id,
     actorMemberId,
@@ -3635,15 +3636,15 @@ export async function enqueueOwnHostingCoverageReevaluation(
     verifiedGroupTrip = null;
   }
   if (resolved.hostScopes.sameBookingOwner) {
-    if (!(await tryLockHostingCoverageOwner(db, booking.memberId))) {
+    if (!(await tryLockHostingCoverageOwner(db, bookingOwner(booking).memberId))) {
       throw new HostingCoverageParticipantRetryError();
     }
-    await lockHostingCoverageOwner(db, booking.memberId);
+    await lockHostingCoverageOwner(db, bookingOwner(booking).memberId);
   }
 
   const ownItemId = await enqueueHostingCoverageReevaluation(
     {
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       lodgeId: booking.lodgeId,
       nights: coverageNightsOf(booking),
       cause: context.cause,
@@ -3844,7 +3845,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
     resolvedByLodge.get(booking.lodgeId)?.mode === "ENFORCED";
   const plannedQueueOwners = plannedAttended
     .filter(enforcing)
-    .map((booking) => booking.memberId);
+    .map((booking) => bookingOwner(booking).memberId);
   if (plannedQueueOwners.length === 0) return 0;
 
   const actorMemberId = context.actorMemberId ?? null;
@@ -3930,7 +3931,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
   for (const booking of attended) {
     if (enforcing(booking)) {
       assertHostingCoverageQueueParticipantsLocked(participantProof, {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         lodgeId: booking.lodgeId,
         sourceBookingId: booking.id,
         actorMemberId,
@@ -3962,7 +3963,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
         enforcing(booking) &&
         resolvedByLodge.get(booking.lodgeId)?.hostScopes.sameBookingOwner === true,
     )
-    .map((booking) => booking.memberId);
+    .map((booking) => bookingOwner(booking).memberId);
   if (!(await tryLockHostingCoverageOwners(db, sameOwnerQueueOwners))) {
     throw new HostingCoverageParticipantRetryError();
   }
@@ -3980,7 +3981,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
     // sorted order. The owner is not necessarily the member whose standing changed.
     const id = await enqueueHostingCoverageReevaluation(
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         lodgeId: booking.lodgeId,
         nights: coverageNightsOf(booking),
         cause: context.cause,

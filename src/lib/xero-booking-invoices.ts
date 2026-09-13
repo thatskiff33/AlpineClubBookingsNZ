@@ -16,6 +16,7 @@ import {
 } from "xero-node";
 import { PaymentSource, PaymentTransactionKind } from "@prisma/client";
 import { prisma } from "./prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { getStayNights } from "./pricing";
@@ -665,7 +666,7 @@ export async function createXeroInvoiceForBooking(
 
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       currentContactId: contactId,
       // #3367 / `INV-INT-019`: THE REPAIR ENTITY MUST MATCH THE INVOICED PARTY.
       //
@@ -874,7 +875,7 @@ export async function createXeroInvoiceForBooking(
         subject: `Xero invoice ${
           createdInvoice.invoiceNumber ?? createdInvoice.invoiceID ?? "(unnumbered)"
         } for your Internet Banking booking payment`,
-        to: booking.member.email,
+        to: bookingOwner(booking).member.email,
         detail:
           'Withheld: this booking has the "No emails" switch turned on. The invoice exists in Xero but was not emailed.',
       });
@@ -1287,7 +1288,7 @@ export async function updateXeroBookingInvoiceForBooking(
     */
     await requireContainedXeroContactForInvoiceOperation({
       resolveXeroContactId: async () => currentInvoice.contact?.contactID,
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       workflow: "updateXeroBookingInvoiceForBooking",
       xero,
       tenantId,

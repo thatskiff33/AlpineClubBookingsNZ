@@ -38,6 +38,7 @@ import {
   minorsReviewAlertShouldFire,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
+import { bookingOwner } from "@/lib/booking-owner";
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import {
@@ -413,7 +414,7 @@ export async function removeBookingGuestInTransaction({
 
   const isOwnerOrAdmin =
     !consentAuthorityApplies &&
-    (booking.memberId === actorMemberId || actorRole === "ADMIN");
+    (bookingOwner(booking).memberId === actorMemberId || actorRole === "ADMIN");
   // A consent removal runs the SELF-REMOVAL gate set on purpose (D-14): the
   // cases in which a never-consented member is trapped on a booking must be
   // exactly the cases in which they could not have taken themselves off, and
@@ -688,7 +689,7 @@ export async function removeBookingGuestInTransaction({
   }));
   const seasonYear = seasonYearOfStoredDate(booking.checkIn);
   await assertMembershipTypeBookingAllowed(tx, {
-    ownerMemberId: booking.memberId,
+    ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,
     seasonYear,
     // Finding 2 (privacy re-review of MG3 #2308): a member removing a guest must
@@ -733,7 +734,7 @@ export async function removeBookingGuestInTransaction({
       // owner who removes their OWN guest row would otherwise walk out from under
       // the requirement entirely, leaving a party they still own and still pay for
       // with nobody paid-up on it.
-      bookingOwnerMemberId: booking.memberId,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
       participants: toSubscriptionLockoutParticipants(remainingGuests),
     });
     if (nonMemberPricing?.violation) {
@@ -747,7 +748,7 @@ export async function removeBookingGuestInTransaction({
       // is withheld. See `PaidUpAdultRefusalAudience`.
       throw new PaidUpAdultMemberRequiredError(
         nonMemberPricing.violation,
-        booking.memberId === actorMemberId ? "BOOKER" : "OTHER_PARTY_MEMBER",
+        bookingOwner(booking).memberId === actorMemberId ? "BOOKER" : "OTHER_PARTY_MEMBER",
       );
     }
   }
@@ -803,7 +804,7 @@ export async function removeBookingGuestInTransaction({
       where: { id: "default" },
     });
     priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-      ownerMemberId: booking.memberId,
+      ownerMemberId: bookingOwner(booking).memberId,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       guests: guestsForPricing,
@@ -1144,7 +1145,7 @@ export async function removeBookingGuestInTransaction({
 
   if (paymentImpact.accountCreditAmountCents > 0) {
     await createBookingModificationCredit(
-      booking.memberId,
+      bookingOwner(booking).memberId,
       paymentImpact.accountCreditAmountCents,
       bookingId,
       bookingModification.id,
@@ -1191,9 +1192,9 @@ export async function removeBookingGuestInTransaction({
     paymentStatus: booking.payment?.status ?? null,
     paymentId: booking.payment?.id ?? null,
     paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-    memberEmail: booking.member.email,
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-    memberId: booking.memberId,
+    memberEmail: bookingOwner(booking).member.email,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+    memberId: bookingOwner(booking).memberId,
     promoRemoved: promoResult.promoRemoved,
     promoCoverage: promoResult.promoCoverage,
     choreWarnings,
@@ -1328,7 +1329,7 @@ export async function recalculateBookingPromo({
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: booking.checkIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,

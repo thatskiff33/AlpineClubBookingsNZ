@@ -7,6 +7,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
@@ -969,7 +970,7 @@ export async function modifyBookingBatch({
     // this is defence in depth rather than the decision).
     if (
       preTransaction &&
-      !(actor.role !== "ADMIN" && booking.memberId !== actor.id)
+      !(actor.role !== "ADMIN" && bookingOwner(booking).memberId !== actor.id)
     ) {
       assertDateEditClearsXeroLockDateFromFacts(
         booking,
@@ -1887,7 +1888,7 @@ export async function modifyBookingBatch({
 
     if (payments.accountCreditAmountCents > 0) {
       await createBookingModificationCredit(
-        booking.memberId,
+        bookingOwner(booking).memberId,
         payments.accountCreditAmountCents,
         bookingId,
         bookingModification.id,
@@ -1967,7 +1968,7 @@ export async function modifyBookingBatch({
           ? {
               linkedMove: {
                 answer: hostingCoverageLinkedMove,
-                bookingOwnerMemberId: booking.memberId,
+                bookingOwnerMemberId: bookingOwner(booking).memberId,
               },
             }
           : {}),
@@ -2040,9 +2041,9 @@ export async function modifyBookingBatch({
       }),
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-      memberEmail: booking.member.email,
-      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-      memberId: booking.memberId,
+      memberEmail: bookingOwner(booking).member.email,
+      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+      memberId: bookingOwner(booking).memberId,
       bookingModificationId: bookingModification.id,
       // MG2 #2307: the cross-family guests this modification added, matched to
       // the rows it actually created, carried OUT of the transaction so the
@@ -2364,7 +2365,7 @@ async function dispatchBatchPostTransactionSideEffects({
       : "booking.modify.batch",
     memberId: actorMemberId,
     targetId: bookingId,
-    subjectMemberId: result.booking.memberId,
+    subjectMemberId: bookingOwner(result.booking).memberId,
     entityType: "BookingModification",
     entityId: result.bookingModificationId,
     category: "booking",
@@ -2432,7 +2433,7 @@ async function dispatchBatchPostTransactionSideEffects({
   }
 
   const member = await prisma.member.findUnique({
-    where: { id: result.booking.memberId },
+    where: { id: bookingOwner(result.booking).memberId },
   });
   if (!member) return;
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
@@ -197,7 +198,7 @@ export async function PATCH(
         : "booking-change-request.reject",
     memberId: session.user.id,
     targetId: existing.booking.id,
-    subjectMemberId: existing.booking.memberId,
+    subjectMemberId: bookingOwner(existing.booking).memberId,
     entityType: "BookingChangeRequest",
     entityId: id,
     category: "booking",

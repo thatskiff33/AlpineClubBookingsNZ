@@ -39,6 +39,7 @@ import {
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -145,7 +146,7 @@ export function deriveOrphanedAppliedCreditFinding(
 
   return {
     bookingId: booking.id,
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
     appliedCreditCents,
     appliedRowCount: booking.creditsApplied.length,
     paymentId: booking.payment?.id ?? null,

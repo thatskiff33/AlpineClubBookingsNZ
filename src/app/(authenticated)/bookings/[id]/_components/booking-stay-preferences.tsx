@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { RequestedRoomEditor } from "@/components/requested-room-editor";
 import { BookingBedAllocationPanel } from "@/components/admin/booking-bed-allocation-panel";
+import { bookingOwner } from "@/lib/booking-owner";
 import { formatDateOnly } from "@/lib/date-only";
 import type { EmailMessageSettings } from "@/lib/email-message-settings";
 import type { BookingDetailRecord } from "../_lib/load-booking-detail";
@@ -104,7 +105,7 @@ export function BookingStayPreferences({
           bookingId={booking.id}
           lodgeId={booking.lodgeId}
           lodgeName={booking.lodge.name}
-          memberName={`${booking.member.firstName} ${booking.member.lastName}`}
+          memberName={`${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`}
           checkIn={formatDateOnly(booking.checkIn)}
           checkOut={formatDateOnly(booking.checkOut)}
           wholeLodgeHold={booking.wholeLodgeHold}

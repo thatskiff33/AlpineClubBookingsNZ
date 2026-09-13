@@ -30,6 +30,7 @@ import { loadEffectiveModuleFlags } from "./module-settings";
 import { canServeMemberPhoneOnLodgeSurface, formatXeroPhone } from "./phone";
 import type { ModuleKey } from "@/config/modules";
 import { prisma } from "./prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 
 // The lobby display's data contract and privacy serialiser (fork issue #28,
 // docs/lobby-display/design.md §5 and §10). THIS FILE IS THE SINGLE
@@ -670,7 +671,7 @@ export async function buildDisplayState(
       continue;
     }
     const guestCount = booking.guests.length;
-    const isOrganisation = booking.member.ageTier === "NOT_APPLICABLE";
+    const isOrganisation = bookingOwner(booking).member.ageTier === "NOT_APPLICABLE";
     const isGroup = isOrganisation || guestCount >= WHOLE_LODGE_MIN_GUESTS;
     if (!isGroup) continue;
     const nightMap = perBookingNightCounts.get(booking.id);
@@ -700,7 +701,7 @@ export async function buildDisplayState(
 
     const containsMinors = booking.guests.some((guest) => isMinor(guest.ageTier));
     const wholeLodge = wholeLodgeBookingIds.has(booking.id);
-    const label = bookingLabel(booking.member, {
+    const label = bookingLabel(bookingOwner(booking).member, {
       granularity,
       containsMinors,
       guestCount: booking.guests.length,
@@ -715,7 +716,7 @@ export async function buildDisplayState(
     const namesAllowed = namesAllowedForBooking({
       soleOccupancy: soleOccupancyBookingIds.has(booking.id),
       containsMinors,
-      organiserAgeTier: booking.member.ageTier,
+      organiserAgeTier: bookingOwner(booking).member.ageTier,
       granularity,
     });
 
@@ -871,7 +872,7 @@ export async function buildDisplayState(
       const namesAllowed = namesAllowedForBooking({
         soleOccupancy: soleOccupancyBookingIds.has(assignment.booking.id),
         containsMinors: bookingContainsMinors,
-        organiserAgeTier: assignment.booking.member.ageTier,
+        organiserAgeTier: bookingOwner(assignment.booking).member.ageTier,
         granularity,
       });
       if (namesAllowed) {
@@ -886,7 +887,7 @@ export async function buildDisplayState(
         // organisation organiser, or counts-only): fall back to the
         // booking's reduced group label rather than the assignee's name.
         assigneeLabels = [
-          bookingLabel(assignment.booking.member, {
+          bookingLabel(bookingOwner(assignment.booking).member, {
             granularity,
             containsMinors: bookingContainsMinors,
             guestCount: assignment.booking.guests.length,

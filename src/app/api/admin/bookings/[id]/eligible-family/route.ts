@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { resolveMemberFamily } from "@/lib/resolve-member-family";
@@ -37,7 +38,7 @@ export async function GET(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  const family = await resolveMemberFamily(booking.memberId);
+  const family = await resolveMemberFamily(bookingOwner(booking).memberId);
   if (!family) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
 import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
@@ -178,7 +179,7 @@ async function handleGet(req: NextRequest, dateStr: string) {
 
       return {
         bookingId: b.id,
-        memberName: `${b.member.firstName} ${b.member.lastName}`,
+        memberName: `${bookingOwner(b).member.firstName} ${bookingOwner(b).member.lastName}`,
         expectedArrivalTime: b.expectedArrivalTime,
         // #1422: flag (don't hide) a booking blocked by a pending admin review.
         // The kiosk shows a "see Booking Officer" note and disables its arrival

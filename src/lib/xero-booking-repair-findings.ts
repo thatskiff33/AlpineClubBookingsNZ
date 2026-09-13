@@ -1,6 +1,7 @@
 // Action and finding builders (including Xero amount-evidence mismatch
 // detection and booking summary assembly) for the booking-vs-Xero repair tool.
 // Extracted verbatim from xero-booking-repair.ts (#1208 item 2).
+import { bookingOwner } from "@/lib/booking-owner";
 import type { XeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import type {
   BookingClassificationContext,
@@ -352,9 +353,9 @@ export function buildBookingSummary(
     bookingStatus: context.booking.status,
     paymentId: context.booking.payment?.id ?? null,
     paymentStatus: context.booking.payment?.status ?? null,
-    memberId: context.booking.memberId,
+    memberId: bookingOwner(context.booking).memberId,
     memberName: buildMemberName(context.booking),
-    memberEmail: context.booking.member.email,
+    memberEmail: bookingOwner(context.booking).member.email,
     checkIn: toIsoDate(context.booking.checkIn),
     checkOut: toIsoDate(context.booking.checkOut),
     findings: findings.map((finding) => ({

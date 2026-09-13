@@ -6,6 +6,7 @@ import {
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
@@ -497,7 +498,7 @@ export async function resolveManualRefundTask(
           // Its exactly-once key is the `BookingModification` id (D-3032-1), and
           // it writes the refund allocation itself when handed a payment id.
           await createBookingModificationCredit(
-            task.booking.memberId,
+            bookingOwner(task.booking).memberId,
             settlement.amountCents,
             task.bookingId,
             settlementRoute.bookingModificationId,
@@ -653,7 +654,7 @@ export async function resolveManualRefundTask(
       settlementAmountCents: settlement?.amountCents ?? null,
       /** #3170: which way this completion sent the money, or null on a dismissal. */
       settlementDirection: settlement ? settlementDirection : null,
-      memberId: task.booking.memberId,
+      memberId: bookingOwner(task.booking).memberId,
       /**
        * #3032: the two facts the post-commit Xero dispatch needs, read under the
        * same transaction as everything else rather than re-queried afterwards.

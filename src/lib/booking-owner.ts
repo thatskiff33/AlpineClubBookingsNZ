@@ -114,13 +114,22 @@
  * The narrowest thing that can be asked who owns it.
  *
  * A booking row, or any selection of one that loaded the member link, the
- * member id, or both. Written as a union rather than as two optional fields so
- * that a value carrying NEITHER is a compile error instead of a view with
- * nothing in it.
+ * member id, or both — including the hand-written projections of a booking that
+ * already declare the id nullable or optional. Both fields are optional HERE
+ * and the guarantee is enforced on the way out instead: {@link BookingOwnerView}
+ * exposes only the keys the caller's own type carries, so a value that has
+ * neither produces a view with nothing readable on it. That is the safety
+ * property worth having — you cannot read a field Prisma never fetched — and it
+ * is the one an optional property cannot express on the way in, because an
+ * optional `memberId` and an absent one are the same type.
+ *
+ * Nothing here widens a caller's answer: the view reports the id exactly as
+ * that caller's own type declares it, `undefined` and `null` included.
  */
-export type BookingOwnerSource =
-  | { readonly memberId: string }
-  | { readonly member: unknown };
+export type BookingOwnerSource = {
+  readonly memberId?: string | null;
+  readonly member?: unknown;
+};
 
 /**
  * What {@link bookingOwner} hands back for a given source shape: exactly the
@@ -131,10 +140,10 @@ export type BookingOwnerSource =
  * runtime, which is the class of failure this module exists to make unreachable
  * by accident.
  */
-export type BookingOwnerView<B> = (B extends { memberId: infer I }
-  ? { readonly memberId: I }
+export type BookingOwnerView<B> = ("memberId" extends keyof B
+  ? { readonly memberId: B["memberId"] }
   : unknown) &
-  (B extends { member: infer M } ? { readonly member: M } : unknown);
+  ("member" extends keyof B ? { readonly member: B["member"] } : unknown);
 
 /**
  * THE ACCESSOR. Who owns this booking?

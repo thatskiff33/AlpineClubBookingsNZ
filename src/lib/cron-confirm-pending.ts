@@ -7,6 +7,7 @@ import {
   Prisma,
 } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
@@ -389,9 +390,9 @@ async function queueXeroInvoice(bookingId: string, logMessage: string) {
 async function sendConfirmationEmail(booking: PendingBooking) {
   try {
     await sendBookingConfirmedEmail(
-      { bookingId: booking.id, recipientMemberId: booking.memberId },
-      booking.member.email,
-      booking.member.firstName,
+      { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+      bookingOwner(booking).member.email,
+      bookingOwner(booking).member.firstName,
       booking.checkIn,
       booking.checkOut,
       booking.guests.length,
@@ -410,18 +411,18 @@ async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
   try {
     if (flagged) {
       await sendBookingGuestsCancelledEmail(
-        { bookingId: booking.id, recipientMemberId: booking.memberId },
-        booking.member.email,
-        booking.member.firstName,
+        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+        bookingOwner(booking).member.email,
+        bookingOwner(booking).member.firstName,
         booking.checkIn,
         booking.checkOut,
         booking.lodgeId
       );
     } else {
       await sendBookingBumpedEmail(
-        { bookingId: booking.id, recipientMemberId: booking.memberId },
-        booking.member.email,
-        booking.member.firstName,
+        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+        bookingOwner(booking).member.email,
+        bookingOwner(booking).member.firstName,
         booking.checkIn,
         booking.checkOut,
         booking.guests.length,
@@ -433,7 +434,7 @@ async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
         // booking request (#707) — or any non-login contact an admin booked for
         // — cannot, so the notice points them at the club contact page instead
         // of the members-only booking flow.
-        booking.member.canLogin
+        bookingOwner(booking).member.canLogin
       );
     }
   } catch (emailErr) {
@@ -1252,7 +1253,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         if (shouldAlertOnSplitSettlementExtension(extensionNumber)) {
           try {
             await sendAdminBookingRequestHoldExpiredEmail({
-              requesterName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+              requesterName: `${bookingOwner(resolution.booking).member.firstName} ${bookingOwner(resolution.booking).member.lastName}`,
               checkIn: resolution.booking.checkIn,
               checkOut: resolution.booking.checkOut,
               guestCount: resolution.booking.guests.length,
@@ -1297,10 +1298,10 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           await sendBookingRequestPaymentExpiredEmail({
             bookingContext: {
               bookingId: resolution.booking.id,
-              recipientMemberId: resolution.booking.memberId,
+              recipientMemberId: bookingOwner(resolution.booking).memberId,
             },
-            email: resolution.booking.member.email,
-            firstName: resolution.booking.member.firstName,
+            email: bookingOwner(resolution.booking).member.email,
+            firstName: bookingOwner(resolution.booking).member.firstName,
             checkIn: resolution.booking.checkIn,
             checkOut: resolution.booking.checkOut,
             lodgeId: resolution.booking.lodgeId,
@@ -1318,7 +1319,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         try {
           await sendAdminBookingRequestHoldCancelledEmail({
-            requesterName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+            requesterName: `${bookingOwner(resolution.booking).member.firstName} ${bookingOwner(resolution.booking).member.lastName}`,
             checkIn: resolution.booking.checkIn,
             checkOut: resolution.booking.checkOut,
             guestCount: resolution.booking.guests.length,
@@ -1362,9 +1363,9 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         try {
           await sendSplitGuestPortionCancelledEmail({
             bookingId: resolution.booking.id,
-            recipientMemberId: resolution.booking.memberId,
-            email: resolution.booking.member.email,
-            firstName: resolution.booking.member.firstName,
+            recipientMemberId: bookingOwner(resolution.booking).memberId,
+            email: bookingOwner(resolution.booking).member.email,
+            firstName: bookingOwner(resolution.booking).member.firstName,
             checkIn: resolution.booking.checkIn,
             checkOut: resolution.booking.checkOut,
             // parentUnpaid conflates unpaid/cancelled/bumped parents, so only
@@ -1387,7 +1388,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         try {
           await sendAdminSplitSettlementCancelledAlert({
-            memberName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+            memberName: `${bookingOwner(resolution.booking).member.firstName} ${bookingOwner(resolution.booking).member.lastName}`,
             checkIn: resolution.booking.checkIn,
             checkOut: resolution.booking.checkOut,
             guestCount: resolution.booking.guests.length,
@@ -1427,7 +1428,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             bookingId: resolution.booking.id,
             templateName: SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
             subject: "Pay for your guests to confirm their place",
-            to: resolution.booking.member.email,
+            to: bookingOwner(resolution.booking).member.email,
             detail:
               'Withheld: this booking has the "No emails" switch turned on. No payment link was created.',
             once: true,
@@ -1453,10 +1454,10 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             const emailOutcome = await sendSplitGuestPaymentLinkEmail({
               bookingContext: {
                 bookingId: resolution.booking.id,
-                recipientMemberId: resolution.booking.memberId,
+                recipientMemberId: bookingOwner(resolution.booking).memberId,
               },
-              email: resolution.booking.member.email,
-              firstName: resolution.booking.member.firstName,
+              email: bookingOwner(resolution.booking).member.email,
+              firstName: bookingOwner(resolution.booking).member.firstName,
               token,
               checkIn: resolution.booking.checkIn,
               checkOut: resolution.booking.checkOut,
@@ -1524,7 +1525,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         if (shouldAlertOnSplitSettlementExtension(extensionNumber)) {
           try {
             await sendAdminSplitSettlementUnpaidAlert({
-              memberName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+              memberName: `${bookingOwner(resolution.booking).member.firstName} ${bookingOwner(resolution.booking).member.lastName}`,
               checkIn: resolution.booking.checkIn,
               checkOut: resolution.booking.checkOut,
               guestCount: resolution.booking.guests.length,
@@ -1566,7 +1567,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         if (shouldAlertOnSplitSettlementExtension(extensionNumber)) {
           try {
             await sendAdminSplitSettlementUnpaidAlert({
-              memberName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+              memberName: `${bookingOwner(resolution.booking).member.firstName} ${bookingOwner(resolution.booking).member.lastName}`,
               checkIn: resolution.booking.checkIn,
               checkOut: resolution.booking.checkOut,
               guestCount: resolution.booking.guests.length,
@@ -1618,7 +1619,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       const paymentIntent = await chargeSavedCardAttempt({
         attempt: resolution.attempt,
         bookingId: resolution.booking.id,
-        memberId: resolution.booking.memberId,
+        memberId: bookingOwner(resolution.booking).memberId,
         amountCents: resolution.booking.finalPriceCents,
         card: resolution.payment,
       });
@@ -1857,7 +1858,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         result.failedBookingIds.push(candidate.id);
         if (alert) {
           sendAdminPaymentFailureAlert({
-            memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
+            memberName: `${bookingOwner(candidate).member.firstName} ${bookingOwner(candidate).member.lastName}`,
             checkIn: candidate.checkIn,
             checkOut: candidate.checkOut,
             amountCents: candidate.finalPriceCents,
@@ -1950,7 +1951,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         }
         if (!escalatedAsTerminal) {
           sendAdminPaymentFailureAlert({
-            memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
+            memberName: `${bookingOwner(candidate).member.firstName} ${bookingOwner(candidate).member.lastName}`,
             checkIn: candidate.checkIn,
             checkOut: candidate.checkOut,
             amountCents: candidate.finalPriceCents,

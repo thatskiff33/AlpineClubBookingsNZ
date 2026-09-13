@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import {
   MemberLifecycleAction,
@@ -744,7 +745,7 @@ export default async function AdminDashboardPage() {
                   >
                     <div className="min-w-0">
                       <p className="font-medium text-sm truncate">
-                        {booking.member.firstName} {booking.member.lastName}
+                        {bookingOwner(booking).member.firstName} {bookingOwner(booking).member.lastName}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {formatClubDayMonth(

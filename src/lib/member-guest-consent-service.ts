@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -646,7 +647,7 @@ export async function expireMemberGuestConsent(params: {
         // receives the credit; the true actor is recorded separately in the audit
         // log as `cron:member-guest-consent-expiry`. The target's id is NOT used —
         // writing it here would attribute to them an act they did not take.
-        actorMemberId: guest.booking.memberId,
+        actorMemberId: bookingOwner(guest.booking).memberId,
         kind: "CONSENT_EXPIRY",
         settlementMethod: "credit",
         today: clubTodayDateOnly,
@@ -1057,13 +1058,13 @@ async function notifyMemberGuestConsentOutcome(params: {
                   ),
                 };
 
-    if (booking.member?.email) {
+    if (bookingOwner(booking).member?.email) {
       try {
         await sendMemberGuestConsentOutcomeEmail({
           bookingId,
-          recipient: { kind: "member", memberId: booking.member.id },
-          email: booking.member.email,
-          firstName: booking.member.firstName ?? "",
+          recipient: { kind: "member", memberId: bookingOwner(booking).member.id },
+          email: bookingOwner(booking).member.email,
+          firstName: bookingOwner(booking).member.firstName ?? "",
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           lodgeId: booking.lodgeId,
@@ -1126,7 +1127,7 @@ async function notifyMemberGuestConsentOutcome(params: {
 
     if (lapsed) {
       const bookerName =
-        [booking.member?.firstName, booking.member?.lastName]
+        [bookingOwner(booking).member?.firstName, bookingOwner(booking).member?.lastName]
           .filter(Boolean)
           .join(" ")
           .trim() || "the person who made the booking";

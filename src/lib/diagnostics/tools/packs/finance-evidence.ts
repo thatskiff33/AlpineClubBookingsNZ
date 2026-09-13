@@ -122,6 +122,7 @@ import {
   hasCapturedPayment,
   isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
+import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import {
   deriveBookingAppliedCreditCents,
@@ -555,7 +556,7 @@ async function assembleBookingFinanceState(
     await Promise.all([
       deriveBookingAppliedCreditCents(bookingId, tx),
       readCancellationCredits(tx, bookingId),
-      getMemberCreditBalance(booking.memberId, tx),
+      getMemberCreditBalance(bookingOwner(booking).memberId, tx),
     ]);
 
   const [xeroActivity, refundPosture, primaryInvoiceLinked] = await Promise.all([

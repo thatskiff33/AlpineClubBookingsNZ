@@ -18,6 +18,7 @@
 import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
 import { CreditType } from "@prisma/client";
 import { prisma } from "./prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -263,7 +264,7 @@ export async function createXeroCreditNote(
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   // Ensure the member has a Xero contact
-  const contactId = await findOrCreateXeroContact(payment.booking.memberId, options);
+  const contactId = await findOrCreateXeroContact(bookingOwner(payment.booking).memberId, options);
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
 
@@ -345,7 +346,7 @@ export async function createXeroCreditNote(
 
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: payment.booking.memberId,
+      memberId: bookingOwner(payment.booking).memberId,
       currentContactId: contactId,
       workflow: "createXeroCreditNote",
       operationId: operationId!,
@@ -605,7 +606,7 @@ export async function createUnappliedXeroCreditNote(
   if (existingLink?.xeroObjectId) {
     if (bookingModificationId) {
       await backfillBookingModificationCreditXeroNote({
-        memberId: payment.booking.memberId,
+        memberId: bookingOwner(payment.booking).memberId,
         bookingId: payment.booking.id,
         bookingModificationId,
         refundAmountCents,
@@ -613,7 +614,7 @@ export async function createUnappliedXeroCreditNote(
       });
     } else {
       await backfillCancellationCreditXeroNote({
-        memberId: payment.booking.memberId,
+        memberId: bookingOwner(payment.booking).memberId,
         bookingId: payment.booking.id,
         refundAmountCents,
         creditNoteId: existingLink.xeroObjectId,
@@ -650,7 +651,7 @@ export async function createUnappliedXeroCreditNote(
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(payment.booking.memberId, options);
+  const contactId = await findOrCreateXeroContact(bookingOwner(payment.booking).memberId, options);
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
 
@@ -719,7 +720,7 @@ export async function createUnappliedXeroCreditNote(
 
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: payment.booking.memberId,
+      memberId: bookingOwner(payment.booking).memberId,
       currentContactId: contactId,
       workflow: "createUnappliedXeroCreditNote",
       operationId: operationId!,
@@ -754,7 +755,7 @@ export async function createUnappliedXeroCreditNote(
 
     if (bookingModificationId) {
       await backfillBookingModificationCreditXeroNote({
-        memberId: payment.booking.memberId,
+        memberId: bookingOwner(payment.booking).memberId,
         bookingId: payment.booking.id,
         bookingModificationId,
         refundAmountCents,
@@ -762,7 +763,7 @@ export async function createUnappliedXeroCreditNote(
       });
     } else {
       await backfillCancellationCreditXeroNote({
-        memberId: payment.booking.memberId,
+        memberId: bookingOwner(payment.booking).memberId,
         bookingId: payment.booking.id,
         refundAmountCents,
         creditNoteId: createdNote.creditNoteID,

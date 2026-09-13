@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getLodgeCapacity, getMonthAvailability } from "@/lib/capacity";
@@ -138,7 +139,7 @@ export async function GET(request: NextRequest) {
 
     const result = bookings.map((b) => ({
       id: b.id,
-      memberName: `${b.member.firstName} ${b.member.lastName}`,
+      memberName: `${bookingOwner(b).member.firstName} ${bookingOwner(b).member.lastName}`,
       // Lodge nights, so the wire shape is the stored calendar day with no
       // zone conversion (CT-4, #2870). The zoned encoder this replaced read a
       // `@db.Date` value as if it were a moment.

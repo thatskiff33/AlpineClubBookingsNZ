@@ -7,6 +7,7 @@ import {
   resolveAdditionalPaymentChase,
   type AdditionalPaymentReminderKind,
 } from "@/lib/additional-payment-chase";
+import { bookingOwner } from "@/lib/booking-owner";
 import { readBookingNoEmails } from "@/lib/booking-email-suppression";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -200,7 +201,7 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
       continue;
     }
 
-    if (!(await canReceiveChaseEmail(found.member.email, found.id))) {
+    if (!(await canReceiveChaseEmail(bookingOwner(found).member.email, found.id))) {
       result.suppressedBookingIds.push(found.id);
       continue;
     }
@@ -252,9 +253,9 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
     try {
       const outcome = await sendAdditionalPaymentReminderEmail({
         bookingId: booking.id,
-        recipientMemberId: booking.memberId,
-        email: booking.member.email,
-        firstName: booking.member.firstName,
+        recipientMemberId: bookingOwner(booking).memberId,
+        email: bookingOwner(booking).member.email,
+        firstName: bookingOwner(booking).member.firstName,
         additionalAmountCents,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,

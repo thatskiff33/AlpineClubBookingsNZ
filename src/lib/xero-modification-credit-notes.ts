@@ -9,6 +9,7 @@
 
 import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
 import { prisma } from "./prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -78,7 +79,7 @@ export async function createXeroCreditNoteForModification(params: {
   const originalInvoiceId = booking.payment.xeroInvoiceId;
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(booking.memberId, {
+  const contactId = await findOrCreateXeroContact(bookingOwner(booking).memberId, {
     createdByMemberId,
     repairExistingLink,
   });
@@ -154,7 +155,7 @@ export async function createXeroCreditNoteForModification(params: {
 
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       currentContactId: contactId,
       workflow: "createXeroCreditNoteForModification",
       operationId: operationId!,

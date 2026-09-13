@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import {
@@ -306,8 +307,8 @@ export async function POST(
           success: true as const,
           memberId: key.memberId,
           lodgeId: key.lodgeId,
-          email: booking.member.email,
-          firstName: booking.member.firstName,
+          email: bookingOwner(booking).member.email,
+          firstName: bookingOwner(booking).member.firstName,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           waitlistPosition,
@@ -338,7 +339,7 @@ export async function POST(
     // `bookingOwnerEmailContext`, so the per-booking "No emails" switch
     // withholds it without this route branching on it.
     sendWaitlistPlaceRestoredEmail(
-      { bookingId, recipientMemberId: result.memberId },
+      { bookingId, recipientMemberId: bookingOwner(result).memberId },
       result.email,
       result.firstName,
       result.checkIn,

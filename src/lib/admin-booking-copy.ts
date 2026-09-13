@@ -1,5 +1,6 @@
 import type { AgeTier } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { ApiError } from "@/lib/api-error";
@@ -72,7 +73,7 @@ export async function copyBookingToDraft({
   if (source.deletedAt) {
     throw new ApiError("Deleted bookings cannot be copied", 400);
   }
-  if (!source.member.active) {
+  if (!bookingOwner(source).member.active) {
     throw new ApiError("The booking member is inactive", 400);
   }
   if (source.guests.length === 0) {
@@ -124,7 +125,7 @@ export async function copyBookingToDraft({
   try {
     resolved = await resolveLinkedBookingMembersWithBoundary(
       prisma,
-      source.memberId,
+      bookingOwner(source).memberId,
       memberGuestIds,
       {
         skipAuthorization: true,
@@ -137,7 +138,7 @@ export async function copyBookingToDraft({
       adminMemberId,
       {
         actorRole: "ADMIN",
-        onBehalfOfMemberId: source.memberId,
+        onBehalfOfMemberId: bookingOwner(source).memberId,
         // D-8: a blocked cross-family member is refused neutrally, even here —
         // the admin copying the booking may be looking at a member whose details
         // the source booking's owner should not have handed over in the first
@@ -212,7 +213,7 @@ export async function copyBookingToDraft({
   const guests = consentPlan.guests;
 
   const booking = await createDraftBooking({
-    effectiveMemberId: source.memberId,
+    effectiveMemberId: bookingOwner(source).memberId,
     isOnBehalf: true,
     sessionUserId: adminMemberId,
     // A copy stays at the source booking's authoritative lodge. Omitting this
@@ -304,7 +305,7 @@ export async function copyBookingToDraft({
     action: "booking.copy.created",
     memberId: adminMemberId,
     targetId: booking.id,
-    subjectMemberId: source.memberId,
+    subjectMemberId: bookingOwner(source).memberId,
     entityType: "Booking",
     entityId: booking.id,
     category: "booking",

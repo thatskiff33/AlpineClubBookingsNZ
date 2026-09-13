@@ -1,4 +1,5 @@
 import type { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
@@ -120,7 +121,7 @@ export async function getAdminOccupancyMonth(input: {
     const bookingSummary: OccupancyBookingSummary = {
       id: booking.id,
       reference: formatBookingReference(booking.id),
-      ownerName: ownerName(booking.member),
+      ownerName: ownerName(bookingOwner(booking).member),
       checkIn: formatDateOnly(booking.checkIn),
       checkOut: formatDateOnly(booking.checkOut),
       guestCount: booking.guests.length,

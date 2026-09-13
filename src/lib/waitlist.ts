@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
+import { bookingOwner } from "@/lib/booking-owner";
 import { addDaysDateOnly } from "@/lib/date-only";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
@@ -217,7 +218,7 @@ async function repriceWaitlistCandidate(
     }));
 
     const priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-      ownerMemberId: candidate.memberId,
+      ownerMemberId: bookingOwner(candidate).memberId,
       checkIn: candidate.checkIn,
       checkOut: candidate.checkOut,
       guests: guestsForPricing,
@@ -572,14 +573,14 @@ export async function processWaitlistForDates(freedDates: {
           // booking at the offered lodge costs, re-checked at confirm.
           const eligible = await isMemberEligibleToBookLodge(
             tx,
-            candidate.memberId,
+            bookingOwner(candidate).memberId,
             offerLodgeId,
           );
           if (!eligible) continue;
           const quote = await quoteWaitlistEntryAtLodge(
             tx,
             {
-              memberId: candidate.memberId,
+              memberId: bookingOwner(candidate).memberId,
               checkIn: candidate.checkIn,
               checkOut: candidate.checkOut,
               guests: candidate.guests,
@@ -649,15 +650,15 @@ export async function processWaitlistForDates(freedDates: {
         });
 
         offerDetails = {
-          email: candidate.member.email,
-          firstName: candidate.member.firstName,
+          email: bookingOwner(candidate).member.email,
+          firstName: bookingOwner(candidate).member.firstName,
           checkIn: candidate.checkIn,
           checkOut: candidate.checkOut,
           guestCount: candidate.guests.length,
           expiresAt,
           bookingId: candidate.id,
-          memberId: candidate.memberId,
-          memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
+          memberId: bookingOwner(candidate).memberId,
+          memberName: `${bookingOwner(candidate).member.firstName} ${bookingOwner(candidate).member.lastName}`,
           position: position + 1,
           lodgeId: candidate.lodgeId,
           finalPriceCents: offerPriceCents,
@@ -695,7 +696,7 @@ export async function processWaitlistForDates(freedDates: {
         // path below, which is where the refusal lives; this call reads only the
         // rate notice, and that notice is keyed on an actual reprice, so an
         // unfinancial owner who holds no bed changes nothing here.
-        bookingOwnerMemberId: offerDetails.memberId,
+        bookingOwnerMemberId: bookingOwner(offerDetails).memberId,
         participants: toSubscriptionLockoutParticipants(
           await prisma.bookingGuest.findMany({
             where: { bookingId: offerDetails.bookingId },
@@ -713,7 +714,7 @@ export async function processWaitlistForDates(freedDates: {
     sendWaitlistOfferEmail(
       {
         bookingId: offerDetails.bookingId,
-        recipientMemberId: offerDetails.memberId,
+        recipientMemberId: bookingOwner(offerDetails).memberId,
       },
       offerDetails.email,
       offerDetails.firstName,
@@ -748,7 +749,7 @@ export async function processWaitlistForDates(freedDates: {
       action: "waitlist.offer_sent",
       memberId: null,
       targetId: offerDetails.bookingId,
-      subjectMemberId: offerDetails.memberId,
+      subjectMemberId: bookingOwner(offerDetails).memberId,
       entityType: "Booking",
       entityId: offerDetails.bookingId,
       category: "booking",
@@ -929,7 +930,7 @@ export async function confirmWaitlistOffer(
   // ownership, status and expiry regardless.
   if (
     offerKind &&
-    offerKind.memberId === memberId &&
+    bookingOwner(offerKind).memberId === memberId &&
     offerKind.status === BookingStatus.WAITLIST_OFFERED &&
     // An already-expired offer keeps its existing "offer has expired" answer
     // from the transaction below rather than being re-explained as a refusal.
@@ -1003,7 +1004,7 @@ export async function confirmWaitlistOffer(
       // Owner decision, 3 Aug 2026. The guard above has already established that
       // this offer belongs to `memberId`, so the booking's owner is the member
       // confirming it.
-      bookingOwnerMemberId: offerKind.memberId,
+      bookingOwnerMemberId: bookingOwner(offerKind).memberId,
       participants: toSubscriptionLockoutParticipants(
         await prisma.bookingGuest.findMany({ where: { bookingId } }),
       ),
@@ -1071,7 +1072,7 @@ export async function confirmWaitlistOffer(
         return { success: false, error: "Booking not found" };
       }
 
-      if (booking.memberId !== memberId) {
+      if (bookingOwner(booking).memberId !== memberId) {
         return { success: false, error: "Forbidden" };
       }
 
@@ -1390,9 +1391,9 @@ export async function expireStaleOffers(): Promise<{
 
   for (const offer of staleOffers) {
     sendWaitlistOfferExpiredEmail(
-      { bookingId: offer.id, recipientMemberId: offer.memberId },
-      offer.member.email,
-      offer.member.firstName,
+      { bookingId: offer.id, recipientMemberId: bookingOwner(offer).memberId },
+      bookingOwner(offer).member.email,
+      bookingOwner(offer).member.firstName,
       offer.checkIn,
       offer.checkOut,
       offer.newPosition,
@@ -1403,7 +1404,7 @@ export async function expireStaleOffers(): Promise<{
       action: "waitlist.offer_expired",
       memberId: null,
       targetId: offer.id,
-      subjectMemberId: offer.memberId,
+      subjectMemberId: bookingOwner(offer).memberId,
       entityType: "Booking",
       entityId: offer.id,
       category: "booking",

@@ -32,6 +32,7 @@
  * idempotency chain (#3266) depends on the previous id staying put, and the
  * customer is still the member's customer.
  */
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import { detachPaymentMethod } from "./stripe";
@@ -395,9 +396,9 @@ export async function retireAndEscalateUnusableSavedCard(params: {
   try {
     await sendSavedCardChargeFailedEmail({
       bookingId: booking.id,
-      recipientMemberId: booking.memberId,
-      email: booking.member.email,
-      firstName: booking.member.firstName,
+      recipientMemberId: bookingOwner(booking).memberId,
+      email: bookingOwner(booking).member.email,
+      firstName: bookingOwner(booking).member.firstName,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       lodgeId: booking.lodgeId,
@@ -411,7 +412,7 @@ export async function retireAndEscalateUnusableSavedCard(params: {
 
   try {
     await sendAdminPaymentFailureAlert({
-      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       amountCents: booking.finalPriceCents,

@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import type {
@@ -118,7 +119,7 @@ async function loadBookingBlockersByMemberId(
   ]);
 
   for (const booking of ownedBookings) {
-    blockersByMemberId.get(booking.memberId)?.push({
+    blockersByMemberId.get(bookingOwner(booking).memberId)?.push({
       type: "owned_booking",
       bookingId: booking.id,
       bookingStatus: booking.status,

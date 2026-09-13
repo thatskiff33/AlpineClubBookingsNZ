@@ -8,6 +8,7 @@ import {
   coverageDependentEnvelopeWhere,
   coverageEnvelopeWhere,
 } from "@/lib/adult-member-hosting-coverage-envelope";
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { bookingsOverlap } from "@/lib/booking-night-overlap";
@@ -90,7 +91,7 @@ export function sameBookingOwnerCoverageSourceWhere(
   // The Group Trip scope's relationship is an `OR` and must compose under `AND`.
   return {
     ...coverageEnvelopeWhere(booking, options),
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
   };
 }
 
@@ -133,7 +134,7 @@ export function sameOwnerCoverageDependentWhere(
 ): Prisma.BookingWhereInput {
   return {
     ...coverageDependentEnvelopeWhere(booking),
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
   };
 }
 
@@ -163,7 +164,7 @@ export function sameOwnerCoverageDependentOverStayUnionWhere(
 ): Prisma.BookingWhereInput {
   return {
     ...coverageDependentEnvelopeOverStayUnionWhere(booking, vacated),
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
   };
 }
 

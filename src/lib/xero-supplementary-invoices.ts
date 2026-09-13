@@ -14,6 +14,7 @@ import {
   Payment as XeroPayment,
 } from "xero-node";
 import { prisma } from "./prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { asRecord } from "@/lib/xero-json";
@@ -147,7 +148,7 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(booking.memberId, {
+  const contactId = await findOrCreateXeroContact(bookingOwner(booking).memberId, {
     createdByMemberId,
     repairExistingLink,
   });
@@ -333,7 +334,7 @@ export async function createXeroSupplementaryInvoice(params: {
 
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       currentContactId: contactId,
       workflow: "createXeroSupplementaryInvoice",
       operationId: operationId!,

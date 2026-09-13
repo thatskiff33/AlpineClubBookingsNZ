@@ -3,6 +3,7 @@ import {
   toEditFinancialReviewEvidence,
   type EditFinancialReviewEvidence,
 } from "@/lib/edit-financial-review-context";
+import { bookingOwner } from "@/lib/booking-owner";
 import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
 
 /**
@@ -91,7 +92,7 @@ export type OpenManualRefundTaskPayload = {
 };
 
 function memberName(booking: QueueBookingSummary): string {
-  return `${booking.member.firstName} ${booking.member.lastName}`;
+  return `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`;
 }
 
 /**
@@ -149,7 +150,7 @@ export function toOpenManualRefundTaskPayload(
     viewerOwnsBooking:
       viewerMemberId != null &&
       task.booking.deletedAt === null &&
-      task.booking.memberId === viewerMemberId,
+      bookingOwner(task.booking).memberId === viewerMemberId,
     reviewEvidence: reviewContext
       ? toEditFinancialReviewEvidence(reviewContext)
       : null,

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Prisma, type BedAllocationSource } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
@@ -469,7 +470,7 @@ async function loadPreviewState(
       approvedRows.some((row) => row.bookingId === bookingId),
   );
   const bookingMemberName = new Map(
-    matchingRows.map((row) => [row.bookingId, personName(row.booking.member)]),
+    matchingRows.map((row) => [row.bookingId, personName(bookingOwner(row.booking).member)]),
   );
 
   const categoryCounts: Record<BedAllocationRemovalCategory, number> = {

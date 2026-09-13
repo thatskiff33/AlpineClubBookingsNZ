@@ -14,6 +14,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 import type { CalendarDate } from "@/lib/club-time";
 import {
@@ -795,7 +796,7 @@ export async function prepareGuestPlan(
   const { members: linkedMembers, boundary } =
     await resolveLinkedBookingMembersWithBoundary(
       tx,
-      booking.memberId,
+      bookingOwner(booking).memberId,
       [
         ...(input.addGuests ?? []).map((guest) => guest.memberId),
         ...guestMemberLinks.map((link) => link.memberId),
@@ -811,10 +812,10 @@ export async function prepareGuestPlan(
     // Judged as the booking's own member when the caller asked for member
     // semantics: the profile/bookability gate answers "can THIS person add that
     // member", and for an approved exception request that person is the booker.
-    guestAuthorizationIsAdmin ? actorId : booking.memberId,
+    guestAuthorizationIsAdmin ? actorId : bookingOwner(booking).memberId,
     {
     actorRole: guestAuthorizationRole,
-    onBehalfOfMemberId: guestAuthorizationIsAdmin ? booking.memberId : null,
+    onBehalfOfMemberId: guestAuthorizationIsAdmin ? bookingOwner(booking).memberId : null,
     // D-8: a blocked cross-family member is refused neutrally.
     crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
     },
@@ -1030,7 +1031,7 @@ export async function prepareGuestPlan(
   // rather than the persisted consent columns.
   const guestsForPricing = await markCrossFamilyGuestsOnBooking(
     tx,
-    booking.memberId,
+    bookingOwner(booking).memberId,
     proposedGuestRows,
     // `bookingId` arms the owner's gate (finding 4) — see
     // `markCrossFamilyGuestsOnBooking`.
@@ -1094,7 +1095,7 @@ export async function prepareGuestPlan(
 
   if (!guestAuthorizationIsAdmin) {
     const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
-      bookingMemberId: booking.memberId,
+      bookingMemberId: bookingOwner(booking).memberId,
       checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
       guests: normalizedAddGuests ?? [],
     });
@@ -1136,7 +1137,7 @@ export async function prepareGuestPlan(
       // Owner decision, 3 Aug 2026. On the apply path this also closes the
       // removal shape of the same hole: an unfinancial owner cannot take their own
       // row off and leave a party they still own with nobody paid-up on it.
-      bookingOwnerMemberId: booking.memberId,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
       participants: guestsForPricing.map((guest) => ({
         isMember: guest.isMember,
         memberId: guest.memberId ?? null,
@@ -1626,7 +1627,7 @@ export async function calculateModifiedPricing(
 ): Promise<PricingResult> {
   const seasonYear = seasonYearOfStoredDate(newCheckIn);
   await assertMembershipTypeBookingAllowed(tx, {
-    ownerMemberId: booking.memberId,
+    ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,
     seasonYear,
     skipAuthorization,
@@ -1862,7 +1863,7 @@ export async function calculateModifiedPricing(
       };
     } else {
       const priced = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-          ownerMemberId: booking.memberId,
+          ownerMemberId: bookingOwner(booking).memberId,
           checkIn: newCheckIn,
           checkOut: newCheckOut,
           guests: policyAdjustedGuestsForPricing,
@@ -2290,7 +2291,7 @@ export async function applyPromoCodeChanges(
     const application = await validateAndCalculatePromoDiscount(
       promoCode,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,
@@ -2327,7 +2328,7 @@ export async function applyPromoCodeChanges(
         tx,
         promoCode.id,
         bookingId,
-        booking.memberId,
+        bookingOwner(booking).memberId,
         newDiscountCents,
         newPromoAdjustmentCents,
         promoResult.freeNightsUsed,
@@ -2361,7 +2362,7 @@ export async function applyPromoCodeChanges(
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,

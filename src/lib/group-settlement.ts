@@ -32,6 +32,7 @@ import {
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -1041,10 +1042,10 @@ async function settleConfirmedChildrenAndNotify(
         await sendGroupJoinSettledEmail({
           bookingContext: {
             bookingId: booking.id,
-            recipientMemberId: booking.memberId,
+            recipientMemberId: bookingOwner(booking).memberId,
           },
-          email: booking.member.email,
-          firstName: booking.member.firstName,
+          email: bookingOwner(booking).member.email,
+          firstName: bookingOwner(booking).member.firstName,
           organiserName,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,

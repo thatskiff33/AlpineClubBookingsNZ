@@ -9,6 +9,7 @@ import {
 } from "@prisma/client";
 
 import type { BookingGuestNightPriceSource } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { logAudit } from "@/lib/audit";
@@ -372,7 +373,7 @@ export async function modifyBookingDates({
       throw new ApiError("Booking not found", 404);
     }
 
-    if (booking.memberId !== actor.id && actor.role !== "ADMIN") {
+    if (bookingOwner(booking).memberId !== actor.id && actor.role !== "ADMIN") {
       throw new ApiError("Forbidden", 403);
     }
     await assertBookingNotQuotePriced(tx, bookingId);
@@ -576,7 +577,7 @@ export async function modifyBookingDates({
     }));
     const seasonYear = seasonYearOfStoredDate(newCheckIn);
     await assertMembershipTypeBookingAllowed(tx, {
-      ownerMemberId: booking.memberId,
+      ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,
       seasonYear,
       // Finding 2 (privacy re-review of MG3 #2308) — see
@@ -590,7 +591,7 @@ export async function modifyBookingDates({
     let priceBreakdown;
     try {
       priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         checkIn: newCheckIn,
         checkOut: newCheckOut,
         guests: guestsForPricing,
@@ -646,7 +647,7 @@ export async function modifyBookingDates({
     };
     const guestsForMemberNightGuard = await markCrossFamilyGuestsOnBooking(
       tx,
-      booking.memberId,
+      bookingOwner(booking).memberId,
       booking.guests.map((g, index) => ({
         memberId: g.memberId ?? null,
         stayStart: newCheckIn,
@@ -785,7 +786,7 @@ export async function modifyBookingDates({
       const application = await validateAndCalculatePromoDiscount(
         promo,
         {
-          memberId: booking.memberId,
+          memberId: bookingOwner(booking).memberId,
           bookingCheckIn: newCheckIn,
           totalPriceCents: newTotalPriceCents,
           guests: guestNightRates,
@@ -975,7 +976,7 @@ export async function modifyBookingDates({
       : 0;
     if (appliedBeforeClamp > 0) {
       const clampedCredit = await clampAppliedCreditToBookingPrice(
-        { memberId: booking.memberId, bookingId, newFinalPriceCents },
+        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents },
         tx,
       );
       const effectivePriceCents =
@@ -1322,7 +1323,7 @@ export async function modifyBookingDates({
 
     if (accountCreditAmountCents > 0) {
       await createBookingModificationCredit(
-        booking.memberId,
+        bookingOwner(booking).memberId,
         accountCreditAmountCents,
         bookingId,
         bookingModification.id,
@@ -1367,7 +1368,7 @@ export async function modifyBookingDates({
           ? {
               linkedMove: {
                 answer: hostingCoverageLinkedMove,
-                bookingOwnerMemberId: booking.memberId,
+                bookingOwnerMemberId: bookingOwner(booking).memberId,
               },
             }
           : {}),
@@ -1405,9 +1406,9 @@ export async function modifyBookingDates({
       zeroDollarAutoPaid,
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-      memberEmail: booking.member.email,
-      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-      memberId: booking.memberId,
+      memberEmail: bookingOwner(booking).member.email,
+      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+      memberId: bookingOwner(booking).memberId,
       bookingModificationId: bookingModification.id,
     } satisfies DateModificationTransactionResult;
   });
@@ -1513,7 +1514,7 @@ async function dispatchDatePostTransactionSideEffects({
       : "booking.modify.dates",
     memberId: actorMemberId,
     targetId: bookingId,
-    subjectMemberId: result.booking.memberId,
+    subjectMemberId: bookingOwner(result.booking).memberId,
     entityType: "BookingModification",
     entityId: result.bookingModificationId,
     category: "booking",
@@ -1585,7 +1586,7 @@ async function dispatchDatePostTransactionSideEffects({
   // the member; the choice is recorded in the audit fields above.
   const member = result.notifyMember
     ? await prisma.member.findUnique({
-        where: { id: result.booking.memberId },
+        where: { id: bookingOwner(result.booking).memberId },
       })
     : null;
   if (member) {
@@ -1913,7 +1914,7 @@ export async function adminShiftBookingDates({
     // routing, and an unmarked party is exactly the silent read-out C1 closed.
     const capacityRangesForGuard = await markCrossFamilyGuestsOnBooking(
       tx,
-      booking.memberId,
+      bookingOwner(booking).memberId,
       capacityRanges,
       { skipAuthorization: true, bookingId },
     );
@@ -2094,9 +2095,9 @@ export async function adminShiftBookingDates({
       capacityOverridden,
       choreWarnings,
       bookingModificationId: bookingModification.id,
-      memberId: booking.memberId,
-      memberEmail: booking.member.email,
-      memberFirstName: booking.member.firstName,
+      memberId: bookingOwner(booking).memberId,
+      memberEmail: bookingOwner(booking).member.email,
+      memberFirstName: bookingOwner(booking).member.firstName,
       guestCount: booking.guests.length,
       finalPriceCents: booking.finalPriceCents,
       paymentReference: booking.payment?.reference ?? null,

@@ -22,6 +22,7 @@ import {
   expandWithSplitHalves,
   resolveRowRemit,
 } from "@/lib/adult-member-hosting-coverage-remit";
+import { bookingOwner } from "@/lib/booking-owner";
 import { tryLockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
 import {
   isHostingCoverageSourceBookingTerminal,
@@ -140,7 +141,7 @@ export async function settleHostingCoverageAfterCommit(
         where: { id: options.bookingId },
         select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
       })) as GroupTripCoverageSourceFacts | null;
-      memberId = booking?.memberId ?? null;
+      memberId = booking ? bookingOwner(booking).memberId : null;
       lodgeId = booking?.lodgeId ?? null;
       if (booking) {
         groupDependentBookingIds =

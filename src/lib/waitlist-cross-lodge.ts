@@ -6,6 +6,7 @@ import {
   toGuestPricingInputs,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
+import { bookingOwner } from "@/lib/booking-owner";
 import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { clubToday } from "@/lib/club-time";
@@ -330,7 +331,7 @@ export async function confirmCrossLodgeWaitlistOffer(
   });
   if (
     preflight &&
-    preflight.memberId === memberId &&
+    bookingOwner(preflight).memberId === memberId &&
     preflight.status === BookingStatus.WAITLIST_OFFERED &&
     preflight.waitlistOfferedLodgeId &&
     // An already-expired offer keeps its existing "offer has expired" answer
@@ -436,7 +437,7 @@ export async function confirmCrossLodgeWaitlistOffer(
       // established that this offer belongs to `memberId`, so the entry's owner is
       // the member promoting it — and stays the owner of the booking Phase 2
       // creates, which is passed `effectiveMemberId: memberId`.
-      bookingOwnerMemberId: preflight.memberId,
+      bookingOwnerMemberId: bookingOwner(preflight).memberId,
       participants: toSubscriptionLockoutParticipants(
         await prisma.bookingGuest.findMany({ where: { bookingId } }),
       ),
@@ -518,7 +519,7 @@ export async function confirmCrossLodgeWaitlistOffer(
       if (!entry) {
         return { ok: false as const, result: { success: false, error: "Booking not found" } };
       }
-      if (entry.memberId !== memberId) {
+      if (bookingOwner(entry).memberId !== memberId) {
         return { ok: false as const, result: { success: false, error: "Forbidden" } };
       }
       if (entry.status !== BookingStatus.WAITLIST_OFFERED) {
@@ -624,7 +625,7 @@ export async function confirmCrossLodgeWaitlistOffer(
       const quote = await quoteWaitlistEntryAtLodge(
         tx,
         {
-          memberId: entry.memberId,
+          memberId: bookingOwner(entry).memberId,
           checkIn: entry.checkIn,
           checkOut: entry.checkOut,
           guests: entry.guests,

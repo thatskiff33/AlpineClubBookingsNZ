@@ -1,5 +1,6 @@
 import "server-only";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
@@ -255,7 +256,7 @@ export async function applyManualBookingPayment(
         return null;
       });
 
-    if (!recipient?.member?.email) {
+    if (!recipient || !bookingOwner(recipient).member?.email) {
       logger.warn(
         { bookingId: input.bookingId },
         "Manual booking mark-paid: a confirmation was requested but the member has no address to send it to"
@@ -269,7 +270,7 @@ export async function applyManualBookingPayment(
         // separate later charge. Read-only; null on non-split bookings.
         const provisionalGuests = await getProvisionalNonMemberChildSummary({
           id: input.bookingId,
-          memberId: recipient.memberId,
+          memberId: bookingOwner(recipient).memberId,
         });
         // The SAME message the Xero-inbound settle sends, so a cash-settled
         // member reads exactly what a bank-transfer-settled member reads.
@@ -287,9 +288,9 @@ export async function applyManualBookingPayment(
         // contradiction #2397 exists to remove, stated to the member rather
         // than only to the admin.
         const outcome = await sendBookingConfirmedEmail(
-          { bookingId: input.bookingId, recipientMemberId: recipient.memberId },
-          recipient.member.email,
-          recipient.member.firstName,
+          { bookingId: input.bookingId, recipientMemberId: bookingOwner(recipient).memberId },
+          bookingOwner(recipient).member.email,
+          bookingOwner(recipient).member.firstName,
           recipient.checkIn,
           recipient.checkOut,
           recipient._count.guests,

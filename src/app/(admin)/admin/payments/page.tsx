@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireInstant } from "@/lib/club-time";
 import { formatPayloadCalendarDay } from "../_lib/calendar-day";
 import { readAdminQueryErrorMessage } from "@/lib/admin-query-error";
@@ -1114,10 +1115,10 @@ export default function PaymentsPage() {
                   <TableCell className="text-sm">{formatPayloadCalendarDay(p.booking.checkIn)}</TableCell>
                   <TableCell className="font-medium">
                     <Link
-                      href={buildHrefWithReturnTo(`/admin/members/${p.booking.member.id}`, currentPaymentsPath)}
+                      href={buildHrefWithReturnTo(`/admin/members/${bookingOwner(p.booking).member.id}`, currentPaymentsPath)}
                       className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      {p.booking.member.lastName}, {p.booking.member.firstName}
+                      {bookingOwner(p.booking).member.lastName}, {bookingOwner(p.booking).member.firstName}
                     </Link>
                   </TableCell>
                   <TableCell>
@@ -1188,7 +1189,7 @@ export default function PaymentsPage() {
                           available to this admin. */}
                       <DiagnosticsRecordButton
                         recordId={p.id}
-                        subject={`the ${formatCents(p.amountCents - p.refundedAmountCents)} payment for ${p.booking.member.firstName} ${p.booking.member.lastName}`}
+                        subject={`the ${formatCents(p.amountCents - p.refundedAmountCents)} payment for ${bookingOwner(p.booking).member.firstName} ${bookingOwner(p.booking).member.lastName}`}
                       />
                     </div>
                   </TableCell>

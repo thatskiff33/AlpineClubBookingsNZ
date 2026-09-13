@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { auth } from "@/lib/auth";
@@ -81,7 +82,7 @@ export async function GET(
   }
 
   if (
-    booking.memberId !== session.user.id &&
+    bookingOwner(booking).memberId !== session.user.id &&
     !hasAdminAccess(session.user) &&
     !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
   ) {

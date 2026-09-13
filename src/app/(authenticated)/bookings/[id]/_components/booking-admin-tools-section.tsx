@@ -1,5 +1,6 @@
 import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-card";
 import { BookingWithheldEmailsBanner } from "@/components/admin/booking-withheld-emails-banner";
+import { bookingOwner } from "@/lib/booking-owner";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import type { BookingDetailRecord } from "../_lib/load-booking-detail";
 import type { BookingEditorData } from "@/components/booking-editor";
@@ -52,8 +53,8 @@ export function BookingAdminToolsSection({
       {canSeeAdminTools && (
         <AdminBookingToolsCard
           bookingId={booking.id}
-          memberId={booking.memberId}
-          memberName={`${booking.member.firstName} ${booking.member.lastName}`}
+          memberId={bookingOwner(booking).memberId}
+          memberName={`${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`}
           lodgeId={booking.lodgeId}
           checkIn={booking.checkIn}
           checkOut={booking.checkOut}
