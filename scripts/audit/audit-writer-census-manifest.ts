@@ -463,7 +463,18 @@ export const AUDIT_CENSUS_TOTALS = {
   // new writers are disjoint and all categorised at the site, so none joins
   // `UNCATEGORISED_AUDIT_WRITERS`. Re-MEASURED on the MERGED tree with
   // `npm run audit:census`, never by adding the two deltas together.
-  writeSites: 476,
+  // 476 -> 477 (#2936): `booking_request.corrected`, the record that an officer
+  // corrected an unconverted school or public request before it was converted.
+  // `logAudit` after the guarded claim has committed, carrying what changed, why,
+  // the previous envelope and price, how many quotes it retired, and — on a
+  // school request — the school record the corrected name will resolve to and the
+  // contact people its teachers would displace (#3367), because that replacement
+  // happens later in a different transaction and this is where the decision
+  // causing it was taken. Categorised `booking` at the site, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. Re-MEASURED by RUNNING
+  // `npm run audit:census` on this tree (477 sites, 2346 files scanned), never by
+  // adding one to the literal.
+  writeSites: 477,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -530,7 +541,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // this sink that record a completed money movement - the epilogue runs after
     // the refund has already been made at Stripe, and must never throw into the
     // recovery worker and replay a refund for the sake of a bookkeeping row.
-    logAudit: { total: 264, uncategorised: 0 },
+    logAudit: { total: 265, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -710,7 +721,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // per-booking breakdown never reach a member surface — what is left is a
     // `details` sentence naming no booking, no nights and no party
     // (`INV-PRIV`).
-    booking: 103,
+    booking: 104,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
