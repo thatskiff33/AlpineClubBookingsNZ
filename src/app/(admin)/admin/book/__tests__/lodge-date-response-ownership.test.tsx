@@ -1,3 +1,12 @@
+/*
+  #2930: `/api/availability/check` states the selected lodge's effective capacity
+  rather than leaving the page to reconstruct it from the first night's
+  `occupiedBeds + availableBeds` (`INV-SSOT-001`) — a reconstruction that had no
+  row to read whenever `nightDetails` came back empty, and silently kept the
+  PREVIOUS lodge's number. Every stub below therefore states `lodgeCapacity`, and
+  it is the same total the night row implies, so the ownership assertions these
+  tests exist for are unchanged.
+*/
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest"
@@ -207,6 +216,7 @@ describe("admin booking date response ownership (#2701, #2887)", () => {
       lodgeA.resolve(
         response({
           minAvailable: 1,
+          lodgeCapacity: 21,
           nightDetails: [{ occupiedBeds: 20, availableBeds: 1 }],
         }),
       )
@@ -233,6 +243,7 @@ describe("admin booking date response ownership (#2701, #2887)", () => {
       lodgeB.resolve(
         response({
           minAvailable: 7,
+          lodgeCapacity: 10,
           nightDetails: [{ occupiedBeds: 3, availableBeds: 7 }],
         }),
       )
@@ -247,6 +258,7 @@ describe("admin booking date response ownership (#2701, #2887)", () => {
       lodgeA.resolve(
         response({
           minAvailable: 1,
+          lodgeCapacity: 21,
           nightDetails: [{ occupiedBeds: 20, availableBeds: 1 }],
         }),
       )
@@ -265,7 +277,8 @@ describe("admin booking date response ownership (#2701, #2887)", () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.includes("/api/availability/check") && url.includes("lodgeId=lodge-a")) {
-        return response({ minAvailable: 8, nightDetails: [{ occupiedBeds: 2, availableBeds: 8 }] })
+        return response({ minAvailable: 8, lodgeCapacity: 10,
+          nightDetails: [{ occupiedBeds: 2, availableBeds: 8 }] })
       }
       if (url === "/api/bookings/quote") {
         expect(JSON.parse(String(init?.body))).toMatchObject({ lodgeId: "lodge-a" })

@@ -565,8 +565,22 @@ const CENSUS_CEILING = {
    * here. The dates it formats are the assignment's own `@db.Date` bounds, which
    * arrive date-only and are written into an audit payload unchanged.
    * Re-measured, not incremented.
+   *
+   * 225 -> 223 (#2930), and a DOWNWARD revision, which is the direction this
+   * census exists to reward. Collapsing the five copies of
+   * `getCapacityFullNights` into `src/lib/capacity-full-nights.ts` removed the
+   * whole `date-only` import from `booking-request-shared.ts`,
+   * `booking-request-quotes.ts` and `group-booking.ts` — in each of those the
+   * copied helper was the file's ONLY reader of the adapter — and added one
+   * import to the new module: -3 +1. `booking-create-guests.ts` lost the same
+   * copy but still imports `addDaysDateOnly`, so it stays counted.
+   * `formatDateOnly` is `date.toISOString().slice(0, 10)` and resolves no
+   * timezone; the dates it formats are the capacity engine's own date-only
+   * lodge nights. No call was added, removed or changed — four call sites became
+   * one, calling the same function on the same values. Re-measured against the
+   * branch base, not subtracted from.
    */
-  dateOnlyImporters: 225,
+  dateOnlyImporters: 223,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
