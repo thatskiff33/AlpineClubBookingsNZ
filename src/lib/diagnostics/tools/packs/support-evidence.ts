@@ -85,7 +85,6 @@ import {
 } from "@/lib/ai-diagnostics-config";
 import {
   DIAGNOSTICS_MAX_TOOL_ROUNDS,
-  WORST_CASE_ROUNDTRIP_CENTS,
   getDiagnosticsUsageSummary,
 } from "@/lib/ai-diagnostics-usage";
 
@@ -339,7 +338,9 @@ export async function readDiagnosticsUsageHealthEvidence(
       latest_success_at_utc: isoOrNull(latestSuccess?.createdAt ?? null),
       latest_failure_at_utc: isoOrNull(latestFailure?.createdAt ?? null),
       latest_failure_code: latestFailure?.errorCode ?? null,
-      worst_case_roundtrip_cents: WORST_CASE_ROUNDTRIP_CENTS,
+      // Club cents like every other figure on this row (#3354): the summary
+      // converts the NZD constant at the configured rate.
+      worst_case_roundtrip_cents: summary.budget.worstCaseRoundtripCents,
       max_tool_rounds: DIAGNOSTICS_MAX_TOOL_ROUNDS,
     },
   ];

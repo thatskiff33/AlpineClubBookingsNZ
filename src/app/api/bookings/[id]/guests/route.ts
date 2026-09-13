@@ -62,7 +62,11 @@ import {
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
-import { sizeAdditionalAskCents } from "@/lib/additional-payment-ask";
+import {
+  NO_ADDITIONAL_ASK,
+  sizeAdditionalAsk,
+  type AdditionalAsk,
+} from "@/lib/additional-payment-ask";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
@@ -965,6 +969,10 @@ export async function POST(
 
       // Calculate additional amount for confirmed+paid bookings
       let additionalAmountCents = 0;
+      // #3371: the card ask as the minter's own value type, carrying what
+      // minting it will absorb. Zero here never mints, so the Xero-only and
+      // nothing-owed endings below are safe without remembering to say so.
+      let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
       /**
        * #3200: "has the main Xero invoice already been raised?" is asked at four
        * edit doors and DEFINED in one — `hasIssuedPrimaryXeroInvoice`
@@ -989,7 +997,7 @@ export async function POST(
       /**
        * #3340: THE FIFTH ASK-SIZING DOOR, and the one the first round missed.
        *
-       * The other four reach `sizeAdditionalAskCents` through
+       * The other four reach `sizeAdditionalAsk` through
        * `applyPaymentAdjustments`; this door settles for itself, so it calls the
        * one home directly rather than restating a bare delta (`INV-SSOT-001`).
        * It is fully wired into the same machinery -
@@ -1015,13 +1023,14 @@ export async function POST(
        * the same locks that serialise every counterpart writer in this route.
        */
       if (hasSucceededPayment && priceDiffCents > 0) {
-        additionalAmountCents = sizeAdditionalAskCents({
+        additionalAsk = sizeAdditionalAsk({
           priceDiffCents,
           // A guest add never charges one; the route passes 0 to the Xero
           // settlement and to the member's email for the same reason.
           changeFeeCents: 0,
           payment: booking.payment,
         });
+        additionalAmountCents = additionalAsk.amountCents;
       } else if (hasIssuedXeroInvoice && priceDiffCents > 0) {
         additionalAmountCents = priceDiffCents;
       }
@@ -1161,6 +1170,7 @@ export async function POST(
         addedGuests: createdGuests,
         priceDiffCents,
         additionalAmountCents,
+        additionalAsk,
         promoRemoved,
         promoCoverage,
         oldGuestCount: booking.guests.length,

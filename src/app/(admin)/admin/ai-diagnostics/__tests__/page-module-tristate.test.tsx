@@ -89,6 +89,9 @@ vi.mock("@/lib/ai-diagnostics-config", () => ({
 
 // The budget card fetches on mount and is covered by its own suite; this file is
 // about the readiness section's treatment of the flag.
+vi.mock("@/components/admin/ai-spend-currency-card", () => ({
+  AiSpendCurrencyCard: () => null,
+}));
 vi.mock("../_components/diagnostics-budget-card", () => ({
   DiagnosticsBudgetCard: () => null,
 }));
