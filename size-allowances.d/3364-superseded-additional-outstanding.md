@@ -48,6 +48,41 @@ refunded you" email. And a declined immediate run is logged rather than returned
 silently. Every one of those lines is beside the processor whose behaviour it
 changes; none of it is a unit anything else could import.
 
+file: src/lib/payment-recovery.ts
+lines: 3123
+reason: a hundred and ninety-six lines on a 2927-line module that is not
+  restructured here.
+  Seventy are `runPaymentRecoveryOperationNow`, which lets the ask-minting path
+  cancel a superseded PaymentIntent synchronously instead of leaving it
+  confirmable for up to five minutes; it has to live beside the processor it
+  reuses, because copying the succeeded-race handling to the mint site is the
+  duplicate rule this repository keeps re-finding, and moving it out would
+  require exporting three module internals to save lines on the one file whose
+  job is to own them. The rest is the fix round: re-deriving the ask at replay
+  rather than replaying a frozen figure that can overcharge, the key selection
+  that re-derivation forces, fencing the refund notice on the completion claim so
+  a replay cannot send it twice, and recording a declined immediate run. The
+  epilogue that records and announces the refund is its own new module; only its
+  call site is here.
+
+## `src/lib/email/booking.ts`
+
+Forty-three lines: `sendSupersededPaymentRefundedEmail`, its docblock, and the
+composed `{{owingSentence}}` the fix round added beside `{{amountOwing}}`.
+
+This is the one home for booking-scoped member mail, and every property that
+makes the new notice correct comes from being in it — the shared
+`bookingOwnerEmailContext`, so the per-booking "No emails" switch withholds it
+like every other booking mail, and the shared `sendEmail` with its template
+registry and retry lifecycle. A separate module for one sender would put the
+first booking mail outside the inventory that `booking-email-suppression.ts` and
+`booking-email-template-contract.ts` classify from, which is the mechanism that
+stopped a booking mail escaping that switch in the first place.
+
+Splitting this file by message family is a real and worthwhile job — it is
+nineteen senders — but it is a refactor of its own, and doing it inside a money
+fix would bury the money fix's diff.
+
 file: src/lib/email/booking.ts
 lines: 1643
 reason: one new member notice on a 1600-line module that is not restructured
@@ -87,7 +122,7 @@ inside it would bury the money fix's diff and put the club's main finance screen
 at risk for a reason that has nothing to do with the defect.
 
 file: src/app/(admin)/admin/payments/page.tsx
-lines: 1322
+lines: 1326
 reason: twenty-one lines on a 1305-line admin screen that is not restructured
   here. Six are the net-of-refunds figure with the gross and the refund printed
   underneath; the rest record that this column's gross figure is what led an
@@ -142,3 +177,40 @@ The net change is the import: two hand-written conditions became one call plus a
 one-line comment. This 2792-line page is not restructured here, and splitting it
 is an unrelated job.
 
+file: src/app/(authenticated)/bookings/[id]/page.tsx
+lines: 2793
+reason: one line on a 2792-line page that is not restructured here. It replaces a
+  hand-written copy of the "is this extra still uncollected" test with a call to
+  the one predicate that defines it — the duplication class #3340 is about —
+  which costs an import line and saves a condition.
+
+## `src/app/api/bookings/[id]/guests/route.ts`
+
+Thirty-seven lines on the guest-add door: three of arithmetic, the rest the
+comment that explains why they are there.
+
+This was the FIFTH ask-sizing door and the one the first round missed. It settles
+for itself rather than through `applyPaymentAdjustments`, so it sized its ask as
+a bare `priceDiffCents` while being fully wired into the machinery that retires
+every other outstanding ask on the payment — which means a $130 booking paid,
+edited +$70 unpaid, then a guest added at +$70 asked for $70 and left $70 owed by
+nobody. Byte-for-byte the defect this pull request exists to fix, at a door the
+fix had not reached.
+
+The change itself is one call and a split `if`. The length is the comment, and
+the comment is load-bearing twice over: it says why this door calls the sizing
+function directly when three others reach it through a shared helper, and it says
+why the Stripe and Xero arms must stay DIFFERENT figures — folding a superseded
+Stripe balance into a supplementary invoice would bill the member the same money
+twice. The next reader "simplifying" those two arms back into one is the failure
+mode, and on this route that failure costs real money.
+
+file: src/app/api/bookings/[id]/guests/route.ts
+lines: 1469
+reason: thirty-seven lines on a 1432-line route that is not restructured here.
+  Three are the sizing call that closes the fifth and last ask-sizing door; the
+  rest explain why this door calls the one home directly where three others reach
+  it through a shared helper, and why its Stripe and Xero arms must stay
+  different figures — folding a superseded Stripe balance into a supplementary
+  invoice would invoice the same money twice. Splitting this route is a genuine
+  job, an unrelated one, and one #3244 already has an opinion about.

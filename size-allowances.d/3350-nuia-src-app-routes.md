@@ -41,7 +41,6 @@ reason: the largest entry, and the only structural one. The created
   of the addition: it has to say what a mispaired row would sell a stay for, and
   why the refusal lives above both readers rather than in each. Splitting this
   route is #2958-shaped work on the file the whole add-guest story runs through.
-  This length also carries #3340's fifth ask-sizing door (#3364), whose own entry was dropped when the two arrived together in the epic sync; one file, one allowance.
 
 file: src/app/(admin)/admin/site-style/site-style-wizard.tsx
 lines: 1051
@@ -109,7 +108,7 @@ reason: eight lines. The membership type id half of a rate key goes through the
   rate row.
 
 file: src/app/(admin)/admin/hut-leaders/page.tsx
-lines: 1357
+lines: 1186
 reason: seven lines. A `YYYY-MM` month key is read at fixed offsets, and the
   short leader label's last name part IS the "there are no parts" check.
 

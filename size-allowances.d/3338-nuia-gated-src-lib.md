@@ -48,7 +48,7 @@ reason: each existing strand now carries its own sold-price map instead of a
   stated in this file already.
 
 file: src/lib/member-merge.ts
-lines: 2878
+lines: 2875
 reason: ten inline `as unknown as Record<string, …>` delegate lookups collapse
   into one `mergeDelegate` with the reasoning for its refusal stated once
   (`INV-SSOT`); four `Promise.all` result arrays now carry their spec. Net of
@@ -79,7 +79,6 @@ reason: twelve lines. The retry schedule's clamped step carries NO numeric
   fallback: a zero would be an immediate retry, the worst wait this function
   could invent, and any other number would be a backoff nobody configured. The
   schedule's length is asserted at module load, so an empty one cannot ship.
-  This length also carries #3340's supersede-refund work (#3364), whose own entry was dropped when the two arrived together in the epic sync; one file, one allowance.
 
 file: src/lib/booking-batch-modification-service.ts
 lines: 2494
