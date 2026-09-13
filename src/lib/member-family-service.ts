@@ -11,6 +11,7 @@ import {
   buildParentLinks,
 } from "@/lib/member-parent-links";
 import type { BookingGuestProfileAction } from "@/lib/booking-guests";
+import { loadBookerDependants } from "@/lib/booking-dependant-identity";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
@@ -328,6 +329,24 @@ export async function getMemberFamily(memberId: string): Promise<JsonRouteResult
   }
 
   const currentMember = self;
+
+  /**
+   * The viewer's OWN recorded dependants (#2721), from the same loader the
+   * booking-create guard re-runs server-side.
+   *
+   * The booking wizard needs this set to ask its collision question at the point
+   * the name is typed, rather than letting the member fill in the rest of the
+   * wizard and meet a 409. Sharing the loader is the point: a client-side set
+   * built from anything else would disagree with the server that decides, and a
+   * question the wizard never asks becomes a refusal the member cannot act on.
+   *
+   * It is the VIEWER'S OWN dependants and nobody else's, so it discloses nothing
+   * — this payload already returns each of them in full where they share a
+   * family group, and a dependant outside every shared group is still the
+   * viewer's own recorded child.
+   */
+  const ownDependants = await loadBookerDependants(prisma, currentMember.id);
+
   const groupIds = getFamilyGroupMemberships(currentMember).map(
     (membership) => membership.familyGroupId
   );
@@ -670,6 +689,7 @@ export async function getMemberFamily(memberId: string): Promise<JsonRouteResult
   const firstGroup = getFamilyGroupMemberships(currentMember)[0]?.familyGroup ?? null;
 
   return jsonResult({
+    ownDependants,
     familyGroupId: firstGroup?.id ?? null,
     familyGroupName: firstGroup?.name ?? null,
     familyGroupIds: groupIds,

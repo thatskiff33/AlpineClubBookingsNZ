@@ -34,6 +34,11 @@ import {
   type NonMemberPricingRequirements,
 } from "@/lib/subscription-lockout-enforcement";
 import {
+  checkOwnDependantIdentity,
+  dependantIdentityDeclarationSchema,
+  loadBookerDependants,
+} from "@/lib/booking-dependant-identity";
+import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
   getBookingGuestValidationErrorResponse,
@@ -133,6 +138,16 @@ const createBookingSchema = z.object({
     )
     .min(1)
     .max(200),
+  // #2721: the booker's answers to "this guest has the same name as your own
+  // recorded dependant". One entry per dependant the collision was with, each
+  // naming that dependant explicitly — see `booking-dependant-identity.ts` for
+  // why a generic override is not a shape this field can hold. The cap is far
+  // above any real family and exists so a hostile payload cannot turn the guard
+  // into a loop over an unbounded array.
+  dependantIdentityDeclarations: z
+    .array(dependantIdentityDeclarationSchema)
+    .max(50)
+    .optional(),
   notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
   promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
@@ -357,6 +372,7 @@ export async function POST(request: NextRequest) {
     memberReviewJustification,
     adultMemberHostingReason,
     paymentMethod,
+    dependantIdentityDeclarations,
   } = parsed.data;
   let guestInputs: BookingGuestInput[] = [];
 
@@ -460,6 +476,60 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     throw error;
+  }
+
+  /**
+   * OWN-DEPENDANT IDENTITY (#2721, `INV-GUEST-019`).
+   *
+   * Run on `guestInputs` — the party AFTER `normalizeBookingGuestInputs`, which
+   * has already stripped any `memberId` that did not resolve to a bookable
+   * member. So "no member id here" means the row really is heading for the
+   * non-member guest split, whatever the client asserted, and a forged
+   * `isMember: true` or an invented member id cannot walk past this by
+   * pretending the row is already on the member path.
+   *
+   * Placed BEFORE the person-night, hosting and capacity pre-flights and before
+   * any create service, so a party that is about to put a member on the
+   * bumpable non-member queue is stopped while it is still only a proposal.
+   *
+   * SKIPPED ON AN AUTHORISED ON-BEHALF CREATE, exactly as the member-guest
+   * boundary check and the member profile gate above it are. An officer
+   * recording a booking for a family has the family in front of them, is
+   * audited, and has no wizard on which to answer a collision question; the
+   * member-facing paths are where a name is typed without that context. The
+   * flag is `isAuthorizedOnBehalf`, the same one that passes `skipAuthorization`
+   * above, so the two can never drift apart.
+   *
+   * The dependant read is skipped entirely for a party that is all member-linked
+   * and carries no declaration — the common family booking — so the ordinary
+   * path pays nothing for this.
+   */
+  if (
+    !isAuthorizedOnBehalf &&
+    (guestInputs.some((guest) => !guest.memberId?.trim()) ||
+      (dependantIdentityDeclarations?.length ?? 0) > 0)
+  ) {
+    const bookerDependants = await loadBookerDependants(
+      prisma,
+      effectiveMemberId,
+    );
+    const dependantIdentityRefusal = checkOwnDependantIdentity({
+      party: guestInputs,
+      dependants: bookerDependants,
+      declarations: dependantIdentityDeclarations,
+    });
+    if (dependantIdentityRefusal) {
+      return NextResponse.json(
+        {
+          code: dependantIdentityRefusal.code,
+          error: dependantIdentityRefusal.error,
+          // Only ever the booker's OWN dependants, so this echoes back nothing
+          // they did not already possess. A tampering refusal carries none.
+          dependantCollisions: dependantIdentityRefusal.collisions,
+        },
+        { status: dependantIdentityRefusal.status },
+      );
+    }
   }
 
   /**
