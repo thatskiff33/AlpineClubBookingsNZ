@@ -96,9 +96,9 @@ import { updatePaymentIntentAmount } from "@/lib/stripe";
  * Those bullets cover two shares of ONE edit, the only case #3170 saw. A booking
  * can also carry an unpaid ask raised by a DIFFERENT edit, and minting this one
  * cancels it - which is how $260 across two parked edits collected $60. The ask
- * is now the share sum PLUS that balance, built by the same module the ordinary
- * path has used since #3340 and stored beside the sum, never inside it.
- * `INV-PAY-098` is the rule and is not restated here.
+ * is now the share sum PLUS that balance, built by the module the ordinary path
+ * has used since #3340 and stored beside the sum, never inside it. The rule is
+ * `INV-PAY-098` and is not restated here.
  *
  * ## What it is NOT
  *
@@ -157,12 +157,11 @@ export type EditReviewChargeSyncOutcome =
 export type EditReviewChargeSyncResult = {
   outcome: EditReviewChargeSyncOutcome;
   paymentIntentId: string | null;
-  /** THIS EDIT'S OWN MONEY - its settled shares, nothing else. The Xero leg
-   * bills it, one invoice per edit (`INV-PAY-070`), so another edit's carried
-   * balance must never reach it or the club invoices that money twice. */
+  /** THIS EDIT'S OWN MONEY - its settled shares, nothing else. `INV-PAY-070`
+   * bills it one invoice per edit, so another edit's carried balance must never
+   * reach it - and says how that other invoice can be orphaned by this mint. */
   totalCents: number;
-  /** #3371: the carried part of what the member is asked for, which is
-   * `totalCents + carriedCents`. */
+  /** #3371: the carried part; the member is asked `totalCents + carriedCents`. */
   carriedCents: number;
 };
 
@@ -368,34 +367,13 @@ export async function chooseEditReviewChargeRoute({
  *     both commits, so at least one run always sees the full set and derives the
  *     true total. A run that started earlier may compute a smaller, stale total.
  *   * A STALE REPLAY CANNOT LOWER A LIVE ASK. A settled share is terminal, so
- *     the derived total only ever grows; a smaller figure is therefore always
- *     the older answer, and the read below REFUSES TO LOWER the recorded
- *     request. A replay that reads AFTER the newer write - which is every
- *     sequential replay, and the recovery cron's whole shape - therefore leaves
- *     it alone. That refusal is what lets this path hold no advisory lock, which
- *     matters because `docs/CONCURRENCY_AND_LOCKING.md` forbids holding
- *     `lock(1)` across a provider round trip.
- *
- * ## WHAT THAT REFUSAL IS NOT, AND THE LIMIT IT LEAVES (#3371 review round)
- *
- * It is NOT an atomic compare-and-set, and this docblock used to say it was.
- * `existing` is read, the comparison happens in application code, and the write
- * goes through an upsert keyed on the intent id with no amount predicate - three
- * statements, with a Stripe round trip between the second and the third. Two
- * runs that each derive a figure ABOVE the stored one therefore both proceed,
- * and both the provider amount and the stored row settle on whichever landed
- * last rather than on the larger. Monotonicity means neither run derives a
- * figure that is wrong for the shares IT saw; it does not order the two.
- *
- * **This is unchanged from `main` and #3371 neither introduced nor repaired it**
- * - the same unguarded read-modify-write is what `main` does with the bare share
- * total. Making it a real claim means claiming in the database BEFORE the
- * provider call and reconciling the provider afterwards, which trades this
- * window for a new one (a claim recorded against an intent the provider call
- * then failed to raise) and is a design change to a gated money path rather than
- * a predicate on this write. It is carried forward as its own issue rather than
- * widened into this one; the reasoning is in that issue and in this pull
- * request's notes.
+ *     the derived total only ever grows and a smaller figure is always the
+ *     older answer; the read below REFUSES TO LOWER the recorded request, so a
+ *     replay reading after the newer write leaves it alone. That is why no
+ *     advisory lock is held here - `docs/CONCURRENCY_AND_LOCKING.md` forbids
+ *     one across a provider round trip. It is NOT an atomic claim, and two
+ *     CONCURRENT runs both proceed: that doc's edit-financial-review section
+ *     has the limit, why a predicate here is no repair, and whose it is.
  *
  * Returns the request's intent id and the total it now asks for.
  */
@@ -575,18 +553,9 @@ export async function syncEditFinancialReviewChargeRequest({
     // `payment-recovery-keys.ts` for the full reasoning and for which of the two
     // (request vs share) each key belongs to. In short: the request is the thing
     // being identified, there is one per edit, and a replay converging on the
-    // first intent is now the point rather than the hazard.
-    //
-    // #3371 fix round: AND THE AMOUNT, for the same reason the ordinary edit's
-    // replay does it. The edit-scoped key was already replayed against a
-    // RE-DERIVED share sum - a second task settling after a failed mint moves
-    // that sum, which `payment-recovery.ts` says in as many words - and the
-    // carried balance is a second thing that can move, because the member can
-    // pay the earlier ask in between. Same key, different amount, is a permanent
-    // `idempotency_error` at Stripe and the ask never gets raised. A genuine
-    // replay of the SAME figure still converges on the one intent, which is what
-    // the paragraph above is about; only a re-derived figure diverges, and it
-    // SHOULD.
+    // first intent is now the point rather than the hazard. #3371 adds THE
+    // AMOUNT, because this figure is RE-DERIVED on every attempt and a fixed key
+    // would then answer `idempotency_error` for ever - see that helper.
     idempotencyKey: stripeIdempotencyKeyForAskAmount(
       buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
       ask.amountCents,

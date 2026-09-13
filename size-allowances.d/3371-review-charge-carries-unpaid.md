@@ -14,6 +14,16 @@ allowed: the carried-balance narration moved to
 `edit-financial-review-charge-request.ts` and `edit-financial-review-charge.ts`
 inside their budgets with no allowance at all.
 
+`edit-financial-review-charge.ts` lands at exactly its 700-line ceiling, and the
+review round is why: three findings wanted explanations there. They were written
+where the RULE lives instead — the concurrency limit in
+`docs/CONCURRENCY_AND_LOCKING.md`, the orphaned supplementary invoice under
+`INV-PAY-070`, the idempotency-key rule beside the helper in
+`payment-recovery-keys.ts` — and the module carries a pointer to each. Anyone
+adding to that file next needs a split, not prose discipline; an allowance
+cannot help, because the ratchet refuses to carry a file over its budget for the
+first time.
+
 file: src/app/api/bookings/[id]/guests/route.ts
 lines: 1535
 reason: the guest-add door sizes its own ask, so it declares the value and

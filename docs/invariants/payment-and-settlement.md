@@ -1298,6 +1298,16 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   invoice behind the first and RECORDS the shortfall:
   `outcome: "short-sent"` when the invoice exists, `"short-in-flight"` when the
   worker has merely claimed the row. What happens next is `INV-PAY-063`.
+- **AND A SUPERSEDED EDIT'S INVOICE CAN BE ORPHANED** (#3371 review round;
+  pre-existing since #3340). A card booking's supplementary invoice waits
+  `WAITING_PAYMENT` on its own PaymentIntent, released only by a confirmed
+  payment on it. A later mint CANCELS that intent ([INV-ADDPAY-023]), so it is
+  never released and `reapStaleWaitingPaymentXeroOutboxOperations` retires it a
+  day later — while the replacement ask still COLLECTS that money
+  ([INV-PAY-098]). The backstop is the booking-vs-Xero repair pass's
+  `MISSING_SUPPLEMENTARY_INVOICE`. Folding the carried balance onto the
+  replacement's invoice is NOT the repair: it double-bills wherever the earlier
+  invoice DID issue.
 
 ## INV-PAY-063
 
