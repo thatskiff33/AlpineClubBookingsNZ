@@ -27,7 +27,7 @@ description, so you can find the right file without opening more than one.
 | [`member-guest-consent.md`](invariants/member-guest-consent.md) | `INV-GUEST` | a member bringing a member as a guest, and consent to do so |
 | [`booking-modifications.md`](invariants/booking-modifications.md) | `INV-MOD` | editing an existing booking's dates, party or price |
 | [`adult-member-hosting.md`](invariants/adult-member-hosting.md) | `INV-HOST` | who may host whom, and what strands cover |
-| [`booking-requests.md`](invariants/booking-requests.md) | `INV-REQ` | booking-request officer notes and the member's own request area |
+| [`booking-requests.md`](invariants/booking-requests.md) | `INV-REQ` | booking-request officer notes, the member's own request area, and correcting a request before conversion |
 | [`subscription-lockout-pricing.md`](invariants/subscription-lockout-pricing.md) | `INV-LOCKOUT` | lapsed-subscription pricing, admin date overrides, retroactive creates, withheld email |
 | [`booking-policy-exceptions.md`](invariants/booking-policy-exceptions.md) | `INV-EXCEPT` | policy-exception requests and officer decisions on them |
 | [`additional-payment-chasing.md`](invariants/additional-payment-chasing.md) | `INV-ADDPAY` | an outstanding additional payment, quote/request holds, refund settlement |
@@ -483,6 +483,9 @@ File:
 | `INV-REQ-005` | Private notes never substitute for member-facing ones; drafts kept per request |
 | `INV-REQ-006` | An expand-only nullable column; an older decision reads as "none" |
 | `INV-REQ-007` | The member's projection states only facts: ledger capacity, conflicts reported, no promises |
+| `INV-REQ-008` | A correction re-opens the request; an accepted quote refuses it outright |
+| `INV-REQ-009` | A corrected school name is stored only against the confirmed record |
+| `INV-REQ-010` | A corrected request never keeps beds held for its old shape |
 
 ### Subscription-lockout pricing, admin date overrides and member-facing email
 

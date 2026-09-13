@@ -162,6 +162,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/booking-requests": "bookings",
   "/api/admin/booking-requests/[id]/approve": "bookings",
   "/api/admin/booking-requests/[id]/contacts": "bookings",
+  "/api/admin/booking-requests/[id]/correct": "bookings",
   "/api/admin/booking-requests/[id]/decline": "bookings",
   "/api/admin/booking-requests/[id]/hold": "bookings",
   // #2263: admin-only availability + conflict preview for a whole-lodge
@@ -174,6 +175,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/booking-requests/[id]/quote": "bookings",
   "/api/admin/booking-requests/[id]/release-hold": "bookings",
   "/api/admin/booking-requests/[id]/resend-attendee-confirmation": "bookings",
+  "/api/admin/booking-requests/[id]/school-record": "bookings",
   "/api/admin/booking-requests/[id]/send-quote": "bookings",
   "/api/admin/booking-requests/settings": "bookings",
   "/api/admin/booking-reviews": "bookings",

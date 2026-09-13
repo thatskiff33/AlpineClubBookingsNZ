@@ -75,6 +75,7 @@ import {
   applyXeroContactEmailPolicy,
   type XeroContactEmailPolicy,
 } from "@/lib/xero-contact-containment";
+import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 
 /**
  * The POSTAL address columns a contact payload reads. Structural rather than a
@@ -123,6 +124,44 @@ export type XeroContactPersonInput = {
   lastName: string;
   email: string;
 };
+
+/**
+ * The contact person ONE local person row becomes — or `null` when the row is
+ * not a contact person at all.
+ *
+ * Here, beside the type it produces, because two readers now build the same list
+ * from the same rows: `readOrganisationForXeroContact`, which sends it, and the
+ * officer's pre-correction preview (#2936), which says who approving would
+ * displace. Both then collapse duplicates of one human through the single
+ * identity function in `organisation-xero-contact-persons.ts`, and an identity
+ * is only as shared as its INPUT — so the shaping has to be shared first, or the
+ * two de-duplicate different sets while calling one function (`INV-SSOT`).
+ *
+ * (That module is named here rather than its function, deliberately: the #3367
+ * census in `organisation-reader-contract.test.ts` matches the identifier as a
+ * bare substring, and this file does not read the organisation link.)
+ *
+ * Two decisions live in it. A walk-in placeholder address is not an address
+ * (#1935) — a reserved-domain marker meaning "this person cannot be reached" —
+ * so it is folded to empty, which also collapses the same human recorded once
+ * with one and once without. And a row with no name at all is not a contact
+ * person: `null`, before it can consume a de-duplication slot or a place under
+ * the cap.
+ */
+export function xeroContactPersonFromMember(member: {
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+}): XeroContactPersonInput | null {
+  const firstName = member.firstName?.trim() ?? "";
+  const lastName = member.lastName?.trim() ?? "";
+  if (!firstName && !lastName) return null;
+  return {
+    firstName,
+    lastName,
+    email: isPlaceholderContactEmail(member.email) ? "" : (member.email ?? ""),
+  };
+}
 
 export function buildXeroAddresses(
   source: XeroContactAddressSource,
