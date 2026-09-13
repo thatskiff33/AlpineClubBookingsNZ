@@ -260,6 +260,12 @@ describe("saving", () => {
     });
     await openForm();
     expect(screen.getByText(/releases them, and the requester/i)).toBeInTheDocument();
+    // The warning must not over-promise: a catering-only correction keeps the
+    // beds, and an officer told otherwise would go looking for a hold that is
+    // still there.
+    expect(
+      screen.getByText(/Changing only the catering preference keeps the beds/i),
+    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Why are you correcting it?"), {
       target: { value: "Dates moved." },
     });

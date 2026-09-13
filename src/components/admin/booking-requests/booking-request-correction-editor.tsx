@@ -583,7 +583,9 @@ export function BookingRequestCorrectionEditor(props: {
         <p className="rounded-md border border-warning-6 bg-warning-2 p-2 text-xs">
           This request is holding beds for the details as they stand. Saving a
           correction releases them, and the requester&apos;s existing quote link
-          stops working — so send a fresh quote afterwards.
+          stops working — so send a fresh quote afterwards. Changing only the
+          catering preference keeps the beds: it is the one detail a hold is not
+          built from.
         </p>
       ) : null}
 
