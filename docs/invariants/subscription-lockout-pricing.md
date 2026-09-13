@@ -909,6 +909,11 @@ The rules are:
   retained body — so the booking page can list exactly what was held back
   (#2259), and the retry cron cannot replay it (its query requires a retained
   body, and the status is terminal).
+- **A `SKIPPED_NO_EMAILS` row means the club decided, not that the switch is
+  on** (#2929). The on-behalf create's "do not email the member" choice writes
+  one too, on a booking whose switch may never have been used, so the row's
+  `errorMessage` names which decision withheld it and no surface may read the
+  status alone as evidence of the switch.
 
 ### INV-LOCKOUT-058
 
@@ -1210,8 +1215,18 @@ non-admin, 400 without `forMemberId`).
 The member confirmation / hold email is an **explicit per-create choice**
 (`notifyMember`, honoured only for on-behalf creates) recorded in the
 `booking.created_on_behalf` audit metadata alongside `allowPastDates`,
-`confirmOverCapacity`, and `capacityOverridden`; `sendAdminNewBookingAlert` and
-the Xero invoice email are unaffected by the choice.
+`confirmOverCapacity`, and `capacityOverridden`; `sendAdminNewBookingAlert` is
+unaffected by the choice.
+**The Xero invoice email raised by that same create is NOT** (#2929): declining
+withholds it for that one invoice creation. The invoice is still raised and
+AUTHORISED; only the send is skipped, recorded as a `SKIPPED_NO_EMAILS` row
+naming this reason and reported on the sync operation under its own key.
+Nothing persistent moves — `Booking.noEmails`, the Xero contact's address and
+every later booking email are untouched — and no other booking-invoice enqueuer
+expresses a choice here. The instruction is **persisted** on
+`XeroSyncOperation.invoiceEmailDelivery`, written once at enqueue like
+`queueType` and never updated, so an outbox retry days later still withholds
+deliberately rather than sending because a caller flag is gone.
 
 ### INV-LOCKOUT-042
 
