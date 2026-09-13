@@ -1,31 +1,14 @@
 # File-size allowances for #2933
 
-Three files, and the two small ones are the same three lines twice.
+Two files, and they are the same three lines twice.
 
-file: src/app/(admin)/admin/fees/_components/hut-fees-section.tsx
-lines: 1143
-reason: the warning had to be computed where the data already is. This section
-  already fetches the seasons, their rate rows, the club's age tiers and the
-  membership types that owe rates — everything the gap computation needs — so
-  putting the computation anywhere else would mean either a second fetch of all
-  four or threading them out through props to a component that renders nothing
-  else. About half the growth is exactly that memo and its comment saying why
-  only in-scope seasons are judged and why "today" comes from the bound club
-  clock rather than the browser's; the rest is the lookup that lets a type's flat
-  all-ages rate show against each age tier instead of "Not set", which is a
-  correction to the table it sits in and belongs beside it. The panel itself is
-  NOT here — it is `missing-hut-rates-notice.tsx`, a new file — and the rule and
-  the coverage arithmetic are in `src/lib/membership-type-rate-coverage.ts`, a
-  new file too, which is what keeps this one to the wiring. The review round added about fifty
-  more, and they are the ones that matter most: the rate record now holds "no
-  rate" as `null` rather than as zero, which is what stops this form
-  manufacturing a $0.00 nightly rate for every blank box it submits, and roughly
-  forty of those lines are the comments at `emptyRates`, the change handler and
-  the submit saying what the two states are and what happened when they were the
-  same one. Splitting the section
-  further is a real piece of work and the right one eventually: it is one
-  component holding a season editor, a rate grid and a season list, and the seam
-  is between those three, not around the six lines this change adds to each.
+This declared a third, `hut-fees-section.tsx` at 1143 lines. #2938 grew that
+same file in the same epic, so 1143 stopped being its length — and a recorded
+length that does not equal the real one is precisely what this directory
+forbids, because the gate then cannot tell which number is meant. The entry
+moved to `2938-season-timeline-and-copy.md`, which carries the current length
+and the reasoning below along with its own. Nothing about #2933's growth is
+withdrawn; it is restated where it is still true.
 
 file: src/lib/config-transfer/categories/lodge-config.ts
 lines: 1011

@@ -439,7 +439,6 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
   {
     files: [
       "src/app/(admin)/admin/fees/_components/finance-fees-sections.tsx",
-      "src/app/(admin)/admin/fees/_components/hut-fees-section.tsx",
       "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx",
       "src/components/admin/booking-policies/cancellation-rules-editor.tsx",
       "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
@@ -447,7 +446,7 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
       "src/components/admin/manual-refund-task-queue.tsx",
     ],
     reason:
-      'Seeds an EDITABLE dollars input\'s plain string value — a form field default, a redraft-on-open value — never a currency symbol, because nobody types "$10.00" into an amount box. #3302 names this as a legitimately different concept from rendering an amount for reading, and excludes it on that basis rather than fixing or flagging it. The refund-requests page left this list in #2932: its `<input max>` went with the browser number control it belonged to, and its prefill now compares integer cents and renders once through `formatCentsPlain`.',
+      'Seeds an EDITABLE dollars input\'s plain string value — a form field default, a redraft-on-open value — never a currency symbol, because nobody types "$10.00" into an amount box. #3302 names this as a legitimately different concept from rendering an amount for reading, and excludes it on that basis rather than fixing or flagging it. The refund-requests page left this list in #2932: its `<input max>` went with the browser number control it belonged to, and its prefill now compares integer cents and renders once through `formatCentsPlain`. The hut-fees section left it in #2938: its flat whole-lodge box was the last hand-rolled copy in that file and now seeds through `amountFieldValue`, which renders the same cents through `formatCentsPlain`.',
   },
   {
     files: [

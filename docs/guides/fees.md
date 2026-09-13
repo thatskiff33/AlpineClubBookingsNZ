@@ -33,6 +33,12 @@ date-only.
 
    ![Fees console: Hut fees seasons with per-age-tier rates, plus the Joining fees, Annual membership fees, and Family billing members sections](../images/admin/admin-fees.png)
 
+   Seasons are listed **in date order, earliest first**, so the list reads as
+   the schedule actually runs. *The screenshot above was captured before that
+   ordering, before the gap warnings and before the **New season from this**
+   button described below, so it shows none of them; it will be refreshed with
+   the next capture run.*
+
 2. Click **Add season** (or **Edit** on a season) to set the **Season Name**,
    **Type** (Winter/Summer), **Start/End Date**, and the **Nightly Rates** for each
    membership type and age tier, then **Create Season** / **Update Season**. Season
@@ -67,7 +73,41 @@ date-only.
    amount is shown against every tier, marked *(flat rate)*, because that is what
    the club actually charges.
 
-4. Optionally set a **Flat whole-lodge night rate** for the season — a single
+4. **Set up next year's season from this year's** with **New season from this**
+   on a season card. It opens a **new** season pre-filled with that season's
+   type, its Active setting, its flat whole-lodge rate, and every nightly rate
+   exactly as it stands — so a club that runs the same shape of winter each year
+   sets its rates once.
+
+   Three things to expect:
+
+   - **The season you clicked is not touched.** This makes a new season; it
+     never edits or overwrites the one it copied from.
+   - **You still have to give it a name and its own dates.** Those are
+     deliberately left blank, and the usual checks apply when you save.
+   - **Blank rates stay blank.** A cell the original season had no rate for
+     arrives empty, not as `0.00` — so the new season starts with the same
+     honest gap, flagged in the same way, rather than quietly charging those
+     guests nothing. A rate deliberately set to `0.00` is carried across as
+     `0.00`.
+
+   Change whatever needs to differ — this year's prices, the dates, the type —
+   then **Create Season**.
+
+5. **Watch for gaps in the schedule.** A season prices every night from its
+   start date to its end date, including both, so seasons run straight on from
+   each other when the next one starts the day after the last one ends. Any
+   nights left over are listed where they fall, between the seasons either side
+   of them, with a count above the list — and a booking for one of those nights
+   is refused, because nothing prices it.
+
+   The screen only tells you; it never fills a gap in, charges zero, or borrows
+   a neighbouring season's rates. A deactivated season does not count as cover.
+   The [Seasons](seasons.md) guide covers this in full — including why a newly
+   set-up club sees one of these warnings before it has configured anything —
+   and either screen can close the gap.
+
+6. Optionally set a **Flat whole-lodge night rate** for the season — a single
    price per night for the whole building, regardless of how many people come.
    Leave it blank to keep pricing whole-lodge bookings per guest. When it is set,
    a booking officer approving a member's whole-lodge request can choose, on that
@@ -117,7 +157,7 @@ date-only.
 
 | Section | Key fields | Notes / constraints |
 | --- | --- | --- |
-| Hut fees | Season Name, Type, Start/End Date, per-type/per-tier nightly rate, flat whole-lodge night rate (optional), Active | Bookings edit; rates entered in dollars, stored as cents; NZ date-only; a blank flat whole-lodge rate keeps whole-lodge bookings priced per guest; a season missing a required rate is flagged before a booking reaches it |
+| Hut fees | Season Name, Type, Start/End Date, per-type/per-tier nightly rate, flat whole-lodge night rate (optional), Active | Bookings edit; rates entered in dollars, stored as cents; NZ date-only; a blank flat whole-lodge rate keeps whole-lodge bookings priced per guest; a season missing a required rate is flagged before a booking reaches it; seasons are listed in date order and nights no active season covers are flagged; **New season from this** starts a new season from an existing one's rates and never changes the one it copied |
 | Joining fees | Membership type, Age tier (or Flat), Amount, Effective from/to | Finance edit; per membership type + age tier |
 | Annual membership fees | Annual amount, Billing basis, Proration, Effective from/to, invoice-line components | Finance edit; GST-inclusive integer cents; components must sum to the total; effective ranges may not overlap for one type |
 | Family billing members | Billing member per family | Finance edit; only in "bill families via a billing member" mode; recipient never inferred |
@@ -132,6 +172,7 @@ date-only.
 | An annual-fee save is rejected | The invoice-line components do not sum to the fee total, or effective ranges overlap | Reconcile the components to the total; make effective ranges non-overlapping |
 | The component Account/Item dropdowns are empty and show an amber notice | Xero is not connected, so the live account/item lists cannot be loaded | Type the account/item codes manually for now; reconnect Xero (see [Xero](xero.md)) to pick from the live lists |
 | A season shows **Missing rates** | A membership type that carries its own nightly rates has none for that season — usually a type added after the season was created | Edit the season and fill in the rates the panel names. Nothing prices until you do; the booking is refused rather than charged a guessed amount |
+| **No season covers &lt;dates&gt;** appears between two seasons | Those nights fall outside every active season, so nothing prices them and a booking including one is refused | Move one of the two windows to meet the other, or add a season covering the nights. Check the Active badge first: a deactivated season sitting in the gap covers nothing |
 | A member's booking is refused with a pricing error | The season it falls in is missing that member's nightly rate | Check the Hut fees section for a **Missing rates** badge on that season and set the rate it names |
 | A season will not save: "Set at least one nightly rate" | Every rate box is empty, and a season has to price somebody | Enter at least one rate. An empty box is "no rate", so clearing them all would leave the season unable to price anyone |
 | A per-family fee can't be invoiced | The club bills members individually, but a schedule still uses the per-family basis | Change that schedule to per-member or no-invoice (see [Subscriptions](subscriptions.md)) |

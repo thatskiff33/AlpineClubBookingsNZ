@@ -405,8 +405,10 @@ describe("Hut Fees never invents a rate on save (#2933)", () => {
 
   async function openTheSeasonEditor() {
     await screen.findByText("Winter 2026");
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    await screen.findByText("Edit Season");
+    // #2938 review: each card's buttons name their season, so a club with five
+    // seasons no longer offers five controls all called "Edit".
+    fireEvent.click(screen.getByRole("button", { name: "Edit Winter 2026" }));
+    await screen.findByRole("heading", { name: "Edit Season" });
   }
 
   it("leaves a cell the panel warned about unset when the officer saves", async () => {
