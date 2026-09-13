@@ -1,5 +1,6 @@
 import type { AgeTier } from "@prisma/client"
 import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache"
+import type { XeroMappingWritableKey } from "@/lib/xero-account-mapping-keys"
 
 export interface XeroStatus {
   connected: boolean
@@ -449,31 +450,21 @@ type MappingValue = {
   itemCode: string | null
 }
 
-export type AccountMappings = {
-  hutFeesIncome: MappingValue
-  hutFeeRefunds: MappingValue
-  stripeBankAccount: MappingValue
-  stripeFees: MappingValue
-  subscriptionIncome: MappingValue
-  membershipCancellationCredit: MappingValue
-  hutFeeItem: MappingValue
-  hutFeeRefundItem: MappingValue
-  entranceFeeItem: MappingValue
-}
+// One row per writable mapping key, straight off the registry (#2717): the
+// panel's shape can no longer drift from the set of keys the API accepts.
+export type AccountMappings = Record<XeroMappingWritableKey, MappingValue>
 
 export type HutFeeMap = Record<string, { itemCode: string }>
 // Item-code-only since #1931 (E5): joining-fee amounts live in the JoiningFee
 // schedule (fee-configuration page), not on Xero item-code mapping rows.
 export type EntranceFeeMap = Record<string, { itemCode: string | null }>
 
-export type AccountMappingKey =
-  | "hutFeesIncome"
-  | "hutFeeRefunds"
-  | "stripeBankAccount"
-  | "stripeFees"
-  | "subscriptionIncome"
-  | "membershipCancellationCredit"
-
-export type CreditItemMappingKey = "hutFeeRefundItem" | "membershipCancellationCredit"
+// Anchored to the registry (#2717): a key renamed or removed there collapses to
+// `never` here, and the picker's hand-ordered list below stops compiling —
+// rather than quietly drifting from the set of keys the API accepts.
+export type CreditItemMappingKey = Extract<
+  XeroMappingWritableKey,
+  "hutFeeRefundItem" | "membershipCancellationCredit"
+>
 
 export type { XeroAccount, XeroItem }

@@ -234,9 +234,15 @@ verbatim and kept their flags. Somebody should schedule the confirmations.
   descendant inherits nobody. That was accepted on the condition that it is
   VISIBLE, so the admin surfaces listing members with no reachable address are
   part of the rule (`INV-LIFE-048`) rather than a convenience beside it.
-- **`INV-PAY-023`** — "ACCOUNTING-POLICY flag (open): the minted remainder note
-  posts to the shared `hutFeeRefunds` mapping; whether admin / goodwill credit
-  should post to a distinct write-off account is an owner call."
+- **`INV-PAY-023` — DECIDED and shipped (#2717).** The flag asked whether admin
+  / goodwill credit should post to a distinct write-off account. It should: the
+  owner decided on 10 August 2026 that goodwill is an expense, not
+  contra-revenue, so revenue stays at what was billed and the goodwill shows as
+  its own cost line. The flag is gone from the document. Because this product
+  is adopted by many clubs the answer could not be an account code — it is a
+  new type-filtered mapping key each club points at its own expense account,
+  falling back to the old destination while unset, which `INV-INT-021` now
+  makes the house rule for every mapping key that follows.
 - **`INV-LIFE-013`** — a self-documented erratum rather than an open question,
   but in the same family: "This one is NOT covered by the
   `cancelledAt`/`archivedAt` refusal and **was wrongly documented here as if it

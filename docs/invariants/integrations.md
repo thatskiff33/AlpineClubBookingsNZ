@@ -334,3 +334,38 @@ legitimately depend on being offered an out-of-service lodge.
   resolving to a different existing `Organisation`. An unresolvable name is
   ambiguity, not evidence, and must not out-vote history that positively
   resolves. Pinned by `organisation-reader-contract.test.ts`.
+
+## Xero account mapping keys (#2717)
+
+### INV-INT-021
+
+- **A new Xero account mapping key ships with three things, always** (owner,
+  10 Aug 2026, #2717): an account filter, a fallback for while unset, a setup
+  prompt saying so. Never a hard failure on upgrade, never a silent default.
+- **Filter on the account's CLASS, not its type** — Xero types four kinds of
+  account as expenses; class is the field meaning "an expense account".
+  `normalizeXeroAccountClass` is the ONE reading of it, shared with the finance
+  reports. A definition may narrow to types within its class.
+- **Structural: that a filter exists, and that the picker obeys it.**
+  `accountClass` is REQUIRED on every definition in
+  `src/lib/xero-account-mapping-keys.ts`, the one registry the picker, API
+  allowlist, resolver and seed derive from; `accountsForMappingKey` is a
+  picker's only filter.
+- **NOT structural: the stored code, and this rule says so.** Judging it needs
+  the org's chart, so config transfer and the API are TRUSTED for the value.
+  `mappingWriteViolation` refuses only what the registry sees: unknown key,
+  account code on an item-only key, item code on a key reading none, blank code.
+  The setup screen flags a stored code outside the filter.
+- **The fallback is ONE hop, and verbatim**: while unset,
+  `getResolvedAccountMappingWithFallback` returns the fallback key's resolution
+  unchanged, so an upgrading club posts where it did. A fallback key declares
+  none itself.
+- **"Configured" means the club CHOSE a code** — `isCodeExplicitlyConfigured`,
+  asked of the code being shown, never a server flag that stales mid-edit.
+- **The prompt is in TWO places**, the mapping row and the `xero-mappings` setup
+  step: the mappings section is collapsed by default.
+- **`goodwillWriteOffs` is the first instance**: whole EXPENSE class, falling
+  back to `hutFeeRefunds`, reclassifying nothing. Only an `ADMIN_ADJUSTMENT` lot
+  routes to it; a member's own money stays on `hutFeeRefunds` even with no note
+  yet (`INV-PAY-023`). Pinned by `xero-account-mapping-registry.test.ts`,
+  `goodwill-write-off-account.test.ts`.

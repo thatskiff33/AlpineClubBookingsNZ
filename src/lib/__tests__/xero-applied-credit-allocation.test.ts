@@ -201,11 +201,16 @@ vi.mock("@/lib/xero-sync", () => ({
   buildXeroIdempotencyKey: vi.fn(() => "idem-key"),
 }));
 
+import { CreditType } from "@prisma/client";
 import {
   allocateAppliedCreditForBooking,
   planAppliedCreditAllocation,
   type AppliedCreditLot,
 } from "@/lib/xero-applied-credit-allocation";
+import {
+  mintSliceMappingKey,
+  planMintGroups,
+} from "@/lib/xero-applied-credit-mint-accounts";
 import { allocateCreditNoteToInvoice } from "@/lib/xero-credit-notes";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
 
@@ -214,11 +219,31 @@ function noteLot(
   xeroCreditNoteId: string,
   remainingCents: number,
 ): AppliedCreditLot {
-  return { memberCreditId: id, xeroCreditNoteId, remainingCents };
+  return {
+    memberCreditId: id,
+    creditType: CreditType.CANCELLATION_REFUND,
+    xeroCreditNoteId,
+    remainingCents,
+  };
 }
 
 function adminLot(id: string, remainingCents: number): AppliedCreditLot {
-  return { memberCreditId: id, xeroCreditNoteId: null, remainingCents };
+  return {
+    memberCreditId: id,
+    creditType: CreditType.ADMIN_ADJUSTMENT,
+    xeroCreditNoteId: null,
+    remainingCents,
+  };
+}
+
+/** A noteless lot that is NOT goodwill: #1547-restored cancellation credit. */
+function restoredLot(id: string, remainingCents: number): AppliedCreditLot {
+  return {
+    memberCreditId: id,
+    creditType: CreditType.CANCELLATION_REFUND,
+    xeroCreditNoteId: null,
+    remainingCents,
+  };
 }
 
 describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
@@ -252,7 +277,13 @@ describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
     expect(plan.noteAllocations).toEqual([
       { memberCreditId: "c1", xeroCreditNoteId: "cn1", amountCents: 2000 },
     ]);
-    expect(plan.mintSlices).toEqual([{ memberCreditId: "c2", amountCents: 1000 }]);
+    expect(plan.mintSlices).toEqual([
+      {
+        memberCreditId: "c2",
+        creditType: CreditType.ADMIN_ADJUSTMENT,
+        amountCents: 1000,
+      },
+    ]);
     expect(plan.mintTotalCents).toBe(1000);
     expect(plan.coveredCents).toBe(3000);
   });
@@ -260,7 +291,13 @@ describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
   it("mints the whole amount when the member has only noteless credit", () => {
     const plan = planAppliedCreditAllocation([adminLot("c1", 5000)], 4000);
     expect(plan.noteAllocations).toEqual([]);
-    expect(plan.mintSlices).toEqual([{ memberCreditId: "c1", amountCents: 4000 }]);
+    expect(plan.mintSlices).toEqual([
+      {
+        memberCreditId: "c1",
+        creditType: CreditType.ADMIN_ADJUSTMENT,
+        amountCents: 4000,
+      },
+    ]);
     expect(plan.mintTotalCents).toBe(4000);
   });
 
@@ -290,6 +327,94 @@ describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
     ]);
     expect(plan.mintSlices).toEqual([]);
     expect(plan.mintTotalCents).toBe(0);
+  });
+});
+
+/**
+ * #2717 — which Xero mapping a minted slice posts to is decided by the lot's
+ * CREDIT TYPE, never by whether it happens to have a note yet.
+ *
+ * Three noteless populations reach this mint, and only the first is goodwill.
+ * Restored cancellation credit is permanently noteless — nothing ever backfills
+ * a note onto it — so a note-based test would book a member's own prepaid money
+ * as a discretionary club expense for ever. An ordinary refund read before its
+ * note arrives from the outbox worker would land wherever worker latency put it.
+ */
+describe("mintSliceMappingKey (#2717): goodwill is the admin adjustment", () => {
+  it("sends an admin adjustment to the goodwill expense mapping", () => {
+    expect(mintSliceMappingKey(CreditType.ADMIN_ADJUSTMENT)).toBe(
+      "goodwillWriteOffs",
+    );
+  });
+
+  it("leaves restored cancellation credit on the refund mapping", () => {
+    // The member's own prepaid money coming back, not generosity by the club.
+    expect(mintSliceMappingKey(CreditType.CANCELLATION_REFUND)).toBe(
+      "hutFeeRefunds",
+    );
+  });
+
+  it("leaves a downward-reprice refund on the refund mapping", () => {
+    expect(mintSliceMappingKey(CreditType.BOOKING_MODIFICATION_REFUND)).toBe(
+      "hutFeeRefunds",
+    );
+  });
+
+  it("leaves a clamp offset row on the refund mapping", () => {
+    // A POSITIVE BOOKING_APPLIED row is the #1887 clamp's offset: it reverses
+    // an application, it does not grant anything.
+    expect(mintSliceMappingKey(CreditType.BOOKING_APPLIED)).toBe(
+      "hutFeeRefunds",
+    );
+  });
+});
+
+describe("planMintGroups (#2717)", () => {
+  it("splits a mixed remainder and conserves every cent", () => {
+    const plan = planAppliedCreditAllocation(
+      [restoredLot("c1", 2000), adminLot("c2", 1500)],
+      3500,
+    );
+    const groups = planMintGroups(plan.mintSlices);
+    expect(groups).toEqual([
+      { mappingKey: "hutFeeRefunds", amountCents: 2000 },
+      { mappingKey: "goodwillWriteOffs", amountCents: 1500 },
+    ]);
+    expect(groups.reduce((sum, g) => sum + g.amountCents, 0)).toBe(
+      plan.mintTotalCents,
+    );
+  });
+
+  it("emits ONE group when every slice shares a destination", () => {
+    const plan = planAppliedCreditAllocation(
+      [restoredLot("c1", 2000), restoredLot("c2", 1000)],
+      3000,
+    );
+    expect(planMintGroups(plan.mintSlices)).toEqual([
+      { mappingKey: "hutFeeRefunds", amountCents: 3000 },
+    ]);
+  });
+
+  it("emits the groups in a fixed order, independent of ledger order", () => {
+    // The recorded request payload and every replay of it must agree, so the
+    // order cannot come from which lot happened to be created first.
+    const goodwillFirst = planMintGroups([
+      { creditType: CreditType.ADMIN_ADJUSTMENT, amountCents: 100 },
+      { creditType: CreditType.CANCELLATION_REFUND, amountCents: 200 },
+    ]);
+    const refundFirst = planMintGroups([
+      { creditType: CreditType.CANCELLATION_REFUND, amountCents: 200 },
+      { creditType: CreditType.ADMIN_ADJUSTMENT, amountCents: 100 },
+    ]);
+    expect(goodwillFirst).toEqual(refundFirst);
+    expect(goodwillFirst.map((g) => g.mappingKey)).toEqual([
+      "hutFeeRefunds",
+      "goodwillWriteOffs",
+    ]);
+  });
+
+  it("has no groups at all when there is nothing to mint", () => {
+    expect(planMintGroups([])).toEqual([]);
   });
 });
 
