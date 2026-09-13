@@ -323,7 +323,18 @@ export function HealthAndDiagnosticsPanels({
         ) : health ? (
           <div className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              <HealthStatCard label="Unlinked members" value={health.unlinkedMembers.count} subtitle="Active members without a Xero contact link." href={health.unlinkedMembers.href} />
+              {/*
+                #2939: this counts EVERY active member with no Xero contact
+                link. The "Members with no Xero contact" section below counts a
+                narrower group — the same population minus archived members,
+                schools, anonymised accounts, records with no usable address and
+                incomplete profiles — so the two figures disagree by
+                construction on any club that has one of those. Both are right;
+                the subtitle is what says which question each is answering,
+                because two different numbers for "members with no Xero contact"
+                on one page with nothing reconciling them is worse than either.
+              */}
+              <HealthStatCard label="Unlinked members" value={health.unlinkedMembers.count} subtitle="Every active member with no Xero contact link — including ones the bulk create tool below sets aside (schools, anonymised accounts, no usable address)." href={health.unlinkedMembers.href} />
               <HealthStatCard
                 label="Active failed issues"
                 value={health.failedOperations.count}

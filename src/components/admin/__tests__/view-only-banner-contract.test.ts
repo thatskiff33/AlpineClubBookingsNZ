@@ -301,8 +301,11 @@ const FIGURES = {
    * 347/349 -> 351 (sync of `main` into `epic/2725-mad`): both lanes' new
    * call sites are disjoint files, so neither classification moved. MEASURED on
    * the MERGED tree by re-running this census, never by adding the deltas.
+   *
+   * 351 -> 353 (#2939): the missing-Xero-contact panel's two controls — run the
+   * dry run, and create the next batch. MEASURED by re-running this census.
    */
-  callSites: 351,
+  callSites: 353,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -314,8 +317,10 @@ const FIGURES = {
    * 293 -> 296 (#3354): so do the AI spend currency card's three.
    * 294/296 -> 298 (sync of `main` into `epic/2725-mad`): both lanes' opt-outs
    * are disjoint. MEASURED on the MERGED tree, never added together.
+   * 298 -> 300 (#2939): both of the missing-contact panel's controls opt out
+   * under the banner that panel heads itself with.
    */
-  optOuts: 298,
+  optOuts: 300,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -334,8 +339,18 @@ const FIGURES = {
    * 260/262 -> 264 (sync of `main` into `epic/2725-mad`): the two are in
    * different files and neither classification moved. MEASURED on the MERGED
    * tree by re-running this census, never by adding the deltas together.
+   * 264 -> 266 (#2939): the missing-contact panel's banner and both its
+   * controls are in one file, so both are static rather than vouched.
+   *
+   * Both controls are ALSO gated on whether Xero is connected, which the
+   * finance-permission banner says nothing about. That second axis is carried
+   * by a visible paragraph in the same section rather than by a per-button
+   * reason, deliberately: a kept reason lands in a `title` that never fires on
+   * a `disabled:pointer-events-none` button and an sr-only line on a control
+   * out of the tab order, which is the weakness the banner exists to fix. So
+   * this is an opt-out with the banner in its own file, not an exception.
    */
-  staticOptOuts: 264,
+  staticOptOuts: 266,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -379,8 +394,11 @@ const FIGURES = {
    * 92 -> 93 (#3354): the AI spend currency card heads itself with one banner,
    * mounted above its loading early-return, and carries it onto both AI
    * settings pages — one component, counted once.
+   *
+   * 93 -> 94 (#2939): the missing-Xero-contact panel heads its own section with
+   * one banner, above everything the section renders.
    */
-  bannerComponents: 93,
+  bannerComponents: 94,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
