@@ -2,6 +2,95 @@ import { describe, expect, it } from "vitest";
 import { buildBookingHistoryItems } from "@/lib/booking-history";
 
 describe("buildBookingHistoryItems", () => {
+  it("shows the stored money source and a classified compatibility fallback on modification history", () => {
+    const items = buildBookingHistoryItems({
+      audience: "member",
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [
+        {
+          id: "mod-stored",
+          modificationType: "PRICE_REBASE",
+          previousData: { finalPriceCents: 12_000 },
+          newData: {
+            finalPriceCents: 10_000,
+            moneyBuildUpOperation: "REVIEW_REBASE",
+            moneyBuildUpSource: "STORED",
+            moneyBuildUpReason: "STORED_MATCHES_DERIVED",
+            moneyBuildUpStoredCents: 10_000,
+            moneyBuildUpDerivedCents: 10_000,
+            moneyBuildUpFallbackClassification: null,
+          },
+          priceDiffCents: -2_000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-04-03T12:00:00Z"),
+        },
+        {
+          id: "mod-fallback",
+          modificationType: "GUEST_REMOVE",
+          previousData: { guestCount: 3, removedGuest: { firstName: "Jo" } },
+          newData: {
+            guestCount: 2,
+            moneyBuildUpOperation: "GUEST_REMOVAL",
+            moneyBuildUpSource: "DERIVED_COMPATIBILITY_FALLBACK",
+            moneyBuildUpReason: "STORED_DERIVED_MISMATCH",
+            moneyBuildUpStoredCents: -4_500,
+            moneyBuildUpDerivedCents: -4_000,
+            moneyBuildUpFallbackClassification: "STORED_SIDE_DEFECT",
+          },
+          priceDiffCents: -4_000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-04-04T12:00:00Z"),
+        },
+      ],
+      refundRequests: [],
+      auditLogs: [],
+    });
+
+    expect(items.find((item) => item.id === "modification-mod-stored")?.detail).toContain(
+      "stored booking build-up ($100.00), confirmed",
+    );
+    const fallback = items.find((item) => item.id === "modification-mod-fallback")?.detail;
+    expect(fallback).toContain("current calculation (-$40.00) retained");
+    expect(fallback).toContain("stored build-up was -$45.00");
+    expect(fallback).toContain("stored evidence is incomplete or inconsistent");
+    expect(fallback).not.toContain("STORED_SIDE_DEFECT");
+  });
+
+  it("shows unknown sold-price evidence without inventing a stored amount", () => {
+    const items = buildBookingHistoryItems({
+      audience: "member",
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [
+        {
+          id: "mod-unknown",
+          modificationType: "GUEST_REMOVE",
+          previousData: { guestCount: 2 },
+          newData: {
+            guestCount: 1,
+            moneyBuildUpOperation: "GUEST_REMOVAL",
+            moneyBuildUpSource: "BASE_EVIDENCE_UNKNOWN",
+            moneyBuildUpReason: "INEXACT_STORED_NIGHT_PRICES",
+            moneyBuildUpStoredCents: null,
+            moneyBuildUpDerivedCents: 0,
+            moneyBuildUpFallbackClassification: null,
+          },
+          priceDiffCents: 0,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-04-04T12:00:00Z"),
+        },
+      ],
+      refundRequests: [],
+      auditLogs: [],
+    });
+
+    const detail = items.find((item) => item.id === "modification-mod-unknown")?.detail;
+    expect(detail).toContain("stored sold-price evidence was not exact enough to use");
+    expect(detail).toContain("source is recorded as unknown");
+    expect(detail).not.toContain("$0.00");
+  });
+
   it("builds a unified history sorted newest-first", () => {
     const items = buildBookingHistoryItems({
       audience: "member",
