@@ -28,7 +28,7 @@ page, which the second fix round reached: it was the one caller still opting out
 of the shared guest form's absent-ceiling shape.
 
 file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2112
+lines: 2341
 reason: the hook is the wizard's single state machine, and this change alters
   what that machine decides rather than adding a feature beside it — the
   advisory replaces a hard stop, `waitlistOnly` becomes an input to
@@ -52,6 +52,14 @@ reason: the hook is the wizard's single state machine, and this change alters
   `partySizeCeiling`'s, which claimed the server "refuses and offers the
   waitlist" at an unconfigured lodge when it refuses the party size outright,
   before the waitlist fallback, and offers nothing.
+  #2721 then added the own-dependant identity question to the same state
+  machine, so the length recorded here is the length after it; the reasoning
+  above is unchanged and applies to it word for word. The collision set, the
+  declaration shape and the refusal all live in
+  `src/lib/booking-dependant-identity.ts`, which the create route re-runs; what
+  is here is the part that cannot leave — the derivation from the live party,
+  the gate on Continue, the two answers, and the note on why each is keyed by
+  normalised name rather than by a position in an array the member is editing.
 
 file: src/app/(authenticated)/book/_components/review-step.tsx
 lines: 1065
@@ -78,7 +86,7 @@ reason: the waitlist-only arm has to be here, because it is a fork in this
   fix — suppressing the control — that would have zeroed the applied credit.
 
 file: src/app/(authenticated)/book/page.tsx
-lines: 687
+lines: 697
 reason: twenty-two lines, and eighteen of them are prop wiring the shell exists
   to do — the advisory and waitlist state travelling from the hook to the two
   steps that render it. The remaining four are the waitlist prompt's copy fix and
@@ -91,6 +99,9 @@ reason: twenty-two lines, and eighteen of them are prop wiring the shell exists
   cross-lodge opt-in moved to its own component, and the shell now builds it once
   and hands the same element to both doors. The entry stays because the file is
   still over budget and still changed.
+  #2721 then added ten lines of the same prop wiring — the collision list, the
+  answered set and the three callbacks travelling from the hook to the guests
+  step — so the length recorded here is the length after that.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
 lines: 2361
