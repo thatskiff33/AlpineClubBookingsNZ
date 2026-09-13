@@ -18,6 +18,12 @@ import {
   withoutDeclaredMemberText,
   type AuditMemberDisclosure,
 } from "./audit-member-disclosure";
+import {
+  AUDIT_TRUNCATION_MARKER,
+  AUDIT_TRUNCATION_SUFFIX,
+  parseStructuredDetail,
+  reduceStructuredDetail,
+} from "./audit-structured-detail";
 // test seam
 export { buildMemberAuditLogWhere } from "./audit-query";
 
@@ -167,7 +173,11 @@ export type AuditLogClient = Pick<PrismaClient, "auditLog">;
 const REDACTED = "[REDACTED]";
 const REDACTED_CARD = "[REDACTED_CARD]";
 const REDACTED_LONG_HTML = "[REDACTED_LONG_HTML]";
-const TRUNCATED = "[TRUNCATED]";
+/**
+ * One spelling, owned by `audit-structured-detail.ts` because the READ side has
+ * to recognise exactly what this one writes (#2704, `INV-SSOT-001`).
+ */
+const TRUNCATED = AUDIT_TRUNCATION_MARKER;
 const MAX_METADATA_DEPTH = 6;
 const MAX_METADATA_ARRAY_ITEMS = 50;
 const MAX_METADATA_OBJECT_KEYS = 75;
@@ -237,12 +247,53 @@ function metadataJsonLimit(options?: AuditMetadataOptions): number {
     : MAX_METADATA_JSON_LENGTH + archived * 2;
 }
 
+/**
+ * The `details` column, sanitised — and, when the caller stored a JSON payload
+ * too big for the column, REDUCED rather than clipped (#2704).
+ *
+ * A payload that fits takes the text rule unchanged, byte for byte, which is
+ * every row the existing tests describe and the overwhelming majority of the
+ * 104 sites writing `details: JSON.stringify(…)`. The structured path exists
+ * only for the case that is already broken today: clipping a JSON document at
+ * character 1000 stores something that still opens with `{` and no longer
+ * parses, so the reader shows an officer a blob instead of fields — and, when
+ * the cut lands mid-value, a *fragment of a number* presented as the number.
+ * `…,"amountCents":1...[TRUNCATED]` for a recorded 1234567 is a measured
+ * example, not a hypothetical.
+ *
+ * ON THE OVER-BUDGET PATH THE PAYLOAD IS RE-SANITISED AS METADATA, which
+ * redacts strictly MORE than the text rule: `sanitizeAuditMetadata` also
+ * replaces sensitive KEY NAMES wholesale, where the text rule can only match
+ * patterns inside the characters. Widening redaction on the one population
+ * whose stored output is malformed anyway is safe in the only direction that
+ * matters; a row that fits still takes the identical path it always did, so no
+ * existing row's meaning moves (`INV-OPS-012`).
+ */
 function sanitizeAuditDetails(value?: string | null): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
-  return sanitizeAuditArchiveText(value) ?? undefined;
+  const sanitized = sanitizeAuditArchiveText(value);
+  if (sanitized === null) {
+    return undefined;
+  }
+  if (!sanitized.endsWith(AUDIT_TRUNCATION_SUFFIX)) {
+    return sanitized;
+  }
+
+  const parsed = parseStructuredDetail(value);
+  if (parsed === null) {
+    // Prose, an array or a scalar. A clipped sentence ending in the marker is
+    // honest about being short, so the text rule is already the right answer.
+    return sanitized;
+  }
+
+  const reduced = reduceStructuredDetail(
+    sanitizeAuditMetadata(parsed),
+    MAX_METADATA_STRING_LENGTH
+  );
+  return reduced?.text ?? sanitized;
 }
 
 /**
@@ -481,14 +532,32 @@ export function sanitizeAuditMetadata(
   }
 
   const serialized = JSON.stringify(sanitized);
-  if (serialized.length <= metadataJsonLimit(options)) {
+  const limit = metadataJsonLimit(options);
+  if (serialized.length <= limit) {
     return sanitized;
   }
 
+  // OVER THE ENVELOPE: keep the fields that fit, not the first 1000 characters
+  // of the document (#2704). This used to store
+  // `{_truncated, _originalLength, preview}` where `preview` was
+  // `serialized.slice(0, 1000)` — a JSON document cut at a character offset, so
+  // every field became one unparseable string and the cut could land mid-value.
+  // That is the same defect the `details` column had, in the sibling column, and
+  // it threw away the structure an officer came to the row for. The reduction
+  // keeps whole fields and names what it dropped; `_truncated` and
+  // `_originalLength` keep their meaning so nothing reading them changes.
+  const reduced = reduceStructuredDetail(sanitized, limit);
+  if (reduced !== null) {
+    return JSON.parse(reduced.text) as Prisma.InputJsonValue;
+  }
+
+  // An array or a scalar at the top level has no fields to keep. No production
+  // writer passes one; the clip stays as the answer for a shape that cannot be
+  // reduced, and it is marked.
   return {
     _truncated: true,
     _originalLength: serialized.length,
-    preview: serialized.slice(0, MAX_METADATA_STRING_LENGTH),
+    preview: `${serialized.slice(0, MAX_METADATA_STRING_LENGTH)}${AUDIT_TRUNCATION_SUFFIX}`,
   };
 }
 
