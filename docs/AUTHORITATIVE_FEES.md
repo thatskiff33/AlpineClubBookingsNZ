@@ -30,6 +30,37 @@ executes that seeder under `E2E_MULTI_LODGE=1`, so the required **E2E
 multi-lodge** branch-protection check would fail at seed time. Do not
 reintroduce a boolean member/non-member rate key.
 
+**Which types owe rate rows is asked in exactly one place**, and since #2933 that
+place is `src/lib/membership-type-rate-coverage.ts`. The rule has one exception —
+`NON_MEMBER` carries `NON_MEMBER_RATE` like `ASSOCIATE` and `SCHOOL` do and is
+nonetheless the rate holder — and a reader who drops the exception writes a rule
+that is right about every type except the one an ordinary public booking hits.
+Archiving does not
+excuse a type from the rule where archiving does not excuse it from PRICING: the
+engine resolves `NON_MEMBER` and `FULL` by key with no active filter, so an
+archived one still prices and still owes rows. A club's own retired type is
+reached only through a member's assignment and is out of scope.
+
+The same module computes which required rates are MISSING, tier by tier and
+including the flat-row fallback, and which seasons are in scope — active, or not
+yet ended against the CLUB's today (`INV-DATE-019`), which a database query
+encodes as the UTC midnight a `@db.Date` column round-trips through rather than
+comparing against the current instant. Two surfaces render that one result: the
+Hut Fees section of **Admin > Fees** flags each affected season while the officer
+is setting rates, and setup readiness lists them on the Seasons And Rates step.
+Both are early warnings and neither is a price — no zero is assumed, no other
+type's rate is inherited, no write surface saves a zero-cent row for a rate
+nobody entered, and pricing still hard-throws at runtime when a required row is
+absent. One part of that is guarded mechanically:
+`rate-bearing-membership-type-census.test.ts` fails any file under `src/` that
+spells the rate-bearing DISJUNCTION inline — the shape six of the seven old
+copies had. The rest of the rule is held by the module and its own tests, not by
+a text scan: the key-resolved pair, the archived and behaviour-edited
+exceptions, and the season bound have no census, and the same two keys are
+resolved by key elsewhere (`membership-type-policy.ts`, `xero-mappings.ts`,
+`booking-request-suggested-rates.ts`) for a different purpose. Read the module
+before writing a second answer to any of those.
+
 E7 (#1933) added the grouped public presentation and token grammar on top of
 this source, not a re-key. Xero
 hut-fee item codes re-key the same way via `XeroItemCodeMapping.membershipTypeId`

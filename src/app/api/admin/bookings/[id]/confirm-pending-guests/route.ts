@@ -31,7 +31,7 @@ import {
   checkCapacityForGuestRanges,
   type NightAvailability,
 } from "@/lib/capacity";
-import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
+import { overCapacityNights, wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -43,7 +43,6 @@ import {
 import { bookingPromoEmailOptions } from "@/lib/booking-promo-email-options";
 import { createStructuredAuditLog, getAuditRequestContext } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { formatDateOnly } from "@/lib/date-only";
 import {
   savedPaymentMethodForBooking,
   savedPaymentMethodRowStamp,
@@ -58,11 +57,9 @@ const confirmPendingGuestsSchema = z.object({
   notifyMember: z.boolean().optional(),
 });
 
-function getOverbookedNightDates(nightDetails: NightAvailability[]): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => formatDateOnly(night.date));
-}
+/** This 409 carries dates alone; the ONE definition supplies them (#2930). */
+const getOverbookedNightDates = (nightDetails: NightAvailability[]): string[] =>
+  overCapacityNights({ nightDetails }).map((night) => night.date);
 
 /**
  * Admin override: "Confirm pending guests now".

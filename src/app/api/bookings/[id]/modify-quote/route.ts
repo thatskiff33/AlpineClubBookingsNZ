@@ -137,6 +137,8 @@ import {
   type BookingEditGuestRangePlan,
 } from "@/lib/booking-edit-guest-ranges";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
+import { overCapacityNights } from "@/lib/over-capacity-confirmation";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
@@ -1625,6 +1627,41 @@ export async function POST(
    * member's request two ways (`INV-SSOT`). Null whenever the request carried no
    * promo change at all.
    */
+  /**
+   * What a capacity refusal puts on the wire, for each of the two audiences that
+   * can receive one (#2930).
+   *
+   * MEMBER — `capacityFullNights`, the nights and nothing else, through the ONE
+   * helper. The list this replaces was built inline by the price summary card
+   * from `availableBeds < 0`, and it told a member two things it must not. A
+   * whole-lodge-held night is pinned to exactly 0 available beds and never goes
+   * negative (`INV-CAP-021`, `INV-CAP-038`), so it fell out of that filter and a
+   * hold-only refusal rendered an EMPTY list where genuine fullness rendered a
+   * populated one — the tell ADR-001 decision 6 forbids, readable in the network
+   * response before a pixel was drawn. And each row carried the night's
+   * shortfall, which has no counterpart on a held night and so tells the two
+   * apart by arithmetic even once the list itself matches.
+   *
+   * ADMIN OVERRIDE — `nightDetails`, the confirmable over-capacity set from its
+   * own canonical helper, which deliberately EXCLUDES held nights because no
+   * override may admit anyone onto one (decision 5). It is emitted only on the
+   * branch that also raises `overCapacityConfirmRequired`, which `adminOverride`
+   * gates, so the bed numbers never reach a member at all. It used to be the
+   * whole unfiltered list, re-filtered client-side — a second spelling of
+   * `overCapacityNights` that could drift from the 409's (`INV-SSOT-001`).
+   */
+  const capacityRefusalFields: {
+    capacityFullNights?: string[];
+    nightDetails?: ReturnType<typeof overCapacityNights>;
+  } = capacity.available
+    ? {}
+    : {
+        capacityFullNights: getCapacityFullNights(capacity.nightDetails),
+        ...(adminOverride && partnerSharedGuests.length === 0
+          ? { nightDetails: overCapacityNights(capacity) }
+          : {}),
+      };
+
   const parkedQuoteResponse = (causes: readonly string[]) => {
     /**
      * #3214: THE ONE ANSWER THAT IS NOT A PARKED QUOTE — an edit that parks its
@@ -1708,14 +1745,7 @@ export async function POST(
       ...(adminOverride && !capacity.available && partnerSharedGuests.length === 0
         ? { overCapacityConfirmRequired: true }
         : {}),
-      ...(capacity.available
-        ? {}
-        : {
-            nightDetails: capacity.nightDetails.map((n) => ({
-              date: formatDateOnly(n.date),
-              availableBeds: n.availableBeds,
-            })),
-          }),
+      ...capacityRefusalFields,
     });
   };
 
@@ -2325,13 +2355,6 @@ export async function POST(
     ...(adminOverride && !capacity.available && partnerSharedGuests.length === 0
       ? { overCapacityConfirmRequired: true }
       : {}),
-    ...(capacity.available
-      ? {}
-      : {
-          nightDetails: capacity.nightDetails.map((n) => ({
-            date: formatDateOnly(n.date),
-            availableBeds: n.availableBeds,
-          })),
-        }),
+    ...capacityRefusalFields,
   });
 }

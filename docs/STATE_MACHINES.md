@@ -2092,6 +2092,16 @@ offer expires/declined -> WAITLISTED or CANCELLED
 stranded free confirm, admin repair -> WAITLISTED
 ```
 
+An entry may legitimately sit over nights a whole-lodge hold covers (#2930).
+That became reachable when the member calendar started letting a full future
+night be selected — which is how the waitlist is reached at all — so
+`capacity unavailable -> WAITLISTED` now includes "unavailable because the lodge
+is held". It changes no transition. Promotion is gated on
+`checkCapacityForGuestRanges(...).available`, and a hold forces that false
+whatever the bed arithmetic says (`INV-CAP-021`), so the entry keeps its queue
+position until the hold is released rather than being offered or cancelled. The
+member is never told which of the two kept them waiting (ADR-001 decision 6).
+
 Cross-lodge offers (ADR-004, `waitlistOfferedLodgeId` set) accept
 differently: the entry never changes lodge. Confirming re-checks the
 quoted price, creates a fresh booking at the offered lodge through the

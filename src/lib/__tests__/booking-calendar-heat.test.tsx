@@ -9,9 +9,15 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_LOCALE } from "@/config/operational";
 
-vi.mock("@/components/club-identity-provider", () => ({
-  useClubIdentity: () => ({ lodgeCapacity: 20 }),
-}));
+/*
+  #2930: the calendar no longer reads the club-identity bed count. That figure is
+  ONE lodge's capacity used as the denominator for every lodge, so at a capped or
+  secondary lodge every free-bed count on this grid was computed against the
+  wrong ceiling. The selected lodge's own effective capacity now arrives with the
+  month's availability (`INV-CAP-001`, `INV-CAP-003`), which is why every stub
+  below states `lodgeCapacity` — and why a stub that omits it renders "availability
+  not loaded" rather than silently borrowing another lodge's number.
+*/
 
 import { BookingCalendar } from "@/components/booking-calendar";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
@@ -63,7 +69,7 @@ function stubAvailability(
     vi.fn(async () => ({
       ok: true,
       json: async () => ({
-        availability: { [targetIso]: occupiedOnTarget },
+        lodgeCapacity: 20, availability: { [targetIso]: occupiedOnTarget },
         seasons: season ? { [targetIso]: season } : {},
       }),
     })),
@@ -115,15 +121,32 @@ describe("BookingCalendar token-driven availability heat (#1814)", () => {
     expect(button.textContent).toContain("3");
   });
 
-  it("paints a full night (0 free) with the danger token and a 'Full' label instead of colour alone", async () => {
+  it("paints a full night (0 free) with the danger token and a 'Waitlist' label instead of colour alone", async () => {
     stubAvailability(20); // 0 of 20 free
     render(<BookingCalendar onDateSelect={() => {}} />);
 
     const button = await targetButton();
     expect(button.className).toContain("bg-danger-muted");
     expect(button.className).toContain("text-danger");
-    // "Full" carries the meaning without relying on the danger colour.
+    // #2930 SUPERSEDES the "Full" wording this line pinned. The heat is
+    // unchanged — a full night is still the danger token and still says so
+    // without relying on colour — but the word is now the ACTION rather than
+    // the state, because since #2930 a member can act on it. "Full" alone was
+    // accurate about a cell that could not be clicked; on a cell that CAN be
+    // clicked it says nothing about what clicking does.
+    expect(button.textContent).toContain("Waitlist");
+  });
+
+  it("still says 'Full' on the admin over-capacity grid, where a full day is not a waitlist", async () => {
+    stubAvailability(20);
+    render(<BookingCalendar onDateSelect={() => {}} allowFullDates />);
+
+    const button = await targetButton();
+    // The admin book-on-behalf boundary (#2930): a full day there is the #1767
+    // over-capacity warn-and-confirm, never the member waitlist, so offering
+    // the member's word for it would name the wrong mechanism.
     expect(button.textContent).toContain("Full");
+    expect(button.textContent).not.toContain("Waitlist");
   });
 
   it("marks the selected check-in with the brand-gold accent, not a heat colour", async () => {

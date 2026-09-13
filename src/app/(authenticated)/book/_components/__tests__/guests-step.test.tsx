@@ -26,6 +26,8 @@ function renderGuestsStep(
       familyMembers={[]}
       guests={[]}
       lodgeCapacity={8}
+      capacityShortNights={[]}
+      capacityShortMessage={null}
       addFamilyMemberAsGuest={vi.fn()}
       showInviteFamilyGroupMembersLink={false}
       handleGuestsChange={vi.fn()}
@@ -50,6 +52,60 @@ function renderGuestsStep(
     />,
   );
 }
+
+/**
+ * #2930 fix round — a lodge with no configured capacity resolves to 0 beds by
+ * design, so it can never be overbooked before somebody configures it. Read as a
+ * party ceiling, that meant "you may add zero guests" — with every add-guest
+ * control disabled at zero guests, the step still requiring one guest to
+ * continue, and the calendar (since #2930) showing every night at that lodge as
+ * full and inviting the member onto the waitlist. Invitation followed by a step
+ * with no way forward is the shape this issue exists to remove.
+ *
+ * Null means no client ceiling. The server is the authority on capacity
+ * (settled contract point 3) and its refusal is what offers the waitlist.
+ */
+describe("GuestsStep party ceiling (#2930)", () => {
+  const party = (size: number): GuestData[] =>
+    Array.from({ length: size }, (_, i) => ({
+      firstName: `G${i}`,
+      lastName: "Guest",
+      ageTier: "ADULT" as const,
+      isMember: false,
+    }));
+
+  const family: FamilyMember[] = [
+    {
+      id: "member-self",
+      firstName: "Sam",
+      lastName: "Skier",
+      ageTier: "ADULT",
+      relationship: "self",
+    },
+  ];
+
+  it("keeps quick-add available when there is no ceiling", () => {
+    renderGuestsStep({
+      lodgeCapacity: null,
+      familyMembers: family,
+      guests: party(3),
+    });
+
+    expect(
+      screen.getByRole("button", { name: /Sam/ }),
+    ).not.toBeDisabled();
+  });
+
+  it("still enforces a real ceiling", () => {
+    renderGuestsStep({
+      lodgeCapacity: 3,
+      familyMembers: family,
+      guests: party(3),
+    });
+
+    expect(screen.getByRole("button", { name: /Sam/ })).toBeDisabled();
+  });
+});
 
 describe("GuestsStep", () => {
   it("keeps the family-profile pointer visible when some family members already exist", () => {
@@ -83,6 +139,8 @@ describe("GuestsStep", () => {
         memberGuestOpenSearchEnabled={false}
         addMemberGuest={vi.fn()}
         memberGuestAddError={null}
+        capacityShortNights={[]}
+        capacityShortMessage={null}
         showInviteFamilyGroupMembersLink={false}
         handleGuestsChange={vi.fn()}
         perGuestDatesEnabled={false}

@@ -47,11 +47,11 @@ import {
   CONSENT_FREE_GUEST_COLUMNS,
   type MemberGuestAddActor,
 } from "@/lib/member-guest-consent";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import {
   buildApprovalGuestCreates,
   claimAlreadyConvertedBookingRequest,
   collectNotifiedMemberGuestIds,
-  getCapacityFullNights,
   notifyMemberGuestsHoldReleased,
   planBookingRequestGuestConsent,
   sendOwnerSubstitutionAdminAlert,

@@ -5,28 +5,27 @@ import { BookingStatus } from "@prisma/client";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
-  type NightAvailability,
 } from "@/lib/capacity";
-import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
+// #2930: the confirmable over-capacity set comes from its ONE definition. This
+// route carried a private `getOverbookedNights` that spelled the same rule
+// inline (`INV-SSOT-001`); `overCapacityNights` also excludes whole-lodge-held
+// nights by name, which this copy achieved only as a side effect of a held
+// night's available beds being pinned to 0 rather than negative (`INV-CAP-021`,
+// ADR-001 decision 5). The hold itself is still reported separately and refused
+// before the overbook gate, below.
+import {
+  overCapacityNights,
+  wholeLodgeBlockedNights,
+} from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { z } from "zod";
-import { formatDateOnly } from "@/lib/date-only";
 
 const capacityHoldSchema = z.object({
   allowOverbook: z.boolean().optional(),
 });
-
-function getOverbookedNights(nightDetails: NightAvailability[]) {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => ({
-      date: formatDateOnly(night.date),
-      availableBeds: night.availableBeds,
-    }));
-}
 
 /**
  * POST /api/admin/bookings/[id]/capacity-hold — Admin Hold (#1764).
@@ -125,7 +124,7 @@ export async function POST(
         booking.id,
         tx,
       );
-      const overbookedNights = getOverbookedNights(capacity.nightDetails);
+      const overbookedNights = overCapacityNights(capacity);
       const overbookDates = overbookedNights.map((night) => night.date);
 
       // Exclusive whole-lodge hold (ADR-001 decision 5, issue #118): a hold on
