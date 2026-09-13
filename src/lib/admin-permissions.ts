@@ -435,6 +435,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       // stays here. The page falls to the overview catch-all and is recorded in
       // OVERVIEW_ALLOWLIST with that reasoning.
       "/api/admin/ai-diagnostics",
+      // The NZD -> club-currency rate for AI spend (#3354): ONE setting shared by
+      // both AI modules, so its own prefix; same levels as the two budget routes.
+      "/api/admin/ai-spend-currency",
     ],
   },
   {

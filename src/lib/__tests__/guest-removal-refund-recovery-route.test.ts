@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
 import { NextRequest } from "next/server";
 
 // Issue #818 (wave 2): a Stripe refund failure after guest removal must enqueue a
@@ -86,6 +88,9 @@ function makeResult(overrides: Record<string, unknown> = {}) {
     // Only the Stripe-refundable slice drives the refund + recovery path.
     pendingRefundAmountCents: 2000,
     additionalAmountCents: 0,
+    // #3371: the minter's own parameter. A removal asks for nothing, and a zero
+    // ask never mints - so it can retire nothing and carries nothing.
+    additionalAsk: NO_ADDITIONAL_ASK,
     settlementMethod: "card",
     policyRetainedAmountCents: 0,
     xeroRefundAmountCents: 0,

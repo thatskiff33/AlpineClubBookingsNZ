@@ -181,6 +181,9 @@ deeper reference for what each category contains and the import safety model.
     - `AiAssistantSettings` — the deployment-specific AI monthly spend cap; an
       operational spend control a source club must never reset on a target
       (a fresh import keeps the target's own cap, #2211).
+    - `AiSpendCurrencySettings` — the NZD-to-club-currency rate for AI spend
+      (#3354), shared by both AI modules; a property of the deployment's
+      configured currency, so a source club's rate has no meaning on a target.
     - `ClubTimeSettings` — the installation's one club time zone (#2989). It does
       not travel for the same reason changing it in-app is Full-Admin-only,
       confirmation-gated and audited: a bundle apply is none of those things, so

@@ -414,7 +414,25 @@ export const AUDIT_CENSUS_TOTALS = {
   // Both are `payment`, both are categorised at the site, so neither joins
   // `UNCATEGORISED_AUDIT_WRITERS`. Re-MEASURED with `npm run audit:census` on
   // this branch (470 sites), never by adding two to the literal.
-  writeSites: 470,
+  // 470 -> 471 (#3354): `AI_SPEND_CURRENCY_RATE_UPDATED` in
+  // `/api/admin/ai-spend-currency`, the administrator-set NZD -> club-currency
+  // rate both AI spend caps are now compared through. `tx.auditLog.create` with
+  // `buildStructuredAuditLogCreateArgs`, the same form as the two sibling AI
+  // settings writers (`AI_ASSISTANT_SETTINGS_UPDATED`,
+  // `AI_DIAGNOSTICS_SETTINGS_UPDATED`) it sits beside, and like them
+  // categorised `admin` at the site and named in none of the four per-site
+  // maps. Re-MEASURED by running the census suite on this branch (471 sites),
+  // never by adding one to the literal.
+  // 471 -> 472 (#3371): `booking.editFinancialReview.chargeCarriedUnpaidBalance`,
+  // the record that a review charge absorbed another change's unpaid extra when
+  // its mint retired that change's ask. It is provenance rather than a queue -
+  // nothing is owed outside the system and nobody has to act - but an officer
+  // opening the earlier change finds its ask gone with no explanation on it, and
+  // this is what answers them. Categorised `payment` at the site, so it does not
+  // join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npm run audit:census` on this tree (472 sites, 2324 files scanned), not by
+  // adding one to the literal.
+  writeSites: 472,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -512,7 +530,14 @@ export const AUDIT_CENSUS_TOTALS = {
     // not be withdrawn from Stripe. #3214 landed on `main` first, so this
     // branch's own delta was 120 -> 121 before the merge and is 121 -> 122
     // after it - re-measured, never re-derived by arithmetic.
-    createAuditLog: { total: 122, uncategorised: 0 },
+    // 122 -> 123 (#3371): the carried-unpaid-balance record, declared as
+    // `recordCarriedEditReviewChargeBalance` in
+    // `edit-financial-review-carried-balance.ts` and called post-commit from
+    // `edit-financial-review-charge.ts`, awaited the same best-effort way as
+    // the two review-charge writers it belongs with.
+    // NOT `edit-financial-review-charge-request.ts`, which imports only the
+    // pure `measureCarriedAskShortfall` from that module and writes no row.
+    createAuditLog: { total: 123, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -537,7 +562,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // as the club-timezone writer beside it, inside the route's own Serializable
     // transaction — so the two-table contract that route's test enumerates stays
     // enumerable.
-    "auditLog.create": { total: 74, uncategorised: 0 },
+    // 74 -> 75 (#3354): the AI spend currency-rate writer, above — the same
+    // `tx.auditLog.create` + `buildStructuredAuditLogCreateArgs` form as the two
+    // AI settings routes it is a sibling of.
+    "auditLog.create": { total: 75, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -644,7 +672,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // escalation. Money left the club with nobody deciding it should, and the
     // person who reconciles that is the one who reconciles the club's money -
     // the same audience, for the same reason, as every row above it.
-    payment: 44,
+    // 44 -> 45 (#3371): the carried-unpaid-balance record. `payment` for the
+    // same reason as the two review-charge writers beside it - the person who
+    // needs to know that one change's ask now rides on another's is the one
+    // reconciling the club's money. It widens nobody's access: `payment` is the
+    // category those siblings already use.
+    payment: 45,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
@@ -754,7 +787,15 @@ export const AUDIT_CENSUS_TOTALS = {
     // disclosure. `security` was considered and rejected: this changes what the
     // installation DOES, not who may sign in or what they may reach, and its read
     // gate is `support:view` either way.
-    admin: 104,
+    // 104 -> 105 (#3354): AI_SPEND_CURRENCY_RATE_UPDATED. A widening of who can
+    // read what by one site, stated rather than counted: `admin` is readable
+    // with `support:view` alone, so the derived weakest-gate total moves
+    // 130 -> 131. The row carries the before/after rate (a ratio, not an
+    // amount) and the id of the administrator who set it — no member data —
+    // and it is `admin` for the same reason the two sibling AI settings writers
+    // are: installation configuration that changes what the caps are compared
+    // against, not who may sign in or what they may reach.
+    admin: 105,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

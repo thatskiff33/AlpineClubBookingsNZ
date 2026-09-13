@@ -9,26 +9,42 @@
  *  - a circuit breaker stops the route spending once metering can no longer be
  *    written ("can't-meter ⇒ don't-spend").
  *
- * All money is NZD integer cents. The question text is NEVER stored — only its
+ * All money is club-currency integer cents (#3354, `INV-CONFIG-001`): the price
+ * table below is in NZD cents, and every estimate is converted ONCE through the
+ * administrator-set NZD -> club-currency rate (`ai-spend-currency.ts`) before
+ * it is booked to the ledger or compared with the cap, so the cap an admin
+ * enters in the club's own money is compared with spend in that money. Usage
+ * rows record the club-currency cost at the rate in force when they were
+ * written and are never rescaled. The question text is NEVER stored — only its
  * character count.
  */
 
 import { prisma } from "@/lib/prisma";
 import { APP_TIME_ZONE } from "@/config/operational";
+import { AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
+import { convertNzdCentsToClubCents } from "@/lib/ai-spend-currency";
+import { loadAiSpendCurrency } from "@/lib/ai-spend-currency-settings";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { reportAiError } from "@/lib/observability-bridge";
 import type { AiUsage } from "@/lib/anthropic-client";
 
-/** Default monthly budget when no AiAssistantSettings row is stored: NZ$10. */
-export const DEFAULT_MONTHLY_BUDGET_CENTS = 1000;
+/**
+ * Default monthly budget when no AiAssistantSettings row is stored: 10.00 in
+ * the club's currency (NZ$10 for a New Zealand club). The value's one home is
+ * `src/config/ai-spend.ts`, which the module descriptions also render.
+ */
+export const DEFAULT_MONTHLY_BUDGET_CENTS = AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS;
 
 const WARNING_THRESHOLDS = [0.7, 0.85, 0.95] as const;
 
 /**
- * NZD integer cents per MILLION tokens, per model. Derived from Anthropic's USD
- * list prices multiplied by a deliberately conservative FX of 1.8 NZD/USD, so
- * the estimate over-counts the true bill and the cap trips early. UPDATE THIS
- * TABLE whenever Anthropic changes prices (or the FX drifts materially).
+ * NZD integer cents per MILLION tokens, per model — `AI_PRICE_TABLE_CURRENCY`
+ * in `ai-spend-currency.ts`, which is what the club's currency is compared
+ * against to decide that no conversion applies (#3354). Derived from
+ * Anthropic's USD list prices multiplied by a deliberately conservative FX of
+ * 1.8 NZD/USD, so the estimate over-counts the true bill and the cap trips
+ * early. UPDATE THIS TABLE whenever Anthropic changes prices (or the FX drifts
+ * materially).
  *
  * claude-haiku-4-5 USD list: input $1.00, output $5.00, cache-write $1.25
  * (1.25x input), cache-read $0.10 (0.1x input) per MTok.
@@ -41,14 +57,16 @@ export const AI_PRICE_TABLE_NZ_CENTS_PER_MTOK: Record<
 };
 
 /**
- * A conservative worst-case cost for a single call, in cents. The pre-call
- * budget gate reserves this so a call that would push spend over the cap is
- * denied BEFORE it is made (we cannot know the real cost until the call
- * returns). A typical Latin-text call costs ~2c; an adversarial dense-Unicode
- * question (CJK/emoji at ~1.8-2 tokens/char) hitting the zod input caps and the
- * 512-output ceiling can reach ~10c, so 16c restores true worst-case headroom.
- * Post-call metering reconciles the actual cost regardless — this constant only
- * bounds the pre-call reservation, never what is charged to the ledger.
+ * A conservative worst-case cost for a single call, in NZD cents (the price
+ * table's currency; `checkAiBudget` converts it to club cents at the configured
+ * rate before comparing). The pre-call budget gate reserves this so a call that
+ * would push spend over the cap is denied BEFORE it is made (we cannot know the
+ * real cost until the call returns). A typical Latin-text call costs ~2c; an
+ * adversarial dense-Unicode question (CJK/emoji at ~1.8-2 tokens/char) hitting
+ * the zod input caps and the 512-output ceiling can reach ~10c, so 16c restores
+ * true worst-case headroom. Post-call metering reconciles the actual cost
+ * regardless — this constant only bounds the pre-call reservation, never what
+ * is charged to the ledger.
  */
 export const WORST_CASE_CALL_CENTS = 16;
 
@@ -90,11 +108,12 @@ function highestPriceRow() {
 }
 
 /**
- * Estimated NZD cents for one call. Math.ceil of the summed per-token cost; a
- * minimum of 1 cent whenever ANY usage is present (so a real call is never free
- * in the ledger); 0 only when every token count is zero. An unknown model is
- * priced at the highest known row — fail-expensive, so a model swap never
- * silently under-counts.
+ * Estimated NZD cents for one call — the price table's currency, before the
+ * club-currency conversion `recordAiUsage` applies. Math.ceil of the summed
+ * per-token cost; a minimum of 1 cent whenever ANY usage is present (so a real
+ * call is never free in the ledger); 0 only when every token count is zero. An
+ * unknown model is priced at the highest known row — fail-expensive, so a model
+ * swap never silently under-counts.
  */
 export function estimateAiCostCents(model: string, usage: AiUsage): number {
   const row = AI_PRICE_TABLE_NZ_CENTS_PER_MTOK[model] ?? highestPriceRow();
@@ -129,6 +148,8 @@ type AiUsagePrisma = typeof prisma & {
   aiAssistantSettings?: {
     findUnique?: (args: unknown) => unknown;
   };
+  // aiSpendCurrencySettings is NOT guarded here: `loadAiSpendCurrency` falls
+  // back to the identity rate itself when its delegate is missing (#3354).
 };
 
 // ---------------------------------------------------------------------------
@@ -145,8 +166,11 @@ export interface AiBudgetState {
  * Whether another paid call is within the monthly budget. FAILS CLOSED — a
  * missing delegate, a DB error, or any unexpected fault returns
  * `{ allowed: false }` (mirrors `loadEffectiveModuleFlags`'s disable-on-error).
- * Denies when `spentCents + WORST_CASE_CALL_CENTS > budgetCents`, reserving the
- * worst-case cost of the in-flight call.
+ * Denies when `spentCents + worstCase > budgetCents`, reserving the worst-case
+ * cost of the in-flight call — `WORST_CASE_CALL_CENTS` converted to club cents
+ * at the configured rate, read once here alongside the settings (#3354). Both
+ * `spentCents` (booked at conversion time) and `budgetCents` (entered by the
+ * admin) are already club cents.
  *
  * SOFT CAP: this is a read-then-spend gate, not a lock. N concurrent in-flight
  * calls can each pass here before any of their metering lands, so spend can
@@ -162,16 +186,21 @@ export async function checkAiBudget(
     return { allowed: false, spentCents: 0, budgetCents: DEFAULT_MONTHLY_BUDGET_CENTS };
   }
   try {
-    const [monthly, settings] = await Promise.all([
+    const [monthly, settings, currency] = await Promise.all([
       prisma.aiAssistantUsageMonthly.findUnique({
         where: { month: aiUsageMonthKey(now) },
       }),
       prisma.aiAssistantSettings.findUnique({ where: { id: "default" } }),
+      loadAiSpendCurrency(),
     ]);
     const budgetCents = settings?.monthlyBudgetCents ?? DEFAULT_MONTHLY_BUDGET_CENTS;
     const spentCents = monthly?.costCents ?? 0;
+    const worstCaseClubCents = convertNzdCentsToClubCents(
+      WORST_CASE_CALL_CENTS,
+      currency.clubUnitsPerNzdMicros,
+    );
     return {
-      allowed: spentCents + WORST_CASE_CALL_CENTS <= budgetCents,
+      allowed: spentCents + worstCaseClubCents <= budgetCents,
       spentCents,
       budgetCents,
     };
@@ -259,7 +288,10 @@ function redactTruncateErrorMessage(message?: string | null): string | null {
  * Persist one AI call (success OR failure) as an event row and roll it into the
  * month singleton, in ONE transaction. Cost is recorded whenever a usage object
  * is present (a refusal or a max_tokens truncation still billed input) and 0
- * only for a token-free error. On any failure this reports through the
+ * only for a token-free error. The NZD estimate is converted to club cents at
+ * the configured rate, read once per call (#3354); a failure to read the rate
+ * is a metering failure like any other, so it trips the breaker rather than
+ * booking an unconverted figure. On any failure this reports through the
  * observability bridge AND trips the metering circuit breaker; on success the
  * breaker resets.
  */
@@ -267,7 +299,7 @@ export async function recordAiUsage(input: RecordAiUsageInput): Promise<void> {
   const now = input.now ?? new Date();
   const month = aiUsageMonthKey(now);
   const usage = input.usage ?? EMPTY_USAGE;
-  const costCents = input.usage ? estimateAiCostCents(input.model, input.usage) : 0;
+  const nzdCostCents = input.usage ? estimateAiCostCents(input.model, input.usage) : 0;
   const failureContext = {
     surface: input.surface,
     model: input.model,
@@ -281,6 +313,11 @@ export async function recordAiUsage(input: RecordAiUsageInput): Promise<void> {
   }
 
   try {
+    const currency = await loadAiSpendCurrency();
+    const costCents = convertNzdCentsToClubCents(
+      nzdCostCents,
+      currency.clubUnitsPerNzdMicros,
+    );
     await prisma.$transaction([
       prisma.aiAssistantUsageEvent.create({
         data: {
