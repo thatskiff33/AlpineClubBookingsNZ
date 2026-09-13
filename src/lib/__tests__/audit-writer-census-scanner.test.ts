@@ -426,19 +426,40 @@ describe("audit writer census TSV (#2695)", () => {
  * reduction, a sentence keeps the honest text clip, and the two are now
  * distinguishable in the artifact a human reads.
  *
- * PINNED AS BEHAVIOUR, NOT AS A POPULATION, and that is a deliberate choice.
- * The reduction lives at the write boundary and covers every site
- * automatically, so a new payload writer needs no per-site review — an exact
- * 104-entry pin would cost every future lane a manifest edit and buy nothing.
- * It would also mint one more count for two branches to collide on
- * byte-identically, which the manifest records happening five separate times.
- * What has to be true is that the scanner can TELL the shapes apart, and these
- * fixtures are what says so.
+ * PINNED AS BEHAVIOUR, NOT AS A POPULATION — kept after review, but NOT for the
+ * reason first given. "An exact 104-entry pin would cost every lane a manifest
+ * edit" argued against a strawman: the manifest beside this one already pins
+ * per-category counts, so a lane adding a writer already edits it, and the
+ * option never weighed was one more integer bucket rather than a hundred named
+ * entries. The reason that carries is what a count of this particular column
+ * would and would not catch. Every other pinned count guards a per-site
+ * DECISION a writer can get wrong — a category, a disclosure — so a moving
+ * number means somebody chose. This one is a passive fact about how a payload
+ * was spelled, governed by a boundary that covers all four write forms whatever
+ * the spelling; a lane converting `details: JSON.stringify(x)` to
+ * `details: serialise(x)` would move the bucket while changing nothing the
+ * reduction does, and a lane adding the hundred-and-fifth payload writer would
+ * move it while doing nothing that needs review. A number that moves for
+ * reasons nobody needs to act on teaches its readers to re-baseline it, which
+ * is how the comment-stripper population drifted three times. What HAS to be
+ * true is that the scanner can tell the shapes apart, and these fixtures say so.
  *
- * Measured on this tree the day it was written: 104 payload sites, 167 text,
- * 195 absent, 8 unreadable. The 104 agrees with an independent
- * `grep -c "details: JSON.stringify"` over `src/` and `scripts/`, which is the
- * point of measuring it two ways.
+ * Measured on this tree: 104 payload sites, 167 text, 198 absent, 8 unreadable,
+ * plus 7 migration statements with no event object to read. The 104 is
+ * corroborated independently — and by a command that REPRODUCES, which the
+ * first version of this sentence did not: a bare
+ * `grep -rn "details: JSON.stringify" src/ scripts/` returns 122, because the
+ * census does not scan tests, mocks, `e2e`, `generated`, `fixtures` or
+ * `test-utils`, and because two of the hits are DOCBLOCK mentions this very
+ * change added — this module and `audit-structured-detail.ts` both quote the
+ * spelling while describing it. Excluding the census's own directories leaves
+ * 106; excluding the two prose mentions leaves 104:
+ *
+ *   grep -rn --include=*.ts --include=*.tsx --include=*.js --include=*.mjs \
+ *     --include=*.cjs "details: JSON.stringify" src/ scripts/ \
+ *     | grep -vE "__tests__|__mocks__|/e2e/|/generated/|/fixtures/|/test-utils/" \
+ *     | grep -vE "\.test\.|\.spec\.|\.d\.ts" \
+ *     | grep -vE ":[0-9]+: \*"
  */
 describe("audit writer census detail shapes (#2704)", () => {
   it("tells a JSON payload apart from a sentence, and from no details at all", () => {

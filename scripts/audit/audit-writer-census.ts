@@ -216,12 +216,14 @@ export type AuditFreeTextEvidence =
  * different halves of `audit-structured-detail.ts`: a payload too big for the
  * column is REDUCED to its whole fields, while prose keeps the honest text clip.
  *
- * It is a MEASUREMENT and deliberately not a gate. The reduction lives at the
- * write boundary and covers every site automatically, so a new payload writer
- * needs no per-site review and pinning the population would buy nothing but a
- * manifest edit for every lane that adds a writer — and one more count for two
- * branches to collide on byte-identically, which this manifest records
- * happening five times already.
+ * It is a MEASUREMENT and deliberately not a gate. Every count this census
+ * DOES pin guards a per-site decision a writer can get wrong; this column is a
+ * passive fact about how a payload was spelled, and the reduction at the write
+ * boundary covers all four write forms whatever the spelling. A count of it
+ * would move for a rename or for a hundred-and-fifth payload writer, neither of
+ * which anybody needs to act on — and a number that moves for reasons nobody
+ * acts on teaches its readers to re-baseline it. The reasoning in full is in
+ * `audit-writer-census-scanner.test.ts`.
  *
  *  - `payload`  `details: JSON.stringify(…)` — structured evidence.
  *  - `text`     anything else: a sentence, a template, a variable holding one.
@@ -665,10 +667,12 @@ function resolveFreeText(
  * Is this site's `details` a JSON payload or a sentence (#2704)?
  *
  * `JSON.stringify(...)` at the top of the expression is the whole test, because
- * that is how all 104 payload writers spell it. A site that builds its payload
- * somewhere else and passes the variable reads as `text` — an UNDER-count, which
- * is the right direction for a measurement nobody gates on: it can understate
- * how many payload writers exist and can never invent one.
+ * that is how all 104 payload writers spell it today. A site that builds its
+ * payload somewhere else and passes the variable reads as `text` — an
+ * UNDER-count, which is the right direction for a measurement nobody gates on:
+ * it can understate how many payload writers exist and can never invent one.
+ * The reduction at the write boundary does not share this blind spot; it reads
+ * the value, not the spelling.
  */
 function resolveDetailShape(event: ResolvedObject): AuditDetailShapeEvidence {
   const property = findTopLevelProperty(event, "details");
