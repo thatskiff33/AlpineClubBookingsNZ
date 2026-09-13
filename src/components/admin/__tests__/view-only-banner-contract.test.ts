@@ -293,8 +293,16 @@ const FIGURES = {
    * gating it would refuse a view-only admin the way out of a prompt they could
    * not have acted on, exactly as #2999's Cancel reasons. MEASURED by re-running
    * this census.
+   * 346 -> 349 (#3354): the shared "Currency for AI spend" card
+   * (`ai-spend-currency-card.tsx`) adds Set/Change rate, Save rate and Cancel.
+   * One component rendered on two pages is ONE file to this census. MEASURED by
+   * re-running it.
+   *
+   * 347/349 -> 350 (sync of `main` into `epic/2725-mad`): both lanes' new
+   * call sites are disjoint files, so neither classification moved. MEASURED on
+   * the MERGED tree by re-running this census, never by adding the deltas.
    */
-  callSites: 347,
+  callSites: 350,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -303,8 +311,11 @@ const FIGURES = {
    * 292 -> 293 (#3214): so does the night-price control.
    * 293 -> 294 (#2698): so does the custodian/whole-lodge-hold amendment
    * control, whose Accept sits under the hut-leaders page's own banner.
+   * 293 -> 296 (#3354): so do the AI spend currency card's three.
+   * 294/296 -> 297 (sync of `main` into `epic/2725-mad`): both lanes' opt-outs
+   * are disjoint. MEASURED on the MERGED tree, never added together.
    */
-  optOuts: 294,
+  optOuts: 297,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -315,8 +326,16 @@ const FIGURES = {
    * 258 -> 259 (#3214): the night-price section's banner and its button are in
    * one file, so it is static rather than vouched — the button sits in a child
    * COMPONENT, but the static rule is about the FILE.
+   * 259 -> 262 (#3354): the AI spend currency card heads itself with its own
+   * banner, so its three controls are static.
+   * 259 -> 260 (#2698, carried in from `epic/2725-mad`, which moved the literal
+   * without a bump line): the custodian/whole-lodge-hold amendment Accept sits
+   * in the same file as the hut-leaders page's own banner, so it is static.
+   * 260/262 -> 263 (sync of `main` into `epic/2725-mad`): the two are in
+   * different files and neither classification moved. MEASURED on the MERGED
+   * tree by re-running this census, never by adding the deltas together.
    */
-  staticOptOuts: 260,
+  staticOptOuts: 263,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -356,8 +375,12 @@ const FIGURES = {
    * one, for every strand it lists rather than one per strand — the permission
    * is the same for all of them, so saying it per guest would say it three times
    * on a three-guest booking.
+   *
+   * 92 -> 93 (#3354): the AI spend currency card heads itself with one banner,
+   * mounted above its loading early-return, and carries it onto both AI
+   * settings pages — one component, counted once.
    */
-  bannerComponents: 92,
+  bannerComponents: 93,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
