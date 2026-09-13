@@ -86,7 +86,7 @@ export const XERO_CONTACT_PROVIDER_ANSWER_UNAVAILABLE_CODE =
 
 /**
  * The provider could not be asked authoritatively, so nothing was done for this
- * member (#2939, `INV-INT-022`).
+ * member (#2939, `INV-INT-023`).
  *
  * Raised ONLY for a caller that passed
  * {@link FindOrCreateXeroContactOptions.requireAuthoritativeMatch}. Two phases

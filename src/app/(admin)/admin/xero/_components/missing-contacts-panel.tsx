@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * The missing-Xero-contact panel (#2939). `INV-INT-022`.
+ * The missing-Xero-contact panel (#2939). `INV-INT-022`, `INV-INT-023`.
  *
  * Three states in one section, because they are one decision: run the dry run,
  * read what it found, then confirm. The confirmation posts the member ids the

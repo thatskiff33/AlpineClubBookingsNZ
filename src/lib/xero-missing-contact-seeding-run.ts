@@ -1,6 +1,6 @@
 /**
  * The BOUNDED RUN that acts on the missing-Xero-contact census (#2939, a child
- * of MAD programme #2725). The rule is `INV-INT-022`; the rule this must not
+ * of MAD programme #2725). The rule is `INV-INT-023`; the rule this must not
  * break is `INV-INT-018`; the census is `xero-missing-contact-seeding.ts`, the
  * shape both return is `xero-missing-contact-seeding-shape.ts`, the operator
  * guide is `docs/guides/xero.md` -> "Create the missing Xero contacts in bulk"
@@ -58,7 +58,7 @@
  * ## What the run may touch
  *
  * The intersection of the ids the operator reviewed with a freshly recomputed
- * pushable set, and nothing else. Both halves are load-bearing; `INV-INT-022`
+ * pushable set, and nothing else. Both halves are load-bearing; `INV-INT-023`
  * is where that is written down, and
  * {@link runXeroMissingContactSeedingChunk} says what each half excludes.
  */
@@ -133,7 +133,7 @@ async function readResolutionLabel(
  * the pushable set is recomputed here from the same classifier the dry run
  * used, and only the intersection is touched. The reviewed half excludes a
  * member who became eligible after the review; the recomputed half excludes a
- * reviewed member who has since stopped being pushable. See `INV-INT-022`.
+ * reviewed member who has since stopped being pushable. See `INV-INT-023`.
  *
  * ## Three guards, and each one closes a different door
  *

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * The missing-contact panel (#2939). `INV-INT-022`.
+ * The missing-contact panel (#2939). `INV-INT-022`, `INV-INT-023`.
  *
  * Two properties are worth a browser-shaped test rather than a reading of the
  * component: that the confirmation posts the member ids the operator was

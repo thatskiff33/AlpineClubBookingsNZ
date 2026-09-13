@@ -151,14 +151,25 @@ creates a small batch at a time.
 5. **Not eligible** is informational: school records, anonymised accounts,
    walk-in placeholders with no real address, and members missing a first name,
    last name or email.
-6. Press **Create the next N** to do a batch of at most 25. One member failing
-   does not stop the batch, and a failure leaves that member exactly where they
-   were — the next run picks them up with nothing duplicated. Run the dry run
-   again and repeat until the count reaches zero.
+6. Press **Create the next N**. You will be asked to confirm, and the
+   confirmation states exactly what is about to happen — how many brand-new Xero
+   contacts will be created and how many members will be linked to contacts Xero
+   already has. The batch size is chosen for you from what each member costs in
+   Xero API calls, so it is smaller on a club that uses contact groups.
+7. One member failing does not stop the batch. For **almost every** failure the
+   member is left exactly where they were and the next run picks them up with
+   nothing duplicated — a failed Xero search, a name that collides with an
+   existing contact, a contact that belongs to a school. The one exception is a
+   row that says the action **completed only in part**: there, something did
+   reach Xero, and the rule for that is the same as everywhere else on this page
+   — *do not repeat the action*, resolve it from **Operations** instead. The
+   result list names every member and says which of these happened to them.
+8. Run the dry run again and repeat until the count reaches zero.
 
-> Running it twice is safe. Every contact goes through the same path a booking
-> invoice uses, which searches Xero first and carries a per-member key, so a
-> repeat converges on the one contact rather than making a second.
+> Running it twice is safe, with that one exception. Every contact goes through
+> the same path a booking invoice uses, which searches Xero first and carries a
+> per-member key, so a repeat converges on the one contact rather than making a
+> second.
 
 ### Set up mappings and import (Xero Setup)
 
@@ -195,7 +206,7 @@ creates a small batch at a time.
 | Inbound Events | Filter and page stored webhooks; replay an event | Dataset Reset keeps the section and Operations state; Replay needs finance edit |
 | Xero Setup → Mappings | Account/item code mappings and hut/joining fee item codes | Finance edit; joining-fee amounts live in [Fees](fees.md) |
 | Member grouping | Grouping mode + rules, dry-run, bulk re-sync | Finance edit; never auto-re-groups; runbook-driven cutover |
-| Members with no Xero contact | Dry run over unlinked members, then create or link in batches of 25 | Finance edit to create; needs a Contact Sync first; schools and ambiguous rows are never acted on |
+| Members with no Xero contact | Dry run over unlinked members, then create or link in small batches | Finance edit to create; needs a Contact Sync first; schools and ambiguous rows are never acted on; the batch size is shown on the button |
 | API budget / Usage | Daily call volume, rate limits, recent failures | Read-only meter |
 
 ## Troubleshooting
@@ -215,6 +226,10 @@ creates a small batch at a time.
 | Create/link/unlink/import says the action completed only in part | The provider or canonical member change committed before a later local step failed | Do not repeat the action; reload/try again from the persistent warning, check the current link, then run **Member Status Repair Backfill** when directed. The message also names anything else left unfinished — the member's **Xero record links may still be active** (check them on the member and deactivate any that remain), and the **audit entry may be missing** so the action may not appear in the member's history |
 | **Member merge** or **account deletion** is refused for a member whose Xero contact looks fine | An open member CONTACT operation still blocks both, most often a create whose Xero contact was made under a different id | The member's Xero panel and the refusal both name the operation. Open **Xero → Operations**, find it, and either wait for it to finish or use **Resolve (fixed in Xero)** once the contact is correct in Xero. Linking the member to the contact that create actually made closes it by itself |
 | The dry run says Xero contacts have never been synced | The local copy of Xero's contacts is empty, so every member would look like they have no contact | Run **Contact Sync** on this page first, then run the dry run again |
+| The dry run warns that the cached contact list is old | The counts come from the last Contact Sync, and a contact added in Xero since then looks here like no contact at all | Run **Contact Sync**, then the dry run again, before creating anything |
+| Creating is refused because "what would happen has changed" | Something moved between the dry run you reviewed and pressing the button — a contact was found, archived or claimed | Nothing was created. Run the dry run again and review the new plan |
+| A row failed saying Xero could not be searched | The search failed for a reason other than the daily limit, so nothing was done rather than risk a second contact for somebody who already has one | Try again later. The member is unchanged |
+| A row failed saying Xero already has a contact with this name | Xero will not allow two contacts with the same name, and nothing here decides on a name alone whether it is the same person | Check the contact in Xero. Link this member to it by hand if it really is them, or rename the old contact |
 | A member stays in **Needs a decision** after a batch | Nothing is ever guessed for these rows — the batch deliberately skipped them | Read the reason on the row and fix the record it names: split a shared email address, link a contact by hand from the member's Xero panel, or tidy duplicate contacts in Xero |
 | A batch stopped part way saying Xero's daily limit was reached | The club has spent its Xero API calls for the day | Nothing is half-done: come back tomorrow, run the dry run again, and carry on. The limit resets at midnight UTC, about midday in New Zealand |
 | A row failed saying the Xero contact belongs to a school | That Xero customer is the school's own record, and one Xero customer belongs to one local record | Give the person their own email address, or link them to their own contact by hand. Never re-use the school's contact for a person |

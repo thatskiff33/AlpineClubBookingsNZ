@@ -1,5 +1,6 @@
 /**
- * The SHAPE of the missing-Xero-contact tool (#2939, `INV-INT-022`): what the
+ * The SHAPE of the missing-Xero-contact tool (#2939, `INV-INT-022` and
+ * `INV-INT-023`): what the
  * census returns, what a run returns, and the constants both are measured
  * against. The census is `xero-missing-contact-seeding.ts`; the run is
  * `xero-missing-contact-seeding-run.ts`; the design is in

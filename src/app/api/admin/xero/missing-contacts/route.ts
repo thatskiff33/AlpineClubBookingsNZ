@@ -1,6 +1,7 @@
 /**
  * The missing-Xero-contact census, and the bounded run that acts on it (#2939).
- * `INV-INT-022`. The census is `src/lib/xero-missing-contact-seeding.ts`, the
+ * `INV-INT-022` (census) and `INV-INT-023` (run). The census is
+ * `src/lib/xero-missing-contact-seeding.ts`, the
  * run `src/lib/xero-missing-contact-seeding-run.ts`, and the shape they return
  * `src/lib/xero-missing-contact-seeding-shape.ts`.
  *
