@@ -110,6 +110,13 @@ beforeEach(() => {
   });
   mocks.memberFindMany.mockResolvedValue([{ id: "m1" }]);
   mocks.linkFindMany.mockResolvedValue([]);
+  /*
+    `mockReset`, not just the shared `clearAllMocks`: these tests queue `…Once`
+    values, `clearAllMocks` clears CALLS rather than queues, and a test that
+    throws part-way leaves an unconsumed entry for the next one to pick up. That
+    is how a suite starts passing or failing on test ORDER.
+  */
+  mocks.applyInboundMemberContactPatch.mockReset();
   mocks.applyInboundMemberContactPatch.mockResolvedValue({
     appliedFields: [],
     linked: false,

@@ -168,12 +168,22 @@ function givenTree(input: {
     started honouring the clause.
   */
   mocks.prisma.xeroContactCache.findMany.mockImplementation(async (args: {
-    where?: { contactStatus?: string };
+    where?: { contactStatus?: string; emailAddress?: { not?: null } };
   }) =>
     (input.contacts ?? []).filter(
       (contact) =>
-        args?.where?.contactStatus === undefined ||
-        contact.contactStatus === args.where.contactStatus,
+        (args?.where?.contactStatus === undefined ||
+          contact.contactStatus === args.where.contactStatus) &&
+        /*
+          #2939: the address narrowing is honoured too, for the same reason the
+          status narrowing is. The read used to require a non-null address,
+          which made every blank-email contact invisible — and a blank-email
+          contact is precisely one that can only ever be matched by NAME. A mock
+          that ignored this clause could not tell the two reads apart, so
+          re-adding the narrowing would survive.
+        */
+        (args?.where?.emailAddress?.not !== null ||
+          contact.emailAddress !== null),
     ),
   );
   mocks.prisma.xeroGroupingSettings.findUnique.mockResolvedValue(
