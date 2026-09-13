@@ -25,6 +25,28 @@
 import type { IntegrationCredential } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
+  applyCredentialWrite,
+  isUniqueConstraintError,
+  readRowForWrite,
+  type CredentialRowWrite,
+} from "@/lib/integration-credential-claim";
+import {
+  assertCredentialActor,
+  assertCredentialDeleteExpectation,
+  assertCredentialWriteExpectation,
+  credentialActorMemberId,
+  credentialVersionOf,
+  describeCredentialExpectation,
+  recordCredentialMutation,
+  CREDENTIAL_AUDIT_ACTIONS,
+  StaleCredentialWriteError,
+  type CredentialActor,
+  type CredentialDeleteExpectation,
+  type CredentialRequestContext,
+  type CredentialVersion,
+  type CredentialWriteExpectation,
+} from "@/lib/integration-credential-actor";
+import {
   CredentialDecryptError,
   INTEGRATION_CREDENTIAL_LABEL,
   decryptCredential,
@@ -90,9 +112,20 @@ export type CredentialResolution =
       /** Value unchanged, but the secret env var it was written under flipped. */
       sourceFlipped: boolean;
       labelVersion: string;
+      /**
+       * Optimistic-concurrency token for the row this value came from (#2723).
+       * Hand it back as `{ expect: "version", version }` to make a
+       * read-modify-write lose deterministically if anybody else got in first.
+       */
+      version: CredentialVersion;
     }
   | { status: "not_configured" }
-  | { status: "needs_reentry"; reason: string };
+  | {
+      status: "needs_reentry";
+      reason: string;
+      /** Same token, for the dead row — a replacement can still CAS on it. */
+      version: CredentialVersion;
+    };
 
 /**
  * Resolve one credential. Distinguishes:
@@ -127,10 +160,15 @@ export async function resolveIntegrationCredential(
       sourceFlipped:
         currentSource !== undefined && currentSource !== row.secretSource,
       labelVersion: row.labelVersion,
+      version: credentialVersionOf(row),
     };
   } catch (error) {
     if (error instanceof CredentialDecryptError) {
-      return { status: "needs_reentry", reason: error.message };
+      return {
+        status: "needs_reentry",
+        reason: error.message,
+        version: credentialVersionOf(row),
+      };
     }
     throw error;
   }
@@ -153,19 +191,63 @@ export async function getIntegrationCredentialValue(
 // Write (Full-Admin only — enforced at the API boundary)
 // ---------------------------------------------------------------------------
 
+/**
+ * THE WRITE CONTRACT (#2723). Four rules, and each is structural rather than
+ * remembered:
+ *
+ *  1. EVERY mutator takes a REQUIRED `actor`, so a write with no attribution
+ *     does not compile. `integration-credential-actor.ts` owns the vocabulary
+ *     and says why "no actor" and "a background writer" must not look alike.
+ *  2. EVERY mutator takes a REQUIRED `expect`, so what a writer believed was
+ *     stored is declared at the call site. A stale write LOSES — it throws
+ *     `StaleCredentialWriteError`, changes nothing and audits nothing — rather
+ *     than silently overwriting whoever got there first.
+ *  3. THE SECRET CHANGE AND ITS AUDIT ROW ARE ONE LOCAL TRANSACTION. Before
+ *     this, the credential landed in one statement and its audit row in another
+ *     (in a different module, after two more awaits), so a crash between them
+ *     left a rewritten secret with no evidence. `createAuditLog` takes the
+ *     transaction client, so the pair commits or neither does.
+ *  4. NO PLAINTEXT LEAVES THIS MODULE. The audit payload is built by
+ *     `buildCredentialAuditEvidence` from a type with no field able to hold a
+ *     value, the errors thrown here carry none, and nothing here logs. That is
+ *     a property of the shapes, not of the care taken — which matters, because
+ *     a redaction rule living in the logger is blind to every door that never
+ *     calls the logger.
+ *
+ * AND A READ MUST NOT AUDIT. Every audit row below is written only where a row
+ * actually changed: a no-op `ensureGeneratedCredential` on a healthy key (which
+ * runs on the Xero token READ path) and a delete that matched nothing write
+ * nothing at all.
+ */
+
 export interface SetCredentialResult {
   provider: string;
   key: string;
   secretSource: AuthSecretSource;
   labelVersion: string;
   updatedAt: Date;
+  /** The token of the row as it now stands, for a follow-on compare-and-set. */
+  version: CredentialVersion;
 }
 
 /**
- * Encrypt and persist a credential (upsert on (provider, key)). Runs the
- * capture-time strong-secret gate inside encryptCredential — a weak/placeholder
- * secret throws WeakAuthSecretError and nothing is written. Invalidates the
- * writing process's cache immediately.
+ * Encrypt and persist a credential. Invalidates the writing process's cache
+ * immediately once the transaction commits.
+ *
+ * The capture-time strong-secret gate runs inside `encryptCredential` BEFORE the
+ * transaction opens — a weak/placeholder secret throws `WeakAuthSecretError`,
+ * nothing is written and nothing is audited.
+ *
+ * COMPARE-AND-SET, by the expectation the caller declared:
+ *   absent  → `create`; a P2002 means somebody created it first and we lose.
+ *   version → the row is re-read inside the transaction, its token compared,
+ *             and the update CLAIMED on the exact `(ciphertext, iv, authTag)`
+ *             tuple that was read. A concurrent writer changes that tuple (every
+ *             encrypt draws a fresh random IV), so the loser's claim matches
+ *             zero rows and it re-reads instead of clobbering — the discipline
+ *             `replaceUnreadableCredential` below has used since #2079.
+ *   any     → a declared unconditional overwrite, for the sole authority of a
+ *             (provider, key) that has nothing to be stale against.
  *
  * Note the VERIFY-RESET rule (any credential write clears the provider's
  * verified/connected state) is applied by the caller that knows the provider's
@@ -176,9 +258,14 @@ export async function setIntegrationCredential(params: {
   provider: string;
   key: string;
   value: string;
-  updatedByUserId?: string | null;
+  actor: CredentialActor;
+  expect: CredentialWriteExpectation;
   label?: string;
+  request?: CredentialRequestContext;
 }): Promise<SetCredentialResult> {
+  assertCredentialActor(CREDENTIAL_AUDIT_ACTIONS.set, params.actor);
+  assertCredentialWriteExpectation(CREDENTIAL_AUDIT_ACTIONS.set, params.expect);
+
   const label = params.label ?? INTEGRATION_CREDENTIAL_LABEL;
   const encrypted = encryptCredential({
     provider: params.provider,
@@ -186,38 +273,57 @@ export async function setIntegrationCredential(params: {
     plaintext: params.value,
     label,
   });
-
-  const row = await prisma.integrationCredential.upsert({
-    where: { provider_key: { provider: params.provider, key: params.key } },
-    create: {
-      provider: params.provider,
-      key: params.key,
-      ciphertext: encrypted.ciphertext,
-      iv: encrypted.iv,
-      authTag: encrypted.authTag,
-      secretSource: encrypted.secretSource,
-      labelVersion: encrypted.labelVersion,
-      updatedByUserId: params.updatedByUserId ?? null,
-    },
-    update: {
-      ciphertext: encrypted.ciphertext,
-      iv: encrypted.iv,
-      authTag: encrypted.authTag,
-      secretSource: encrypted.secretSource,
-      labelVersion: encrypted.labelVersion,
-      updatedByUserId: params.updatedByUserId ?? null,
-    },
-  });
-
-  invalidateProviderCredentialCache(params.provider);
-
-  return {
-    provider: row.provider,
-    key: row.key,
+  const written: CredentialRowWrite = {
+    ciphertext: encrypted.ciphertext,
+    iv: encrypted.iv,
+    authTag: encrypted.authTag,
     secretSource: encrypted.secretSource,
     labelVersion: encrypted.labelVersion,
-    updatedAt: row.updatedAt,
+    updatedByUserId: credentialActorMemberId(params.actor),
   };
+
+  try {
+    const result = await prisma.$transaction(
+      async (tx): Promise<SetCredentialResult> => {
+        const updatedAt = await applyCredentialWrite(tx, {
+          provider: params.provider,
+          key: params.key,
+          expectation: params.expect,
+          written,
+        });
+
+        await recordCredentialMutation(tx, {
+          action: CREDENTIAL_AUDIT_ACTIONS.set,
+          summary: `Set ${params.provider} credential "${params.key}"`,
+          actor: params.actor,
+          provider: params.provider,
+          key: params.key,
+          expectation: describeCredentialExpectation(params.expect),
+          secretSource: encrypted.secretSource,
+          labelVersion: encrypted.labelVersion,
+          request: params.request,
+        });
+
+        return {
+          provider: params.provider,
+          key: params.key,
+          secretSource: encrypted.secretSource,
+          labelVersion: encrypted.labelVersion,
+          updatedAt,
+          version: credentialVersionOf(written),
+        };
+      },
+    );
+    invalidateProviderCredentialCache(params.provider);
+    return result;
+  } catch (error) {
+    // A lost claim rolled the transaction back, so the cached rows are still
+    // whatever the winner wrote. Drop them so the caller's re-read is fresh.
+    if (error instanceof StaleCredentialWriteError) {
+      invalidateProviderCredentialCache(params.provider);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -228,7 +334,9 @@ export async function setIntegrationCredential(params: {
  *   - strong secret + no row      → CREATE-ONLY: `create` + catch P2002, so a
  *                                    concurrent creator's value wins (never an
  *                                    upsert / last-writer-wins across containers);
- *   - strong secret + readable row → return the existing value (never overwrite);
+ *   - strong secret + readable row → return the existing value (never overwrite,
+ *                                    and — the READ-PATH rule — audit nothing:
+ *                                    this runs on every Xero token decrypt);
  *   - strong secret + unreadable row (auth secret changed) → the wrapped key is
  *     useless and would block reconnect, so replace the ALREADY-DEAD material
  *     with a fresh one — under a status-guarded `updateMany` claim so a loser
@@ -237,21 +345,25 @@ export async function setIntegrationCredential(params: {
  *
  * The generate path is genuinely create-only: there is no upsert here, so two
  * cron/web containers generating at once converge on ONE stored value instead of
- * silently overwriting each other (correctness F1 / ops F6 / security F3).
+ * silently overwriting each other (correctness F1 / ops F6 / security F3). Its
+ * expectation is therefore not the caller's to choose, which is why this is the
+ * one mutator with no `expect` parameter — the discipline IS the function.
  */
 export async function ensureGeneratedCredential(params: {
   provider: string;
   key: string;
   label: string;
   generate: () => string;
-  updatedByUserId?: string | null;
+  actor: CredentialActor;
 }): Promise<string | null> {
+  assertCredentialActor(CREDENTIAL_AUDIT_ACTIONS.generated, params.actor);
+
   if (!isAuthSecretStrongEnough(getAuthSecretWithSource()?.secret)) {
     return null; // blocked readiness check, not an exception
   }
 
   const existing = await resolveIntegrationCredential(params.provider, params.key);
-  // A readable key is authoritative — never overwrite it.
+  // A readable key is authoritative — never overwrite it, and never audit a read.
   if (existing.status === "configured") return existing.value;
 
   if (existing.status === "not_configured") {
@@ -260,7 +372,7 @@ export async function ensureGeneratedCredential(params: {
       key: params.key,
       label: params.label,
       value: params.generate(),
-      updatedByUserId: params.updatedByUserId ?? null,
+      actor: params.actor,
     });
   }
 
@@ -275,7 +387,7 @@ export async function ensureGeneratedCredential(params: {
       key: params.key,
       label: params.label,
       value: params.generate(),
-      updatedByUserId: params.updatedByUserId ?? null,
+      actor: params.actor,
     });
   }
   return replaceUnreadableCredential({
@@ -284,23 +396,8 @@ export async function ensureGeneratedCredential(params: {
     label: params.label,
     value: params.generate(),
     staleCiphertext: staleRow.ciphertext,
-    updatedByUserId: params.updatedByUserId ?? null,
+    actor: params.actor,
   });
-}
-
-/**
- * True for a Prisma unique-constraint conflict (P2002). Detected structurally
- * (by `code`) so a raced insert is tolerated regardless of how the driver
- * surfaces it — same shape as `isUniqueConstraintError` in config-self-heal,
- * inlined here to keep this module free of that boot module's imports.
- */
-function isUniqueConstraintError(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: unknown }).code === "P2002"
-  );
 }
 
 /**
@@ -308,13 +405,16 @@ function isUniqueConstraintError(err: unknown): boolean {
  * decrypted value: on a P2002 unique race the concurrent creator won, so we
  * re-resolve and return whatever is now stored (both processes share the same
  * strong auth secret, so the winner's row is readable). Never overwrites.
+ *
+ * The create and its audit row are one transaction; a LOST race commits neither,
+ * so a loser leaves no evidence of a write it did not make.
  */
 async function createGeneratedCredential(params: {
   provider: string;
   key: string;
   label: string;
   value: string;
-  updatedByUserId?: string | null;
+  actor: CredentialActor;
 }): Promise<string> {
   const encrypted = encryptCredential({
     provider: params.provider,
@@ -323,17 +423,29 @@ async function createGeneratedCredential(params: {
     label: params.label,
   });
   try {
-    await prisma.integrationCredential.create({
-      data: {
+    await prisma.$transaction(async (tx) => {
+      await tx.integrationCredential.create({
+        data: {
+          provider: params.provider,
+          key: params.key,
+          ciphertext: encrypted.ciphertext,
+          iv: encrypted.iv,
+          authTag: encrypted.authTag,
+          secretSource: encrypted.secretSource,
+          labelVersion: encrypted.labelVersion,
+          updatedByUserId: credentialActorMemberId(params.actor),
+        },
+      });
+      await recordCredentialMutation(tx, {
+        action: CREDENTIAL_AUDIT_ACTIONS.generated,
+        summary: `Generated ${params.provider} credential "${params.key}"`,
+        actor: params.actor,
         provider: params.provider,
         key: params.key,
-        ciphertext: encrypted.ciphertext,
-        iv: encrypted.iv,
-        authTag: encrypted.authTag,
+        expectation: "absent",
         secretSource: encrypted.secretSource,
         labelVersion: encrypted.labelVersion,
-        updatedByUserId: params.updatedByUserId ?? null,
-      },
+      });
     });
     invalidateProviderCredentialCache(params.provider);
     return params.value;
@@ -357,6 +469,9 @@ async function createGeneratedCredential(params: {
  * and every loser re-reads the winner's value instead of clobbering it. The
  * stale material is already unrecoverable, so we never risk overwriting a live
  * key here (that case returned above).
+ *
+ * The claim and its audit row are one transaction, and the audit row is written
+ * only inside the winning branch — a loser changed nothing and records nothing.
  */
 async function replaceUnreadableCredential(params: {
   provider: string;
@@ -364,7 +479,7 @@ async function replaceUnreadableCredential(params: {
   label: string;
   value: string;
   staleCiphertext: string;
-  updatedByUserId?: string | null;
+  actor: CredentialActor;
 }): Promise<string> {
   const encrypted = encryptCredential({
     provider: params.provider,
@@ -372,25 +487,43 @@ async function replaceUnreadableCredential(params: {
     plaintext: params.value,
     label: params.label,
   });
-  const claimed = await prisma.integrationCredential.updateMany({
-    where: {
-      provider: params.provider,
-      key: params.key,
-      // Claim only the exact dead row we observed. Once any process replaces it
-      // the ciphertext changes, so a racing writer's claim matches zero rows.
-      ciphertext: params.staleCiphertext,
-    },
-    data: {
-      ciphertext: encrypted.ciphertext,
-      iv: encrypted.iv,
-      authTag: encrypted.authTag,
-      secretSource: encrypted.secretSource,
-      labelVersion: encrypted.labelVersion,
-      updatedByUserId: params.updatedByUserId ?? null,
-    },
+  const claimedCount = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.integrationCredential.updateMany({
+      where: {
+        provider: params.provider,
+        key: params.key,
+        // Claim only the exact dead row we observed. Once any process replaces it
+        // the ciphertext changes, so a racing writer's claim matches zero rows.
+        ciphertext: params.staleCiphertext,
+      },
+      data: {
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        secretSource: encrypted.secretSource,
+        labelVersion: encrypted.labelVersion,
+        updatedByUserId: credentialActorMemberId(params.actor),
+      },
+    });
+    if (claimed.count === 1) {
+      await recordCredentialMutation(tx, {
+        action: CREDENTIAL_AUDIT_ACTIONS.generated,
+        summary: `Replaced unreadable ${params.provider} credential "${params.key}"`,
+        actor: params.actor,
+        provider: params.provider,
+        key: params.key,
+        // Not one of the caller-declared expectations: this path claims the
+        // exact dead row it read, which is the same compare-and-set with a
+        // discriminator the caller never holds.
+        expectation: "stale-row-claim",
+        secretSource: encrypted.secretSource,
+        labelVersion: encrypted.labelVersion,
+      });
+    }
+    return claimed.count;
   });
   invalidateProviderCredentialCache(params.provider);
-  if (claimed.count === 1) return params.value;
+  if (claimedCount === 1) return params.value;
 
   // Another process already replaced the dead row — adopt the winner's value.
   const winner = await resolveIntegrationCredential(params.provider, params.key);
@@ -400,15 +533,71 @@ async function replaceUnreadableCredential(params: {
   return createGeneratedCredential(params);
 }
 
-/** Delete a single credential row (used by disconnect flows). */
-export async function deleteIntegrationCredential(
-  provider: string,
-  key: string,
-): Promise<void> {
-  await prisma.integrationCredential.deleteMany({
-    where: { provider, key },
-  });
-  invalidateProviderCredentialCache(provider);
+/**
+ * Delete a single credential row (used by disconnect and verify-reset flows).
+ *
+ * Deleting nothing is a no-op, NOT an error and NOT an audit row: verify-reset
+ * fires on every credential write whether or not a marker was ever stamped, and
+ * a row per no-op would bury the real deletions.
+ */
+export async function deleteIntegrationCredential(params: {
+  provider: string;
+  key: string;
+  actor: CredentialActor;
+  expect: CredentialDeleteExpectation;
+  request?: CredentialRequestContext;
+}): Promise<void> {
+  assertCredentialActor(CREDENTIAL_AUDIT_ACTIONS.deleted, params.actor);
+  assertCredentialDeleteExpectation(
+    CREDENTIAL_AUDIT_ACTIONS.deleted,
+    params.expect,
+  );
+  const expectation = params.expect;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      let claimCiphertext: string | undefined;
+      if (expectation.expect === "version") {
+        const current = await readRowForWrite(tx, params.provider, params.key);
+        // Already gone. The caller wanted it absent and it is absent, so this
+        // is the intended end state rather than a lost race.
+        if (current === null) return;
+        if (credentialVersionOf(current) !== expectation.version) {
+          throw new StaleCredentialWriteError({
+            provider: params.provider,
+            key: params.key,
+            expectation,
+            observedVersion: credentialVersionOf(current),
+          });
+        }
+        claimCiphertext = current.ciphertext;
+      }
+
+      const removed = await tx.integrationCredential.deleteMany({
+        where: {
+          provider: params.provider,
+          key: params.key,
+          // The CLAIM, when a version was declared: a writer that replaced the
+          // row between the read above and here changed its ciphertext, so this
+          // removes nothing and the delete simply did not happen.
+          ...(claimCiphertext === undefined ? {} : { ciphertext: claimCiphertext }),
+        },
+      });
+      if (removed.count === 0) return;
+
+      await recordCredentialMutation(tx, {
+        action: CREDENTIAL_AUDIT_ACTIONS.deleted,
+        summary: `Deleted ${params.provider} credential "${params.key}"`,
+        actor: params.actor,
+        provider: params.provider,
+        key: params.key,
+        expectation: describeCredentialExpectation(expectation),
+        request: params.request,
+      });
+    });
+  } finally {
+    invalidateProviderCredentialCache(params.provider);
+  }
 }
 
 // ---------------------------------------------------------------------------
