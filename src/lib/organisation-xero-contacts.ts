@@ -100,6 +100,7 @@ import {
   stripPersonNameFromStoredContactPayload,
 } from "@/lib/xero-contacts";
 import {
+  applyOrganisationShapeToAdoptedContact,
   buildOrganisationXeroContactPayload,
   contactPersonsFingerprint,
   ORGANISATION_LOCAL_MODEL,
@@ -161,6 +162,48 @@ export interface FindOrCreateOrganisationXeroContactOptions {
   /** An already-authenticated client, purely to avoid a second `initialize()`. */
   xero?: XeroClient;
   tenantId?: string;
+  /**
+   * Re-resolve from the provider instead of trusting the stored link.
+   *
+   * The organisation half of the member path's option of the same name, and it
+   * exists for the same reason: Xero has answered that the contact reference it
+   * was given is invalid, so the link this application holds is the thing that
+   * is wrong and trusting it again would replay the same failure for ever.
+   */
+  repairExistingLink?: boolean;
+}
+
+/**
+ * The repair a Xero write should attempt when the INVOICED PARTY's contact
+ * reference turns out to be stale.
+ *
+ * `retryXeroWriteWithContactRepair` is keyed on a member, because before this
+ * stage every invoiced party was one. Its default repair resolves through
+ * `findOrCreateXeroContact`, which searches Xero by EMAIL first — and a
+ * school's recorded address is routinely a teacher's own, which the module
+ * docblock calls routine. So on a school booking that default would find that
+ * teacher's personal Xero contact, link it, and re-send the school's invoice
+ * against a person: the #2912 prohibition, reached through the back door.
+ *
+ * Handing the retry this instead makes the repaired entity the INVOICED party
+ * rather than the booking's member. Disabling repair for schools would have
+ * been the smaller change and the wrong one — a stale reference is exactly the
+ * situation a repair exists for.
+ */
+export function invoicedPartyContactRepair(booking: {
+  memberId: string;
+  organisationId: string | null;
+}) {
+  return async (
+    memberId: string,
+    options?: FindOrCreateOrganisationXeroContactOptions & {
+      repairExistingLink?: boolean;
+    },
+  ): Promise<string> =>
+    findOrCreateXeroContactForInvoicedParty(
+      { memberId, organisationId: booking.organisationId },
+      { ...options, repairExistingLink: true },
+    );
 }
 
 /**
@@ -192,7 +235,9 @@ export async function findOrCreateXeroContactForOrganisation(
     callerClient ?? (await getAuthenticatedXeroClient());
 
   // ── Phase 0: trust the persisted link ──────────────────────────────
-  if (organisation.xeroContactId) {
+  // Skipped on a repair: the caller is here because Xero answered that this
+  // very reference is invalid, so trusting it again would replay the failure.
+  if (organisation.xeroContactId && !options?.repairExistingLink) {
     const xeroContactId = organisation.xeroContactId;
     await upsertOrganisationContactLink({ organisationId, xeroContactId });
     await ensureXeroContactContained({
@@ -202,6 +247,15 @@ export async function findOrCreateXeroContactForOrganisation(
       workflow: "findOrCreateXeroContactForOrganisation",
       xero: options?.xero,
       tenantId: options?.tenantId,
+    });
+    // Before the persons, because a contact that is still person-shaped is a
+    // school #2939 will classify as a person — and #2939 is one of the two
+    // issues this stage exists to unblock. A no-op once the marker is written.
+    await applyOrganisationShapeToAdoptedContact({
+      organisation,
+      xeroContactId,
+      resolveClient,
+      createdByMemberId: options?.createdByMemberId,
     });
     await refreshOrganisationContactPersons({
       organisation,
@@ -348,13 +402,37 @@ export async function findOrCreateXeroContactForOrganisation(
           `Organisation disappeared while linking its Xero contact: ${organisationId}`,
         );
       }
-      if (fresh.xeroContactId && fresh.xeroContactId !== finalResolved.contactId) {
-        // First writer wins, exactly as the member path does.
+      if (
+        fresh.xeroContactId &&
+        !options?.repairExistingLink &&
+        fresh.xeroContactId !== finalResolved.contactId
+      ) {
+        // First writer wins, exactly as the member path does — except on a
+        // repair, where the stored link is the thing known to be broken and
+        // keeping it is the one outcome that helps nobody.
         return {
           contactId: fresh.xeroContactId,
           wonWrite: false,
           transferredFrom: null,
         };
+      }
+      if (
+        options?.repairExistingLink &&
+        fresh.xeroContactId &&
+        fresh.xeroContactId !== finalResolved.contactId
+      ) {
+        // Retire the broken link's ledger row before writing the new one, so
+        // the organisation is never left asserting two active CONTACT links.
+        await tx.xeroObjectLink.updateMany({
+          where: {
+            localModel: ORGANISATION_LOCAL_MODEL,
+            localId: organisationId,
+            xeroObjectType: "CONTACT",
+            xeroObjectId: fresh.xeroContactId,
+            active: true,
+          },
+          data: { active: false },
+        });
       }
 
       /*
@@ -481,6 +559,12 @@ export async function findOrCreateXeroContactForOrganisation(
     workflow: "findOrCreateXeroContactForOrganisation",
     xero,
     tenantId,
+  });
+  await applyOrganisationShapeToAdoptedContact({
+    organisation,
+    xeroContactId,
+    resolveClient: async () => ({ xero, tenantId }),
+    createdByMemberId: options?.createdByMemberId,
   });
   await refreshOrganisationContactPersons({
     organisation,

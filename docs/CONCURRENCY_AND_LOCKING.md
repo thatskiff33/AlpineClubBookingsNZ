@@ -3952,7 +3952,7 @@ reasoning that gave `lockBookingMemberNights` its own family.
 
 | Key | Minted in | Taken by |
 | --- | --- | --- |
-| `pg_advisory_xact_lock(hashtext('xero-contact-home:<contactId>'))` | `src/lib/xero-contact-home.ts` (`lockXeroContactHome`) | all three contact-linking writers |
+| `pg_advisory_xact_lock(hashtext('xero-contact-home:<contactId>'))` | `src/lib/xero-contact-home.ts` (`lockXeroContactHome`) | all four contact-linking writers |
 | `pg_advisory_xact_lock(hashtext('xero-organisation-contact:<organisationId>'))` | `src/lib/organisation-xero-contacts.ts` | the organisation resolve only |
 
 Both are domain-keyed `hashtext` locks in their own namespaces. Neither joins the
@@ -3962,18 +3962,45 @@ status transition and not a bed.
 
 ### Acquisition order (`INV-LOCK-002`)
 
-**Entity key first, contact-home key last, always.** The three writers:
+**Entity ADVISORY key first, then the contact-home key, and only then any
+`Member` ROW lock.** The four writers:
 
 | Writer | Order |
 | --- | --- |
-| `findOrCreateXeroContact` phase 2 (`xero-contacts.ts`) | `hashtext(<memberId>)` → member row `FOR UPDATE` → `xero-contact-home:<contactId>` |
-| `commitManualXeroContactLink` (`xero-manual-contact-link.ts`) | member `FOR UPDATE` fence → `xero-contact-home:<contactId>` |
-| `findOrCreateXeroContactForOrganisation` phase 2 | `xero-organisation-contact:<organisationId>` → `xero-contact-home:<contactId>` |
+| `findOrCreateXeroContact` phase 2 (`xero-contacts.ts`) | `hashtext(<memberId>)` → `xero-contact-home:<contactId>` → member row `FOR UPDATE` |
+| `commitManualXeroContactLink` (`xero-manual-contact-link.ts`) | `xero-contact-home:<contactId>` → member `FOR UPDATE` fence |
+| `findOrCreateXeroContactForOrganisation` phase 2 | `xero-organisation-contact:<organisationId>` → `xero-contact-home:<contactId>` → member row `UPDATE` (only when the transfer fires) |
+| `POST /api/admin/xero/import-member-contact` | `xero-contact-home:<contactId>` → `Member` INSERT |
 
-Because every participant acquires entity-then-contact and nothing else is taken
-while the contact key is held, the wait graph has no cycle. Only ONE contact key
-is ever taken per transaction, so the sorted-key discipline the member families
-need does not apply here.
+Because every participant reaches a `Member` row only with the contact-home key
+already held, the wait graph has no cycle. Only ONE contact key is ever taken per
+transaction, so the sorted-key discipline the member families need does not
+apply here.
+
+#### The order this replaced, and the deadlock it described
+
+Until [#3367](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3367)'s
+review round, this section said "entity key first, contact-home key **last**,
+always" and added that nothing else was acquired while the contact key was held.
+Both halves were false, and together they described a cycle rather than
+preventing one.
+
+`takeXeroContactFromSchoolsOwnMember` clears the holder's `Member.xeroContactId`,
+which is a `Member` ROW lock, and it does that **while holding the contact-home
+key**. The member-side linkers took the row lock first and then waited for the
+contact key. So:
+
+- the organisation resolve holds `xero-contact-home:<c>` and waits for member
+  row `m`;
+- the member linker holds row `m` and waits for `xero-contact-home:<c>`.
+
+Reachable on the pair the transfer's own docblock calls reachable on purpose: a
+credit note on the school's earlier booking, against the new booking's invoice.
+Postgres breaks it by aborting one transaction with `40P01`.
+
+The fix is the order above — the contact-home key moved AHEAD of the member row
+lock in both linkers — and restating the rule as one about row locks rather than
+about "last", because "last" is what made a row lock look like it did not count.
 
 ### The one transfer runs under these same locks
 
@@ -3995,7 +4022,7 @@ transfer that declines to fire can only ever produce a refusal.
 
 ### What is inside the transaction, and what is not
 
-**No provider call, on any of the three paths.** The organisation resolve copies
+**No provider call, on any of the four paths.** The organisation resolve copies
 `findOrCreateXeroContact`'s three-phase shape for exactly that reason (F7,
 [#1355](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/1355)): every
 Xero call — authentication, the search, the create and its retry sleeps — happens

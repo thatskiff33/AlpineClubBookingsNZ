@@ -1002,14 +1002,28 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
     Exactly the reasoning that gave the member-night lock its own family: an
     invariant across two records cannot be serialised by either record's key.
 
-    COMPOSITION AND ORDER. Taken LAST, always. Each writer takes its own entity
-    key first — `hashtext(<memberId>)` in `findOrCreateXeroContact`'s phase 2,
-    the member FOR-UPDATE fence in `commitManualXeroContactLink`, and the
-    per-organisation key below in the organisation resolve — and then this one.
-    Nothing else is acquired while it is held, and no provider call runs inside
-    the holding transaction (the F7/#1355 property this area was restructured
-    for). Since every participant acquires entity-then-contact, no two can
-    deadlock.
+    COMPOSITION AND ORDER — and the rule is NOT "taken last".
+
+    An earlier revision of this entry said it was taken last and that nothing
+    else was acquired while it was held. That was false, and it described a
+    reachable DEADLOCK. `takeXeroContactFromSchoolsOwnMember` takes a `Member`
+    ROW lock — it clears the holder's `xeroContactId` — while holding this key;
+    the two member-side linkers took the row lock FIRST and then waited for this
+    key. Wait graph: the credit-note path on a school's earlier booking against
+    the new booking's invoice, which is the pair `xero-contact-home.ts` calls
+    reachable on purpose. Postgres resolves it by aborting one with `40P01`.
+
+    THE REAL RULE: the contact-home key is the OUTER lock relative to any
+    `Member` row lock. Each writer takes its own entity ADVISORY key first —
+    `hashtext(<memberId>)` in `findOrCreateXeroContact`'s phase 2, the
+    per-organisation key below in the organisation resolve — then THIS key, and
+    only then may it touch a `Member` row, whether by `SELECT … FOR UPDATE`
+    (`lockMemberForXeroContactLink`, `lockMemberForManualXeroContactLink`) or by
+    an `update`. Every participant therefore reaches a member row with the
+    contact key already held, and the cycle cannot form.
+
+    No provider call runs inside the holding transaction (the F7/#1355 property
+    this area was restructured for).
 
     ONE site: every acquisition in the tree goes through the helper. Counterpart
     analysis in docs/CONCURRENCY_AND_LOCKING.md; the rule itself is

@@ -609,6 +609,16 @@ describe("#3367: each declared reader still plays its declared part", () => {
     expect(body).toContain("findOrCreateXeroContact(booking.memberId");
   });
 
+  it("repairs a stale contact reference against the INVOICED party", () => {
+    // `retryXeroWriteWithContactRepair` is keyed on a member and its DEFAULT
+    // repair searches Xero by email — which on a school booking finds the
+    // teacher whose address the school recorded and re-sends the school's
+    // invoice against that person. The invoice path must therefore hand it the
+    // invoiced-party repair rather than take the default.
+    const source = read("src/lib/xero-booking-invoices.ts");
+    expect(source).toContain("repairContactLink: invoicedPartyContactRepair(");
+  });
+
   it("the two-homes refusal reads the organisation side, from every linker", () => {
     const source = read("src/lib/xero-contact-home.ts");
     expect(source).toContain("tx.organisation.findFirst({");

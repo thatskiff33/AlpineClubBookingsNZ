@@ -86,7 +86,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
   return {
     ...actual,
     // The REAL buildXeroIdempotencyKey and buildXeroPayloadHash stay, so the
@@ -99,7 +99,7 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-api-client")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
   return {
     ...actual,
     getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
@@ -108,7 +108,7 @@ vi.mock("@/lib/xero-api-client", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero-contacts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-contacts")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-contacts");
   return {
     ...actual,
     // The member fallback is asserted by identity, not re-exercised: the
@@ -125,6 +125,7 @@ vi.mock("@/lib/logger", () => ({
 import {
   findOrCreateXeroContactForInvoicedParty,
   findOrCreateXeroContactForOrganisation,
+  invoicedPartyContactRepair,
 } from "@/lib/organisation-xero-contacts";
 import { XeroContactTwoHomesError } from "@/lib/xero-contact-home";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
@@ -560,6 +561,32 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
     expect(mocks.tx.member.update).not.toHaveBeenCalled();
   });
 
+  it("re-shapes the contact it just took, so the school stops being a person", async () => {
+    // The composition, end to end: Xero refuses the duplicate name, the
+    // recovery finds the contact the invented member holds, the organisation
+    // TAKES it — and then the contact stops carrying that invented person's
+    // name. Without the last step a returning school is invoiced correctly and
+    // still reads as a surnameless human in the treasurer's contact list.
+    aMemberHoldsTheContact();
+    aReturningSchoolFromBeforeThisRelease();
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({
+      metadata: { linkedVia: "name_match" },
+    });
+
+    await expect(findOrCreateXeroContactForOrganisation("org-1")).resolves.toBe(
+      "contact-held-by-member",
+    );
+
+    const shapeCall = mocks.updateContact.mock.calls.find(
+      ([, , payload]) =>
+        "firstName" in (payload as { contacts: Contact[] }).contacts[0],
+    );
+    expect(shapeCall).toBeDefined();
+    const sent = (shapeCall?.[2] as { contacts: Contact[] }).contacts[0];
+    expect(sent.firstName).toBe("");
+    expect(sent.lastName).toBe("");
+  });
+
   it("releases the member's CONTACT ledger row with the column", async () => {
     aMemberHoldsTheContact();
     onlyThisSchoolsBookings();
@@ -991,6 +1018,187 @@ describe("#3367: the named teacher is kept honest", () => {
   });
 });
 
+describe("#3367: a stale contact reference repairs the INVOICED party", () => {
+  /*
+    `retryXeroWriteWithContactRepair` is keyed on a member, because before this
+    stage every invoiced party was one, and its default repair resolves through
+    `findOrCreateXeroContact` — which searches Xero by EMAIL first.
+
+    A school's recorded address is routinely a teacher's own, which the invoice
+    module's own comment calls routine. So on a school booking the default
+    repair would find that teacher's PERSONAL Xero contact, link it, and re-send
+    the school's invoice against a person: the #2912 prohibition, reached
+    through the back door rather than the front.
+  */
+  it("re-resolves the ORGANISATION, never the booking's member", async () => {
+    mocks.organisationFindUnique.mockResolvedValue(
+      organisationRow({ xeroContactId: "contact-org-1" }),
+    );
+
+    const repair = invoicedPartyContactRepair({
+      memberId: "invented-school-member",
+      organisationId: "org-1",
+    });
+    await expect(repair("invented-school-member")).resolves.toBe(
+      "contact-org-1",
+    );
+    // The member path — and with it the email search — is never entered.
+    expect(mocks.findOrCreateXeroContact).not.toHaveBeenCalled();
+  });
+
+  it("does not trust the link it is being asked to repair", async () => {
+    // The caller is here because Xero answered that this very reference is
+    // invalid. Returning it again would replay the same failure for ever, so
+    // the repair re-resolves from the provider instead of phase 0.
+    mocks.organisationFindUnique.mockResolvedValue(
+      organisationRow({ xeroContactId: "contact-stale" }),
+    );
+    mocks.tx.organisation.findUnique.mockResolvedValue({
+      xeroContactId: "contact-stale",
+    });
+    mocks.tx.xeroObjectLink.updateMany.mockResolvedValue({ count: 1 });
+
+    const repair = invoicedPartyContactRepair({
+      memberId: "invented-school-member",
+      organisationId: "org-1",
+    });
+    await expect(repair("invented-school-member")).resolves.toBe(
+      "contact-org-1",
+    );
+    expect(mocks.createContacts).toHaveBeenCalled();
+    expect(mocks.tx.organisation.update).toHaveBeenCalledWith({
+      where: { id: "org-1" },
+      data: { xeroContactId: "contact-org-1" },
+    });
+    // And the broken link's ledger row is retired, so the organisation never
+    // asserts two active CONTACT links at once.
+    expect(mocks.tx.xeroObjectLink.updateMany).toHaveBeenCalledWith({
+      where: {
+        localModel: "Organisation",
+        localId: "org-1",
+        xeroObjectType: "CONTACT",
+        xeroObjectId: "contact-stale",
+        active: true,
+      },
+      data: { active: false },
+    });
+  });
+
+  it("still repairs the MEMBER where the booking has no organisation", async () => {
+    mocks.findOrCreateXeroContact.mockResolvedValue("contact-member");
+
+    const repair = invoicedPartyContactRepair({
+      memberId: "member-1",
+      organisationId: null,
+    });
+    await expect(repair("member-1")).resolves.toBe("contact-member");
+    expect(mocks.findOrCreateXeroContact).toHaveBeenCalledWith("member-1", {
+      repairExistingLink: true,
+    });
+  });
+});
+
+describe("#3367: an ADOPTED contact stops being person-shaped", () => {
+  beforeEach(() => {
+    mocks.organisationFindUnique.mockResolvedValue(
+      organisationRow({ xeroContactId: "contact-org-1" }),
+    );
+  });
+
+  it("clears the invented person's name off a contact it adopted", async () => {
+    /*
+      A returning school's contact was CREATED from the invented school member,
+      so it carries `firstName: "<school name>"` and `lastName: ""` — the
+      surnameless human this programme exists to remove. The transfer moves
+      which local record claims it and changes nothing at Xero, so without this
+      only brand-new schools ever become organisation-shaped.
+
+      It is not cosmetic: #2939's test for "school or person" is exactly the
+      absence of those keys, and #2939 is one of the two issues this stage
+      exists to unblock.
+    */
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({
+      metadata: { linkedVia: "name_match" },
+    });
+
+    await findOrCreateXeroContactForOrganisation("org-1");
+
+    const shapeCall = mocks.updateContact.mock.calls.find(
+      ([, , payload]) =>
+        "firstName" in (payload as { contacts: Contact[] }).contacts[0],
+    );
+    expect(shapeCall, "an adopted contact must be re-shaped").toBeDefined();
+    const sent = (shapeCall?.[2] as { contacts: Contact[] }).contacts[0];
+    expect(sent.firstName).toBe("");
+    expect(sent.lastName).toBe("");
+    expect(sent.name).toBe("New Plymouth Primary School");
+  });
+
+  it("sends nothing for a contact this application created itself", async () => {
+    // Built by the organisation payload builder, so it is already name-only.
+    // Record the fact rather than spending a provider call saying so.
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({
+      metadata: { linkedVia: "created" },
+    });
+
+    await findOrCreateXeroContactForOrganisation("org-1");
+
+    expect(
+      mocks.updateContact.mock.calls.some(
+        ([, , payload]) =>
+          "firstName" in (payload as { contacts: Contact[] }).contacts[0],
+      ),
+    ).toBe(false);
+    expect(
+      mocks.upsertXeroObjectLink.mock.calls.some(
+        ([link]) =>
+          (link as { metadata?: Record<string, unknown> }).metadata
+            ?.organisationShapeApplied === true,
+      ),
+    ).toBe(true);
+  });
+
+  it("stays REPLAYABLE and never fails the invoice if Xero refuses", async () => {
+    // Whether Xero clears the person-name fields when sent empty strings is not
+    // something this repository can prove without a live tenant. If it refuses,
+    // the operation is recorded FAILED, the marker is NOT written, and the next
+    // resolve tries again — but the school's invoice is still raised, because a
+    // contact that already works must not be held hostage to its own shape.
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({
+      metadata: { linkedVia: "name_match" },
+    });
+    mocks.updateContact.mockRejectedValue(new Error("Xero refused"));
+
+    await expect(findOrCreateXeroContactForOrganisation("org-1")).resolves.toBe(
+      "contact-org-1",
+    );
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalled();
+    expect(
+      mocks.upsertXeroObjectLink.mock.calls.some(
+        ([link]) =>
+          (link as { metadata?: Record<string, unknown> }).metadata
+            ?.organisationShapeApplied === true,
+      ),
+      "a refusal must not mark the shape as applied",
+    ).toBe(false);
+  });
+
+  it("does nothing once the marker says it has already been done", async () => {
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({
+      metadata: { linkedVia: "name_match", organisationShapeApplied: true },
+    });
+
+    await findOrCreateXeroContactForOrganisation("org-1");
+
+    expect(
+      mocks.updateContact.mock.calls.some(
+        ([, , payload]) =>
+          "firstName" in (payload as { contacts: Contact[] }).contacts[0],
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("#3367: a booking with no organisation behaves exactly as it does today", () => {
   it("resolves the booking's member, and touches nothing organisation-shaped", async () => {
     mocks.findOrCreateXeroContact.mockResolvedValue("contact-member");
@@ -1016,9 +1224,9 @@ describe("#3367: a booking with no organisation behaves exactly as it does today
  * constant this file invented.
  */
 async function fingerprintOfCurrentContactPersons(): Promise<string> {
-  const { buildXeroPayloadHash } = await vi.importActual<
-    typeof import("@/lib/xero-sync")
-  >("@/lib/xero-sync");
+  const { buildXeroPayloadHash } = (await vi.importActual(
+    "@/lib/xero-sync",
+  )) as typeof import("@/lib/xero-sync");
   return buildXeroPayloadHash({
     contactPersons: [
       {

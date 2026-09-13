@@ -294,12 +294,175 @@ export function contactPersonsFingerprint(contact: {
   return buildXeroPayloadHash({ contactPersons: contact.contactPersons ?? [] });
 }
 
-function readStoredFingerprint(metadata: unknown): string | null {
+function readLinkMetadata(metadata: unknown): Record<string, unknown> | null {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
     return null;
   }
-  const value = (metadata as Record<string, unknown>).contactPersonsFingerprint;
+  return metadata as Record<string, unknown>;
+}
+
+function readStoredFingerprint(metadata: unknown): string | null {
+  const value = readLinkMetadata(metadata)?.contactPersonsFingerprint;
   return typeof value === "string" ? value : null;
+}
+
+/** The metadata key recording that an adopted contact has been re-shaped. */
+export const ORGANISATION_SHAPE_APPLIED_KEY = "organisationShapeApplied";
+
+/**
+ * Give an ADOPTED contact the organisation shape it was never created with.
+ *
+ * ## Why this is not cosmetic
+ *
+ * A returning school's Xero contact was created from the invented school
+ * member, so it carries `firstName: "<school name>"` and `lastName: ""` — the
+ * surnameless human this whole programme exists to remove. The transfer moves
+ * WHICH LOCAL RECORD claims that contact; it changes nothing at Xero. So
+ * without this, only brand-new schools ever become organisation-shaped, and
+ * every school that has booked before stays a person in the contact list.
+ *
+ * That matters beyond appearance: #2939's test for "is this contact a school or
+ * a person" is exactly the ABSENCE of the person-name keys beside a populated
+ * name. A school left person-shaped is one #2939 will classify as a person, and
+ * #2939 is one of the two issues this stage exists to unblock.
+ *
+ * ## Only an adopted contact, and only once
+ *
+ * A contact this application CREATED was built by the organisation payload
+ * builder and is already the right shape, so the marker below is written for it
+ * without a provider call. A transfer always arrives through the duplicate-name
+ * recovery — a brand-new contact id cannot already be held by a member — so
+ * every transferred contact is covered by the adopted case.
+ *
+ * ## LOUD AND REPLAYABLE IF XERO REFUSES, never silently skipped
+ *
+ * Whether Xero will clear `firstName`/`lastName` by being sent empty strings is
+ * not something this repository can prove without a live tenant, and pretending
+ * otherwise would be the overclaim. If it refuses, the sync operation is
+ * recorded FAILED with the provider's own error, the failure is logged at
+ * error, and the marker is NOT written — so the next contact resolution tries
+ * again rather than the problem disappearing.
+ *
+ * It deliberately does not THROW. The school's invoice must not fail because
+ * the shape of a contact that already works could not be corrected; "loud"
+ * here means an unresolved ledger row an operator can find, not a refused
+ * invoice. That is the same bargain {@link refreshOrganisationContactPersons}
+ * makes, for the same reason.
+ */
+export async function applyOrganisationShapeToAdoptedContact(input: {
+  organisation: OrganisationContactSnapshot;
+  xeroContactId: string;
+  /** LAZY, for the same reason as the refresh below: no work in steady state. */
+  resolveClient: () => Promise<{ xero: XeroClient; tenantId: string }>;
+  createdByMemberId?: string;
+}): Promise<void> {
+  const { organisation, xeroContactId } = input;
+  const link = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel: ORGANISATION_LOCAL_MODEL,
+      localId: organisation.id,
+      xeroObjectType: "CONTACT",
+      xeroObjectId: xeroContactId,
+      role: "CONTACT",
+    },
+    select: { metadata: true },
+  });
+  const metadata = readLinkMetadata(link?.metadata);
+  if (metadata?.[ORGANISATION_SHAPE_APPLIED_KEY] === true) return;
+  if (metadata?.linkedVia === "created") {
+    // Built by the organisation payload builder, so it is already name-only.
+    // Record that rather than sending an update that would change nothing.
+    await upsertOrganisationContactLink({
+      organisationId: organisation.id,
+      xeroContactId,
+      organisationShapeApplied: true,
+    });
+    return;
+  }
+  /*
+    ONLY a contact this application KNOWS it adopted, and the positive test is
+    deliberate. `linkedVia: "name_match"` is written by the one adoption path —
+    which is also the only way a transfer can arrive, since a contact id Xero
+    minted a moment ago cannot already be held by a member.
+
+    Treating "no provenance recorded" as adopted would be the dangerous
+    direction: it would send an empty-name update to any contact whose ledger
+    metadata this code cannot read, on the strength of an assumption. Doing
+    nothing there leaves the shape wrong, which is visible and correctable;
+    guessing would blank the names on a contact nobody chose.
+  */
+  if (metadata?.linkedVia !== "name_match") return;
+
+  const name = schoolXeroContactName(organisation.name);
+  const contact = {
+    contactID: xeroContactId,
+    name,
+    // EMPTY STRINGS, not omitted keys. Omitting them would leave whatever Xero
+    // already holds; the whole point here is to clear the invented person.
+    firstName: "",
+    lastName: "",
+  };
+  const idempotencyKey = buildXeroIdempotencyKey(
+    "organisation",
+    organisation.id,
+    "contact",
+    "organisation-shape",
+    "v1",
+  );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CONTACT",
+    operationType: "UPDATE",
+    localModel: ORGANISATION_LOCAL_MODEL,
+    localId: organisation.id,
+    idempotencyKey,
+    correlationKey: idempotencyKey,
+    // INV-PRIV-011 (#2683): the school's name is not a person's, but the
+    // redactor is not asked to tell the difference — it is stripped like every
+    // other stored contact payload, and the empty person keys carry nothing.
+    requestPayload: stripPersonNameFromStoredContactPayload({
+      contacts: [contact],
+    }),
+    createdByMemberId: input.createdByMemberId ?? null,
+  });
+
+  try {
+    const { xero, tenantId } = await input.resolveClient();
+    const response = await callXeroApi(
+      () =>
+        xero.accountingApi.updateContact(
+          tenantId,
+          xeroContactId,
+          { contacts: [contact] },
+          idempotencyKey,
+        ),
+      {
+        operation: "updateContact",
+        resourceType: "CONTACT",
+        workflow: "applyOrganisationShapeToAdoptedContact",
+        context: `updateContact(organisation ${organisation.id} shape)`,
+      },
+    );
+    await upsertOrganisationContactLink({
+      organisationId: organisation.id,
+      xeroContactId,
+      organisationShapeApplied: true,
+    });
+    await completeXeroSyncOperation(operation.id, {
+      responsePayload: response.body,
+      xeroObjectType: "CONTACT",
+      xeroObjectId: xeroContactId,
+      xeroObjectUrl: buildXeroContactUrl(xeroContactId),
+    });
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    logger.error(
+      { err: error, organisationId: organisation.id, xeroContactId },
+      "Could not give this school's adopted Xero contact the organisation " +
+        "shape; it is still recorded as a person at Xero and the operation " +
+        "stays replayable (#3367)",
+    );
+  }
 }
 
 export async function upsertOrganisationContactLink(
@@ -308,6 +471,7 @@ export async function upsertOrganisationContactLink(
     xeroContactId: string;
     linkedVia?: string;
     contactPersonsFingerprint?: string;
+    organisationShapeApplied?: boolean;
   },
   store?: Prisma.TransactionClient,
 ): Promise<void> {
@@ -328,7 +492,9 @@ export async function upsertOrganisationContactLink(
       // and provenance is exactly what tells a reader whether the contact is
       // one this application made or one it adopted.
       mergeMetadata: true,
-      ...(input.linkedVia || input.contactPersonsFingerprint
+      ...(input.linkedVia ||
+      input.contactPersonsFingerprint ||
+      input.organisationShapeApplied
         ? {
             metadata: {
               ...(input.linkedVia ? { linkedVia: input.linkedVia } : {}),
@@ -336,6 +502,9 @@ export async function upsertOrganisationContactLink(
                 ? {
                     contactPersonsFingerprint: input.contactPersonsFingerprint,
                   }
+                : {}),
+              ...(input.organisationShapeApplied
+                ? { [ORGANISATION_SHAPE_APPLIED_KEY]: true }
                 : {}),
             },
           }

@@ -54,7 +54,10 @@ import {
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
-import { findOrCreateXeroContactForInvoicedParty } from "@/lib/organisation-xero-contacts";
+import {
+  findOrCreateXeroContactForInvoicedParty,
+  invoicedPartyContactRepair,
+} from "@/lib/organisation-xero-contacts";
 import { formatDateOnly } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
@@ -664,6 +667,21 @@ export async function createXeroInvoiceForBooking(
     const response = await retryXeroWriteWithContactRepair({
       memberId: booking.memberId,
       currentContactId: contactId,
+      // #3367: THE REPAIR ENTITY MUST MATCH THE INVOICED PARTY.
+      //
+      // `currentContactId` above is now the ORGANISATION's contact where this
+      // booking is a school's. The default repair resolves through
+      // `findOrCreateXeroContact(booking.memberId)`, which searches Xero by
+      // EMAIL first — and a school's recorded address is routinely a teacher's
+      // own, which this module's own comment calls routine. So on a stale
+      // contact reference the default would find that teacher's personal Xero
+      // contact, link it, and re-send the SCHOOL's invoice against a person:
+      // the #2912 prohibition, through the back door.
+      //
+      // Repairing the invoiced party instead is the fix. Disabling repair for
+      // schools would have been smaller and wrong — a stale reference is
+      // exactly the situation a repair exists for.
+      repairContactLink: invoicedPartyContactRepair(booking),
       workflow: "createXeroInvoiceForBooking",
       operationId: operationId!,
       repairExistingLink: options?.repairExistingLink,
