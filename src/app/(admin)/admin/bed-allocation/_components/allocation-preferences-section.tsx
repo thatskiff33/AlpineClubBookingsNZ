@@ -16,6 +16,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { responseErrorMessage } from "@/lib/api-error-message";
 import {
   BED_ALLOCATION_PRIORITY_VOCABULARY,
   type BedAllocationPriority,
@@ -24,6 +25,39 @@ import {
 interface AllocationPreferencesDraft {
   autoAllocationEnabled: boolean;
   allocationPriorityOrder: BedAllocationPriority[];
+}
+
+/**
+ * A 404 here means the bed-allocation module is switched off, not that the
+ * address is wrong: the route's own guard answers a disabled module with
+ * `{ error: "Not found" }` before it ever looks at the body. Passing that two
+ * word sentence through would tell an admin nothing, so the module-off state
+ * gets its own explicit message and stays distinguishable from both the
+ * permission refusal (403) and the generic fallback (#2931).
+ */
+export const ALLOCATION_PREFERENCES_MODULE_OFF_REASON =
+  "Bed allocation is turned off for this club, so allocation preferences cannot be loaded or saved. Turn the module on under Feature modules first.";
+
+const LOAD_FALLBACK = "Failed to load allocation preferences";
+const SAVE_FALLBACK = "Failed to save allocation preferences";
+
+/**
+ * The GET and PUT both answer with the server's EFFECTIVE settings view: the
+ * two editable fields plus read-only provenance (`source`, `fallback`,
+ * `settingsId`, `authoritativeLodgeId`, `updatedByMemberId`, `updatedAt`).
+ * Only the two editable fields are the draft.
+ *
+ * Projecting here rather than at save time is the point: the PUT schema is
+ * `.strict()`, so while the whole response WAS the draft, the save body spread
+ * six fields the write contract does not accept and every save came back 400
+ * "Invalid input" — which the generic error message then hid (#2931). Keeping
+ * the draft narrow makes that unrepresentable instead of policed.
+ */
+function toDraft(settings: AllocationPreferencesDraft) {
+  return {
+    autoAllocationEnabled: settings.autoAllocationEnabled,
+    allocationPriorityOrder: settings.allocationPriorityOrder,
+  };
 }
 
 const LABELS: Record<BedAllocationPriority, string> = {
@@ -60,34 +94,51 @@ export function AllocationPreferencesSection({
   const section = useSectionEditState<AllocationPreferencesDraft>({
     load: async (signal) => {
       const response = await fetch(endpoint, { cache: "no-store", signal });
-      if (!response.ok) throw new Error("Failed to load allocation preferences");
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error(ALLOCATION_PREFERENCES_MODULE_OFF_REASON);
+        }
+        throw new Error(await responseErrorMessage(response, LOAD_FALLBACK));
+      }
       const body = (await response.json()) as {
         settings: AllocationPreferencesDraft;
       };
-      return body.settings;
+      return toDraft(body.settings);
     },
     save: async (draft) => {
       const response = await fetch("/api/admin/bed-allocation/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
+        // The write contract, field by field — never a spread of the draft.
         body: JSON.stringify({
-          ...draft,
           lodgeId,
+          autoAllocationEnabled: draft.autoAllocationEnabled,
+          allocationPriorityOrder: draft.allocationPriorityOrder,
         }),
       });
+      // Three refusals an admin must be able to tell apart: their role can read
+      // but not write (403), the module is off (404), and everything else, for
+      // which the server's own curated sentence is the useful one and the
+      // fallback covers a body that carried none.
       if (response.status === 403) throw new ForbiddenSaveError();
-      if (!response.ok) throw new Error("Failed to save allocation preferences");
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error(ALLOCATION_PREFERENCES_MODULE_OFF_REASON);
+        }
+        throw new Error(await responseErrorMessage(response, SAVE_FALLBACK));
+      }
       const body = (await response.json()) as {
         settings: AllocationPreferencesDraft;
       };
+      const saved = toDraft(body.settings);
       // The section is keyed by lodge. A save may finish after a scope change;
       // never let that stale completion refresh its former parent's board.
-      if (mountedRef.current) await onSaved(body.settings);
-      return body.settings;
+      if (mountedRef.current) await onSaved(saved);
+      return saved;
     },
     successMessage: "Allocation preferences saved",
-    loadErrorFallback: "Failed to load allocation preferences",
-    saveErrorFallback: "Failed to save allocation preferences",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     isDirty: (draft, saved) =>
       draft.autoAllocationEnabled !== saved.autoAllocationEnabled ||
       draft.allocationPriorityOrder.join("|") !==
