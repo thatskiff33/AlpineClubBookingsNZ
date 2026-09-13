@@ -18,8 +18,10 @@
  * - the admin lodge configuration screen previews both against a capacity the
  *   admin has typed but not yet saved, so the explanation on screen can never
  *   drift from what the server will do;
- * - `/api/admin/lodge-settings` reads the save bounds below, so a figure the
- *   screen calls acceptable is exactly a figure the schema accepts.
+ * - `/api/admin/lodge-settings` reads the save bounds below, as do BOTH
+ *   screens that edit the field — the lodge configuration hub and the Setup
+ *   screen's lodge settings card — so a figure either screen calls acceptable
+ *   is exactly a figure the schema accepts.
  *
  * Keep it free of Prisma, config and React imports: the client bundle imports
  * it directly.
@@ -60,11 +62,12 @@ export interface EffectiveLodgeCapacity {
 
 /**
  * The bounds a configured lodge capacity must satisfy to be saved
- * (`INV-SSOT-001`). One definition, read by all three places that decide
- * whether a typed figure is acceptable: the API schema
- * (`/api/admin/lodge-settings`), the lodge configuration screen's save, and
- * the guidance beside the field, which must not predict a save for a value
- * the server will refuse.
+ * (`INV-SSOT-001`). One definition, read by every place that decides whether a
+ * typed figure is acceptable: the API schema (`/api/admin/lodge-settings`),
+ * the lodge configuration screen's save and the guidance beside its field —
+ * which must not predict a save for a value the server will refuse — and the
+ * Setup screen's lodge settings card, a SECOND editor of the same field
+ * through the same route, which had no upper bound at all.
  */
 export const MIN_CONFIGURED_LODGE_CAPACITY = 1;
 export const MAX_CONFIGURED_LODGE_CAPACITY = 100_000;

@@ -264,9 +264,11 @@ headroom formula below is the same capacity-versus-beds relationship and lives
 there too, as `resolvePartnerSharedHeadroom`, alongside the save bounds
 (`parseConfiguredLodgeCapacity`). `getLodgeCapacityStatus` and
 `getLodgePartnerSharedCapacityStatus` resolve the real figures through them,
-`/api/admin/lodge-settings` validates against the same bounds, and the admin
-lodge configuration screen (`/admin/lodges/[id]`) previews all three against a
-capacity the admin has typed but not yet saved. That is what stops the
+`/api/admin/lodge-settings` validates against the same bounds — as do both
+screens that edit the field, the lodge configuration hub and the **Setup**
+screen's lodge settings card — and the admin lodge configuration screen
+(`/admin/lodges/[id]`) previews all three against a capacity the admin has
+typed but not yet saved. That is what stops the
 explanation on screen drifting from what the server will do; an import census
 in `src/lib/__tests__/lodge-effective-capacity.test.ts` records the readers —
 in every import form, and stating plainly that it cannot see a hand
@@ -513,8 +515,9 @@ notices, neither of them a validation error (#1653, #2724):
   partner-shared slot the card above is displaying.
 
 A figure outside the save bounds (a whole number from 1 to 100,000) is refused
-by `/api/admin/lodge-settings`; the field carries the same bounds as `min`/`max`
-and the notice names the range rather than predicting a save that would fail.
+by `/api/admin/lodge-settings`; both editors of the field carry the same bounds
+as `min`/`max`, and the notice names the range rather than predicting a save
+that would fail.
 The notice is attached to the field with `aria-describedby` rather than being a
 live region, so it is announced on focus — including to a view-only officer,
 who cannot type at all — and never announces a half-typed figure's sentence.

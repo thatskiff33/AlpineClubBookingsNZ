@@ -31,7 +31,9 @@
   `0` claimed it would cap the lodge at zero, and a stray extra zero on a large
   figure was told the save was allowed and then failed with a bare "Invalid
   input". The field now carries the same limits the server uses and says what
-  the accepted range is.
+  the accepted range is, and so does the second place a lodge's capacity can be
+  set — the lodge settings card on **Admin → Setup**, which had no upper limit
+  of its own at all.
 
   The explanation is also attached to the capacity field itself, so a screen
   reader announces it when you reach the field — including for an officer with
