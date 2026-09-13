@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -221,7 +222,7 @@ export async function POST(
           action: auditAction,
           memberId: session.user.id,
           actorMemberId: session.user.id,
-          subjectMemberId: booking.memberId,
+          subjectMemberId: bookingOwner(booking).memberId,
           targetId: bookingId,
           entityType: "Booking",
           entityId: bookingId,
@@ -321,12 +322,12 @@ export async function POST(
       // charge. Read-only; null on non-split bookings.
       const provisionalGuests = await getProvisionalNonMemberChildSummary({
         id: booking.id,
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
       });
       sendBookingConfirmedEmail(
-        { bookingId: booking.id, recipientMemberId: booking.memberId },
-        booking.member.email,
-        booking.member.firstName,
+        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+        bookingOwner(booking).member.email,
+        bookingOwner(booking).member.firstName,
         booking.checkIn,
         booking.checkOut,
         booking.guests.length,

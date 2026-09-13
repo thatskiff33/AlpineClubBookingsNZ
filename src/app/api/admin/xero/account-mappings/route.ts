@@ -4,16 +4,52 @@ import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
+import {
+  XERO_MAPPING_WRITABLE_KEYS,
+  mappingWriteViolation,
+  normalizeMappingCode,
+  type XeroMappingWritableKey,
+} from "@/lib/xero-account-mapping-keys";
 
-// entranceFeeAmountCents is intentionally absent (#1931, E5): the legacy flat
-// joining-fee amount is no longer read at runtime (amounts are authoritative
-// in the JoiningFee schedule, migrated on upgrade), so exposing it as a
-// writable mapping would accept edits that silently have no effect. The
+// The writable key set comes from the ONE registry (#2717): adding a mapping
+// key used to mean editing this allowlist, this zod schema, the admin picker's
+// key list and the runtime defaults, with nothing failing if you edited three.
+// entranceFeeAmountCents is deliberately absent from that registry (#1931, E5):
+// the legacy flat joining-fee amount is no longer read at runtime (amounts are
+// authoritative in the JoiningFee schedule, migrated on upgrade), so exposing
+// it as a writable mapping would accept edits that silently have no effect. The
 // stored row (if any) is retained untouched for provenance until E13.
-const VALID_KEYS = [
-  "hutFeesIncome", "hutFeeRefunds", "stripeBankAccount", "stripeFees", "subscriptionIncome",
-  "membershipCancellationCredit", "hutFeeItem", "hutFeeRefundItem", "entranceFeeItem",
-] as const;
+const VALID_KEYS = XERO_MAPPING_WRITABLE_KEYS;
+
+type SerialisedMapping = {
+  /**
+   * Normalised (#2717): a blank stored code is reported as `null`, because
+   * blank is not a choice. The Xero setup screen asks
+   * `isCodeExplicitlyConfigured` of the code it is SHOWING — which during an
+   * edit is the staged one — rather than reading a configuredness flag from
+   * here, which would describe the saved code and go stale the moment an
+   * officer cleared the field.
+   */
+  code: string | null;
+  itemCode: string | null;
+};
+
+/** Every writable key, present whether or not a row exists for it. */
+function serialiseMappings(
+  rows: Array<{ key: string; code: string | null; itemCode: string | null }>,
+): Record<string, SerialisedMapping> {
+  const result: Record<string, SerialisedMapping> = {};
+  for (const key of VALID_KEYS) {
+    result[key] = { code: null, itemCode: null };
+  }
+  for (const row of rows) {
+    result[row.key] = {
+      code: normalizeMappingCode(row.code),
+      itemCode: row.itemCode,
+    };
+  }
+  return result;
+}
 
 /**
  * GET /api/admin/xero/account-mappings
@@ -29,16 +65,7 @@ export async function GET() {
       select: { key: true, code: true, itemCode: true },
     });
 
-    // Return as a key→{code, itemCode} object for easy consumption
-    const result: Record<string, { code: string | null; itemCode: string | null }> = {};
-    for (const key of VALID_KEYS) {
-      result[key] = { code: null, itemCode: null };
-    }
-    for (const m of mappings) {
-      result[m.key] = { code: m.code, itemCode: m.itemCode };
-    }
-
-    return NextResponse.json(result);
+    return NextResponse.json(serialiseMappings(mappings));
   } catch (error) {
     logger.error({ err: error }, "Failed to fetch account mappings");
     return NextResponse.json({ error: "Failed to fetch account mappings" }, { status: 500 });
@@ -46,21 +73,33 @@ export async function GET() {
 }
 
 const MappingValueSchema = z.object({
-  code: z.string().nullable().optional(),
-  itemCode: z.string().nullable().optional(),
+  // A blank code is refused rather than stored (#2717). Stored blank, it read as
+  // an explicit choice, which disengaged the key's fallback and sent an empty
+  // accountCode to Xero — which rejects it, so the outbox retried for ever.
+  // Clearing a mapping is `null`, which is a different and supported thing.
+  code: z.string().trim().min(1).nullable().optional(),
+  itemCode: z.string().trim().min(1).nullable().optional(),
 });
 
-const UpdateMappingsSchema = z.object({
-  hutFeesIncome: MappingValueSchema.optional(),
-  hutFeeRefunds: MappingValueSchema.optional(),
-  stripeBankAccount: MappingValueSchema.optional(),
-  stripeFees: MappingValueSchema.optional(),
-  subscriptionIncome: MappingValueSchema.optional(),
-  membershipCancellationCredit: MappingValueSchema.optional(),
-  hutFeeItem: MappingValueSchema.optional(),
-  hutFeeRefundItem: MappingValueSchema.optional(),
-  entranceFeeItem: MappingValueSchema.optional(),
-});
+const UpdateMappingsSchema = z
+  .object(
+    Object.fromEntries(
+      VALID_KEYS.map((key) => [key, MappingValueSchema.optional()]),
+    ) as Record<XeroMappingWritableKey, z.ZodOptional<typeof MappingValueSchema>>,
+  )
+  // #2717, `INV-INT-021`: a key holds an ACCOUNT code or an ITEM code, and the
+  // registry says which. Refusing the mix-up here is what stops an edit being
+  // accepted that the runtime then discards — the goodwill key's item code was
+  // exactly that, because the resolver returns the fallback's resolution whole.
+  .superRefine((updates, ctx) => {
+    for (const [key, value] of Object.entries(updates)) {
+      if (!value) continue;
+      const violation = mappingWriteViolation(key, value);
+      if (violation) {
+        ctx.addIssue({ code: "custom", path: [key], message: violation });
+      }
+    }
+  });
 
 /**
  * PUT /api/admin/xero/account-mappings
@@ -88,7 +127,7 @@ export async function PUT(request: NextRequest) {
 
   try {
     type MappingValue = { code?: string | null; itemCode?: string | null };
-    const ops = (Object.entries(updates) as [typeof VALID_KEYS[number], MappingValue | undefined][])
+    const ops = (Object.entries(updates) as [XeroMappingWritableKey, MappingValue | undefined][])
       .filter(([, val]) => val !== undefined)
       .map(([key, val]) => {
         const updateData: { code?: string | null; itemCode?: string | null } = {};
@@ -114,15 +153,8 @@ export async function PUT(request: NextRequest) {
     const all = await prisma.xeroAccountMapping.findMany({
       select: { key: true, code: true, itemCode: true },
     });
-    const result: Record<string, { code: string | null; itemCode: string | null }> = {};
-    for (const key of VALID_KEYS) {
-      result[key] = { code: null, itemCode: null };
-    }
-    for (const m of all) {
-      result[m.key] = { code: m.code, itemCode: m.itemCode };
-    }
 
-    return NextResponse.json(result);
+    return NextResponse.json(serialiseMappings(all));
   } catch (error) {
     logger.error({ err: error }, "Failed to update account mappings");
     return NextResponse.json({ error: "Failed to update account mappings" }, { status: 500 });

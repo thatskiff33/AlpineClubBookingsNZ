@@ -15,6 +15,7 @@ import {
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
+import { bookingOwner } from "@/lib/booking-owner";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import {
@@ -470,7 +471,7 @@ export async function applyLifecycleTransitions(
     );
     if (appliedBeforeClamp > 0) {
       const clamp = await clampAppliedCreditToBookingPrice(
-        { memberId: booking.memberId, bookingId, newFinalPriceCents },
+        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents },
         tx,
       );
       appliedCreditCents = clamp.appliedCreditCents;

@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
@@ -130,7 +131,7 @@ export default async function MyBookingsPage() {
       // so it shows no special linked label. `guest-linked` (viewer is a guest
       // on someone else's booking) and `linked-parent` are unaffected.
       linkLabel:
-        booking.memberId !== session.user.id
+        bookingOwner(booking).memberId !== session.user.id
           ? "guest-linked"
           : isNestableSplitChild
             ? "provisional-child"

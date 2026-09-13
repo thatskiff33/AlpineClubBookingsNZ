@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
@@ -116,7 +117,7 @@ export async function POST(
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
-  if (booking.memberId !== session.user.id && !isAdmin) {
+  if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -248,7 +249,7 @@ export async function POST(
       action: "booking-policy-exception-request.create",
       memberId: session.user.id,
       targetId: bookingId,
-      subjectMemberId: booking.memberId,
+      subjectMemberId: bookingOwner(booking).memberId,
       entityType: "BookingChangeRequest",
       entityId: created.id,
       category: "booking",
@@ -268,8 +269,8 @@ export async function POST(
 
     // Post-commit, fire-and-forget: never fail the request on an alert error.
     sendAdminBookingChangeRequestAlert({
-      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-      memberEmail: booking.member.email,
+      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+      memberEmail: bookingOwner(booking).member.email,
       bookingId,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,

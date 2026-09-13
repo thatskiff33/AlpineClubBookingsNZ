@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
 import {
@@ -232,8 +233,8 @@ export async function resolveDelegateConsentPageState(params: {
         ageYears: ageInYears(target?.dateOfBirth ?? null, todayInClub),
       },
       bookerName:
-        `${guest.booking.member.firstName} ${guest.booking.member.lastName}`.trim(),
-      bookerFirstName: guest.booking.member.firstName,
+        `${bookingOwner(guest.booking).member.firstName} ${bookingOwner(guest.booking).member.lastName}`.trim(),
+      bookerFirstName: bookingOwner(guest.booking).member.firstName,
       lodgeId: guest.booking.lodgeId,
       checkIn: guest.booking.checkIn,
       checkOut: guest.booking.checkOut,

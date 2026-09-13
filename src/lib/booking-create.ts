@@ -25,6 +25,7 @@ import {
   PaymentStatus,
   type PrismaClient,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { assertMemberMayBookLodge } from "@/lib/lodge-access";
 import {
   lodgeNullTolerantScope,
@@ -1527,15 +1528,15 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             // here — the split engine above is untouched.)
             const provisionalGuests = await getProvisionalNonMemberChildSummary({
               id: fullBooking.id,
-              memberId: fullBooking.memberId,
+              memberId: bookingOwner(fullBooking).memberId,
             });
             sendBookingConfirmedEmail(
               {
                 bookingId: fullBooking.id,
-                recipientMemberId: fullBooking.memberId,
+                recipientMemberId: bookingOwner(fullBooking).memberId,
               },
-              fullBooking.member.email,
-              fullBooking.member.firstName,
+              bookingOwner(fullBooking).member.email,
+              bookingOwner(fullBooking).member.firstName,
               fullBooking.checkIn,
               fullBooking.checkOut,
               fullBooking.guests.length,

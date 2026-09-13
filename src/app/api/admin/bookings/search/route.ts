@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import {
   buildBookingDeletedWhere,
@@ -239,8 +240,8 @@ export async function GET(request: NextRequest) {
 
       return {
         id: booking.id,
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`.trim(),
-        memberEmail: booking.member.email,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim(),
+        memberEmail: bookingOwner(booking).member.email,
         checkIn: formatDateOnly(booking.checkIn),
         checkOut: formatDateOnly(booking.checkOut),
         status: booking.status,

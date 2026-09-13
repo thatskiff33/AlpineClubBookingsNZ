@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import type { Instant } from "@/lib/club-time";
 // `eachDateOnlyInRange` is pure UTC calendar arithmetic feeding
@@ -57,7 +58,7 @@ export async function resolveBookingDetailConsent({
     isBookingOwner,
     isAdminViewer: isAdmin,
     bookingDeletedAt: booking.deletedAt,
-    bookingOwnerMemberId: booking.memberId,
+    bookingOwnerMemberId: bookingOwner(booking).memberId,
     bookingStatus: booking.status,
     bookingCheckIn: booking.checkIn,
     guests: booking.guests,

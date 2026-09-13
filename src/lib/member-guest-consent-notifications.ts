@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -479,11 +480,11 @@ async function loadNotificationContext(
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     bookingStatus: booking.status,
-    bookingOwnerMemberId: booking.memberId,
+    bookingOwnerMemberId: bookingOwner(booking).memberId,
     isQuotePriced: Boolean(
       booking.originBookingRequest ?? booking.heldForBookingRequest,
     ),
-    bookerName: `${booking.member.firstName} ${booking.member.lastName}`.trim(),
+    bookerName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim(),
     party: booking.guests.map((guest) => ({
       firstName: guest.firstName,
       lastName: guest.lastName,
@@ -587,7 +588,7 @@ export async function sendMemberGuestWithdrawnNotifications(params: {
     return result;
   }
   const bookerName =
-    `${booking.member.firstName} ${booking.member.lastName}`.trim();
+    `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim();
 
   const targets = await db.member.findMany({
     where: { id: { in: targetMemberIds } },

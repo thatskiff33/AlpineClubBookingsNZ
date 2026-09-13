@@ -1,4 +1,5 @@
 import { BookingStatus, type Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
@@ -316,7 +317,7 @@ export async function listMemberGuestConsentExceptions(
         checkIn: row.booking.checkIn,
         checkOut: row.booking.checkOut,
         bookerName:
-          `${row.booking.member.firstName} ${row.booking.member.lastName}`.trim(),
+          `${bookingOwner(row.booking).member.firstName} ${bookingOwner(row.booking).member.lastName}`.trim(),
         guestFirstName: row.firstName,
         guestLastName: row.lastName,
         status,

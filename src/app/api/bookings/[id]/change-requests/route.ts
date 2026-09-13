@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { AgeTier } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
@@ -207,7 +208,7 @@ export async function POST(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && !isAdmin) {
+  if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -468,7 +469,7 @@ export async function POST(
     action: "booking-change-request.create",
     memberId: session.user.id,
     targetId: bookingId,
-    subjectMemberId: booking.memberId,
+    subjectMemberId: bookingOwner(booking).memberId,
     entityType: "BookingChangeRequest",
     entityId: changeRequest.id,
     category: "booking",
@@ -485,8 +486,8 @@ export async function POST(
   });
 
   sendAdminBookingChangeRequestAlert({
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-    memberEmail: booking.member.email,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+    memberEmail: bookingOwner(booking).member.email,
     bookingId,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
@@ -535,7 +536,7 @@ export async function GET(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && !isAdmin) {
+  if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

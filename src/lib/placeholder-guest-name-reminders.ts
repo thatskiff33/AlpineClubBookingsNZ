@@ -1,4 +1,5 @@
 import { BookingRequestType, BookingStatus, Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import { getBookingRequestSettings } from "@/lib/booking-request";
 import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
@@ -246,9 +247,9 @@ export async function sendPlaceholderGuestNameReminders(
     try {
       await sendWholeLodgeGuestNamesReminderEmail({
         bookingId: booking.id,
-        recipientMemberId: booking.memberId,
-        email: booking.member.email,
-        firstName: booking.member.firstName,
+        recipientMemberId: bookingOwner(booking).memberId,
+        email: bookingOwner(booking).member.email,
+        firstName: bookingOwner(booking).member.firstName,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         guestCount: booking.guests.length,

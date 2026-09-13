@@ -687,6 +687,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-015` | A hut leader's PIN session: ten minutes' inactivity, twelve-hour ceiling, Lock control |
 | `INV-PRIV-016` | Kiosk Group Trip disclosure by tier: linkage ordinal only; never `joinCode` |
 | `INV-PRIV-017` | Member-visible audit text: declared at the write site, denied by default |
+| `INV-PRIV-018` | An audit row's subject is a person; an organisation-owned booking records none |
 
 ## Membership Lifecycle
 
@@ -824,6 +825,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-018` | A Xero contact id has at most one local home |
 | `INV-INT-019` | A Xero link that cannot be made fails loudly and stays replayable |
 | `INV-INT-020` | A school Xero contact transfers once, to its Organisation, on proof |
+| `INV-INT-021` | A new Xero account mapping is type-filtered, falls back, and prompts |
 
 ## Operations
 
@@ -890,3 +892,4 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-002` | Both sides of a comparison come from one helper; encoding included |
 | `INV-SSOT-003` | Authority-bearing parameters carry no default; lint exclusions judged and stated |
 | `INV-SSOT-004` | Two instruments claiming independence must measure the same way; `stripComments` lives once |
+| `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |

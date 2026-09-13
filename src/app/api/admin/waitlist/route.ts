@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { BookingStatus } from "@prisma/client";
@@ -103,9 +104,9 @@ export async function GET(request: NextRequest) {
 
   const entries = bookings.map((b) => ({
     id: b.id,
-    memberName: `${b.member.firstName} ${b.member.lastName}`,
-    memberEmail: b.member.email,
-    memberId: b.member.id,
+    memberName: `${bookingOwner(b).member.firstName} ${bookingOwner(b).member.lastName}`,
+    memberEmail: bookingOwner(b).member.email,
+    memberId: bookingOwner(b).member.id,
     checkIn: formatDateOnly(b.checkIn),
     checkOut: formatDateOnly(b.checkOut),
     guestCount: b.guests.length,

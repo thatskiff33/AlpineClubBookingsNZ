@@ -11,6 +11,7 @@
  */
 
 import { FinanceMonthlyStatementKind } from "@prisma/client";
+import { normalizeXeroAccountClass } from "@/lib/xero-account-class";
 import {
   financeDashboardWindowMonths,
   type FinanceDashboardDateWindow,
@@ -96,11 +97,14 @@ function normalizeCode(value: string): string {
   return value.trim().toUpperCase();
 }
 
+// The account CLASS is what says whether a row is income or a cost, and that
+// reading lives in one module (#2717) so the admin account pickers and these
+// reports cannot come to disagree about what an expense account is.
 function classKind(accountClass: string | null): FinanceReportKind | null {
-  const normalized = accountClass?.toUpperCase();
-  if (normalized === "REVENUE") return "REVENUE";
-  if (normalized === "EXPENSE") return "EXPENSE";
-  return null;
+  const normalized = normalizeXeroAccountClass(accountClass);
+  return normalized === "REVENUE" || normalized === "EXPENSE"
+    ? normalized
+    : null;
 }
 
 function sectionLabelForClass(accountClass: string | null): string {

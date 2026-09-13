@@ -6,6 +6,7 @@
  * wording comes from `booking-narrative.ts`, which this module only feeds.
  */
 import { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
 import {
   resolveBookingNarrative,
@@ -141,7 +142,7 @@ export async function getPaymentLinkContext(
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
-      firstName: booking.member.firstName,
+      firstName: bookingOwner(booking).member.firstName,
       adminReviewStatus: booking.adminReviewStatus,
       adminReviewNotes: booking.adminReviewNotes,
       adminReviewReason: booking.adminReviewReason,
@@ -246,7 +247,7 @@ export async function getPaymentLinkContext(
   return {
     state: narrative.state,
     narrative,
-    firstName: booking.member.firstName,
+    firstName: bookingOwner(booking).member.firstName,
     payable,
     canRequestFreshLink: paymentState === "expired_payable",
     lodgeName: booking.lodge.name,

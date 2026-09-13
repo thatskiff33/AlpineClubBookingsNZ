@@ -7,6 +7,7 @@ import {
   getLodgeCapacity,
   getLodgePartnerSharedCapacityStatus,
 } from "@/lib/lodge-capacity";
+import { bookingOwner } from "@/lib/booking-owner";
 import { mayShareDoubleBed } from "@/lib/double-bed-sharing";
 import {
   eachDateOnlyInRange,
@@ -335,8 +336,8 @@ export async function findOverlappingCapacityHoldingBookings(
   return rows.map((row) => ({
     id: row.id,
     memberName:
-      [row.member?.firstName, row.member?.lastName].filter(Boolean).join(" ") ||
-      row.member?.email ||
+      [bookingOwner(row).member?.firstName, bookingOwner(row).member?.lastName].filter(Boolean).join(" ") ||
+      bookingOwner(row).member?.email ||
       "Unknown member",
     checkIn: formatDateOnly(row.checkIn),
     checkOut: formatDateOnly(row.checkOut),
@@ -408,8 +409,8 @@ export async function findOverlappingOverriddenNonHoldingBookings(
   return rows.map((row) => ({
     id: row.id,
     memberName:
-      [row.member?.firstName, row.member?.lastName].filter(Boolean).join(" ") ||
-      row.member?.email ||
+      [bookingOwner(row).member?.firstName, bookingOwner(row).member?.lastName].filter(Boolean).join(" ") ||
+      bookingOwner(row).member?.email ||
       "Unknown member",
     checkIn: formatDateOnly(row.checkIn),
     checkOut: formatDateOnly(row.checkOut),

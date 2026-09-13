@@ -27,10 +27,11 @@ reason: the owner's decided site. Three lines of declaration plus the comment
   member. Without that note the next reader deletes the "duplication".
 
 file: src/app/api/admin/bookings/[id]/review/route.ts
-lines: 350
+lines: 351
 reason: two declarations, approve and reject, three lines each with the
   compressed note above. There is no seam: both sit inside branch-specific
   `logAudit` calls that already differ in action, summary and metadata.
+  #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/app/api/admin/booking-exception-requests/[id]/route.ts
 lines: 792

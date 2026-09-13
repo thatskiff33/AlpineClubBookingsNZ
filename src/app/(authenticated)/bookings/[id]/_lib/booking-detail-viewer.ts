@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import type { auth } from "@/lib/auth";
 import { hasAdminAccess } from "@/lib/access-roles";
 import {
@@ -33,7 +34,7 @@ export function resolveBookingDetailViewer({
   // the member — matching the widened /api/bookings/[id]/modify authority. A
   // Full Admin already resolves to ADMIN; member / read-only viewers stay USER.
   const viewerAuthorizationRole = bookingManagementAuthorizationRole(session.user);
-  const isBookingOwner = booking.memberId === session.user.id;
+  const isBookingOwner = bookingOwner(booking).memberId === session.user.id;
   // The viewer's OWN guest row, kept rather than thrown away: its consent state
   // decides what operational detail (the door code, below) this viewer may see.
   const viewerGuestRow =

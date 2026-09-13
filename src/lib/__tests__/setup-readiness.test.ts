@@ -12,6 +12,7 @@ import {
   normalizeSetupProgress,
   renderSetupCheckReport,
   type SetupDatabaseSnapshot,
+  type SetupReadiness,
 } from "@/lib/setup-readiness";
 
 /**
@@ -202,6 +203,12 @@ function makeConfigDir(config: unknown = validClubConfig) {
   return dir;
 }
 
+function findStep(readiness: SetupReadiness, id: string) {
+  return readiness.categories
+    .flatMap((category) => category.checks)
+    .find((check) => check.id === id);
+}
+
 describe("setup-readiness", () => {
   afterEach(() => {
     for (const dir of tempDirs.splice(0)) {
@@ -229,6 +236,46 @@ describe("setup-readiness", () => {
     expect(report).toContain("accounting.reports.balancesheet.read");
     expect(report).toContain("accounting.reports.banksummary.read");
     expect(report).not.toContain("accounting.reports.read");
+  });
+
+  it("names a Xero mapping that is unset and falling back (#2717)", () => {
+    // The upgrading-club case the owner's decision is about. Every existing
+    // mapping is configured, so the row count says "configured" and would have
+    // reported the step complete — while goodwill quietly posted to the
+    // hut-fee-refund account and nothing anywhere invited an officer to choose.
+    // The panel notice cannot reach them: the mappings section is collapsed by
+    // default and only loads when it is opened.
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        xeroUnsetFallbackMappingLabels: ["Goodwill & Write-Offs"],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const step = findStep(readiness, "xero-mappings");
+    expect(step?.status).toBe("warning");
+    expect(step?.message).toContain("Goodwill & Write-Offs");
+    expect(step?.message).toContain("keep posting where they did before");
+    expect(step?.details?.join(" ")).toContain("using a fallback: Goodwill & Write-Offs");
+    // Non-required, so it informs rather than blocking anybody's upgrade.
+    expect(step?.required).toBe(false);
+    expect(readiness.summary.blocked).toBe(0);
+  });
+
+  it("reports the mappings step complete once every fallback key is chosen (#2717)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, xeroUnsetFallbackMappingLabels: [] },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const step = findStep(readiness, "xero-mappings");
+    expect(step?.status).toBe("complete");
+    expect(step?.details?.join(" ")).not.toContain("using a fallback");
   });
 
   it("drops the Seasons And Rates step to a warning when a membership type has rate gaps (#1930, E4)", () => {

@@ -76,6 +76,7 @@
  */
 import type { XeroClient } from "xero-node";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { buildXeroContactUrl } from "@/lib/xero-links";
@@ -156,7 +157,7 @@ export async function findOrCreateXeroContactForInvoicedParty(
       options,
     );
   }
-  return findOrCreateXeroContact(booking.memberId, options);
+  return findOrCreateXeroContact(bookingOwner(booking).memberId, options);
 }
 
 export interface FindOrCreateOrganisationXeroContactOptions {

@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { createAuditLog } from "@/lib/audit";
@@ -72,7 +73,7 @@ async function resolveXeroAuditSubjects(links: XeroAuditLocalLink[]) {
     });
     for (const booking of bookings) {
       subjects.set(`Booking:${booking.id}`, {
-        subjectMemberId: booking.memberId,
+        subjectMemberId: bookingOwner(booking).memberId,
         bookingId: booking.id,
       });
     }
@@ -107,12 +108,12 @@ async function resolveXeroAuditSubjects(links: XeroAuditLocalLink[]) {
       },
     });
     for (const payment of payments) {
-      if (!payment.booking?.memberId) {
+      if (!payment.booking || !bookingOwner(payment.booking).memberId) {
         continue;
       }
 
       subjects.set(`Payment:${payment.id}`, {
-        subjectMemberId: payment.booking.memberId,
+        subjectMemberId: bookingOwner(payment.booking).memberId,
         bookingId: payment.bookingId,
       });
     }

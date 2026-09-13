@@ -4,6 +4,7 @@ import {
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
@@ -76,7 +77,7 @@ function releaseOneHold(paymentId: string, now: Date) {
       // allocation/deallocation reconciliation from changing precise slices
       // between this guard, the local restore, and the clearing aggregate.
       await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId);
-      await lockMemberCreditLedger(fresh.booking.memberId, tx);
+      await lockMemberCreditLedger(bookingOwner(fresh.booking).memberId, tx);
 
       if (await findUnconvergedAppliedCreditDeallocation(fresh.id, tx)) {
         return {
@@ -119,7 +120,7 @@ function releaseOneHold(paymentId: string, now: Date) {
       // hold not yet released, booking still CONFIRMED) is its exactly-once
       // guarantee — re-runs skip released holds before reaching this line.
       const creditRestoredCents = await restoreCreditFromBooking(
-        fresh.booking.memberId,
+        bookingOwner(fresh.booking).memberId,
         fresh.bookingId,
         tx,
       );
@@ -329,7 +330,7 @@ export async function releaseExpiredInternetBankingHolds(
     createAuditLog({
       action: "booking.internet_banking_hold_expired",
       targetId: payment.bookingId,
-      subjectMemberId: payment.booking.memberId,
+      subjectMemberId: bookingOwner(payment.booking).memberId,
       entityType: "Booking",
       entityId: payment.bookingId,
       category: "payment",
@@ -369,10 +370,10 @@ export async function releaseExpiredInternetBankingHolds(
     sendBookingCancelledEmail(
       {
         bookingId: payment.booking.id,
-        recipientMemberId: payment.booking.memberId,
+        recipientMemberId: bookingOwner(payment.booking).memberId,
       },
-      payment.booking.member.email,
-      payment.booking.member.firstName,
+      bookingOwner(payment.booking).member.email,
+      bookingOwner(payment.booking).member.firstName,
       payment.booking.checkIn,
       payment.booking.checkOut,
       0,

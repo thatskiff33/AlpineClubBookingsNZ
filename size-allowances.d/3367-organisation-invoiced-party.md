@@ -8,7 +8,7 @@ genuinely the worse answer. Three of them, and the growth in the other two,
 come from the adversarial review round rather than from the first build.
 
 file: src/lib/school-booking-request.ts
-lines: 2735
+lines: 2736
 reason: The school approval transaction gains the resolve-or-create of the
   school's own `Organisation`, the link from the booking and the request, and
   the teacher association. Every one of those writes has to happen INSIDE the
@@ -36,7 +36,7 @@ reason: Three lines net. The member payload builder's object literal MOVED OUT
   duplicate-name predicate rather than copying them.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1428
+lines: 1429
 reason: Six lines, and five of them are the comment. One call site changes from
   `findOrCreateXeroContact(booking.memberId, …)` to
   `findOrCreateXeroContactForInvoicedParty(booking, …)`. The comment is there
@@ -44,6 +44,7 @@ reason: Six lines, and five of them are the comment. One call site changes from
   line — an invoice payload sends a contact reference and no name — and a reader
   who does not know that will go looking for a change in the eleven invoice
   builders that is not there.
+  #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/lib/xero-operation-retry.ts
 lines: 1450

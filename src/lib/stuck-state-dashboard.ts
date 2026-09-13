@@ -1,5 +1,6 @@
 import type { FeatureFlags } from "@/config/schema";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
+import { bookingOwner } from "@/lib/booking-owner";
 import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-coverage-incidents";
 import { formatDateOnly } from "@/lib/date-only";
 import { addCalendarDays } from "@/lib/club-time";
@@ -1080,7 +1081,7 @@ export async function getStuckStateDashboard(input?: {
         )
       : [];
     const ownerName =
-      `${incident.booking.member.firstName} ${incident.booking.member.lastName}`.trim();
+      `${bookingOwner(incident.booking).member.firstName} ${bookingOwner(incident.booking).member.lastName}`.trim();
     return {
       id: incident.id,
       title: `${formatBookingReference(incident.booking.id)} - ${ownerName}`,

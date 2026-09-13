@@ -22,6 +22,7 @@ import {
   type HostingCoverageQueueParticipantProof,
   type HostingCoverageSourceParticipant,
 } from "@/lib/adult-member-hosting-queue-participants";
+import { bookingOwner } from "@/lib/booking-owner";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import type { ResolvedAdultMemberHostingPolicy } from "@/lib/policies/adult-member-hosting";
 
@@ -84,7 +85,7 @@ export async function buildMemberMergeHostingCoveragePlan(
     (booking) => policyByLodge.get(booking.lodgeId)?.mode === "ENFORCED",
   );
   const items = included.map((booking) => ({
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
     lodgeId: booking.lodgeId,
     nights: eachDateOnlyInRange(booking.checkIn, booking.checkOut).map(
       formatDateOnly,
@@ -113,7 +114,7 @@ export async function buildMemberMergeHostingCoveragePlan(
               policyByLodge.get(booking.lodgeId)?.hostScopes.sameBookingOwner ===
               true,
           )
-          .map((booking) => booking.memberId),
+          .map((booking) => bookingOwner(booking).memberId),
       )].sort(),
     ),
   });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -159,7 +160,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const memberName = `${booking.member.firstName} ${booking.member.lastName}`;
+    const memberName = `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`;
     // lodgeId is immutable, so keying the lock from the pre-lock read is safe
     // (read-key -> lock -> re-read, docs/CONCURRENCY_AND_LOCKING.md).
     const lodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
@@ -398,7 +399,7 @@ export async function POST(request: NextRequest) {
     const paymentIntent = await chargeSavedCardAttempt({
       attempt: claim.attempt,
       bookingId,
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       amountCents,
       card,
     });
@@ -486,7 +487,7 @@ export async function POST(request: NextRequest) {
       claimReleaser = null;
       const account = describeUnsettledPaymentIntent(paymentIntent.status);
       logger.warn(
-        { bookingId, piStatus: paymentIntent.status, memberId: booking.memberId },
+        { bookingId, piStatus: paymentIntent.status, memberId: bookingOwner(booking).memberId },
         "Off-session charge did not capture — booking returned to PENDING (#3267)"
       );
       // Alert admins so they can contact the member to complete payment

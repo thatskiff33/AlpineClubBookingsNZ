@@ -119,7 +119,10 @@ describe("no guest-authorisation gate keys on the raw role any more", () => {
     );
     expect(source).toContain("actorRole: guestAuthorizationRole,");
     expect(source).toContain(
-      "onBehalfOfMemberId: guestAuthorizationIsAdmin ? booking.memberId : null,",
+      // #3368: the booking's owner is read through the one accessor, which is
+      // the identity on this column while it is still required. The gate this
+      // rule pins — the DERIVED admin flag, not the raw role — is unchanged.
+      "onBehalfOfMemberId: guestAuthorizationIsAdmin ? bookingOwner(booking).memberId : null,",
     );
     expect(source).toContain("if (!guestAuthorizationIsAdmin) {");
     // The adult-supervision review on the MODIFICATION path takes the same

@@ -5,6 +5,7 @@ import {
   lockMemberCreditLedger,
 } from "./member-credit";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
@@ -680,7 +681,7 @@ export async function deallocateExcessAppliedCreditForBooking(
       );
       return response.body.invoices?.[0]?.contact?.contactID;
     },
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
     workflow: "deallocateExcessAppliedCreditForBooking",
   });
 
@@ -706,7 +707,7 @@ export async function deallocateExcessAppliedCreditForBooking(
   }
 
   const snapshot = await prisma.$transaction(async (tx) => {
-    await lockMemberCreditLedger(booking.memberId, tx);
+    await lockMemberCreditLedger(bookingOwner(booking).memberId, tx);
     await assertNoAppliedCreditDeallocationFence(booking.payment!.id, tx, {
       excludeOperationId: options.syncOperationId,
       allowUncheckpointedPending: true,
@@ -977,7 +978,7 @@ export async function deallocateExcessAppliedCreditForBooking(
     await applyLocalGroup({
       operationId: options.syncOperationId,
       bookingId,
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       paymentId: booking.payment.id,
       invoiceId: booking.payment.xeroInvoiceId,
       group,

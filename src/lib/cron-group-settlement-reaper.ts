@@ -53,6 +53,7 @@ import {
   GroupBookingPaymentMode,
   PaymentStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import { prisma } from "@/lib/prisma";
@@ -504,9 +505,9 @@ async function releaseSettlementChildren(
       checkIn: child.checkIn,
       checkOut: child.checkOut,
       lodgeId: child.lodgeId,
-      memberId: child.member.id,
-      memberEmail: child.member.email,
-      memberFirstName: child.member.firstName,
+      memberId: bookingOwner(child).member.id,
+      memberEmail: bookingOwner(child).member.email,
+      memberFirstName: bookingOwner(child).member.firstName,
     }));
   });
 }
@@ -581,9 +582,9 @@ async function cancelReapedChildren(
       checkIn: child.checkIn,
       checkOut: child.checkOut,
       lodgeId: child.lodgeId,
-      memberId: child.member.id,
-      memberEmail: child.member.email,
-      memberFirstName: child.member.firstName,
+      memberId: bookingOwner(child).member.id,
+      memberEmail: bookingOwner(child).member.email,
+      memberFirstName: bookingOwner(child).member.firstName,
     }));
   });
 }
@@ -615,7 +616,7 @@ async function finishExpiry({
 
     try {
       await sendGroupJoinCancelledEmail({
-        bookingContext: { bookingId: child.id, recipientMemberId: child.memberId },
+        bookingContext: { bookingId: child.id, recipientMemberId: bookingOwner(child).memberId },
         email: child.memberEmail,
         firstName: child.memberFirstName,
         organiserName,
@@ -724,7 +725,7 @@ async function finishReap({
   for (const child of released) {
     try {
       await sendGroupJoinReleasedEmail({
-        bookingContext: { bookingId: child.id, recipientMemberId: child.memberId },
+        bookingContext: { bookingId: child.id, recipientMemberId: bookingOwner(child).memberId },
         email: child.memberEmail,
         firstName: child.memberFirstName,
         organiserName,

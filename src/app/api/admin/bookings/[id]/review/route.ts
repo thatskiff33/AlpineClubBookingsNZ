@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 import { AdminReviewStatus, BookingStatus, type Prisma } from "@prisma/client";
@@ -153,13 +154,13 @@ export async function PATCH(
     // notify (default is notify; the suppression is audited below).
     if (parsed.data.notifyMember !== false) {
       sendBookingReviewApprovedEmail({
-        email: reviewedBooking.member.email,
-        firstName: reviewedBooking.member.firstName,
+        email: bookingOwner(reviewedBooking).member.email,
+        firstName: bookingOwner(reviewedBooking).member.firstName,
         checkIn: reviewedBooking.checkIn,
         checkOut: reviewedBooking.checkOut,
         adminNotes: parsed.data.adminNotes,
         bookingId,
-        recipientMemberId: reviewedBooking.memberId,
+        recipientMemberId: bookingOwner(reviewedBooking).memberId,
         lodgeId: reviewedBooking.lodgeId,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking review approved email"),
@@ -170,7 +171,7 @@ export async function PATCH(
       action: "booking.review.approve",
       memberId: session.user.id,
       targetId: bookingId,
-      subjectMemberId: reviewedBooking.memberId,
+      subjectMemberId: bookingOwner(reviewedBooking).memberId,
       entityType: "Booking",
       entityId: bookingId,
       category: "booking",
@@ -309,9 +310,9 @@ export async function PATCH(
   if (parsed.data.notifyMember !== false) {
     sendBookingReviewRejectedEmail({
       bookingId: reviewedBooking.id,
-      recipientMemberId: reviewedBooking.memberId,
-      email: reviewedBooking.member.email,
-      firstName: reviewedBooking.member.firstName,
+      recipientMemberId: bookingOwner(reviewedBooking).memberId,
+      email: bookingOwner(reviewedBooking).member.email,
+      firstName: bookingOwner(reviewedBooking).member.firstName,
       checkIn: reviewedBooking.checkIn,
       checkOut: reviewedBooking.checkOut,
       adminNotes: parsed.data.adminNotes,
@@ -325,7 +326,7 @@ export async function PATCH(
     action: "booking.review.reject",
     memberId: session.user.id,
     targetId: bookingId,
-    subjectMemberId: reviewedBooking.memberId,
+    subjectMemberId: bookingOwner(reviewedBooking).memberId,
     entityType: "Booking",
     entityId: bookingId,
     category: "booking",

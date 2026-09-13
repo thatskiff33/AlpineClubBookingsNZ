@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { addDaysDateOnly, parseDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubTimeZone } from "@/lib/club-time/server";
@@ -912,7 +913,8 @@ function resolveProposalBookingOwner(
     | { requestedByMemberId?: string | null; bookingId?: string | null }
     | undefined,
 ): string | null {
-  if (presence?.bookingId) return booking?.memberId ?? null;
+  if (presence?.bookingId)
+    return booking ? bookingOwner(booking).memberId : null;
   return presence?.requestedByMemberId?.trim() || null;
 }
 

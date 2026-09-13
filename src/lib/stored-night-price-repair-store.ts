@@ -7,11 +7,9 @@ import {
   requireCalendarDate,
   type CalendarDate,
 } from "@/lib/club-time";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
-import {
-  isNonNegativeIntegerCents,
-  parseEditFinancialReviewContext,
-} from "@/lib/edit-financial-review-context";
+import { isNonNegativeIntegerCents, parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
@@ -427,7 +425,7 @@ export async function recordReviewClosurePricing({
         : "booking-payment.review-closure.reprice",
       memberId: actingMemberId,
       actorMemberId: actingMemberId,
-      subjectMemberId: task.booking.memberId,
+      subjectMemberId: bookingOwner(task.booking).memberId,
       targetId: task.bookingId,
       entityType: plan ? "BookingGuest" : "Booking",
       entityId: plan ? plan.bookingGuestId : task.bookingId,

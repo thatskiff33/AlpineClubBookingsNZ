@@ -5,6 +5,7 @@ import {
   inspectSameOwnerStrandingForOffer,
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
+import { bookingOwner } from "@/lib/booking-owner";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
   SameOwnerCoverageLinkedMoveRequiredError,
@@ -229,7 +230,7 @@ async function runLinkedDateMove(
     // ROLE IS NOT THE TEST — ownership is. An admin moving their OWN booking is
     // offered the linked move like anybody else, which is why neither save route
     // gates the answer on `adminOverride`.
-    if (args.actor.id !== before.memberId) {
+    if (args.actor.id !== bookingOwner(before).memberId) {
       throw new ApiError(
         "Moving both bookings together is only available to the member whose " +
           "bookings they are.",

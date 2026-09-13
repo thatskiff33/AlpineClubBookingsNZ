@@ -1,4 +1,5 @@
 import type { BookingStatus, PaymentSource } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import { getWaitlistOfferEmailDeliveries } from "@/lib/waitlist-offer-email-visibility";
@@ -185,7 +186,7 @@ export async function getBookingProviderMismatches(
         // #2258: a deliberately-silenced booking is not a delivery failure —
         // unless its offer is still live, which the expiry decides.
         noEmails: booking.noEmails,
-        member: { email: booking.member.email },
+        member: { email: bookingOwner(booking).member.email },
       },
     ]);
 

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma, type PrismaClient } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import type { AdultMemberHostingPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import { formatBookingReference } from "@/lib/booking-reference";
@@ -512,9 +513,9 @@ export async function loadHostingCoverageOwnerNotificationDelivery(
 
   return {
     bookingId: incident.booking.id,
-    recipientMemberId: incident.booking.memberId,
-    email: incident.booking.member.email,
-    firstName: incident.booking.member.firstName,
+    recipientMemberId: bookingOwner(incident.booking).memberId,
+    email: bookingOwner(incident.booking).member.email,
+    firstName: bookingOwner(incident.booking).member.firstName,
     checkIn: incident.booking.checkIn,
     checkOut: incident.booking.checkOut,
     lodgeId: incident.booking.lodgeId,

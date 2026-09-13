@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 import type { HostingCoverageReevaluationInput } from "@/lib/adult-member-hosting-coverage-queue";
 
@@ -287,7 +288,7 @@ export async function acquireHostingCoverageQueueParticipantProof(
   });
   const refreshed = bookings.map((booking) => ({
     bookingId: booking.id,
-    ownerMemberId: booking.memberId,
+    ownerMemberId: bookingOwner(booking).memberId,
     lodgeId: booking.lodgeId,
   }));
   if (sourceFingerprint(refreshed) !== sourceFingerprint(params.sources)) {

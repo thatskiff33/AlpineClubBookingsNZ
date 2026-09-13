@@ -6,6 +6,7 @@ import { AlertTriangle, CheckCircle2, Circle, Clock } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { FocusedActionError } from "@/components/focused-action-error"
+import { bookingOwner } from "@/lib/booking-owner"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
@@ -484,7 +485,7 @@ function MissingInvoicesList({
                 <Badge variant="outline">{booking.status}</Badge>
               </div>
               <p className="text-sm">
-                <a href={buildHrefWithReturnTo(`/admin/members/${booking.memberId}`, currentXeroPath)} className="text-primary hover:underline">
+                <a href={buildHrefWithReturnTo(`/admin/members/${bookingOwner(booking).memberId}`, currentXeroPath)} className="text-primary hover:underline">
                   {booking.memberName}
                 </a>
                 <span className="ml-2 text-muted-foreground">{booking.memberEmail}</span>

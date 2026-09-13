@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
@@ -58,7 +59,7 @@ export async function writeRequestedRoom(input: {
     if (!booking) {
       throw new RequestedRoomWriteError("Booking not found", 404);
     }
-    if (!input.actorIsAdmin && booking.memberId !== input.actorMemberId) {
+    if (!input.actorIsAdmin && bookingOwner(booking).memberId !== input.actorMemberId) {
       throw new RequestedRoomWriteError("Forbidden", 403);
     }
     // Resolve and validate the room only AFTER ownership/authority. A
