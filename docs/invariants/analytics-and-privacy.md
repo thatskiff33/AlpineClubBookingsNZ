@@ -685,54 +685,31 @@ enforced by what the server BUILDS rather than by what a component renders.
 
 What a member reads of an audit row's FREE TEXT is a property of the event,
 declared where the row is written and denied when nothing is declared. Owner
-decision of 9 August 2026 (#2695).
+decision, 9 August 2026 (#2695). Reasoning: `src/lib/audit-member-disclosure.ts`.
 
-- **The declaration is the only path from an audit row's free text to a
-  member-facing audit channel, and there are two such channels.** A write site
-  passes `memberDisclosure: { visibility: "member-facing", text }` or
-  `{ visibility: "internal" }`; the member timeline and
-  `/api/member/data-export` both show the declared sentence or nothing, and
-  neither reads `details`, `metadata`, or the shape of either. Omitting the
-  declaration is legal and means internal, so a new writer cannot publish by
-  forgetting — which is why this field is OPTIONAL where `category` is
-  mandatory: here omission is the safe answer.
-- **Two things a member reads off an audit row are NOT this declaration's, and
-  saying so is the difference between a rule and a slogan.** The stored
-  `summary` column is the row's short title and the member's timeline shows it
-  for every row; 188 write sites set one, denying them all would withdraw
-  history from members everywhere at once, and that is a readership change
-  reserved to the owner rather than a consequence of this one. It is sanitised
-  on the same terms as `details` (#2695) and it is derived from the row's own
-  columns, never from a payload. Separately, the BOOKING PAGE replays an audit
-  row's `details` to the booking's own member for two payment-failure actions,
-  and `buildBookingHistoryItems` is that surface's gate — a required audience
-  argument, #3232 D4, decided by the owner on 4 September 2026. A second
-  domain page that renders an audit row's words answers to that decision, not
-  to this one.
-- **What it replaced.** The reader decided a member's text with
-  `hasLegacyMetadata ? null : log.details`, a JSON-parse test: prose reached the
-  member, JSON did not, and nobody chose either. `projectFreeTextForAudience` in
-  `src/lib/audit-query.ts` now answers every free-text field for both audiences
-  in one exhaustive place, so no length and no parse result decides an audience.
-- **The reserved key is not forgeable.** The declared sentence is stored under
-  one reserved `metadata` key `src/lib/audit.ts` owns: the boundary strips it
-  from caller-supplied metadata and re-attaches it only from a declaration,
-  after sanitising the caller's payload — so an over-budget payload cannot
-  delete what the member reads. The price of that order is that the metadata
-  JSON budget now bounds the CALLER'S payload rather than the stored column: a
-  declared sentence is attached after the budget check and can carry the row
-  past it by up to the free-text string limit, about a kilobyte. Bounded and
-  deliberate, but do not read the budget as a ceiling on what is stored.
+- **A site declares, or the member reads nothing.**
+  `memberDisclosure: { visibility: "member-facing", text }` or
+  `{ visibility: "internal" }`. Both member-facing audit channels — the member
+  timeline and `/api/member/data-export` — show that sentence or nothing, and
+  neither reads `details`, `metadata` or either's shape.
+  Omitting it means internal, so no writer can publish by forgetting.
+- **The sentence is neither forgeable nor droppable.** One reserved `metadata`
+  key `src/lib/audit.ts` owns: stripped from caller metadata, re-attached only
+  from a declaration, after the payload is sanitised. So the metadata budget
+  bounds the CALLER'S payload, not the stored column, which a sentence can
+  exceed by the free-text limit.
+- **Two things a member reads off a row are NOT this rule's.** The `summary`
+  column: the short title on every row, derived from the row's columns and
+  sanitised like `details` — denying its 188 writers is a readership change
+  reserved to the owner. And the booking page's replay of two payment-failure
+  `details` to the booking's own member, gated by `buildBookingHistoryItems`'s
+  required audience argument (#3232 D4).
 - **Adding a member-facing site widens member readership and is the owner's
   (`INV-PRIV-012`); removing one is not.** The six are pinned in
-  `MEMBER_FACING_AUDIT_WRITERS_2695`. This decides TEXT only: whether the row
-  reaches the timeline at all stays the category's job.
-- **It reclassifies nothing**, so `INV-OPS-012` owes no backfill — but it is not
-  free of the past either, and the cost falls BOTH ways. Rows already written
-  declare nothing and are denied from this release. That withdraws pre-existing
-  officer notes from members, which is the point; it also withdraws the one
-  thing this rule exists to keep, so a member who received a credit adjustment
-  before this release loses the stored explanation of it. No row is altered and
-  every officer can still read all of it. A backfill would be the alternative,
-  and it is the owner's call, not a lane's: it would publish text to members
-  that no writer declared.
+  `MEMBER_FACING_AUDIT_WRITERS_2695`. This decides TEXT; the category still
+  decides whether the row reaches a timeline at all.
+- **It reclassifies nothing**, so `INV-OPS-012` owes no backfill — and the cost
+  falls both ways. A pre-release row declares nothing, so a member loses an older
+  officer note — the point — and an older credit adjustment's recorded reason,
+  which is not. Nothing is altered; a backfill would publish undeclared text, so
+  it is the owner's call.

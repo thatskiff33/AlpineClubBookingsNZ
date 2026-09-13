@@ -906,14 +906,11 @@ export async function reviewAdminAdjustmentRequest(
         // raw cents (`+2500 cents`) for an operator; a member reads money, so
         // the direction is a word and the amount unsigned.
         //
-        // The claim is narrowed to the free text on purpose. The adjustment
-        // REQUEST's id is this row's `entityId`, and the timeline returns
-        // `entityType`/`entityId` to both audiences — so that one identifier
-        // does cross, as an opaque handle on the member's own request rather
-        // than as an explanation of it. Withholding it would be a change to
-        // every row on the member timeline rather than to this sentence, so
-        // this says what is true here instead of asserting a gate that is not
-        // there.
+        // The claim is the free text only, on purpose: the adjustment REQUEST's
+        // id is this row's `entityId`, which the timeline returns to both
+        // audiences, so that one identifier does cross — as an opaque handle on
+        // the member's own request, not as an explanation. Withholding it is a
+        // change to every row on the timeline rather than to this sentence.
         memberDisclosure: {
           visibility: "member-facing",
           text:

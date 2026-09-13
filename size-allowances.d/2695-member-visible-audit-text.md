@@ -29,10 +29,13 @@ reason: the two write boundaries route their metadata through one new builder,
   field on both writer param types, said once and re-exported.
 
 file: src/lib/audit-query.ts
-lines: 1264
+lines: 1282
 reason: `projectFreeTextForAudience` answers every free-text field for both
   audiences in one exhaustive place, replacing three ternaries spread through
-  the serializer. It cannot move to the new module: it composes `getSummary`,
+  the serializer, and `storedSummary` beside it is the single fallback rule the
+  two audiences' row titles share — written twice with two different emptiness
+  tests, it showed a member a blank row title where an officer saw the derived
+  one. It cannot move to the new module: it composes `getSummary`,
   `getDescription` and the legacy-metadata parse, all of which live here, so
   lifting it out means either a circular import or four callbacks passed in to
   reach the same result. Its docblock carries why the audience must be answered
@@ -40,21 +43,38 @@ reason: `projectFreeTextForAudience` answers every free-text field for both
   measured to survive deletion with the word left behind in a comment.
 
 file: src/lib/member-credit.ts
-lines: 942
+lines: 947
 reason: the owner's decided site. Three lines of declaration plus the comment
   saying why the member's sentence is written out rather than reusing `details`
   — which names the adjustment request, the credit row and the requesting
   member. Without that note the next reader deletes the "duplication".
 
 file: src/app/api/admin/bookings/[id]/review/route.ts
-lines: 344
+lines: 350
 reason: two declarations, approve and reject, three lines each with the
   compressed note above. There is no seam: both sit inside branch-specific
   `logAudit` calls that already differ in action, summary and metadata.
 
 file: src/app/api/admin/booking-exception-requests/[id]/route.ts
-lines: 784
-reason: the same, for the refuse and approve decisions.
+lines: 792
+reason: the same, for the refuse and approve decisions. The approval's note is
+  the longer of the two because its `details` falls back to the reviewed policy
+  codes when an officer writes nothing, and the declaration deliberately does
+  NOT follow that fallback — a code is an internal identifier for the rule that
+  was waived, not a sentence written for a member, and the comment is what stops
+  the next reader restoring the symmetry.
+
+file: src/app/api/member/data-export/route.ts
+lines: 352
+reason: the data export is the second member-facing audit channel and it read
+  `AuditLog.details` raw, so the deletion-decline note written under "do not
+  notify the member" came back in the member's own download. The growth is the
+  swap to `metadata` plus the two comments that say why the column a reader
+  expects to see here is deliberately absent — the field keeps its name and
+  changes its source, which is exactly the kind of change a later reader
+  "corrects" without the note. Splitting is not available: this route is one
+  linear disclosure document assembled in one function, and the audit block is
+  eleven lines of it.
 
 file: src/app/api/admin/deletion-requests/[id]/route.ts
 lines: 1295
