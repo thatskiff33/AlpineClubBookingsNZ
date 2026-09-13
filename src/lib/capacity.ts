@@ -32,24 +32,12 @@ export interface NightAvailability {
   date: Date;
   occupiedBeds: number;
   availableBeds: number;
-  /**
-   * True when a capacity-holding booking overlapping this night holds the
-   * whole lodge exclusively (ADR-001, issue #118). A held night is hard-blocked:
-   * availableBeds is pinned to 0 (never negative, so it stays OUT of the
-   * over-capacity confirm set) and `available` is forced false. To members it is
-   * indistinguishable from a genuinely full lodge (decision 6); an admin
-   * over-capacity override cannot punch into it (decision 5).
-   *
-   * REQUIRED since #2930, where it used to be optional. The pin is the reason:
-   * a held night sits at exactly 0 rather than below it, so every reader that
-   * asks "is this night full?" by arithmetic alone must ask this as well, and a
-   * row that simply omits the flag answers "not held" while looking complete.
-   * That is the hold-privacy leak in its original form — `getCapacityFullNights`
-   * would drop the held nights and hand a member an EMPTY list where a genuinely
-   * full lodge gets a populated one (`INV-CAP-021`, ADR-001 decision 6). Optional
-   * made that a silent default; required makes it a compile error. Prefer
-   * unrepresentable over policed.
-   */
+  // True when a capacity-holding booking overlapping this night holds the whole
+  // lodge exclusively (ADR-001, issue #118). Hard-blocked: availableBeds is
+  // pinned to 0 (never negative, so it stays OUT of the over-capacity confirm
+  // set) and `available` is forced false — indistinguishable from genuine
+  // fullness to a member (decision 6), unreachable by an admin override
+  // (decision 5). REQUIRED since #2930; `capacity-full-nights.ts` says why.
   wholeLodgeHeld: boolean;
 }
 

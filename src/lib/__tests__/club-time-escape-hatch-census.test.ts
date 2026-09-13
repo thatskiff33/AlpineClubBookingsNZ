@@ -566,10 +566,12 @@ const CENSUS_CEILING = {
    * arrive date-only and are written into an audit payload unchanged.
    * Re-measured, not incremented.
    *
-   * 225 -> 220 (#2930), and a DOWNWARD revision, which is the direction this
-   * census exists to reward. Two rounds of the same collapse.
+   * 225 -> 221 (#2930), and a DOWNWARD revision, which is the direction this
+   * census exists to reward. Six importers went and two arrived; the whole
+   * movement is set out here because an earlier draft of this entry said 220 by
+   * counting only five of the eight and was caught by this test, not by review.
    *
-   * The first took the FOUR copies of `getCapacityFullNights` into
+   * The first round took the FOUR copies of `getCapacityFullNights` into
    * `src/lib/capacity-full-nights.ts`, which removed the whole `date-only`
    * import from `booking-request-shared.ts`, `booking-request-quotes.ts` and
    * `group-booking.ts` — in each of those the copied helper was the file's ONLY
@@ -585,14 +587,25 @@ const CENSUS_CEILING = {
    * because its copy mapped the raw `Date` (that was the defect): -3 and no
    * additions, `over-capacity-confirmation.ts` having imported it all along.
    *
-   * `formatDateOnly` is `date.toISOString().slice(0, 10)` and resolves no
-   * timezone; the dates it formats are the capacity engine's own date-only
-   * lodge nights. No call was added or changed by either round — many call sites
-   * became two, calling the same function on the same values — and the group
-   * settlement path gained one it should always have made. Re-measured against
-   * the branch base, not subtracted from.
+   * The third is the one the first accounting missed: +1 for
+   * `book/_lib/capacity-advisory.ts`, the wizard's per-night shortfall
+   * calculation lifted out of `use-booking-wizard.ts`. It imports `parseDateOnly`
+   * for a reason this census should want — it stopped restating the stay-night
+   * rule and now calls the frozen `isGuestActiveOnNight`, whose parameters are
+   * date-only `Date` encodings, so the adapter is how a `yyyy-MM-dd` from the
+   * availability payload reaches the one model (`INV-DATE-005`). The hook it
+   * came from does not import the adapter, so this is a genuine new importer
+   * rather than a move, and it is counted as one.
+   *
+   * Neither `formatDateOnly` (`date.toISOString().slice(0, 10)`) nor
+   * `parseDateOnly` resolves a timezone; the values on both sides are the
+   * capacity engine's own date-only lodge nights. No call was added or changed
+   * by the two collapse rounds — many call sites became two, calling the same
+   * function on the same values — and the group settlement path gained one it
+   * should always have made. Re-measured against the branch base, not
+   * subtracted from.
    */
-  dateOnlyImporters: 220,
+  dateOnlyImporters: 221,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

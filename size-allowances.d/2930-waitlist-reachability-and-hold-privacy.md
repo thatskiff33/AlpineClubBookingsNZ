@@ -26,7 +26,7 @@ All three new modules are comfortably inside their own budgets. What is left is
 growth that has nowhere else to go.
 
 file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2063
+lines: 2067
 reason: the hook is the wizard's single state machine, and this change alters
   what that machine decides rather than adding a feature beside it — the
   advisory replaces a hard stop, `waitlistOnly` becomes an input to

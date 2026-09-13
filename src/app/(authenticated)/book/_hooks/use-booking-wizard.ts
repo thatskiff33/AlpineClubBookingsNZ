@@ -664,7 +664,11 @@ export function useBookingWizard() {
     // Only a fresh, bookable, within-capacity party gets self injected. Case (a)
     // (a non-empty party) falls through here having spent the opportunity.
     if (guests.length > 0) return;
-    if (partyAtCeiling(guests)) return;
+    // Spelled against `partySizeCeiling` rather than through `partyAtCeiling`,
+    // which is re-created every render and would either be a wrong dependency
+    // or a re-run on each one. Same rule, and an exhaustive-deps list that is
+    // honest about what this effect reads.
+    if (partySizeCeiling !== null && guests.length >= partySizeCeiling) return;
     setGuests([
       {
         firstName: self.firstName,
