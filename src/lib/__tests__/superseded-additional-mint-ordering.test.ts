@@ -54,12 +54,20 @@ vi.mock("@/lib/payment-recovery", () => ({
   processPaymentRecoveryOperations: mocks.processRecovery,
 }));
 
+import { sizeAdditionalAsk } from "@/lib/additional-payment-ask";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 
 const CONTEXT = {
   pendingRefundAmountCents: 0,
   paymentId: "payment_1",
-  additionalAmountCents: 14000,
+  // #3371: the minter takes the ask as ONE value carrying what minting it will
+  // absorb, so the fixture builds it the way a door does - through the one home
+  // - rather than asserting a number the production path can no longer pass.
+  additionalAsk: sizeAdditionalAsk({
+    priceDiffCents: 7000,
+    changeFeeCents: 0,
+    payment: { additionalAmountCents: 7000, additionalPaymentStatus: "PENDING" },
+  }),
   hasSucceededPayment: true,
   hasIssuedXeroInvoice: false,
   paymentCustomerId: "cus_1",
@@ -122,6 +130,10 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
       kind: PaymentTransactionKind.ADDITIONAL,
       paymentIntentId: "pi_new",
       amountCents: 14000,
+      // #3371: written in the SAME upsert as the amount, from the same value,
+      // because the intents it came from are about to be cancelled and the
+      // figure is then recoverable from nothing.
+      carriedAskCents: 7000,
       status: PaymentStatus.PENDING,
       reason: "guest_add_price_increase",
       stripeCustomerId: "cus_1",
