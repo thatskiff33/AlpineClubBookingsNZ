@@ -24,12 +24,21 @@
  *    don't-spend), and a metering circuit breaker stops the route once usage can
  *    no longer be recorded.
  *
- * All money is NZD integer cents. NO raw prompt, answer, tool arg/result, or
- * provider payload is ever stored — only approved metering metadata.
+ * All money is club-currency integer cents (#3354, `INV-CONFIG-001`): the price
+ * table below is in NZD cents, and every estimate — the worst-case reservation
+ * and the settled cost — is converted ONCE per roundtrip through the
+ * administrator-set NZD -> club-currency rate (`ai-spend-currency.ts`) before
+ * it is reserved, booked or compared with the budget. Usage rows record the
+ * club-currency cost at the rate in force when they were written and are never
+ * rescaled. NO raw prompt, answer, tool arg/result, or provider payload is ever
+ * stored — only approved metering metadata.
  */
 
 import { prisma } from "@/lib/prisma";
 import { APP_TIME_ZONE } from "@/config/operational";
+import { AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
+import { convertNzdCentsToClubCents } from "@/lib/ai-spend-currency";
+import { loadAiSpendCurrency } from "@/lib/ai-spend-currency-settings";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { reportAiError } from "@/lib/observability-bridge";
 import type { AiUsage } from "@/lib/anthropic-client";
@@ -37,19 +46,22 @@ import type { AiUsage } from "@/lib/anthropic-client";
 export const DIAGNOSTICS_SETTINGS_ID = "default";
 
 /**
- * Default monthly budget when no DiagnosticsSettings row is stored: NZ$0 =
- * hard-off. Unlike page-help (which defaults to NZ$10 so it works out of the
- * box), a paid, admin-only diagnostics product ships with NO budget so that
- * enabling the module can never, by itself, authorise spend — the operator sets
- * a budget deliberately. This is a fail-closed default.
+ * Default monthly budget when no DiagnosticsSettings row is stored: 0 =
+ * hard-off. Unlike page-help (which defaults to 10.00 in the club's currency so
+ * it works out of the box), a paid, admin-only diagnostics product ships with NO
+ * budget so that enabling the module can never, by itself, authorise spend —
+ * the operator sets a budget deliberately. This is a fail-closed default. The
+ * value's one home is `src/config/ai-spend.ts`, which the module descriptions
+ * also render.
  */
-export const DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS = 0;
+export const DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS =
+  AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS;
 
 /**
- * Upper guard on the monthly budget a fat-finger can set (NZ$5,000). Diagnostics
- * reasons over code with tools, so it can cost materially more per session than a
- * grounded page-help answer — the ceiling is higher than page-help's NZ$1,000,
- * but still bounded.
+ * Upper guard on the monthly budget a fat-finger can set (5,000.00 in the
+ * club's currency). Diagnostics reasons over code with tools, so it can cost
+ * materially more per session than a grounded page-help answer — the ceiling
+ * is higher than page-help's 1,000.00, but still bounded.
  */
 export const DIAGNOSTICS_MAX_MONTHLY_BUDGET_CENTS = 500_000;
 
@@ -127,10 +139,12 @@ function highestPriceRow() {
 }
 
 /**
- * Estimated NZD cents for one roundtrip. Math.ceil of the summed per-token cost;
- * a minimum of 1 cent whenever ANY usage is present (so a real call is never free
- * in the ledger); 0 only when every token count is zero. An unknown model is
- * priced at the highest known row — fail-expensive.
+ * Estimated NZD cents for one roundtrip — the price table's currency, before
+ * the club-currency conversion `settleDiagnosticsRoundtrip` applies. Math.ceil
+ * of the summed per-token cost; a minimum of 1 cent whenever ANY usage is
+ * present (so a real call is never free in the ledger); 0 only when every token
+ * count is zero. An unknown model is priced at the highest known row —
+ * fail-expensive.
  */
 export function estimateDiagnosticsCostCents(model: string, usage: AiUsage): number {
   const row = AI_DIAGNOSTICS_PRICE_TABLE_NZ_CENTS_PER_MTOK[model] ?? highestPriceRow();
@@ -150,13 +164,15 @@ export function estimateDiagnosticsCostCents(model: string, usage: AiUsage): num
 }
 
 /**
- * The worst-case cost of a single provider roundtrip, in cents — the amount the
- * pre-call gate RESERVES so a roundtrip that would push spend over the budget is
- * denied BEFORE it is made. Fail-expensive: every input token is priced at the
- * MORE EXPENSIVE of the plain-input and cache-write rates, every output token at
- * the output rate, at the highest-priced known model. Post-call metering
- * reconciles the actual (usually far smaller) cost; this constant only bounds the
- * reservation, never what is charged to the ledger.
+ * The worst-case cost of a single provider roundtrip, in NZD cents (the price
+ * table's currency; `reserveDiagnosticsBudget` converts it to club cents at the
+ * configured rate before reserving) — the amount the pre-call gate RESERVES so
+ * a roundtrip that would push spend over the budget is denied BEFORE it is
+ * made. Fail-expensive: every input token is priced at the MORE EXPENSIVE of
+ * the plain-input and cache-write rates, every output token at the output rate,
+ * at the highest-priced known model. Post-call metering reconciles the actual
+ * (usually far smaller) cost; this constant only bounds the reservation, never
+ * what is charged to the ledger.
  */
 export function computeWorstCaseRoundtripCents(): number {
   const row = highestPriceRow();
@@ -220,8 +236,8 @@ type DiagnosticsPrisma = typeof prisma & {
 // ---------------------------------------------------------------------------
 
 /**
- * The current monthly budget in NZD integer cents. FAILS CLOSED to the default
- * (NZ$0 = no spend) when the settings delegate is unavailable (an old-colour
+ * The current monthly budget in club-currency integer cents. FAILS CLOSED to the
+ * default (0 = no spend) when the settings delegate is unavailable (an old-colour
  * client through a blue/green drain). A DB error propagates to the caller
  * (getDiagnosticsReadiness treats it as not-ready).
  */
@@ -270,7 +286,11 @@ export type ReserveDiagnosticsBudgetResult =
     };
 
 export interface ReserveDiagnosticsBudgetInput {
-  /** Worst-case cents to reserve for this roundtrip. Defaults to WORST_CASE_ROUNDTRIP_CENTS. */
+  /**
+   * Worst-case CLUB-CURRENCY cents to reserve for this roundtrip. Defaults to
+   * WORST_CASE_ROUNDTRIP_CENTS converted at the configured rate (#3354); a
+   * caller passing its own figure is responsible for it already being club cents.
+   */
   reserveCents?: number;
   now?: Date;
 }
@@ -295,7 +315,6 @@ export async function reserveDiagnosticsBudget(
 ): Promise<ReserveDiagnosticsBudgetResult> {
   const now = input.now ?? new Date();
   const month = diagnosticsUsageMonthKey(now);
-  const reserveCents = input.reserveCents ?? WORST_CASE_ROUNDTRIP_CENTS;
 
   const p = prisma as DiagnosticsPrisma;
   if (
@@ -327,13 +346,19 @@ export async function reserveDiagnosticsBudget(
         where: { month, expiresAt: { lte: now } },
       });
 
-      const [settings, monthly, activeAgg] = await Promise.all([
+      // The rate is read HERE, under the same lock and in the same snapshot as
+      // the budget (#3354): one primary-key read of a one-row table (and no
+      // read at all for an NZD club), so it adds nothing material to the lock
+      // hold. It is not part of the invariant the lock protects — every stored
+      // term is already club cents — it only sizes THIS reservation.
+      const [settings, monthly, activeAgg, currency] = await Promise.all([
         tx.diagnosticsSettings.findUnique({ where: { id: DIAGNOSTICS_SETTINGS_ID } }),
         tx.diagnosticsUsageMonthly.findUnique({ where: { month } }),
         tx.diagnosticsBudgetReservation.aggregate({
           _sum: { reservedCents: true },
           where: { month, expiresAt: { gt: now } },
         }),
+        loadAiSpendCurrency(tx),
       ]);
 
       const budgetCents =
@@ -342,6 +367,12 @@ export async function reserveDiagnosticsBudget(
         return { ok: false as const, reason: "budget_not_set" as const, budgetCents };
       }
 
+      const reserveCents =
+        input.reserveCents ??
+        convertNzdCentsToClubCents(
+          WORST_CASE_ROUNDTRIP_CENTS,
+          currency.clubUnitsPerNzdMicros,
+        );
       const settledCents = monthly?.settledCents ?? 0;
       const activeReservedCents = activeAgg._sum.reservedCents ?? 0;
 
@@ -494,7 +525,9 @@ export async function settleDiagnosticsRoundtrip(
   const now = input.now ?? new Date();
   const month = diagnosticsUsageMonthKey(now);
   const usage = input.usage ?? EMPTY_USAGE;
-  const costCents = input.usage ? estimateDiagnosticsCostCents(input.model, input.usage) : 0;
+  const nzdCostCents = input.usage
+    ? estimateDiagnosticsCostCents(input.model, input.usage)
+    : 0;
   const isFirstRoundtrip = input.roundIndex == null || input.roundIndex === 0;
   const failureContext = {
     surface: input.surface,
@@ -524,6 +557,15 @@ export async function settleDiagnosticsRoundtrip(
       // call already happened OUTSIDE this transaction. Different months do not
       // contend; the lock releases on commit.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('diagnostics-budget-reserve'), hashtext(${month}))`;
+
+      // Same snapshot and lock as the reserve's rate read (#3354): the settled
+      // cost is booked in club cents at the rate in force now. A failed read
+      // fails the settle, which trips the breaker — never books NZD cents.
+      const currency = await loadAiSpendCurrency(tx);
+      const costCents = convertNzdCentsToClubCents(
+        nzdCostCents,
+        currency.clubUnitsPerNzdMicros,
+      );
 
       await tx.diagnosticsBudgetReservation.deleteMany({
         // A null reservation matches nothing (sentinel id); a real one is
@@ -603,7 +645,7 @@ function budgetStatusFor(usagePercent: number): DiagnosticsBudgetStatus {
  */
 export async function getDiagnosticsUsageSummary(now: Date = new Date()) {
   const month = diagnosticsUsageMonthKey(now);
-  const [monthly, settings, reservedAgg, events] = await Promise.all([
+  const [monthly, settings, reservedAgg, events, currency] = await Promise.all([
     prisma.diagnosticsUsageMonthly.findUnique({ where: { month } }),
     prisma.diagnosticsSettings.findUnique({ where: { id: DIAGNOSTICS_SETTINGS_ID } }),
     prisma.diagnosticsBudgetReservation.aggregate({
@@ -615,6 +657,7 @@ export async function getDiagnosticsUsageSummary(now: Date = new Date()) {
       orderBy: { createdAt: "desc" },
       take: 2000,
     }),
+    loadAiSpendCurrency(),
   ]);
 
   const limitCents = settings?.monthlyBudgetCents ?? DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS;
@@ -626,7 +669,12 @@ export async function getDiagnosticsUsageSummary(now: Date = new Date()) {
     budget: {
       limitCents,
       warningThresholds: [...WARNING_THRESHOLDS],
-      worstCaseRoundtripCents: WORST_CASE_ROUNDTRIP_CENTS,
+      // Club cents, like every other figure here (#3354) — the NZD constant
+      // converted at the configured rate.
+      worstCaseRoundtripCents: convertNzdCentsToClubCents(
+        WORST_CASE_ROUNDTRIP_CENTS,
+        currency.clubUnitsPerNzdMicros,
+      ),
       maxToolRounds: DIAGNOSTICS_MAX_TOOL_ROUNDS,
     },
     month: {
