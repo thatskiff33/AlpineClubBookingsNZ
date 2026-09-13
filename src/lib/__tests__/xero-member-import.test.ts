@@ -145,6 +145,37 @@ beforeEach(() => {
   mocks.upsertXeroObjectLink.mockResolvedValue({});
 });
 
+describe("Xero member import — the two-homes refusal (#2939)", () => {
+  it("refuses to import a contact that is already a school's Xero customer", async () => {
+    /*
+      INV-INT-018. The reachable-on-purpose case rather than a race: a school's
+      organisation contact carries the school's own address, so that contact can
+      perfectly well sit in a mapped membership group, and importing it would
+      make one Xero customer both a school and a person.
+
+      The refusal fires inside the create transaction, so the member row rolls
+      back with it, and the import's per-contact catch turns it into a reported
+      error rather than a halted run.
+    */
+    mocks.prisma.organisation.findFirst.mockResolvedValue({
+      id: "org_1",
+      name: "Tokoroa Primary School",
+    });
+
+    const result = await importMembersFromXeroGroups(
+      [{ groupId: "group_1", groupName: "Adults", ageTier: "ADULT" }],
+      false,
+    );
+
+    expect(result.created).toBe(0);
+    expect(result.errors).toBe(1);
+    expect(result.errorDetails[0]?.error).toContain("Tokoroa Primary School");
+    // The lock is taken before the refusal can mean anything, and it is taken
+    // on the contact rather than on either record.
+    expect(mocks.prisma.$executeRaw).toHaveBeenCalled();
+  });
+});
+
 describe("Xero member import — membership types (#2108)", () => {
   it("tier-only import is byte-identical to today (no type lookup / assignment / audit)", async () => {
     const result = await importMembersFromXeroGroups(
