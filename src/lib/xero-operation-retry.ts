@@ -671,13 +671,42 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
   }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "CREATE") {
+    /*
+      #3367: the ORGANISATION case is admitted, not refused.
+
+      Stage 2 made a school's Xero customer an operation with
+      `localModel: "Organisation"`, and every one of its failure paths — the
+      two-homes refusal above all — is recorded FAILED specifically so an
+      officer can replay it. Gating this screen on `localModel === "Member"`
+      would have answered "contact create retries require a member-local
+      record" for exactly those, which is both wrong and a direct contradiction
+      of the "stays replayable" claim the module and the officer guide make.
+
+      The retry is the same call the invoice path makes, and it is safe to
+      replay for the same reason: the organisation-scoped idempotency key means
+      a repeat converges on one Xero contact rather than minting a second.
+    */
+    if (operation.localModel === "Organisation" && operation.localId) {
+      return { supported: true, reason: null };
+    }
     return operation.localModel === "Member" && operation.localId
       ? { supported: true, reason: null }
-      : { supported: false, reason: "Contact create retries require a member-local record." };
+      : {
+          supported: false,
+          reason:
+            "Contact create retries require a member or organisation record.",
+        };
   }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "UPDATE") {
     if (operation.localModel === "Member" && operation.localId) {
+      return { supported: true, reason: null };
+    }
+    // A school's contact-person refresh and its organisation-shape correction
+    // are both CONTACT UPDATEs on an Organisation. Re-resolving the school's
+    // contact re-runs whichever of the two has not yet been recorded as done,
+    // so one replay covers both without a second handler.
+    if (operation.localModel === "Organisation" && operation.localId) {
       return { supported: true, reason: null };
     }
 
@@ -1003,11 +1032,34 @@ export async function retryXeroSyncOperation(
   }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "CREATE") {
+    if (operation.localModel === "Organisation" && operation.localId) {
+      // #3367. Same call the invoice path makes, and idempotent for the same
+      // reason: the organisation-scoped key converges a replay on one contact.
+      const { findOrCreateXeroContactForOrganisation } = await import(
+        "@/lib/organisation-xero-contacts"
+      );
+      await findOrCreateXeroContactForOrganisation(operation.localId, {
+        createdByMemberId,
+      });
+      return { message: "Retried Xero contact creation for the organisation." };
+    }
     await xero.findOrCreateXeroContact(operation.localId!, { createdByMemberId });
     return { message: "Retried Xero contact creation." };
   }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "UPDATE") {
+    if (operation.localModel === "Organisation" && operation.localId) {
+      // Re-resolving the school's contact re-runs the contact-person refresh
+      // and the organisation-shape correction, each of which is a no-op once
+      // its own marker is recorded. See the support gate above.
+      const { findOrCreateXeroContactForOrganisation } = await import(
+        "@/lib/organisation-xero-contacts"
+      );
+      await findOrCreateXeroContactForOrganisation(operation.localId, {
+        createdByMemberId,
+      });
+      return { message: "Retried the Xero contact update for the organisation." };
+    }
     const retryInput =
       operation.localModel === "Member" && operation.localId
         ? await buildCurrentMemberContactUpdateRetryInput(operation)

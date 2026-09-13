@@ -987,6 +987,62 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // analysis in docs/CONCURRENCY_AND_LOCKING.md.
   "src/lib/nomination.ts": 3,
   "src/lib/xero-contacts.ts": 2,
+  /*
+    #3367 — the CONTACT-HOME key,
+    `pg_advisory_xact_lock(hashtext('xero-contact-home:<contactId>'))`.
+    INV-INT-018, minted once in `lockXeroContactHome` and taken by all four
+    writers that link a Xero contact id to a local record.
+
+    WHY IT EXISTS. Since #3366 two columns can hold one Xero contact id —
+    `Member.xeroContactId` and `Organisation.xeroContactId` — each unique within
+    its own table, with no constraint able to span the two. The refusal that
+    keeps them exclusive is a READ of the other table, and a read cannot see an
+    uncommitted concurrent link, so without a key scoped to the CONTACT rather
+    than to either record two writers can both pass the check and both write.
+    Exactly the reasoning that gave the member-night lock its own family: an
+    invariant across two records cannot be serialised by either record's key.
+
+    COMPOSITION AND ORDER — and the rule is NOT "taken last".
+
+    An earlier revision of this entry said it was taken last and that nothing
+    else was acquired while it was held. That was false, and it described a
+    reachable DEADLOCK. `takeXeroContactFromSchoolsOwnMember` takes a `Member`
+    ROW lock — it clears the holder's `xeroContactId` — while holding this key;
+    the two member-side linkers took the row lock FIRST and then waited for this
+    key. Wait graph: the credit-note path on a school's earlier booking against
+    the new booking's invoice, which is the pair `xero-contact-home.ts` calls
+    reachable on purpose. Postgres resolves it by aborting one with `40P01`.
+
+    THE REAL RULE: the contact-home key is the OUTER lock relative to any
+    `Member` row lock. Each writer takes its own entity ADVISORY key first —
+    `hashtext(<memberId>)` in `findOrCreateXeroContact`'s phase 2, the
+    per-organisation key below in the organisation resolve — then THIS key, and
+    only then may it touch a `Member` row, whether by `SELECT … FOR UPDATE`
+    (`lockMemberForXeroContactLink`, `lockMemberForManualXeroContactLink`) or by
+    an `update`. Every participant therefore reaches a member row with the
+    contact key already held, and the cycle cannot form.
+
+    No provider call runs inside the holding transaction (the F7/#1355 property
+    this area was restructured for).
+
+    ONE site: every acquisition in the tree goes through the helper. Counterpart
+    analysis in docs/CONCURRENCY_AND_LOCKING.md; the rule itself is
+    docs/invariants/integrations.md → INV-INT-018.
+  */
+  "src/lib/xero-contact-home.ts": 1,
+  /*
+    #3367 — the per-organisation contact key,
+    `pg_advisory_xact_lock(hashtext('xero-organisation-contact:<organisationId>'))`.
+    A NEW keyspace, in its own namespace, keyed on the club's `Organisation`.
+
+    It is this path's equivalent of the member key `findOrCreateXeroContact`
+    takes: it serialises two resolutions of the SAME school so the phase-2
+    re-read-then-write cannot interleave and produce two links. Taken FIRST, with
+    the contact-home key immediately after it, so the whole family acquires in
+    one direction. No counterpart reverses that order, because this is the only
+    writer of `Organisation.xeroContactId`.
+  */
+  "src/lib/organisation-xero-contacts.ts": 1,
   // #3170: `enqueueXeroSupplementaryInvoiceOperation` takes
   // `pg_advisory_xact_lock(hashtext('xero-supplementary-invoice'), hashtext(<anchor>))`
   // - a NEW keyspace in its own namespace, keyed on the `BookingModification`

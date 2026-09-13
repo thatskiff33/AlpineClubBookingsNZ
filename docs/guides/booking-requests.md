@@ -376,6 +376,84 @@ Notes and constraints:
 - If your admin role is view-only for bookings, a notice explains you can view
   but not approve, reject, price, hold, or convert requests.
 
+## What happens in Xero when you approve a school request
+
+A school is a thing in its own right, not a person. When you approve a school
+request, the club records the school itself — its name, and the contact details
+the request supplied — and the booking is attached to it. That school record is
+the party the invoice belongs to.
+
+In Xero the school appears as an **organisation**, with the school's name and no
+first or last name, and the teacher named underneath it as a **contact person**.
+So a treasurer opening the contact sees the school, and sees who to talk to,
+without leaving Xero.
+
+Two things follow that are worth knowing before you meet them.
+
+### If the teacher changes
+
+The teacher on the school's Xero contact is refreshed the next time the club
+raises anything against that school — which in practice means **the next
+approval**. Approving a booking for the school records that booking's teacher
+against the school and then raises the invoice, and raising the invoice is what
+pushes the current teacher to Xero. If nothing has changed, nothing is sent.
+
+So a school whose teacher left is corrected by its next booking, and needs no
+action from you. Approving a booking makes **that booking's teachers** the
+school's current contact people — the ones it names are replaced, not added to —
+which is what stops a school that has been coming for years from naming five
+people who have all moved on.
+
+**One case it does not cover, so you know where the edge is.** If a teacher
+leaves and the next request names *nobody* in their place, nothing is sent: the
+club will not tell Xero "this school has no contact person", because on a
+contact the club adopted rather than created that would wipe out anyone a
+treasurer had entered by hand. A departure with a replacement — the ordinary
+case — is corrected as described.
+
+If you need it corrected sooner than the next booking, edit the contact person
+in Xero directly; the club will not overwrite it again until the recorded
+teacher actually changes.
+
+The school's **name** is never rewritten in Xero. Xero requires contact names to
+be unique, and quietly renaming an existing contact is the one thing this club's
+accounting rules forbid. A school that has genuinely changed its name is an
+officer's decision: rename it in Xero, and tell support so the club's own record
+matches.
+
+### The teacher's name goes to Xero
+
+Approving a school booking sends the teacher's name and email address to Xero as
+part of the school's record. That is deliberate — it is what lets the treasurer
+see who to contact — but it is worth saying plainly, because it is information
+about a person leaving this system for an accounting provider. Nothing else
+about the teacher is sent.
+
+### A school that has booked before
+
+A school that booked before this change already has a contact in Xero, created
+under the old arrangement where a school was recorded as a person. The first time
+the club raises something against that school after the change, **the school's
+own record takes that same contact over**.
+
+Almost nothing happens in Xero when it does. It is the same contact, with the
+same history and the same invoices on it; all that changes is which of the
+club's own records says "this customer is mine". You will see it recorded in the
+audit log. A returning school's invoices therefore keep going to the customer you
+already know, and no second contact is created for it.
+
+The one visible change is that the contact **stops looking like a person**. It
+was created under the old arrangement with the school's name in the first-name
+box and the surname blank, and the club clears those so it reads as an
+organisation like every new school does. If that correction cannot be made for
+any reason, the invoice still goes out and the club tries again next time — so
+a contact that still looks like a person after a booking is worth mentioning to
+support, but it is not stopping anything.
+
+If a school does somehow end up with two contacts in Xero — an old one and a new
+one — **merge them in Xero**. Xero can merge two contacts and this application
+cannot, so that is an ordinary bit of tidying rather than something to report.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -394,6 +472,9 @@ Notes and constraints:
 | Approving a policy exception says the exceptions it needs are not the ones reviewed | What you would be overriding is not what was reviewed. Usually a rule was edited after the member asked, but the nights a rule trips on can also be re-derived, so the message no longer names a cause it cannot prove | Nothing was changed. Ask the member to submit again; you will then see the current situation |
 | Approve is greyed out on a policy exception | You have not ticked the confirmation, or an adult-member hosting override needs a written reason | Write the reason and tick the confirmation |
 | Cannot price/approve anything | Your role is view-only for bookings | Ask a full admin for bookings edit access |
+| A school's Xero contact names a teacher who has left | The teacher on the contact is refreshed when the club next raises something against that school | Approve the school's next booking and it corrects itself, or edit the contact person in Xero now |
+| A returning school's invoice went to the Xero contact it always used | Correct. The school's own record took that contact over; it is the same customer with the same history | Nothing to do. The hand-over is in the audit log if you want to see it |
+| A school has two contacts in Xero | Something created a second one — usually a name that was typed differently | Merge the two contacts in Xero. This application cannot merge them for you |
 | A request says **Saved details need attention** and its buttons are greyed out | Some of its saved data could not be read back, so it cannot be quoted, priced, held, or approved | Confirm what the group wants with the requester, then **Decline** so they can submit again — or ask support to repair the stored row. There is no guest-edit screen |
 
 ## Related links
