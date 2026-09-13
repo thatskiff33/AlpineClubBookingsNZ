@@ -219,6 +219,33 @@ describe("PUT /api/admin/xero/account-mappings", () => {
     );
   });
 
+  it("accepts the goodwillWriteOffs mapping (#2717)", async () => {
+    const req = makePutRequest({ goodwillWriteOffs: { code: "404" } });
+    const res = await putMappings(req);
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: "goodwillWriteOffs" },
+        update: { code: "404" },
+      })
+    );
+  });
+
+  it("never writes the derived codeExplicitlyConfigured flag the panel round-trips (#2717)", async () => {
+    const req = makePutRequest({
+      goodwillWriteOffs: { code: "404", itemCode: null, codeExplicitlyConfigured: true },
+    });
+    const res = await putMappings(req);
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: "goodwillWriteOffs" },
+        update: { code: "404", itemCode: null },
+        create: { key: "goodwillWriteOffs", code: "404", itemCode: null },
+      })
+    );
+  });
+
   it("ignores unknown keys (they fail Zod schema)", async () => {
     const req = makePutRequest({ unknownKey: { code: "999" }, hutFeesIncome: { code: "201" } });
     const res = await putMappings(req);
