@@ -16,4 +16,7 @@
   was counted before, so nothing changes for a club that does not act. A New
   Zealand club sees a one-sentence note that no conversion applies and nothing
   to set. Past usage is not re-priced. One new settings table; the rate, like
-  the caps, does not travel in a config-transfer bundle.
+  the caps, does not travel in a config-transfer bundle. A change to the rate is
+  recorded in the audit log under the `admin` category, exactly as changes to
+  the two AI spend caps already are, so it is readable with the same
+  support-view access.
