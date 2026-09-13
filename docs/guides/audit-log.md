@@ -84,6 +84,47 @@ and machine `action`, the actor, the affected member (subject), the entity, and
 primary drill-down links. Expanding a row reveals the request ID, IP, user
 agent, **retention class**, raw details, and JSON metadata.
 
+### Very large entries, and the older ones that look broken (#2704)
+
+Some entries record structured evidence — a before-and-after snapshot, a list of
+what changed — rather than a sentence. There is a size limit on that field, and
+until this release an entry that ran past it was simply **cut off at the
+thousandth character**, wherever that happened to fall.
+
+That produced two problems on exactly the entries you most want to read.
+
+- The expanded row showed a wall of broken text instead of named fields, with no
+  metadata panel and none of the drill-through links.
+- Worse, the cut could land **in the middle of a value**. An entry recording an
+  amount of 1234567 could be stored showing `1`, with nothing on screen to say
+  it was a fragment. Anyone reading it would have read a figure that was wrong
+  by six orders of magnitude.
+
+**From this release an entry that will not fit keeps whole fields instead.** It
+records as many complete fields as there is room for, tells you how long the
+full record was, and names the fields it could not keep. A long piece of *text*
+inside one is still shortened — you will see `...[TRUNCATED]` at the end of it —
+but a number, an identifier or a date is now either recorded in full or listed
+as dropped. **Nothing on the screen is ever a piece of a value pretending to be
+the whole one.**
+
+**Entries recorded before this release are read back the same way, as far as
+that is possible.** The cut already happened and nothing can undo it, so the
+screen rebuilds the fields that were complete before the cut and discards the
+part that was not. Such an entry is marked `_recoveredFromTruncatedText` in its
+metadata panel, and **the original stored text is still shown beside it** under
+Details. That is deliberate: the rebuilt fields are a convenience, and the
+stored text is the club's actual record. Nothing is rewritten in the database —
+what changed is only how it is read.
+
+One place is deliberately outside this: a member's own booking page, which shows
+the reason a payment failed. That page decides its own readership (see the note
+at the end of the member section below) and it was left exactly as it was, so
+this change cannot widen what a member reads. On the member's own activity
+history it changes nothing at all — that is decided by the rule in "What a
+member reads on their own timeline", which reads neither this field nor its
+shape.
+
 ### Categories, and what they are actually for
 
 The **Category** on an entry is not a colour or a label for tidiness. It is the

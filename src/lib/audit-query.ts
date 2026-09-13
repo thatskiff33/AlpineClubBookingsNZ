@@ -691,15 +691,10 @@ function getMemberSummary(log: AuditTimelineLog): string {
 /**
  * The one-line description an officer reads under the row title.
  *
- * `structuredDetails` says whether the `details` column holds a PAYLOAD — either
- * parsed cleanly, or rebuilt from a clipped one (#2704). When it does, the
- * description is formatted from the fields; when it does not, `details` is
- * prose and the prose is the description.
- *
- * Passing that in rather than re-deriving it here is what stopped a legacy
- * clipped payload being handed back as a sentence. It opens with `{`, it does
- * not parse, and the old test — "did it parse?" — called it prose and printed
- * a broken fragment of JSON in the place a human sentence goes.
+ * `structuredDetails` — the column holds a payload, parsed cleanly or rebuilt
+ * from a clipped one — is passed IN rather than re-derived here (#2704). The
+ * old test was "did it parse?", which called a legacy clipped payload prose and
+ * printed a broken fragment of JSON where a human sentence goes.
  */
 function getDescription(
   log: AuditTimelineLog,
@@ -1173,11 +1168,11 @@ function projectFreeTextForAudience(params: {
     summary: getSummary(log),
     description: getDescription(log, adminMetadata, hasStructuredDetails),
     // The RAW column, and the test is the CLEAN parse rather than
-    // `hasStructuredDetails` (#2704). A cleanly-parsed payload is shown in full
-    // in the metadata panel, so repeating it here is noise. A RECOVERED one is
-    // not: the recovery is a derived view of a clipped string, so the string
-    // itself stays on screen as the club's actual record of the event. The
-    // officer reads both, and never a rendering standing in for the record.
+    // `hasStructuredDetails` — deliberately (#2704). A cleanly-parsed payload
+    // is shown whole in the metadata panel, so repeating it is noise; a
+    // RECOVERED one is a derived view, so the stored string stays on screen as
+    // the club's actual record. The officer reads both, never a rendering
+    // standing in for the record.
     details: legacyMetadata ? null : log.details,
   };
 }
@@ -1204,13 +1199,11 @@ function serializeAuditTimelineLog(params: {
     currentMemberId,
   });
   const legacyMetadata = parseJsonObject(log.details);
-  // A payload written before #2704 that the old character clip left unparseable
-  // — the whole legacy population, which no write-time change can reach. The
-  // recovery keeps the complete key/value pairs that precede the cut and
-  // discards the partial one, so the officer gets named fields and drill-downs
-  // where the row used to render as a blob. Only attempted when the clean parse
-  // failed, and the result is marked `_recoveredFromTruncatedText` so it can
-  // never be mistaken for the stored document.
+  // A payload written before #2704, which the old character clip left
+  // unparseable — the whole legacy population, which no write-time change can
+  // reach. Attempted only when the clean parse failed, and marked
+  // `_recoveredFromTruncatedText` so it is never mistaken for the stored
+  // document. Rule and guarantees: `audit-structured-detail.ts`.
   const structuredDetails =
     legacyMetadata ??
     (recoverTruncatedStructuredDetail(log.details) as Prisma.JsonObject | null);

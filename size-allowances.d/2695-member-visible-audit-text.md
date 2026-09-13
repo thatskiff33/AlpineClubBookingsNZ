@@ -1,5 +1,14 @@
 # File-size allowances for #2695 — member-visible audit text is declared
 
+**#2704 raised two of these numbers, and edited this file rather than adding its
+own.** The gate refuses two LIVE allowances for one file ("one file, one
+allowance"), and measured against `origin/main` — the base CI uses — #2695 has
+not merged there yet, so its fragment is still live in #2704's diff. A second
+fragment naming `audit.ts` or `audit-query.ts` would therefore be refused
+outright, and the gate's own remedy is to correct the number here. Each entry
+below says which issue's growth is which, so the reason text stays true to the
+lines it is describing.
+
 Six already-over-budget files grow. **One split was taken rather than allowed
 for:** the declaration's vocabulary, its reserved-key rules and the reasoning
 for all of it are a new module, `src/lib/audit-member-disclosure.ts`, well
@@ -17,8 +26,18 @@ because that is the whole point of the change — a declaration lifted into a
 helper is a declaration a reviewer cannot see beside the text it governs.
 
 file: src/lib/audit.ts
-lines: 837
-reason: the two write boundaries route their metadata through one new builder,
+lines: 895
+reason: #2704 adds 58 of these lines and #2695 the rest. #2704's share is the
+  `details` column's over-budget branch, which is where the two boundaries
+  around the structural reduction are decided: a payload that FITS takes the
+  text rule byte for byte, and one that does not is re-sanitised as metadata,
+  which redacts strictly more. The rule itself and the measured
+  `"amountCents":1` case were deliberately NOT restated here — they live in
+  `audit-structured-detail.ts`, which is the split this change took rather than
+  allowing for, and the comment compression of this file's first draft is what
+  keeps the share to 58. It cannot move: it is the sanitiser for one column, and
+  a column's write boundary is where a reader looks for what that column stores.
+  #2695's share, below, is unchanged. The two write boundaries route their metadata through one new builder,
   and the docblock on it is the deliverable rather than decoration — the ORDER
   it imposes is load-bearing and invisible from the code. The caller's metadata
   is sanitised first and the declared member text attached afterwards, because
@@ -29,8 +48,18 @@ reason: the two write boundaries route their metadata through one new builder,
   field on both writer param types, said once and re-exported.
 
 file: src/lib/audit-query.ts
-lines: 1282
-reason: `projectFreeTextForAudience` answers every free-text field for both
+lines: 1322
+reason: #2704 adds 40 of these lines and #2695 the rest. #2704's share threads
+  one fact — the `details` column holds a payload, parsed or rebuilt — through
+  the serializer, `projectFreeTextForAudience` and `getDescription`, so a legacy
+  clipped payload renders as fields instead of being handed back as a sentence.
+  It has to be threaded rather than re-derived at each reader: three readers
+  each asking "did it parse?" is how the audience came to be a property of the
+  JSON parser in the first place, which is the defect #2695 removed from this
+  same file. The recovery ITSELF is in `audit-structured-detail.ts`; what is
+  here is only the wiring and the two comments saying why the raw column stays
+  on screen beside a recovered view. #2695's share, below, is unchanged.
+  `projectFreeTextForAudience` answers every free-text field for both
   audiences in one exhaustive place, replacing three ternaries spread through
   the serializer, and `storedSummary` beside it is the single fallback rule the
   two audiences' row titles share — written twice with two different emptiness

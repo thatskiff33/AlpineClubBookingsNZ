@@ -251,23 +251,16 @@ function metadataJsonLimit(options?: AuditMetadataOptions): number {
  * The `details` column, sanitised — and, when the caller stored a JSON payload
  * too big for the column, REDUCED rather than clipped (#2704).
  *
- * A payload that fits takes the text rule unchanged, byte for byte, which is
- * every row the existing tests describe and the overwhelming majority of the
- * 104 sites writing `details: JSON.stringify(…)`. The structured path exists
- * only for the case that is already broken today: clipping a JSON document at
- * character 1000 stores something that still opens with `{` and no longer
- * parses, so the reader shows an officer a blob instead of fields — and, when
- * the cut lands mid-value, a *fragment of a number* presented as the number.
- * `…,"amountCents":1...[TRUNCATED]` for a recorded 1234567 is a measured
- * example, not a hypothetical.
- *
- * ON THE OVER-BUDGET PATH THE PAYLOAD IS RE-SANITISED AS METADATA, which
- * redacts strictly MORE than the text rule: `sanitizeAuditMetadata` also
+ * Why clipping a payload at a character offset is not merely untidy, and the
+ * measured `"amountCents":1` case: `audit-structured-detail.ts`, which owns the
+ * rule. What is decided HERE is the two boundaries around it. A payload that
+ * FITS takes the text rule unchanged, byte for byte, so no row whose meaning
+ * anybody already relies on moves (`INV-OPS-012`). And on the over-budget path
+ * the payload is re-sanitised as METADATA, which redacts strictly more — it
  * replaces sensitive KEY NAMES wholesale, where the text rule can only match
  * patterns inside the characters. Widening redaction on the one population
  * whose stored output is malformed anyway is safe in the only direction that
- * matters; a row that fits still takes the identical path it always did, so no
- * existing row's meaning moves (`INV-OPS-012`).
+ * matters.
  */
 function sanitizeAuditDetails(value?: string | null): string | undefined {
   if (value === undefined || value === null) {
@@ -538,14 +531,10 @@ export function sanitizeAuditMetadata(
   }
 
   // OVER THE ENVELOPE: keep the fields that fit, not the first 1000 characters
-  // of the document (#2704). This used to store
-  // `{_truncated, _originalLength, preview}` where `preview` was
-  // `serialized.slice(0, 1000)` — a JSON document cut at a character offset, so
-  // every field became one unparseable string and the cut could land mid-value.
-  // That is the same defect the `details` column had, in the sibling column, and
-  // it threw away the structure an officer came to the row for. The reduction
-  // keeps whole fields and names what it dropped; `_truncated` and
-  // `_originalLength` keep their meaning so nothing reading them changes.
+  // of the document (#2704). `preview` was `serialized.slice(0, 1000)` — the
+  // same character cut the `details` column had, in the sibling column, and it
+  // threw away every field an officer came to the row for. `_truncated` and
+  // `_originalLength` keep their meaning, so nothing reading them changes.
   const reduced = reduceStructuredDetail(sanitized, limit);
   if (reduced !== null) {
     return JSON.parse(reduced.text) as Prisma.InputJsonValue;
