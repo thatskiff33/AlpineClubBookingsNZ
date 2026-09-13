@@ -607,6 +607,14 @@ export async function POST(
         entityType: "Member",
         entityId: member.id,
         details: body.note ? `Note: ${body.note}` : "No note",
+        // #2695 (`INV-PRIV-017`) — DECLARED INTERNAL, owner decision of 9 August
+        // 2026. This note is typed on the same form as the "do not notify the
+        // member" tick below, and the member used to read it on their own
+        // timeline whenever it was prose rather than JSON — so the tick meant
+        // the opposite of what the administrator ticking it believes. They still
+        // see that their request was declined; the reason reaches them by email,
+        // or deliberately does not.
+        memberDisclosure: { visibility: "internal" },
         ipAddress: ip,
         ...(Object.keys(rejectAuditMetadata).length > 0
           ? { metadata: rejectAuditMetadata }
@@ -1188,6 +1196,9 @@ export async function POST(
       entityType: "Member",
       entityId: member.id,
       details: `Account anonymised. Cancelled ${cancelledBookingIds.length} future bookings.${body.note ? ` Note: ${body.note}` : ""}`,
+      // #2695 - DECLARED INTERNAL, like its rejection sibling above. The default
+      // already denies it; saying so keeps the pair one decision.
+      memberDisclosure: { visibility: "internal" },
       ipAddress: ip,
       metadata: {
         detachedEmailInheritorIds: detachedFamilyLinks.emailInheritors.map(

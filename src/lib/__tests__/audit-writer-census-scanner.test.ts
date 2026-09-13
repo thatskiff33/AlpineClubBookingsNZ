@@ -32,7 +32,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  AUDIT_CENSUS_TSV_COLUMNS,
   describeCategory,
+  describeMemberDisclosure,
+  renderCensusTsv,
   scanAuditWriterCensus,
 } from "../../../scripts/audit/audit-writer-census";
 
@@ -255,5 +258,160 @@ describe("audit writer census scanner: the bypasses a review demonstrated (#2581
     });
 
     expect(report(census)).toEqual([]);
+  });
+});
+
+/**
+ * The same claim, for the #2695 member-disclosure column.
+ *
+ * The population that matters here is the INVERSE of the category one, and the
+ * difference is what these tests are about. For `category`, the dangerous
+ * reading is `absent` and the census PINS it, so a site the walk cannot read
+ * lands in a set somebody has to explain. For `memberDisclosure`, `absent` is
+ * the SAFE answer — the reader publishes nothing without a declared sentence —
+ * so `absent` is deliberately unpinned. That makes "measured as absent" the one
+ * outcome a real declaration must never produce: the site would be in neither
+ * the pinned member-facing set nor the pinned forwarded set, invisible to the
+ * census, while the runtime reader honoured it and the member read the text.
+ */
+describe("audit writer census scanner: a declaration the walk cannot name (#2695)", () => {
+  function disclosures(census: ReturnType<typeof scanAuditWriterCensus>) {
+    return census.sites.map((site) => describeMemberDisclosure(site.memberDisclosure));
+  }
+
+  it("treats a COMPUTED property key as unreadable rather than as an absent one", () => {
+    // Both objects declare member-facing text at run time; neither names the key
+    // in a form `propertyName` can resolve. The walk used to SKIP a property it
+    // could not name, so the object measured as though the key were not there.
+    const census = tree({
+      "src/lane.ts": `
+        const KEY = "memberDisclosure";
+        export async function write(logAudit: any, note: string) {
+          logAudit({
+            action: "member.deletion_rejected",
+            category: "privacy",
+            [KEY]: { visibility: "member-facing", text: note },
+          });
+          logAudit({
+            action: "member.credit.adjustment.approve",
+            category: "payment",
+            ["memberDisclosure"]: { visibility: "member-facing", text: note },
+          });
+        }
+      `,
+    });
+
+    expect(disclosures(census)).toEqual([
+      "forwarded:unreadable keys",
+      "forwarded:unreadable keys",
+    ]);
+    // Neither is in the member-facing set — the walk genuinely cannot read the
+    // declaration — but neither is silently absent either, which is the point:
+    // both land in the population the manifest pins and a reviewer sees.
+    expect(census.memberFacing).toHaveLength(0);
+    expect(census.memberDisclosureForwarded).toHaveLength(2);
+  });
+
+  it("treats a GETTER as unreadable too, and the same for the category column", () => {
+    // The second form of the same hole. A getter names the key plainly and
+    // holds no initialiser expression, so the walk skipped it — and it skipped
+    // it for `category` as well, which reported an omission that is not one.
+    const census = tree({
+      "src/lane.ts": `
+        export async function write(logAudit: any, note: string) {
+          logAudit({
+            action: "member.deletion_rejected",
+            get category() { return "privacy"; },
+            get memberDisclosure() {
+              return { visibility: "member-facing" as const, text: note };
+            },
+          });
+        }
+      `,
+    });
+
+    expect(disclosures(census)).toEqual(["forwarded:unreadable keys"]);
+    expect(report(census)).toEqual([
+      { sink: "logAudit", category: "forwarded:unreadable keys" },
+    ]);
+    // And NOT counted as a writer that forgot its category, which is the
+    // failure a reviewer would otherwise have to chase to a getter.
+    expect(census.uncategorised).toHaveLength(0);
+  });
+
+  it("still reads an ordinary declaration, so failing closed has not become failing always", () => {
+    const census = tree({
+      "src/lane.ts": `
+        export async function write(logAudit: any, note: string) {
+          logAudit({
+            action: "member.credit.adjustment.approve",
+            category: "payment",
+            memberDisclosure: { visibility: "member-facing", text: note },
+          });
+          logAudit({
+            action: "member.deletion_rejected",
+            category: "privacy",
+            memberDisclosure: { visibility: "internal" },
+          });
+          logAudit({ action: "member.updated", category: "account" });
+        }
+      `,
+    });
+
+    expect(disclosures(census)).toEqual([
+      "member-facing",
+      "internal",
+      "(absent)",
+    ]);
+    expect(census.memberDisclosureForwarded).toHaveLength(0);
+  });
+});
+
+/**
+ * The census FILE a human reads, as opposed to the census a test reads.
+ *
+ * #2695's acceptance criterion is "re-census every event currently rendered to
+ * members", and this TSV is the artifact that is done with. Nothing tested the
+ * renderer, so three columns were added to both row builders and to neither the
+ * header: the ninth column read `omitsRetentionInputs` and carried a
+ * disclosure, and three columns had no name at all.
+ */
+describe("audit writer census TSV (#2695)", () => {
+  it("names every column each row actually carries", () => {
+    const census = tree({
+      "src/lane.ts": `
+        export async function write(logAudit: any, prisma: any, note: string) {
+          logAudit({
+            action: "member.credit.adjustment.approve",
+            category: "payment",
+            summary: "Credit adjusted",
+            details: \`for \${note}\`,
+            memberDisclosure: { visibility: "member-facing", text: note },
+          });
+          await prisma.auditLog.updateMany({ where: {}, data: { archivedAt: new Date() } });
+        }
+      `,
+      "prisma/migrations/20260101000000_x/migration.sql": `
+        INSERT INTO "AuditLog" ("id", "action", "category") VALUES ('a', 'b', 'admin');
+      `,
+    });
+
+    const lines = renderCensusTsv(census).split("\n");
+    const header = lines[0]?.split("\t") ?? [];
+
+    expect(header).toEqual(AUDIT_CENSUS_TSV_COLUMNS);
+    // A write site, a non-row-producing DML statement and a migration SQL row
+    // all share the table, so all three row shapes are counted against it.
+    expect(lines).toHaveLength(4);
+    for (const line of lines.slice(1)) {
+      expect(line.split("\t")).toHaveLength(header.length);
+    }
+
+    // The column that carried a disclosure under the wrong name, read by name.
+    const site = lines[1]?.split("\t") ?? [];
+    expect(site[header.indexOf("memberDisclosure")]).toBe("member-facing");
+    expect(site[header.indexOf("detailsText")]).toBe("dynamic");
+    expect(site[header.indexOf("summaryText")]).toBe("constant");
+    expect(site[header.indexOf("omitsRetentionInputs")]).toBe("true");
   });
 });
