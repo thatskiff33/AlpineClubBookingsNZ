@@ -23,7 +23,7 @@
  * and the provider-test route. `email-delivery-boundary-census.test.ts` asserts
  * `nodemailer.createTransport` now appears in this file alone.
  */
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
 import logger from "@/lib/logger";
 import {
   CAPTURE_TRANSPORT_MODE_LABEL,
@@ -43,7 +43,7 @@ export type EmailAttachment = {
   contentType?: string;
 };
 
-let cachedTransporter: nodemailer.Transporter | null = null;
+let cachedTransporter: Transporter | null = null;
 let cachedTransportSignature: string | null = null;
 
 /**
