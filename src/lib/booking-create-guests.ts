@@ -18,7 +18,7 @@ import {
   dateOnlyInstantOf,
   type CalendarDate,
 } from "@/lib/club-time";
-import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import { addDaysDateOnly } from "@/lib/date-only";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 import {
