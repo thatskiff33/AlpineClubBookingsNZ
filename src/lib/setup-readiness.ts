@@ -112,6 +112,14 @@ export interface SetupDatabaseSnapshot {
   stripeWebhookSecretSet?: boolean;
   stripeNeedsReentry?: boolean;
   xeroAccountMappingCount: number;
+  /**
+   * Labels of the mapping keys that have a registered fallback and are still
+   * unset (#2717, `INV-INT-021`). The count above says nothing about them — it
+   * counts any row carrying a code, so an upgrading club reads "configured" on
+   * the very day a new key ships, which is the silence the owner rejected.
+   * Optional for callers that took no database snapshot.
+   */
+  xeroUnsetFallbackMappingLabels?: string[];
   xeroHutFeeItemMappingCount: number;
   xeroEntranceFeeMappingCount: number;
   // Per-membership-type rate gaps (#1930, E4): "TypeName — SeasonName" entries
@@ -2034,8 +2042,16 @@ function buildXeroMappingCheck(
   const accountMappings = db?.xeroAccountMappingCount ?? 0;
   const hutFeeMappings = db?.xeroHutFeeItemMappingCount ?? 0;
   const entranceFeeMappings = db?.xeroEntranceFeeMappingCount ?? 0;
+  // A mapping that is falling back is a mapping nobody has decided (#2717,
+  // `INV-INT-021`). The owner's decision rejected silence, and the account
+  // count cannot see this: it counts rows with a code, so every upgrading club
+  // would read "configured" while a new key was quietly unset.
+  const unsetFallbackMappings = db?.xeroUnsetFallbackMappingLabels ?? [];
   const complete =
-    accountMappings > 0 && hutFeeMappings > 0 && entranceFeeMappings > 0;
+    accountMappings > 0 &&
+    hutFeeMappings > 0 &&
+    entranceFeeMappings > 0 &&
+    unsetFallbackMappings.length === 0;
 
   return applyProgress(
     {
@@ -2047,9 +2063,17 @@ function buildXeroMappingCheck(
       required: false,
       message: complete
         ? "Xero account and item mappings are configured."
-        : "Map Xero accounts and item codes before using live Xero sync.",
+        : unsetFallbackMappings.length > 0 &&
+            accountMappings > 0 &&
+            hutFeeMappings > 0 &&
+            entranceFeeMappings > 0
+          ? `Choose an account for ${unsetFallbackMappings.join(" and ")} — until you do, those entries keep posting where they did before.`
+          : "Map Xero accounts and item codes before using live Xero sync.",
       details: [
         `Account mappings: ${accountMappings}`,
+        ...(unsetFallbackMappings.length > 0
+          ? [`Not chosen yet, using a fallback: ${unsetFallbackMappings.join(", ")}`]
+          : []),
         `Hut fee item mappings: ${hutFeeMappings}`,
         `Joining fee mappings: ${entranceFeeMappings}`,
       ],

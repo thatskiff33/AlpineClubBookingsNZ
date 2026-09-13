@@ -378,6 +378,14 @@ legitimately depend on being offered an out-of-service lodge.
   posts exactly where it posted before, down to the line-coding decision. A
   fallback key may not declare a fallback of its own; a chain would make "where
   are my entries going?" unanswerable from one row of the setup screen.
+- **The prompt is in TWO places, because one of them is collapsed.** The
+  mapping row says it is falling back and names the account its entries are
+  going to; and the `xero-mappings` setup-checklist step names any key that is
+  unset and falling back, instead of reporting "configured" off a row count that
+  cannot see a key nobody has decided. The Xero screen's mappings section is
+  collapsed by default and only loads when it is opened, so the row notice alone
+  reaches nobody who does not already know to look — which is the silence the
+  owner rejected.
 - **"Configured" means the club CHOSE a code**, which is
   `isCodeExplicitlyConfigured` and nothing else. The setup screen's fallback
   notice is driven by that flag, through the same resolver the runtime path
