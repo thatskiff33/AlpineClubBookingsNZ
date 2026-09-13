@@ -98,10 +98,22 @@ export function SeasonCoverageGapSummary({
           ? "There is a gap in the season schedule."
           : `There are ${gaps.length} gaps in the season schedule.`}
       </span>{" "}
-      {totalNights === 1 ? "One night is" : `${totalNights} nights are`} not
-      covered by any active season, and a booking for one of them is refused.
-      Each gap is marked in the list below, between the seasons on either side of
-      it.
+      {/*
+        #2938 review — the singular is a WHOLE clause, not a swapped noun
+        phrase. Reading the count alone out of the sentence left "One night is
+        not covered …, and a booking for one of THEM is refused" — a plural
+        pronoun under a singular count. It is not a stray nit: a one-night hole
+        is exactly the boundary slip this count exists to make visible, so the
+        singular branch is a likely real rendering rather than a theoretical
+        one, and this repository has shipped an ungrammatical string pinned by a
+        test before.
+      */}
+      {totalNights === 1
+        ? "One night is not covered by any active season, and a booking that includes it is refused."
+        : `${totalNights} nights are not covered by any active season, and a booking that includes one of them is refused.`}{" "}
+      {gaps.length === 1
+        ? "The gap is marked in the list below, between the seasons on either side of it."
+        : "Each gap is marked in the list below, between the seasons on either side of it."}
     </div>
   );
 }
