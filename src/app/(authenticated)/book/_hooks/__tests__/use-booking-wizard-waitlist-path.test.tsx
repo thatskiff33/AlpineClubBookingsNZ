@@ -70,6 +70,16 @@ interface StubOptions {
   availableCreditCents?: number;
 }
 
+/** Every night of the fixture stay with no free bed: the advisory goes short. */
+const FULL_NIGHTS = [
+  { date: "2026-08-01", availableBeds: 0 },
+  { date: "2026-08-02", availableBeds: 0 },
+];
+
+const ONE_MEMBER_GUEST = [
+  { firstName: "Jo", lastName: "Member", ageTier: "ADULT" as const, isMember: true },
+];
+
 function stubFetch(options: StubOptions) {
   const calls: Array<{ url: string; body: unknown }> = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -259,5 +269,84 @@ describe("the party ceiling belongs to the lodge on screen (#2930)", () => {
     });
 
     expect(result.current.lodgeCapacity).toBeNull();
+  });
+});
+
+/**
+ * #2930 SECOND fix round — two findings the first round created, both about
+ * state that used to be safe only because the 409 refusal prompt was the ONLY
+ * door to the waitlist.
+ */
+describe("per-lodge state the second fix round found still standing (#2930)", () => {
+  it("drops the cross-lodge waitlist opt-in when the lodge changes", async () => {
+    stubFetch({ availability: { lodgeCapacity: 8, nightDetails: [] } });
+    const { result } = renderHook(() => useBookingWizard());
+
+    await act(async () => {
+      result.current.handleLodgeChange("lodge-a");
+    });
+    // "Also waitlist me for Lodge B", ticked on the REVIEW step — which the
+    // first round added and which raises no refusal prompt, so nothing on the
+    // way in empties the array the way the prompt's own handler does.
+    act(() => {
+      result.current.setWaitlistAlternateLodgeIds(() => ["lodge-b"]);
+    });
+    expect(result.current.waitlistAlternateLodgeIds).toEqual(["lodge-b"]);
+
+    act(() => {
+      result.current.handleLodgeChange("lodge-b");
+    });
+
+    // Carried across, this is a box pre-ticked for a lodge chosen in another
+    // context — and here it names the lodge the member just switched TO.
+    expect(result.current.waitlistAlternateLodgeIds).toEqual([]);
+  });
+
+  it("closes the 409 refusal prompt once the review step offers the waitlist", async () => {
+    // Both doors render at once otherwise: the prompt is drawn ABOVE a review
+    // step that stays mounted, so the member gets the "Also waitlist me for ..."
+    // checkboxes twice and two Join Waitlist buttons.
+    stubFetch({ availability: { lodgeCapacity: 4, nightDetails: FULL_NIGHTS } });
+    const { result } = renderHook(() => useBookingWizard());
+
+    await act(async () => {
+      result.current.handleLodgeChange("lodge-a");
+    });
+    await act(async () => {
+      await result.current.handleDateSelect(CHECK_IN, CHECK_OUT);
+    });
+    act(() => {
+      result.current.handleGuestsChange(ONE_MEMBER_GUEST);
+    });
+    await waitFor(() => expect(result.current.waitlistOnly).toBe(true));
+
+    // The 409 arm: reachable because the member pressed Confirm while the
+    // advisory still said the stay was confirmable, and the figures moved after.
+    act(() => {
+      result.current.setShowWaitlistPrompt(true);
+    });
+
+    await waitFor(() => expect(result.current.showWaitlistPrompt).toBe(false));
+  });
+
+  it("leaves the prompt open when the review step is NOT offering the waitlist", async () => {
+    // The ordinary 409 path, and the one the prompt exists for: the advisory has
+    // no per-night figures, so the prompt is the only door and must stay up.
+    stubFetch({ availability: { lodgeCapacity: 8, nightDetails: [] } });
+    const { result } = renderHook(() => useBookingWizard());
+
+    await act(async () => {
+      result.current.handleLodgeChange("lodge-a");
+    });
+    await act(async () => {
+      await result.current.handleDateSelect(CHECK_IN, CHECK_OUT);
+    });
+    expect(result.current.waitlistOnly).toBe(false);
+
+    act(() => {
+      result.current.setShowWaitlistPrompt(true);
+    });
+
+    await waitFor(() => expect(result.current.showWaitlistPrompt).toBe(true));
   });
 });

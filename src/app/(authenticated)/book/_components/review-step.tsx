@@ -573,11 +573,41 @@ export function ReviewStep({
                 />
                 Apply credit to this booking
               </label>
-              {useCredit && remainingToPay === 0 && (
+              {/*
+                #2930 second fix round: SAY WHICH BRANCH THE MEMBER IS ON.
+
+                The control above is offered whenever the member holds credit,
+                and that is right — `handleJoinWaitlist` posts the same proposal
+                `handleSubmit` does, `POST /api/bookings` tries the ordinary
+                create FIRST, and the applied credit travels with it, so a stay
+                that turns out to be confirmable is booked with the credit on it.
+                Withholding the control on this branch would zero the applied
+                credit and re-open exactly that hole.
+
+                What could not be said honestly was the sentence below it. On a
+                waitlist-only stay the totals can read "Remaining to pay $0" and
+                promise "no card payment needed", while the outcome the member is
+                actually about to get is a waitlist PLACE: `createWaitlistedBooking`
+                takes no `applyCreditCents` and stores no election, so a later
+                promotion prices the stay again and quotes the full amount. No
+                money is lost either way — the screen simply stated an outcome
+                this branch does not deliver.
+              */}
+              {waitlistOnly ? (
+                <p
+                  className="mt-2 text-sm text-success"
+                  data-testid="waitlist-credit-caveat"
+                >
+                  Your credit is applied only if we can confirm this stay now. A
+                  waitlist place holds no credit — if a bed opens up later
+                  we will price the stay again and you can apply your credit
+                  then.
+                </p>
+              ) : useCredit && remainingToPay === 0 ? (
                 <p className="mt-2 text-sm font-medium text-success">
                   Credit covers entire booking — no card payment needed
                 </p>
-              )}
+              ) : null}
             </div>
           )}
 

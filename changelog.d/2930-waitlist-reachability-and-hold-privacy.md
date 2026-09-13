@@ -55,23 +55,35 @@
   way, and the club's own count of how many beds are missing stays on the
   officer's screen, where it belongs.
 
-  **The waitlist keeps your account credit.** Joining the waitlist from the
-  review step sent everything except the credit you had chosen to apply. That
-  request can still turn into a real booking if a bed frees up in the moment
-  between reading the screen and pressing the button, so the booking could be
-  created without the credit and cost more than the page had quoted.
+  **The waitlist keeps your account credit, and the screen no longer over-promises
+  what it can do.** Joining the waitlist from the review step sent everything
+  except the credit you had chosen to apply. That request can still turn into a
+  real booking if a bed frees up in the moment between reading the screen and
+  pressing the button, so the booking could be created without the credit and
+  cost more than the page had quoted. The credit box also said "credit covers
+  entire booking — no card payment needed" on a stay that could only be
+  waitlisted, which a waitlist place does not deliver: it holds no credit, and if
+  a bed opens up later the stay is priced again. The box now says so, and still
+  applies your credit to the booking on the spot if one turns out to be possible.
 
   **"Also waitlist me for another lodge" is offered wherever the waitlist is.**
   Those tick boxes only appeared on the older "lodge is fully booked" panel, so a
   member taken straight to the waitlist from the review step never saw them.
 
-  **A lodge whose beds have not been set up yet no longer traps you.** With no
-  bed count configured, a lodge counts as having none — deliberately, so it
-  cannot be overbooked by accident. The guests step was reading that as "you may
-  add nobody", so nobody could get past it while the calendar was offering the
-  waitlist. The screen now leaves the decision to the server, which refuses and
-  offers the waitlist in the normal way.
+  **A lodge whose beds have not been set up yet no longer leaves you on a screen
+  with nothing on it.** With no bed count configured, a lodge counts as having
+  none — deliberately, so it cannot be overbooked by accident. Both the member's
+  guests step and the officer's book-on-behalf screen were reading that as "you
+  may add nobody": every add-guest control switched off at zero guests, under a
+  heading that read "0 of 0 max", while the calendar was offering the waitlist.
+  Neither screen imposes that ceiling now and the decision goes to the server.
 
-  Booking on a member's behalf from the admin screens is unchanged: a full night
-  there still means the over-capacity confirmation an officer already knows, not
-  the member waitlist.
+  What that does not do is make such a lodge bookable. A booking still cannot
+  exceed a lodge's bed count, so where there is none the server refuses the
+  create outright rather than offering a waitlist place. The refusal at least
+  names its cause, which a screenful of disabled buttons did not, but configuring
+  the lodge's capacity is what actually unblocks it.
+
+  Booking on a member's behalf from the admin screens is otherwise unchanged: a
+  full night there still means the over-capacity confirmation an officer already
+  knows, not the member waitlist.

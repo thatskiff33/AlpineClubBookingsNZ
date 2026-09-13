@@ -357,6 +357,15 @@ export function useBookingWizard() {
    * advisory rather than a client hard stop"), it refuses, and the refusal is
    * what offers the waitlist. A positive capacity still caps the party, because
    * a party larger than the lodge's beds cannot be satisfied even by a promotion.
+   *
+   * AT ZERO THE SERVER STILL REFUSES OUTRIGHT, and says so rather than offering
+   * a queue: `POST /api/bookings` rejects any party larger than the lodge's
+   * capacity before the waitlist fallback is reached, so an unconfigured lodge
+   * answers "a booking cannot exceed 0 guests" (#2930 second fix round). What
+   * this ceiling change buys is a usable form and a refusal that names its
+   * cause, not a waitlist place. Whether such a lodge should be bookable or
+   * waitlistable at all is a capacity product question this issue does not
+   * settle.
    */
   const partySizeCeiling =
     resolvedLodgeCapacity !== null && resolvedLodgeCapacity > 0
@@ -466,6 +475,16 @@ export function useBookingWizard() {
     // which, for a lodge the member cannot book, never does.
     setResolvedLodgeCapacity(null);
     setShowWaitlistPrompt(false);
+    // #2930 second fix round: the cross-lodge opt-in names OTHER lodges relative
+    // to the one being left, so it belongs to that lodge exactly as the eleven
+    // clears around it do. It was safe while the checkboxes lived only inside
+    // the 409 refusal prompt, whose own handler empties the array before the
+    // prompt is raised; the first fix round put them on the review step too, so
+    // the array can now be filled with no refusal in sight and carried across a
+    // switch as a pre-ticked box for a lodge chosen in another context. The
+    // server drops the primary lodge and any duplicate, so the worst case was
+    // discarded rather than acted on — this is the symmetry, not a money fix.
+    setWaitlistAlternateLodgeIds([]);
     setActiveWorkPartyEvents([]);
     setSelectedWorkPartyEventId(null);
     setAttendingWorkParty(false);
@@ -1843,6 +1862,32 @@ export function useBookingWizard() {
    */
   const showPaymentMethodChoice =
     remainingToPay > 0 && !requiresAdminReviewLocal && !waitlistOnly;
+
+  /**
+   * ONE door to the waitlist on screen at a time (#2930 second fix round).
+   *
+   * There are two of them. The 409 refusal prompt is raised by `handleSubmit`,
+   * which is only reachable from the review step — and it is raised ABOVE that
+   * step, which stays mounted. So when `waitlistOnly` is also true, the member
+   * sees the "Also waitlist me for ..." checkboxes twice and two Join Waitlist
+   * buttons. They cannot disagree, because both render the same
+   * `waitlistAlternateLodgeIds` and call the same `handleJoinWaitlist`; it is a
+   * duplicated control group and a duplicated primary action, not a split state.
+   *
+   * The overlap needs the advisory to FLIP while the prompt is open: a member
+   * presses Confirm only when `waitlistOnly` is false, and the availability
+   * figures behind it can arrive or be recomputed afterwards.
+   *
+   * The review step's door wins because it is the richer one — it carries the
+   * price, the capacity notice and Save as Draft, and it is the door this issue
+   * built. Closing the prompt rather than hiding it also means the flag does not
+   * sit invisibly true, ready to resurface if the advisory clears again.
+   */
+  useEffect(() => {
+    if (waitlistOnly && showWaitlistPrompt) {
+      setShowWaitlistPrompt(false);
+    }
+  }, [showWaitlistPrompt, waitlistOnly]);
 
   useEffect(() => {
     if (

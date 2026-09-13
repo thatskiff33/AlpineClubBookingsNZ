@@ -173,6 +173,36 @@ export default function AdminBookPage() {
   // a pre-selection fallback — a capped or secondary lodge resolves lower, and
   // the create route hard-400s a party above the resolved value (#1767).
   const [resolvedCapacity, setResolvedCapacity] = useState(lodgeCapacity);
+  /**
+   * The most guests this wizard will let an officer ADD, or null for no ceiling
+   * (#2930 second fix round) — the same rule the member wizard's
+   * `partySizeCeiling` applies, for the same reason.
+   *
+   * ZERO IS NOT A CEILING OF ZERO. A lodge with no configured capacity resolves
+   * to 0 beds by design (`getLodgeCapacityStatus`, source `unconfigured_lodge`)
+   * so that it can never be overbooked before somebody configures it. Read as a
+   * ceiling, that disabled every add-guest control at zero guests and headed the
+   * form "Guests (0/0 max)" — the officer could not add the first guest, and
+   * this surface has no waitlist to fall through to. It is the dead end #2930
+   * removed for members, standing on the admin side of the same shared form.
+   *
+   * The ceiling is the only thing withdrawn, and ONLY at zero. A positive
+   * capacity still caps the party exactly as before, so every configured lodge
+   * is unaffected; an on-behalf create over the beds remains warn-and-confirm
+   * rather than a refusal (#1695/#1767) and an exclusive hold remains
+   * unbypassable. The server still decides.
+   *
+   * WHAT THIS DOES NOT FIX, deliberately: `POST /api/bookings` refuses any party
+   * larger than the lodge's capacity, so at zero the create still fails — with
+   * "A booking cannot exceed 0 guests", which at least names the cause an
+   * officer can act on. Whether an unconfigured lodge should be bookable or
+   * waitlistable at all is a capacity product decision this issue's settled
+   * contract does not answer, and it is the same refusal the member path meets.
+   */
+  const partySizeCeiling = resolvedCapacity > 0 ? resolvedCapacity : null;
+  /** Derived once, so the three add-guest affordances cannot disagree. */
+  const atPartySizeCeiling =
+    partySizeCeiling !== null && guests.length >= partySizeCeiling;
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
@@ -327,8 +357,9 @@ export default function AdminBookPage() {
     if (guests.some((g) => g.memberId === fm.id)) return;
     // Admin creates may exceed the live availability (over-capacity is
     // warn-and-confirm at submit, #1695/#1767), so cap by the selected
-    // lodge's resolved capacity — the create route's hard party-size limit.
-    if (guests.length >= resolvedCapacity) return;
+    // lodge's resolved capacity — the create route's hard party-size limit —
+    // except at zero, which is "unconfigured" rather than a ceiling (#2930).
+    if (atPartySizeCeiling) return;
     setGuests([
       ...guests,
       {
@@ -950,9 +981,7 @@ export default function AdminBookPage() {
                               : "outline"
                         }
                         size="sm"
-                        disabled={
-                          alreadyAdded || guests.length >= resolvedCapacity
-                        }
+                        disabled={alreadyAdded || atPartySizeCeiling}
                         onClick={() => addFamilyMemberAsGuest(fm)}
                       >
                         {alreadyAdded ? "\u2713 " : "+ "}
@@ -991,7 +1020,7 @@ export default function AdminBookPage() {
             <GuestForm
               guests={guests}
               onGuestsChange={setGuests}
-              maxGuests={resolvedCapacity}
+              maxGuests={partySizeCeiling}
             />
             <div className="flex justify-between pt-4">
               <Button

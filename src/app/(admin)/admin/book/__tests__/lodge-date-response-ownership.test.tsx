@@ -117,8 +117,10 @@ vi.mock("@/components/booking-calendar", () => ({
 }))
 
 vi.mock("@/components/guest-form", () => ({
+  // `maxGuests` is nullable since #2930: null is "no ceiling", which is how an
+  // unconfigured lodge's 0 beds stops reading as "you may add zero guests".
   GuestForm: ({ maxGuests, onGuestsChange }: {
-    maxGuests: number
+    maxGuests: number | null
     onGuestsChange: (guests: Array<{ firstName: string; lastName: string; ageTier: string; isMember: boolean }>) => void
   }) => (
     <div data-testid="guest-form" data-max-guests={String(maxGuests)}>
@@ -307,5 +309,78 @@ describe("admin booking date response ownership (#2701, #2887)", () => {
 
     expect(screen.queryByText("Booking Summary")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Choose dates at lodge-b" })).toBeInTheDocument()
+  })
+})
+
+/**
+ * #2930 SECOND fix round — the zero-capacity dead end was fixed for members and
+ * left standing for officers.
+ *
+ * `getLodgeCapacityStatus` answers 0 for a lodge whose capacity nobody has
+ * configured (source `unconfigured_lodge`, #1982) precisely so it cannot be
+ * overbooked first. Read as a party ceiling that is "you may add zero guests",
+ * which disabled every add-guest control at zero guests and headed the shared
+ * form "Guests (0/0 max)". The member wizard stopped reading it that way in the
+ * first fix round; this page still passed the plain number, on the one surface
+ * that has no waitlist to fall through to.
+ */
+describe("an unconfigured lodge is not an admin dead end (#2930)", () => {
+  const FAMILY = [
+    {
+      id: "family-1",
+      firstName: "Robin",
+      lastName: "Member",
+      ageTier: "ADULT",
+      relationship: "spouse",
+    },
+  ]
+
+  function stubCapacity(lodgeCapacity: number) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input)
+      if (url.includes("/api/availability/check")) {
+        return response({ minAvailable: 0, lodgeCapacity, nightDetails: [] })
+      }
+      if (url.includes("/api/admin/bookings/eligible-family")) {
+        return response({ familyMembers: FAMILY })
+      }
+      if (url.includes("/api/payments/options")) {
+        return response({ methods: { internetBanking: { enabled: false } } })
+      }
+      return response({})
+    })
+    vi.stubGlobal("fetch", fetchMock)
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  it("imposes no party ceiling when the lodge resolves to zero beds", async () => {
+    stubCapacity(0)
+    await openDates()
+    fireEvent.click(screen.getByRole("button", { name: "Choose dates at lodge-a" }))
+
+    expect(await screen.findByTestId("guest-form")).toHaveAttribute(
+      "data-max-guests",
+      "null",
+    )
+    // The proof it is not merely a different number: the officer can still add
+    // the first guest. At a ceiling of zero this button was disabled.
+    expect(
+      screen.getByRole("button", { name: /Robin Member/ }),
+    ).not.toBeDisabled()
+  })
+
+  it("still caps the party at a configured lodge's capacity", async () => {
+    stubCapacity(6)
+    await openDates()
+    fireEvent.click(screen.getByRole("button", { name: "Choose dates at lodge-a" }))
+
+    expect(await screen.findByTestId("guest-form")).toHaveAttribute(
+      "data-max-guests",
+      "6",
+    )
   })
 })
