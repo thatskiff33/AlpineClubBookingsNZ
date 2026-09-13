@@ -23,10 +23,11 @@ import {
   getAuthenticatedXeroClient,
 } from "./xero-api-client";
 import { getResolvedAccountMapping } from "./xero-mappings";
+import { retryXeroWriteWithContactRepair } from "./xero-contacts";
 import {
-  findOrCreateXeroContact,
-  retryXeroWriteWithContactRepair,
-} from "./xero-contacts";
+  findOrCreateXeroContactForInvoicedParty,
+  invoicedPartyContactRepair,
+} from "@/lib/organisation-xero-contacts";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
@@ -79,7 +80,11 @@ export async function createXeroCreditNoteForModification(params: {
   const originalInvoiceId = booking.payment.xeroInvoiceId;
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(bookingOwner(booking).memberId, {
+  // The INVOICED PARTY, not the booking's member (#3368; #3367's leftover).
+  // A modification credit note on a school booking belongs against the
+  // school's own Xero customer, exactly as the original invoice was. Where no
+  // organisation is linked, this is the same member resolved the same way.
+  const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
     createdByMemberId,
     repairExistingLink,
   });
@@ -157,6 +162,10 @@ export async function createXeroCreditNoteForModification(params: {
     const response = await retryXeroWriteWithContactRepair({
       memberId: bookingOwner(booking).memberId,
       currentContactId: contactId,
+      // The repair entity matches the invoiced party (#3368, `INV-INT-019`) —
+      // the default repair searches Xero by email and would adopt a teacher's
+      // personal contact for a school's credit note.
+      repairContactLink: invoicedPartyContactRepair(booking),
       workflow: "createXeroCreditNoteForModification",
       operationId: operationId!,
       repairExistingLink,
