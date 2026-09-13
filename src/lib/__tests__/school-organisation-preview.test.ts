@@ -177,6 +177,36 @@ describe("previewing the record a name claims", () => {
     expect(preview.currentContactNames).toEqual(["Ann Baker", "Bea Cole"]);
     expect(preview.currentContactNamesTruncated).toBe(false);
   });
+
+  it("shapes each row the way the provider does before taking its identity", async () => {
+    // The identity is only as shared as its INPUT is. The provider folds a
+    // walk-in placeholder address to empty (#1935) and drops a row with no name
+    // at all BEFORE de-duplicating, so a preview that read the raw row would
+    // count one human twice — once with the placeholder and once without — and
+    // would let a nameless row consume a de-duplication slot. Both go through
+    // `xeroContactPersonFromMember` now.
+    const { db } = reader({
+      id: "org-7",
+      name: "Big School",
+      archivedAt: null,
+      xeroContactId: null,
+      contacts: [
+        {
+          member: {
+            firstName: "Cara",
+            lastName: "Dunn",
+            email: "walkin-1@no-email.invalid",
+          },
+        },
+        { member: { firstName: "Cara", lastName: "Dunn", email: "" } },
+        { member: { firstName: "  ", lastName: "  ", email: "x@y.test" } },
+        { member: { firstName: "Eve", lastName: "Frank", email: null } },
+      ],
+    });
+    const preview = await previewSchoolRecordForName(db, "Big School");
+    expect(preview.currentContactNames).toEqual(["Cara Dunn", "Eve Frank"]);
+    expect(preview.currentContactNamesTruncated).toBe(false);
+  });
 });
 
 describe("the acknowledgement is checked against the record, not the tick", () => {

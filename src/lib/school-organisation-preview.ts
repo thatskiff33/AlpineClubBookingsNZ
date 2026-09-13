@@ -60,6 +60,7 @@ import {
   MAX_XERO_ORGANISATION_CONTACT_PERSONS,
   organisationContactPersonIdentity,
 } from "@/lib/organisation-xero-contact-persons";
+import { xeroContactPersonFromMember } from "@/lib/xero-contact-shape";
 import type { prisma } from "@/lib/prisma";
 import {
   MAX_ORGANISATION_NAME_LENGTH,
@@ -77,8 +78,19 @@ import {
  * capped at this many. A preview with its own larger cap and its own opposite
  * ordering showed precisely the names that cap has already dropped: the oldest
  * associations, which are the ones the provider never names. So the preview
- * borrows the cap, the ordering and the de-duplication rather than inventing
- * three of its own (`INV-SSOT`).
+ * borrows the cap, the ordering, the person shaping and the de-duplication
+ * identity rather than inventing four of its own (`INV-SSOT`).
+ *
+ * ONE thing is deliberately NOT borrowed, and it is stated here rather than left
+ * to be discovered as a bug: the ROLE scope. The provider names a school's
+ * `TEACHER` and `CONTACT` rows together; this preview reads `TEACHER` rows only,
+ * because it answers a narrower question — "who would approving DISPLACE?" — and
+ * `reconcileOrganisationTeachers` replaces the teacher set and deliberately
+ * never touches a `CONTACT` row somebody attached by hand. So a school that has
+ * one is shown fewer names here than its accounting contact carries, and that is
+ * the correct answer to this question. If this list is ever reused to say what
+ * the provider SHOWS rather than what approval replaces, the role filter is the
+ * line that has to go.
  */
 const CONTACT_PREVIEW_LIMIT = MAX_XERO_ORGANISATION_CONTACT_PERSONS;
 
@@ -216,17 +228,22 @@ export async function previewSchoolRecordForName(
     };
   }
 
-  // De-duplicated on the provider's own identity, so a teacher the club has
-  // recorded once per visit is one name here as they are one contact person
-  // there.
+  // Shaped and de-duplicated by the provider's own functions, so a teacher the
+  // club has recorded once per visit is one name here as they are one contact
+  // person there — and so a row the provider would not name at all (no name on
+  // it) is not counted here either. Shaping through
+  // `xeroContactPersonFromMember` rather than reading the row directly is what
+  // makes "the same de-duplication identity" true rather than nearly true: the
+  // identity is only as shared as its input is.
   const seen = new Set<string>();
   const names: string[] = [];
   for (const { member } of existing.contacts) {
-    const identity = organisationContactPersonIdentity(member);
+    const person = xeroContactPersonFromMember(member);
+    if (!person) continue;
+    const identity = organisationContactPersonIdentity(person);
     if (seen.has(identity)) continue;
     seen.add(identity);
-    const name = `${member.firstName} ${member.lastName}`.trim();
-    if (name) names.push(name);
+    names.push(`${person.firstName} ${person.lastName}`.trim());
   }
   return {
     normalisedName,

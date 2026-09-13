@@ -101,9 +101,9 @@ import type { XeroContactEmailPolicy } from "@/lib/xero-contact-containment";
 import { stripPersonNameFromStoredContactPayload } from "@/lib/xero-contacts";
 import {
   buildXeroContactShape,
+  xeroContactPersonFromMember,
   type XeroContactPersonInput,
 } from "@/lib/xero-contact-shape";
-import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 import { schoolXeroContactName } from "@/lib/school-organisations";
 
 /** The local model name the organisation paths write into the Xero ledger. */
@@ -253,20 +253,8 @@ export async function readOrganisationForXeroContact(
   const seen = new Set<string>();
   for (const row of organisation.contacts) {
     if (contactPersons.length >= MAX_XERO_ORGANISATION_CONTACT_PERSONS) break;
-    const firstName = row.member.firstName?.trim() ?? "";
-    const lastName = row.member.lastName?.trim() ?? "";
-    if (!firstName && !lastName) continue;
-    const person = {
-      firstName,
-      lastName,
-      // A walk-in placeholder address is not an address (#1935): it is a
-      // reserved-domain marker meaning "this person cannot be reached", and
-      // putting one on a school's contact would tell the treasurer to write to
-      // a mailbox that does not exist.
-      email: isPlaceholderContactEmail(row.member.email)
-        ? ""
-        : row.member.email,
-    };
+    const person = xeroContactPersonFromMember(row.member);
+    if (!person) continue;
     const identity = organisationContactPersonIdentity(person);
     if (seen.has(identity)) continue;
     seen.add(identity);
