@@ -29,8 +29,8 @@ reason: fifty lines, and the editor itself is not among them — it is
   and which changes only the booking about to be quoted.
 
 file: src/lib/booking-request.ts
-lines: 2927
-reason: six lines, and five of them are the comment. The code is one field:
+lines: 2928
+reason: seven lines, and five of them are the comment. The code is one field:
   `serializeBookingRequestForAdmin` now returns the row's `version`, so the
   officer's correction form can send back the version it was showing and the
   service can refuse a correction written over a request an accept or a decline
@@ -39,7 +39,12 @@ reason: six lines, and five of them are the comment. The code is one field:
   the next person adding a field would not find it. The comment is what stops
   the next reader treating a client-supplied counter as authority — the server
   never trusts it as anything but a fence, and that sentence is the only place
-  in the tree that says so.
+  in the tree that says so. The seventh line arrived with stage 3 (#3368),
+  which had its own entry for this file until this branch merged the epic:
+  the `bookingOwner` import this module needs to ask who owns a booking
+  through the one accessor instead of reading the column. One file takes one
+  allowance, so the two entries are folded here rather than left for a gate
+  that cannot choose between two numbers.
 
 file: src/lib/booking-request-quotes.ts
 lines: 1875
