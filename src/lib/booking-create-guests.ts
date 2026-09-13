@@ -351,10 +351,3 @@ function nightEntryKey(entry: GuestNightInput): CalendarDate {
   return nightEntryKey(entry.stayDate);
 }
 
-export function getCapacityFullNights(
-  nightDetails: Array<{ date: Date; availableBeds: number }>
-): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => formatDateOnly(night.date));
-}

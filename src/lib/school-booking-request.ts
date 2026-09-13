@@ -60,10 +60,10 @@ import {
   splitPriceAcrossGuests,
   type BookingRequestGuest,
 } from "@/lib/booking-request";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import {
   buildApprovalGuestCreates,
   claimAlreadyConvertedBookingRequest,
-  getCapacityFullNights,
   planBookingRequestGuestConsent,
   sendOwnerSubstitutionAdminAlert,
   toPipelineGuestCreateData,

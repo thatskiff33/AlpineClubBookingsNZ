@@ -41,7 +41,6 @@ import { getStayNights } from "@/lib/policies/pricing";
 import { prisma } from "@/lib/prisma";
 import { requiredGuestPriceCents } from "@/lib/required-price-cents";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
-import { formatDateOnly } from "@/lib/date-only";
 
 /** A held booking's owner failed re-validation and a fresh contact was
  * substituted at conversion (issue #1255 residual-risk decision 1). */
@@ -194,13 +193,6 @@ export function buildApprovalGuestNights(params: {
 }
 
 /** Capacity nights that came back oversubscribed, as NZ date-only strings. */
-export function getCapacityFullNights(
-  nightDetails: Array<{ date: Date; availableBeds: number }>
-): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => formatDateOnly(night.date));
-}
 
 /**
  * Idempotency guard (#1232 double-charge). Under the per-lodge advisory lock —
