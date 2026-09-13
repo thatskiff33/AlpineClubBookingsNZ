@@ -40,8 +40,10 @@ import { z } from "zod";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import {
   resolveOrCreateSchoolOrganisation,
+  schoolXeroContactName,
   type ResolvedSchoolOrganisation,
 } from "@/lib/school-organisations";
+import { reconcileOrganisationTeachers } from "@/lib/organisation-xero-contact-persons";
 import { issueActionToken } from "@/lib/action-tokens";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -1023,7 +1025,11 @@ export async function approveSchoolBookingRequest(input: {
               email: request.contactEmail,
               passwordHash: placeholderPasswordHash,
               emailVerified: true,
-              firstName: schoolName.slice(0, 100),
+              // #3367: through the SHARED helper, so the name this member's
+              // Xero contact is created under is byte-identical to the one the
+              // school's own record sends. Two truncations for one name is how
+              // a returning school ends up with two Xero customers.
+              firstName: schoolXeroContactName(schoolName),
               lastName: "",
               role: "SCHOOL",
               ageTier: AgeTier.ADULT,
@@ -1145,7 +1151,11 @@ export async function approveSchoolBookingRequest(input: {
               email: request.contactEmail,
               passwordHash: placeholderPasswordHash,
               emailVerified: true,
-              firstName: schoolName.slice(0, 100),
+              // #3367: through the SHARED helper, so the name this member's
+              // Xero contact is created under is byte-identical to the one the
+              // school's own record sends. Two truncations for one name is how
+              // a returning school ends up with two Xero customers.
+              firstName: schoolXeroContactName(schoolName),
               lastName: "",
               role: "SCHOOL",
               ageTier: AgeTier.ADULT,
@@ -1367,6 +1377,13 @@ export async function approveSchoolBookingRequest(input: {
           this inserts; the upsert is what keeps that an implementation detail
           rather than a constraint this code depends on.
 
+          WRITING THE NEW ROWS IS ONLY HALF OF IT. Because a fresh teacher
+          `Member` is minted on every approval — even for the same returning
+          human — an approval that only ever added rows would accumulate one
+          association per approval and never remove one, and the derived contact
+          list would name people who left years ago. The other half is
+          `reconcileOrganisationTeachers` after this loop.
+
           THE TEACHER STILL CARRIES `Role.SCHOOL` above. That is not an oversight
           and a reader who notices it deserves the reason: the owner declined
           changing it in this stage (13 September 2026, choice B) because a
@@ -1398,6 +1415,64 @@ export async function approveSchoolBookingRequest(input: {
           firstName: teacherMember.firstName,
           pin: plan.pin,
         });
+      }
+
+      /*
+        #3367: the school's TEACHER associations are RECONCILED to this
+        booking's teachers, not appended to.
+
+        Without this the rows accumulate one set per approval and nothing in the
+        tree ever removes one — the model has no end-date column — so the
+        school's Xero contact would eventually name five people who have gone
+        and could never be corrected. The owner took decision A (13 September
+        2026) on the stated promise that a departed teacher is corrected on the
+        next invoice; this is what makes that promise true rather than a hope.
+
+        Safe to delete rather than end-date because `OrganisationContact` is
+        pure association and says so in its own schema docblock: "it carries no
+        history of its own". The history a school's teachers DO have lives on
+        `HutLeaderAssignment`, created above, which is a separate record and is
+        never touched here.
+
+        A request that recorded no teachers reconciles nothing — see
+        `reconcileOrganisationTeachers`.
+      */
+      const reconciledTeachers = await reconcileOrganisationTeachers(tx, {
+        organisationId: organisation.id,
+        teacherMemberIds: teacherAssignments.map((row) => row.memberId),
+      });
+      if (reconciledTeachers.removedCount > 0) {
+        await createAuditLog(
+          {
+            action: "organisation.contacts.teachers_reconciled",
+            memberId: input.adminMemberId,
+            actorMemberId: input.adminMemberId,
+            targetId: organisation.id,
+            entityType: "Organisation",
+            entityId: organisation.id,
+            // The same subsystem test the transfer's row answers: this is the
+            // set that reaches Xero as the school's contact persons, so it
+            // correlates with the rest of the contact-identity story rather
+            // than splitting off into `admin` (INV-PRIV-013).
+            category: "xero",
+            severity: "important",
+            outcome: "success",
+            summary:
+              "School contact people replaced by the approved booking's teachers",
+            details:
+              "Approving this school booking made its teachers the school's " +
+              "current contact people. Associations for teachers who are no " +
+              "longer named were removed, so the school's Xero contact stops " +
+              "naming people who have left (#3367).",
+            metadata: {
+              organisationId: organisation.id,
+              bookingId: booking.id,
+              removedCount: reconciledTeachers.removedCount,
+              keptCount: teacherAssignments.length,
+            },
+          },
+          tx,
+        );
       }
 
       await tx.bookingRequest.update({

@@ -13,9 +13,20 @@
  * than a hope.** A record naming a teacher who left is worse than one naming
  * nobody, because it invites the treasurer to contact them. So:
  *
+ * - Approval RECONCILES rather than appends. A fresh teacher `Member` is minted
+ *   on every approval — even for the same returning human — so an approval that
+ *   only ever added rows would accumulate one association per approval and
+ *   never remove one. {@link reconcileOrganisationTeachers} makes the approved
+ *   booking's teacher set BE the organisation's `TEACHER` set: rows for people
+ *   no longer in it are deleted. The model's own docblock licenses that — "this
+ *   row is pure association… it carries no history of its own" — and the
+ *   booking-side `HutLeaderAssignment`, which DOES carry history, is a separate
+ *   record and is never touched.
  * - The intended contact persons are derived from the organisation's
  *   `OrganisationContact` rows every time this module resolves a contact —
- *   never from a snapshot taken when the contact was first created.
+ *   never from a snapshot taken when the contact was first created — NEWEST
+ *   first, and with duplicates of one human collapsed, so the cap below can
+ *   never hide the current teacher behind five departed ones.
  * - A fingerprint of what was last SENT is kept in the local `XeroObjectLink`
  *   row's metadata. When the derived list no longer matches it, one
  *   `updateContact` is sent and the fingerprint is rewritten; when it matches,
@@ -24,6 +35,15 @@
  * - Approving a new school booking records the new teacher and then queues that
  *   booking's invoice, which resolves the contact — so "the next approval
  *   refreshes it" is literally true.
+ *
+ * TWO CONSEQUENCES OF RECONCILING THAT A READER SHOULD MEET HERE RATHER THAN
+ * DISCOVER. First, a school with two approved bookings in flight ends up naming
+ * the teachers of whichever was approved LAST, not of whichever travels next:
+ * the association is "who the school's current contact is", and this data has
+ * no better answer to that than the most recent approval. Second, a request
+ * that records NO teacher reconciles nothing — an absence of information is not
+ * an assertion that the school has no contacts, and treating it as one would
+ * let an incomplete request erase a known-good teacher.
  *
  * Only `contactPersons` is refreshed. The contact's NAME is never rewritten:
  * Xero enforces unique contact names, renaming is the operation the settled rule
@@ -46,7 +66,7 @@
  */
 
 import type { XeroClient } from "xero-node";
-import type { Prisma } from "@prisma/client";
+import { OrganisationContactRole, type Prisma } from "@prisma/client";
 
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -67,6 +87,7 @@ import {
   type XeroContactPersonInput,
 } from "@/lib/xero-contact-shape";
 import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
+import { schoolXeroContactName } from "@/lib/school-organisations";
 
 /** The local model name the organisation paths write into the Xero ledger. */
 export const ORGANISATION_LOCAL_MODEL = "Organisation";
@@ -97,11 +118,59 @@ export type OrganisationContactSnapshot = {
 };
 
 /**
+ * Make this booking's teacher set BE the organisation's `TEACHER` set.
+ *
+ * MUST run inside the approval transaction, on its client, so the associations
+ * and the booking they describe commit together.
+ *
+ * Called with an EMPTY set it does nothing at all, deliberately: see the second
+ * consequence in this module's docblock. Only `TEACHER` rows are reconciled —
+ * a `CONTACT`-role association is somebody an officer attached by hand for a
+ * reason this code does not know, and a booking approval is not evidence that
+ * it has stopped being true.
+ *
+ * Returns how many associations it removed, so the caller can log or audit a
+ * departure rather than have it happen silently.
+ */
+export async function reconcileOrganisationTeachers(
+  tx: Prisma.TransactionClient,
+  input: { organisationId: string; teacherMemberIds: readonly string[] },
+): Promise<{ removedCount: number }> {
+  const keep = [...new Set(input.teacherMemberIds)];
+  if (keep.length === 0) return { removedCount: 0 };
+
+  const removed = await tx.organisationContact.deleteMany({
+    where: {
+      organisationId: input.organisationId,
+      role: OrganisationContactRole.TEACHER,
+      memberId: { notIn: keep },
+    },
+  });
+  return { removedCount: removed.count };
+}
+
+/**
  * The organisation and the people to name on its Xero contact.
  *
  * Order is deterministic and is part of the fingerprint: teachers before other
- * contacts, then oldest association first. Deterministic order is what stops the
- * refresh below firing on every resolve because two rows came back swapped.
+ * contacts, then the NEWEST association first. Deterministic order is what
+ * stops the refresh below firing on every resolve because two rows came back
+ * swapped.
+ *
+ * NEWEST first, not oldest, and the direction is load-bearing rather than
+ * cosmetic. The cap below stops at five. Ordered oldest-first, a school that
+ * ever accumulated five associations would have its derived list frozen on the
+ * oldest five for ever: the fingerprint would stop changing, no update would
+ * ever be sent again, and the contact would keep naming people who have gone.
+ * Newest-first means the cap can only ever hide the LEAST current names, which
+ * is what a cap is for.
+ *
+ * Duplicates of one human are collapsed before the cap applies. A returning
+ * teacher is minted as a fresh `Member` on every approval, and an ADOPTED
+ * contact may already carry contact persons this application has never seen, so
+ * "the same person twice" is an ordinary state rather than a corruption. The
+ * identity used is the trimmed, case-folded name and address together, which is
+ * all this data has; it is deliberately not a fuzzy match.
  */
 export async function readOrganisationForXeroContact(
   organisationId: string,
@@ -118,7 +187,7 @@ export async function readOrganisationForXeroContact(
       contacts: {
         // TEACHER sorts before CONTACT alphabetically, which is also the
         // priority wanted, so the enum's own ordering carries it.
-        orderBy: [{ role: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+        orderBy: [{ role: "asc" }, { createdAt: "desc" }, { id: "desc" }],
         select: {
           member: {
             select: { firstName: true, lastName: true, email: true },
@@ -134,12 +203,13 @@ export async function readOrganisationForXeroContact(
   }
 
   const contactPersons: XeroContactPersonInput[] = [];
+  const seen = new Set<string>();
   for (const row of organisation.contacts) {
     if (contactPersons.length >= MAX_XERO_ORGANISATION_CONTACT_PERSONS) break;
     const firstName = row.member.firstName?.trim() ?? "";
     const lastName = row.member.lastName?.trim() ?? "";
     if (!firstName && !lastName) continue;
-    contactPersons.push({
+    const person = {
       firstName,
       lastName,
       // A walk-in placeholder address is not an address (#1935): it is a
@@ -149,7 +219,12 @@ export async function readOrganisationForXeroContact(
       email: isPlaceholderContactEmail(row.member.email)
         ? ""
         : row.member.email,
-    });
+    };
+    const identity =
+      `${person.firstName} ${person.lastName} ${person.email}`.toLowerCase();
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    contactPersons.push(person);
   }
 
   return {
@@ -187,7 +262,13 @@ export function buildOrganisationXeroContactPayload(
   policy: XeroContactEmailPolicy,
 ) {
   return buildXeroContactShape(policy, {
-    name: organisation.name,
+    // Through the SHARED helper, not `organisation.name` raw. The invented
+    // school member's contact was named with the school truncated at 100
+    // characters — its `firstName` column's limit — and the organisation record
+    // holds 200. A returning school with a long name would otherwise not
+    // collide with the contact it already has, Xero would accept the create,
+    // and the club would hold two customers for one school.
+    name: schoolXeroContactName(organisation.name),
     // No `person`: this is what makes the contact an ORGANISATION rather than a
     // surnameless human. `isCustomer` cannot be set on write and is never read
     // as the discriminator — see xero-contact-shape.ts.
@@ -238,6 +319,15 @@ export async function upsertOrganisationContactLink(
       xeroObjectId: input.xeroContactId,
       xeroObjectUrl: buildXeroContactUrl(input.xeroContactId),
       role: "CONTACT",
+      // MERGED, never replaced. The two facts this row's metadata carries are
+      // written by two different calls at two different times: `linkedVia` —
+      // whether the contact was `created` or adopted by `name_match` — is
+      // written once when the link is first made, and the contact-persons
+      // fingerprint is rewritten on every refresh that sends an update. A plain
+      // rebuild would mean the FIRST refresh silently dropped the provenance,
+      // and provenance is exactly what tells a reader whether the contact is
+      // one this application made or one it adopted.
+      mergeMetadata: true,
       ...(input.linkedVia || input.contactPersonsFingerprint
         ? {
             metadata: {
@@ -283,6 +373,28 @@ export async function refreshOrganisationContactPersons(input: {
     organisation,
     input.policy,
   );
+  const desiredPersons = desired.contactPersons ?? [];
+
+  /*
+    NOTHING TO SAY IS NOT THE SAME AS "THERE IS NOBODY", so no update is sent.
+
+    An `updateContact` carrying `contactPersons: []` does not mean "we have no
+    teacher on file" to Xero — it means "replace the list with nothing". On the
+    ADOPTION path that is actively destructive: the contact this organisation
+    took is one Xero refused to let us duplicate, so it may well be a record a
+    treasurer built by hand, with contact persons they entered and this
+    application has never seen. Clearing those because a request happened to
+    record no teacher would delete somebody's work to assert an absence this
+    code does not actually know.
+
+    The honest cost, stated rather than hidden: a school whose only teacher
+    leaves and is replaced by NOBODY keeps naming them in Xero until either a
+    replacement is recorded or the treasurer edits the contact. A departure WITH
+    a replacement — the ordinary case, and the one the owner's decision was
+    taken on — is corrected on the next invoice as promised.
+  */
+  if (desiredPersons.length === 0) return;
+
   const fingerprint = contactPersonsFingerprint(desired);
 
   const link = await prisma.xeroObjectLink.findFirst({
@@ -302,7 +414,7 @@ export async function refreshOrganisationContactPersons(input: {
   // payload cannot silently re-point a school's invoice delivery.
   const contact = {
     contactID: xeroContactId,
-    contactPersons: desired.contactPersons ?? [],
+    contactPersons: desiredPersons,
   };
   const idempotencyKey = buildXeroIdempotencyKey(
     "organisation",

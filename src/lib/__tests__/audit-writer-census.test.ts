@@ -1315,9 +1315,15 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // (INV-INT-018). Categorised `xero` at the site and named in none of the
     // four per-site maps, so it lands unpinned like every other new feature's
     // writer. Re-measured after the merge with the epic, which brought two
-    // writers of its own: 473 sites MEASURED with `npm run audit:census` minus
-    // 127 pinned; `pinned` is unchanged, so no existing classification moved.
-    ).toEqual({ pinned: 127, unpinned: 346 });
+    // writers of its own.
+    // 346 -> 347 (#3367 fix round): a second new writer,
+    // `organisation.contacts.teachers_reconciled` — the record that a school's
+    // contact people were REPLACED by the approved booking's teachers rather
+    // than added to. Categorised `xero` at the site, for the same subsystem
+    // reason as the row above, and named in none of the four per-site maps.
+    // 474 sites MEASURED with `npm run audit:census` minus 127 pinned;
+    // `pinned` is unchanged, so no existing classification moved.
+    ).toEqual({ pinned: 127, unpinned: 347 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

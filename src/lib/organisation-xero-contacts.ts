@@ -115,6 +115,7 @@ import {
   takeXeroContactFromSchoolsOwnMember,
   type XeroContactTransferFromMember,
 } from "@/lib/xero-contact-home";
+import { schoolXeroContactName } from "@/lib/school-organisations";
 
 /** The advisory-lock keyspace for one organisation's contact link. */
 export function organisationXeroContactLockKey(organisationId: string): string {
@@ -286,7 +287,10 @@ export async function findOrCreateXeroContactForOrganisation(
       const matched = await findExistingXeroContactByExactName({
         xero,
         tenantId,
-        fullName: organisation.name,
+        // The name we SENT, not `organisation.name` raw — the create that was
+        // refused carried the shared truncation, so the search has to ask for
+        // the same string or it cannot find the contact that refused it.
+        fullName: schoolXeroContactName(organisation.name),
         contextPrefix:
           "findOrCreateXeroContactForOrganisation duplicate-name recovery",
       });

@@ -542,18 +542,24 @@ describe("#3367: each declared reader still plays its declared part", () => {
   it("approval resolves the school and links it from the booking and the request", () => {
     const source = read("src/lib/school-booking-request.ts");
     expect(source).toContain("resolveOrCreateSchoolOrganisation(tx, {");
-    // FIVE sites, and the count is the point: a school approval that took the
+    // SEVEN sites, and the count is the point: a school approval that took the
     // held-conversion branch and silently lost its organisation would be
-    // invisible without it. Measured on the tree this shipped with — the
-    // fresh-create booking, the held-conversion booking update, the teacher
-    // association's `where` and its `create`, and the converted booking
-    // request. A number that moves means a site was added or lost, and either
-    // way somebody has to look.
+    // invisible without it. Measured on the tree — the fresh-create booking,
+    // the held-conversion booking update, the teacher association's `where` and
+    // its `create`, the converted booking request, and — added in #3367's fix
+    // round — the teacher RECONCILE and the audit row that records a removal.
+    // A number that moves means a site was added or lost, and either way
+    // somebody has to look.
     expect(
       [...source.matchAll(/organisationId: organisation\.id/g)].length,
       "the fresh booking, the held conversion, both halves of the teacher " +
-        "association and the booking request must all carry the school",
-    ).toBe(5);
+        "association, the booking request, the teacher reconcile and its " +
+        "audit row must all carry the school",
+    ).toBe(7);
+    // The reconcile is not optional: appending teacher rows without removing
+    // the ones no longer named is what froze a school's Xero contact on people
+    // who had left.
+    expect(source).toContain("reconcileOrganisationTeachers(tx, {");
     expect(source).toContain("OrganisationContactRole.TEACHER");
   });
 
@@ -631,11 +637,21 @@ describe("#3367: each declared reader still plays its declared part", () => {
     );
     expect(start, "the transfer must still exist").toBeGreaterThan(-1);
     const body = source.slice(start);
-    // Leg 1 and leg 2: this organisation's bookings resolve to the member, and
-    // no other organisation's do.
-    expect(body).toContain("tx.booking.findFirst({");
-    expect(body).toContain("organisationId: input.organisationId");
-    expect(body).toContain("NOT: { organisationId: input.organisationId }");
+    // Legs 1 and 2 read BOTH generations of the tie, and the request half is
+    // the load-bearing one: `Booking.organisationId` is written only from this
+    // release, so a returning school's earlier booking carries NULL and a
+    // booking-only leg 1 would answer "no" for every school that has booked
+    // before — the transfer would never fire for the case it exists for.
+    expect(body).toContain("tx.booking.findMany({");
+    expect(body).toContain("tx.bookingRequest.findMany({");
+    expect(body).toContain("convertedMemberId: holder.id");
+    expect(body).toContain("schoolName: true");
+    // And the name comparison goes through the ONE matching rule, never a
+    // second spelling of it (INV-SSOT).
+    expect(body).toContain("isSameOrganisationName(");
+    expect(source).toContain(
+      'import { isSameOrganisationName } from "@/lib/school-organisations"',
+    );
     // Leg 3 and leg 4: it cannot sign in, and it is not a named teacher.
     expect(body).toContain("if (holder.canLogin) return null;");
     expect(body).toContain("tx.organisationContact.findUnique({");

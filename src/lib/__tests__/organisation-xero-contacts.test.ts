@@ -39,7 +39,8 @@ const mocks = vi.hoisted(() => {
     // undefined-property throw rather than a wrong answer, which is how this
     // suite wants an unmocked read to behave.
     member: { findFirst: vi.fn(), update: vi.fn() },
-    booking: { findFirst: vi.fn() },
+    booking: { findMany: vi.fn() },
+    bookingRequest: { findMany: vi.fn() },
     xeroObjectLink: { updateMany: vi.fn() },
     auditLog: { create: vi.fn() },
   };
@@ -174,7 +175,8 @@ beforeEach(() => {
   mocks.tx.organisation.update.mockResolvedValue({ id: "org-1" });
   mocks.tx.member.findFirst.mockResolvedValue(null);
   mocks.tx.member.update.mockResolvedValue({ id: "invented-school-member" });
-  mocks.tx.booking.findFirst.mockResolvedValue(null);
+  mocks.tx.booking.findMany.mockResolvedValue([]);
+  mocks.tx.bookingRequest.findMany.mockResolvedValue([]);
   mocks.tx.organisationContact.findUnique.mockResolvedValue(null);
   mocks.tx.xeroObjectLink.updateMany.mockResolvedValue({ count: 1 });
   mocks.tx.auditLog.create.mockResolvedValue({ id: "audit-1" });
@@ -402,12 +404,37 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
     );
   }
 
-  /** Leg 1 answers yes for THIS school; leg 2 (any other school) answers no. */
+  /**
+   * A school that has booked SINCE this release: its earlier booking carries
+   * `organisationId`, so leg 1 is answered from the booking generation.
+   */
   function onlyThisSchoolsBookings() {
-    mocks.tx.booking.findFirst.mockImplementation(
-      async (args: { where: { organisationId?: string } }) =>
-        args.where.organisationId === "org-1" ? { id: "booking-1" } : null,
-    );
+    mocks.tx.booking.findMany.mockResolvedValue([{ organisationId: "org-1" }]);
+    mocks.tx.bookingRequest.findMany.mockResolvedValue([
+      { organisationId: "org-1", schoolName: "New Plymouth Primary School" },
+    ]);
+  }
+
+  /**
+   * THE RETURNING SCHOOL, and the premise is ESTABLISHED rather than stubbed.
+   *
+   * A school whose earlier booking predates this release has
+   * `Booking.organisationId = NULL` on it — the column is written in exactly
+   * one place, at approval, from this release, and nothing backfills it. So the
+   * booking generation supplies NOTHING here, which is the one fact the old
+   * harness stubbed away by answering leg 1 "yes" for any member id.
+   *
+   * What production really has is the request that minted the member:
+   * `convertedMemberId` pointing at it and `schoolName` holding the free text
+   * the requester typed. That is what these rows are.
+   */
+  function aReturningSchoolFromBeforeThisRelease(
+    schoolName = "New Plymouth   Primary School",
+  ) {
+    mocks.tx.booking.findMany.mockResolvedValue([]);
+    mocks.tx.bookingRequest.findMany.mockResolvedValue([
+      { organisationId: null, schoolName },
+    ]);
   }
 
   beforeEach(() => {
@@ -457,6 +484,80 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
     });
     // Never refused, so no failure row and no cancellation.
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("TAKES the contact from a school that booked BEFORE this release", async () => {
+    /*
+      THE CASE THE WHOLE TRANSFER EXISTS FOR, and the one the previous
+      implementation could not do.
+
+      A returning school's earlier booking has `organisationId = NULL` — the
+      column is written only at approval, only from this release, and nothing
+      backfills it. Reading the tie from that column alone made leg 1 answer
+      "no" for every such school: the refusal below it then threw, and because
+      nothing else ever writes `Organisation.xeroContactId`, the school's
+      invoice failed on every retry, for ever. That is an end state, not a
+      window — no later stage of #2912 repairs it.
+
+      The tie is read from the request that minted the member instead. Note the
+      doubled whitespace in the fixture's school name: the comparison goes
+      through the same normalisation the school resolve uses, so "New
+      Plymouth   Primary School" and "New Plymouth Primary School" are one
+      school here exactly as they are there.
+    */
+    aMemberHoldsTheContact();
+    aReturningSchoolFromBeforeThisRelease();
+
+    await expect(findOrCreateXeroContactForOrganisation("org-1")).resolves.toBe(
+      "contact-held-by-member",
+    );
+    expect(mocks.tx.member.update).toHaveBeenCalledWith({
+      where: { id: "invented-school-member" },
+      data: { xeroContactId: null },
+    });
+    expect(mocks.tx.organisation.update).toHaveBeenCalledWith({
+      where: { id: "org-1" },
+      data: { xeroContactId: "contact-held-by-member" },
+    });
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES a member that served a DIFFERENT school before this release", async () => {
+    /*
+      The symmetric half, and it is why leg 2 has to read the free text too. A
+      member who was the booking contact for two schools before this release has
+      no `Booking.organisationId` on either, so an organisation-only leg 2 sees
+      nothing to refuse — and one school walks off with the other's Xero
+      customer while every leg reports clean.
+    */
+    aMemberHoldsTheContact();
+    mocks.tx.booking.findMany.mockResolvedValue([]);
+    mocks.tx.bookingRequest.findMany.mockResolvedValue([
+      { organisationId: null, schoolName: "New Plymouth Primary School" },
+      { organisationId: null, schoolName: "Hawera Intermediate" },
+    ]);
+
+    await expect(
+      findOrCreateXeroContactForOrganisation("org-1"),
+    ).rejects.toBeInstanceOf(XeroContactTwoHomesError);
+    expect(mocks.tx.member.update).not.toHaveBeenCalled();
+    expect(mocks.tx.organisation.update).not.toHaveBeenCalled();
+  });
+
+  it("does not take a school's contact on a request that named no school", async () => {
+    // A converted request with neither an organisation nor a school name is a
+    // GENERAL request, and it is evidence of nothing. It must not establish
+    // leg 1 on its own, or a public requester's contact becomes adoptable.
+    aMemberHoldsTheContact();
+    mocks.tx.booking.findMany.mockResolvedValue([]);
+    mocks.tx.bookingRequest.findMany.mockResolvedValue([
+      { organisationId: null, schoolName: null },
+    ]);
+
+    await expect(
+      findOrCreateXeroContactForOrganisation("org-1"),
+    ).rejects.toBeInstanceOf(XeroContactTwoHomesError);
+    expect(mocks.tx.member.update).not.toHaveBeenCalled();
   });
 
   it("releases the member's CONTACT ledger row with the column", async () => {
@@ -526,7 +627,10 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
 
   it("REFUSES a member none of this school's bookings resolve to", async () => {
     aMemberHoldsTheContact();
-    mocks.tx.booking.findFirst.mockResolvedValue(null);
+    // Neither generation ties this member to this school: no booking carrying
+    // the organisation, and no request it was converted from.
+    mocks.tx.booking.findMany.mockResolvedValue([]);
+    mocks.tx.bookingRequest.findMany.mockResolvedValue([]);
 
     await expect(
       findOrCreateXeroContactForOrganisation("org-1"),
@@ -539,7 +643,10 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
     aMemberHoldsTheContact();
     // Both legs answer: this school's bookings resolve to it, and so do
     // another's. A contact shared by two organisations belongs to neither.
-    mocks.tx.booking.findFirst.mockResolvedValue({ id: "booking-1" });
+    mocks.tx.booking.findMany.mockResolvedValue([
+      { organisationId: "org-1" },
+      { organisationId: "org-2" },
+    ]);
 
     await expect(
       findOrCreateXeroContactForOrganisation("org-1"),
@@ -572,7 +679,7 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
 
   it("fails a refusal LOUDLY and replayably, never closing it as skipped", async () => {
     aMemberHoldsTheContact();
-    mocks.tx.booking.findFirst.mockResolvedValue(null);
+    mocks.tx.booking.findMany.mockResolvedValue([]);
 
     await expect(
       findOrCreateXeroContactForOrganisation("org-1"),
@@ -607,7 +714,7 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
 
   it("does NOT fall back to the member when the organisation cannot be resolved", async () => {
     aMemberHoldsTheContact();
-    mocks.tx.booking.findFirst.mockResolvedValue(null);
+    mocks.tx.booking.findMany.mockResolvedValue([]);
 
     // The fallback that raised the invoice against the member's own contact is
     // retired (owner, 13 September 2026). An Organisation-linked booking is
@@ -714,6 +821,158 @@ describe("#3367: the named teacher is kept honest", () => {
           ?.contactPersonsFingerprint,
     );
     expect(fingerprintWrite).toBeDefined();
+  });
+
+  it("names the NEWEST teacher even once the school has crossed the cap", async () => {
+    /*
+      THE FREEZE. A fresh teacher `Member` is minted on every approval, each
+      gets its own `OrganisationContact` row, and the derived list stops at
+      five. Ordered oldest-first, a school past five associations had its list
+      frozen on the oldest five for ever: the fingerprint stopped changing, no
+      update was ever sent again, and the contact kept naming people who had
+      gone. Newest-first means the cap can only hide the LEAST current names.
+
+      The rows arrive here in the order the query asks for, so this fixture is
+      the seven a `createdAt: "desc"` read returns — newest first.
+    */
+    const seven = ["Grace", "Fiona", "Eve", "Dan", "Cara", "Bo", "Ana"].map(
+      (firstName) => ({
+        member: {
+          firstName,
+          lastName: "Teacher",
+          email: `${firstName.toLowerCase()}@school.test`,
+        },
+      }),
+    );
+    mocks.organisationFindUnique.mockResolvedValue(
+      organisationRow({ xeroContactId: "contact-org-1", contacts: seven }),
+    );
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({
+      metadata: { contactPersonsFingerprint: "stale" },
+    });
+
+    await findOrCreateXeroContactForOrganisation("org-1");
+
+    const sent = (
+      mocks.updateContact.mock.calls[0][2] as { contacts: Contact[] }
+    ).contacts[0];
+    expect(sent.contactPersons).toHaveLength(5);
+    expect(sent.contactPersons?.map((person) => person.firstName)).toEqual([
+      "Grace",
+      "Fiona",
+      "Eve",
+      "Dan",
+      "Cara",
+    ]);
+    // Ana is the school's first-ever teacher and has long gone. She must be the
+    // one the cap drops, never the one it keeps.
+    expect(JSON.stringify(sent.contactPersons)).not.toContain("Ana");
+
+    /*
+      AND THE DIRECTION IS ASSERTED ON THE QUERY, not only on the fixture.
+
+      The fixture above arrives in whatever order this file wrote it — a mocked
+      delegate does not honour `orderBy` — so the list assertion alone would
+      pass just as happily against `createdAt: "asc"`, which is the bug. The
+      ordering lives in the QUERY here, so that is where it has to be read. This
+      assertion is what fails if the direction is flipped back.
+    */
+    const [query] = mocks.organisationFindUnique.mock.calls.at(-1) as [
+      { select: { contacts: { orderBy: Array<Record<string, string>> } } },
+    ];
+    expect(query.select.contacts.orderBy).toEqual([
+      { role: "asc" },
+      { createdAt: "desc" },
+      { id: "desc" },
+    ]);
+  });
+
+  it("names a returning teacher ONCE, not once per approval", async () => {
+    // The same human, minted as a fresh `Member` on each approval, is the
+    // ordinary case rather than a corruption — and an ADOPTED contact may
+    // already carry persons this application has never seen. Collapsing them
+    // before the cap applies is what stops one returning teacher filling all
+    // five places.
+    mocks.organisationFindUnique.mockResolvedValue(
+      organisationRow({
+        xeroContactId: "contact-org-1",
+        contacts: [
+          {
+            member: {
+              firstName: "Ana",
+              lastName: "Teacher",
+              email: "ana@school.test",
+            },
+          },
+          {
+            member: {
+              firstName: " Ana ",
+              lastName: "Teacher",
+              email: "ANA@school.test",
+            },
+          },
+          {
+            member: {
+              firstName: "Bo",
+              lastName: "Teacher",
+              email: "bo@school.test",
+            },
+          },
+        ],
+      }),
+    );
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({
+      metadata: { contactPersonsFingerprint: "stale" },
+    });
+
+    await findOrCreateXeroContactForOrganisation("org-1");
+
+    const sent = (
+      mocks.updateContact.mock.calls[0][2] as { contacts: Contact[] }
+    ).contacts[0];
+    expect(sent.contactPersons?.map((person) => person.firstName)).toEqual([
+      "Ana",
+      "Bo",
+    ]);
+  });
+
+  it("sends NO update at all rather than an empty contact-person list", async () => {
+    // An `updateContact` carrying `contactPersons: []` does not say "we know of
+    // nobody", it says "replace the list with nothing" — and on the adoption
+    // path the list it would clear may be one a treasurer built by hand on a
+    // contact Xero refused to let us duplicate.
+    mocks.organisationFindUnique.mockResolvedValue(
+      organisationRow({ xeroContactId: "contact-org-1", contacts: [] }),
+    );
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({
+      metadata: { contactPersonsFingerprint: "stale" },
+    });
+
+    await findOrCreateXeroContactForOrganisation("org-1");
+
+    expect(mocks.updateContact).not.toHaveBeenCalled();
+  });
+
+  it("keeps the link's provenance when it records what it sent", async () => {
+    // `linkedVia` is written once, when the link is made; the fingerprint is
+    // rewritten on every refresh. A rebuilt metadata object would mean the
+    // FIRST refresh silently dropped whether this contact was created or
+    // adopted — which is the only local record of that fact.
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({
+      metadata: { contactPersonsFingerprint: "stale", linkedVia: "name_match" },
+    });
+
+    await findOrCreateXeroContactForOrganisation("org-1");
+
+    const fingerprintWrite = mocks.upsertXeroObjectLink.mock.calls.find(
+      ([link]) =>
+        (link as { metadata?: Record<string, unknown> }).metadata
+          ?.contactPersonsFingerprint,
+    );
+    expect(
+      (fingerprintWrite?.[0] as { mergeMetadata?: boolean }).mergeMetadata,
+      "the ledger write must MERGE, so provenance survives the refresh",
+    ).toBe(true);
   });
 
   it("does not fail the invoice when the refresh cannot be sent", async () => {

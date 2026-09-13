@@ -70,7 +70,7 @@ vi.mock("@/lib/prisma", () => ({
           name: args.data.name,
         })),
     },
-    organisationContact: { upsert: vi.fn() },
+    organisationContact: { upsert: vi.fn(), deleteMany: vi.fn() },
     payment: { create: vi.fn() },
     // #2263: stubbed so "no PaymentLink is created" is a REAL assertion. Left
     // off the mock it was vacuous — `expect(prisma.paymentLink).toBeUndefined()`
@@ -713,6 +713,11 @@ describe("approveSchoolBookingRequest", () => {
     vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
     vi.mocked(prisma.hutLeaderAssignment.create).mockResolvedValue({} as never);
+    // #3367: the teacher RECONCILE. Nothing removed by default, so a test that
+    // does not opt in sees the ordinary steady state.
+    vi.mocked(prisma.organisationContact.deleteMany).mockResolvedValue({
+      count: 0,
+    } as never);
     vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
     // Default to no member-night conflict; individual tests override to reject.
     mockedAssertNoConflicts.mockResolvedValue(undefined);
@@ -1105,6 +1110,62 @@ describe("approveSchoolBookingRequest", () => {
         }),
       }),
     );
+  });
+
+  it("REPLACES the school's teachers rather than adding to them (#3367)", async () => {
+    /*
+      A fresh teacher `Member` is minted on every approval, even for the same
+      returning human, and nothing in the tree ever removed an
+      `OrganisationContact` row — the model has no end-date column. So an
+      approval that only added rows would accumulate one association per
+      approval for ever, and once five existed the school's Xero contact would
+      be frozen naming people who had left.
+
+      The owner took decision A (13 September 2026) on the stated promise that a
+      departed teacher is corrected on the next invoice, and three published
+      statements now say so. This is what makes the promise true.
+    */
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(prisma.organisationContact.deleteMany).toHaveBeenCalledWith({
+      where: {
+        organisationId: "org-1",
+        role: "TEACHER",
+        // Exactly this booking's teachers survive; anybody else's TEACHER row
+        // for this school is an association that is no longer true.
+        memberId: { notIn: ["teacher-member-2"] },
+      },
+    });
+  });
+
+  it("records a teacher departure, rather than removing people silently", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    vi.mocked(prisma.organisationContact.deleteMany).mockResolvedValue({
+      count: 2,
+    } as never);
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    const reconcileAudit = vi
+      .mocked(createAuditLog)
+      .mock.calls.map(([params]) => params as Record<string, unknown>)
+      .find(
+        (row) => row.action === "organisation.contacts.teachers_reconciled",
+      );
+    expect(reconcileAudit, "a removal must leave a record").toBeDefined();
+    expect(reconcileAudit?.category).toBe("xero");
+    expect(reconcileAudit?.entityId).toBe("org-1");
+    expect(reconcileAudit?.metadata).toMatchObject({ removedCount: 2 });
+    // INV-PRIV: counts and ids, never the names of the people removed.
+    expect(JSON.stringify(reconcileAudit?.metadata)).not.toContain("@");
   });
 
   it("attaches a RETURNING school to the record it already has (#3367)", async () => {
