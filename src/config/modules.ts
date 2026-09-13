@@ -1,4 +1,9 @@
 import type { ClubModuleSettings, Prisma, PrismaClient } from "@prisma/client";
+import { formatCents } from "@/lib/utils";
+import {
+  AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS,
+  AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS,
+} from "./ai-spend";
 import type { FeatureFlags } from "./schema";
 
 export const MODULE_KEYS = [
@@ -382,7 +387,9 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "Free-text help questions answered by a paid AI model, grounded in each page's help content. Curated page help works without it.",
     dependencies: [
       "Enter your Anthropic API key under Admin → Integrations before the assistant can answer.",
-      "A monthly spend cap (default NZ$10) hard-stops AI answers for the rest of the month once reached; adjust it on the AI assistant settings.",
+      // The default renders through the canonical money formatter in the
+      // club's configured currency (#3354, INV-CONFIG-001) — never a literal.
+      `A monthly spend cap (default ${formatCents(AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS)}) hard-stops AI answers for the rest of the month once reached; adjust it on the AI assistant settings.`,
     ],
   },
   memberGuests: {
@@ -437,7 +444,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       // that spends money — the two setup steps below, and a passing readiness
       // check, are what make the product usable.
       "Enter a DEDICATED Anthropic API key under Admin → Integrations (a separate key from the AI help assistant — the keys are never shared).",
-      "Set a monthly spend budget on the AI Diagnostics settings. It ships at NZ$0, which hard-stops every paid diagnostics call until you raise it.",
+      `Set a monthly spend budget on the AI Diagnostics settings. It ships at ${formatCents(AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS)}, which hard-stops every paid diagnostics call until you raise it.`,
     ],
   },
   alpineCentralServer: {

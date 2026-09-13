@@ -29,6 +29,33 @@ vi.mock("@/lib/observability-bridge", () => ({
   reportAiError: mocks.reportAiError,
 }));
 
+// #3354: the NZD -> club-currency rate, identity unless a test sets otherwise.
+// Mocked at the reader so the conversion seam is exercised without a currency
+// env; the reader itself has its own suites.
+const rateMocks = vi.hoisted(() => ({
+  loadAiSpendCurrency: vi.fn(),
+  identity: () => ({
+    clubCurrency: "NZD",
+    isNzd: true,
+    clubUnitsPerNzdMicros: 1_000_000,
+    rateSetAt: null,
+    rateSetByMemberId: null,
+    isConfigured: false,
+  }),
+  aud: (micros: number) => ({
+    clubCurrency: "AUD",
+    isNzd: false,
+    clubUnitsPerNzdMicros: micros,
+    rateSetAt: new Date("2026-06-01T00:00:00.000Z"),
+    rateSetByMemberId: "admin-1",
+    isConfigured: true,
+  }),
+}));
+vi.mock("@/lib/ai-spend-currency-settings", () => ({
+  AI_SPEND_CURRENCY_SETTINGS_ID: "default",
+  loadAiSpendCurrency: rateMocks.loadAiSpendCurrency,
+}));
+
 import {
   aiUsageMonthKey,
   checkAiBudget,
@@ -50,6 +77,7 @@ const USAGE = {
 beforeEach(() => {
   vi.clearAllMocks();
   resetAiMeteringHealthForTests();
+  rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.identity());
   // $transaction executes the array of pending ops (which are already-resolved
   // promises from the create/upsert mocks).
   mocks.transaction.mockImplementation((ops: unknown[]) => Promise.all(ops));
@@ -293,5 +321,74 @@ describe("getAiUsageSummary", () => {
     expect(summary.recentFailures).toHaveLength(1);
     expect(JSON.stringify(summary)).not.toContain("question");
     expect(summary.bySurface.length).toBeGreaterThan(0);
+  });
+});
+
+describe("club-currency conversion (#3354)", () => {
+  it("compares the cap against the worst-case reserve CONVERTED at the rate", async () => {
+    // 16c NZD x 0.5 = 8c AUD. Spent 992 + 8 = 1000 <= 1000: admitted where the
+    // unconverted 16c would have denied.
+    rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.aud(500_000));
+    mocks.monthlyFindUnique.mockResolvedValue({ costCents: 1000 - 8 });
+    mocks.settingsFindUnique.mockResolvedValue({ monthlyBudgetCents: 1000 });
+    expect((await checkAiBudget()).allowed).toBe(true);
+    // ...and one more cent spent is denied: the boundary moved WITH the rate.
+    mocks.monthlyFindUnique.mockResolvedValue({ costCents: 1000 - 8 + 1 });
+    expect((await checkAiBudget()).allowed).toBe(false);
+  });
+
+  it("reads the rate once per budget check, alongside the settings", async () => {
+    mocks.monthlyFindUnique.mockResolvedValue({ costCents: 0 });
+    mocks.settingsFindUnique.mockResolvedValue({ monthlyBudgetCents: 1000 });
+    await checkAiBudget();
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledTimes(1);
+  });
+
+  it("FAILS CLOSED when the rate cannot be read", async () => {
+    rateMocks.loadAiSpendCurrency.mockRejectedValue(new Error("db down"));
+    mocks.monthlyFindUnique.mockResolvedValue({ costCents: 0 });
+    mocks.settingsFindUnique.mockResolvedValue({ monthlyBudgetCents: 1000 });
+    expect((await checkAiBudget()).allowed).toBe(false);
+  });
+
+  it("books the CONVERTED cost, rounded up, to the event and the month", async () => {
+    // haiku at 1M of everything = 1323c NZD; x 0.92 = 1217.16 -> 1218c AUD.
+    rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.aud(920_000));
+    await recordAiUsage({
+      surface: "member",
+      pathname: "/bookings",
+      model: "claude-haiku-4-5",
+      success: true,
+      usage: USAGE,
+    });
+    expect(mocks.eventCreate.mock.calls[0][0].data.costCents).toBe(1218);
+    expect(mocks.monthlyUpsert.mock.calls[0][0].update.costCents).toEqual({
+      increment: 1218,
+    });
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledTimes(1);
+  });
+
+  it("books the NZD estimate unchanged at the identity rate", async () => {
+    await recordAiUsage({
+      surface: "member",
+      pathname: "/bookings",
+      model: "claude-haiku-4-5",
+      success: true,
+      usage: USAGE,
+    });
+    expect(mocks.eventCreate.mock.calls[0][0].data.costCents).toBe(1323);
+  });
+
+  it("treats a failed rate read as a metering failure (can't-meter => don't-spend)", async () => {
+    rateMocks.loadAiSpendCurrency.mockRejectedValue(new Error("db down"));
+    await recordAiUsage({
+      surface: "member",
+      pathname: "/bookings",
+      model: "claude-haiku-4-5",
+      success: true,
+      usage: USAGE,
+    });
+    expect(mocks.eventCreate).not.toHaveBeenCalled();
+    expect(mocks.reportAiError).toHaveBeenCalledTimes(1);
   });
 });

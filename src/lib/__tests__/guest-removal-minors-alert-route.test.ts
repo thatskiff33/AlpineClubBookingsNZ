@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
 import { NextRequest } from "next/server";
 import { AdminReviewStatus, BookingStatus } from "@prisma/client";
 import { ADULT_SUPERVISION_REVIEW_REASON } from "@/lib/booking-review";
@@ -370,6 +372,9 @@ beforeEach(() => {
     accountCreditAmountCents: 0,
     pendingRefundAmountCents: 0,
     additionalAmountCents: 0,
+    // #3371: the minter's own parameter, zero here - this removal asks for
+    // nothing, and a zero ask never mints, so it can retire nothing.
+    additionalAsk: NO_ADDITIONAL_ASK,
     settlementMethod: null,
     policyRetainedAmountCents: 0,
     xeroRefundAmountCents: 0,

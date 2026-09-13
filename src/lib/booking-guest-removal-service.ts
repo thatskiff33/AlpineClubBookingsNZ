@@ -38,6 +38,7 @@ import {
   minorsReviewAlertShouldFire,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
+import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import {
   hostingCoverageActorOptions,
@@ -108,6 +109,13 @@ export type RemoveBookingGuestResult = {
   accountCreditAmountCents: number;
   pendingRefundAmountCents: number;
   additionalAmountCents: number;
+  /**
+   * #3371: the minter's own value, carrying what minting it would absorb. The
+   * plain figure above is what the emails and the response body read; the two
+   * are not interchangeable and only this one may reach
+   * `createModificationAdditionalPaymentIntent`.
+   */
+  additionalAsk: AdditionalAsk;
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
@@ -1173,6 +1181,7 @@ export async function removeBookingGuestInTransaction({
     accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     additionalAmountCents: paymentImpact.additionalAmountCents,
+    additionalAsk: paymentImpact.additionalAsk,
     settlementMethod: paymentImpact.settlementMethod,
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
