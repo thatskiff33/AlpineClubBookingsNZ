@@ -51,8 +51,15 @@ is setting rates, and setup readiness lists them on the Seasons And Rates step.
 Both are early warnings and neither is a price — no zero is assumed, no other
 type's rate is inherited, no write surface saves a zero-cent row for a rate
 nobody entered, and pricing still hard-throws at runtime when a required row is
-absent. `rate-bearing-membership-type-census.test.ts` fails any second spelling
-of the rule under `src/`.
+absent. One part of that is guarded mechanically:
+`rate-bearing-membership-type-census.test.ts` fails any file under `src/` that
+spells the rate-bearing DISJUNCTION inline — the shape six of the seven old
+copies had. The rest of the rule is held by the module and its own tests, not by
+a text scan: the key-resolved pair, the archived and behaviour-edited
+exceptions, and the season bound have no census, and the same two keys are
+resolved by key elsewhere (`membership-type-policy.ts`, `xero-mappings.ts`,
+`booking-request-suggested-rates.ts`) for a different purpose. Read the module
+before writing a second answer to any of those.
 
 E7 (#1933) added the grouped public presentation and token grammar on top of
 this source, not a re-key. Xero

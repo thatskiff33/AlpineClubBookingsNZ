@@ -35,6 +35,24 @@ import { stripComments } from "./support/strip-comments";
  * snapshot, which had already drifted into a Prisma filter and is the reason
  * this issue exists — see the paragraph below, which is about exactly that.
  *
+ * It covers THE DISJUNCTION AND NOTHING ELSE IN THE MODULE. The key-resolved
+ * pair (`NON_MEMBER` and `FULL`, the two the engine looks up by key and which
+ * therefore owe rows whatever their row says), the shapes of `requiresHutRates`
+ * and `holdsHutRateRows`, and the season bound have no census, and no pattern
+ * was added for them —
+ * deliberately. The canonical module spells the pair as an ARRAY of two named
+ * constants, so a `===`-disjunction pattern could not match it and the positive
+ * anchor above, the whole reason this file is worth running, would have nothing
+ * to anchor on. A literal-array pattern would anchor on nothing either, and
+ * would instead fire on `xero-mappings.ts`,
+ * `booking-request-suggested-rates.ts` and `membership-type-policy.ts`, which
+ * name the same two keys to RESOLVE THEIR IDS — a different question, correctly
+ * asked, and three allowlist entries covering every real occurrence is a census
+ * that guards nothing while reading as though it guards everything. The
+ * published docs were narrowed to say what this file actually holds instead: a
+ * guard is described exactly as strongly as it holds, never as strongly as the
+ * rule it partly guards.
+ *
  * It does NOT prove the rule is asked correctly wherever it is asked. A Prisma
  * `where` clause naming `bookingBehavior: "MEMBER_RATE"` and omitting the
  * exception is exactly the defect this issue fixed, and it matches no pattern

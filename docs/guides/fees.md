@@ -59,8 +59,11 @@ date-only.
    that cannot book the lodge, is never flagged, because a rate set for it would
    never be read. A tier a club does not run is never asked for either. An
    archived membership type is left alone, with two exceptions: the built-in
-   **Non-Member** and **Full** types keep pricing even while archived, so they
-   stay in the grid and in the warning and can still be given rates. Where a type prices from a single flat all-ages rate, that
+   **Non-Member** and **Full** types keep pricing whatever you do to them on the
+   [Membership types](membership-types.md) page — archive one, or change its
+   booking behaviour, and bookings still price from its rates — so they stay in
+   the grid and in the warning and can still be given
+   rates. Where a type prices from a single flat all-ages rate, that
    amount is shown against every tier, marked *(flat rate)*, because that is what
    the club actually charges.
 

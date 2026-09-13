@@ -439,10 +439,12 @@ throw at pricing, plus an early warning on the Hut Fees section of Admin > Fees
 and on setup readiness — warnings only: neither invents a rate, substitutes zero
 or inherits another type's amount, and no write surface saves a zero-cent row
 nobody entered. Which types owe rows, and which seasons are in scope, are asked
-in one place, `membership-type-rate-coverage.ts`; a re-spelling elsewhere fails
-`rate-bearing-membership-type-census.test.ts` (#2933). Archived types are out of
-scope except `NON_MEMBER` and `FULL`, which the engine resolves by key with no
-active filter and which therefore still price and still owe rows. Season scope
+in one place, `membership-type-rate-coverage.ts` (#2933);
+`rate-bearing-membership-type-census.test.ts` fails only an inline re-spelling of
+the rate-bearing disjunction. `NON_MEMBER` and `FULL` owe rows whatever their row
+says — the engine resolves them by key, so neither archiving nor a
+booking-behaviour edit retires them; other archived types are out of
+scope. Season scope
 compares calendar dates against the club's today (`INV-DATE-019`), never the
 current instant. The group discount no longer
 flips a boolean: it substitutes `GroupDiscountSetting.rateMembershipTypeId`
