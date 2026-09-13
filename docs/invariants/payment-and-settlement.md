@@ -805,9 +805,12 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   FAILED allocation op has no auto FAILED→PENDING reaper; recovery runs through
   the Xero outbox retry stack (`xero-operation-retry.ts`). Cancellation is
   UNCHANGED and still conserves: the 100% restore + `finalPrice − allocated`
-  clearing note void the invoice while returning the credit LOCALLY; after a cancel of an allocated-credit booking the restored credit is local-only (its funding note was consumed by the cancelled invoice); the local ledger is the source of truth and Xero catches up when the credit is next used, via the noteless mint-fresh branch. Goodwill, settled (#2717): the remainder note posts to
-  `goodwillWriteOffs`, an EXPENSE mapping falling back to `hutFeeRefunds`
-  while unset (`INV-INT-021`).
+  clearing note void the invoice while returning the credit LOCALLY; after a cancel of an allocated-credit booking the restored credit is local-only (its funding note was consumed by the cancelled invoice); the local ledger is the source of truth and Xero catches up when the credit is next used, via the noteless mint-fresh branch. Goodwill, settled (#2717): the remainder note's
+  `ADMIN_ADJUSTMENT` share — discretionary credit the club was never owed —
+  posts to `goodwillWriteOffs`, an EXPENSE mapping falling back to
+  `hutFeeRefunds` while unset (`INV-INT-021`). Every other share, restored
+  credit included, stays on `hutFeeRefunds`: it is the member's own money, and
+  "has no note yet" is not the accounting question.
 
 ## INV-PAY-024
 
