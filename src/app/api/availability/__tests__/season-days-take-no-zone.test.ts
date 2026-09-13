@@ -60,6 +60,10 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 vi.mock("@/lib/capacity", () => ({
   getMonthAvailability: (...a: unknown[]) => mocks.getMonthAvailability(...a),
+  // #2930: the route now resolves the SELECTED lodge's capacity through the one
+  // resolver (`INV-CAP-003`) instead of leaving the client to divide by a
+  // club-wide figure, so the mock has to carry it or the module throws at import.
+  getLodgeCapacity: async () => 20,
 }));
 vi.mock("@/lib/lodge-access", () => ({
   isMemberEligibleToBookLodge: (...a: unknown[]) => mocks.isMemberEligibleToBookLodge(...a),

@@ -1130,6 +1130,65 @@ describe("processWaitlistForDates", () => {
     expect(result.offeredBookingId).toBeNull();
   });
 
+  /**
+   * #2930 — a waitlist entry sitting over a whole-lodge hold must not promote
+   * while the hold applies.
+   *
+   * This case is NEWLY REACHABLE. Until #2930 a member could not select a full
+   * night at all, so they could not put an entry over a held range in the first
+   * place; the settled owner contract now lets them (point 4), which makes "the
+   * entry exists and must stay put" a state the sweep meets in production rather
+   * than only in theory.
+   *
+   * The engine half is proved in `capacity.test.ts` ("whole-lodge exclusive hold
+   * — capacity engine"): a held night comes back `available: false` with
+   * `availableBeds` pinned to 0, even when the numeric beds would fit easily.
+   * This is the other half — that the sweep's decision is that same flag, so the
+   * hold really does hold, and that it hangs on to the entry rather than
+   * discarding it.
+   */
+  it("does not promote an entry whose nights a whole-lodge hold covers, and leaves it waitlisted (#2930)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+
+    const candidate = {
+      id: "booking1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      guests: [{ id: "g1" }],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      memberId: "m1",
+      lodgeId: "lodge-1",
+      waitlistAlternateLodges: [],
+      promoRedemption: null,
+    };
+
+    mockTxBookingFindMany.mockResolvedValue([candidate]);
+    // Exactly what the engine returns for a held range: NOT negative beds — a
+    // lodge pinned to zero free with the flag set. A promotion gate that keyed
+    // on "beds went negative" instead of on `available` would wave this through,
+    // because nothing here is negative.
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({
+      available: false,
+      minAvailable: 0,
+      nightDetails: [
+        { date: new Date("2026-07-01"), occupiedBeds: 20, availableBeds: 0, wholeLodgeHeld: true },
+        { date: new Date("2026-07-02"), occupiedBeds: 20, availableBeds: 0, wholeLodgeHeld: true },
+      ],
+    });
+
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-05"),
+    });
+
+    expect(result.offeredBookingId).toBeNull();
+    // No status write at all: the entry keeps its place in the queue for when
+    // the hold is released, rather than being offered or cancelled.
+    expect(mockTx.booking.update).not.toHaveBeenCalled();
+  });
+
   it("passes per-guest stay ranges into waitlist promotion capacity checks", async () => {
     const { processWaitlistForDates } = await import("@/lib/waitlist");
     const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");

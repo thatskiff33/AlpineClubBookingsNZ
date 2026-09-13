@@ -82,15 +82,30 @@ export function PriceSummaryCard({
             <p className="font-medium">
               {quote.partnerSharedReason ?? "Not enough beds available"}
             </p>
-            {quote.nightDetails && (
+            {/*
+              #2930: the nights the server refused, exactly as it named them,
+              and NOTHING ELSE.
+
+              This list used to be built here from `nightDetails.filter(n =>
+              n.availableBeds < 0)` and printed "N bed(s) short" beside each
+              date. Both halves leaked the one distinction ADR-001 decision 6
+              says a member must never be able to draw. A whole-lodge-held night
+              is pinned to exactly 0 available beds and never negative
+              (`INV-CAP-021`), so it fell out of the filter and a hold-only
+              refusal drew an EMPTY list under the same sentence that a
+              genuinely full lodge drew an itemised one under. The shortfall
+              numbers then told them apart a second way, by arithmetic, because
+              a held night has no shortfall to state.
+
+              `capacityFullNights` is the server's own list from the single
+              helper (`getCapacityFullNights`), which counts a held night as a
+              full night and carries dates only.
+            */}
+            {quote.capacityFullNights && quote.capacityFullNights.length > 0 && (
               <ul className="mt-1 list-disc pl-4">
-                {quote.nightDetails
-                  .filter((n) => n.availableBeds < 0)
-                  .map((n) => (
-                    <li key={n.date}>
-                      {n.date}: {Math.abs(n.availableBeds)} bed(s) short
-                    </li>
-                  ))}
+                {quote.capacityFullNights.map((date) => (
+                  <li key={date}>{date}</li>
+                ))}
               </ul>
             )}
           </div>

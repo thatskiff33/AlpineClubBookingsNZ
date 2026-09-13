@@ -18,7 +18,7 @@ import {
   dateOnlyInstantOf,
   type CalendarDate,
 } from "@/lib/club-time";
-import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import { addDaysDateOnly } from "@/lib/date-only";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 import {
@@ -349,12 +349,4 @@ function nightEntryKey(entry: GuestNightInput): CalendarDate {
     return calendarDateOfDateOnlyInstant(entry);
   }
   return nightEntryKey(entry.stayDate);
-}
-
-export function getCapacityFullNights(
-  nightDetails: Array<{ date: Date; availableBeds: number }>
-): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => formatDateOnly(night.date));
 }

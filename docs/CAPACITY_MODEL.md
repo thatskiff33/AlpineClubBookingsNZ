@@ -346,6 +346,48 @@ every member-facing surface still sees a full lodge (ADR-001 decision 6) and
 is still hard-blocked at zero beds for everyone else. What it removes is the
 double claim, and with it the contention this section used to describe.
 
+**The night list a refusal names is part of the same disclosure rule (#2930).**
+A capacity refusal tells the caller which nights did not fit, and for a long
+time it built that list by filtering `availableBeds < 0`. A held night is pinned
+to exactly 0 and never goes negative — the pin above is deliberate and is what
+keeps it out of the admin confirmable set — so a hold-only refusal produced an
+EMPTY list where genuine fullness produced a populated one. The member wizard
+renders whatever it is handed, so this surfaced as "the lodge is at capacity on
+**0 nights**": a tell, in plain sight, in the one place decision 6 is about.
+
+Three member surfaces carried it, not one. The create path said "0 nights"; the
+booking-EDIT quote drew the same "not enough beds" heading over an empty list
+where an ordinary full lodge drew an itemised one, and itemised it with each
+night's SHORTFALL, which a held night has none of; and the group settlement
+refusal handed the organiser an empty `fullNights` the same way. All three now
+name the nights through the one helper, and the member-facing payloads carry
+dates only — the per-night bed numbers survive solely on the admin
+over-capacity confirm, which `adminOverride` gates.
+
+`getCapacityFullNights` (`src/lib/capacity-full-nights.ts`) now counts a held
+night as a full night, so both refusals carry the same list. It is the mirror of
+`overCapacityNights()`, which excludes held nights precisely because an admin
+override may never reach one: never negotiable, and never distinguishable. The
+comparison `availableBeds < 0` was written out in ELEVEN non-test files when the
+defect was found — four byte-identical definitions of this helper reached from
+eight call sites, six more inline under no name at all (the three admin
+overbook routes, group settlement, the member price-summary card's shortfall
+list and the edit panel's over-capacity list), and `overCapacityNights` itself.
+The booking-edit quote route is not among the eleven and never spelled the
+comparison: it leaked by PROJECTING every night's bed numbers and letting that
+card do the filtering. That is how one
+mistake reached every refusal path at once. Two definitions now remain, this one
+and `overCapacityNights`, held there by a census test (`INV-SSOT-001`) that
+matches the comparison rather than the name.
+
+**A member may waitlist over a held night, and cannot be promoted off it.**
+Since #2930 a full future night is selectable in the member calendar — that is
+how the waitlist is reached at all — so an entry can now legitimately sit over a
+held range. Promotion is gated on `checkCapacityForGuestRanges(...).available`,
+which a hold forces false whatever the bed arithmetic says, so the entry keeps
+its queue position until the hold is released rather than being offered or
+dropped.
+
 **Whole-lodge flat pricing is untouched.** `priceWholeLodgeFlat`
 (`src/lib/policies/pricing.ts`) sums a flat per-night season rate and never
 reads a bed count, so a hold whose represented set narrows costs the holding

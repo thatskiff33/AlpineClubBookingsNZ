@@ -103,7 +103,6 @@ import {
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { resolveRequestBookingHoldUntil } from "@/lib/booking-request";
-import { formatDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
@@ -116,6 +115,7 @@ import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 
 // Organiser booking states that may host a group. The organiser must be
 // committed (their own beds already reserved) before opening the group to
@@ -1375,15 +1375,6 @@ export type VerifyNonMemberJoinResult =
 /** Internal sentinel: the join row was claimed by a concurrent verify. */
 const JOIN_ALREADY_CLAIMED = "GROUP_JOIN_ALREADY_CLAIMED_SENTINEL";
 const CAPACITY_EXCEEDED = "GROUP_JOIN_CAPACITY_EXCEEDED_SENTINEL";
-
-/** Full nights (date-only strings) where the capacity check went negative. */
-function getCapacityFullNights(
-  nightDetails: Array<{ date: Date; availableBeds: number }>
-): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => formatDateOnly(night.date));
-}
 
 // test seam
 /**

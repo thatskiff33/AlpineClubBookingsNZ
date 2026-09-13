@@ -32,13 +32,13 @@ export interface NightAvailability {
   date: Date;
   occupiedBeds: number;
   availableBeds: number;
-  // True when a capacity-holding booking overlapping this night holds the
-  // whole lodge exclusively (ADR-001, issue #118). A held night is hard-blocked:
-  // availableBeds is pinned to 0 (never negative, so it stays OUT of the
-  // over-capacity confirm set) and `available` is forced false. To members it is
-  // indistinguishable from a genuinely full lodge (decision 6); an admin
-  // over-capacity override cannot punch into it (decision 5).
-  wholeLodgeHeld?: boolean;
+  // True when a capacity-holding booking overlapping this night holds the whole
+  // lodge exclusively (ADR-001, issue #118). Hard-blocked: availableBeds is
+  // pinned to 0 (never negative, so it stays OUT of the over-capacity confirm
+  // set) and `available` is forced false — indistinguishable from genuine
+  // fullness to a member (decision 6), unreachable by an admin override
+  // (decision 5). REQUIRED since #2930; `capacity-full-nights.ts` says why.
+  wholeLodgeHeld: boolean;
 }
 
 // The admin-override over-capacity error/helpers (issue #1668) live in

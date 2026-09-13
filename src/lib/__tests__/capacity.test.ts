@@ -741,10 +741,13 @@ describe("overCapacityNights (issue #1668 admin override)", () => {
   it("returns only the nights whose availableBeds went negative, as YYYY-MM-DD", () => {
     const nights = overCapacityNights({
       nightDetails: [
-        { date: parseDateOnly("2026-09-01"), occupiedBeds: 10, availableBeds: 2 },
-        { date: parseDateOnly("2026-09-02"), occupiedBeds: 30, availableBeds: -1 },
-        { date: parseDateOnly("2026-09-03"), occupiedBeds: 31, availableBeds: -2 },
-        { date: parseDateOnly("2026-09-04"), occupiedBeds: 29, availableBeds: 0 },
+        // `wholeLodgeHeld` is REQUIRED since #2930 — a night that cannot say
+        // whether it is held cannot be classified, because a held night sits at
+        // exactly 0 rather than below it (`INV-CAP-021`).
+        { date: parseDateOnly("2026-09-01"), occupiedBeds: 10, availableBeds: 2, wholeLodgeHeld: false },
+        { date: parseDateOnly("2026-09-02"), occupiedBeds: 30, availableBeds: -1, wholeLodgeHeld: false },
+        { date: parseDateOnly("2026-09-03"), occupiedBeds: 31, availableBeds: -2, wholeLodgeHeld: false },
+        { date: parseDateOnly("2026-09-04"), occupiedBeds: 29, availableBeds: 0, wholeLodgeHeld: false },
       ],
     });
 
@@ -758,7 +761,7 @@ describe("overCapacityNights (issue #1668 admin override)", () => {
     expect(
       overCapacityNights({
         nightDetails: [
-          { date: parseDateOnly("2026-09-01"), occupiedBeds: 1, availableBeds: 5 },
+          { date: parseDateOnly("2026-09-01"), occupiedBeds: 1, availableBeds: 5, wholeLodgeHeld: false },
         ],
       }),
     ).toEqual([]);
@@ -999,7 +1002,12 @@ describe("wholeLodgeBlockedNights + WholeLodgeHoldBlockedError (issue #118)", ()
     expect(
       wholeLodgeBlockedNights({
         nightDetails: [
-          { date: parseDateOnly("2026-09-01"), occupiedBeds: 5, availableBeds: 15 },
+          {
+            date: parseDateOnly("2026-09-01"),
+            occupiedBeds: 5,
+            availableBeds: 15,
+            wholeLodgeHeld: false,
+          },
           {
             date: parseDateOnly("2026-09-02"),
             occupiedBeds: 3,
@@ -1010,6 +1018,7 @@ describe("wholeLodgeBlockedNights + WholeLodgeHoldBlockedError (issue #118)", ()
             date: parseDateOnly("2026-09-03"),
             occupiedBeds: 31,
             availableBeds: -1,
+            wholeLodgeHeld: false,
           },
         ],
       }),

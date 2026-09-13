@@ -7,13 +7,19 @@ import { requiresAdultSupervisionReview } from "@/lib/booking-review";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
-  type NightAvailability,
 } from "@/lib/capacity";
-import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
+// #2930: one definition of the confirmable over-capacity set (`INV-SSOT-001`).
+// The private copy this replaces filtered `availableBeds < 0` and relied on a
+// held night's pin to 0 to stay out of it; `overCapacityNights` says so by name
+// (`INV-CAP-021`, ADR-001 decision 5), and held nights are still refused
+// separately below even under `allowOverbook`.
+import {
+  overCapacityNights,
+  wholeLodgeBlockedNights,
+} from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { formatDateOnly } from "@/lib/date-only";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import logger from "@/lib/logger";
@@ -30,19 +36,6 @@ const forceConfirmSchema = z.object({
   // lands PAID). A non-boolean value is rejected with 400.
   notifyMember: z.boolean().optional(),
 });
-
-function formatOverbookDate(night: NightAvailability) {
-  return formatDateOnly(night.date);
-}
-
-function getOverbookedNights(nightDetails: NightAvailability[]) {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => ({
-      date: formatOverbookDate(night),
-      availableBeds: night.availableBeds,
-    }));
-}
 
 export async function POST(
   request: NextRequest,
@@ -100,7 +93,7 @@ export async function POST(
         undefined,
         tx
       );
-      const overbookedNights = getOverbookedNights(nightDetails);
+      const overbookedNights = overCapacityNights({ nightDetails });
       const overbookDates = overbookedNights.map((night) => night.date);
 
       // Exclusive whole-lodge hold (ADR-001 decision 5, issue #118): a held

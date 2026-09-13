@@ -310,6 +310,21 @@ export interface QuoteResult {
    * keeps showing the stored fees.
    */
   guestPrices?: { guestId: string; priceCents: number }[];
+  /**
+   * #2930 — the nights a capacity refusal names, for the MEMBER. Dates only,
+   * built by `getCapacityFullNights`, which counts a whole-lodge-held night as
+   * a full night so a hold-only refusal is indistinguishable from ordinary
+   * fullness in this list as well as in the wording (`INV-CAP-021`, ADR-001
+   * decision 6). Present whenever capacity refused, whoever is asking.
+   */
+  capacityFullNights?: string[];
+  /**
+   * The CONFIRMABLE over-capacity nights, present only under an admin override
+   * (alongside `overCapacityConfirmRequired`). Held nights are excluded by
+   * `overCapacityNights` because no override may admit anyone onto one
+   * (decision 5), which is also why the bed numbers here are safe: they cannot
+   * describe a hold, and they never reach a member.
+   */
   nightDetails?: { date: string; availableBeds: number }[];
   // Issue #1668: set under an admin override when the target nights are over
   // capacity — the UI shows a warning and an explicit confirm rather than a

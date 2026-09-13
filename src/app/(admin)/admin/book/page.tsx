@@ -173,6 +173,30 @@ export default function AdminBookPage() {
   // a pre-selection fallback — a capped or secondary lodge resolves lower, and
   // the create route hard-400s a party above the resolved value (#1767).
   const [resolvedCapacity, setResolvedCapacity] = useState(lodgeCapacity);
+  /**
+   * The party ceiling, or null for none — the member wizard's `partySizeCeiling`
+   * rule, applied to the surface that kept opting out of it (#2930).
+   *
+   * ZERO IS NOT A CEILING OF ZERO. An unconfigured lodge resolves to 0 beds by
+   * design (`getLodgeCapacityStatus`, source `unconfigured_lodge`) so it cannot
+   * be overbooked first. Read as a ceiling, that disabled every add-guest
+   * control at zero guests under a "Guests (0/0 max)" heading — the same dead
+   * end #2930 removed for members, on the one surface with no waitlist to fall
+   * through to. Withdrawn ONLY at zero: a positive capacity caps the party
+   * exactly as before, and over-capacity stays warn-and-confirm (#1695/#1767)
+   * with an exclusive hold still unbypassable.
+   *
+   * IT DOES NOT MAKE SUCH A LODGE BOOKABLE. `POST /api/bookings` refuses any
+   * party above the lodge's capacity before the waitlist fallback, so at zero
+   * the create still fails — with "a booking cannot exceed 0 guests", which at
+   * least names the cause. Whether such a lodge should be bookable at all is a
+   * product question this issue does not settle; the member path meets the same
+   * refusal.
+   */
+  const partySizeCeiling = resolvedCapacity > 0 ? resolvedCapacity : null;
+  /** Derived once, so the three add-guest affordances cannot disagree. */
+  const atPartySizeCeiling =
+    partySizeCeiling !== null && guests.length >= partySizeCeiling;
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
@@ -327,8 +351,9 @@ export default function AdminBookPage() {
     if (guests.some((g) => g.memberId === fm.id)) return;
     // Admin creates may exceed the live availability (over-capacity is
     // warn-and-confirm at submit, #1695/#1767), so cap by the selected
-    // lodge's resolved capacity — the create route's hard party-size limit.
-    if (guests.length >= resolvedCapacity) return;
+    // lodge's resolved capacity — the create route's hard party-size limit —
+    // except at zero, which is "unconfigured" rather than a ceiling (#2930).
+    if (atPartySizeCeiling) return;
     setGuests([
       ...guests,
       {
@@ -400,15 +425,15 @@ export default function AdminBookPage() {
         const data = await res.json();
         if (!ownsCurrentLodge()) return;
         setAvailableBeds(data.minAvailable);
-        const night = Array.isArray(data.nightDetails)
-          ? data.nightDetails[0]
-          : null;
-        if (
-          night &&
-          typeof night.occupiedBeds === "number" &&
-          typeof night.availableBeds === "number"
-        ) {
-          setResolvedCapacity(night.occupiedBeds + night.availableBeds);
+        // #2930: read the lodge's capacity from the field the route now states,
+        // rather than re-deriving it from the first night's
+        // `occupiedBeds + availableBeds`. The derivation was correct — the #155
+        // payload contract guarantees that sum on every night — but it was a
+        // SECOND way of answering "how many beds has this lodge", computed from
+        // a row that is absent whenever `nightDetails` is empty, which left the
+        // previous lodge's capacity standing (`INV-SSOT-001`).
+        if (typeof data.lodgeCapacity === "number") {
+          setResolvedCapacity(data.lodgeCapacity);
         }
       }
 
@@ -950,9 +975,7 @@ export default function AdminBookPage() {
                               : "outline"
                         }
                         size="sm"
-                        disabled={
-                          alreadyAdded || guests.length >= resolvedCapacity
-                        }
+                        disabled={alreadyAdded || atPartySizeCeiling}
                         onClick={() => addFamilyMemberAsGuest(fm)}
                       >
                         {alreadyAdded ? "\u2713 " : "+ "}
@@ -991,7 +1014,7 @@ export default function AdminBookPage() {
             <GuestForm
               guests={guests}
               onGuestsChange={setGuests}
-              maxGuests={resolvedCapacity}
+              maxGuests={partySizeCeiling}
             />
             <div className="flex justify-between pt-4">
               <Button
