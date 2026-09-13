@@ -243,8 +243,3 @@ export function isDeclarationName(call: ts.CallExpression): boolean {
 export function collapseWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
-
-/** The 1-based line a node starts on, for a human-readable report. */
-export function lineOf(ast: ts.SourceFile, node: ts.Node): number {
-  return ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1;
-}
