@@ -109,18 +109,18 @@ async function mintedGoodwillLine(appliedCents = 3000) {
   ];
 
   let sent: CreditNote | undefined;
-  retryWrite.mockImplementation(
+  retryWrite.mockImplementation(async (options) => {
     // The engine hands us the payload builder it would hand the Xero write, so
-    // this captures the note as it would actually be created.
-    async (params: {
-      buildRequestPayload: (contactId: string) => { creditNotes: CreditNote[] };
-    }) => {
-      sent = params.buildRequestPayload("contact-1").creditNotes[0];
-      return {
-        body: { creditNotes: [{ creditNoteID: "cn-new", creditNoteNumber: "CN-1" }] },
-      };
-    },
-  );
+    // this captures the note as it would actually be created. The options type
+    // declares the payload `unknown`, hence the narrowing here.
+    const payload = options.buildRequestPayload("contact-1") as {
+      creditNotes: CreditNote[];
+    };
+    sent = payload.creditNotes[0];
+    return {
+      body: { creditNotes: [{ creditNoteID: "cn-new", creditNoteNumber: "CN-1" }] },
+    };
+  });
 
   await allocateAppliedCreditForBooking("b1");
   expect(sent).toBeDefined();
