@@ -528,3 +528,122 @@ describe("sendQuoteExpiryReminders environment-safety withholds (#3035)", () => 
     );
   });
 });
+
+/**
+ * #2936 — the beds a CORRECTED request was left holding.
+ *
+ * A correction supersedes every DRAFT/SENT quote and drops the request to
+ * VERIFIED. A catering-only correction deliberately keeps the beds, because
+ * catering is the one corrected field a hold is not built from — and every
+ * correction whose bed release FAILED leaves the same state. Before this, that
+ * state was swept by nothing: the expiry phase selects SENT quotes, which the
+ * correction had just superseded, and this phase selected the statuses the
+ * correction had just left. A school request holding thirty beds could
+ * sterilise them indefinitely.
+ */
+describe("sendQuoteExpiryReminders — a corrected request's leftover hold (#2936)", () => {
+  const past = () => new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const wayPast = () => new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+
+  beforeEach(() => {
+    mocks.mockGetSettings.mockResolvedValue({
+      showPricingToNonMembers: false,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 0,
+    });
+  });
+
+  it("sweeps a VERIFIED request still holding beds after its window lapsed", async () => {
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      {
+        id: "req-c",
+        heldBookingId: "held-c",
+        heldBooking: { createdAt: wayPast() },
+        quotes: [{ responseTokenExpiresAt: past() }],
+      },
+    ] as never);
+    mocks.tx.bookingRequest.findUnique.mockResolvedValue({
+      heldBookingId: "held-c",
+      // Where a correction leaves it: live, re-openable, and holding beds for a
+      // shape nobody is quoting any more.
+      status: BookingRequestStatus.VERIFIED,
+    });
+    mocks.tx.bookingRequestQuote.count.mockResolvedValue(0);
+    mocks.tx.booking.findUnique.mockResolvedValue({
+      status: BookingStatus.AWAITING_REVIEW,
+      createdAt: wayPast(),
+    });
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.releasedHoldCount).toBe(1);
+    expect(mocks.tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "held-c", status: BookingStatus.AWAITING_REVIEW },
+      }),
+    );
+    // The scan asks for the status a correction leaves, not only the two the
+    // requester's own bounce-backs leave.
+    const scan = vi.mocked(prisma.bookingRequest.findMany).mock
+      .calls[0][0] as { where: { status: { in: string[] } } };
+    expect(scan.where.status.in).toContain(BookingRequestStatus.VERIFIED);
+  });
+
+  it("still keeps a deliberate hold on a request that was never quoted", async () => {
+    // The reason VERIFIED was excluded in the first place: an officer holding
+    // beds for an unquoted school request. It has no response window at all, so
+    // the deadline rule keeps it — and keeps it for the same reason as before,
+    // rather than by a new exception.
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      {
+        id: "req-c2",
+        heldBookingId: "held-c2",
+        heldBooking: { createdAt: wayPast() },
+        quotes: [],
+      },
+    ] as never);
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.releasedHoldCount).toBe(0);
+    expect(mocks.prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("still keeps a re-hold placed after the window lapsed", async () => {
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      {
+        id: "req-c3",
+        heldBookingId: "held-c3",
+        heldBooking: { createdAt: new Date(Date.now() - 60 * 60 * 1000) },
+        quotes: [{ responseTokenExpiresAt: past() }],
+      },
+    ] as never);
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.releasedHoldCount).toBe(0);
+    expect(mocks.prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("bails under the lock if the request left the sweepable set", async () => {
+    // The officer re-quoted between the scan and the lock, so the beds are
+    // wanted again.
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      {
+        id: "req-c4",
+        heldBookingId: "held-c4",
+        heldBooking: { createdAt: wayPast() },
+        quotes: [{ responseTokenExpiresAt: past() }],
+      },
+    ] as never);
+    mocks.tx.bookingRequest.findUnique.mockResolvedValue({
+      heldBookingId: "held-c4",
+      status: BookingRequestStatus.QUOTE_SENT,
+    });
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.releasedHoldCount).toBe(0);
+    expect(mocks.tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+});

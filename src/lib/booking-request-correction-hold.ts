@@ -43,18 +43,30 @@ export type CorrectionHoldOutcome =
   | "keptCateringOnly";
 
 /**
- * The correction COMMITTED but the capacity hold could not be released.
+ * The correction COMMITTED but something after the claim did not.
  *
  * Separate from `BookingRequestError` because the caller must not retry: the
- * request is already corrected. What is left is a hold over the old shape,
- * still pointed at by the request and still carrying its own Release button.
+ * request is already corrected, and a retry would refuse on the bumped version
+ * anyway. The usual case is a hold over the old shape, still pointed at by the
+ * request and still carrying its own Release button — but every post-claim
+ * failure wears this shape, because every one of them leaves a saved
+ * correction, and telling the officer it failed is what makes them re-type it.
+ *
+ * `cause` is carried rather than dropped so
+ * `isHostingCoverageParticipantRetry` can still see the participant fence
+ * through the wrapper, exactly as `BookingRequestDeclineCommittedError` does.
  */
 export class BookingRequestCorrectionCommittedError extends Error {
   status: number;
   holdReleasePending: boolean;
 
-  constructor(message: string, status: number, holdReleasePending: boolean) {
-    super(message);
+  constructor(
+    message: string,
+    status: number,
+    holdReleasePending: boolean,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
     this.name = "BookingRequestCorrectionCommittedError";
     this.status = status;
     this.holdReleasePending = holdReleasePending;

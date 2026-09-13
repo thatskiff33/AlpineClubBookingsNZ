@@ -121,9 +121,11 @@ import {
   type BookingRequestGuest,
 } from "@/lib/booking-request";
 import {
+  BookingRequestCorrectionCommittedError,
   reconcileCorrectedRequestHold,
   type CorrectionHoldOutcome,
 } from "@/lib/booking-request-correction-hold";
+import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -341,10 +343,35 @@ export async function correctBookingRequest(
     );
   }
 
+  /**
+   * WHAT THE REQUEST IS DECIDES THE SHAPE, NOT WHAT THE CALLER SENT.
+   *
+   * This used to branch on whether a school block arrived, which is a different
+   * question with a different answer: a GENERAL request carrying both a guest
+   * list and a school block would have had its party silently REGENERATED from
+   * teachers and counts, and school fields stamped onto a row that has none.
+   * This module's whole claim is that it cannot be routed around by a caller
+   * with a looser idea of what a correction is, and branching on the payload is
+   * exactly that idea. So the row's own type selects the shape, and a payload
+   * that does not match it is refused rather than partly used.
+   */
   const isSchool = request.type === BookingRequestType.SCHOOL;
-  if (isSchool && !input.school) {
+  const school = isSchool ? (input.school ?? null) : null;
+  if (isSchool && !school) {
     throw new BookingRequestError(
       "A school request needs its school details to be corrected together.",
+      422,
+    );
+  }
+  if (!isSchool && input.school) {
+    throw new BookingRequestError(
+      "This request is not a school request, so it has no school details to correct.",
+      422,
+    );
+  }
+  if (isSchool && input.guests?.length) {
+    throw new BookingRequestError(
+      "A school request's party is built from its teachers and child counts, so a guest list cannot be sent with it.",
       422,
     );
   }
@@ -372,16 +399,16 @@ export async function correctBookingRequest(
     );
   }
 
-  const teachers = input.school ? normaliseTeachers(input.school.teachers) : [];
-  if (input.school && teachers.length === 0) {
+  const teachers = school ? normaliseTeachers(school.teachers) : [];
+  if (school && teachers.length === 0) {
     throw new BookingRequestError(
       "A school request needs at least one teacher attending.",
       422,
     );
   }
 
-  const guests: BookingRequestGuest[] = input.school
-    ? generateSchoolGuests({ teachers, childCounts: input.school.childCounts })
+  const guests: BookingRequestGuest[] = school
+    ? generateSchoolGuests({ teachers, childCounts: school.childCounts })
     : (input.guests ?? []);
   if (guests.length === 0) {
     throw new BookingRequestError("A request needs at least one guest.", 422);
@@ -407,8 +434,8 @@ export async function correctBookingRequest(
       422,
     );
   }
-  const schoolName = input.school
-    ? normaliseSchoolNameForStorage(input.school.schoolName)
+  const schoolName = school
+    ? normaliseSchoolNameForStorage(school.schoolName)
     : null;
 
   // ---- what actually changed ----------------------------------------------
@@ -424,7 +451,7 @@ export async function correctBookingRequest(
   mark("contactLastName", request.contactLastName !== contactLastName);
   mark("contactEmail", request.contactEmail.toLowerCase() !== contactEmail);
   mark("contactPhone", (request.contactPhone ?? null) !== contactPhone);
-  if (input.school) {
+  if (school) {
     mark("schoolName", request.schoolName !== schoolName);
     mark(
       "teachers",
@@ -433,7 +460,7 @@ export async function correctBookingRequest(
     );
     mark(
       "cateringPreference",
-      request.cateringPreference !== input.school.cateringPreference,
+      request.cateringPreference !== school.cateringPreference,
     );
   }
   if (changedFields.length === 0) {
@@ -491,8 +518,8 @@ export async function correctBookingRequest(
     const preview = schoolName
       ? await previewSchoolRecordForName(tx, schoolName)
       : null;
-    if (preview && input.school) {
-      assertSchoolRecordOutcomeAcknowledged(preview, input.school.schoolRecord);
+    if (preview && school) {
+      assertSchoolRecordOutcomeAcknowledged(preview, school.schoolRecord);
     }
 
     const claimed = await tx.bookingRequest.updateMany({
@@ -517,11 +544,11 @@ export async function correctBookingRequest(
         ...(partyChanged
           ? { linkedGuestMembers: [] as unknown as Prisma.InputJsonValue }
           : {}),
-        ...(input.school
+        ...(school
           ? {
               schoolName,
               teachers: teachers as unknown as Prisma.InputJsonValue,
-              cateringPreference: input.school.cateringPreference,
+              cateringPreference: school.cateringPreference,
             }
           : {}),
         // The one rule: a correction re-opens the request. Every number below
@@ -569,14 +596,26 @@ export async function correctBookingRequest(
     );
   }
 
-  // ---- the hold ------------------------------------------------------------
-  // The claim has COMMITTED. Everything below is after the fact, so the audit
-  // row must survive the release failing: a correction whose beds could not be
-  // freed is precisely the one an officer has to be able to find later, and
-  // letting `reconcileCorrectedRequestHold` throw past the write would delete
-  // the record of the case that needs it most. The error is held, the row is
-  // written with what actually happened to the hold, and only then is it
-  // rethrown — so the caller still learns the release failed.
+  // ---- everything after the claim -----------------------------------------
+  /**
+   * THE CLAIM HAS COMMITTED, SO NOTHING BELOW MAY BE REPORTED AS A FAILED SAVE.
+   *
+   * `declineBookingRequest` wraps its whole post-claim block and converts ANY
+   * error into its own committed type. This adopted decline's ORDERING and, for
+   * a while, not its wrapper — so only the hold reconcile's own committed error
+   * got that treatment, and everything else (a hold read that throws instead of
+   * returning, the member-guest notification, the advisory availability
+   * measure) fell through to a bare failure while the correction WAS saved. The
+   * officer then re-types the whole form, resubmits, and hits a version
+   * conflict: the exact confusion this surface set out to remove, one layer up.
+   *
+   * So the block is wrapped. The inner capture around the reconcile stays, and
+   * is a different thing: it is what lets the AUDIT ROW be written with what
+   * actually happened to the hold before the error is rethrown, because a
+   * correction whose beds could not be freed is precisely the one an officer has
+   * to be able to find later.
+   */
+  try {
   let hold:
     | { released: true; outcome: CorrectionHoldOutcome }
     | { released: false; error: unknown };
@@ -625,7 +664,7 @@ export async function correctBookingRequest(
       checkIn: checkIn.toISOString(),
       checkOut: checkOut.toISOString(),
       guestCount: guests.length,
-      ...(input.school
+      ...(school
         ? {
             previousSchoolName: request.schoolName,
             schoolName,
@@ -671,4 +710,29 @@ export async function correctBookingRequest(
         : getCapacityFullNights(capacity.nightDetails),
     },
   };
+  } catch (error) {
+    // Already the committed shape (the reconcile's own refusal, rethrown
+    // above): it already says the right thing, so pass it through untouched.
+    if (error instanceof BookingRequestCorrectionCommittedError) throw error;
+    // The hosting-coverage participant fence is a RETRY signal, and the route
+    // turns it into its own response — so it is carried as `cause`, the way
+    // decline carries it, rather than flattened away.
+    const holdReleasePending = isHostingCoverageParticipantRetry(error);
+    // Only a request that HAD a hold can have left one behind. Saying "check
+    // the held beds" to an officer correcting a request that never held any is
+    // how a clear message becomes noise.
+    const holdUnresolved = holdReleasePending || request.heldBookingId !== null;
+    throw new BookingRequestCorrectionCommittedError(
+      holdUnresolved
+        ? "The correction was saved, but this request's held beds could not be confirmed. Open the request and check its hold before quoting again."
+        : "The correction was saved, but the result could not be read back. Reload the request queue before continuing.",
+      error instanceof BookingRequestError
+        ? error.status
+        : holdReleasePending
+          ? 409
+          : 500,
+      holdReleasePending,
+      { cause: error },
+    );
+  }
 }

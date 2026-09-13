@@ -150,18 +150,24 @@ export async function POST(
       availability: result.availability,
     });
   } catch (err) {
-    const hostingRetry = hostingCoverageParticipantRetryResponse(err);
+    // The correction is ALREADY saved and something after the claim was not.
+    // Reported as its own shape so the panel says what actually happened rather
+    // than inviting a retry that would refuse on the bumped version anyway —
+    // and the recovery fields ride along with the hosting-retry response too,
+    // which is why that check comes second and takes them. `decline/route.ts`
+    // composes the identical pair.
+    const committedRecovery =
+      err instanceof BookingRequestCorrectionCommittedError
+        ? { corrected: true, holdReleasePending: err.holdReleasePending }
+        : undefined;
+    const hostingRetry = hostingCoverageParticipantRetryResponse(
+      err,
+      committedRecovery,
+    );
     if (hostingRetry) return hostingRetry;
-    // The correction is ALREADY saved; only the bed release failed. Reported as
-    // its own shape so the panel says what actually happened rather than
-    // inviting a retry that would refuse on the bumped version anyway.
     if (err instanceof BookingRequestCorrectionCommittedError) {
       return NextResponse.json(
-        {
-          error: err.message,
-          corrected: true,
-          holdReleasePending: err.holdReleasePending,
-        },
+        { error: err.message, ...committedRecovery },
         { status: err.status },
       );
     }

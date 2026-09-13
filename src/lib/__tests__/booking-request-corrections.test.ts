@@ -931,3 +931,141 @@ describe("the party and the member links keyed to it move together", () => {
     expect(entry.metadata.clearedMemberLinkCount).toBe(1);
   });
 });
+
+describe("the request's own type decides the shape, not the payload", () => {
+  /** A public request as it sits in the queue: a guest list, no school half. */
+  function generalRequestRow(overrides: Record<string, unknown> = {}) {
+    return schoolRequestRow({
+      type: BookingRequestType.GENERAL,
+      schoolName: null,
+      teachers: null,
+      cateringPreference: null,
+      ...overrides,
+    });
+  }
+
+  it("refuses a school block on a request that is not a school request", async () => {
+    // The defect: branching on whether a school block ARRIVED rather than on
+    // what the row IS. A public request carrying both a guest list and a school
+    // block had its party silently regenerated from teachers and counts, and
+    // school fields stamped onto a row that has none — the exact "caller with a
+    // looser idea of what a correction is" this module claims it cannot be
+    // routed around by.
+    stubRequest(generalRequestRow());
+    await expect(
+      correctBookingRequest(
+        schoolInput({
+          guests: [{ firstName: "Gus", lastName: "Guest", ageTier: "ADULT" }],
+        }),
+      ),
+    ).rejects.toThrow(/not a school request/i);
+    expect(prisma.bookingRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a hand-edited guest list on a school request", async () => {
+    // The mirror: a school party is DERIVED from its teachers and counts, so a
+    // guest list sent alongside would be silently discarded. Refused instead,
+    // because a caller who sent one believed it would be used.
+    stubRequest(schoolRequestRow());
+    await expect(
+      correctBookingRequest(
+        schoolInput({
+          guests: [{ firstName: "Gus", lastName: "Guest", ageTier: "ADULT" }],
+        }),
+      ),
+    ).rejects.toThrow(/built from its teachers and child counts/i);
+    expect(prisma.bookingRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("corrects a public request from its guest list alone", async () => {
+    stubRequest(generalRequestRow());
+    const result = await correctBookingRequest(
+      schoolInput({
+        school: null,
+        guests: [
+          { firstName: "Gus", lastName: "Guest", ageTier: "ADULT" },
+          { firstName: "Pip", lastName: "Guest", ageTier: "CHILD" },
+        ],
+      }),
+    );
+    const data = claimData();
+    expect(data.guests).toHaveLength(2);
+    // No school field is written onto a row that has none.
+    expect(data.schoolName).toBeUndefined();
+    expect(data.teachers).toBeUndefined();
+    expect(data.cateringPreference).toBeUndefined();
+    expect(result.schoolRecord).toBeNull();
+  });
+});
+
+describe("everything after the claim is a SAVED correction, whatever went wrong", () => {
+  // `declineBookingRequest` wraps its whole post-claim block and converts ANY
+  // error into its committed type. This adopted decline's ordering and, for a
+  // while, not its wrapper: only the hold reconcile's own refusal got that
+  // treatment, so anything else threw a bare failure while the correction WAS
+  // saved — and the officer re-typed the form, resubmitted, and hit a version
+  // conflict. That is the confusion this surface exists to remove, one layer up.
+
+  it("reports a failed availability measure as saved, not as a failed save", async () => {
+    stubRequest(schoolRequestRow());
+    (checkCapacityForGuestRanges as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("capacity read blew up"),
+    );
+
+    const error = await correctBookingRequest(schoolInput()).catch((err) => err);
+    expect(error).toBeInstanceOf(BookingRequestCorrectionCommittedError);
+    expect(error.message).toMatch(/correction was saved/i);
+    // Nothing was held, so the officer is not sent looking for beds.
+    expect(error.message).toMatch(/could not be read back/i);
+    expect(error.holdReleasePending).toBe(false);
+    // And the claim really did commit, which is what makes the message true.
+    expect(prisma.bookingRequest.updateMany).toHaveBeenCalled();
+  });
+
+  it("names the hold when there was one to leave behind", async () => {
+    stubRequest(
+      schoolRequestRow({
+        heldBookingId: "held-1",
+        status: BookingRequestStatus.QUOTE_SENT,
+      }),
+    );
+    (prisma.booking.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    });
+    (notifyMemberGuestsHoldReleased as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("mail dispatcher blew up"),
+    );
+
+    const error = await correctBookingRequest(schoolInput()).catch((err) => err);
+    expect(error).toBeInstanceOf(BookingRequestCorrectionCommittedError);
+    expect(error.message).toMatch(/held beds could not be confirmed/i);
+  });
+
+  it("passes the reconcile's own refusal through untouched", async () => {
+    // It already says the right thing — and it knows whether the beds are still
+    // held, which the generic wrapper can only guess at.
+    stubRequest(
+      schoolRequestRow({
+        heldBookingId: "held-1",
+        status: BookingRequestStatus.QUOTE_SENT,
+      }),
+    );
+    (prisma.booking.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    });
+    (cancelBooking as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 500,
+      error: "nope",
+    });
+
+    const error = await correctBookingRequest(schoolInput()).catch((err) => err);
+    expect(error).toBeInstanceOf(BookingRequestCorrectionCommittedError);
+    expect(error.message).toMatch(/Release the hold from the request/i);
+    expect(error.holdReleasePending).toBe(true);
+    // The audit row is still written first, with what happened to the hold.
+    const entry = (logAudit as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(entry.metadata.holdOutcome).toBe("releaseFailed");
+  });
+});
