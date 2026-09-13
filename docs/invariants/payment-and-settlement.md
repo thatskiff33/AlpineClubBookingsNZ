@@ -786,9 +786,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   ACCRECCREDIT notes back-linked to the positive `MemberCredit` row's
   `xeroCreditNoteId`. When credit is applied to an IB booking (create-time or
   switch-to-IB), the raise-path engine (`xero-applied-credit-allocation.ts`, an
-  outbox op enqueued after the invoice op) allocates those notes against the new
-  invoice oldest-first, up to the applied amount; only the noteless remainder
- is covered by a freshly minted note. Per-note
+  outbox op enqueued after the invoice op) allocates those notes oldest-first
+  against the new invoice, up to the applied amount; only the noteless remainder
+  is freshly minted. Per-note
   remaining balances live in `MemberCreditNoteAllocation`. The `payment` mirror holds
   `amountCents + creditAppliedCents = finalPriceCents` (net of
   `refundedAmountCents` once a #1765 repay generation exists; the switch path
@@ -798,19 +798,22 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   clearing term is exact. Stated limit, the partial-window residual: a
   concurrent CANCEL treats the credit as unallocated and Xero rejects the excess
   LOUDLY; a concurrent HOLD-EXPIRY settles its clearing note by bank payment and
-  silently over-credits Xero by the already-allocated slice — a bookkeeping-only divergence (member LOCAL money is conserved either way by the 100% restore) that an operator reconciles in Xero. The op's idempotent retry (the `@@unique(memberCreditId,
-  appliedToBookingId)` join key + per-row completion links) finishes the
-  allocations then stamps; its re-plan reads each lot's remaining balance
-  EXCLUDING this booking's own already-committed allocation rows. A
-  FAILED allocation op has no auto FAILED→PENDING reaper; recovery runs through
-  the Xero outbox retry stack (`xero-operation-retry.ts`). Cancellation is
+  over-credits Xero by the already-allocated slice — bookkeeping-only (the 100%
+  restore conserves LOCAL money either way), reconciled in Xero. The op's
+  idempotent retry (`@@unique(memberCreditId, appliedToBookingId)` + per-row
+  completion links) finishes the allocations then stamps; its re-plan reads each
+  lot's remaining balance EXCLUDING this booking's own committed rows. A FAILED
+  op has no auto FAILED→PENDING reaper; recovery runs through
+  `xero-operation-retry.ts`. Cancellation is
   UNCHANGED and still conserves: the 100% restore + `finalPrice − allocated`
-  clearing note void the invoice while returning the credit LOCALLY; after a cancel of an allocated-credit booking the restored credit is local-only (its funding note was consumed by the cancelled invoice); the local ledger is the source of truth and Xero catches up when the credit is next used, via the noteless mint-fresh branch. Goodwill, settled (#2717): the remainder note's
-  `ADMIN_ADJUSTMENT` share — discretionary credit the club was never owed —
-  posts to `goodwillWriteOffs`, an EXPENSE mapping falling back to
-  `hutFeeRefunds` while unset (`INV-INT-021`). Every other share, restored
-  credit included, stays on `hutFeeRefunds`: it is the member's own money, and
-  "has no note yet" is not the accounting question.
+  clearing note void the invoice while returning the credit LOCALLY. After a
+  cancel of an allocated-credit booking the restored credit is local-only (the
+  cancelled invoice consumed its funding note); the local ledger is the source
+  of truth and Xero catches up on the next use, via the mint-fresh branch. Goodwill, settled (#2717): only the minted note's
+  `ADMIN_ADJUSTMENT` share posts to `goodwillWriteOffs` (EXPENSE, falling back
+  to `hutFeeRefunds` while unset, `INV-INT-021`); every other share, restored
+  credit included, is the member's own money and stays on `hutFeeRefunds`.
+  Noteless is not the accounting question.
 
 ## INV-PAY-024
 

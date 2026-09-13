@@ -340,60 +340,32 @@ legitimately depend on being offered an out-of-service lodge.
 ### INV-INT-021
 
 - **A new Xero account mapping key ships with three things, always** (owner,
-  10 Aug 2026, #2717): an explicit account filter, a documented fallback for
-  while it is unset, and a prompt in the Xero setup screen saying so. Never a
-  hard failure on upgrade, never a silent default. Every existing club and
-  every fork lands unconfigured the moment a key ships, so refusing to post
-  until an admin acts breaks a working flow for all of them.
-- **The filter is on the account's CLASS, not its type.** Xero's type
-  enumeration carries four expense-class values — `EXPENSE`, `OVERHEADS`,
-  `DIRECTCOSTS`, `DEPRECIATN` — and the single field meaning "this is an
-  expense account" is the class; on the standard New Zealand chart a treasurer's
-  write-off range is typed `OVERHEADS`. `normalizeXeroAccountClass` is the ONE
-  reading of it, shared with the finance reports, which classify the same way.
-  A definition may narrow to named types WITHIN its class; every existing key
-  does, which is why none of their pickers widened.
-- **What is structural: the filter EXISTS, and the picker obeys it.**
-  `accountClass` is a REQUIRED field of every definition in
-  `src/lib/xero-account-mapping-keys.ts` — the one registry the admin picker,
-  the API allowlist, the runtime resolver and the seed all derive from — so a
-  key with no filter cannot be written down, and `accountsForMappingKey` is the
-  only thing a picker filters with. The key set was spelled out in four places
-  before #2717, and nothing failed if you edited three.
-- **What is NOT: the server does not check a stored code against the filter,
-  and says so.** Answering "is 477 an expense account?" needs the connected
-  organisation's chart, which no offline writer has. So config transfer and a
-  direct call to `/api/admin/xero/account-mappings` are TRUSTED for the code's
-  value: a bundle exported at one club can put a revenue code on the goodwill
-  key at another. What the write path does refuse is the structural mix-up
-  `mappingWriteViolation` can see — an unknown key, an account code on a key
-  that selects a Xero Item, an item code on a key that reads none, a blank code
-  masquerading as a choice. Detection of the rest is the setup screen, which
-  shows a stored code that is outside its key's filter, names it as such, and
-  keeps it selectable rather than rendering a value the picker does not offer.
-- **The fallback is ONE hop, and verbatim.** While a key with a registered
-  fallback is unset, `getResolvedAccountMappingWithFallback` returns the
-  fallback key's resolution unchanged — code, item code and
-  `codeExplicitlyConfigured` alike — so a club that upgrades and does nothing
-  posts exactly where it posted before, down to the line-coding decision. A
-  fallback key may not declare a fallback of its own; a chain would make "where
-  are my entries going?" unanswerable from one row of the setup screen.
-- **The prompt is in TWO places, because one of them is collapsed.** The
-  mapping row says it is falling back and names the account its entries are
-  going to; and the `xero-mappings` setup-checklist step names any key that is
-  unset and falling back, instead of reporting "configured" off a row count that
-  cannot see a key nobody has decided. The Xero screen's mappings section is
-  collapsed by default and only loads when it is opened, so the row notice alone
-  reaches nobody who does not already know to look — which is the silence the
-  owner rejected.
-- **"Configured" means the club CHOSE a code**, which is
-  `isCodeExplicitlyConfigured` and nothing else. The setup screen's fallback
-  notice is driven by that flag, through the same resolver the runtime path
-  uses, never by the panel deciding for itself that a null code means unset.
-- **`goodwillWriteOffs` is the first instance**: filtered to the whole EXPENSE
-  class, falling back to `hutFeeRefunds`, and it reclassifies nothing already in
-  Xero. Only a DISCRETIONARY grant routes to it — an `ADMIN_ADJUSTMENT` credit
-  lot. A member's own money coming back stays on `hutFeeRefunds` even when it
-  has no Xero note yet, because "noteless" is not the accounting question
-  (`INV-PAY-023`). Pinned by `xero-account-mapping-registry.test.ts` and
+  10 Aug 2026, #2717): an account filter, a fallback for while unset, a setup
+  prompt saying so. Never a hard failure on upgrade, never a silent default.
+- **Filter on the account's CLASS, not its type** — Xero types four kinds of
+  account as expenses; class is the field meaning "an expense account".
+  `normalizeXeroAccountClass` is the ONE reading of it, shared with the finance
+  reports. A definition may narrow to types within its class.
+- **Structural: that a filter exists, and that the picker obeys it.**
+  `accountClass` is REQUIRED on every definition in
+  `src/lib/xero-account-mapping-keys.ts`, the one registry the picker, API
+  allowlist, resolver and seed derive from; `accountsForMappingKey` is a
+  picker's only filter.
+- **NOT structural: the stored code, and this rule says so.** Judging it needs
+  the org's chart, so config transfer and the API are TRUSTED for the value.
+  `mappingWriteViolation` refuses only what the registry sees: unknown key,
+  account code on an item-only key, item code on a key reading none, blank code.
+  The setup screen flags a stored code outside the filter.
+- **The fallback is ONE hop, and verbatim**: while unset,
+  `getResolvedAccountMappingWithFallback` returns the fallback key's resolution
+  unchanged, so an upgrading club posts where it did. A fallback key declares
+  none itself.
+- **"Configured" means the club CHOSE a code** — `isCodeExplicitlyConfigured`,
+  asked of the code being shown, never a server flag that stales mid-edit.
+- **The prompt is in TWO places**, the mapping row and the `xero-mappings` setup
+  step: the mappings section is collapsed by default.
+- **`goodwillWriteOffs` is the first instance**: whole EXPENSE class, falling
+  back to `hutFeeRefunds`, reclassifying nothing. Only an `ADMIN_ADJUSTMENT` lot
+  routes to it; a member's own money stays on `hutFeeRefunds` even with no note
+  yet (`INV-PAY-023`). Pinned by `xero-account-mapping-registry.test.ts`,
   `goodwill-write-off-account.test.ts`.
