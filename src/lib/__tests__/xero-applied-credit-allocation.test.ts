@@ -204,11 +204,13 @@ vi.mock("@/lib/xero-sync", () => ({
 import { CreditType } from "@prisma/client";
 import {
   allocateAppliedCreditForBooking,
-  mintSliceMappingKey,
   planAppliedCreditAllocation,
-  planMintGroups,
   type AppliedCreditLot,
 } from "@/lib/xero-applied-credit-allocation";
+import {
+  mintSliceMappingKey,
+  planMintGroups,
+} from "@/lib/xero-applied-credit-mint-accounts";
 import { allocateCreditNoteToInvoice } from "@/lib/xero-credit-notes";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
 
@@ -397,12 +399,12 @@ describe("planMintGroups (#2717)", () => {
     // The recorded request payload and every replay of it must agree, so the
     // order cannot come from which lot happened to be created first.
     const goodwillFirst = planMintGroups([
-      { memberCreditId: "c1", creditType: CreditType.ADMIN_ADJUSTMENT, amountCents: 100 },
-      { memberCreditId: "c2", creditType: CreditType.CANCELLATION_REFUND, amountCents: 200 },
+      { creditType: CreditType.ADMIN_ADJUSTMENT, amountCents: 100 },
+      { creditType: CreditType.CANCELLATION_REFUND, amountCents: 200 },
     ]);
     const refundFirst = planMintGroups([
-      { memberCreditId: "c2", creditType: CreditType.CANCELLATION_REFUND, amountCents: 200 },
-      { memberCreditId: "c1", creditType: CreditType.ADMIN_ADJUSTMENT, amountCents: 100 },
+      { creditType: CreditType.CANCELLATION_REFUND, amountCents: 200 },
+      { creditType: CreditType.ADMIN_ADJUSTMENT, amountCents: 100 },
     ]);
     expect(goodwillFirst).toEqual(refundFirst);
     expect(goodwillFirst.map((g) => g.mappingKey)).toEqual([
