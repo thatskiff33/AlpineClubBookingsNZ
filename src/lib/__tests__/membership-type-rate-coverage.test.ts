@@ -4,6 +4,7 @@ import { requireCalendarDate } from "@/lib/club-time";
 import {
   computeMembershipTypeRateGaps,
   formatMembershipTypeRateGap,
+  isKeyResolvedRateHolder,
   isRateBearingMembershipType,
   requiresHutRates,
   seasonRequiresRates,
@@ -50,10 +51,34 @@ describe("which membership types carry their own hut rates (INV-MOD-007)", () =>
     expect(isRateBearingMembershipType(ADMIN)).toBe(false);
   });
 
-  it("excludes an archived type, which prices only history", () => {
-    expect(requiresHutRates(FULL)).toBe(true);
-    expect(requiresHutRates({ ...FULL, isActive: false })).toBe(false);
-    expect(requiresHutRates({ ...NON_MEMBER, isActive: false })).toBe(false);
+  it("excludes an archived ordinary type, which prices only history", () => {
+    // A club's own retired MEMBER_RATE type is reached only through a member's
+    // assignment. Sending an officer to price it on every future season would
+    // be work they cannot act on.
+    const RETIRED = { key: "STUDENT", bookingBehavior: "MEMBER_RATE", isActive: false };
+    expect(requiresHutRates({ ...RETIRED, isActive: true })).toBe(true);
+    expect(requiresHutRates(RETIRED)).toBe(false);
+  });
+
+  it("still asks for rates on an ARCHIVED key-resolved holder, which still prices", () => {
+    /*
+      Archiving is one click and is offered for every membership type — the
+      built-in guard on the membership-type route covers deletion only. But the
+      engine resolves these two BY KEY with no active filter, so archiving does
+      not take them out of pricing: `NON_MEMBER` still prices every non-member
+      guest the club takes, and `FULL` still prices any member the engine cannot
+      place plus every other-lodge guest.
+
+      Before this, archiving `NON_MEMBER` dropped it out of the fee grid (which
+      filters on this rule), so the officer could not set a rate, no new season
+      got rows for it, NOTHING warned, and the first public booking in that
+      season threw. The rule follows what prices.
+    */
+    expect(requiresHutRates({ ...NON_MEMBER, isActive: false })).toBe(true);
+    expect(requiresHutRates({ ...FULL, isActive: false })).toBe(true);
+    // Being key-resolved does not make a non-rate-bearing type owe rows.
+    expect(isKeyResolvedRateHolder(ASSOCIATE)).toBe(false);
+    expect(requiresHutRates({ ...ADMIN, isActive: false })).toBe(false);
   });
 
   it("selects exactly the types that owe rates, in the order given", () => {
@@ -63,7 +88,8 @@ describe("which membership types carry their own hut rates (INV-MOD-007)", () =>
         FULL,
         ASSOCIATE,
         NON_MEMBER,
-        { ...FULL, key: "LIFE", isActive: false },
+        // A club's own retired type: not key-resolved, so it is left out.
+        { key: "STUDENT", bookingBehavior: "MEMBER_RATE", isActive: false },
       ]),
     ).toEqual([FULL, NON_MEMBER]);
   });
@@ -208,17 +234,30 @@ describe("tier-aware membership-type rate gaps (#1930, E4 review F7)", () => {
     ).toEqual(["New Type — Winter 2026 (missing INFANT, CHILD, YOUTH, ADULT)"]);
   });
 
-  it("never invents a rate: a zero-cent row is configuration, not a gap", () => {
-    // The amount is not read here at all — only the row's key. A club that
-    // genuinely prices a tier at $0.00 has configured it, and must not be told
-    // it is missing; equally, a gap is never closed by assuming zero.
+  it("reads a row's key and never its amount, so a $0.00 rate is covered", () => {
+    /*
+      Coverage is presence, not price. A club that genuinely charges a tier
+      $0.00 has configured that tier and must not be told it is missing;
+      equally, a gap is never closed by assuming zero.
+
+      The row below CARRIES an amount of zero, which is what makes this
+      discriminating rather than a restatement of the type: a coverage rule that
+      grew an amount test and read `0` as "not really set" fails here. The
+      complementary half — that nothing manufactures a zero-cent row nobody
+      typed — is the form's, and is pinned in
+      `hut-fees-missing-rates.test.tsx`.
+    */
+    const zeroCentRow = {
+      seasonId: "s-1",
+      membershipTypeId: "type-flat",
+      ageTier: null,
+      pricePerNightCents: 0,
+    };
     expect(
       computeMembershipTypeRateGaps({
         types: [{ id: "type-flat", name: "Flat", ageGroupsApply: false }],
         seasons,
-        rateRows: [
-          { seasonId: "s-1", membershipTypeId: "type-flat", ageTier: null },
-        ],
+        rateRows: [zeroCentRow],
         bookableAgeTiers: FOUR_TIERS,
       }),
     ).toEqual([]);

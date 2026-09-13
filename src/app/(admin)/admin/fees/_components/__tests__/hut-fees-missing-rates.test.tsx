@@ -22,6 +22,8 @@ import { useEffect } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
+
 vi.mock("@/components/lodge-select", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/components/lodge-select");
   return {
@@ -138,6 +140,9 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  // A case that pins its own instant is left alone by the root re-freeze, so it
+  // would leak into every case after it. Put the default back by hand.
+  vi.setSystemTime(new Date(FROZEN_TEST_CLOCK_BASE_ISO));
 });
 
 describe("Hut Fees warns about missing required rates (#2933)", () => {
@@ -249,6 +254,79 @@ describe("Hut Fees warns about missing required rates (#2933)", () => {
     );
     expect(screen.queryByText("Not set")).not.toBeInTheDocument();
     expect(screen.queryByText("Missing nightly rates")).not.toBeInTheDocument();
+  });
+
+  it("asks what day it is at the CLUB, not in the browser's timezone", async () => {
+    /*
+      Nothing else in this suite can tell the two apart. The suite runs in one
+      zone and the repository's frozen instant — midday NZ — is chosen so that
+      zone and UTC name the same day, so swapping `useClubTime().today()` for
+      `new Date()` passes every other case here.
+
+      13:00 UTC on 1 July is already 2 July in Auckland. "Winter 2026" ended
+      last night at the club and is switched off, so its gaps are not work; a
+      browser or host reading of the same instant still calls it today and would
+      raise a warning the officer cannot act on. "Summer 2026" ends tomorrow and
+      is the control: exactly one season is flagged, and it is that one.
+    */
+    vi.setSystemTime(new Date("2026-07-01T13:00:00.000Z"));
+    mockApi({
+      seasons: [
+        season({
+          id: "season-ended",
+          name: "Winter 2026",
+          active: false,
+          startDate: "2026-06-01T00:00:00.000Z",
+          endDate: "2026-07-01T00:00:00.000Z",
+        }),
+        season({
+          id: "season-open",
+          name: "Summer 2026",
+          active: false,
+          startDate: "2026-07-02T00:00:00.000Z",
+          endDate: "2026-07-03T00:00:00.000Z",
+        }),
+      ],
+    });
+    renderSection();
+
+    await screen.findByText("Missing nightly rates");
+    expect(
+      screen.getByText("One season is missing required nightly rates."),
+    ).toBeInTheDocument();
+    const badges = screen.getAllByText("Missing rates");
+    expect(badges).toHaveLength(1);
+    // The badge sits beside its season's title, so the flagged one is named.
+    expect(badges[0]?.parentElement?.textContent).toContain("Summer 2026");
+  });
+
+  it("still asks for rates on an archived Non-Member, which still prices", async () => {
+    /*
+      Archiving a membership type is one click and is offered for every type —
+      the built-in guard on the membership-type route covers deletion only. The
+      engine resolves the built-in NON_MEMBER by key with no active filter, so
+      an archived one still prices every non-member guest the club takes.
+
+      Before this it disappeared from the fee grid — which filters on the same
+      rule — so the officer could not set a rate, a new season got no rows for
+      it, nothing warned, and the first public booking in that season threw.
+    */
+    mockApi({
+      seasons: [
+        season({
+          membershipTypeRates: [
+            { membershipTypeId: FULL.id, ageTier: null, pricePerNightCents: 4500 },
+          ],
+        }),
+      ],
+      membershipTypes: [FULL, { ...NON_MEMBER, isActive: false }, ASSOCIATE],
+    });
+    renderSection();
+
+    const heading = await screen.findByText("Missing nightly rates");
+    expect(
+      within(heading.parentElement as HTMLElement).getByText("Non-Member"),
+    ).toBeInTheDocument();
   });
 
   it("leaves a closed past season alone, and still warns about an active one", async () => {

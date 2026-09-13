@@ -37,6 +37,19 @@
  * caller cannot get the club's calendar day from the host clock by accident
  * (`INV-DATE-019`) and a club running a subset of the four age tiers is judged
  * against its own subset (#2009).
+ *
+ * ## What "one rule" covers, and what it does not
+ *
+ * Both callers take their types, their season scope and their tier list from
+ * this module, so they cannot disagree about which types owe rows, which
+ * seasons are in scope, or what is missing. Neither of those is a claim about
+ * WHICH ROWS each caller loaded: the readiness snapshot asks about the whole
+ * installation and the Hut Fees screen about the lodge on screen. A caller that
+ * builds its season scope some other way — a database filter comparing an
+ * INSTANT against a date-only column, which is what the snapshot did before
+ * #2933's fix round — has left this module behind and the two surfaces diverge
+ * again. Give `seasonRequiresRates` the club's today, or encode that same day
+ * for the query; do not reach for the current instant.
  */
 
 import { compareCalendarDates, type CalendarDate } from "@/lib/club-time";
@@ -47,6 +60,43 @@ import { compareCalendarDates, type CalendarDate } from "@/lib/club-time";
  * function rather than an enum comparison.
  */
 export const NON_MEMBER_RATE_HOLDER_KEY = "NON_MEMBER";
+
+/**
+ * The built-in type a member the engine cannot place prices from — a member
+ * with no assignment for the season year, and a guest a booking officer has
+ * recognised as another lodge's member.
+ */
+export const MEMBER_RATE_FALLBACK_HOLDER_KEY = "FULL";
+
+/**
+ * The two built-in types the pricing engine resolves BY KEY, with no active
+ * filter, on paths that depend on nobody's membership record
+ * (`membership-type-policy.ts`: `nonMemberTypeId()` for every true non-member
+ * and every type-policy-forced member, `fullTypeId()` for an unplaceable member
+ * and for an other-lodge guest).
+ *
+ * ARCHIVING ONE DOES NOT TAKE IT OUT OF PRICING, which is why they are the
+ * exception to the archived-types rule below. Archiving is one click, it is
+ * offered for every type — the built-in guard on the membership-type route
+ * covers deletion only — and nothing downstream asks whether the key it looked
+ * up was active. So an archived `NON_MEMBER` still prices every non-member
+ * guest the club takes, from rows the officer can no longer see or set.
+ *
+ * Deliberately these two and not every built-in. `LIFE` or `FAMILY` reach
+ * pricing only when some member actually holds that role or assignment, which
+ * is data this rule cannot see; telling a club that retired a type it never
+ * used to go and price it would be noise, and a warning panel that cries wolf
+ * is worth less than no panel. These two are reachable in every club, always.
+ */
+const KEY_RESOLVED_RATE_HOLDER_KEYS: readonly string[] = [
+  NON_MEMBER_RATE_HOLDER_KEY,
+  MEMBER_RATE_FALLBACK_HOLDER_KEY,
+];
+
+/** Is this the kind of rate holder archiving cannot retire? */
+export function isKeyResolvedRateHolder(type: { key: string }): boolean {
+  return KEY_RESOLVED_RATE_HOLDER_KEYS.includes(type.key);
+}
 
 /** The two fields the rate-bearing question is answered from, and no others. */
 export interface RateBearingMembershipTypeShape {
@@ -84,12 +134,23 @@ export interface HutRateRequirementShape extends RateBearingMembershipTypeShape 
 /**
  * Does this type owe hut rates for the seasons a club is still selling?
  *
- * Archived types are excluded deliberately: they price history, and a booking
- * can no longer be created on one, so a missing rate on an archived type is not
- * a defect an operator has to fix.
+ * Archived types are excluded: an ordinary one is reached only through a
+ * member's assignment, so an archived one is mostly pricing history, and a
+ * missing rate on it is not work an operator can usefully act on.
+ *
+ * **The two key-resolved holders are the exception, because archiving does not
+ * retire them** (`isKeyResolvedRateHolder`). Archive the built-in `NON_MEMBER`
+ * and every non-member guest still prices from its rows — while the fee grid,
+ * which filters on this very rule, stops showing it, so the officer cannot set
+ * one; a new season gets no rows for it; and the first public booking in that
+ * season throws outright. That is the same defect #2933 exists to close,
+ * pointing the other way, so the rule follows what actually PRICES rather than
+ * what is merely offered. Whether archiving one should be possible at all is a
+ * separate question about the membership-type route, not about this rule.
  */
 export function requiresHutRates(type: HutRateRequirementShape): boolean {
-  return type.isActive && isRateBearingMembershipType(type);
+  if (!isRateBearingMembershipType(type)) return false;
+  return type.isActive || isKeyResolvedRateHolder(type);
 }
 
 /** Every type from `types` that owes hut rates, in the order given. */

@@ -15,8 +15,17 @@
  * This is a WARNING, never a price. It invents nothing, substitutes nothing,
  * and changes no amount: pricing still refuses at runtime when a required rate
  * is absent, and that refusal stays the safety property. The gaps themselves are
- * computed by the one shared rule in `@/lib/membership-type-rate-coverage`, so
- * the screen and the readiness report can never disagree about what is missing.
+ * computed by the one shared rule in `@/lib/membership-type-rate-coverage`, and
+ * so is the season scope, so this screen and the readiness report ask one
+ * question of one rule: the same types owe rows, the same seasons are in scope,
+ * and the same club day bounds them. The screen asks it of the lodge on screen,
+ * which is the only difference between the two.
+ *
+ * One caveat the officer copy deliberately does not carry, because the outcome
+ * it promises is right either way: pricing only ever loads ACTIVE seasons, so a
+ * booking landing in an INACTIVE future season is refused for want of a season
+ * rather than for want of this rate. The rate is what refuses it the moment the
+ * season is switched on, which is what the officer is being warned to fix.
  */
 
 import type { MembershipTypeRateGap } from "@/lib/membership-type-rate-coverage";

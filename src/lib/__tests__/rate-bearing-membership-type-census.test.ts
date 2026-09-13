@@ -28,9 +28,12 @@ import { stripComments } from "./support/strip-comments";
  *
  * It is a SOURCE-TEXT scan over `src/`, excluding `__tests__`, over
  * comment-stripped source. It fails any production file outside the canonical
- * module that spells the disjunction inline — the exact shape every one of the
- * seven copies had. That is the shape a reader reaches for when they want the
- * rule and do not know there is a function for it.
+ * module that spells the disjunction inline — the shape SIX of the seven copies
+ * had, in either order and in either of the two spellings of the `NON_MEMBER`
+ * half. That is the shape a reader reaches for when they want the rule and do
+ * not know there is a function for it. The seventh copy is the readiness
+ * snapshot, which had already drifted into a Prisma filter and is the reason
+ * this issue exists — see the paragraph below, which is about exactly that.
  *
  * It does NOT prove the rule is asked correctly wherever it is asked. A Prisma
  * `where` clause naming `bookingBehavior: "MEMBER_RATE"` and omitting the
@@ -54,16 +57,28 @@ const SRC_ROOT = path.resolve(process.cwd(), "src");
 const CANONICAL_MODULE = "src/lib/membership-type-rate-coverage.ts";
 
 /**
+ * The name the canonical module gives the non-member half. A reader who opens
+ * the one home of the rule and copies its two lines copies THIS, not the string
+ * literal — so a census that knew only the literal could not see the copy its
+ * own stated purpose is about.
+ */
+const NON_MEMBER_HALF = '(?:"NON_MEMBER"|NON_MEMBER_RATE_HOLDER_KEY)';
+
+/**
  * The inline disjunction, in either order, tolerant of whitespace and of the
  * few characters that separated the two halves at the sites that had it:
- * `type.bookingBehavior === "MEMBER_RATE" || type.key === "NON_MEMBER"`, and
- * the `membershipTypeKey === "NON_MEMBER"` spelling two config-transfer
- * categories used. The bounded gap is what keeps it a scan for ONE expression
- * rather than for two unrelated comparisons that happen to share a file.
+ * `type.bookingBehavior === "MEMBER_RATE" || type.key === "NON_MEMBER"`, the
+ * `membershipTypeKey === "NON_MEMBER"` spelling two config-transfer categories
+ * used, and the constant-spelled form above. The bounded gap is what keeps it a
+ * scan for ONE expression rather than for two unrelated comparisons that happen
+ * to share a file.
  */
 const INLINE_RULE_PATTERNS = [
-  /===\s*"MEMBER_RATE"\s*\|\|[^;{}]{0,120}?===\s*"NON_MEMBER"/,
-  /===\s*"NON_MEMBER"\s*\|\|[^;{}]{0,120}?===\s*"MEMBER_RATE"/,
+  // `String.raw`, because a plain template literal reads `\s` as an escape and
+  // hands `RegExp` a pattern with the backslashes gone — which for `\|\|`
+  // means an empty alternation that matches every file in the tree.
+  new RegExp(String.raw`===\s*"MEMBER_RATE"\s*\|\|[^;{}]{0,120}?===\s*${NON_MEMBER_HALF}`),
+  new RegExp(String.raw`===\s*${NON_MEMBER_HALF}\s*\|\|[^;{}]{0,120}?===\s*"MEMBER_RATE"`),
 ];
 
 function allSourceFiles(directory: string): string[] {
@@ -96,6 +111,33 @@ describe("INV-MOD-007: the rate-bearing rule is spelled once (#2933)", () => {
       /export function isRateBearingMembershipType\(/.test(source),
       `${CANONICAL_MODULE} no longer exports isRateBearingMembershipType. It is the one home of INV-MOD-007; if it moved, move this census with it rather than letting the comparison quietly stop happening.`,
     ).toBe(true);
+  });
+
+  it("matches the canonical spelling, so the patterns cannot be quietly broken", () => {
+    /*
+      THE POSITIVE ANCHOR, and the reason this census is worth running.
+
+      Its patterns matched NOTHING in the tree, which is the state a census is
+      supposed to be in — and is also the state a census with a broken pattern
+      is in, forever, with nobody the wiser. So the canonical module, which
+      spells the rule once and is excluded from the scan below, is used as the
+      known positive: if the patterns stop matching the real expression, they
+      stop matching a copy of it too, and this fails instead of going quietly
+      green.
+
+      Exactly one, because two would mean the patterns overlap and the offender
+      list below could name a file twice.
+    */
+    const source = stripComments(
+      fs.readFileSync(path.resolve(process.cwd(), CANONICAL_MODULE), "utf8"),
+    );
+    const matched = INLINE_RULE_PATTERNS.filter((pattern) =>
+      pattern.test(source),
+    );
+    expect(
+      matched.length,
+      `INLINE_RULE_PATTERNS no longer matches the rule as ${CANONICAL_MODULE} actually writes it, so it cannot match a copy of it either and the scan below is vacuous. Update the patterns to the spelling the canonical module uses — including the name it gives the NON_MEMBER half — rather than leaving a census that matches nothing.`,
+    ).toBe(1);
   });
 
   it("finds no inline copy of it anywhere else under src/", () => {

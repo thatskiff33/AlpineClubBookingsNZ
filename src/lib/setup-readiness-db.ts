@@ -5,6 +5,8 @@ import { resolveEnvironmentRole } from "@/lib/environment-role";
 import { readWithheldApplicationEmail } from "@/lib/environment-safety-withheld";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { BOOKABLE_AGE_TIER_VALUES } from "@/lib/age-tier-schema";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   computeMembershipTypeRateGaps,
   formatMembershipTypeRateGap,
@@ -65,6 +67,15 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     inside something that looks like a thirteenth query.
   */
   const environmentRole = await resolveEnvironmentRole();
+  /*
+    The club's today, encoded the way a `@db.Date` column stores it, for the
+    season-scope bound below (`INV-DATE-019`, `INV-CONFIG-002`). Read outside
+    the `Promise.all` for the same reason as the two resolvers around it: it is
+    not a table read, and the season query needs its answer.
+  */
+  const clubTodayDateOnly = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
   /*
     How much application email this installation has held back for
     environment-safety reasons (ENV-SAFETY 1, #3034). Answers
@@ -180,28 +191,33 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     }),
   ]);
 
-  // Missing-rate readiness (#1930, E4; widened by #2933): every ACTIVE
-  // RATE-BEARING membership type must carry tier-complete rate rows (every
-  // bookable age tier, or a flat all-ages row) for every active or future
-  // season, or bookings for that type × those dates hard-throw at pricing time.
-  // Archived types are skipped — they only price history.
+  // Missing-rate readiness (#1930, E4; widened by #2933): every membership type
+  // that OWES hut rates must carry tier-complete rate rows (every bookable age
+  // tier, or a flat all-ages row) for every active or not-yet-ended season, or
+  // bookings for that type × those dates hard-throw at pricing time.
   //
-  // "Rate-bearing" is `INV-MOD-007` and is asked exactly once, in
-  // `membership-type-rate-coverage.ts`. It used to be asked HERE as the Prisma
-  // filter `bookingBehavior: "MEMBER_RATE"`, which silently omitted the built-in
-  // NON_MEMBER type — the type every non-member guest prices from — so the one
-  // set of missing rates an ordinary public booking hits first was the one set
-  // nothing warned about (#2933). The filter is now the shared predicate, over
-  // active types.
+  // Which types owe rows, and which seasons are in scope, are `INV-MOD-007` and
+  // are asked exactly once, in `membership-type-rate-coverage.ts`. Both used to
+  // be asked HERE instead, as Prisma filters, and both were wrong in the same
+  // way — a filter that leaves a case out reads like any other narrow query:
+  //
+  //   - `bookingBehavior: "MEMBER_RATE"` silently omitted the built-in
+  //     NON_MEMBER type, which every non-member guest prices from, so the one
+  //     set of missing rates an ordinary public booking hits first was the one
+  //     set nothing warned about (#2933);
+  //   - `isActive: true` omitted an ARCHIVED key-resolved holder, which the
+  //     engine still resolves by key and still prices from.
+  //
+  // So the read is now unfiltered and `selectTypesRequiringHutRates` decides.
+  // The table holds a handful of rows per club.
   const [
-    activeMembershipTypes,
+    membershipTypesForRateGaps,
     currentAndFutureSeasons,
     existingTypeSeasonRates,
     configuredAgeTiers,
     basedOnAgeTierTypes,
   ] = await Promise.all([
     prisma.membershipType.findMany({
-      where: { isActive: true },
       select: {
         id: true,
         name: true,
@@ -211,8 +227,25 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
         ageGroupsApply: true,
       },
     }),
+    /*
+      The same season scope the Hut Fees screen judges, asked of the database:
+      active, or not yet ended. `endDate` is a `@db.Date`, so the bound has to
+      be the club's today encoded as the UTC midnight that column round-trips
+      through — `INV-DATE-019` — and NOT a raw `new Date()`. Comparing an
+      instant against a date column excluded a season ending TODAY from midday
+      onwards in a club ahead of Greenwich, which is exactly when tonight is
+      still bookable; the screen included it, and the two surfaces are supposed
+      to be answering one question.
+
+      `readClubTimeZoneOutsideRequest`, not `clubTodayDateOnlyInstant`: this
+      module is imported by `scripts/setup.ts`, and the `server-only` import
+      that the request-scoped reader carries is a bare throw outside a React
+      render — it would kill the `setup:check` CLI at import.
+    */
     prisma.season.findMany({
-      where: { OR: [{ active: true }, { endDate: { gte: now } }] },
+      where: {
+        OR: [{ active: true }, { endDate: { gte: clubTodayDateOnly } }],
+      },
       select: { id: true, name: true },
     }),
     prisma.membershipTypeSeasonRate.findMany({
@@ -222,7 +255,9 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     // (e.g. CHILD + ADULT only), and only its present tiers are ever priced —
     // so the rate-gap check must demand rate rows for THOSE tiers, not the full
     // built-in four, or a valid subset club is falsely told it is missing
-    // INFANT/YOUTH rates. Empty (unconfigured) → let the check use its default.
+    // INFANT/YOUTH rates. Empty (unconfigured) → the caller passes the four
+    // tiers the runtime would price; the coverage rule takes no default of its
+    // own (#2933).
     // Also carries subscriptionRequiredForBooking for the #2041
     // BASED_ON_AGE_TIER soft-check.
     prisma.ageTierSetting.findMany({
@@ -248,7 +283,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
       ? basedOnAgeTierTypes.map((type) => type.name)
       : [];
   const membershipTypeRateGaps = computeMembershipTypeRateGaps({
-    types: selectTypesRequiringHutRates(activeMembershipTypes),
+    types: selectTypesRequiringHutRates(membershipTypesForRateGaps),
     seasons: currentAndFutureSeasons,
     rateRows: existingTypeSeasonRates,
     // A club running a SUBSET of the four tiers is judged against its own
