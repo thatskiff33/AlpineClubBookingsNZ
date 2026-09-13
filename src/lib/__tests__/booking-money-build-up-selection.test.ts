@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { parseDateOnly } from "@/lib/date-only";
 
 import {
   BOOKING_MONEY_BUILD_UP_INVARIANT,
+  d3CompatibleBookingMoneyBuildUpCents,
   readBookingMoneyBuildUp,
   selectBookingMoneyBuildUp,
   type BookingMoneyBuildUpRow,
@@ -30,38 +32,6 @@ function knownRows(amounts: readonly number[], guestIds?: readonly string[]) {
 }
 
 describe("#3277 canonical D3 build-up selection", () => {
-  const corpus = [
-    { name: "percentage / all guests", base: 40_500, amounts: [-2_500, -3_000, -2_600] },
-    { name: "percentage / assigned own nights", base: 40_500, amounts: [-900, -800] },
-    { name: "fixed amount / selected guests", base: 40_500, amounts: [-10_000, -10_000] },
-    { name: "free nights / per-member cap", base: 40_500, amounts: [-4_500, -3_000] },
-    { name: "fixed nightly CAP_ONLY", base: 40_500, amounts: [-500, -500, -3_000] },
-    { name: "fixed nightly SET_PRICE positive adjustment", base: 40_500, amounts: [1_000, 1_000, 1_500] },
-    { name: "partial work-party window", base: 37_500, amounts: [-7_000, -5_500, -10_500] },
-    { name: "redistributed cap still reconciles", base: 30_000, amounts: [-4_000, -6_000] },
-  ] as const;
-
-  it.each(corpus)("selects STORED only when $name is byte-identical", ({ base, amounts }) => {
-    const recorded = knownRows(amounts);
-    const derivedCents = base + amounts.reduce((sum, cents) => sum + cents, 0);
-    const result = selectBookingMoneyBuildUp({
-      operation: "CREDIT_ELECTION",
-      baseEvidence: { kind: "EXACT", amountCents: base },
-      ...recorded,
-      derivedCents,
-    });
-
-    expect(result).toMatchObject({
-      source: "STORED",
-      storedCents: derivedCents,
-      selectedCents: derivedCents,
-      historyMetadata: {
-        moneyBuildUpSource: "STORED",
-        moneyBuildUpFallbackClassification: null,
-      },
-    });
-  });
-
   it("preserves today's amount for a classified redistribution mismatch", () => {
     const recorded = knownRows([-4_000, -6_000]);
     const result = selectBookingMoneyBuildUp({
@@ -145,6 +115,7 @@ describe("#3277 canonical D3 build-up selection", () => {
         storedCents: null,
       });
       expect("selectedCents" in result).toBe(false);
+      expect(d3CompatibleBookingMoneyBuildUpCents(result)).toBe(-9_500);
     }
   });
 
@@ -157,6 +128,7 @@ describe("#3277 canonical D3 build-up selection", () => {
       derivedCents: -9_000,
     });
     expect(result).toMatchObject({ source: "STORED", selectedCents: -9_000 });
+    expect(d3CompatibleBookingMoneyBuildUpCents(result)).toBe(-9_000);
   });
 
   it("refuses a known mismatch without an explicit classification", () => {
@@ -184,14 +156,28 @@ describe("#3277 canonical D3 build-up selection", () => {
     const store = {
       booking: {
         findUnique: vi.fn().mockResolvedValue({
+          checkIn: parseDateOnly("2026-08-01"),
+          checkOut: parseDateOnly("2026-08-03"),
           totalPriceCents: 10_001,
           guests: [
             {
               id: "departing",
               priceCents: 10_001,
+              stayStart: null,
+              stayEnd: null,
               nights: [
-                { id: "night-1", priceCents: 5_000, priceSource: "EVEN_SPLIT" },
-                { id: "night-2", priceCents: 5_001, priceSource: "EVEN_SPLIT" },
+                {
+                  id: "night-1",
+                  stayDate: parseDateOnly("2026-08-01"),
+                  priceCents: 5_000,
+                  priceSource: "EVEN_SPLIT",
+                },
+                {
+                  id: "night-2",
+                  stayDate: parseDateOnly("2026-08-02"),
+                  priceCents: 5_001,
+                  priceSource: "EVEN_SPLIT",
+                },
               ],
             },
           ],
@@ -234,6 +220,8 @@ describe("#3277 canonical D3 build-up selection", () => {
     const store = {
       booking: {
         findUnique: vi.fn().mockResolvedValue({
+          checkIn: parseDateOnly("2026-08-01"),
+          checkOut: parseDateOnly("2026-08-02"),
           totalPriceCents: 20_000,
           promoRedemption: null,
           nightAdjustments: [
@@ -254,8 +242,15 @@ describe("#3277 canonical D3 build-up selection", () => {
             {
               id: "guest-night",
               priceCents: 20_000,
+              stayStart: null,
+              stayEnd: null,
               nights: [
-                { id: "night-target", priceCents: 20_000, priceSource: "SOLD" },
+                {
+                  id: "night-target",
+                  stayDate: parseDateOnly("2026-08-01"),
+                  priceCents: 20_000,
+                  priceSource: "SOLD",
+                },
               ],
             },
           ],

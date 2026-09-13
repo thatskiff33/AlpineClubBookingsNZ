@@ -8,6 +8,7 @@ import {
 } from "@/lib/member-credit";
 import { calculateBookingCreditApplication } from "@/lib/policies/booking-route-decisions";
 import {
+  d3CompatibleBookingMoneyBuildUpCents,
   readBookingMoneyBuildUp,
   selectLoadedBookingMoneyBuildUp,
   type BookingMoneyBuildUpHistoryMetadata,
@@ -162,10 +163,9 @@ export async function consumeStoredCreditElection(
       mismatchClassification: "STORED_SIDE_DEFECT",
     },
   );
-  const verifiedFinalPriceCents =
-    moneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN"
-      ? booking.finalPriceCents
-      : moneyBuildUpSelection.selectedCents;
+  const verifiedFinalPriceCents = d3CompatibleBookingMoneyBuildUpCents(
+    moneyBuildUpSelection,
+  );
 
   const requestedCents = booking.creditElectionCents;
 

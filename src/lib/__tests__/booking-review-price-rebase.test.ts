@@ -57,6 +57,7 @@ const TODAY = requireCalendarDate("2026-07-01");
 
 const AUG_1 = new Date("2026-08-01T00:00:00.000Z");
 const AUG_2 = new Date("2026-08-02T00:00:00.000Z");
+const AUG_3 = new Date("2026-08-03T00:00:00.000Z");
 
 /**
  * The worked case from #3219: two guests at $100.00 a head, a booking headline
@@ -76,6 +77,7 @@ function bookingWithStrands(
     memberId: "member-1",
     lodgeId: null,
     checkIn: AUG_1,
+    checkOut: AUG_3,
     totalPriceCents: 20_000,
     discountCents: 15_000,
     promoAdjustmentCents: -15_000,
@@ -85,8 +87,11 @@ function bookingWithStrands(
     guests: guests.map((guest) => ({
       memberId: null,
       isMember: false,
+      stayStart: null,
+      stayEnd: null,
       ...guest,
-      nights: guest.nights.map((night) => ({
+      nights: guest.nights.map((night, index) => ({
+        id: `${guest.id}-night-${index + 1}`,
         ...night,
         priceSource: "SOLD" as const,
       })),

@@ -9,6 +9,7 @@ import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import {
   BOOKING_MONEY_BUILD_UP_INVARIANT,
+  d3CompatibleBookingMoneyBuildUpCents,
   readBookingMoneyBuildUp,
   selectLoadedBookingMoneyBuildUp,
   type BookingMoneyBuildUpSelection,
@@ -525,6 +526,9 @@ export async function rebaseBookingPriceFromStrands({
       `${BOOKING_MONEY_BUILD_UP_INVARIANT}: the review re-base lost exact base evidence after recording its build-up`,
     );
   }
+  const verifiedNewFinalPriceCents = d3CompatibleBookingMoneyBuildUpCents(
+    moneyBuildUpSelection,
+  );
 
   const rebased = await store.booking.updateMany({
     where: {
@@ -538,7 +542,7 @@ export async function rebaseBookingPriceFromStrands({
       totalPriceCents: newTotalPriceCents,
       discountCents: promo.newDiscountCents,
       promoAdjustmentCents: promo.newPromoAdjustmentCents,
-      finalPriceCents: newFinalPriceCents,
+      finalPriceCents: verifiedNewFinalPriceCents,
     },
   });
   if (rebased.count !== 1) {
@@ -556,7 +560,7 @@ export async function rebaseBookingPriceFromStrands({
       newTotalPriceCents,
       newDiscountCents: promo.newDiscountCents,
       newPromoAdjustmentCents: promo.newPromoAdjustmentCents,
-      newFinalPriceCents,
+      newFinalPriceCents: verifiedNewFinalPriceCents,
       promoRemoved: promo.promoRemoved,
     },
   };

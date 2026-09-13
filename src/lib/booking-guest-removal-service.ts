@@ -22,6 +22,7 @@ import {
   type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
 import {
+  d3CompatibleBookingMoneyBuildUpCents,
   readBookingMoneyBuildUp,
   selectBookingMoneyBuildUp,
   selectLoadedBookingMoneyBuildUp,
@@ -929,10 +930,7 @@ export async function removeBookingGuestInTransaction({
   // its targets still exist. Only now may the destructive half start.
   const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
   await tx.bookingGuest.delete({ where: { id: guestId } });
-  const priceDiffCents =
-    moneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN"
-      ? derivedPriceDiffCents
-      : moneyBuildUpSelection.selectedCents;
+  const priceDiffCents = d3CompatibleBookingMoneyBuildUpCents(moneyBuildUpSelection);
   // Owner rule (#1100): a booking left with only non-adults must go through
   // admin approval, even if it was previously paid and approved for a
   // different composition. The self-removing guest is never blocked — the

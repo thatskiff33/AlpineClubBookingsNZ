@@ -65,7 +65,7 @@ import {
 } from "./xero-invoice-helpers";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import {
-  type BookingMoneyBuildUpSelection,
+  d3CompatibleBookingMoneyBuildUpCents,
   readBookingMoneyBuildUp,
   selectLoadedBookingMoneyBuildUp,
 } from "@/lib/booking-money-build-up";
@@ -486,24 +486,20 @@ export async function createXeroInvoiceForBooking(
   // before authentication or any provider call. A mismatch remains today's
   // headline under D3 and its classified fallback is persisted on the uniquely
   // anchored sync operation below.
-  let promoMoneyBuildUpSelection: BookingMoneyBuildUpSelection | null = null;
-  let xeroPromoAdjustmentCents = booking.promoAdjustmentCents;
-  // There is no aggregate promo line to source when the headline is zero. The
-  // non-zero branch is the named Stage 3 reader and always records its verdict.
-  if (booking.promoAdjustmentCents) {
-    const recordedMoneyBuildUp = await readBookingMoneyBuildUp(prisma, {
-      bookingId,
-      purpose: "XERO_PROMO_LINE",
-    });
-    promoMoneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(recordedMoneyBuildUp, {
+  const recordedMoneyBuildUp = await readBookingMoneyBuildUp(prisma, {
+    bookingId,
+    purpose: "XERO_PROMO_LINE",
+  });
+  const promoMoneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(
+    recordedMoneyBuildUp,
+    {
       derivedCents: booking.promoAdjustmentCents,
       mismatchClassification: "STORED_SIDE_DEFECT",
-    });
-    xeroPromoAdjustmentCents =
-      promoMoneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN"
-        ? booking.promoAdjustmentCents
-        : promoMoneyBuildUpSelection.selectedCents;
-  }
+    },
+  );
+  const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents(
+    promoMoneyBuildUpSelection,
+  );
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
@@ -628,7 +624,7 @@ export async function createXeroInvoiceForBooking(
   let operationId = options?.syncOperationId ?? null;
   const requestPayload = {
     invoices: [buildInvoice(contactId)],
-    moneyBuildUp: promoMoneyBuildUpSelection?.historyMetadata ?? null,
+    moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
   };
 
   if (operationId) {
@@ -698,7 +694,7 @@ export async function createXeroInvoiceForBooking(
         // Contact repair rewrites the stored operation request. Preserve the
         // Stage 3 source verdict with the rebuilt invoice instead of erasing
         // the evidence on the only retry that changes this payload.
-        moneyBuildUp: promoMoneyBuildUpSelection?.historyMetadata ?? null,
+        moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
