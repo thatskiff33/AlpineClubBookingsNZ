@@ -409,7 +409,7 @@ function AccountMappingRow({
           <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm">{matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode || <span className="text-muted-foreground">Not configured (using default)</span>}</p>
         )}
         {currentIsOutsideFilter ? (
-          <p className="mt-1 text-xs text-amber-700 dark:text-amber-500">
+          <p className="mt-1 text-xs text-warning-11">
             This code is not {anIndefiniteArticle(accountNoun)} {accountNoun} account in the connected
             Xero organisation. It is still what entries post to &mdash; the server does not
             second-guess a stored code (<code>INV-INT-021</code>) &mdash; so check it, or refresh the
