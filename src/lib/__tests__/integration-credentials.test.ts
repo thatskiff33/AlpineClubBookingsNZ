@@ -1,25 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
-  const prisma = {
-    integrationCredential: {
-      findMany: vi.fn(),
-      findUnique: vi.fn(),
-      upsert: vi.fn(),
-      create: vi.fn(),
-      updateMany: vi.fn(),
-      deleteMany: vi.fn(),
-    },
+  // Every mutator runs inside one transaction with its audit row (#2723). The
+  // transaction client is a SEPARATE double from the module client, so a store
+  // that wrote its audit row outside the transaction is visible here rather
+  // than indistinguishable — see the note in `credential-write-contract.test.ts`.
+  const delegate = () => ({
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+    create: vi.fn(),
+    updateMany: vi.fn(),
+    deleteMany: vi.fn(),
+  });
+  const tx = {
+    integrationCredential: delegate(),
     auditLog: { create: vi.fn() },
-    // Every mutator runs inside one transaction with its audit row (#2723).
-    // Handing the callback the SAME double is what makes the assertions below
-    // able to say the credential statement and the audit row went to one client.
+  };
+  const prisma = {
+    integrationCredential: delegate(),
+    auditLog: { create: vi.fn() },
     $transaction: vi.fn(),
   };
   prisma.$transaction.mockImplementation(
-    async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+    async (callback: (client: typeof tx) => unknown) => callback(tx),
   );
-  return { prisma };
+  return { prisma, tx };
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
@@ -78,10 +84,10 @@ function storedRow(provider: string, key: string, value: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.prisma.$transaction.mockImplementation(
-    async (callback: (tx: unknown) => unknown) => callback(mocks.prisma),
+    async (callback: (client: unknown) => unknown) => callback(mocks.tx),
   );
-  mocks.prisma.auditLog.create.mockResolvedValue({});
-  mocks.prisma.integrationCredential.findUnique.mockResolvedValue(null);
+  mocks.tx.auditLog.create.mockResolvedValue({});
+  mocks.tx.integrationCredential.findUnique.mockResolvedValue(null);
   resetIntegrationCredentialCacheForTests();
   delete process.env.NEXTAUTH_SECRET;
   process.env.AUTH_SECRET = STRONG_SECRET;
@@ -125,7 +131,7 @@ describe("integration-credentials: cross-process cache contract", () => {
       "not_configured",
     );
 
-    mocks.prisma.integrationCredential.upsert.mockResolvedValue({
+    mocks.tx.integrationCredential.upsert.mockResolvedValue({
       provider: "xero",
       key: "client_id",
       updatedAt: new Date(),
@@ -213,7 +219,7 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
 
   it("generates via create (never upsert) when no row exists", async () => {
     mocks.prisma.integrationCredential.findMany.mockResolvedValue([]);
-    mocks.prisma.integrationCredential.create.mockResolvedValue({});
+    mocks.tx.integrationCredential.create.mockResolvedValue({});
 
     const value = await ensureGeneratedCredential({
       provider: "xero",
@@ -224,9 +230,9 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
     });
 
     expect(value).toBe("fresh-generated-key");
-    expect(mocks.prisma.integrationCredential.create).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.integrationCredential.create).toHaveBeenCalledTimes(1);
     // Genuinely create-only: no last-writer-wins upsert.
-    expect(mocks.prisma.integrationCredential.upsert).not.toHaveBeenCalled();
+    expect(mocks.tx.integrationCredential.upsert).not.toHaveBeenCalled();
   });
 
   it("on a P2002 create race, returns the winner's value (not ours)", async () => {
@@ -235,7 +241,7 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
     mocks.prisma.integrationCredential.findMany
       .mockResolvedValueOnce([])
       .mockResolvedValue([storedRow("xero", "token_key", "winner-key")]);
-    mocks.prisma.integrationCredential.create.mockRejectedValueOnce(P2002);
+    mocks.tx.integrationCredential.create.mockRejectedValueOnce(P2002);
 
     const value = await ensureGeneratedCredential({
       provider: "xero",
@@ -264,8 +270,8 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
 
     expect(value).toBe("already-there");
     expect(generate).not.toHaveBeenCalled();
-    expect(mocks.prisma.integrationCredential.create).not.toHaveBeenCalled();
-    expect(mocks.prisma.integrationCredential.updateMany).not.toHaveBeenCalled();
+    expect(mocks.tx.integrationCredential.create).not.toHaveBeenCalled();
+    expect(mocks.tx.integrationCredential.updateMany).not.toHaveBeenCalled();
   });
 
   it("replaces an unreadable (needs_reentry) row via a claim keyed on its stale ciphertext", async () => {
@@ -273,7 +279,7 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
     const staleRow = storedRow("xero", "token_key", "dead-material");
     process.env.AUTH_SECRET = OTHER_STRONG_SECRET; // strands the row → needs_reentry
     mocks.prisma.integrationCredential.findMany.mockResolvedValue([staleRow]);
-    mocks.prisma.integrationCredential.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.integrationCredential.updateMany.mockResolvedValue({ count: 1 });
 
     const value = await ensureGeneratedCredential({
       provider: "xero",
@@ -286,7 +292,7 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
     expect(value).toBe("regenerated-key");
     // The claim is scoped to the exact dead ciphertext, so a racing writer's
     // claim matches zero rows instead of clobbering the winner.
-    expect(mocks.prisma.integrationCredential.updateMany).toHaveBeenCalledWith(
+    expect(mocks.tx.integrationCredential.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           provider: "xero",
@@ -306,7 +312,7 @@ describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () =
     mocks.prisma.integrationCredential.findMany
       .mockResolvedValueOnce([staleRow])
       .mockResolvedValue([winnerRow]);
-    mocks.prisma.integrationCredential.updateMany.mockResolvedValue({ count: 0 });
+    mocks.tx.integrationCredential.updateMany.mockResolvedValue({ count: 0 });
 
     const value = await ensureGeneratedCredential({
       provider: "xero",

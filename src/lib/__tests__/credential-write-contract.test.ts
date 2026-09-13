@@ -20,21 +20,34 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+/**
+ * THE TRANSACTION CLIENT IS A DIFFERENT DOUBLE FROM THE MODULE CLIENT, and that
+ * is load-bearing rather than tidy. The first draft of this file handed the
+ * `$transaction` callback the same object, which made "the audit row and the
+ * secret went through one client" untestable: swapping `tx` for `prisma` inside
+ * the store passed all nineteen tests. It was caught by mutating exactly that
+ * line, which is the only way that class of hole ever shows up.
+ */
 const mocks = vi.hoisted(() => {
+  const credentialDelegate = () => ({
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+    create: vi.fn(),
+    updateMany: vi.fn(),
+    deleteMany: vi.fn(),
+  });
+  const tx = {
+    integrationCredential: credentialDelegate(),
+    auditLog: { create: vi.fn() },
+  };
   const prisma = {
-    integrationCredential: {
-      findMany: vi.fn(),
-      findUnique: vi.fn(),
-      upsert: vi.fn(),
-      create: vi.fn(),
-      updateMany: vi.fn(),
-      deleteMany: vi.fn(),
-    },
+    integrationCredential: credentialDelegate(),
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(),
   };
   prisma.$transaction.mockImplementation(
-    async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+    async (callback: (client: typeof tx) => unknown) => callback(tx),
   );
   const logger = {
     error: vi.fn(),
@@ -42,7 +55,7 @@ const mocks = vi.hoisted(() => {
     info: vi.fn(),
     debug: vi.fn(),
   };
-  return { prisma, logger };
+  return { prisma, tx, logger };
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
@@ -106,17 +119,18 @@ function storedRow(provider: string, key: string, value: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.prisma.$transaction.mockImplementation(
-    async (callback: (tx: unknown) => unknown) => callback(mocks.prisma),
+    async (callback: (client: unknown) => unknown) => callback(mocks.tx),
   );
+  mocks.tx.auditLog.create.mockResolvedValue({});
   mocks.prisma.auditLog.create.mockResolvedValue({});
   mocks.prisma.integrationCredential.findMany.mockResolvedValue([]);
-  mocks.prisma.integrationCredential.findUnique.mockResolvedValue(null);
-  mocks.prisma.integrationCredential.upsert.mockResolvedValue({
+  mocks.tx.integrationCredential.findUnique.mockResolvedValue(null);
+  mocks.tx.integrationCredential.upsert.mockResolvedValue({
     provider: "stripe",
     key: "secret_key",
     updatedAt: new Date("2026-07-01T00:00:00.000Z"),
   });
-  mocks.prisma.integrationCredential.deleteMany.mockResolvedValue({ count: 1 });
+  mocks.tx.integrationCredential.deleteMany.mockResolvedValue({ count: 1 });
   resetIntegrationCredentialCacheForTests();
   delete process.env.NEXTAUTH_SECRET;
   process.env.AUTH_SECRET = STRONG_SECRET;
@@ -138,12 +152,12 @@ describe("credential writes carry distinguishable actor evidence (#2723)", () =>
       expect: { expect: "any" },
     });
 
-    expect(mocks.prisma.integrationCredential.upsert).toHaveBeenCalledWith(
+    expect(mocks.tx.integrationCredential.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         update: expect.objectContaining({ updatedByUserId: "member-42" }),
       }),
     );
-    const audited = mocks.prisma.auditLog.create.mock.calls[0]?.[0]?.data;
+    const audited = mocks.tx.auditLog.create.mock.calls[0]?.[0]?.data;
     expect(audited).toMatchObject({
       action: "integration.credential.set",
       category: "security",
@@ -167,12 +181,12 @@ describe("credential writes carry distinguishable actor evidence (#2723)", () =>
       expect: { expect: "any" },
     });
 
-    expect(mocks.prisma.integrationCredential.upsert).toHaveBeenCalledWith(
+    expect(mocks.tx.integrationCredential.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         update: expect.objectContaining({ updatedByUserId: null }),
       }),
     );
-    const audited = mocks.prisma.auditLog.create.mock.calls[0]?.[0]?.data;
+    const audited = mocks.tx.auditLog.create.mock.calls[0]?.[0]?.data;
     expect(audited?.metadata).toMatchObject({
       actorKind: "system",
       systemActor: "stripe-webhook-verify",
@@ -193,8 +207,8 @@ describe("credential writes carry distinguishable actor evidence (#2723)", () =>
       }),
     ).rejects.toBeInstanceOf(CredentialActorError);
 
-    expect(mocks.prisma.integrationCredential.upsert).not.toHaveBeenCalled();
-    expect(mocks.prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(mocks.tx.integrationCredential.upsert).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("refuses an admin actor with an empty member id", async () => {
@@ -209,7 +223,7 @@ describe("credential writes carry distinguishable actor evidence (#2723)", () =>
         expect: { expect: "any" },
       }),
     ).rejects.toBeInstanceOf(CredentialActorError);
-    expect(mocks.prisma.integrationCredential.upsert).not.toHaveBeenCalled();
+    expect(mocks.tx.integrationCredential.upsert).not.toHaveBeenCalled();
   });
 
   it("refuses a delete that expects the row to be absent", async () => {
@@ -224,7 +238,7 @@ describe("credential writes carry distinguishable actor evidence (#2723)", () =>
         expect: { expect: "absent" } as never,
       }),
     ).rejects.toBeInstanceOf(CredentialExpectationError);
-    expect(mocks.prisma.integrationCredential.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.tx.integrationCredential.deleteMany).not.toHaveBeenCalled();
   });
 });
 
@@ -241,20 +255,25 @@ describe("the secret and its audit row are one local action (#2723)", () => {
     });
 
     expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(mocks.prisma.integrationCredential.upsert).toHaveBeenCalledTimes(1);
-    expect(mocks.prisma.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.integrationCredential.upsert).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.auditLog.create).toHaveBeenCalledTimes(1);
+    // And NOT through the module client, which would commit on its own and
+    // survive a rollback of the secret. This is the assertion the same-double
+    // draft could not make.
+    expect(mocks.prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(mocks.prisma.integrationCredential.upsert).not.toHaveBeenCalled();
   });
 
   it("rolls the secret back when the audit row cannot be written", async () => {
     // The failure mode this contract exists for. Before #2723 the credential
     // landed in one statement and its audit row in another module two awaits
     // later, so this sequence left a rewritten secret with no evidence.
-    mocks.prisma.auditLog.create.mockRejectedValueOnce(new Error("audit down"));
+    mocks.tx.auditLog.create.mockRejectedValueOnce(new Error("audit down"));
     let committed = true;
     mocks.prisma.$transaction.mockImplementationOnce(
-      async (callback: (tx: unknown) => unknown) => {
+      async (callback: (client: unknown) => unknown) => {
         try {
-          return await callback(mocks.prisma);
+          return await callback(mocks.tx);
         } catch (error) {
           committed = false; // what a real ROLLBACK does to the upsert above
           throw error;
@@ -279,7 +298,7 @@ describe("the secret and its audit row are one local action (#2723)", () => {
     // Verify-reset fires on every credential write whether or not a marker was
     // ever stamped. A row per no-op would bury the real deletions — and a read
     // that changes nothing must make no mutation audit noise at all.
-    mocks.prisma.integrationCredential.deleteMany.mockResolvedValueOnce({
+    mocks.tx.integrationCredential.deleteMany.mockResolvedValueOnce({
       count: 0,
     });
 
@@ -290,7 +309,7 @@ describe("the secret and its audit row are one local action (#2723)", () => {
       expect: { expect: "any" },
     });
 
-    expect(mocks.prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 });
 
@@ -299,10 +318,10 @@ describe("the secret and its audit row are one local action (#2723)", () => {
 describe("a stale concurrent write loses deterministically (#2723)", () => {
   it("refuses a create-only write when a row appeared first", async () => {
     const winner = storedRow("stripe", "secret_key", "winner-value");
-    mocks.prisma.integrationCredential.create.mockRejectedValueOnce(
+    mocks.tx.integrationCredential.create.mockRejectedValueOnce(
       Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
     );
-    mocks.prisma.integrationCredential.findUnique.mockResolvedValue(winner);
+    mocks.tx.integrationCredential.findUnique.mockResolvedValue(winner);
 
     const error = await setIntegrationCredential({
       provider: "stripe",
@@ -317,12 +336,12 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
       credentialVersionOf(winner),
     );
     // The loser wrote nothing, so it recorded nothing.
-    expect(mocks.prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("refuses a compare-and-set whose version has moved", async () => {
     const moved = storedRow("stripe", "secret_key", "somebody-elses-value");
-    mocks.prisma.integrationCredential.findUnique.mockResolvedValue(moved);
+    mocks.tx.integrationCredential.findUnique.mockResolvedValue(moved);
 
     const error = await setIntegrationCredential({
       provider: "stripe",
@@ -336,14 +355,14 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
     expect((error as StaleCredentialWriteError).observedVersion).toBe(
       credentialVersionOf(moved),
     );
-    expect(mocks.prisma.integrationCredential.updateMany).not.toHaveBeenCalled();
-    expect(mocks.prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(mocks.tx.integrationCredential.updateMany).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("applies a matching compare-and-set, claiming the exact tuple it read", async () => {
     const current = storedRow("stripe", "secret_key", "current-value");
-    mocks.prisma.integrationCredential.findUnique.mockResolvedValue(current);
-    mocks.prisma.integrationCredential.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.integrationCredential.findUnique.mockResolvedValue(current);
+    mocks.tx.integrationCredential.updateMany.mockResolvedValue({ count: 1 });
 
     await setIntegrationCredential({
       provider: "stripe",
@@ -353,7 +372,7 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
       expect: { expect: "version", version: credentialVersionOf(current) },
     });
 
-    expect(mocks.prisma.integrationCredential.updateMany).toHaveBeenCalledWith(
+    expect(mocks.tx.integrationCredential.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           provider: "stripe",
@@ -364,7 +383,7 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
         }),
       }),
     );
-    expect(mocks.prisma.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.auditLog.create).toHaveBeenCalledTimes(1);
   });
 
   it("loses when the claim matches nothing, even though the version agreed", async () => {
@@ -372,8 +391,8 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
     // the predicate after taking the row lock, so of two writers holding the
     // same token exactly one sees `count: 1`.
     const current = storedRow("stripe", "secret_key", "current-value");
-    mocks.prisma.integrationCredential.findUnique.mockResolvedValue(current);
-    mocks.prisma.integrationCredential.updateMany.mockResolvedValue({ count: 0 });
+    mocks.tx.integrationCredential.findUnique.mockResolvedValue(current);
+    mocks.tx.integrationCredential.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(
       setIntegrationCredential({
@@ -384,7 +403,7 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
         expect: { expect: "version", version: credentialVersionOf(current) },
       }),
     ).rejects.toBeInstanceOf(StaleCredentialWriteError);
-    expect(mocks.prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("mints a different version for the same plaintext written twice", async () => {
@@ -414,6 +433,7 @@ describe("no plaintext reaches audit, log or error output (#2723)", () => {
   /** Everything the store emitted this test, as one searchable string. */
   function everythingEmitted(extra: unknown[] = []): string {
     return JSON.stringify([
+      mocks.tx.auditLog.create.mock.calls,
       mocks.prisma.auditLog.create.mock.calls,
       mocks.logger.error.mock.calls,
       mocks.logger.warn.mock.calls,
@@ -436,12 +456,12 @@ describe("no plaintext reaches audit, log or error output (#2723)", () => {
       expect: { expect: "any" },
     });
 
-    expect(mocks.prisma.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.auditLog.create).toHaveBeenCalledTimes(1);
     expect(everythingEmitted([result])).not.toContain(SECRET);
     // And the metadata is the small typed evidence set, not an echo of the call.
     expect(
       Object.keys(
-        mocks.prisma.auditLog.create.mock.calls[0]?.[0]?.data?.metadata ?? {},
+        mocks.tx.auditLog.create.mock.calls[0]?.[0]?.data?.metadata ?? {},
       ).sort(),
     ).toEqual([
       "actorKind",
@@ -455,7 +475,7 @@ describe("no plaintext reaches audit, log or error output (#2723)", () => {
   });
 
   it("keeps the value out of a database failure", async () => {
-    mocks.prisma.integrationCredential.upsert.mockRejectedValueOnce(
+    mocks.tx.integrationCredential.upsert.mockRejectedValueOnce(
       new Error("could not connect to server"),
     );
     const error = await setIntegrationCredential({
@@ -472,7 +492,7 @@ describe("no plaintext reaches audit, log or error output (#2723)", () => {
 
   it("keeps the value out of a lost concurrency race", async () => {
     const moved = storedRow("stripe", "secret_key", "somebody-elses-value");
-    mocks.prisma.integrationCredential.findUnique.mockResolvedValue(moved);
+    mocks.tx.integrationCredential.findUnique.mockResolvedValue(moved);
     const error = await setIntegrationCredential({
       provider: "stripe",
       key: "secret_key",
