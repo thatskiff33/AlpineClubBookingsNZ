@@ -274,6 +274,30 @@ describe("audit member timeline reads only what was declared (#2695)", () => {
     expect([asJson.details, asProse.details]).toEqual([null, null]);
   });
 
+  it("falls back to the derived title for BOTH audiences when the stored title is blank", async () => {
+    // One fallback rule, two audiences. The admin title has always fallen
+    // through on a blank `summary`; the member title was first written with
+    // `??`, which only catches null — so an empty string, which the write
+    // boundary stores as readily as any other value, gave an officer
+    // "Member Deletion Rejected" and the member an empty row title. A member
+    // reading their own history should never be shown less than an officer is
+    // shown of the same row unless somebody DECIDED it, and nobody decided this.
+    for (const blank of ["", "   "]) {
+      const row = rowOf({
+        action: "member.deletion_rejected",
+        category: "privacy",
+        summary: blank,
+      });
+
+      const member = await timelineEntry(row, "member");
+      const admin = await timelineEntry(row, "admin");
+
+      expect(member.summary).toBe("Member Deletion Rejected");
+      expect(admin.summary).toBe("Member Deletion Rejected");
+      expect(member.summary).toBe(admin.summary);
+    }
+  });
+
   it("never shows a member a payload-derived title for somebody else", async () => {
     // The admin title for these two actions is read out of the legacy JSON
     // payload. A row reaches the ACTING member's own timeline through the

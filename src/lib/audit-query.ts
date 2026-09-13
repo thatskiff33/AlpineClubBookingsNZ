@@ -615,9 +615,27 @@ function getActorName(actor: AuditTimelineActorRecord | undefined): string {
   return fullName || actor.email || "Unknown member";
 }
 
+/**
+ * The writer's OWN short title, or null when there is none worth showing.
+ *
+ * ONE rule, read by both audiences, and that is the whole reason it exists as a
+ * function. The admin title fell back on a truthiness test and the member title
+ * was first written with `??`, so a row stored with a BLANK summary — an empty
+ * string, which the write boundary stores as readily as any other (only
+ * `undefined` is dropped), or the whitespace `sanitizeAuditDetails` passes
+ * through — gave an officer the derived title and the member a blank line.
+ * That is two tests of one fallback rule, living inside the pair of functions
+ * written to make the audiences agree about everything except what a member may
+ * read.
+ */
+function storedSummary(log: AuditTimelineLog): string | null {
+  return log.summary && log.summary.trim().length > 0 ? log.summary : null;
+}
+
 function getSummary(log: AuditTimelineLog): string {
-  if (log.summary) {
-    return log.summary;
+  const stored = storedSummary(log);
+  if (stored) {
+    return stored;
   }
 
   const parsedDetails = parseJsonObject(log.details);
@@ -658,7 +676,7 @@ function getSummary(log: AuditTimelineLog): string {
  * `description` built from it.
  */
 function getMemberSummary(log: AuditTimelineLog): string {
-  return log.summary ?? titleCaseAction(log.action);
+  return storedSummary(log) ?? titleCaseAction(log.action);
 }
 
 function getDescription(
