@@ -44,6 +44,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
 import {
@@ -140,15 +141,6 @@ function describeBulkConflicts(
  */
 function nightAfter(stayDate: string): string {
   return addCalendarDays(requireCalendarDate(stayDate), 1);
-}
-
-async function readApiError(response: Response, fallback: string) {
-  try {
-    const body = (await response.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 /**
@@ -549,7 +541,7 @@ export default function AdminBedAllocationPage() {
           throw new Error(body.error ?? "Failed to load bed allocation");
         }
         throw new Error(
-          await readApiError(response, "Failed to load bed allocation"),
+          await apiErrorMessageFromResponse(response, "Failed to load bed allocation"),
         );
       }
       return (await response.json()) as DashboardPayload;
@@ -873,7 +865,7 @@ export default function AdminBedAllocationPage() {
     try {
       const response = await request();
       if (!response.ok) {
-        throw new Error(await readApiError(response, "Request failed"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Request failed"));
       }
       toast.success(success);
       await loadDashboard();
@@ -961,7 +953,7 @@ export default function AdminBedAllocationPage() {
 
         if (!response.ok) {
           setPayload(snapshot);
-          toast.error(await readApiError(response, "Failed to allocate bed"));
+          toast.error(await apiErrorMessageFromResponse(response, "Failed to allocate bed"));
           await loadDashboard();
           return;
         }
@@ -1035,7 +1027,7 @@ export default function AdminBedAllocationPage() {
               `That bed was just taken for ${stayDate} — refreshing the board`,
             );
           } else {
-            toast.error(await readApiError(response, "Failed to allocate bed"));
+            toast.error(await apiErrorMessageFromResponse(response, "Failed to allocate bed"));
           }
           await loadDashboard();
           return;

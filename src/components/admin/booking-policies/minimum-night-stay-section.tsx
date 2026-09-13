@@ -23,7 +23,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
-import { responseErrorMessage } from "@/lib/api-error-message"
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
 import { dateOnlyFromIsoString } from "@/lib/date-only"
 import {
   calendarDateOfSerialisedDbDateOrNull,
@@ -117,7 +117,6 @@ function parseMinStayPolicy(value: unknown): MinStayPolicy | null {
   }
   return row as unknown as MinStayPolicy
 }
-
 
 function draftsEqual(a: MinStayDraft, b: MinStayDraft) {
   return (
@@ -513,7 +512,7 @@ export function MinimumNightStaySection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const message = await responseErrorMessage(res, "Failed to save")
+        const message = await apiErrorMessageFromResponse(res, "Failed to save")
         if (res.status === 409) {
           const refreshed = await refreshAfterMutation()
           setError(
@@ -572,7 +571,7 @@ export function MinimumNightStaySection() {
         },
       )
       if (!res.ok) {
-        const message = await responseErrorMessage(res, "Failed to deactivate")
+        const message = await apiErrorMessageFromResponse(res, "Failed to deactivate")
         if (res.status === 409) {
           const refreshed = await refreshAfterMutation()
           setError(
@@ -630,7 +629,7 @@ export function MinimumNightStaySection() {
         }),
       })
       if (!res.ok) {
-        const message = await responseErrorMessage(res, "Failed to update")
+        const message = await apiErrorMessageFromResponse(res, "Failed to update")
         if (res.status === 409) {
           const refreshed = await refreshAfterMutation()
           setError(
