@@ -3,7 +3,7 @@
 Three files, and the two small ones are the same three lines twice.
 
 file: src/app/(admin)/admin/fees/_components/hut-fees-section.tsx
-lines: 1142
+lines: 1143
 reason: the warning had to be computed where the data already is. This section
   already fetches the seasons, their rate rows, the club's age tiers and the
   membership types that owe rates — everything the gap computation needs — so
