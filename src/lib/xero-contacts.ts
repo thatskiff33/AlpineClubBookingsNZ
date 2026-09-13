@@ -39,6 +39,7 @@ import { buildXeroContactUpdatePayload } from "./xero-contact-sync";
 import { buildXeroContactCompanyNumberPatch } from "@/lib/xero-contact-date-of-birth";
 import { xeroCalendarDateAsDateOnly } from "@/lib/xero-provider-dates";
 import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
+import { normalizeXeroContactMatchValue } from "@/lib/xero-contact-name-match";
 import {
   applyXeroContactEmailPolicy,
   resolveXeroContactEmailPolicy,
@@ -299,21 +300,6 @@ export interface XeroContactUpdateData {
 // ---------------------------------------------------------------------------
 // Normalisation / matching helpers
 // ---------------------------------------------------------------------------
-
-export function normalizeXeroContactMatchValue(
-  value: string | null | undefined
-): string {
-  return (
-    value
-      ?.trim()
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim() ?? ""
-  );
-}
 
 export function buildMemberFullName(member: {
   firstName: string | null;

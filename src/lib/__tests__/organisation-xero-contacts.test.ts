@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
     $executeRaw: vi.fn(),
     organisation: {
       findUnique: vi.fn(),
+      findMany: vi.fn(),
       update: vi.fn(),
     },
     organisationContact: { findUnique: vi.fn() },
@@ -173,6 +174,16 @@ beforeEach(() => {
   mocks.organisationFindUnique.mockResolvedValue(organisationRow());
   mocks.xeroObjectLinkFindFirst.mockResolvedValue(null);
   mocks.tx.organisation.findUnique.mockResolvedValue({ xeroContactId: null });
+  // Leg 2's evidence read has NO default on purpose. A test that reaches it has
+  // put a foreign school name in the member's history, and what the club's own
+  // records answer to that name is the whole question — a default would decide
+  // it silently for every such test.
+  mocks.tx.organisation.findMany.mockImplementation(async () => {
+    throw new Error(
+      "A test reaching the other-school lookup must say what the club's " +
+        "records hold for that name",
+    );
+  });
   mocks.tx.organisation.update.mockResolvedValue({ id: "org-1" });
   mocks.tx.member.findFirst.mockResolvedValue(null);
   mocks.tx.member.update.mockResolvedValue({ id: "invented-school-member" });
@@ -523,6 +534,51 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 
+  it("TAKES the contact from a school whose name is PUNCTUATED differently", async () => {
+    /*
+      THE PROOF MAY NOT BE STRICTER THAN THE MATCH THAT PRODUCED THE CANDIDATE.
+
+      Xero's own name search folds every run of non-alphanumeric characters to a
+      single space, so it hands back ONE contact for "St. Peter's College" and
+      "St Peter's College" — which is exactly how this school's contact reaches
+      the transfer at all. If the legs then compared whitespace and case only,
+      they would judge the very row the provider matched a DIFFERENT school: leg
+      1 finds no evidence, the refusal below throws, and the school's invoice
+      fails on every replay for ever. School names are full of full stops and
+      apostrophes, so this is the common case for the population the transfer
+      exists to serve, not an edge.
+
+      The two spellings are genuinely different STRINGS and the whitespace
+      fixture above cannot stand in for them: collapsing runs of spaces is
+      something both rules do, so it discriminates nothing here.
+    */
+    mocks.organisationFindUnique.mockResolvedValue(
+      organisationRow({ name: "St. Peter's College" }),
+    );
+    mocks.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          { contactID: "contact-held-by-member", name: "St Peter's College" },
+        ],
+      },
+    });
+    aMemberHoldsTheContact();
+    aReturningSchoolFromBeforeThisRelease("St Peter's College");
+
+    await expect(findOrCreateXeroContactForOrganisation("org-1")).resolves.toBe(
+      "contact-held-by-member",
+    );
+    expect(mocks.tx.member.update).toHaveBeenCalledWith({
+      where: { id: "invented-school-member" },
+      data: { xeroContactId: null },
+    });
+    expect(mocks.tx.organisation.update).toHaveBeenCalledWith({
+      where: { id: "org-1" },
+      data: { xeroContactId: "contact-held-by-member" },
+    });
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
   it("REFUSES a member that served a DIFFERENT school before this release", async () => {
     /*
       The symmetric half, and it is why leg 2 has to read the free text too. A
@@ -530,6 +586,9 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
       no `Booking.organisationId` on either, so an organisation-only leg 2 sees
       nothing to refuse — and one school walks off with the other's Xero
       customer while every leg reports clean.
+
+      The other school is EVIDENCE here rather than merely different text: the
+      club has a record answering to that name, and the lookup is what says so.
     */
     aMemberHoldsTheContact();
     mocks.tx.booking.findMany.mockResolvedValue([]);
@@ -537,12 +596,60 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
       { organisationId: null, schoolName: "New Plymouth Primary School" },
       { organisationId: null, schoolName: "Hawera Intermediate" },
     ]);
+    mocks.tx.organisation.findMany.mockResolvedValue([
+      { id: "org-2", name: "Hawera Intermediate" },
+    ]);
 
     await expect(
       findOrCreateXeroContactForOrganisation("org-1"),
     ).rejects.toBeInstanceOf(XeroContactTwoHomesError);
     expect(mocks.tx.member.update).not.toHaveBeenCalled();
     expect(mocks.tx.organisation.update).not.toHaveBeenCalled();
+    // Only the FOREIGN name is asked about, and this school is excluded from
+    // the answer — otherwise its own record would refuse the transfer to itself.
+    expect(mocks.tx.organisation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ NOT: { id: "org-1" } }),
+      }),
+    );
+    const asked = mocks.tx.organisation.findMany.mock.calls[0][0] as {
+      where: { OR: { name: { equals: string } }[] };
+    };
+    expect(asked.where.OR.map((clause) => clause.name.equals)).toEqual([
+      "Hawera Intermediate",
+    ]);
+  });
+
+  it("does not refuse on a school name the club has NO record of", async () => {
+    /*
+      Ambiguity is not evidence. A converted request naming a school that was
+      never created — a typo, a request the club declined, a school that booked
+      once and never came back — would otherwise out-vote history that
+      POSITIVELY resolves, and this school could then never be invoiced at all:
+      nothing else ever writes `Organisation.xeroContactId`, so the refusal is
+      permanent rather than a window.
+
+      The direction is deliberate and it is bounded. The contact being taken
+      carries THIS school's name — that is how the provider matched it — so the
+      unresolvable name has no claim on it, and if that school is ever created
+      its own resolve searches Xero for its OWN name and finds nothing to
+      collide with.
+    */
+    aMemberHoldsTheContact();
+    mocks.tx.booking.findMany.mockResolvedValue([]);
+    mocks.tx.bookingRequest.findMany.mockResolvedValue([
+      { organisationId: null, schoolName: "New Plymouth Primary School" },
+      { organisationId: null, schoolName: "A School Nobody Recorded" },
+    ]);
+    mocks.tx.organisation.findMany.mockResolvedValue([]);
+
+    await expect(findOrCreateXeroContactForOrganisation("org-1")).resolves.toBe(
+      "contact-held-by-member",
+    );
+    expect(mocks.tx.organisation.update).toHaveBeenCalledWith({
+      where: { id: "org-1" },
+      data: { xeroContactId: "contact-held-by-member" },
+    });
   });
 
   it("does not take a school's contact on a request that named no school", async () => {

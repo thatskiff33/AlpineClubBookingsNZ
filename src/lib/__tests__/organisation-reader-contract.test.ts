@@ -657,11 +657,21 @@ describe("#3367: each declared reader still plays its declared part", () => {
     expect(body).toContain("convertedMemberId: holder.id");
     expect(body).toContain("schoolName: true");
     // And the name comparison goes through the ONE matching rule, never a
-    // second spelling of it (INV-SSOT).
+    // second spelling of it (INV-SSOT) — the rule that is the SAME folding
+    // Xero's own name search applies, because a proof stricter than the match
+    // that produced the candidate refuses the rows the search accepted.
     expect(body).toContain("isSameOrganisationName(");
-    expect(source).toContain(
-      'import { isSameOrganisationName } from "@/lib/school-organisations"',
+    expect(source).toContain('from "@/lib/school-organisations"');
+    expect(
+      read("src/lib/school-organisations.ts"),
+      "the predicate must fold what the contact search folds, from its one home",
+    ).toContain(
+      'import { normalizeXeroContactMatchValue } from "@/lib/xero-contact-name-match"',
     );
+    // Leg 2 refuses on EVIDENCE: another organisation id, or free text that
+    // positively resolves to another school. A name nothing answers to is
+    // ambiguous and must not out-vote history that positively resolves.
+    expect(body).toContain("findOtherSchoolOrganisationsNamed(tx, {");
     // Leg 3 and leg 4: it cannot sign in, and it is not a named teacher.
     expect(body).toContain("if (holder.canLogin) return null;");
     expect(body).toContain("tx.organisationContact.findUnique({");

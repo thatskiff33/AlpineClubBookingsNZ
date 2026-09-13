@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OrganisationKind } from "@prisma/client";
 
 import {
+  isSameOrganisationName,
   MAX_ORGANISATION_NAME_LENGTH,
   normaliseOrganisationName,
   resolveOrCreateSchoolOrganisation,
 } from "@/lib/school-organisations";
+import { normalizeXeroContactMatchValue } from "@/lib/xero-contact-name-match";
 
 /**
  * #3367: which school is this?
@@ -184,5 +186,73 @@ describe("resolveOrCreateSchoolOrganisation", () => {
   it("refuses an empty name rather than creating a nameless school", async () => {
     await expect(call({ name: "   " })).rejects.toThrow(/empty name/);
     expect(tx.organisation.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A PROOF MAY NEVER BE STRICTER THAN THE MATCH THAT PRODUCED ITS CANDIDATE.
+ *
+ * `isSameOrganisationName` is what the Xero contact transfer uses to decide
+ * whether a school's own history names the school a contact was matched FOR, and
+ * the provider matched that contact under `normalizeXeroContactMatchValue`. So
+ * anything the search calls one name, this predicate must call one school. The
+ * property test below is the guard: it fails for any future re-spelling of the
+ * rule that refuses a pair the search accepts.
+ */
+describe("isSameOrganisationName", () => {
+  const SAME_SCHOOL_PAIRS: readonly [string, string][] = [
+    ["St. Peter's College", "St Peter's College"],
+    ["Te Kura o Whangarei", "Te Kura o Whangārei"],
+    ["Hawera Intermediate", "hawera-intermediate"],
+    ["New Plymouth   Primary School", "New Plymouth Primary School"],
+    ["TOKOROA PRIMARY", "Tokoroa Primary"],
+  ];
+
+  it.each(SAME_SCHOOL_PAIRS)(
+    "calls %s and %s the same school, because Xero's name search does",
+    (left, right) => {
+      // The premise, stated rather than assumed: the provider really would hand
+      // back one contact for these two spellings.
+      expect(normalizeXeroContactMatchValue(left)).toBe(
+        normalizeXeroContactMatchValue(right),
+      );
+      expect(isSameOrganisationName(left, right)).toBe(true);
+    },
+  );
+
+  it("is never stricter than the contact search, whatever it is re-spelt as", () => {
+    // The rule, not the examples. Any pair the search folds together must
+    // satisfy the proof; a comparison of its own here would strand a returning
+    // school whose name was typed with different punctuation.
+    for (const [left, right] of SAME_SCHOOL_PAIRS) {
+      if (
+        normalizeXeroContactMatchValue(left) ===
+        normalizeXeroContactMatchValue(right)
+      ) {
+        expect(
+          isSameOrganisationName(left, right),
+          `${left} / ${right}: the search matched these, so the proof must too`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("is a FOLDING, not a fuzzy match", () => {
+    // #2912 forbids a near-miss merge, and the coarser rule does not smuggle
+    // one in: an extra word is still another school.
+    expect(isSameOrganisationName("Tokoroa Primary", "Tokoroa Primary School")).toBe(
+      false,
+    );
+    expect(isSameOrganisationName("Hawera Intermediate", "Hawera High")).toBe(
+      false,
+    );
+  });
+
+  it("never matches on an absent or punctuation-only name", () => {
+    // An absent name is not evidence of anything, and a name that folds away to
+    // nothing is absent by the same test.
+    expect(isSameOrganisationName(null, "A School")).toBe(false);
+    expect(isSameOrganisationName("   ", "A School")).toBe(false);
+    expect(isSameOrganisationName("---", "...")).toBe(false);
   });
 });

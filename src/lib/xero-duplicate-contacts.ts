@@ -19,8 +19,8 @@ import {
   buildMemberFullName,
   buildXeroContactDisplayName,
   namesLookSimilarForPotentialMatch,
-  normalizeXeroContactMatchValue,
 } from "./xero-contacts";
+import { normalizeXeroContactMatchValue } from "./xero-contact-name-match";
 import { isPlaceholderContactEmail } from "./placeholder-contact-email";
 import { xeroInstant } from "@/lib/xero-provider-dates";
 

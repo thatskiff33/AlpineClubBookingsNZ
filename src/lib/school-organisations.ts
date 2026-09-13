@@ -15,12 +15,38 @@
  *
  * A school name is free text — what counts as one varies by country and by club,
  * so nothing here encodes a format (`INV-CONFIG-001`). Two names are the same
- * school when they match after trimming and collapsing runs of whitespace,
- * ignoring case. That is it: **no fuzzy matching, no near-miss merging, no
+ * school when they match once punctuation, accents, case and runs of whitespace
+ * are folded away. That is it: **no fuzzy matching, no near-miss merging, no
  * stemming.** The binding classification rule on #2912 forbids a fuzzy merge
  * outright, and this is the runtime half of the same rule — "Tokoroa Primary"
  * and "Tokoroa Primary School" are two schools here, and an officer who knows
  * better merges them deliberately rather than having it guessed.
+ *
+ * ## TWO QUESTIONS, AND THEY ARE NOT THE SAME QUESTION
+ *
+ * {@link resolveOrCreateSchoolOrganisation} asks **which record does this name
+ * claim?** — and it asks Postgres, with a case-insensitive equality on the
+ * whitespace-normalised name, because that is the claim two concurrent
+ * approvals race for. {@link isSameOrganisationName} asks **does this free text
+ * name the same school as that record?**, in TypeScript, over a small fetched
+ * set, and it is the one used to PROVE that a Xero contact matched by name
+ * belongs where the provider said it did.
+ *
+ * The proof is deliberately COARSER than the claim, and never the other way
+ * round. Xero's own name search folds punctuation and accents, so it hands back
+ * one contact for `St. Peter's College` and `St Peters College`; a proof that
+ * called those two different schools would refuse the very row the search
+ * accepted, and school names are full of apostrophes and full stops. Coarser is
+ * safe — every name that claims a record also satisfies the proof — whereas
+ * stricter re-opens exactly the defect `INV-INT-018` exists to close. The
+ * folding itself lives in `xero-contact-name-match.ts`, in ONE place, so the
+ * search and the proof cannot drift apart (`INV-SSOT`).
+ *
+ * The cost of the coarser proof is bounded and it is the right way round: a
+ * punctuation variant typed at approval still MINTS a second record (the claim
+ * is unchanged), and the proof then lets that record take the Xero contact its
+ * own earlier booking created. Two records for one school is an officer's merge;
+ * a school that can never be invoiced is not.
  *
  * ## The unique-name claim (`INV-LOCK-001`)
  *
@@ -47,6 +73,8 @@
 
 import { OrganisationKind, type Prisma } from "@prisma/client";
 
+import { normalizeXeroContactMatchValue } from "@/lib/xero-contact-name-match";
+
 /** Trim, collapse internal whitespace. The only normalisation there is. */
 export function normaliseOrganisationName(name: string): string {
   return name.replace(/\s+/g, " ").trim();
@@ -55,26 +83,30 @@ export function normaliseOrganisationName(name: string): string {
 /**
  * Are these two names the same school?
  *
- * The runtime half of the matching rule above, factored out because THREE
- * places now ask it and they must agree: `resolveOrCreateSchoolOrganisation`
- * asks Postgres (`mode: "insensitive"`), and the contact transfer in
- * `xero-contact-home.ts` asks it in TypeScript over a small fetched set,
- * because the comparison normalises whitespace and no SQL predicate here does.
+ * THE ONE TypeScript answer, and it is deliberately the same folding Xero's
+ * contact-name search uses — see "Two questions" above. The contact transfer in
+ * `xero-contact-home.ts` is the caller that makes that mandatory: it has to
+ * decide whether a school's own history names the school whose contact the
+ * provider just handed back, and the provider handed it back under exactly this
+ * rule. A comparison of its own here would refuse a school recorded once as
+ * `St. Peter's College` and typed on its return as `St Peters College`, and that
+ * school's invoice would then fail on every replay, for ever.
  *
- * `toLowerCase()` rather than `localeCompare`: it is deterministic on every
- * machine and in every locale, which a collation-sensitive comparison is not,
- * and it is the closest thing in JavaScript to what Postgres does for the ASCII
- * school names this column actually holds. Two empty names are never "the same
- * school" — an absent name is not evidence of anything.
+ * It is a FOLDING, not a fuzzy match: `Tokoroa Primary` and `Tokoroa Primary
+ * School` are still two schools, because #2912 forbids a near-miss merge.
+ *
+ * Two empty names are never "the same school" — an absent name is not evidence
+ * of anything. A name that folds to nothing at all (punctuation only) is empty
+ * by the same test and is likewise never a match.
  */
 export function isSameOrganisationName(
   left: string | null | undefined,
   right: string | null | undefined,
 ): boolean {
-  const a = normaliseOrganisationName(left ?? "");
-  const b = normaliseOrganisationName(right ?? "");
+  const a = normalizeXeroContactMatchValue(left);
+  const b = normalizeXeroContactMatchValue(right);
   if (!a || !b) return false;
-  return a.toLowerCase() === b.toLowerCase();
+  return a === b;
 }
 
 /** The column is `VarChar(200)`; a longer name is truncated rather than refused. */
@@ -111,6 +143,67 @@ export type ResolvedSchoolOrganisation = {
 };
 
 /**
+ * The CLAIM a school name makes on a record: which row
+ * {@link resolveOrCreateSchoolOrganisation} would find for it, expressed as a
+ * Prisma filter so the resolve and every reader that asks "does this free text
+ * name a school we already have?" ask Postgres the same question (`INV-SSOT`).
+ *
+ * Case-insensitive equality on the whitespace-normalised, truncated name — the
+ * claim, not the proof. See "Two questions" in the module docblock.
+ */
+export function schoolOrganisationNameClaim(
+  name: string,
+): Prisma.OrganisationWhereInput {
+  return {
+    kind: OrganisationKind.SCHOOL,
+    name: {
+      equals: normaliseOrganisationName(name).slice(
+        0,
+        MAX_ORGANISATION_NAME_LENGTH,
+      ),
+      mode: "insensitive",
+    },
+  };
+}
+
+/**
+ * Which of these free-text school names POSITIVELY name a school record that is
+ * not this one?
+ *
+ * Read-only, and used as EVIDENCE rather than as a resolve: the contact transfer
+ * in `xero-contact-home.ts` asks it before refusing to hand a school its own
+ * Xero contact, because free-text inequality on its own is weak evidence that
+ * another school is involved. A name nothing answers to is ambiguous — a typo, a
+ * school that never booked again, a request the club never converted — and an
+ * ambiguous name must not out-vote history that positively resolves.
+ *
+ * Names are de-duplicated and empty ones dropped, so a request naming one school
+ * twice costs one clause. Callers pass the names of ONE member's converted
+ * requests, which is a small bounded set.
+ */
+export async function findOtherSchoolOrganisationsNamed(
+  tx: Prisma.TransactionClient,
+  input: {
+    names: readonly (string | null | undefined)[];
+    excludeOrganisationId: string;
+  },
+): Promise<{ id: string; name: string }[]> {
+  const claims = [
+    ...new Set(
+      input.names
+        .map((name) => normaliseOrganisationName(name ?? ""))
+        .filter(Boolean),
+    ),
+  ].map((name) => schoolOrganisationNameClaim(name));
+  if (claims.length === 0) return [];
+
+  return tx.organisation.findMany({
+    where: { OR: claims, NOT: { id: input.excludeOrganisationId } },
+    select: { id: true, name: true },
+  });
+}
+
+/**
  * The `Organisation` for this school name, creating it on first sight.
  *
  * MUST be called inside a transaction already holding the global booking lock —
@@ -139,10 +232,7 @@ export async function resolveOrCreateSchoolOrganisation(
   }
 
   const existing = await tx.organisation.findFirst({
-    where: {
-      kind: OrganisationKind.SCHOOL,
-      name: { equals: name, mode: "insensitive" },
-    },
+    where: schoolOrganisationNameClaim(name),
     // A live record first, then the oldest, so the answer does not depend on
     // insertion order when a club has archived one and re-created it.
     orderBy: [{ archivedAt: { sort: "asc", nulls: "first" } }, { createdAt: "asc" }],

@@ -99,7 +99,10 @@
 import type { Prisma } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
-import { isSameOrganisationName } from "@/lib/school-organisations";
+import {
+  findOtherSchoolOrganisationsNamed,
+  isSameOrganisationName,
+} from "@/lib/school-organisations";
 
 /** The advisory-lock keyspace. Namespaced, so it collides with nothing else. */
 export const XERO_CONTACT_HOME_LOCK_NAMESPACE = "xero-contact-home";
@@ -281,19 +284,37 @@ export type XeroContactTransferFromMember = {
  *   `BookingRequest` this member converted that carries this organisation, OR a
  *   `BookingRequest` this member converted whose `schoolName` normalises equal
  *   to this organisation's name.
- * - **Leg 2 refuses** on a `Booking` carrying a DIFFERENT organisation, or a
- *   converted `BookingRequest` carrying a different organisation, or one whose
- *   `schoolName` normalises to a different school. The name half is what lets
- *   leg 2 see pre-release history at all: without it a member who served two
- *   schools before this release passes every leg, and one school walks off with
- *   the other's Xero customer.
+ * - **Leg 2 refuses** on a `Booking` carrying a DIFFERENT organisation, on a
+ *   converted `BookingRequest` carrying a different organisation, or on one
+ *   whose free-text `schoolName` POSITIVELY resolves to a different existing
+ *   `Organisation`. The name half is what lets leg 2 see pre-release history at
+ *   all: without it a member who served two schools before this release passes
+ *   every leg, and one school walks off with the other's Xero customer.
  *
- * The name comparison is done in TypeScript, over the small bounded set of
- * requests this member converted, through the SAME
- * {@link isSameOrganisationName} that `resolveOrCreateSchoolOrganisation` uses
- * (`INV-SSOT`) — not in SQL, because normalising whitespace is not something a
- * Prisma `where` can express, and two rules for "is this the same school" is
- * exactly how the club ends up with two records for one name.
+ * **Why leg 2 asks the database rather than stopping at "the text differs".**
+ * Free-text inequality is weak evidence for a refusal that has no remedy. A
+ * converted request naming a school the club never created a record for — a
+ * typo, a school that booked once and never returned, a request that was
+ * declined — would otherwise out-vote history that positively resolves, and the
+ * school in front of us could never be invoiced at all. A name that answers to
+ * an actual other `Organisation` is evidence; a name that answers to nothing is
+ * ambiguity, and ambiguity does not refuse. The lookup goes through
+ * {@link findOtherSchoolOrganisationsNamed} so "which record does this name
+ * claim?" is asked exactly as the approval resolve asks it (`INV-SSOT`).
+ *
+ * **And the name comparison is the CONTACT-MATCH rule, never a stricter one.**
+ * {@link isSameOrganisationName} folds punctuation, accents, case and
+ * whitespace, which is what Xero's own exact-name search folds — so the school
+ * this contact was matched FOR is the school these legs recognise. An earlier
+ * revision compared whitespace and case only. That was stricter than the search
+ * that produced the candidate, so a school recorded once as `St. Peter's
+ * College` and typed on its return as `St Peters College` was handed to this
+ * transfer by Xero and then judged a different school by leg 1: no evidence,
+ * the refusal below threw, and the invoice failed on every replay for ever. A
+ * proof may never be stricter than the match that produced its candidate.
+ *
+ * The comparison runs in TypeScript, over the small bounded set of requests this
+ * member converted, because no Prisma `where` expresses that folding.
  *
  * ## Why neither record can end up holding the id twice, or neither
  *
@@ -365,24 +386,37 @@ export async function takeXeroContactFromSchoolsOwnMember(
   if (!ownHistory) return null;
 
   // Leg 2 — and no OTHER school's does. A row belongs to another school when it
-  // names another organisation, or when it names none and its free-text school
-  // is a different name. A row whose name is absent or unreadable is NOT
-  // evidence of another school and does not refuse on its own — leg 1 is what
-  // has to be positively established, and it already has been.
-  const isAnotherSchool = (row: {
-    organisationId: string | null;
-    schoolName?: string | null;
-  }) =>
-    (row.organisationId !== null &&
-      row.organisationId !== input.organisationId) ||
-    (row.organisationId === null &&
-      Boolean(row.schoolName?.trim()) &&
-      !isSameOrganisationName(row.schoolName, input.organisationName));
+  // RESOLVES to one: it names another organisation, or its free text answers to
+  // an actual other `Organisation` record. A row whose name is absent, or names
+  // a school this club has no record of, is ambiguity rather than evidence and
+  // does not refuse on its own — leg 1 is what has to be positively
+  // established, and it already has been.
+  const namesAnotherOrganisation = (row: { organisationId: string | null }) =>
+    row.organisationId !== null && row.organisationId !== input.organisationId;
   if (
-    organisationBookings.some(isAnotherSchool) ||
-    convertedRequests.some(isAnotherSchool)
+    organisationBookings.some(namesAnotherOrganisation) ||
+    convertedRequests.some(namesAnotherOrganisation)
   ) {
     return null;
+  }
+
+  // The pre-release half: free text on requests that resolved to no school at
+  // all. Only names that are not THIS school's are asked about, so a punctuation
+  // variant of this school's own name is never carried into the question.
+  const otherSchoolNames = convertedRequests
+    .filter(
+      (row) =>
+        row.organisationId === null &&
+        Boolean(row.schoolName?.trim()) &&
+        !isSameOrganisationName(row.schoolName, input.organisationName),
+    )
+    .map((row) => row.schoolName);
+  if (otherSchoolNames.length > 0) {
+    const otherSchools = await findOtherSchoolOrganisationsNamed(tx, {
+      names: otherSchoolNames,
+      excludeOrganisationId: input.organisationId,
+    });
+    if (otherSchools.length > 0) return null;
   }
 
   // Leg 3 — an invented record, not a person who signs in.
