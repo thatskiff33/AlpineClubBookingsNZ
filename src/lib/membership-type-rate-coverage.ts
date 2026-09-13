@@ -66,7 +66,7 @@ export const NON_MEMBER_RATE_HOLDER_KEY = "NON_MEMBER";
  * with no assignment for the season year, and a guest a booking officer has
  * recognised as another lodge's member.
  */
-export const MEMBER_RATE_FALLBACK_HOLDER_KEY = "FULL";
+const MEMBER_RATE_FALLBACK_HOLDER_KEY = "FULL";
 
 /**
  * The two built-in types the pricing engine resolves BY KEY, with no active
@@ -165,8 +165,11 @@ export function selectTypesRequiringHutRates<T extends HutRateRequirementShape>(
  *
  * Active, or not yet ended. A closed past season keeps whatever rows it has for
  * the bookings it priced, and telling an operator to "fix" it would be noise
- * they cannot act on — the same scope the setup-readiness snapshot has asked the
- * database for since #1930.
+ * they cannot act on — the scope the setup-readiness snapshot has meant since
+ * #1930, and has actually asked the database for since #2933: its bound was the
+ * current INSTANT against a date-only column, which is a different question and
+ * dropped a season ending today from midday onwards in any club ahead of
+ * Greenwich.
  *
  * Both edges are calendar dates, so no timezone is involved and none should be.
  * `today` is the CLUB's day (`INV-DATE-019`) and is passed in rather than read
