@@ -130,7 +130,11 @@ describe("the member data export reads the #2695 declaration, not `details`", ()
     // the member reads no free text from it.
     mocks.auditFindMany.mockResolvedValue([
       {
+        // Both columns, as the stored row really has them: `details` is what
+        // the officer typed, `metadata` is what the site declared — nothing.
+        // A route reading the wrong one puts the note in the file.
         action: "member.deletion_rejected",
+        details: OFFICER_DECLINE_NOTE,
         metadata: { notifyMember: false },
         createdAt: new Date("2026-06-01T00:00:00.000Z"),
       },
@@ -157,6 +161,9 @@ describe("the member data export reads the #2695 declaration, not `details`", ()
     mocks.auditFindMany.mockResolvedValue([
       {
         action: "member.credit.adjustment.approve",
+        details:
+          "Approved admin credit adjustment req_7 as credit credit_internal_1: " +
+          "+2500 cents. Requested by member_officer_3. Reason: weather cancellation.",
         metadata: {
           creditId: "credit_internal_1",
           [MEMBER_FACING_AUDIT_TEXT_KEY]: DECLARED_CREDIT_SENTENCE,
@@ -168,9 +175,13 @@ describe("the member data export reads the #2695 declaration, not `details`", ()
     const { auditLog, text } = await exportedDocument();
 
     expect(auditLog[0]?.details).toBe(DECLARED_CREDIT_SENTENCE);
-    // The rest of the row's metadata is the officers' record and does not ride
-    // along with the declared sentence.
+    // The rest of the row is the officers' record and does not ride along with
+    // the declared sentence: not the credit row's id, not the adjustment
+    // request's, not the officer who asked for it, and not raw cents.
     expect(text).not.toContain("credit_internal_1");
+    expect(text).not.toContain("req_7");
+    expect(text).not.toContain("member_officer_3");
+    expect(text).not.toContain("2500 cents");
   });
 
   it("returns nothing for a row written before the declaration existed", async () => {
@@ -180,19 +191,22 @@ describe("the member data export reads the #2695 declaration, not `details`", ()
     mocks.auditFindMany.mockResolvedValue([
       {
         action: "booking.review.reject",
+        details: '{"decision":"REJECTED"}',
         metadata: { decision: "REJECTED", internalNoteRecorded: true },
         createdAt: new Date("2026-06-03T00:00:00.000Z"),
       },
       {
         action: "member.bulk-deactivate",
+        details: "Bulk deactivate: Jane Doe (jane@example.test)",
         metadata: null,
         createdAt: new Date("2026-06-04T00:00:00.000Z"),
       },
     ]);
 
-    const { auditLog } = await exportedDocument();
+    const { auditLog, text } = await exportedDocument();
 
     expect(auditLog.map((entry) => entry.details)).toEqual([null, null]);
+    expect(text).not.toContain("Jane Doe");
   });
 
   it("does not ask the database for the `details` column at all", async () => {
