@@ -853,10 +853,12 @@ unrepresentable.
 
 **Scope.** Tracked source under `src/` only, tests excluded, in any of
 `.ts .tsx .mts .cts .js .jsx .mjs .cjs`. Everything outside `src/` —
-`scripts/`, `prisma/`, `e2e/`, `load/`, and a temporary `measurement/` tree —
-is outside the file-size policy by definition. That scope is stated once, in
-the tool, rather than as a per-issue exemption; adding or deleting a
-measurement tree is a non-event for this gate.
+`scripts/`, `prisma/`, `e2e/`, `load/` — is outside the file-size policy by
+definition. That scope is stated once, in the tool, rather than as a
+per-issue exemption; adding or deleting a directory out there is a non-event
+for this gate, which is what the temporary `measurement/` tree (#2663) was:
+present, then removed whole by #3382, without ever moving this gate's
+baseline.
 
 An **untracked** new file under `src/` is judged too, even before `git add`.
 `git diff` cannot see one, so without that a brand-new 900-line module would be

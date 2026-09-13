@@ -11,12 +11,14 @@
   // `docs/AUTHORITATIVE_FEES.md` relies on for `e2e/setup/seed-second-lodge.ts`.
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["node"],
-    // #2802: see tsconfig.test.json for why this stays off here for now —
-    // the same "application code before tests" scoping applies to the
-    // Playwright suite, and none of its diagnostics were part of programme
-    // #2694's tracked inventory. #3363 is the one home for how many there are.
-    "noUncheckedIndexedAccess": false
+    "types": ["node"]
+    // `noUncheckedIndexedAccess` is inherited ON from tsconfig.json since
+    // #3363. #2802 had turned it back off here, alongside tsconfig.test.json,
+    // under programme #2694's "application code before tests" scoping; #3363
+    // cleared the Playwright suite's diagnostics and removed the override, so
+    // the browser suite is under the same rule as the application. The
+    // unit-test project (tsconfig.test.json) is the one that stays off, and
+    // #3363 is the one home for how many diagnostics it holds.
   },
   "include": ["e2e/**/*.ts", "playwright.config.ts"],
   "exclude": ["node_modules"]

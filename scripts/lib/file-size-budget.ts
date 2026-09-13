@@ -18,11 +18,11 @@
  * extensions in `SOURCE_EXTENSIONS`, and a tracked `src/` file carrying an
  * extension the classifier does not recognise fails the check rather than
  * dropping quietly out of scope. Everything
- * outside `src/` — `scripts/`, `prisma/`, `e2e/`, `load/`, `measurement/` — is
- * outside the file-size policy by definition. That is what makes a temporary
- * measurement tree (#2663) a non-event for this gate: it is not in scope when
- * it is added and it is not in scope when it is deleted, so there is nothing to
- * regenerate and nothing to hide.
+ * outside `src/` — `scripts/`, `prisma/`, `e2e/`, `load/` — is outside the
+ * file-size policy by definition. That was what made the temporary
+ * `measurement/` tree (#2663) a non-event for this gate: it was not in scope
+ * when it was added and it was not in scope when it was removed (#3382), so
+ * there was nothing to regenerate and nothing to hide.
  *
  * Uses `git ls-files` and `fs` only — no network, no build, no database.
  */

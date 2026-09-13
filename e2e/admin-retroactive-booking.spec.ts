@@ -25,6 +25,7 @@ import {
 import { cancelMemberBookingsOnDate } from "./helpers/reset";
 import {
   calendarDayLabel,
+  dateOnlyParts,
   pastStayLeftoverCheckIns,
   pastStayWindowForAttempt,
 } from "./helpers/stay-dates";
@@ -214,8 +215,8 @@ test("an admin records a past stay on behalf of a member without emailing them",
   // The persisted booking renders its past check-in date. Match the full
   // formatted date ("Friday, 3 July 2026") — a bare day-number regex collides
   // with timestamps elsewhere on the page (strict-mode violation).
-  const [y, m, d] = pastCheckIn.split("-").map(Number);
-  const checkInText = new Date(y, m - 1, d).toLocaleDateString("en-NZ", {
+  const { year, month, day } = dateOnlyParts(pastCheckIn);
+  const checkInText = new Date(year, month - 1, day).toLocaleDateString("en-NZ", {
     weekday: "long",
     day: "numeric",
     month: "long",

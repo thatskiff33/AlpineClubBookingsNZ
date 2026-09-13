@@ -242,18 +242,17 @@ export async function register() {
 
           INFO, NOT WARN, AND THAT WAS MEASURED RATHER THAN PREFERRED. It is not
           a fault — a copy declaring itself a copy is the system working — so
-          `warn` would be the wrong volume on its own. It is also the wrong LEVEL
-          for a concrete reason: `measurement/current-main-refresh/run-log-noise.sh`
-          (MC-09) fails any warning-or-error signature that repeats three times
-          across the producer logs, and eight of its eleven producers
-          `--force-recreate app` inside their own `docker logs --since` window. So
-          one line per boot is one line per producer. Measured by running
-          `bin/analyse-log-noise.mjs` over eleven producer logs each holding this
-          exact line: at level 40 it reports `count: 11` and THROWS
-          `sustained/fatal log noise detected`; at level 30 it passes with zero
-          classified lines. The analyser also text-classifies any line containing
-          "error", "failed", "warning" or "exception" regardless of level, so the
-          sentence below deliberately says "held back" and not "failed".
+          `warn` would be the wrong volume on its own. It was also the wrong
+          LEVEL at the time, for a concrete reason: the now-removed
+          `measurement/current-main-refresh/run-log-noise.sh` (MC-09, harness
+          deleted by #3382) failed any warning-or-error signature repeated
+          three times across the producer logs, and eight of its eleven
+          producers `--force-recreate app`d inside their own `docker logs
+          --since` window, so one line per boot was one line per producer. It
+          also text-classified any line by WORDS regardless of level, which is
+          why the sentence below still deliberately says "held back" and not
+          "failed" — worth keeping even with the analyser gone, since it is
+          the more accurate word for what a copy does to outbound mail.
 
           Same best-effort try/catch as the UNKNOWN branch above, and the same
           rule about the structured fields: the two source KINDS and the decision,
