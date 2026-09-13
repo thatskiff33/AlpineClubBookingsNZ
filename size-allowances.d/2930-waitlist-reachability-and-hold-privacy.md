@@ -93,7 +93,7 @@ reason: twenty-two lines, and eighteen of them are prop wiring the shell exists
   still over budget and still changed.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
-lines: 2360
+lines: 2361
 reason: two eight-line night-list projections became one derivation used by
   both, plus the docblock that is the actual deliverable. The route answers TWO
   audiences from one capacity result — a member, who gets the nights and no bed
@@ -104,9 +104,10 @@ reason: two eight-line night-list projections became one derivation used by
   `partnerSharedGuests` are all in scope, which is inside this handler; lifting
   it to a module would mean passing all three back out and would separate the
   rule from the only place it is applied. Nothing else in this file moved.
+  #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/lib/group-settlement.ts
-lines: 1262
+lines: 1263
 reason: one line of code and eight of comment. The refusal's night list now
   comes from `getCapacityFullNights` instead of an inline filter, and the comment
   is the only record of the two defects that line had: it dropped every
@@ -114,6 +115,7 @@ reason: one line of code and eight of comment. The refusal's night list now
   rather than a date-only string, so this single refusal put an instant on the
   wire where every other one emits a lodge night. A reader who does not know
   both will re-inline it.
+  #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/app/(admin)/admin/book/page.tsx
 lines: 1506

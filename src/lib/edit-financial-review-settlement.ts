@@ -10,10 +10,7 @@ import {
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { recordBookingEvent } from "@/lib/booking-events";
-import {
-  editReviewSettlementPayment,
-  hasCapturedPayment,
-} from "@/lib/booking-payment-state";
+import { editReviewSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,

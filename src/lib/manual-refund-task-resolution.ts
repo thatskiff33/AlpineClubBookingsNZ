@@ -16,10 +16,7 @@ import {
   executeEditReviewSettlement,
   type EditReviewSettlementRoute,
 } from "@/lib/edit-financial-review-settlement";
-import {
-  MANUAL_PAYMENT_NOTE_MAX,
-  normaliseManualPaymentNote,
-} from "@/lib/manual-subscription-payment";
+import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
