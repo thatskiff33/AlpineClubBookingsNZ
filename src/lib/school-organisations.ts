@@ -32,8 +32,17 @@
  * approval transaction, which already holds the canonical global
  * `pg_advisory_xact_lock(1)` for its whole life — so school approvals are
  * serialised against each other and the read-then-create below cannot interleave.
- * Calling this outside that lock would reintroduce the race it is relying on;
- * the assertion below is what makes that a failure rather than a surprise.
+ * Calling this outside that lock would reintroduce the race it is relying on.
+ *
+ * NOTHING IN THIS FILE ENFORCES THAT, and saying so is the point. A transaction
+ * client cannot be asked which advisory locks it holds, so there is no runtime
+ * assertion to write here. What enforces it is a disk-scanning census in
+ * `src/lib/__tests__/organisation-reader-contract.test.ts` — "the school
+ * resolve is called ONLY inside the locked approval transaction" — which reads
+ * every file under `src/` and fails if any caller other than
+ * `school-booking-request.ts` names this function. Adding a caller therefore
+ * means proving the new one holds the lock and amending that census, not
+ * trusting this paragraph.
  */
 
 import { OrganisationKind, type Prisma } from "@prisma/client";
@@ -43,8 +52,57 @@ export function normaliseOrganisationName(name: string): string {
   return name.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Are these two names the same school?
+ *
+ * The runtime half of the matching rule above, factored out because THREE
+ * places now ask it and they must agree: `resolveOrCreateSchoolOrganisation`
+ * asks Postgres (`mode: "insensitive"`), and the contact transfer in
+ * `xero-contact-home.ts` asks it in TypeScript over a small fetched set,
+ * because the comparison normalises whitespace and no SQL predicate here does.
+ *
+ * `toLowerCase()` rather than `localeCompare`: it is deterministic on every
+ * machine and in every locale, which a collation-sensitive comparison is not,
+ * and it is the closest thing in JavaScript to what Postgres does for the ASCII
+ * school names this column actually holds. Two empty names are never "the same
+ * school" — an absent name is not evidence of anything.
+ */
+export function isSameOrganisationName(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const a = normaliseOrganisationName(left ?? "");
+  const b = normaliseOrganisationName(right ?? "");
+  if (!a || !b) return false;
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 /** The column is `VarChar(200)`; a longer name is truncated rather than refused. */
 export const MAX_ORGANISATION_NAME_LENGTH = 200;
+
+/**
+ * The NAME a school's Xero contact carries, from either local record.
+ *
+ * ONE home for it, because two records can produce it (`INV-SSOT`). Before this
+ * stage a school's contact was created from the invented school member, whose
+ * `firstName` column is `VarChar(100)` — so every school contact already in
+ * Xero was named with the school truncated at 100 characters. The organisation
+ * record holds up to 200.
+ *
+ * If the organisation sent its longer name, a returning school with a name over
+ * 100 characters would not collide with the contact it already has: Xero would
+ * accept the create, and the club would end up with two customers for one
+ * school — exactly the duplicate this stage exists to avoid. The cap is
+ * therefore not a display choice, it is what makes the duplicate-name recovery
+ * in `organisation-xero-contacts.ts` find the existing contact.
+ */
+export const MAX_SCHOOL_XERO_CONTACT_NAME_LENGTH = 100;
+
+export function schoolXeroContactName(name: string): string {
+  return normaliseOrganisationName(name)
+    .slice(0, MAX_SCHOOL_XERO_CONTACT_NAME_LENGTH)
+    .trim();
+}
 
 export type ResolvedSchoolOrganisation = {
   id: string;

@@ -49,11 +49,25 @@
  *
  * This is a DOMAIN-KEYED advisory lock — `hashtext` of a namespaced string —
  * which is a deliberately distinct keyspace from the global lock(1) cohort and
- * from the per-lodge capacity key, so it joins neither. It is always taken
- * LAST: a writer takes its own entity key (the member key, or the organisation
- * key) and then this one, so every participant acquires in the same order and
- * no two can deadlock. Nothing else is ever taken while it is held, and no
- * provider call may run inside the transaction that holds it.
+ * from the per-lodge capacity key, so it joins neither.
+ *
+ * **The rule is that the contact-home key is the OUTER lock relative to any
+ * `Member` ROW lock.** A writer takes its own entity ADVISORY key first (the
+ * member key, or the organisation key), then this one, and only then may it
+ * touch a `Member` row — whether by `SELECT … FOR UPDATE` or by an `update`.
+ *
+ * An earlier revision of this file said instead that the contact-home key is
+ * taken LAST and that nothing else is acquired while it is held. That was
+ * FALSE, and it described a deadlock: {@link takeXeroContactFromSchoolsOwnMember}
+ * takes a `Member` row lock — `tx.member.update` on the holder — while holding
+ * this key, and the member-side linkers took the row lock first and then waited
+ * for this key. The wait graph closes on the pair the section below calls
+ * reachable on purpose (a credit note on a school's earlier booking against the
+ * new booking's invoice), and Postgres resolves it by aborting one with
+ * `40P01`. Stating the order the code really needs, and moving the two member
+ * linkers to match it, is what makes the rule hold rather than merely read well.
+ *
+ * No provider call may run inside the transaction that holds this key.
  *
  * ## The ONE exception: a school taking its own contact (owner, 13 Sep 2026)
  *
@@ -85,6 +99,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
+import { isSameOrganisationName } from "@/lib/school-organisations";
 
 /** The advisory-lock keyspace. Namespaced, so it collides with nothing else. */
 export const XERO_CONTACT_HOME_LOCK_NAMESPACE = "xero-contact-home";
@@ -136,8 +151,10 @@ export function xeroContactHomeLockKey(xeroContactId: string): string {
 /**
  * Take the contact-scoped advisory lock for the rest of the transaction.
  *
- * Call it AFTER the writer's own entity lock and before the refusal below, and
- * never around a provider call.
+ * Call it AFTER the writer's own entity ADVISORY key, BEFORE any `Member` row
+ * lock, and before the refusal below. Never around a provider call. See "Lock
+ * tier and order" above for why the row-lock half of that sentence is the part
+ * that matters.
  */
 export async function lockXeroContactHome(
   tx: Prisma.TransactionClient,
@@ -228,20 +245,55 @@ export type XeroContactTransferFromMember = {
  * transfer fire on whatever a mistaken call site passed. All four legs are read
  * from the database inside the locked transaction:
  *
- * 1. **This school's bookings resolve to it.** A `Booking` links this
- *    organisation to this member. That is what "the school's own member" means
- *    operationally — approval creates the invented member and the booking
- *    together, and a returning school's request is mapped onto the same record.
- *    (A `BookingRequest` carries no member of its own; it resolves to one only
- *    through its converted booking, which is the row read here.)
- * 2. **No OTHER school's bookings do.** A shared booking contact used by two
- *    organisations belongs to neither, and handing it to whichever invoices
- *    first is precisely the guess this module exists to refuse.
+ * 1. **This school's history resolves to it** (see the next section).
+ * 2. **No OTHER school's history does.** A booking contact shared by two
+ *    schools belongs to neither, and handing it to whichever invoices first is
+ *    precisely the guess this module exists to refuse.
  * 3. **It cannot sign in.** An invented record, never a person with an account.
  * 4. **It is not one of this school's named people.** Teachers are recorded as
  *    `OrganisationContact` rows and are pushed to Xero as contact persons on the
  *    school's own record; a teacher's personal Xero contact is exactly what
  *    #2912 settled must never be repurposed as the school.
+ *
+ * ## WHY THE FIRST TWO LEGS DO NOT READ `Booking.organisationId` ALONE
+ *
+ * Because the returning school — the entire case this transfer exists for —
+ * does not have one. `Booking.organisationId` is written in exactly one place,
+ * at approval, from THIS release, and nothing backfills it. So a school that
+ * booked before this release has an earlier booking whose `organisationId` is
+ * `NULL`, and reading only that column would make leg 1 answer "no" for every
+ * such school: the transfer would never fire, the refusal immediately after it
+ * would throw, and the school's invoice would fail on every retry for ever,
+ * because nothing else ever writes `Organisation.xeroContactId`. That is an END
+ * STATE, not a window — no later stage of this programme repairs it.
+ *
+ * The durable tie already exists, on columns that predate this release.
+ * `BookingRequest` carries `convertedMemberId` — the invented school member the
+ * request converted into, written once at conversion and never rewritten — and
+ * `schoolName`, the free text the requester typed, present on EVERY school
+ * request including every historical one. Together they answer "whose school
+ * was this member invented for?" for a pre-release booking exactly as
+ * `Booking.organisationId` answers it for a new one.
+ *
+ * So each leg reads BOTH generations:
+ *
+ * - **Leg 1 accepts** a `Booking` carrying this organisation, OR a
+ *   `BookingRequest` this member converted that carries this organisation, OR a
+ *   `BookingRequest` this member converted whose `schoolName` normalises equal
+ *   to this organisation's name.
+ * - **Leg 2 refuses** on a `Booking` carrying a DIFFERENT organisation, or a
+ *   converted `BookingRequest` carrying a different organisation, or one whose
+ *   `schoolName` normalises to a different school. The name half is what lets
+ *   leg 2 see pre-release history at all: without it a member who served two
+ *   schools before this release passes every leg, and one school walks off with
+ *   the other's Xero customer.
+ *
+ * The name comparison is done in TypeScript, over the small bounded set of
+ * requests this member converted, through the SAME
+ * {@link isSameOrganisationName} that `resolveOrCreateSchoolOrganisation` uses
+ * (`INV-SSOT`) — not in SQL, because normalising whitespace is not something a
+ * Prisma `where` can express, and two rules for "is this the same school" is
+ * exactly how the club ends up with two records for one name.
  *
  * ## Why neither record can end up holding the id twice, or neither
  *
@@ -280,25 +332,58 @@ export async function takeXeroContactFromSchoolsOwnMember(
   const holder = await findMemberHoldingXeroContact(tx, input.xeroContactId);
   if (!holder) return null;
 
-  // Leg 1 — this school's bookings resolve to this member.
-  const ownBooking = await tx.booking.findFirst({
-    where: { organisationId: input.organisationId, memberId: holder.id },
-    select: { id: true },
-  });
-  if (!ownBooking) return null;
+  // The BOTH-GENERATIONS read. One query per generation, both keyed on the
+  // holder, both bounded: a `Booking` set narrowed to the rows that carry any
+  // organisation at all, and the requests this member was converted from.
+  // Fetched rather than counted because leg 1 and leg 2 are answered from the
+  // SAME rows, and because the name comparison happens here, not in SQL.
+  const [organisationBookings, convertedRequests] = await Promise.all([
+    tx.booking.findMany({
+      where: { memberId: holder.id, organisationId: { not: null } },
+      select: { organisationId: true },
+      distinct: ["organisationId"],
+    }),
+    tx.bookingRequest.findMany({
+      where: { convertedMemberId: holder.id },
+      select: { organisationId: true, schoolName: true },
+    }),
+  ]);
 
-  // Leg 2 — and no other school's do.
-  const otherSchoolBooking = await tx.booking.findFirst({
-    where: {
-      memberId: holder.id,
-      AND: [
-        { organisationId: { not: null } },
-        { NOT: { organisationId: input.organisationId } },
-      ],
-    },
-    select: { id: true },
-  });
-  if (otherSchoolBooking) return null;
+  // Leg 1 — this school's history resolves to this member, in either generation.
+  const isThisSchool = (row: {
+    organisationId: string | null;
+    schoolName?: string | null;
+  }) =>
+    row.organisationId === input.organisationId ||
+    // Only where the row names no organisation: a request already resolved to a
+    // DIFFERENT school is that school's, whatever text it was typed from.
+    (row.organisationId === null &&
+      isSameOrganisationName(row.schoolName, input.organisationName));
+  const ownHistory =
+    organisationBookings.some(isThisSchool) ||
+    convertedRequests.some(isThisSchool);
+  if (!ownHistory) return null;
+
+  // Leg 2 — and no OTHER school's does. A row belongs to another school when it
+  // names another organisation, or when it names none and its free-text school
+  // is a different name. A row whose name is absent or unreadable is NOT
+  // evidence of another school and does not refuse on its own — leg 1 is what
+  // has to be positively established, and it already has been.
+  const isAnotherSchool = (row: {
+    organisationId: string | null;
+    schoolName?: string | null;
+  }) =>
+    (row.organisationId !== null &&
+      row.organisationId !== input.organisationId) ||
+    (row.organisationId === null &&
+      Boolean(row.schoolName?.trim()) &&
+      !isSameOrganisationName(row.schoolName, input.organisationName));
+  if (
+    organisationBookings.some(isAnotherSchool) ||
+    convertedRequests.some(isAnotherSchool)
+  ) {
+    return null;
+  }
 
   // Leg 3 — an invented record, not a person who signs in.
   if (holder.canLogin) return null;
@@ -319,9 +404,24 @@ export async function takeXeroContactFromSchoolsOwnMember(
     where: { id: holder.id },
     data: { xeroContactId: null },
   });
-  // The member's canonical CONTACT ledger row goes with the column, the way
-  // member merge retires a loser's identity links. Scoped to this contact id
-  // and this role, so an unrelated link on the same record survives.
+  /*
+    The member's canonical CONTACT ledger rows go with the column, the way
+    member merge retires a loser's identity links.
+
+    SCOPED TO THIS MEMBER, THIS OBJECT TYPE AND THIS CONTACT ID — and
+    deliberately NOT to `role`, which this `where` does not name. So every
+    active `Member` link to THIS contact id is deactivated, whatever role it
+    carries, not only the canonical `CONTACT` one.
+
+    Deactivating more is the safe direction and it is what makes the inbound
+    analysis hold. `xero-inbound/contact.ts` resolves a contact webhook's local
+    target by reading ACTIVE `Member` links with `role: "CONTACT"`, so that role
+    must go or an inbound patch would still be applied to a member that no
+    longer owns the contact. Naming the role here would close exactly that one
+    and leave any other role on the same id asserting a link that is no longer
+    true; not naming it closes them all. A link on the same record to a
+    DIFFERENT contact id is untouched, which is the separation that matters.
+  */
   const deactivated = await tx.xeroObjectLink.updateMany({
     where: {
       localModel: "Member",

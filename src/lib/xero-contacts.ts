@@ -1000,6 +1000,21 @@ export async function findOrCreateXeroContact(
   try {
     linkOutcome = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
+      /*
+        INV-INT-018 (#3367) — the contact-home key, taken BEFORE the Member row
+        fence below. See the refusal further down for what it guards; the ORDER
+        is its own rule and its own hazard.
+
+        The organisation-side transfer (`takeXeroContactFromSchoolsOwnMember`)
+        takes a Member ROW lock — it clears the holder's `xeroContactId` — while
+        holding this key. If this path took the row fence first and then waited
+        for the key, the two would close a deadlock cycle on exactly the pair
+        this module calls reachable on purpose: a credit note on a school's
+        earlier booking, against the new booking's invoice. Postgres would abort
+        one with `40P01`. Taking the key first makes "the contact-home key is
+        outer to any Member row lock" a rule every participant keeps.
+      */
+      await lockXeroContactHome(tx, finalResolved.contactId);
       const fresh = await lockMemberForXeroContactLink(tx, memberId);
 
       if (
@@ -1022,14 +1037,13 @@ export async function findOrCreateXeroContact(
         the ORGANISATION's contact and quietly link it to the member, leaving two
         local records claiming one Xero customer.
 
-        The lock is taken here, after the member key and before the check, so a
-        concurrent organisation resolve cannot pass its own check at the same
-        moment (INV-LOCK-002: entity key first, contact-home key last). The
-        refusal throws rather than choosing a winner — the settled rule on #2912
-        is that a person's contact is never reused as the school, and picking
-        one silently is that rule broken from the database side.
+        The lock taken above — after the member advisory key, before the member
+        ROW fence — is what stops a concurrent organisation resolve passing its
+        own check at the same moment (INV-LOCK-002). The refusal throws rather
+        than choosing a winner: the settled rule on #2912 is that a person's
+        contact is never reused as the school, and picking one silently is that
+        rule broken from the database side.
       */
-      await lockXeroContactHome(tx, finalResolved.contactId);
       await assertXeroContactHasNoOtherHome(tx, {
         xeroContactId: finalResolved.contactId,
         home: { kind: "MEMBER", id: memberId },
