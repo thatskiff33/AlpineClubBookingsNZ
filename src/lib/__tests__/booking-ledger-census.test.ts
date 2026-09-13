@@ -103,14 +103,38 @@ function applyPriceIncrease(
  * Written the way that production path writes it, which is the whole point of
  * putting it in this file: the ask comes from `sizeReviewChargeAsk`, and minting
  * it RETIRES whatever ask was there before, whoever raised it. `shareTotalCents`
- * is the sum of the shares settled against THIS edit; the booking's price rose
- * when the edit landed, so the price term is raised by the same figure and NOT
- * by the carried part - the carried part is money the price already names, owed
- * from an earlier change.
+ * is the sum of the shares settled against THIS edit; the price term rises by
+ * the same figure and NOT by the carried part - the carried part is money the
+ * price already names, owed from an earlier change.
+ *
+ * ## WHY THE PRICE RISES HERE, since the park deliberately FROZE it (#3371 fix
+ * round)
+ *
+ * A review round read this fixture as modelling a rise production never makes,
+ * on the ground that a parked edit writes the total back unchanged. The park
+ * does exactly that - and the CLOSURE undoes it. Traced through the writers
+ * rather than assumed:
+ *
+ *   * `recordReviewClosurePricing` (`stored-night-price-repair-store.ts`) runs
+ *     inside the settlement's own claim on EVERY parked-review closure, and it
+ *     calls `rebaseBookingPriceFromStrands`;
+ *   * that writer (`booking-review-price-rebase.ts`, #3219/#3257) re-prices the
+ *     booking from its strands and WRITES `finalPriceCents`;
+ *   * and the officer's per-night figures are not free: `unpricedNightTargetCents`
+ *     (`stored-night-price-repair.ts`) requires the blanks to sum to
+ *     `storedGuestTotal + settlementDelta - knownNightTotal`, so the strand ends
+ *     at `storedGuestTotal + delta` and the re-based booking rises by exactly the
+ *     settled charge.
+ *
+ * All of it commits before the mint, which happens after the transaction. So the
+ * ask really is raised against a price that already names it.
+ *
+ * `repriced: false` is the OTHER shape, and it is a real one - see the fixture
+ * that uses it.
  */
 function applyReviewCharge(
   ledger: Ledger,
-  params: { shareTotalCents: number },
+  params: { shareTotalCents: number; repriced?: boolean },
 ): Ledger {
   const ask = sizeReviewChargeAsk({
     shareTotalCents: params.shareTotalCents,
@@ -118,7 +142,9 @@ function applyReviewCharge(
   });
   return {
     ...ledger,
-    finalPriceCents: ledger.finalPriceCents + params.shareTotalCents,
+    finalPriceCents:
+      ledger.finalPriceCents +
+      (params.repriced === false ? 0 : params.shareTotalCents),
     additionalAmountCents: ask.amountCents,
     additionalPaymentStatus: "PENDING",
   };
@@ -288,6 +314,53 @@ const SCENARIOS: Scenario[] = [
     },
     verdict: "balanced",
     expectedResidualCents: 0,
+  },
+  {
+    label: "#3371: the closure's re-price DECLINED, so the price never moved",
+    /*
+      THE OTHER SHAPE THE REVIEW PATH REALLY PRODUCES, added by the #3371 fix
+      round because a review lens was right that it existed even though it was
+      wrong about which one was the fiction.
+
+      `rebaseBookingPriceFromStrands` REFUSES to re-price where a surviving
+      strand's nights cannot be read back as exact, reconciling evidence
+      (`INV-MOD-028`) - its own docblock names that decline as the thing that
+      makes re-pricing on any closure safe rather than reckless. The settlement
+      still charges, so the club ends up asking for money the frozen headline
+      does not name.
+
+      The census REPORTS that and does not fail it, which is the right answer:
+      `retained` is "the club holds more than the price says", and the repair for
+      it is the frozen price, not the ask. The #3340 class - money the price says
+      is owed that nothing is asking for - is `unasked`, and no shape on this path
+      produces one. This fixture and the one after it pin that difference rather
+      than leaving it to be inferred from the carried-balance fixtures above.
+    */
+    build: () => {
+      let ledger = newBooking({ finalPriceCents: 13000, paidCents: 13000 });
+      ledger = applyReviewCharge(ledger, {
+        shareTotalCents: 6000,
+        repriced: false,
+      });
+      return ledger;
+    },
+    verdict: "retained",
+    expectedResidualCents: -6000,
+  },
+  {
+    label: "#3371: a declined re-price, then the member pays the ask",
+    // The same shape once the money lands: the club has $60 the price does not
+    // name, which is what an operator reading the census needs to see.
+    build: () => {
+      let ledger = newBooking({ finalPriceCents: 13000, paidCents: 13000 });
+      ledger = applyReviewCharge(ledger, {
+        shareTotalCents: 6000,
+        repriced: false,
+      });
+      return payOutstandingAsk(ledger);
+    },
+    verdict: "retained",
+    expectedResidualCents: -6000,
   },
   {
     label: "a policy-tiered reduction kept a slice the price no longer names",
