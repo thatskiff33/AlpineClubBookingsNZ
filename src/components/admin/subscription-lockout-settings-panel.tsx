@@ -47,7 +47,10 @@ const NONE = "__none__";
 
 function monthName(month: number | null): string {
   if (month == null || month < 1 || month > 12) return "Unknown";
-  return MONTH_NAMES[month - 1];
+  // The range check above guarantees `month - 1` is within [0, 11], so this
+  // can only be undefined if that guarantee is ever violated — the same
+  // "Unknown" this function already returns for an out-of-range month.
+  return MONTH_NAMES[month - 1] ?? "Unknown";
 }
 
 /** #2543 — mirrors the Prisma `SubscriptionLockoutMode` enum. */

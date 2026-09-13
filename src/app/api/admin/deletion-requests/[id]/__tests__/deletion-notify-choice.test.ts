@@ -99,9 +99,7 @@ vi.mock("@/lib/access-roles", () => ({
   memberHoldsPrivilegedRole: h.memberHoldsPrivilegedRole,
 }));
 vi.mock("@/lib/admin-account-guards", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/admin-account-guards")>(
-    "@/lib/admin-account-guards",
-  );
+  const actual = (await vi.importActual("@/lib/admin-account-guards")) as typeof import("@/lib/admin-account-guards");
   return { ...actual, wouldRemoveLastFullAdmin: h.wouldRemoveLastFullAdmin };
 });
 vi.mock("@/lib/access-role-definitions", () => ({ MEMBER_ACCESS_ROLE_SELECT: {} }));

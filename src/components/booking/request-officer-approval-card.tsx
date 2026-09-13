@@ -219,12 +219,15 @@ export function RequestOfficerApprovalCard({
   );
 
   const trimmed = memberMessage.trim();
-  // The member's own selection arithmetic, not a policy calculation.
-  const guestStays = proposal.guests.map((guest) =>
-    describeGuestStay(guest, proposal.envelopeNightCount),
-  );
-  const guestNights = guestStays.reduce(
-    (sum, stay) => sum + stay.nightCount,
+  // The member's own selection arithmetic, not a policy calculation. Each
+  // guest is paired with its own stay description here, rather than kept in
+  // a separate same-length array read back by a shared render index below.
+  const guestsWithStays = proposal.guests.map((guest) => ({
+    guest,
+    stay: describeGuestStay(guest, proposal.envelopeNightCount),
+  }));
+  const guestNights = guestsWithStays.reduce(
+    (sum, { stay }) => sum + stay.nightCount,
     0,
   );
   const capacityWording = memberExceptionSubmitCapacityWording({
@@ -424,13 +427,13 @@ export function RequestOfficerApprovalCard({
           </div>
         </dl>
         <ul className="mt-3 space-y-1">
-          {proposal.guests.map((guest, index) => (
+          {guestsWithStays.map(({ guest, stay }, index) => (
             <li key={`${guest.firstName}-${guest.lastName}-${index}`}>
               {guest.firstName} {guest.lastName} — {guest.ageTierLabel}
               {guest.isMember ? ", member" : ""}
               <span className="text-muted-foreground">
                 {" "}
-                · {guestStays[index].label}
+                · {stay.label}
               </span>
             </li>
           ))}

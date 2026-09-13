@@ -69,16 +69,14 @@ vi.mock("@/lib/ai-diagnostics-config", () => ({
   getOperationalDiagnosticsApiKey: mocks.apiKey,
 }));
 vi.mock("@/lib/ai-diagnostics-usage", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/ai-diagnostics-usage")>()),
+  ...((await importOriginal()) as typeof import("@/lib/ai-diagnostics-usage")),
   isDiagnosticsMeteringHealthy: mocks.meteringHealthy,
 }));
 // PARTIAL: keep the real `hasAllAreaViews`/`missingAreaViews` the resolver uses
 // to gate on permission, override only the database-backed fresh matrix read
 // that both the route (gate 7) and the resolver (gate 2) call.
 vi.mock("@/lib/diagnostics/page-context/authorize", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/lib/diagnostics/page-context/authorize")
-  >()),
+  ...((await importOriginal()) as typeof import("@/lib/diagnostics/page-context/authorize")),
   readFreshAdminPermissionMatrix: mocks.freshMatrix,
 }));
 // Stub only the record READER, so the resolver runs for real without a database.

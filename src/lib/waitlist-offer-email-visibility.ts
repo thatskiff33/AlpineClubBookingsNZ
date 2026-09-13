@@ -230,10 +230,14 @@ export async function getWaitlistOfferEmailDeliveries(
     return deliveries;
   }
 
-  const earliestLookupStart = lookupBookings.reduce((earliest, booking) => {
+  // Seeded from the first booking's own lookup start, which the early return
+  // above proves is present; reading it here is what says so (#2800).
+  const [firstLookupBooking, ...laterLookupBookings] = lookupBookings;
+  if (firstLookupBooking === undefined) return deliveries;
+  const earliestLookupStart = laterLookupBookings.reduce((earliest, booking) => {
     const lookupStart = getLookupStart(booking);
     return lookupStart < earliest ? lookupStart : earliest;
-  }, getLookupStart(lookupBookings[0]));
+  }, getLookupStart(firstLookupBooking));
   const recipients = Array.from(
     new Set(lookupBookings.map((booking) => booking.member.email)),
   );

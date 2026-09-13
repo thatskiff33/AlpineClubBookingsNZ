@@ -19,7 +19,7 @@ import { getAppBaseUrl, sanitizeEmailHref } from "@/lib/app-url";
 import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 import { SUPPORT_EMAIL } from "@/lib/email-sender";
 import { emailPalette } from "@/lib/email-theme";
-import { formatCents as formatMoneyCents } from "@/lib/utils";
+export { formatCents } from "@/lib/utils";
 
 export const BASE_URL = getAppBaseUrl();
 
@@ -188,8 +188,4 @@ export function alertBox(
 <div style="background-color: ${c.bg}; border: 1px solid ${c.border}; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
   <p style="margin: 0; color: ${c.text}; font-size: 14px; font-weight: 600; white-space: pre-wrap;">${text}</p>
 </div>`;
-}
-
-export function formatCents(cents: number): string {
-  return formatMoneyCents(cents);
 }

@@ -38,6 +38,7 @@ import {
   DIAGNOSTICS_PAGE_CONTEXT_ROUTES,
   type DiagnosticsPageContextRoute,
 } from "./registry";
+import { must } from "@/lib/indexed-access";
 
 /** A dynamic segment in a canonical pathname: `[id]`, `[bookingId]`, `[...slug]`. */
 const DYNAMIC_SEGMENT = /^\[.+\]$/;
@@ -86,8 +87,10 @@ export function matchDiagnosticsPageRoute(
     let recordId: string | undefined;
     let matched = true;
     for (let index = 0; index < canonical.length; index += 1) {
-      const expected = canonical[index];
-      const actual = live[index];
+      // `canonical.length === live.length` was checked above, so `index` is
+      // within both arrays.
+      const expected = must(canonical[index], `matchDiagnosticsPageContext: no canonical segment at index ${index}`);
+      const actual = must(live[index], `matchDiagnosticsPageContext: no live segment at index ${index}`);
       if (DYNAMIC_SEGMENT.test(expected)) {
         // A dynamic segment is the record id. Only ONE is expected; a route with two
         // would make "which one is the record" a guess, so the second refuses the

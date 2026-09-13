@@ -176,6 +176,11 @@ function parseIpv4(host: string): number[] | null {
 }
 
 function isPrivateIpv4([a, b]: number[]): boolean {
+  // Unreachable: `parseIpv4` only ever returns exactly 4 octets. Fail
+  // closed the same way `classifyCaptureHost`'s docstring commits to for
+  // every other unrecognised shape: "I could not tell" must never come out
+  // as private/safe.
+  if (a === undefined || b === undefined) return false;
   if (a === 127) return true; // loopback, RFC 1122
   if (a === 10) return true; // RFC 1918
   if (a === 172 && b >= 16 && b <= 31) return true; // RFC 1918

@@ -195,7 +195,7 @@ vi.mock("../member-xero-duplicate-decision-dialog", () => ({
 }));
 
 vi.mock("@/lib/admin-member-xero-actions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/admin-member-xero-actions")>()),
+  ...((await importOriginal()) as typeof import("@/lib/admin-member-xero-actions")),
   linkMemberXeroContact: (...args: unknown[]) => xeroActionMocks.link(...args),
   pushMemberToXero: (...args: unknown[]) => xeroActionMocks.push(...args),
   searchXeroContacts: (...args: unknown[]) => xeroActionMocks.search(...args),
@@ -566,7 +566,6 @@ describe("admin member access-role UI", () => {
     const roleCheckbox = (name: string) =>
       screen.getByRole("checkbox", {
         // Test helper: name is escaped via escapeRegExp and test-controlled; not user input.
-        // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
         name: new RegExp(`^${escapeRegExp(name)}(?:\\b|Can)`),
       });
 

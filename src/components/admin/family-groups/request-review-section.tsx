@@ -177,10 +177,19 @@ export function FamilyGroupRequestReviewSection({
         [request.id]: foundMembers,
       }));
 
-      if (foundMembers.length === 1) {
+      // Read the sole match once, alongside the length check that proves it
+      // is the sole match — `foundMembers.length === 1` doesn't tell the
+      // type checker that `foundMembers[0]` exists, so both the selection
+      // and the feedback message below share this one lookup instead of
+      // each re-indexing `foundMembers[0]`.
+      const [onlyMember] = foundMembers;
+      const singleMatch =
+        foundMembers.length === 1 ? onlyMember : null;
+
+      if (singleMatch) {
         setRequestSelections((current) => ({
           ...current,
-          [request.id]: foundMembers[0].id,
+          [request.id]: singleMatch.id,
         }));
       }
 
@@ -189,8 +198,8 @@ export function FamilyGroupRequestReviewSection({
         [request.id]:
           foundMembers.length === 0
             ? `No eligible member records found for "${query}".`
-            : foundMembers.length === 1
-              ? `Found and selected ${foundMembers[0].firstName} ${foundMembers[0].lastName}.`
+            : singleMatch
+              ? `Found and selected ${singleMatch.firstName} ${singleMatch.lastName}.`
               : `Found ${foundMembers.length} member records.`,
       }));
     } finally {
@@ -242,6 +251,7 @@ export function FamilyGroupRequestReviewSection({
     const linkedMemberId = requestSelections[request.id];
     const needsMemberSelection =
       request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
+    const rejectionReason = requestNotes[request.id]?.trim();
 
     setRequestSubmittingId(request.id);
 
@@ -262,8 +272,8 @@ export function FamilyGroupRequestReviewSection({
                     : {}),
                 }
             : {}),
-          ...(action === "reject" && requestNotes[request.id]?.trim()
-            ? { rejectionReason: requestNotes[request.id].trim() }
+          ...(action === "reject" && rejectionReason
+            ? { rejectionReason }
             : {}),
           // Only carry the flag when a choice was made (emailing decisions); an
           // omitted flag threads as undefined and the server defaults to notify.

@@ -36,7 +36,7 @@ vi.mock("@/lib/audit", () => ({
   logAudit: mockLogAudit,
 }));
 vi.mock("@/lib/xero-inbound-reconciliation", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-inbound-reconciliation")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-inbound-reconciliation");
 
   return {
     ...actual,

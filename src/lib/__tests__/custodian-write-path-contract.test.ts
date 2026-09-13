@@ -19,7 +19,6 @@ import { describe, expect, it } from "vitest";
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
@@ -625,7 +624,7 @@ describe("custodian write-path contract (#2286)", () => {
 
   it("feeds BOTH planner expansions the same custodian hold list (#2698)", () => {
     /*
-      `INV-CAP-035` makes the whole-lodge hold expansion DROP a bed-night the
+      `INV-CAP-038` makes the whole-lodge hold expansion DROP a bed-night the
       custodian expansion is expected to EMIT. That is a partition only while
       both feeds in a planner call read the same custodian holds.
 
@@ -687,7 +686,7 @@ describe("custodian write-path contract (#2286)", () => {
       ] as const) {
         expect(
           containsEvidence(call, feed.holds),
-          `${feed.file}: the ${label} must be fed \`${feed.holds}\` — INV-CAP-035 is a partition only while both feeds read the SAME custodian holds, and a wider list here leaves a bed-night with no occupancy row at all`,
+          `${feed.file}: the ${label} must be fed \`${feed.holds}\` — INV-CAP-038 is a partition only while both feeds read the SAME custodian holds, and a wider list here leaves a bed-night with no occupancy row at all`,
         ).toBe(true);
         expect(
           containsEvidence(call, feed.nights),

@@ -529,7 +529,6 @@ describe("real-Postgres over-budget race proof stays wired into CI (#2532)", () 
   function repoFile(relativePath: string) {
     // Test helper: reads a fixed repo file under process.cwd(); the path is
     // test-controlled, not user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
   }
 
@@ -602,7 +601,6 @@ describe("real-Postgres read-only SEAM proof stays wired into CI (AID-8 F2)", ()
   function repoFile(relativePath: string) {
     // Test helper: reads a fixed repo file under process.cwd(); the path is
     // test-controlled, not user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
   }
 

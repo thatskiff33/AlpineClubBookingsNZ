@@ -956,8 +956,13 @@ export function PairStep({
     chosenTemplateId === null &&
     bound === null &&
     context.templates.length > 0;
+  // "Exactly one board to choose from" said as a first with nothing after it,
+  // so the board that gets seeded is the one the condition tested for (#2801).
+  const [onlyTemplate, ...otherTemplates] = context.templates;
   const onlyTemplateId =
-    context.templates.length === 1 ? context.templates[0].id : null;
+    onlyTemplate !== undefined && otherTemplates.length === 0
+      ? onlyTemplate.id
+      : null;
   useEffect(() => {
     if (needsBoardPick && onlyTemplateId) onChoose(onlyTemplateId);
   }, [needsBoardPick, onlyTemplateId, onChoose]);
@@ -1333,6 +1338,13 @@ export function DoneStep({ context, helpers }: StepProps) {
   const clubTime = useClubTime();
   const live = liveDevicesForLodge(context);
   const seen = live.filter((device) => device.lastSeenAt !== null);
+  const [firstSeen, ...otherSeen] = seen;
+  // "Exactly one screen is live" said as a first with nothing after it, so the
+  // screen the headline names is the one the condition tested for (#2801).
+  const liveHeadline =
+    firstSeen !== undefined && otherSeen.length === 0
+      ? `${firstSeen.name} is live`
+      : `${seen.length} screens are live`;
   const lodgeUnresolved = isLodgeUnresolved(context);
 
   // The last thing the wizard waits for is written by the TV, not by this page:
@@ -1355,9 +1367,7 @@ export function DoneStep({ context, helpers }: StepProps) {
         <Notice tone="success">
           <p className="font-medium">
             <Check className="mr-1 inline h-4 w-4" aria-hidden />
-            {seen.length === 1
-              ? `${seen[0].name} is live`
-              : `${seen.length} screens are live`}
+            {liveHeadline}
             .
           </p>
           <ul className="mt-1 space-y-0.5">

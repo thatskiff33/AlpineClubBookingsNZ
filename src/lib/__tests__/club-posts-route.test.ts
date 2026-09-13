@@ -179,7 +179,7 @@ describe("content rules at the door", () => {
   it("rejects a post naming more than six images with 400, not a silent truncation (#3091 r3)", async () => {
     const imgs = Array.from(
       { length: 7 },
-      (unused, i) =>
+      (_unused, i) =>
         `<img src="/api/club-posts/images/${i.toString(16).padStart(32, "0")}" alt="" />`,
     ).join("");
     const res = await POST(
@@ -196,7 +196,7 @@ describe("content rules at the door", () => {
     // client cap can come out over the column's 20,000.
     const anchors = Array.from(
       { length: 450 },
-      (unused, i) => `<a href="https://example.org/${i}">x</a>`,
+      (_unused, i) => `<a href="https://example.org/${i}">x</a>`,
     ).join(" ");
     const res = await POST(post({ content: "links", bodyHtml: `<p>${anchors}</p>` }));
     expect(res.status).toBe(400);

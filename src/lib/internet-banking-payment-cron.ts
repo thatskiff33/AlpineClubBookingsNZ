@@ -19,6 +19,7 @@ import {
 } from "@/lib/member-credit";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
+import { formatCents } from "@/lib/utils";
 import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
@@ -316,7 +317,7 @@ export async function releaseExpiredInternetBankingHolds(
       // the cancel branches.
       reason:
         creditRestoredCents > 0
-          ? `Internet Banking payment hold expired before reconciliation. NZ$${(creditRestoredCents / 100).toFixed(2)} of applied account credit was returned.`
+          ? `Internet Banking payment hold expired before reconciliation. ${formatCents(creditRestoredCents)} of applied account credit was returned.`
           : "Internet Banking payment hold expired before reconciliation.",
       snapshot: {
         paymentId: payment.id,

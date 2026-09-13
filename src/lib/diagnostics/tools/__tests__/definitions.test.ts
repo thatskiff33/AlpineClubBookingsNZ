@@ -19,7 +19,7 @@ import {
 // predicate, so a divergence between them would fail here.
 vi.mock("../../page-context/authorize", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../../page-context/authorize")>();
+    (await importOriginal()) as typeof import("../../page-context/authorize");
   return { ...actual, readFreshAdminPermissionMatrix: vi.fn() };
 });
 

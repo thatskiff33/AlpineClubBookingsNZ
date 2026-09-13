@@ -1046,12 +1046,24 @@ export async function POST(
   // two-added-guest case with different ranges specifically so a mis-ordered join
   // fails rather than silently pricing one added guest on the other's nights.
   const normalizedAddGuestsWithRanges = normalizedAddGuests
-    ? normalizedAddGuests.map((guest, index) => ({
-        ...guest,
-        stayStart: guestRanges.ranges.added[index].stayStart,
-        stayEnd: guestRanges.ranges.added[index].stayEnd,
-        nights: guestRanges.ranges.added[index].nights,
-      }))
+    ? normalizedAddGuests.map((guest, index) => {
+        const range = guestRanges.ranges.added[index];
+        if (range === undefined) {
+          // The join above is sound by construction, and the type cannot say
+          // so. Refused by name rather than read past (#2801): the alternative
+          // is quoting an added guest on nobody's nights, and this quote is
+          // what the save is then held to (INV-MOD-028).
+          throw new Error(
+            `The modify quote has no resolved stay range at added-guest position ${index} of ${guestRanges.ranges.added.length}.`
+          );
+        }
+        return {
+          ...guest,
+          stayStart: range.stayStart,
+          stayEnd: range.stayEnd,
+          nights: range.nights,
+        };
+      })
     : undefined;
 
   const proposedGuestRows = [

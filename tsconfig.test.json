@@ -2,12 +2,22 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "types": ["vitest/globals", "node"],
-    "noEmit": true,
-    // JavaScript/MJS Vitest files are deliberately loaded by this project so
-    // they cannot sit in neither config, but they are not claimed as statically
-    // typechecked. #2693 owns converting the remaining files and disabling
-    // allowJs; until then checkJs remains explicitly off.
-    "checkJs": false
+    // #2802: tsconfig.json turns `noUncheckedIndexedAccess` on as the
+    // permanent rule for application code. Programme #2694 (the ratchet that
+    // reached zero) was scoped to `tsconfig.json` throughout — "application
+    // code before tests" — and forcing the flag on here surfaces thousands of
+    // pre-existing diagnostics scattered across hundreds of test files, none
+    // of which #2694 ever measured or budgeted. It is several times the whole
+    // migration this programme just finished, so widening the flag to tests is
+    // a separate programme rather than the tail of this stage; turning it back
+    // off here keeps that decision explicit instead of silent, and keeps
+    // `npm run typecheck` green in the meantime.
+    //
+    // #3363 IS THE ONE HOME for how many, and for the plan. The counts are
+    // measurements rather than facts about the design, so a second copy of them
+    // goes stale silently and nobody can tell which copy is wrong — which is
+    // why neither this comment nor docs/TESTING.md restates them.
+    "noUncheckedIndexedAccess": false
   },
   // Every Vitest test under the configured src/ and scripts/ collection roots.
   //
@@ -20,19 +30,41 @@
   // file-size gate this PR adds: a gate whose own tests were outside the
   // typechecker (#2875).
   //
-  // Broad `*.test.*` / `*.spec.*` patterns cover every TypeScript extension
-  // Vitest and TypeScript share, including `.mts` and `.cts`, plus the current
-  // JavaScript forms while allowJs remains enabled. The project-coverage test
-  // pins the exact Vitest default and refuses a collected extension TypeScript
-  // cannot load, so broad patterns cannot turn into a silent scope claim.
+  // The patterns name every TypeScript extension Vitest and TypeScript share —
+  // `.ts`, `.tsx`, `.mts` and `.cts` — and nothing else. `allowJs` is off
+  // (#2693), so the `scripts/**/*.test.mjs` suites Vitest also collects are
+  // deliberately NOT roots here: they run, but no project claims to typecheck
+  // them, exactly as before, when `checkJs: false` loaded them and checked
+  // nothing. `src/lib/__tests__/typecheck-project-coverage.test.ts` pins that
+  // list, so a new JavaScript test cannot appear without being named there.
   "include": [
-    "src/**/*.test.*",
-    "src/**/*.spec.*",
-    "src/**/__tests__/**/*",
-    "scripts/**/*.test.*",
-    "scripts/**/*.spec.*",
-    "scripts/**/__tests__/**/*",
-    "vitest.config.mts"
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.test.mts",
+    "src/**/*.test.cts",
+    "src/**/*.spec.ts",
+    "src/**/*.spec.tsx",
+    "src/**/*.spec.mts",
+    "src/**/*.spec.cts",
+    "src/**/__tests__/**/*.ts",
+    "src/**/__tests__/**/*.tsx",
+    "src/**/__tests__/**/*.mts",
+    "src/**/__tests__/**/*.cts",
+    "scripts/**/*.test.ts",
+    "scripts/**/*.test.tsx",
+    "scripts/**/*.test.mts",
+    "scripts/**/*.test.cts",
+    "scripts/**/*.spec.ts",
+    "scripts/**/*.spec.tsx",
+    "scripts/**/*.spec.mts",
+    "scripts/**/*.spec.cts",
+    "scripts/**/__tests__/**/*.ts",
+    "scripts/**/__tests__/**/*.tsx",
+    "scripts/**/__tests__/**/*.mts",
+    "scripts/**/__tests__/**/*.cts",
+    "vitest.config.mts",
+    "vitest.setup.ts",
+    "vitest.clock-setup.ts"
   ],
   "exclude": ["node_modules"]
 }

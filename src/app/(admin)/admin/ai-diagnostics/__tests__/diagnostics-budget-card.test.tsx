@@ -22,7 +22,7 @@ import { DiagnosticsBudgetCard } from "../_components/diagnostics-budget-card";
 
 const mocks = vi.hoisted(() => ({ canEdit: true as boolean | undefined }));
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>()),
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => mocks.canEdit,
 }));
 

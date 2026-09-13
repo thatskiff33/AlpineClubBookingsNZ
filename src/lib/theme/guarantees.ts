@@ -18,6 +18,7 @@
  */
 import { contrast, oklch, a4SolidForeground, type BuiltTheme } from "./theme-substrate";
 import { A2_INPUT_RING_NEUTRAL_STEP, ACCENT_NEUTRAL_STEP } from "./aliases";
+import { must } from "./index-guards";
 
 /** WCAG AA minimum for normal-size body text. */
 export const AA_TEXT = 4.5;
@@ -70,48 +71,57 @@ export function sweepGuarantees(
 ): SweepFailure[] {
   const failures: SweepFailure[] = [];
   const n = theme.neutralHex;
-  const fg = n[11]; // neutral-12
-  const mfg = n[10]; // neutral-11
-  const surfaces1to3 = [n[0], n[1], n[2]];
+  const fg = must(n[11], "sweepGuarantees: neutral ramp has no step 12"); // neutral-12
+  const mfg = must(n[10], "sweepGuarantees: neutral ramp has no step 11"); // neutral-11
+  const surfaces1to3 = n.slice(0, 3);
 
   for (const [sname, s] of Object.entries(theme.scales)) {
     const h = s.hex;
     // G1: foreground on steps 1–5
-    for (let i = 0; i < 5; i++) {
-      const r = contrast(fg, h[i]);
+    h.slice(0, 5).forEach((hex, i) => {
+      const r = contrast(fg, hex);
       if (r < AA_TEXT) failures.push({ guarantee: "G1", cell: `${cellPrefix}/${sname}/step${i + 1}`, ratio: round2(r), floor: AA_TEXT });
-    }
+    });
     // G2: muted-fg on steps 1–3
-    for (let i = 0; i < 3; i++) {
-      const r = contrast(mfg, h[i]);
+    h.slice(0, 3).forEach((hex, i) => {
+      const r = contrast(mfg, hex);
       if (r < AA_TEXT) failures.push({ guarantee: "G2", cell: `${cellPrefix}/${sname}/step${i + 1}`, ratio: round2(r), floor: AA_TEXT });
-    }
+    });
     // G2b: chip text (step-11) on chip surface (step-3) for EVERY scale
-    const g2b = contrast(h[10], h[2]);
+    const chipText = must(h[10], `sweepGuarantees: scale ${sname} has no step 11`);
+    const chipSurface = must(h[2], `sweepGuarantees: scale ${sname} has no step 3`);
+    const g2b = contrast(chipText, chipSurface);
     if (g2b < CHIP_TEXT_FLOOR) failures.push({ guarantee: "G2b", cell: `${cellPrefix}/${sname}/chip`, ratio: round2(g2b), floor: CHIP_TEXT_FLOOR });
     // G4: A4 solid-foreground on step-9 / step-10 (hue scales only)
     if (sname !== "neutral" && s.generatorContrast) {
-      for (const idx of [8, 9]) {
-        const res = a4SolidForeground(h[idx], s.generatorContrast, lightNeutral12);
+      const generatorContrast = s.generatorContrast;
+      [8, 9].forEach((idx) => {
+        const stepHex = must(h[idx], `sweepGuarantees: scale ${sname} has no step ${idx + 1}`);
+        const res = a4SolidForeground(stepHex, generatorContrast, lightNeutral12);
         if (!res.passAA) failures.push({ guarantee: "G4", cell: `${cellPrefix}/${sname}/step${idx + 1}`, ratio: res.ratio, floor: AA_TEXT });
-      }
+      });
     }
   }
 
   // G5b: --input/--ring (neutral-10) vs surfaces 1–3
-  const inputRing = n[A2_INPUT_RING_NEUTRAL_STEP - 1];
-  for (let i = 0; i < 3; i++) {
-    const r = contrast(inputRing, surfaces1to3[i]);
+  const inputRing = must(
+    n[A2_INPUT_RING_NEUTRAL_STEP - 1],
+    `sweepGuarantees: neutral ramp has no step ${A2_INPUT_RING_NEUTRAL_STEP}`,
+  );
+  surfaces1to3.forEach((surface, i) => {
+    const r = contrast(inputRing, surface);
     if (r < INPUT_RING_MIN) failures.push({ guarantee: "G5b", cell: `${cellPrefix}/inputring/surface${i + 1}`, ratio: round2(r), floor: INPUT_RING_MIN });
-  }
+  });
 
   // G5a: card/page separation (light only — cards read via shadow+border in dark).
   if (theme.mode === "light") {
+    const card = must(n[0], "sweepGuarantees: neutral ramp has no step 1");
+    const page = must(n[1], "sweepGuarantees: neutral ramp has no step 2");
     // Compared at measurements.json precision (ΔL r3, contrast r2): both reference
     // seeds clear the pinned candidate-ii floor there; tokoroa sits right on the ΔL
     // floor, with the pinned J8 shadow the primary separation reinforcement.
-    const dL = round3(Math.abs(oklchL(n[0]) - oklchL(n[1])));
-    const c = round2(contrast(n[0], n[1]));
+    const dL = round3(Math.abs(oklchL(card) - oklchL(page)));
+    const c = round2(contrast(card, page));
     if (dL < G5A_CARD_SEPARATION.minDeltaL) failures.push({ guarantee: "G5a", cell: `${cellPrefix}/card-deltaL`, ratio: dL, floor: G5A_CARD_SEPARATION.minDeltaL });
     if (c < G5A_CARD_SEPARATION.minContrast) failures.push({ guarantee: "G5a", cell: `${cellPrefix}/card-contrast`, ratio: c, floor: G5A_CARD_SEPARATION.minContrast });
   }
@@ -121,7 +131,9 @@ export function sweepGuarantees(
 
 /** G3 distinctness ratio (recorded, not a hard floor): muted-fg vs foreground. */
 export function g3Distinctness(theme: BuiltTheme): number {
-  return round2(contrast(theme.neutralHex[10], theme.neutralHex[11]));
+  const mutedFg = must(theme.neutralHex[10], "g3Distinctness: neutral ramp has no step 11");
+  const fg = must(theme.neutralHex[11], "g3Distinctness: neutral ramp has no step 12");
+  return round2(contrast(mutedFg, fg));
 }
 
 /**
@@ -143,8 +155,8 @@ export function sweepDerivedMutedForeground(
 ): SweepFailure[] {
   const failures: SweepFailure[] = [];
   const n = theme.neutralHex;
-  for (let i = 0; i < DERIVED_MUTED_SURFACE_STEPS; i++) {
-    const r = contrast(mutedTone, n[i]);
+  n.slice(0, DERIVED_MUTED_SURFACE_STEPS).forEach((surface, i) => {
+    const r = contrast(mutedTone, surface);
     if (r < AA_TEXT) {
       failures.push({
         guarantee: "G2c",
@@ -153,7 +165,7 @@ export function sweepDerivedMutedForeground(
         floor: AA_TEXT,
       });
     }
-  }
+  });
   return failures;
 }
 

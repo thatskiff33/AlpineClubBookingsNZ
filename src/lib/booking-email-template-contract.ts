@@ -25,6 +25,10 @@ export const BOOKING_URL_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
   // Booking-scoped and registered like setup-intent-failed, so the same optional
   // canonical booking link carries the member to the booking that needs a card.
   "saved-card-charge-failed",
+  // #3340: the supersede-refund notice. Booking-scoped and registered like its
+  // siblings, so the canonical authorized booking link carries the member to the
+  // booking whose money moved.
+  "superseded-payment-refunded",
   "waitlist-confirmation",
   "waitlist-offer",
   "waitlist-offer-expired",

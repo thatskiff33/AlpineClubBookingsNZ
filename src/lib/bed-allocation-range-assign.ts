@@ -247,10 +247,11 @@ async function classifyBedTakenNights(input: {
       : new Set<string>();
 
   for (const stayDate of input.candidateNights) {
-    const occupants = byNight.get(stayDate);
-    if (!occupants || occupants.length === 0) continue;
-
-    const [primary] = occupants;
+    // Reading the first occupant is what says the bed-night has one; an empty
+    // night is not taken and needs no refusal (#2800).
+    const occupants = byNight.get(stayDate) ?? [];
+    const primary = occupants[0];
+    if (primary === undefined) continue;
     const describe = (): BedRangeRefusal => ({
       stayDate,
       category: "BED_TAKEN",
@@ -547,9 +548,15 @@ const RETRYABLE_RANGE_WRITE_CODES: Record<string, string> = {
     "That range collided with another change being saved at the same moment, twice. Nothing was written — reload the board and try again.",
 };
 
-function retryableRangeWriteCode(error: unknown): string | null {
+/**
+ * The operator wording for a retryable write conflict, or `null` when the error
+ * is not one. Returning the MESSAGE rather than the code makes the table lookup
+ * and its answer one read, so the caller cannot look the code up again and find
+ * nothing (#2800).
+ */
+function retryableRangeWriteMessage(error: unknown): string | null {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
-  return error.code in RETRYABLE_RANGE_WRITE_CODES ? error.code : null;
+  return RETRYABLE_RANGE_WRITE_CODES[error.code] ?? null;
 }
 
 /**
@@ -624,7 +631,7 @@ export async function assignBedRange(
   try {
     return await runAttempt();
   } catch (error) {
-    if (!retryableRangeWriteCode(error)) {
+    if (!retryableRangeWriteMessage(error)) {
       throw error;
     }
     // Nothing was written (the transaction rolled back), so re-attempt once
@@ -633,12 +640,9 @@ export async function assignBedRange(
     try {
       return await runAttempt();
     } catch (retryError) {
-      const code = retryableRangeWriteCode(retryError);
-      if (code) {
-        throw new BedAllocationAdminError(
-          RETRYABLE_RANGE_WRITE_CODES[code],
-          409,
-        );
+      const retryableMessage = retryableRangeWriteMessage(retryError);
+      if (retryableMessage) {
+        throw new BedAllocationAdminError(retryableMessage, 409);
       }
       throw retryError;
     }

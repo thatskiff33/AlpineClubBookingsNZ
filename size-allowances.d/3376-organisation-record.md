@@ -5,7 +5,7 @@ a declarative table plus the two-line comment saying why that row's key is what
 it is.
 
 file: src/lib/member-merge.ts
-lines: 2834
+lines: 2878
 reason: `GENERIC_KEYED_RESOLVERS` is the merge's declarative collision table,
   and the schema completeness test fails CI for any Member relation with no
   bucket — so the new `OrganisationContact.member` relation has to appear here

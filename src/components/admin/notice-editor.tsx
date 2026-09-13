@@ -127,12 +127,18 @@ function useNoticeExpiryField() {
     toIso(value: string): string | null {
       const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(value);
       if (!match) return null;
-      const day = parseCalendarDate(match[1]);
+      const [, dateText, hourText, minuteText] = match;
+      // All three capture groups are mandatory (no `?`), so a successful
+      // match always populates all three.
+      if (dateText === undefined || hourText === undefined || minuteText === undefined) {
+        return null;
+      }
+      const day = parseCalendarDate(dateText);
       if (day === null) return null;
       return clubTime
         .atWallTime(
           day,
-          { hour: Number(match[2]), minute: Number(match[3]) },
+          { hour: Number(hourText), minute: Number(minuteText) },
           { skipped: "nextExistingInstant" },
         )
         .toISOString();

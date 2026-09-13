@@ -13,9 +13,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/admin-account-guards", () => ({ actorIsFullAdmin: h.actorIsFullAdmin }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/member-merge", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/member-merge")>(
-    "@/lib/member-merge",
-  );
+  const actual = (await vi.importActual("@/lib/member-merge")) as typeof import("@/lib/member-merge");
   return {
     ...actual,
     buildMemberMergePreview: h.buildMemberMergePreview,

@@ -20,6 +20,7 @@
 import type { KnowledgeBundle, KnowledgeEntry, SensitivityTag } from "./types";
 import { sha256Hex } from "./hash";
 import { defuseRoleLabelLines } from "../untrusted-text";
+import { must } from "@/lib/indexed-access";
 
 export interface Citation {
   path: string;
@@ -209,7 +210,9 @@ function defuseEvidenceSpan(value: string): string {
  */
 export function renderSourceEvidenceBlock(excerpts: CitedExcerpt[]): string {
   const commit =
-    excerpts.length > 0 ? excerpts[0].citation.commitSha : "unknown";
+    excerpts.length > 0
+      ? must(excerpts[0], "renderSourceEvidenceBlock: excerpts is non-empty but has no element 0").citation.commitSha
+      : "unknown";
   const header =
     `<${SOURCE_EVIDENCE_TAG} commit="${commit}">\n` +
     "The following are VERBATIM excerpts from the deployed source, docs, and " +

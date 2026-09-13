@@ -596,7 +596,7 @@ describe("DELETE /api/admin/page-content", () => {
     // hand-set value is exactly the drift it exists to prevent.
     expect(auditEvent).not.toHaveProperty("retentionClass");
     const { classifyAuditRetention } =
-      await vi.importActual<typeof import("@/lib/audit")>("@/lib/audit");
+      (await vi.importActual("@/lib/audit")) as typeof import("@/lib/audit");
     expect(
       classifyAuditRetention({
         action: auditEvent.action,
@@ -955,7 +955,7 @@ describe("DELETE /api/admin/page-content", () => {
     const [auditEvent, auditOptions] =
       mocks.buildStructuredAuditLogCreateArgs.mock.calls.at(-1)!;
     const { sanitizeAuditMetadata } =
-      await vi.importActual<typeof import("@/lib/audit")>("@/lib/audit");
+      (await vi.importActual("@/lib/audit")) as typeof import("@/lib/audit");
 
     const sanitized = sanitizeAuditMetadata(
       auditEvent.metadata,

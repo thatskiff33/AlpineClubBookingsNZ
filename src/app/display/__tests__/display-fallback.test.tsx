@@ -14,9 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // renders cleanly through the proven legacy region path.
 vi.mock("@/components/lodge-display/modules", async () => {
   const actual =
-    await vi.importActual<typeof import("@/components/lodge-display/modules")>(
-      "@/components/lodge-display/modules"
-    );
+    (await vi.importActual("@/components/lodge-display/modules")) as typeof import("@/components/lodge-display/modules");
   function BoomModule(): never {
     throw new Error("welcome module crashed");
   }

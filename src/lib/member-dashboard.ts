@@ -1,3 +1,4 @@
+import { outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 
 export interface DashboardPaymentSnapshot {
@@ -26,13 +27,11 @@ export function getDashboardPaymentOwedCents(booking: DashboardPaymentSnapshot) 
     owedCents += booking.finalPriceCents;
   }
 
-  if (
-    booking.payment &&
-    booking.payment.additionalAmountCents > 0 &&
-    booking.payment.additionalPaymentStatus !== "SUCCEEDED"
-  ) {
-    owedCents += booking.payment.additionalAmountCents;
-  }
+  // #3340 (`INV-SSOT-001`): the unpaid balance of an extra is read through the
+  // one function that knows what "still owed" means, not restated here. This was
+  // a hand-written copy of the same two conditions, and a copy is how the
+  // member's dashboard total comes to disagree with the chase and with the ask.
+  owedCents += outstandingAdditionalAskCents(booking.payment);
 
   return owedCents;
 }

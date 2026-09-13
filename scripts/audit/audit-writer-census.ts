@@ -84,6 +84,8 @@ import { join, relative, sep } from "node:path";
 
 import ts from "typescript";
 
+import { must } from "../../src/lib/indexed-access";
+
 /** The module that owns the audit boundary; its own writes are not call sites. */
 export const AUDIT_BOUNDARY_MODULE = "src/lib/audit.ts";
 
@@ -420,7 +422,7 @@ function combineCategory(
   }
 
   const each = events.map((event) => resolveCategory(event));
-  if (each.length === 1) return each[0];
+  if (each.length === 1) return must(each[0], "combineCategory: length-1 evidence list has no first element");
 
   const absent = each.find((evidence) => evidence.kind === "absent");
   if (absent) return absent;
@@ -439,7 +441,7 @@ function combineCategory(
     ),
   ].sort();
   return values.length === 1
-    ? { kind: "literal", value: values[0] }
+    ? { kind: "literal", value: must(values[0], "combineCategory: length-1 value list has no first element") }
     : { kind: "conditional", values };
 }
 
@@ -484,7 +486,9 @@ function resolveOneAction(event: ResolvedObject): string {
 function resolveAction(events: readonly ResolvedObject[] | null): string {
   if (!events || events.length === 0) return "(forwarded)";
   const actions = [...new Set(events.map(resolveOneAction))].sort();
-  return actions.length === 1 ? actions[0] : `(mixed) ${actions.join("|")}`;
+  return actions.length === 1
+    ? must(actions[0], "resolveAction: length-1 action list has no first element")
+    : `(mixed) ${actions.join("|")}`;
 }
 
 /**
@@ -626,7 +630,11 @@ function rawSqlDmlKind(call: ts.CallExpression): "insert" | "mutation" | null {
 function classifyRawSqlText(text: string): "insert" | "mutation" | null {
   const match = new RegExp(SQL_AUDIT_DML_SOURCE, "i").exec(text);
   if (!match) return null;
-  return match[1].toUpperCase().startsWith("INSERT") ? "insert" : "mutation";
+  // The pattern's own capture group is mandatory, so its absence here would
+  // mean the pattern itself did not really match.
+  const [, verb] = match;
+  if (!verb) return null;
+  return verb.toUpperCase().startsWith("INSERT") ? "insert" : "mutation";
 }
 
 /**
@@ -1000,7 +1008,11 @@ function scanSqlFile(file: string, repoRoot: string): AuditSqlStatement[] {
   const ordinals = new Map<string, number>();
 
   for (const match of sql.matchAll(SQL_AUDIT_DML)) {
-    const keyword = match[1].toUpperCase();
+    // The pattern's own capture group is mandatory, so its absence here would
+    // mean the pattern itself did not really match.
+    const [fullMatch, verb] = match;
+    if (!fullMatch || !verb) continue;
+    const keyword = verb.toUpperCase();
     const kind = keyword.startsWith("INSERT")
       ? "insert"
       : keyword.startsWith("UPDATE")
@@ -1020,7 +1032,7 @@ function scanSqlFile(file: string, repoRoot: string): AuditSqlStatement[] {
     // list says otherwise.
     let namesCategory = false;
     if (kind === "insert") {
-      const rest = sql.slice(at + match[0].length);
+      const rest = sql.slice(at + fullMatch.length);
       const columnGroup = readParenGroup(rest);
       if (columnGroup) {
         const columns = splitTopLevel(columnGroup.inner).map((column) =>

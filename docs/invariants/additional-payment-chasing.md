@@ -60,6 +60,43 @@ admin surface showed one. These rules now hold:
   backstop (#1350) auto-refunded and alerted, but the member had still been
   charged for a booking that no longer existed.
 
+  **The rule is about a RETIRED OBLIGATION, of which a cancelled booking is one
+  case and a SUPERSEDED ask is the other (#3340).** A booking edit that raises a
+  new extra retires the extra before it: minting the replacement ADDITIONAL
+  PaymentIntent queues every other outstanding one on that payment for
+  cancellation. Until #3340 the cancellation was only *enqueued* for the
+  five-minute recovery cron, so the retired intent stayed confirmable — measured
+  at 4 minutes 5 seconds in the live case, and a member's card confirm landed
+  inside it. The same shape as a cancelled booking, and the same harm: a member
+  charged against an obligation the club had already withdrawn.
+
+  Three things close it, and all three are needed because each alone leaves the
+  charge possible. The cancellation is attempted SYNCHRONOUSLY at mint, before
+  the new client secret is returned, with the enqueued operation kept as the
+  durable backstop for a provider failure. The secret route returns the
+  INTENT'S own amount and id, so the figure a member reads and the intent the
+  button confirms cannot come from different places. And `<Elements>` is keyed on
+  the client secret, because Stripe treats `options.clientSecret` as immutable
+  after mount — without the key a changed secret rebinds nothing and the mounted
+  form goes on confirming the intent it was born with.
+
+  **"Cancelled at mint" is BEST-EFFORT, and the queued operation is the durable
+  guarantee.** The immediate attempt cannot run when the recovery row is not
+  claimable — most often because a FIRST cancel attempt failed and left it in a
+  five-minute backoff, which is the window the live incident was measured in. The
+  retired intent then stays confirmable until the cron reaches it, and a capture
+  landing in that window is caught by the compensating refund below rather than
+  prevented. Every declined immediate attempt is logged with the intent it left
+  live, so such a charge can be explained rather than investigated from scratch.
+
+  When a capture does land on a retired intent anyway, the refund that follows is
+  no longer silent: it writes a `booking.payment.superseded_payment_refunded`
+  audit row and a REFUNDED `BookingEvent` (discriminated so the cancellation
+  narrative can never read it as a settlement clause), emails the member naming
+  what came back and what is still owing, and alerts admins. Before #3340 Stripe's
+  own receipt was the entire notice, and a member's query about one is the only
+  reason the money leak underneath ([INV-PAY-047]) was ever found.
+
 ### INV-ADDPAY-024
 
 - **What the member is told.** While the stay is still ahead, the member is
@@ -581,8 +618,7 @@ the key across attempts). Every canonical-link maintainer is bound by the
 multi-note contract too: `cleanupStaleCanonicalXeroObjectLinks` and the
 reconciliation report's drift classifications never deactivate or flag a LIVE
 active Stripe per-delta refund-note link as stale, mismatched, or duplicate
-(#2901 — treating the scalar pointer as the sole note put cleanup and this
-self-heal into an unbounded duplicate-note loop). The exemption is
+(#2901). The exemption is
 status-aware in both directions: a note recorded VOIDED/DELETED in Xero
 counts as ZERO coverage everywhere (`xero-refund-note-status.ts` is the one
 home for that judgement), its still-active local mirror is stale drift that
@@ -695,7 +731,7 @@ of the four routes the census above found "consulting `deletedAt` directly".
 (`if (!booking || booking.deletedAt)`) **above** its 403, so a caller with no
 claim on the booking got `403` while it was live and `404` the moment an admin
 deleted it — a deleted-or-live oracle on any id whose existence they could
-otherwise establish (a booking they were a guest on, a shared URL). Consulting
+otherwise establish. Consulting
 `deletedAt` is therefore not sufficient evidence that a route follows this rule;
 the ordering has to be read. Reordered in #2674 and pinned by
 `src/app/api/bookings/[id]/send-guest-payment-link/__tests__/deleted-booking-ordering.test.ts`.

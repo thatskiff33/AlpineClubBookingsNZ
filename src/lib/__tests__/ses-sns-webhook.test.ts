@@ -25,7 +25,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/ses-sns", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/ses-sns")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/ses-sns");
   return {
     ...actual,
     verifySnsWebhookMessage: (...args: unknown[]) =>

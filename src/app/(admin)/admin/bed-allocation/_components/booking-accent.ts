@@ -13,7 +13,10 @@ export interface BookingAccent {
 // `-500` weight); the focus ring uses step 7 of the same scale, which reads as a
 // subtle-but-visible ring in BOTH light and dark because the `--gen-*` substrate
 // adapts per mode — so the old `dark:ring-*` companion pair is dropped.
-export const BOOKING_ACCENTS: BookingAccent[] = [
+// Typed as a NON-EMPTY tuple, which is what makes `BOOKING_ACCENTS[0]` below a
+// proven `BookingAccent` rather than a lookup (#2801). A palette with no
+// colours in it would have no accent to return at all.
+export const BOOKING_ACCENTS: [BookingAccent, ...BookingAccent[]] = [
   { name: "cat1", stripClassName: "bg-cat1-9", ringClassName: "ring-cat1-7" },
   { name: "cat2", stripClassName: "bg-cat2-9", ringClassName: "ring-cat2-7" },
   { name: "cat3", stripClassName: "bg-cat3-9", ringClassName: "ring-cat3-7" },
@@ -30,5 +33,11 @@ function hashBookingId(bookingId: string) {
 }
 
 export function getBookingAccent(bookingId: string): BookingAccent {
-  return BOOKING_ACCENTS[hashBookingId(bookingId) % BOOKING_ACCENTS.length];
+  // `hash % length` is in range for a non-empty palette, so the second arm is
+  // unreachable — and it is the very colour bucket 0 returns, not an invented
+  // default.
+  return (
+    BOOKING_ACCENTS[hashBookingId(bookingId) % BOOKING_ACCENTS.length] ??
+    BOOKING_ACCENTS[0]
+  );
 }

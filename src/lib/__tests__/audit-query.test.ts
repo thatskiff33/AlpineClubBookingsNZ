@@ -4,6 +4,7 @@ import { requireClubTimeZone } from "@/lib/club-time";
 import {
   buildAuditDrilldownLinks,
   buildAuditMemberScopeWhere,
+  formatMetadataFragment,
   getAuditTimelinePage,
   inferAuditCategoryFromAction,
 } from "@/lib/audit-query";
@@ -239,5 +240,25 @@ describe("audit query helpers", () => {
     expect(oversizedPage.success).toBe(false);
     if (oversizedPage.success) return;
     expect(oversizedPage.details?.fieldErrors.pageSize).toBeDefined();
+  });
+
+  // #3302: this used to be a private, untested "$" + toFixed(2) copy — no
+  // thousands grouping, no configured-currency awareness. It now derives from
+  // the shared `formatCents`, so a metadata amount over $999 groups.
+  it("formats a *Cents metadata value through the shared, currency-aware formatter", () => {
+    expect(formatMetadataFragment("amountCents", 123456)).toBe(
+      "Amount $1,234.56",
+    );
+  });
+
+  // #3302 review (equivalence lens F8): stored audit metadata is untyed JSON,
+  // with no writer-side guarantee a `*Cents` value is an integer. Rounds
+  // before formatting so money stays integer cents at this call site, and so
+  // this cannot render two different amounts for the same stored value
+  // depending on which formatter happens to read it (measured: 1.5 rounded to
+  // two cents one way and one cent the other before this guard).
+  it("rounds a non-integer *Cents metadata value before formatting", () => {
+    expect(formatMetadataFragment("amountCents", 1.5)).toBe("Amount $0.02");
+    expect(formatMetadataFragment("amountCents", 1.4)).toBe("Amount $0.01");
   });
 });

@@ -141,14 +141,24 @@ export function composeGuestNightsLabel(nights: readonly Date[]): string {
 
   const count = ordered.length;
   const suffix = `(${count} night${count === 1 ? "" : "s"})`;
-  const contiguous = ordered.every(
-    (night, index) =>
-      index === 0 ||
-      addDaysDateOnly(ordered[index - 1], 1).getTime() === night.getTime(),
-  );
+  // Walking adjacent pairs rather than indexing `index - 1`: `index > 0`
+  // already guarantees a previous element, but a missing one reads as "not
+  // contiguous" rather than a guessed match.
+  const contiguous = ordered.every((night, index) => {
+    if (index === 0) return true;
+    const previous = ordered[index - 1];
+    return (
+      previous !== undefined &&
+      addDaysDateOnly(previous, 1).getTime() === night.getTime()
+    );
+  });
 
-  if (count > 3 && contiguous) {
-    return `${emailCalendarDay(ordered[0])} to ${emailCalendarDay(ordered[count - 1])} ${suffix}`;
+  // `ordered.length === 0` returned above and `count > 3` here, so both ends
+  // exist; the type can't carry either fact.
+  const firstNight = ordered[0];
+  const lastNight = ordered[count - 1];
+  if (count > 3 && contiguous && firstNight && lastNight) {
+    return `${emailCalendarDay(firstNight)} to ${emailCalendarDay(lastNight)} ${suffix}`;
   }
 
   return `${ordered.map((night) => emailCalendarDay(night)).join(", ")} ${suffix}`;

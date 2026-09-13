@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  470
+row-producing sites:  472
 uncategorised:        0
-category values: admin 104, booking 103, xero 34, family 35, payment 42,
+category values: admin 104, booking 103, xero 34, family 35, payment 44,
                  lodge 66, account 19, security 22, privacy 19,
                  communication 21, system 4
 ```
@@ -662,6 +662,17 @@ tree rather than by adding one branch's delta to the other's total. The category
 values sum to 463 rather than 464 because one site forwards its category rather
 than naming one.
 
+Since then #3340 added two (`payment` 42 -> 44, 468 -> 470, MEASURED with
+`npm run audit:census` on that branch rather than added to the literal): the
+permanent record that a payment taken against a superseded charge was refunded,
+and the `critical` escalation for when the member notice that should accompany it
+could not be assembled. Until #3340 that refund left no record at all - the
+payment provider's own receipt was the entire notice, a member wrote in asking
+what had happened, and that query is the only reason the money leak underneath it
+was found. `payment` for the same audience reason as every row beside it: money
+left the club with nobody deciding it should, and the person who answers for that
+is the one who reconciles the club's money.
+
 Since then #3220 added the refused stranded-intent record (`payment` 41 -> 42,
 467 -> 468 - taken from `npm run audit:census` on the merged tree, not from this
 branch's own pre-merge delta): when a booking change's card request could not be
@@ -674,6 +685,11 @@ live card request against an unpaid invoice for the same money. `important`
 rather than `critical`: nothing is mis-stated yet and the remedy is a
 reconciliation by hand, which is the same severity the sibling
 `chargeShareUncollected` record carries.
+
+Merging `main` into the epic on 13 Sep 2026 brought BOTH rounds into one tree: #3340's two
+payment rows and #2698's two, so 470 -> 472, `booking` 102 -> 103 and `lodge` 65 -> 66.
+RE-MEASURED with `npm run audit:census` on the merged tree — each side had independently
+measured 470 from different rows, and the numeric lines merged silently without conflicting.
 
 Since then #2698 added two writers carrying four actions, taking 468 -> 470 as
 measured by `npm run audit:census`. One is a SHARED writer for the hut-leader
