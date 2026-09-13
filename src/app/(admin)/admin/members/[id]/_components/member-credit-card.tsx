@@ -13,6 +13,7 @@ import { formatAdminName } from "@/lib/admin-member-detail-helpers"
 import { useClubTime } from "@/components/club-time-provider"
 import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
+import { MONEY_INPUT_PROPS } from "@/lib/money-input"
 import { formatCents, formatSignedCents } from "@/lib/utils"
 import type {
   CreditHistoryItem,
@@ -109,8 +110,7 @@ export function MemberCreditCard({
                 <Label htmlFor="adj-amount">Amount ($)</Label>
                 <Input
                   id="adj-amount"
-                  type="number"
-                  step="0.01"
+                  {...MONEY_INPUT_PROPS}
                   value={adjustmentAmount}
                   onChange={(e) => onChangeAdjustmentAmount(e.target.value)}
                   {...adjustmentAmountHint.fieldProps}

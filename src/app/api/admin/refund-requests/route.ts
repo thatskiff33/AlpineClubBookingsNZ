@@ -48,6 +48,11 @@ export async function GET(req: NextRequest) {
             },
             payment: {
               select: {
+                // #2932: the screen derives its refund ceiling through
+                // `getRemainingRefundableCents`, the same helper the approve
+                // route decides by, and that helper answers 0 unless the
+                // payment actually captured.
+                status: true,
                 amountCents: true,
                 refundedAmountCents: true,
                 stripePaymentIntentId: true,

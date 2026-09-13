@@ -41,7 +41,7 @@ import {
 } from "@/lib/club-time";
 import { countNightsDateOnly } from "@/lib/date-only";
 import { formatCents } from "@/lib/utils";
-import { parseDecimalDollarsToCents } from "@/lib/money-input";
+import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import { FocusedActionError } from "@/components/focused-action-error";
 import {
   BookingRequestContactPicker,
@@ -1723,9 +1723,7 @@ export function PublicBookingRequestsPanel({
                                     </Label>
                                     <Input
                                       id={`price-${request.id}-${optionId}`}
-                                      type="number"
-                                      min="0"
-                                      step="0.01"
+                                      {...MONEY_INPUT_PROPS}
                                       className="w-32"
                                       disabled={actionsBlocked}
                                       value={optionTotalInputValue(request, optionId)}
@@ -1766,9 +1764,7 @@ export function PublicBookingRequestsPanel({
                                         </Label>
                                         <Input
                                           id={key}
-                                          type="number"
-                                          min="0"
-                                          step="0.01"
+                                          {...MONEY_INPUT_PROPS}
                                           className="w-32"
                                           disabled={actionsBlocked}
                                           value={

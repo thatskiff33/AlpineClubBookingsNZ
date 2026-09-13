@@ -36,8 +36,16 @@
  *
  * The considered alternative was reading `validity.badInput` on the number
  * input. It was rejected: jsdom reports `badInput` as `false` unconditionally,
- * so it cannot be unit-tested at all, and this repository already ships the
- * text+`inputMode` pattern on the payments amount filter.
+ * so it cannot be unit-tested at all, and the payments amount filter had
+ * already shipped the text+`inputMode` pattern by hand.
+ *
+ * SPREAD THIS, including on a filter. A hand-written `inputMode="decimal"` with
+ * no `type` at all was a fifth spelling of the same box and outlived #2932's
+ * first pass on four of them, the payments filter among them; they spread the
+ * constant now (#2932 review). There is no entry-versus-search distinction to
+ * draw: these are two presentational attributes, and an omitted `type` was
+ * already `text` by the HTML default, so the constant states what the markup
+ * meant rather than changing it.
  *
  * ACCEPTED COST: no spinner arrows, and a decimal rather than numeric keypad.
  */

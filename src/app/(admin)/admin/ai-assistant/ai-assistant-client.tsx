@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { isFullAdmin } from "@/lib/access-roles";
@@ -359,7 +360,7 @@ function BudgetCard() {
                 <span className="text-sm text-muted-foreground">$</span>
                 <Input
                   id="ai-budget"
-                  inputMode="decimal"
+                  {...MONEY_INPUT_PROPS}
                   value={dollars}
                   disabled={editingDisabled}
                   onChange={(event) => setDollars(event.target.value)}
