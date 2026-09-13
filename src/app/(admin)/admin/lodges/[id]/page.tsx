@@ -28,6 +28,11 @@ import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { LodgeCapacityGuidance } from "@/components/admin/lodge-capacity-guidance";
 import {
+  MAX_CONFIGURED_LODGE_CAPACITY,
+  MIN_CONFIGURED_LODGE_CAPACITY,
+  parseConfiguredLodgeCapacity,
+} from "@/lib/lodge-effective-capacity";
+import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -90,6 +95,11 @@ export default function LodgeConfigurationHubPage() {
   // Partner-shared double-bed slots on top of the base figure (#1745), shown
   // broken out so an admin can see the extra is partner-only.
   const [partnerSharedHeadroom, setPartnerSharedHeadroom] = useState(0);
+  // The shareable inventory those slots come from. The saved headroom above is
+  // the figure for the SAVED capacity; the guidance beside the field needs the
+  // double-bed count so it can preview the headroom for a capacity still being
+  // typed (#2724) through the same rule the server resolves with.
+  const [activeDoubleBedCount, setActiveDoubleBedCount] = useState(0);
   const [capacityOverride, setCapacityOverride] = useState("");
   const [savedCapacityOverride, setSavedCapacityOverride] = useState("");
   const [savingCapacity, setSavingCapacity] = useState(false);
@@ -176,6 +186,7 @@ export default function LodgeConfigurationHubPage() {
           setCapacitySource(data.capacity.source ?? null);
           setActiveBedCount(data.capacity.activeBedCount ?? 0);
           setPartnerSharedHeadroom(data.capacity.partnerSharedHeadroom ?? 0);
+          setActiveDoubleBedCount(data.capacity.activeDoubleBedCount ?? 0);
         }
       })
       .catch(() => {});
@@ -232,19 +243,17 @@ export default function LodgeConfigurationHubPage() {
     setSavingCapacity(true);
     setCapacityMessage(null);
     const trimmed = capacityOverride.trim();
-    let capacity: number | null = null;
-    if (trimmed !== "") {
-      const parsed = Number(trimmed);
-      if (!Number.isInteger(parsed) || parsed <= 0) {
-        setCapacityMessage({
-          type: "error",
-          text: "Enter a whole number greater than zero, or clear it to fall back.",
-        });
-        setSavingCapacity(false);
-        return;
-      }
-      capacity = parsed;
+    // One parser, shared with the guidance beside the field and with the API
+    // schema's bounds (#2724, INV-SSOT-001), so a figure the screen calls
+    // acceptable is exactly a figure the save accepts — at BOTH bounds.
+    const typed = parseConfiguredLodgeCapacity(capacityOverride);
+    if (typed.kind === "invalid") {
+      setCapacityMessage({ type: "error", text: typed.message });
+      setSavingCapacity(false);
+      return;
     }
+    const capacity: number | null =
+      typed.kind === "valid" ? typed.capacity : null;
     try {
       const res = await fetch(
         `/api/admin/lodge-settings?lodgeId=${encodeURIComponent(lodgeId)}`,
@@ -278,6 +287,7 @@ export default function LodgeConfigurationHubPage() {
         // The saved capacity also moves the partner headroom (a cap at or
         // below the bed count zeroes it) — keep the breakout in sync.
         setPartnerSharedHeadroom(refreshed.capacity.partnerSharedHeadroom ?? 0);
+        setActiveDoubleBedCount(refreshed.capacity.activeDoubleBedCount ?? 0);
       }
     } catch (err) {
       setCapacityMessage({
@@ -482,7 +492,15 @@ export default function LodgeConfigurationHubPage() {
               <Input
                 id="lodge-capacity-override"
                 type="number"
-                min="1"
+                min={MIN_CONFIGURED_LODGE_CAPACITY}
+                max={MAX_CONFIGURED_LODGE_CAPACITY}
+                // Both the fallback hint and the live guidance describe this
+                // field, so both are announced when an officer reaches it —
+                // including one who tabs back without typing, and a view-only
+                // officer who never types at all (#2724). The guidance is a
+                // description rather than a live region on purpose: see
+                // LodgeCapacityGuidance.
+                aria-describedby="lodge-capacity-fallback-hint lodge-capacity-guidance"
                 value={capacityOverride}
                 onChange={(e) => setCapacityOverride(e.target.value)}
                 disabled={!canEdit}
@@ -497,13 +515,18 @@ export default function LodgeConfigurationHubPage() {
                 {savingCapacity ? "Saving..." : "Save"}
               </ViewOnlyActionButton>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p
+              id="lodge-capacity-fallback-hint"
+              className="text-xs text-muted-foreground"
+            >
               Leave blank to fall back to the club default (default lodge) or
               zero (additional lodges).
             </p>
             <LodgeCapacityGuidance
+              id="lodge-capacity-guidance"
               capacityInput={capacityOverride}
               activeBedCount={activeBedCount}
+              activeDoubleBedCount={activeDoubleBedCount}
             />
           </div>
           {capacityMessage && (
