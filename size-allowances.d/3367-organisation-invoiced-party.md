@@ -8,7 +8,7 @@ genuinely the worse answer. Three of them, and the growth in the other two,
 come from the adversarial review round rather than from the first build.
 
 file: src/lib/school-booking-request.ts
-lines: 2733
+lines: 2735
 reason: The school approval transaction gains the resolve-or-create of the
   school's own `Organisation`, the link from the booking and the request, and
   the teacher association. Every one of those writes has to happen INSIDE the
@@ -25,7 +25,7 @@ reason: The school approval transaction gains the resolve-or-create of the
   reads anyway.
 
 file: src/lib/xero-contacts.ts
-lines: 1934
+lines: 1920
 reason: Three lines net. The member payload builder's object literal MOVED OUT
   to `xero-contact-shape.ts`, which the organisation builder shares, so the
   single-source-of-truth direction of this change is a reduction. What is added
@@ -73,3 +73,30 @@ reason: Forty lines, of which thirty are the comment. This route is a writer the
   refusal happens inside THIS route's transaction. The comment is long because
   the reachability is the part a reader cannot reconstruct: it explains why a
   route that was safe last release is not safe this one.
+
+## Added by the second fix round
+
+Both of these are comment-only growth, and both are the fix: a lock-order rule
+and a merge-semantics rule that a next author reads AT the function rather than
+in a guide they have no reason to open. The first fix round corrected the guide,
+the invariant and the lock-guard test and left these two sentences teaching the
+order that produced the deadlock, which is exactly how the rule stops holding.
+
+file: src/lib/xero-contact-create-recovery.ts
+lines: 844
+reason: Fourteen comment lines across two docblocks, no code. The manual-link
+  fence called the target `Member` row the transaction's FIRST lock; the
+  contact-home key is taken before it, and the sentence as written described the
+  deadlock `INV-LOCK-002` now forbids. Both the shared row fence and the
+  manual-link fence say the order, because a fifth linker reads whichever one it
+  calls. The docblock cannot move: a lock-order rule stated anywhere but at the
+  lock is a rule somebody has to go and find.
+
+file: src/lib/xero-sync.ts
+lines: 883
+reason: Eleven comment lines on `XeroObjectLinkInput.mergeMetadata`, no code. The
+  flag's docblock said only inbound writers set it while one outbound writer
+  now does, for a sound reason; two comments contradicting each other is how a
+  reader "corrects" the specific writer back to replace semantics and silently
+  disables the adopted-contact reshape that depends on its provenance marker.
+  The rule belongs on the field it governs, where the next caller chooses.

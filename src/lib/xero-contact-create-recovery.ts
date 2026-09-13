@@ -267,12 +267,10 @@ async function lockMemberRowForXeroFence(
  * and this writer observes the canonical anonymisation marker, or this short
  * local-link transaction commits before deletion can continue.
  *
- * **A caller that is linking a Xero CONTACT id must already hold that contact's
- * home key** (`lockXeroContactHome`, `xero-contact-home.ts`) when it calls this:
- * the contact-home key is the OUTER lock relative to any `Member` row lock
- * (`INV-LOCK-002`), because the organisation-side transfer holds it while taking
- * a row lock of its own. Deletion and merge, which link no contact, simply take
- * the row.
+ * **A caller linking a Xero CONTACT id must already hold that contact's home
+ * key** (`lockXeroContactHome`), the OUTER lock relative to any `Member` row
+ * lock (`INV-LOCK-002`): the school transfer holds it while taking a row lock of
+ * its own. Deletion and merge, which link no contact, simply take the row.
  */
 export async function lockMemberForXeroContactLink(
   db: ContactLinkMemberFenceDb,
@@ -455,15 +453,13 @@ export async function applyInboundMemberContactPatch(
  * reservation can re-read the authoritative `xeroContactId`.
  *
  * **THIS IS NOT THE TRANSACTION'S FIRST LOCK, AND MUST NOT BE MADE ONE
- * (`INV-LOCK-002`, `INV-INT-018`).** The caller takes the contact-home advisory
- * key — `lockXeroContactHome` in `xero-contact-home.ts` — BEFORE calling this,
- * because the organisation-side transfer takes a `Member` ROW lock while
- * holding that key. A writer that took the row first and then waited for the
- * key would close a deadlock cycle with it, and Postgres would abort one side
- * with `40P01`. An earlier revision of this docblock said the target row was
- * the first lock; it was describing that deadlock. `docs/CONCURRENCY_AND_LOCKING.md`
- * → "One Xero contact, one local home" carries the full order for all four
- * linkers.
+ * (`INV-LOCK-002`, `INV-INT-020`).** The caller takes the contact-home key
+ * first, because the school transfer takes a `Member` ROW lock while holding
+ * it: a writer that took the row first and then waited for the key would close
+ * a deadlock cycle, which Postgres aborts as `40P01`. An earlier revision of
+ * this docblock called the target row the first lock — it was describing that
+ * deadlock. `docs/CONCURRENCY_AND_LOCKING.md` → "One Xero contact, one local
+ * home" has the order for all four linkers.
  */
 export async function lockMemberForManualXeroContactLink(
   db: ManualContactLinkFenceDb,
