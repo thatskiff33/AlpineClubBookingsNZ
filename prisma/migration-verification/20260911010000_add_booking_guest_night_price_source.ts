@@ -4,6 +4,7 @@ const verification: DataMigrationVerification = {
   migration: "20260911010000_add_booking_guest_night_price_source",
   intent:
     "Keep officer-repair provenance truthful while the draining colour still omits priceSource: only the exact successful BookingGuest repair audits may mark an existing matching row OFFICER_PRICED.",
+  executionMode: "isolated_database",
   idempotentReRun: false,
   cases: [
     {

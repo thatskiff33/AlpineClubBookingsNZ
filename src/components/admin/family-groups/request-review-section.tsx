@@ -72,6 +72,7 @@ export function FamilyGroupRequestReviewSection({
     prop docblock carries the full reasoning.
   */
   const clubTime = useClubTime();
+  const memberSelectionRequiredMessage = `Choose the member record to link, or create a new non-login ${createMemberNoun} where available.`;
   // Seed the default selections/notification parents from the initial request
   // list so the first paint already shows the auto-selected records (the caller
   // only mounts this section once `requests` is non-empty).
@@ -150,12 +151,16 @@ export function FamilyGroupRequestReviewSection({
     try {
       const ageTierSearchFilter =
         request.type === "CHILD_REQUEST" ? "&ageTierIn=INFANT,CHILD,YOUTH" : "";
+      const prospectiveParentFilter =
+        request.type === "CHILD_REQUEST"
+          ? `&prospectiveParentMemberId=${encodeURIComponent(request.requester.id)}`
+          : "";
       // #2568: the family-group lookup, not the members admin search. It answers
       // with each candidate's CALCULATED AGE and no date of birth, and restricts
       // itself to active, non-archived members capped at ten rows — the filters
       // the members endpoint had to be told about in the query string.
       const res = await fetch(
-        `/api/admin/family-groups/member-search?q=${encodeURIComponent(query)}${ageTierSearchFilter}`
+        `/api/admin/family-groups/member-search?q=${encodeURIComponent(query)}${ageTierSearchFilter}${prospectiveParentFilter}`
       );
       const data = await res.json().catch(() => ({}));
 
@@ -177,30 +182,54 @@ export function FamilyGroupRequestReviewSection({
         [request.id]: foundMembers,
       }));
 
-      // Read the sole match once, alongside the length check that proves it
-      // is the sole match — `foundMembers.length === 1` doesn't tell the
-      // type checker that `foundMembers[0]` exists, so both the selection
-      // and the feedback message below share this one lookup instead of
-      // each re-indexing `foundMembers[0]`.
-      const [onlyMember] = foundMembers;
-      const singleMatch =
-        foundMembers.length === 1 ? onlyMember : null;
+      const eligibleFoundMembers = foundMembers.filter(
+        (member) => !member.ineligibleReason,
+      );
+      const [onlyFoundMember] = foundMembers;
+      const singleFoundMatch =
+        foundMembers.length === 1 ? onlyFoundMember : null;
+      const [onlyEligibleMember] = eligibleFoundMembers;
+      const singleEligibleMatch =
+        eligibleFoundMembers.length === 1 ? onlyEligibleMember : null;
 
-      if (singleMatch) {
-        setRequestSelections((current) => ({
-          ...current,
-          [request.id]: singleMatch.id,
-        }));
-      }
+      setRequestSelections((current) => {
+        const currentSelection = current[request.id];
+        const selectedResult =
+          foundMembers.find((member) => member.id === currentSelection) ??
+          request.matchingMembers.find(
+            (member) => member.id === currentSelection,
+          );
+        const priorSearchSelectionDisappeared = Boolean(
+          currentSelection &&
+            currentSelection !== "__create__" &&
+            !selectedResult,
+        );
+        if (selectedResult?.ineligibleReason || priorSearchSelectionDisappeared) {
+          const next = { ...current };
+          if (singleEligibleMatch) {
+            next[request.id] = singleEligibleMatch.id;
+          } else {
+            delete next[request.id];
+          }
+          return next;
+        }
+        return singleEligibleMatch
+          ? { ...current, [request.id]: singleEligibleMatch.id }
+          : current;
+      });
 
       setRequestSearchFeedback((current) => ({
         ...current,
         [request.id]:
           foundMembers.length === 0
             ? `No eligible member records found for "${query}".`
-            : singleMatch
-              ? `Found and selected ${singleMatch.firstName} ${singleMatch.lastName}.`
-              : `Found ${foundMembers.length} member records.`,
+            : eligibleFoundMembers.length === 0
+              ? singleFoundMatch
+                ? `Found ${singleFoundMatch.firstName} ${singleFoundMatch.lastName}, but this member is unavailable. ${singleFoundMatch.ineligibleReason ?? "They are not eligible for this relationship."}`
+                : `Found ${foundMembers.length} member records, but none are eligible for this relationship.`
+              : singleEligibleMatch
+                ? `Found and selected ${singleEligibleMatch.firstName} ${singleEligibleMatch.lastName}.`
+                : `Found ${foundMembers.length} member records.`,
       }));
     } finally {
       setRequestSearchingId((current) => (current === request.id ? null : current));
@@ -216,11 +245,34 @@ export function FamilyGroupRequestReviewSection({
     const linkedMemberId = requestSelections[request.id];
     const needsMemberSelection =
       request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
+    const knownCandidates = [
+      ...request.matchingMembers,
+      ...(requestSearchResults[request.id] ?? []),
+    ];
+    const selectedCandidate = knownCandidates.find(
+      (candidate) => candidate.id === linkedMemberId,
+    );
+    const createSelectionAllowed = linkedMemberId === "__create__";
+    const unavailableReason = knownCandidates.find(
+      (candidate) => candidate.ineligibleReason,
+    )?.ineligibleReason;
 
-    if (action === "approve" && needsMemberSelection && !linkedMemberId) {
+    if (action === "approve" && selectedCandidate?.ineligibleReason) {
       setRequestErrors((current) => ({
         ...current,
-        [request.id]: `Choose the member record to link, or create a new non-login ${createMemberNoun} where available.`,
+        [request.id]: selectedCandidate.ineligibleReason!,
+      }));
+      return;
+    }
+
+    if (
+      action === "approve" &&
+      needsMemberSelection &&
+      (!linkedMemberId || (!selectedCandidate && !createSelectionAllowed))
+    ) {
+      setRequestErrors((current) => ({
+        ...current,
+        [request.id]: unavailableReason ?? memberSelectionRequiredMessage,
       }));
       return;
     }
@@ -251,6 +303,30 @@ export function FamilyGroupRequestReviewSection({
     const linkedMemberId = requestSelections[request.id];
     const needsMemberSelection =
       request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
+    const selectedCandidate = [
+      ...request.matchingMembers,
+      ...(requestSearchResults[request.id] ?? []),
+    ].find((candidate) => candidate.id === linkedMemberId);
+    const createSelectionAllowed = linkedMemberId === "__create__";
+
+    if (action === "approve" && selectedCandidate?.ineligibleReason) {
+      setRequestErrors((current) => ({
+        ...current,
+        [request.id]: selectedCandidate.ineligibleReason!,
+      }));
+      return;
+    }
+    if (
+      action === "approve" &&
+      needsMemberSelection &&
+      (!linkedMemberId || (!selectedCandidate && !createSelectionAllowed))
+    ) {
+      setRequestErrors((current) => ({
+        ...current,
+        [request.id]: memberSelectionRequiredMessage,
+      }));
+      return;
+    }
     const rejectionReason = requestNotes[request.id]?.trim();
 
     setRequestSubmittingId(request.id);

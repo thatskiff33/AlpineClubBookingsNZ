@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
   const parsed = familyGroupMemberSearchQuerySchema.safeParse({
     q: sp.get("q") ?? undefined,
     ageTierIn: sp.get("ageTierIn") ?? undefined,
+    prospectiveParentMemberId:
+      sp.get("prospectiveParentMemberId") ?? undefined,
   });
 
   if (!parsed.success) {

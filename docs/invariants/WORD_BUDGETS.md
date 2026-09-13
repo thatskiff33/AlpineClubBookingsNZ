@@ -124,7 +124,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-INT-017` | 489 |
 | `INV-PRIV-015` | 458 |
 | `INV-LIFE-054` | 449 |
-| `INV-LIFE-024` | 431 |
+| `INV-LIFE-024` | 346 |
 | `INV-DATE-026` | 430 |
 | `INV-PRIV-014` | 425 |
 | `INV-DATE-025` | 418 |
@@ -134,7 +134,6 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-HOST-033` | 396 |
 | `INV-ADDPAY-011` | 395 |
 | `INV-REQ-007` | 391 |
-| `INV-LIFE-078` | 387 |
 | `INV-MOD-005` | 381 |
 | `INV-CAP-023` | 365 |
 | `INV-PAY-058` | 363 |

@@ -158,6 +158,12 @@ than with a screenshot:
   **merge** two duplicate records: merging joins their families, so a merge that
   would produce a chain longer than four generations — or link a family back on
   itself — is refused and asks you to remove the link between them first.
+  The same pair of records can never mean both things: a pending or confirmed
+  partner link prevents either direct-parent link, and a recorded primary or
+  secondary parent prevents a partner request, confirmation, one-step
+  declaration, or admin assignment. Searches omit or disable the contradictory
+  choice, but the save itself always checks again. A merge is likewise refused
+  before changing either record if its moved edges would create that overlap.
   A parent link is a **record of a family relationship, at any age** (#2282): a
   16 or 17 year old can genuinely be a parent, so the club can write that down.
   It does **not** by itself decide anything else. It does not decide who is

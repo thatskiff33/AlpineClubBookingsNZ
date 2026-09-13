@@ -69,6 +69,10 @@ import {
   dependentParentStateBlocker,
   type DependentLinkIneligibleMatch,
 } from "@/lib/dependent-link-eligibility";
+import {
+  notDirectParentWithMemberWhere,
+  notPartnerWithMemberWhere,
+} from "@/lib/member-parent-partner-exclusivity";
 import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
 import { ensureDefaultSeasonSubscriptionForNewMember } from "@/lib/member-subscription-defaults";
@@ -533,6 +537,7 @@ export async function listAdminMembers(
     // `ageTier: NOT_APPLICABLE`, which age-exempt HUMAN members carry too.
     andConditions.push(
       { id: { notIn: excludedParentIds } },
+      ...notPartnerWithMemberWhere(parentLinkEligibleFor),
       ancestorDepthWithinWhere(
         allowedParentAncestorGenerations(childSide.descendantGenerations),
       ),
@@ -548,6 +553,7 @@ export async function listAdminMembers(
       { id: { not: partnerLinkEligibleFor } },
       { active: true },
       { ageTier: "ADULT" },
+      ...notDirectParentWithMemberWhere(partnerLinkEligibleFor),
       { partnerLinksAsMemberA: { none: { status: "CONFIRMED" } } },
       { partnerLinksAsMemberB: { none: { status: "CONFIRMED" } } },
     );

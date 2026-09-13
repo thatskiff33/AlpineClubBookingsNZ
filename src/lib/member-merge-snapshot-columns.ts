@@ -44,6 +44,18 @@
  * Layout: the FIRST block is that hand-kept remainder (bespoke names plus the
  * entries that predate the detector); the SECOND is the detectable set.
  */
+/**
+ * FK-less member-id-shaped columns that are derived transactionally from live
+ * relationship rows rather than moved or retained as history during merge.
+ * Source-table triggers update these pair endpoints while merge rewrites and
+ * deletes Member/MemberPartnerLink edges; treating them as snapshots would
+ * leave a stale loser id, while moving them directly would double-apply deltas.
+ */
+export const MEMBER_MERGE_DERIVED_MEMBER_ID_COLUMNS: readonly string[] = [
+  "MemberParentPartnerExclusion.memberAId",
+  "MemberParentPartnerExclusion.memberBId",
+];
+
 export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "MemberLifecycleActionRequest.memberId",
   "MemberApplication.nominator1Id",

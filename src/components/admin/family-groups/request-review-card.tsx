@@ -256,7 +256,11 @@ export function FamilyGroupRequestReviewCard({
                 <option value="__create__">Create new non-login dependant from request</option>
               )}
               {candidateMembers.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
+                <option
+                  key={candidate.id}
+                  value={candidate.id}
+                  disabled={Boolean(candidate.ineligibleReason)}
+                >
                   {getMemberName(candidate)}
                   {" - "}
                   {candidate.ageTier}
@@ -267,6 +271,9 @@ export function FamilyGroupRequestReviewCard({
                   {candidate.canLogin ? " - has login" : " - no login"}
                   {candidate.alreadyInGroup ? " - already in group" : ""}
                   {!candidate.active ? " - inactive" : ""}
+                  {candidate.ineligibleReason
+                    ? ` - unavailable: ${candidate.ineligibleReason}`
+                    : ""}
                 </option>
               ))}
             </select>
@@ -318,6 +325,7 @@ export function FamilyGroupRequestReviewCard({
                     onClearRequestFeedback();
                     onSelectMember(candidate.id);
                   }}
+                  disabled={Boolean(candidate.ineligibleReason)}
                   className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
                     requestSelection === candidate.id
                       ? "border-warning-6 bg-warning-3"
@@ -343,6 +351,11 @@ export function FamilyGroupRequestReviewCard({
                     {candidate.canLogin ? " - has login" : " - no login"}
                     {candidate.alreadyInGroup ? " - already in this group" : ""}
                   </span>
+                  {candidate.ineligibleReason && (
+                    <span className="mt-1 block text-xs font-medium text-danger-11">
+                      {candidate.ineligibleReason}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
