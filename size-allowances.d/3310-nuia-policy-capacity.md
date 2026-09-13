@@ -10,7 +10,7 @@ split guidance"). Stages E3 and E4 rewrite these same files again; splitting
 them here would also make those diffs unreadable.
 
 file: src/lib/capacity.ts
-lines: 1044
+lines: 1132
 reason: the partner-shared coverage loop stopped correlating two parallel
   arrays by index and now builds one array of `{ sharer, covered }` pairs, so
   the missing case is unrepresentable rather than guarded. That is the better
