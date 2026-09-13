@@ -25,13 +25,11 @@
  *    no longer be recorded.
  *
  * All money is club-currency integer cents (#3354, `INV-CONFIG-001`): the price
- * table below is in NZD cents, and every estimate — the worst-case reservation
- * and the settled cost — is converted ONCE per roundtrip through the
- * administrator-set NZD -> club-currency rate (`ai-spend-currency.ts`) before
- * it is reserved, booked or compared with the budget. Usage rows record the
- * club-currency cost at the rate in force when they were written and are never
- * rescaled. NO raw prompt, answer, tool arg/result, or provider payload is ever
- * stored — only approved metering metadata.
+ * table is NZD cents; the reservation and the settled cost are each converted
+ * ONCE per roundtrip through the administrator-set rate (`ai-spend-currency.ts`)
+ * before being reserved, booked or compared with the budget. Usage rows keep the
+ * club-currency cost at the rate in force when written; never rescaled. NO raw
+ * prompt, answer, tool arg/result, or provider payload is ever stored.
  */
 
 import { prisma } from "@/lib/prisma";
@@ -286,11 +284,7 @@ export type ReserveDiagnosticsBudgetResult =
     };
 
 export interface ReserveDiagnosticsBudgetInput {
-  /**
-   * Worst-case CLUB-CURRENCY cents to reserve for this roundtrip. Defaults to
-   * WORST_CASE_ROUNDTRIP_CENTS converted at the configured rate (#3354); a
-   * caller passing its own figure is responsible for it already being club cents.
-   */
+  /** Worst-case CLUB-CURRENCY cents to reserve. Defaults to WORST_CASE_ROUNDTRIP_CENTS converted at the configured rate (#3354). */
   reserveCents?: number;
   now?: Date;
 }
@@ -346,11 +340,9 @@ export async function reserveDiagnosticsBudget(
         where: { month, expiresAt: { lte: now } },
       });
 
-      // The rate is read HERE, under the same lock and in the same snapshot as
-      // the budget (#3354): one primary-key read of a one-row table (and no
-      // read at all for an NZD club), so it adds nothing material to the lock
-      // hold. It is not part of the invariant the lock protects — every stored
-      // term is already club cents — it only sizes THIS reservation.
+      // The rate is read under the same lock and snapshot as the budget (#3354):
+      // one PK read of a one-row table, none for an NZD club. It only sizes THIS
+      // reservation; every stored term the lock protects is already club cents.
       const [settings, monthly, activeAgg, currency] = await Promise.all([
         tx.diagnosticsSettings.findUnique({ where: { id: DIAGNOSTICS_SETTINGS_ID } }),
         tx.diagnosticsUsageMonthly.findUnique({ where: { month } }),
@@ -558,9 +550,8 @@ export async function settleDiagnosticsRoundtrip(
       // contend; the lock releases on commit.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('diagnostics-budget-reserve'), hashtext(${month}))`;
 
-      // Same snapshot and lock as the reserve's rate read (#3354): the settled
-      // cost is booked in club cents at the rate in force now. A failed read
-      // fails the settle, which trips the breaker — never books NZD cents.
+      // Same lock and snapshot as the reserve's rate read (#3354). A failed read
+      // fails the settle and trips the breaker — never books NZD cents.
       const currency = await loadAiSpendCurrency(tx);
       const costCents = convertNzdCentsToClubCents(
         nzdCostCents,
@@ -669,8 +660,7 @@ export async function getDiagnosticsUsageSummary(now: Date = new Date()) {
     budget: {
       limitCents,
       warningThresholds: [...WARNING_THRESHOLDS],
-      // Club cents, like every other figure here (#3354) — the NZD constant
-      // converted at the configured rate.
+      // Club cents like every other figure here (#3354).
       worstCaseRoundtripCents: convertNzdCentsToClubCents(
         WORST_CASE_ROUNDTRIP_CENTS,
         currency.clubUnitsPerNzdMicros,

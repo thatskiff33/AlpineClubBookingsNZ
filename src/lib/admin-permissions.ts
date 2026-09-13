@@ -435,12 +435,8 @@ const ROUTE_AREA_PREFIXES: Array<{
       // stays here. The page falls to the overview catch-all and is recorded in
       // OVERVIEW_ALLOWLIST with that reasoning.
       "/api/admin/ai-diagnostics",
-      // The NZD -> club-currency rate for AI spend (#3354), ONE setting shared
-      // by both AI modules and rendered on both settings pages, so it lives at
-      // its own prefix rather than under either module's. Same area and levels
-      // as the two budget routes: support view reads it, support edit sets it.
-      // Deliberately NOT module-gated in feature-routes.ts: it belongs to two
-      // modules, spends nothing, and the pages that render it are gated.
+      // The NZD -> club-currency rate for AI spend (#3354): ONE setting shared by
+      // both AI modules, so its own prefix; same levels as the two budget routes.
       "/api/admin/ai-spend-currency",
     ],
   },

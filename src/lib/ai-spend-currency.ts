@@ -23,7 +23,7 @@
 export const MICROS_PER_CLUB_UNIT = 1_000_000;
 
 /** The identity rate — 1 NZD = 1 club unit — used for an NZD club and for a non-NZD club that has not set a rate. */
-export const IDENTITY_RATE_MICROS = MICROS_PER_CLUB_UNIT;
+export const IDENTITY_RATE_MICROS = 1 * MICROS_PER_CLUB_UNIT;
 
 /** Smallest storable rate: 0.000001 club units per NZD (one micro). */
 export const MIN_RATE_MICROS = 1;

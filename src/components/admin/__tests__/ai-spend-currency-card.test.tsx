@@ -60,7 +60,11 @@ function makeFetch(initial: RateBody, onPut?: (body: unknown) => Response | Prom
     if (init?.method === "PUT") {
       const body = JSON.parse(String(init.body));
       if (onPut) return onPut(body);
-      current = { ...SET_AUD, clubUnitsPerNzd: body.clubUnitsPerNzd };
+      current = {
+        ...SET_AUD,
+        clubUnitsPerNzd: body.clubUnitsPerNzd,
+        clubUnitsPerNzdMicros: Math.round(Number(body.clubUnitsPerNzd) * 1_000_000),
+      };
       return { ok: true, status: 200, json: async () => current } as Response;
     }
     return { ok: true, status: 200, json: async () => current } as Response;
