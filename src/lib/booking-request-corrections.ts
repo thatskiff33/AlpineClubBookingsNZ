@@ -508,13 +508,30 @@ export async function correctBookingRequest(
   }
 
   // ---- the hold ------------------------------------------------------------
-  const holdOutcome = await reconcileCorrectedRequestHold({
-    requestId: request.id,
-    heldBookingId: request.heldBookingId,
-    holdAffecting,
-    adminMemberId: input.adminMemberId,
-    ipAddress: input.ipAddress ?? "",
-  });
+  // The claim has COMMITTED. Everything below is after the fact, so the audit
+  // row must survive the release failing: a correction whose beds could not be
+  // freed is precisely the one an officer has to be able to find later, and
+  // letting `reconcileCorrectedRequestHold` throw past the write would delete
+  // the record of the case that needs it most. The error is held, the row is
+  // written with what actually happened to the hold, and only then is it
+  // rethrown — so the caller still learns the release failed.
+  let hold:
+    | { released: true; outcome: CorrectionHoldOutcome }
+    | { released: false; error: unknown };
+  try {
+    hold = {
+      released: true,
+      outcome: await reconcileCorrectedRequestHold({
+        requestId: request.id,
+        heldBookingId: request.heldBookingId,
+        holdAffecting,
+        adminMemberId: input.adminMemberId,
+        ipAddress: input.ipAddress ?? "",
+      }),
+    };
+  } catch (error) {
+    hold = { released: false, error };
+  }
 
   logAudit({
     action: "booking_request.corrected",
@@ -530,7 +547,10 @@ export async function correctBookingRequest(
     metadata: {
       reason,
       changedFields,
-      holdOutcome,
+      // `releaseFailed` is not a `CorrectionHoldOutcome`: no outcome was
+      // reached. It is the audit's own word for "the beds are still held for
+      // the old shape", which is what an officer reading this row needs to know.
+      holdOutcome: hold.released ? hold.outcome : "releaseFailed",
       supersededQuoteCount: claim.supersededQuoteCount,
       previousStatus: request.status,
       previousCheckIn: request.checkIn.toISOString(),
@@ -560,6 +580,8 @@ export async function correctBookingRequest(
     },
   });
 
+  if (!hold.released) throw hold.error;
+
   // Advisory, and measured last: after the hold went, so the officer is told
   // what the lodge can take now rather than what it could take while this
   // request's own beds were still sterilised by a stale hold.
@@ -573,7 +595,7 @@ export async function correctBookingRequest(
 
   return {
     changedFields,
-    holdOutcome,
+    holdOutcome: hold.outcome,
     supersededQuoteCount: claim.supersededQuoteCount,
     schoolRecord: claim.preview ?? null,
     availability: {

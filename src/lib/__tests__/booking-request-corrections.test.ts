@@ -699,6 +699,32 @@ describe("the beds the request was holding", () => {
     );
   });
 
+  it("still records the correction when the release fails, because that is the row an officer needs", async () => {
+    // The claim has already committed at this point. If the release error were
+    // allowed past the audit write, the ONE case where the beds are left held
+    // for the old shape would be the one case with no record of who corrected
+    // the request, when, or why.
+    stubRequest(heldRow());
+    (prisma.booking.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    });
+    (cancelBooking as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: 500,
+      error: "boom",
+    });
+    await expect(correctBookingRequest(schoolInput())).rejects.toBeInstanceOf(
+      BookingRequestCorrectionCommittedError,
+    );
+    const row = (logAudit as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0];
+    expect(row.action).toBe("booking_request.corrected");
+    expect(row.category).toBe("booking");
+    // Not a `CorrectionHoldOutcome`: no outcome was reached, and the row says so
+    // rather than implying the beds went.
+    expect(row.metadata.holdOutcome).toBe("releaseFailed");
+    expect(row.metadata.reason).toBeTruthy();
+  });
+
   it("reports nothing to do when the request held no beds", async () => {
     stubRequest(schoolRequestRow());
     const result = await correctBookingRequest(schoolInput());

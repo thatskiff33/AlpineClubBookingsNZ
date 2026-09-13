@@ -222,30 +222,30 @@ Pinned by `src/lib/__tests__/school-organisation-preview.test.ts` and
 ### INV-REQ-010
 
 **A corrected request never keeps beds held for the shape it no longer has.** A
-hold is a whole `AWAITING_REVIEW` booking built out of the request — its nights,
-its guest rows, its owner's name and email address — so every corrected field
-except the catering preference invalidates it.
+hold is a whole `AWAITING_REVIEW` booking built from the request's nights, guest
+rows and owner, so every corrected field except the catering preference
+invalidates it.
 
-- **A catering-only correction keeps the hold.** That is the one corrected field
-  a hold never reads: it selects quote options, not beds.
+- **A catering-only correction keeps the hold**: that is the one corrected field
+  a hold never reads, because it selects quote options, not beds.
 - **Every other correction releases it**, through the shared `cancelBooking`
-  path with the requester's cancellation email suppressed (an officer
-  correcting a request, not a requester cancelling a booking) and
-  `requireRequestHold: true`, so a hold a requester accepted in between is
-  refused rather than clobbered.
+  path with the requester's cancellation email suppressed (an officer correcting
+  a request, not a requester cancelling a booking) and `requireRequestHold: true`,
+  so a hold a requester accepted in between is refused rather than clobbered.
 - **The release runs AFTER the claim has committed and outside every
   transaction.** `cancelBooking` takes `pg_advisory_xact_lock(1)` and opens
   transactions of its own, so nesting it self-deadlocks. This is
-  `declineBookingRequest`'s composition exactly, including collecting the
-  notified member guests while the held booking still describes them.
+  `declineBookingRequest`'s composition exactly, its member-guest read included.
 - **A release that fails is reported as a correction that SAVED**
   (`BookingRequestCorrectionCommittedError`), never as a failed save and never
-  as a clean success. The caller must not retry — the request is already
-  corrected, and a retry would refuse on the bumped version. The worst case is a
-  request still pointing at a hold covering more than it needs, with its own
-  Release button; never one that has quietly lost beds it believes it has.
-- **A pointer to a hold that is no longer live is detached**, which is the same
-  repair the Release-hold route makes.
+  as a clean success, and **the audit row is written before that error is
+  rethrown** (`holdOutcome: "releaseFailed"`) — the one case where beds are left
+  held for the old shape is the one case an officer must be able to find. The
+  caller must not retry: a retry would refuse on the bumped version. The worst
+  case is a request pointing at a hold covering more than it needs, with its own
+  Release button; never one that has quietly lost beds.
+- **A pointer to a hold no longer live is detached**, the Release-hold route's
+  own repair.
 - **Availability is re-measured after the release and is ADVISORY.** A
   correction is never refused for it: recording what the requester asked for is
   the officer's job whether or not the lodge can take it.
