@@ -579,11 +579,31 @@ export async function deleteIntegrationCredential(params: {
           key: params.key,
           // The CLAIM, when a version was declared: a writer that replaced the
           // row between the read above and here changed its ciphertext, so this
-          // removes nothing and the delete simply did not happen.
+          // matches nothing.
           ...(claimCiphertext === undefined ? {} : { ciphertext: claimCiphertext }),
         },
       });
-      if (removed.count === 0) return;
+      if (removed.count === 0) {
+        // Removing nothing means two different things, and they must not be
+        // spelled the same way. Under `any` the caller asked for the row to be
+        // gone and it is gone — verify-reset fires on every credential write
+        // whether or not a marker was ever stamped, so a no-op is the common
+        // case and neither an error nor an audit row. Under `version` the row
+        // was there a statement ago and somebody replaced it since, which is a
+        // LOST RACE, and losing silently is the behaviour this whole contract
+        // exists to remove.
+        if (claimCiphertext !== undefined) {
+          const winner = await readRowForWrite(tx, params.provider, params.key);
+          throw new StaleCredentialWriteError({
+            provider: params.provider,
+            key: params.key,
+            expectation,
+            observedVersion:
+              winner === null ? null : credentialVersionOf(winner),
+          });
+        }
+        return;
+      }
 
       await recordCredentialMutation(tx, {
         action: CREDENTIAL_AUDIT_ACTIONS.deleted,

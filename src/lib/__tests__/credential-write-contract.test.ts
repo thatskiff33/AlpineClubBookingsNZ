@@ -432,6 +432,32 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
     expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it("refuses a versioned delete whose row was replaced under it", async () => {
+    // Removing nothing means two different things. Under `any` it is the common
+    // no-op (see the verify-reset case above); under `version` the row was there
+    // a statement ago and somebody replaced it since, so the delete LOST and
+    // says so rather than returning as though it had succeeded.
+    const current = storedRow("stripe", "secret_key", "current-value");
+    const winner = storedRow("stripe", "secret_key", "winners-value");
+    mocks.tx.integrationCredential.findUnique
+      .mockResolvedValueOnce(current)
+      .mockResolvedValue(winner);
+    mocks.tx.integrationCredential.deleteMany.mockResolvedValueOnce({ count: 0 });
+
+    const error = await deleteIntegrationCredential({
+      provider: "stripe",
+      key: "secret_key",
+      actor: ADMIN,
+      expect: { expect: "version", version: credentialVersionOf(current) },
+    }).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(StaleCredentialWriteError);
+    expect((error as StaleCredentialWriteError).observedVersion).toBe(
+      credentialVersionOf(winner),
+    );
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
   it("mints a different version for the same plaintext written twice", async () => {
     // What makes the tuple a usable version at all: a fresh random IV per
     // encrypt, so re-saving an unchanged value still invalidates a held token.
