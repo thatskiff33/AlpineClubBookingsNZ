@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { computeMemberGuestBoundary } from "@/lib/booking-guests";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
@@ -120,7 +121,7 @@ export async function sendFamilyMemberBookingAddNotifications(params: {
     return result;
   }
 
-  const bookerName = fullName(booking.member ?? {}) || "A family member";
+  const bookerName = fullName(bookingOwner(booking).member ?? {}) || "A family member";
 
   const targetMembers = await db.member.findMany({
     where: { id: { in: familyTargetIds } },

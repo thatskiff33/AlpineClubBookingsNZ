@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { createSetupIntent, findOrCreateCustomer, getSetupIntent } from "@/lib/stripe";
 import { classifySucceededSetupIntentCard } from "@/lib/setup-intent-card";
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify the requesting user owns this booking or is admin
-    if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
+    if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -132,9 +133,9 @@ export async function POST(request: NextRequest) {
 
     // Find or create Stripe customer
     const customer = await findOrCreateCustomer({
-      email: booking.member.email,
-      name: `${booking.member.firstName} ${booking.member.lastName}`,
-      memberId: booking.member.id,
+      email: bookingOwner(booking).member.email,
+      name: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+      memberId: bookingOwner(booking).member.id,
     });
 
     // Create the SetupIntent
@@ -142,7 +143,7 @@ export async function POST(request: NextRequest) {
       customerId: customer.id,
       metadata: {
         bookingId: booking.id,
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
       },
       idempotencyKey: `seti_${booking.id}_${booking.payment?.stripeSetupIntentId ?? "initial"}`,
     });

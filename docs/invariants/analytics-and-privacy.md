@@ -713,3 +713,30 @@ decision, 9 August 2026 (#2695). Reasoning: `src/lib/audit-member-disclosure.ts`
   officer note — the point — and an older credit adjustment's recorded reason,
   which is not. Nothing is altered; a backfill would publish undeclared text, so
   it is the owner's call.
+
+## INV-PRIV-018
+
+An audit row's SUBJECT is a person. Where a booking is owned by an
+organisation, the row records no subject member, and the booking carries the
+identity through `entityType`/`entityId`. Decided on #3368 (stage 3 of
+programme #2912) rather than left for stage 4 to settle by whatever a null
+does.
+
+- **`subjectMemberId` means "whose personal history is this?"** — it is what
+  decides whether a row reaches a member's own timeline. An organisation has no
+  timeline, no sign-in and no personal history, so putting its id there would be
+  a category error before it was a privacy one.
+- **Nothing is lost by leaving it unset.** Every one of these rows already
+  carries the booking on `entityType: "Booking"` with its `entityId`, which is
+  what an officer reads the row by, and a school's bookings are reachable
+  through the organisation.
+- **It widens no readership**, so `INV-PRIV-012` is untouched: a row with no
+  subject member reaches strictly fewer member timelines, never more. The
+  category still decides whether the row reaches a timeline at all.
+- **It moves no row already written** (`INV-OPS-012`). Today every booking has a
+  member and every such row has its subject; this rule governs only rows a
+  future organisation-owned booking writes. No backfill is owed and no member's
+  view of their own history changes.
+- **The alternative was recording the school's invented member.** That member is
+  exactly what stage 4 removes, so the subject would have pointed at a record
+  nobody can sign in as and nobody is keeping.

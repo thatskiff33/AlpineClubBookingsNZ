@@ -168,6 +168,7 @@ import "server-only";
 
 import type { AgeTier, Prisma } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT } from "@/lib/adult-member-hosting-coverage-ceilings";
 import { evaluatePersistedBookingAdultMemberHostingReadOnly } from "@/lib/adult-member-hosting-review";
 import { getLifecycleStatusConfig } from "@/lib/admin-member-badges";
@@ -1292,7 +1293,7 @@ async function readBookingBlockState(
           booking.lodgeId,
           party,
           {
-          requestedByMemberId: booking.memberId,
+          requestedByMemberId: bookingOwner(booking).memberId,
           bookingId: booking.id,
           },
           {
@@ -1384,7 +1385,7 @@ async function readBookingBlockState(
           // this tool then projects. `"USER"` is the least-privileged answer and
           // the tool reports only counts and nights, never the counterpart
           // booking.
-          actorMemberId: booking.memberId,
+          actorMemberId: bookingOwner(booking).memberId,
           actorRole: "USER",
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
@@ -1420,9 +1421,9 @@ async function readBookingBlockState(
     requireResolvedLockoutMode(subscriptionLockoutMode) !== "HARD_BLOCK"
       ? Promise.resolve(false)
       : readOwnerSubscriptionHardBlock(tx, {
-          memberId: booking.memberId,
+          memberId: bookingOwner(booking).memberId,
           seasonYear: requireResolvedSeasonYear(seasonYear),
-          ageTier: booking.member?.ageTier ?? null,
+          ageTier: bookingOwner(booking).member?.ageTier ?? null,
           readAgeTierSettings,
         }),
     ]);
@@ -1615,7 +1616,7 @@ async function readBookingBlockState(
     {
       booking_id: booking.id,
       booking_reference: formatBookingReference(booking.id),
-      owner_member_ref: booking.memberId,
+      owner_member_ref: bookingOwner(booking).memberId,
       lodge_ref: booking.lodgeId,
       booking_status: booking.status,
       check_in: checkInDay,

@@ -1,5 +1,6 @@
 import { type Invoice } from "xero-node";
 import { BookingEventType, BookingStatus, CreditType, PaymentSource, PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -319,7 +320,7 @@ async function recordManualSettlementConflict({
   if (!holdsClaim) return;
 
   await sendAdminManualSettlementConflictAlert({
-    memberName: `${payment.booking.member.firstName} ${payment.booking.member.lastName}`,
+    memberName: `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`,
     checkIn: payment.booking.checkIn,
     checkOut: payment.booking.checkOut,
     amountCents: payment.amountCents,
@@ -468,7 +469,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         continue;
       }
       await sendAdminPaymentFailureAlert({
-        memberName: `${payment.booking.member.firstName} ${payment.booking.member.lastName}`,
+        memberName: `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`,
         checkIn: payment.booking.checkIn,
         checkOut: payment.booking.checkOut,
         amountCents: payment.amountCents,
@@ -710,7 +711,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         // its existence, and the later-cash detection below needs its size.
         const existingCredit = await tx.memberCredit.findFirst({
           where: {
-            memberId: settlementPayment.booking.memberId,
+            memberId: bookingOwner(settlementPayment.booking).memberId,
             sourceBookingId: settlementPayment.bookingId,
             type: CreditType.CANCELLATION_REFUND,
             description: {
@@ -785,7 +786,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         if (credited) {
           await tx.memberCredit.create({
             data: {
-              memberId: settlementPayment.booking.memberId,
+              memberId: bookingOwner(settlementPayment.booking).memberId,
               amountCents: mintableCents,
               type: CreditType.CANCELLATION_REFUND,
               description: `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
@@ -977,7 +978,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           const creditDescription = `Internet Banking payment credit for booking ${fresh.bookingId.slice(0, 8)}`;
           const existingCredit = await tx.memberCredit.findFirst({
             where: {
-              memberId: fresh.booking.memberId,
+              memberId: bookingOwner(fresh.booking).memberId,
               sourceBookingId: fresh.bookingId,
               amountCents: mintableCents,
               type: CreditType.CANCELLATION_REFUND,
@@ -988,7 +989,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           if (!existingCredit && mintableCents > 0) {
             await tx.memberCredit.create({
               data: {
-                memberId: fresh.booking.memberId,
+                memberId: bookingOwner(fresh.booking).memberId,
                 amountCents: mintableCents,
                 type: CreditType.CANCELLATION_REFUND,
                 description: creditDescription,
@@ -1153,10 +1154,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         sendBookingCancelledEmail(
           {
             bookingId: outcome.payment.booking.id,
-            recipientMemberId: outcome.payment.booking.memberId,
+            recipientMemberId: bookingOwner(outcome.payment.booking).memberId,
           },
-          outcome.payment.booking.member.email,
-          outcome.payment.booking.member.firstName,
+          bookingOwner(outcome.payment.booking).member.email,
+          bookingOwner(outcome.payment.booking).member.firstName,
           outcome.payment.booking.checkIn,
           outcome.payment.booking.checkOut,
           outcome.creditedCents,
@@ -1173,7 +1174,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero."
           : "";
         sendAdminPaymentFailureAlert({
-          memberName: `${outcome.payment.booking.member.firstName} ${outcome.payment.booking.member.lastName}`,
+          memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`,
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.creditedCents,
@@ -1193,7 +1194,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         );
       } else if (outcome.laterCashCents > 0) {
         sendAdminPaymentFailureAlert({
-          memberName: `${outcome.payment.booking.member.firstName} ${outcome.payment.booking.member.lastName}`,
+          memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`,
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.laterCashCents,
@@ -1207,7 +1208,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         );
       } else if (outcome.zeroCashAnomaly) {
         sendAdminPaymentFailureAlert({
-          memberName: `${outcome.payment.booking.member.firstName} ${outcome.payment.booking.member.lastName}`,
+          memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`,
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.payment.amountCents,
@@ -1252,7 +1253,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // transaction above (atomic with the local credit), so there is no
       // post-commit fire-and-forget enqueue here.
       sendAdminPaymentFailureAlert({
-        memberName: `${outcome.payment.booking.member.firstName} ${outcome.payment.booking.member.lastName}`,
+        memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`,
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
         amountCents: outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
@@ -1267,10 +1268,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       sendBookingCancelledEmail(
         {
           bookingId: outcome.payment.booking.id,
-          recipientMemberId: outcome.payment.booking.memberId,
+          recipientMemberId: bookingOwner(outcome.payment.booking).memberId,
         },
-        outcome.payment.booking.member.email,
-        outcome.payment.booking.member.firstName,
+        bookingOwner(outcome.payment.booking).member.email,
+        bookingOwner(outcome.payment.booking).member.firstName,
         outcome.payment.booking.checkIn,
         outcome.payment.booking.checkOut,
         outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
@@ -1302,7 +1303,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       await createAuditLog({
         action: "booking.payment.confirmed",
         targetId: outcome.payment.bookingId,
-        subjectMemberId: outcome.payment.booking.memberId,
+        subjectMemberId: bookingOwner(outcome.payment.booking).memberId,
         entityType: "Booking",
         entityId: outcome.payment.bookingId,
         category: "payment",
@@ -1345,9 +1346,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     if (outcome.staleCreditElectionCents != null) {
       await reportUnappliedCreditElection({
         bookingId: outcome.payment.bookingId,
-        memberId: outcome.payment.booking.memberId,
-        memberFirstName: outcome.payment.booking.member.firstName,
-        memberLastName: outcome.payment.booking.member.lastName,
+        memberId: bookingOwner(outcome.payment.booking).memberId,
+        memberFirstName: bookingOwner(outcome.payment.booking).member.firstName,
+        memberLastName: bookingOwner(outcome.payment.booking).member.lastName,
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
         electionCents: outcome.staleCreditElectionCents,
@@ -1370,16 +1371,16 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     // separate later charge. Read-only; null on non-split bookings.
     const provisionalGuests = await getProvisionalNonMemberChildSummary({
       id: outcome.payment.bookingId,
-      memberId: outcome.payment.booking.memberId,
+      memberId: bookingOwner(outcome.payment.booking).memberId,
     });
 
     sendBookingConfirmedEmail(
       {
         bookingId: outcome.payment.booking.id,
-        recipientMemberId: outcome.payment.booking.memberId,
+        recipientMemberId: bookingOwner(outcome.payment.booking).memberId,
       },
-      outcome.payment.booking.member.email,
-      outcome.payment.booking.member.firstName,
+      bookingOwner(outcome.payment.booking).member.email,
+      bookingOwner(outcome.payment.booking).member.firstName,
       outcome.payment.booking.checkIn,
       outcome.payment.booking.checkOut,
       outcome.payment.booking.guests.length,

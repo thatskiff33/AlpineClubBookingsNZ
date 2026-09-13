@@ -35,6 +35,7 @@ import {
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   aggregatePolicyExceptionViolations,
@@ -260,7 +261,7 @@ export async function createGroupBooking(
   if (!booking || booking.deletedAt) {
     throw new GroupBookingError("Booking not found", 404);
   }
-  if (booking.memberId !== sessionUserId) {
+  if (bookingOwner(booking).memberId !== sessionUserId) {
     throw new GroupBookingError(
       "You can only open a group on your own booking",
       403
@@ -293,7 +294,7 @@ export async function createGroupBooking(
       return await prisma.groupBooking.create({
         data: {
           organiserBookingId: booking.id,
-          organiserMemberId: booking.memberId,
+          organiserMemberId: bookingOwner(booking).memberId,
           joinCode: generateGroupBookingCode(),
           paymentMode: input.paymentMode,
           joinDeadline: input.joinDeadline ?? null,

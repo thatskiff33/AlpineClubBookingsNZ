@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { AgeTier } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -328,7 +329,7 @@ export async function POST(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && !isAdmin) {
+  if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -736,7 +737,7 @@ export async function POST(
   // same field the create-flow quote returns (api/bookings/quote/route.ts) —
   // the edit panel's credit card keys off it. The BOOKING OWNER's balance, not
   // the actor's: an admin editing on behalf must see the member's credit.
-  const availableCreditCents = await getMemberCreditBalance(booking.memberId);
+  const availableCreditCents = await getMemberCreditBalance(bookingOwner(booking).memberId);
 
   let normalizedAddGuests: NormalizedAddGuest[] | undefined = addGuests;
   let guestNameUpdates: ReturnType<typeof resolveGuestNameUpdates> = [];
@@ -805,7 +806,7 @@ export async function POST(
     const { members: linkedMembers, boundary } =
       await resolveLinkedBookingMembersWithBoundary(
         prisma,
-        booking.memberId,
+        bookingOwner(booking).memberId,
         [
           ...(addGuests ?? []).map((guest) => guest.memberId),
           // #2337: linked members resolve through the same eligibility/boundary
@@ -843,7 +844,7 @@ export async function POST(
       session.user.id,
       {
         actorRole,
-        onBehalfOfMemberId: isAdmin ? booking.memberId : null,
+        onBehalfOfMemberId: isAdmin ? bookingOwner(booking).memberId : null,
         // D-8: neutral refusal for a blocked cross-family member.
         crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
       }
@@ -1130,7 +1131,7 @@ export async function POST(
   // `markCrossFamilyGuestsOnBooking`.
   const guestsForPricing = await markCrossFamilyGuestsOnBooking(
     prisma,
-    booking.memberId,
+    bookingOwner(booking).memberId,
     proposedGuestRows,
     // `bookingId` arms the owner's gate (finding 4): with the module off and no
     // consent row on this booking, the family-boundary recomputation is skipped.
@@ -1220,7 +1221,7 @@ export async function POST(
 
   try {
     await assertMembershipTypeBookingAllowed(prisma, {
-      ownerMemberId: booking.memberId,
+      ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,
       seasonYear,
       // Finding 2 (privacy re-review of MG3 #2308). `guestsForPricing` is the
@@ -1260,7 +1261,7 @@ export async function POST(
     let unpaidMemberGuests;
     try {
       unpaidMemberGuests = await findUnpaidMemberGuestNames(prisma, {
-        bookingMemberId: booking.memberId,
+        bookingMemberId: bookingOwner(booking).memberId,
         checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
         guests: normalizedAddGuests ?? [],
       });
@@ -1334,7 +1335,7 @@ export async function POST(
       // Owner decision, 3 Aug 2026: an unfinancial owner triggers the requirement
       // whether or not they are one of the rows being priced, so the preview
       // refuses exactly what the apply path refuses.
-      bookingOwnerMemberId: booking.memberId,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
       // D-12. `proposedGuestRows` is rebuilt field by field and deliberately
       // carries no consent column, so passing it raw made a PENDING cross-family
       // adult count as the party's paid-up adult HERE while the guest-add path
@@ -1775,7 +1776,7 @@ export async function POST(
       newTotalPriceCents = inProgressPlan.newTotalPriceCents;
     } else {
       priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         checkIn: newCheckIn,
         checkOut: newCheckOut,
         guests: policyAdjustedGuestsForPricing,
@@ -1970,7 +1971,7 @@ export async function POST(
 
     try {
       const oldPriceForRemaining = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         guests: oldRemainingForPricing,
@@ -1979,7 +1980,7 @@ export async function POST(
         subscriptionLockoutMode,
       });
       const newPriceForRemaining = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         checkIn: newCheckIn,
         checkOut: newCheckOut,
         guests: newRemainingForPricing,
@@ -2054,7 +2055,7 @@ export async function POST(
     for (const guest of normalizedAddGuestsWithRanges) {
       try {
         const guestPrice = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-          ownerMemberId: booking.memberId,
+          ownerMemberId: bookingOwner(booking).memberId,
           checkIn: newCheckIn,
           checkOut: newCheckOut,
           guests: [
@@ -2201,7 +2202,7 @@ export async function POST(
     }
     const validation = await validatePromoCodeFull(newPromoCode, {
       totalPriceCents: newTotalPriceCents,
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       guests: quoteGuestNightRates,
     }, todayAtClub, bookingId, bookingLodgeId, {
       selectedGuestIndexes: quoteSelectedGuestIndexes,
@@ -2239,7 +2240,7 @@ export async function POST(
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,

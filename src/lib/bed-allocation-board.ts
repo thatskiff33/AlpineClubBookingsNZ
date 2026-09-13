@@ -6,6 +6,7 @@
  * the warnings, composed into one response. The queries and serialisers are
  * `bed-allocation-board-records.ts`.
  */
+import { bookingOwner } from "@/lib/booking-owner";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import { buildFirstFitBedAllocationPlan } from "@/lib/bed-allocation";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
@@ -165,7 +166,7 @@ export async function getBedAllocationDashboard(input: {
       );
       return {
         bookingId: booking.id,
-        memberName: memberName(booking.member),
+        memberName: memberName(bookingOwner(booking).member),
         checkIn: formatDateOnly(booking.checkIn),
         checkOut: formatDateOnly(booking.checkOut),
         guestCount: booking.guests.length,

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { BookingStatus } from "@prisma/client";
@@ -180,7 +181,7 @@ export async function POST(
             : "booking.admin_capacity_hold.placed",
           memberId: session.user.id,
           actorMemberId: session.user.id,
-          subjectMemberId: booking.memberId,
+          subjectMemberId: bookingOwner(booking).memberId,
           targetId: booking.id,
           entityType: "Booking",
           entityId: booking.id,
@@ -316,7 +317,7 @@ export async function DELETE(
           action: "booking.admin_capacity_hold.released",
           memberId: session.user.id,
           actorMemberId: session.user.id,
-          subjectMemberId: booking.memberId,
+          subjectMemberId: bookingOwner(booking).memberId,
           targetId: booking.id,
           entityType: "Booking",
           entityId: booking.id,

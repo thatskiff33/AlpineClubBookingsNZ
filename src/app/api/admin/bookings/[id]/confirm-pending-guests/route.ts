@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { z } from "zod";
@@ -152,7 +153,7 @@ export async function POST(
     createStructuredAuditLog({
       action: "booking.confirm_pending_guests",
       actor: { memberId: session.user.id },
-      subject: { memberId: booking.memberId },
+      subject: { memberId: bookingOwner(booking).memberId },
       entity: { type: "booking", id: bookingId },
       category: "booking",
       severity: "important",
@@ -314,9 +315,9 @@ export async function POST(
       await audit("paid_zero", false);
       if (notifyMember !== false) {
         sendBookingConfirmedEmail(
-          { bookingId: booking.id, recipientMemberId: booking.memberId },
-          booking.member.email,
-          booking.member.firstName,
+          { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+          bookingOwner(booking).member.email,
+          bookingOwner(booking).member.firstName,
           booking.checkIn,
           booking.checkOut,
           booking.guests.length,
@@ -526,7 +527,7 @@ export async function POST(
           "Admin confirm-pending-guests: refused to charge (#3267)"
         );
         sendAdminPaymentFailureAlert({
-          memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+          memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           amountCents: booking.finalPriceCents,
@@ -652,7 +653,7 @@ export async function POST(
       paymentIntent = await chargeSavedCardAttempt({
         attempt: claim.attempt,
         bookingId,
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         amountCents: claim.amountCents,
         card: claim.card,
       });
@@ -672,7 +673,7 @@ export async function POST(
       // price that moved between the pre-lock read and the claim would
       // otherwise make this alert name a figure nobody was ever charged.
       sendAdminPaymentFailureAlert({
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         amountCents: claim.amountCents,
@@ -778,7 +779,7 @@ export async function POST(
         "Admin confirm-pending-guests: charge captured but reconciliation failed; leaving booking claimed"
       );
       sendAdminPaymentFailureAlert({
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         amountCents: paymentIntent.amount,
@@ -882,9 +883,9 @@ export async function POST(
     await audit("paid_charged", true);
     if (notifyMember !== false) {
       sendBookingConfirmedEmail(
-        { bookingId: booking.id, recipientMemberId: booking.memberId },
-        booking.member.email,
-        booking.member.firstName,
+        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+        bookingOwner(booking).member.email,
+        bookingOwner(booking).member.firstName,
         booking.checkIn,
         booking.checkOut,
         booking.guests.length,

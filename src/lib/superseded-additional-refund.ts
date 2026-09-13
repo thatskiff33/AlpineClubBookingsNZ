@@ -1,5 +1,6 @@
 import { BookingEventType, Prisma } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { bookingOutstandingCents } from "@/lib/additional-payment-ask";
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -105,11 +106,11 @@ export async function reportSupersededPaymentRefund(params: {
         },
       },
     });
-    if (booking?.member) {
+    if (booking && bookingOwner(booking).member) {
       context = {
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-        memberEmail: booking.member.email,
-        memberId: booking.member.id,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+        memberEmail: bookingOwner(booking).member.email,
+        memberId: bookingOwner(booking).member.id,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         lodgeId: booking.lodgeId ?? null,
@@ -188,7 +189,7 @@ export async function reportSupersededPaymentRefund(params: {
 
   await sendSupersededPaymentRefundedEmail({
     bookingId,
-    recipientMemberId: context.memberId,
+    recipientMemberId: bookingOwner(context).memberId,
     email: context.memberEmail,
     firstName: context.memberName.split(" ")[0] ?? context.memberName,
     checkIn: context.checkIn,

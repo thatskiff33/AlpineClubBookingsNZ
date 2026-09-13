@@ -33,6 +33,7 @@
 
 import "server-only";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { formatDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 
@@ -215,7 +216,12 @@ async function readBooking({
   }
 
   if (includeSensitive) {
-    facts.push(sensitiveFact("booking.member-name", displayName(booking.member)));
+    // The fact KEY is a stable operator-facing string and is NOT an ownership
+    // read (#3368): the sweep rewrote it along with the value beside it, which
+    // renamed a diagnostics fact. Left as it was.
+    facts.push(
+      sensitiveFact("booking.member-name", displayName(bookingOwner(booking).member)),
+    );
     if (booking.notes) {
       facts.push(sensitiveFact("booking.notes", booking.notes));
     }
@@ -297,7 +303,7 @@ async function readPayment({
 
   if (includeSensitive) {
     facts.push(
-      sensitiveFact("payment.payer-name", displayName(payment.booking.member)),
+      sensitiveFact("payment.payer-name", displayName(bookingOwner(payment.booking).member)),
     );
   }
 

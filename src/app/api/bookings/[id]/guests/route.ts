@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import {
   PaymentSource,
@@ -313,7 +314,7 @@ export async function POST(
       }
 
       if (
-        booking.memberId !== session.user.id &&
+        bookingOwner(booking).memberId !== session.user.id &&
         !isAdmin
       ) {
         throw new ApiError("Forbidden", 403);
@@ -407,7 +408,7 @@ export async function POST(
         const { members: linkedMembers, boundary } =
           await resolveLinkedBookingMembersWithBoundary(
             tx,
-            booking.memberId,
+            bookingOwner(booking).memberId,
             newGuests.map((guest) => guest.memberId),
             {
               skipAuthorization: isAdmin,
@@ -420,7 +421,7 @@ export async function POST(
           session.user.id,
           {
             actorRole,
-            onBehalfOfMemberId: isAdmin ? booking.memberId : null,
+            onBehalfOfMemberId: isAdmin ? bookingOwner(booking).memberId : null,
             // D-8: a blocked cross-family member is refused neutrally.
             crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
           }
@@ -458,7 +459,7 @@ export async function POST(
 
       const seasonYear = seasonYearOfStoredDate(booking.checkIn);
       await assertMembershipTypeBookingAllowed(tx, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         guests: [
           ...booking.guests,
           ...normalizedNewGuests.map((guest) => ({
@@ -473,7 +474,7 @@ export async function POST(
 
       if (!isAdmin) {
         const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
-          bookingMemberId: booking.memberId,
+          bookingMemberId: bookingOwner(booking).memberId,
           checkIn: booking.checkIn,
           guests: normalizedNewGuests,
         });
@@ -504,7 +505,7 @@ export async function POST(
           // Owner decision, 3 Aug 2026: an unfinancial owner triggers the
           // requirement whether or not they hold a bed on the booking they are
           // adding to.
-          bookingOwnerMemberId: booking.memberId,
+          bookingOwnerMemberId: bookingOwner(booking).memberId,
           // D-12 over the whole post-add party. `toSubscriptionLockoutParticipants`
           // reads a persisted row's `consentStatus` and a pre-persist row's planned
           // `memberGuestConsent.consentStatus`, which is exactly the two shapes
@@ -607,7 +608,7 @@ export async function POST(
       let fullPriceBreakdown;
       try {
         fullPriceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-          ownerMemberId: booking.memberId,
+          ownerMemberId: bookingOwner(booking).memberId,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           guests: allGuestsForPricing,
@@ -854,7 +855,7 @@ export async function POST(
         const application = await validateAndCalculatePromoDiscount(
           promo,
           {
-            memberId: booking.memberId,
+            memberId: bookingOwner(booking).memberId,
             bookingCheckIn: booking.checkIn,
             totalPriceCents: newTotalPriceCents,
             guests: guestNightRates,
@@ -1182,9 +1183,9 @@ export async function POST(
         xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
         paymentId: booking.payment?.id ?? null,
         paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-        memberEmail: booking.member.email,
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-        memberId: booking.memberId,
+        memberEmail: bookingOwner(booking).member.email,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+        memberId: bookingOwner(booking).memberId,
         addedGuestNames: normalizedNewGuests.map((guest) => `${guest.firstName} ${guest.lastName}`),
         bookingModificationId: bookingModification.id,
         // MG2 #2307: the cross-family rows to tell about, matched to the guest
@@ -1248,7 +1249,7 @@ export async function POST(
       try {
         await sendFamilyMemberBookingAddNotifications({
           bookingId,
-          bookerMemberId: result.booking.memberId,
+          bookerMemberId: bookingOwner(result.booking).memberId,
           actorMemberId: session.user.id,
           addedMemberIds: result.familyAddMemberIds,
         });
@@ -1281,7 +1282,7 @@ export async function POST(
       action: "booking.modify.guests.add",
       memberId: session.user.id,
       targetId: bookingId,
-      subjectMemberId: result.booking.memberId,
+      subjectMemberId: bookingOwner(result.booking).memberId,
       entityType: "BookingModification",
       entityId: result.bookingModificationId,
       category: "booking",
@@ -1323,7 +1324,7 @@ export async function POST(
 
     // Send email
     const member = await prisma.member.findUnique({
-      where: { id: result.booking.memberId },
+      where: { id: bookingOwner(result.booking).memberId },
     });
     if (member && notifyMember !== false) {
       /*

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -37,7 +38,7 @@ export async function POST(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
+  if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -165,7 +166,7 @@ export async function POST(
     action: "refund-request.create",
     memberId: session.user.id,
     targetId: bookingId,
-    subjectMemberId: booking.memberId,
+    subjectMemberId: bookingOwner(booking).memberId,
     entityType: "RefundRequest",
     entityId: refundRequest.id,
     category: "payment",
@@ -182,7 +183,7 @@ export async function POST(
 
   // Notify admins
   sendAdminRefundRequestAlert({
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
     bookingId,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
@@ -221,7 +222,7 @@ export async function GET(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
+  if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

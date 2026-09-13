@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { requireCalendarDate } from "@/lib/club-time";
 import {
@@ -391,7 +392,7 @@ export async function planStrandNightPriceReconcile({
     bookingGuestId: guest.id,
     guestName: offer.guestName,
     cause: offer.cause,
-    subjectMemberId: booking.memberId,
+    subjectMemberId: bookingOwner(booking).memberId,
     summary: offer.summary,
     writes: check.entries.map((entry) => ({
       date: entry.date,

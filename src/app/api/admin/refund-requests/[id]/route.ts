@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -280,9 +281,9 @@ export async function PUT(
     // #1792: resolve the member email BEFORE the audit so the notify choice can
     // be recorded honestly. Only stamp notifyMember:false when there was an
     // email to suppress; otherwise there was nothing to opt out of.
-    const memberEmail = booking.member.email || refundRequest.member.email;
-    const recipientMemberId = booking.member.email
-      ? booking.member.id
+    const memberEmail = bookingOwner(booking).member.email || refundRequest.member.email;
+    const recipientMemberId = bookingOwner(booking).member.email
+      ? bookingOwner(booking).member.id
       : refundRequest.member.id;
     const notifyAuditFields =
       memberEmail && notifyMember === false ? { notifyMember: false } : {};
@@ -291,7 +292,7 @@ export async function PUT(
       action: "refund-request.approve",
       memberId: session.user.id,
       targetId: id,
-      subjectMemberId: booking.memberId,
+      subjectMemberId: bookingOwner(booking).memberId,
       entityType: "RefundRequest",
       entityId: id,
       category: "payment",
@@ -369,9 +370,9 @@ export async function PUT(
     // #1792: resolve the member email BEFORE the audit so the notify choice can
     // be recorded honestly. Only stamp notifyMember:false when there was an
     // email to suppress; otherwise there was nothing to opt out of.
-    const memberEmail = booking.member.email || refundRequest.member.email;
-    const recipientMemberId = booking.member.email
-      ? booking.member.id
+    const memberEmail = bookingOwner(booking).member.email || refundRequest.member.email;
+    const recipientMemberId = bookingOwner(booking).member.email
+      ? bookingOwner(booking).member.id
       : refundRequest.member.id;
     const notifyAuditFields =
       memberEmail && notifyMember === false ? { notifyMember: false } : {};
@@ -380,7 +381,7 @@ export async function PUT(
       action: "refund-request.reject",
       memberId: session.user.id,
       targetId: id,
-      subjectMemberId: booking.memberId,
+      subjectMemberId: bookingOwner(booking).memberId,
       entityType: "RefundRequest",
       entityId: id,
       category: "payment",

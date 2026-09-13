@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
 import { BookingStatus, type Prisma } from "@prisma/client";
@@ -133,7 +134,7 @@ export async function setBookingNoEmails(params: {
             : "booking.noEmails.cleared",
           memberId: params.actorMemberId,
           actorMemberId: params.actorMemberId,
-          subjectMemberId: booking.memberId,
+          subjectMemberId: bookingOwner(booking).memberId,
           targetId: booking.id,
           entityType: "Booking",
           entityId: booking.id,

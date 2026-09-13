@@ -395,6 +395,12 @@ const DECLARED_FILES: Record<string, string> = {
     "INV-INT-018: the two-homes refusal, which reads the Organisation holding " +
     "a Xero contact id so a member cannot claim it as well, and the ONE " +
     "transfer that lets a school take the contact its own invented member holds",
+  // ---- added by stage 3 (#3368) ---------------------------------------
+  "src/lib/booking-owner.ts":
+    "the one-home accessor this census's own message names as stage 3: it " +
+    "answers who owns a booking, and its docblock is where the decision that " +
+    "an OrganisationContact role is NOT yet entitled to act on a school's " +
+    "booking is written down (INV-SSOT-005)",
 };
 
 /**
@@ -605,8 +611,12 @@ describe("#3367: each declared reader still plays its declared part", () => {
     expect(body).toContain("booking.organisationId");
     expect(body).toContain("findOrCreateXeroContactForOrganisation(");
     // The fallback is today's behaviour to the letter, so a booking with no
-    // organisation is unchanged.
-    expect(body).toContain("findOrCreateXeroContact(booking.memberId");
+    // organisation is unchanged. Since stage 3 (#3368) the member id it passes
+    // is read through the one-home accessor, which is the identity on this
+    // column while it is still required — the same id, resolved the same way.
+    expect(body).toContain(
+      "findOrCreateXeroContact(bookingOwner(booking).memberId",
+    );
   });
 
   it("repairs a stale contact reference against the INVOICED party", () => {

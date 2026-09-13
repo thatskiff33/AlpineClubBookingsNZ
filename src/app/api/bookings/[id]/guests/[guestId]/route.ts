@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -258,7 +259,7 @@ export async function DELETE(
       action: "booking.modify.guests.remove",
       memberId: session.user.id,
       targetId: bookingId,
-      subjectMemberId: result.booking.memberId,
+      subjectMemberId: bookingOwner(result.booking).memberId,
       entityType: "BookingModification",
       entityId: result.bookingModificationId,
       category: "booking",
@@ -323,7 +324,7 @@ export async function DELETE(
     // never suppressed by the choice.
     const member = notifyMember
       ? await prisma.member.findUnique({
-          where: { id: result.booking.memberId },
+          where: { id: bookingOwner(result.booking).memberId },
         })
       : null;
     if (member) {

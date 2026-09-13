@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { sendCheckinReminderEmail, shouldSendEmail } from "./email";
 import { addDaysDateOnly } from "./date-only";
+import { bookingOwner } from "@/lib/booking-owner";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
@@ -76,7 +77,7 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
     // are never gated.) `booking.member` is loaded via the `member: true`
     // include above, so the memberId is already in hand.
     const wantsReminder = await shouldSendEmail(
-      booking.member.id,
+      bookingOwner(booking).member.id,
       "bookingReminder",
     );
     if (!wantsReminder) {
@@ -88,7 +89,7 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
     const alreadySent = await prisma.emailLog.findFirst({
       where: {
         templateName: "checkin-reminder",
-        to: booking.member.email,
+        to: bookingOwner(booking).member.email,
         subject: `Check-in Reminder - ${EMAIL_DEFAULT_LODGE_NAME}`,
         status: "SENT",
         // Only check within the last 48h to avoid false matches from old bookings
@@ -113,9 +114,9 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
 
     try {
       await sendCheckinReminderEmail(
-        { bookingId: booking.id, recipientMemberId: booking.memberId },
-        booking.member.email,
-        booking.member.firstName,
+        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+        bookingOwner(booking).member.email,
+        bookingOwner(booking).member.firstName,
         booking.checkIn,
         booking.checkOut,
         guests,

@@ -18,6 +18,7 @@
 import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
 import { CreditType } from "@prisma/client";
 import { prisma } from "./prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -39,11 +40,11 @@ import {
   getAccountMapping,
   getResolvedAccountMapping,
 } from "./xero-mappings";
+import { retryXeroWriteWithContactRepair, type FindOrCreateXeroContactOptions } from "./xero-contacts";
 import {
-  findOrCreateXeroContact,
-  retryXeroWriteWithContactRepair,
-  type FindOrCreateXeroContactOptions,
-} from "./xero-contacts";
+  findOrCreateXeroContactForInvoicedParty,
+  invoicedPartyContactRepair,
+} from "@/lib/organisation-xero-contacts";
 import { formatDateOnly } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
@@ -262,8 +263,24 @@ export async function createXeroCreditNote(
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
-  // Ensure the member has a Xero contact
-  const contactId = await findOrCreateXeroContact(payment.booking.memberId, options);
+  /*
+    Ensure the INVOICED PARTY has a Xero contact (#3368; the obligation this
+    stage inherited from #3367 in writing on 13 September 2026).
+
+    Stage 2 made the Organisation the invoiced party in the INVOICE builder
+    only. A credit note on a returning school's EARLIER booking still resolved
+    through `booking.memberId`, found no contact link on that invented school
+    member, searched Xero by EMAIL — the school's address sits on both records
+    — and was refused by stage 2's two-homes rule. That refusal is the window
+    the issue comment names, and this line is what closes it.
+
+    Where no organisation is linked this is today's behaviour to the letter:
+    the same member id, the same options object, the same function underneath.
+  */
+  const contactId = await findOrCreateXeroContactForInvoicedParty(
+    payment.booking,
+    options,
+  );
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
 
@@ -345,8 +362,14 @@ export async function createXeroCreditNote(
 
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: payment.booking.memberId,
+      memberId: bookingOwner(payment.booking).memberId,
       currentContactId: contactId,
+      // `INV-INT-019`: THE REPAIR ENTITY MATCHES THE INVOICED PARTY (#3368).
+      // The default repair resolves through `findOrCreateXeroContact`, which
+      // searches Xero by EMAIL first, so on a school's booking it would find
+      // the teacher's personal contact and re-issue the SCHOOL's credit note
+      // against a person — the #2912 prohibition through the back door.
+      repairContactLink: invoicedPartyContactRepair(payment.booking),
       workflow: "createXeroCreditNote",
       operationId: operationId!,
       repairExistingLink: options?.repairExistingLink,
@@ -605,7 +628,7 @@ export async function createUnappliedXeroCreditNote(
   if (existingLink?.xeroObjectId) {
     if (bookingModificationId) {
       await backfillBookingModificationCreditXeroNote({
-        memberId: payment.booking.memberId,
+        memberId: bookingOwner(payment.booking).memberId,
         bookingId: payment.booking.id,
         bookingModificationId,
         refundAmountCents,
@@ -613,7 +636,7 @@ export async function createUnappliedXeroCreditNote(
       });
     } else {
       await backfillCancellationCreditXeroNote({
-        memberId: payment.booking.memberId,
+        memberId: bookingOwner(payment.booking).memberId,
         bookingId: payment.booking.id,
         refundAmountCents,
         creditNoteId: existingLink.xeroObjectId,
@@ -650,7 +673,13 @@ export async function createUnappliedXeroCreditNote(
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(payment.booking.memberId, options);
+  // The invoiced party, for the reason spelled out in `createXeroCreditNote`
+  // above (#3368/#3367). An account-credit note is raised against the same
+  // customer the original invoice was.
+  const contactId = await findOrCreateXeroContactForInvoicedParty(
+    payment.booking,
+    options,
+  );
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
 
@@ -719,8 +748,10 @@ export async function createUnappliedXeroCreditNote(
 
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: payment.booking.memberId,
+      memberId: bookingOwner(payment.booking).memberId,
       currentContactId: contactId,
+      // The invoiced party, as above (#3368, `INV-INT-019`).
+      repairContactLink: invoicedPartyContactRepair(payment.booking),
       workflow: "createUnappliedXeroCreditNote",
       operationId: operationId!,
       repairExistingLink: options?.repairExistingLink,
@@ -754,7 +785,7 @@ export async function createUnappliedXeroCreditNote(
 
     if (bookingModificationId) {
       await backfillBookingModificationCreditXeroNote({
-        memberId: payment.booking.memberId,
+        memberId: bookingOwner(payment.booking).memberId,
         bookingId: payment.booking.id,
         bookingModificationId,
         refundAmountCents,
@@ -762,7 +793,7 @@ export async function createUnappliedXeroCreditNote(
       });
     } else {
       await backfillCancellationCreditXeroNote({
-        memberId: payment.booking.memberId,
+        memberId: bookingOwner(payment.booking).memberId,
         bookingId: payment.booking.id,
         refundAmountCents,
         creditNoteId: createdNote.creditNoteID,

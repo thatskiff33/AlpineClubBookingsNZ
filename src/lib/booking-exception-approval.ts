@@ -1,4 +1,5 @@
 import type { AgeTier, BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import type { CalendarDate } from "@/lib/club-time";
 
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
@@ -619,7 +620,7 @@ export function buildPolicyExceptionApprovalHooks(
           payment: { select: { status: true } },
         },
       });
-      if (!booking?.member?.email) return;
+      if (!booking || !bookingOwner(booking).member?.email) return;
       // What is still owed: the whole price unless the create already settled it
       // ($0 / fully credit-covered bookings reach PAID or CONFIRMED and send
       // their own confirmation).
@@ -628,10 +629,10 @@ export function buildPolicyExceptionApprovalHooks(
         booking.status === "CONFIRMED" ||
         booking.payment?.status === "SUCCEEDED";
       await sendBookingPolicyExceptionApprovedEmail(
-        { bookingId: booking.id, recipientMemberId: booking.member.id },
-        booking.member.email,
+        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).member.id },
+        bookingOwner(booking).member.email,
         {
-          firstName: booking.member.firstName,
+          firstName: bookingOwner(booking).member.firstName,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           guestCount: booking.guests.length,

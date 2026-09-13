@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -48,7 +49,7 @@ export async function GET(
     }
 
     if (
-      payment.booking.memberId !== session.user.id &&
+      bookingOwner(payment.booking).memberId !== session.user.id &&
       !hasAdminAccess(session.user)
     ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });

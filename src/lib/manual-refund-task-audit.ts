@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import {
   completionSettlementShape,
@@ -67,7 +68,7 @@ export async function recordManualRefundTaskClosureAudit({
           : "booking-payment.manual-refund-task.dismiss",
       memberId: actingMemberId,
       actorMemberId: actingMemberId,
-      subjectMemberId: task.booking.memberId,
+      subjectMemberId: bookingOwner(task.booking).memberId,
       targetId: task.bookingId,
       entityType: "ManualRefundTask",
       entityId: task.id,

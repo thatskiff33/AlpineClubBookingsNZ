@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { listRefundsForCharge, processRefund } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
@@ -590,12 +591,12 @@ async function handlePaymentIntentSucceeded(
         // child so the confirmation explains the separate later charge.
         const provisionalGuests = await getProvisionalNonMemberChildSummary({
           id: booking.id,
-          memberId: booking.memberId,
+          memberId: bookingOwner(booking).memberId,
         });
         await sendBookingConfirmedEmail(
-          { bookingId: booking.id, recipientMemberId: booking.memberId },
-          booking.member.email,
-          booking.member.firstName,
+          { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+          bookingOwner(booking).member.email,
+          bookingOwner(booking).member.firstName,
           booking.checkIn,
           booking.checkOut,
           booking.guests.length,
@@ -691,7 +692,7 @@ async function handlePaymentIntentFailed(
     });
     if (booking) {
       sendAdminPaymentFailureAlert({
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         amountCents: paymentIntent.amount,
@@ -1013,12 +1014,12 @@ async function handleSetupIntentFailed(
     include: { member: { select: { email: true, firstName: true } } },
   });
 
-  if (booking?.member?.email) {
+  if (booking && bookingOwner(booking).member?.email) {
     sendSetupIntentFailedEmail({
       bookingId: booking.id,
-      recipientMemberId: booking.memberId,
-      email: booking.member.email,
-      firstName: booking.member.firstName,
+      recipientMemberId: bookingOwner(booking).memberId,
+      email: bookingOwner(booking).member.email,
+      firstName: bookingOwner(booking).member.firstName,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       lodgeId: booking.lodgeId,
@@ -1155,7 +1156,7 @@ async function alertPaymentAmountMismatch(
     }
 
     await sendAdminPaymentFailureAlert({
-      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       amountCents: receivedCents,
@@ -1382,7 +1383,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     paymentId: booking.payment.id,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     openingDeletedAt: booking.deletedAt,
@@ -1652,7 +1653,7 @@ async function handleCancelledBookingPaymentSucceeded(
     paymentId: booking.payment.id,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     openingDeletedAt: booking.deletedAt,

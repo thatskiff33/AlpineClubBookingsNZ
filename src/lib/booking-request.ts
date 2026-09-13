@@ -30,6 +30,7 @@ import {
   type BookingRequest,
 } from "@prisma/client";
 import { z } from "zod";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileAdultMemberHostingReviewWithSiblings } from "@/lib/adult-member-hosting-review";
@@ -817,7 +818,7 @@ export async function createMemberWholeLodgeRequest(input: {
   notes?: string | null;
 }) {
   const member = await prisma.member.findUnique({
-    where: { id: input.memberId },
+    where: { id: bookingOwner(input).memberId },
     select: {
       id: true,
       firstName: true,
@@ -855,7 +856,7 @@ export async function createMemberWholeLodgeRequest(input: {
   // Account-state guard (D3), not an availability guard: how many requests this
   // member already has open. Runs before the write so the cap cannot be raced
   // past by more than the usual single-request window.
-  const openRequests = await countOpenMemberWholeLodgeRequests(input.memberId);
+  const openRequests = await countOpenMemberWholeLodgeRequests(bookingOwner(input).memberId);
   if (openRequests >= MEMBER_WHOLE_LODGE_OPEN_REQUEST_CAP) {
     // Audit the REFUSAL, not just the success. A member hammering this door is
     // the cheapest signal that something is wrong (a broken client, or someone
@@ -2273,9 +2274,9 @@ export async function approveBookingRequest(input: {
         // back to a fresh non-login contact (the pre-#1255 default owner) and
         // flag an admin. Auto-created owners always pass this guard, so it is a
         // no-op except for a changed-state mapped contact.
-        let ownerId = held.memberId;
+        let ownerId = bookingOwner(held).memberId;
         try {
-          await assertMappableOwnerContact(tx, held.memberId);
+          await assertMappableOwnerContact(tx, bookingOwner(held).memberId);
         } catch (err) {
           // Only recover from validation failures; a real DB/other error must
           // still abort so we never silently substitute on a transient fault.
@@ -2297,7 +2298,7 @@ export async function approveBookingRequest(input: {
           });
           ownerId = substitute.id;
           ownerSubstitution = {
-            invalidMemberId: held.memberId,
+            invalidMemberId: bookingOwner(held).memberId,
             substituteMemberId: substitute.id,
             reason: err.message,
           };

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { bookingOwner } from "@/lib/booking-owner";
 import { formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
 import { BookingsPagination } from "@/components/admin/bookings-pagination";
@@ -451,8 +452,8 @@ export default async function AdminBookingsPage({
                   <div>
                     <p className="text-sm font-medium">
                       {formatBookingReference(incident.bookingId)} ·{" "}
-                      {incident.booking.member.firstName}{" "}
-                      {incident.booking.member.lastName}
+                      {bookingOwner(incident.booking).member.firstName}{" "}
+                      {bookingOwner(incident.booking).member.lastName}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {incident.booking.lodge?.name ?? "Lodge"} ·{" "}
@@ -646,17 +647,17 @@ export default async function AdminBookingsPage({
                   <TableRow key={booking.id}>
                     <TableCell>
                       <Link
-                        href={buildHrefWithReturnTo(`/admin/members/${booking.member.id}`, currentBookingsPath)}
+                        href={buildHrefWithReturnTo(`/admin/members/${bookingOwner(booking).member.id}`, currentBookingsPath)}
                         className="group inline-block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <span className="block text-sm font-medium text-foreground group-hover:text-primary group-hover:underline">
-                          {booking.member.firstName} {booking.member.lastName}
+                          {bookingOwner(booking).member.firstName} {bookingOwner(booking).member.lastName}
                         </span>
-                        <span className="block text-xs text-muted-foreground">{booking.member.email}</span>
+                        <span className="block text-xs text-muted-foreground">{bookingOwner(booking).member.email}</span>
                       </Link>
-                      {formatMemberPhone(booking.member) ? (
+                      {formatMemberPhone(bookingOwner(booking).member) ? (
                         <span className="block text-xs text-muted-foreground">
-                          {formatMemberPhone(booking.member)}
+                          {formatMemberPhone(bookingOwner(booking).member)}
                         </span>
                       ) : null}
                     </TableCell>
@@ -714,7 +715,7 @@ export default async function AdminBookingsPage({
                             available to this admin. */}
                         <DiagnosticsRecordButton
                           recordId={booking.id}
-                          subject={`the booking for ${booking.member.firstName} ${booking.member.lastName} from ${formatClubDate(stayDay(booking.checkIn))}`}
+                          subject={`the booking for ${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} from ${formatClubDate(stayDay(booking.checkIn))}`}
                         />
                       </div>
                       {booking.requiresAdminReview && booking.adminReviewReason ? (

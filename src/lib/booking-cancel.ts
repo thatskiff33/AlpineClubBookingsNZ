@@ -29,6 +29,7 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "./xero-operation-outbox";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import {
   applyLocalRefundAllocation,
@@ -332,7 +333,7 @@ async function cancelLinkedProvisionalChildBookings(
       // so this is the same auditable-invariant no-op (#1547). The guarded
       // PENDING -> CANCELLED claim makes every in-transaction side effect
       // single-flight even if another writer somehow misses the lock protocol.
-      await restoreCreditFromBooking(fresh.memberId, fresh.id, tx);
+      await restoreCreditFromBooking(bookingOwner(fresh).memberId, fresh.id, tx);
       return fresh;
     });
 
@@ -371,9 +372,9 @@ async function cancelLinkedProvisionalChildBookings(
     // provisional child cancelled alongside their booking.
     if (notifyMember) {
       sendBookingCancelledEmail(
-        { bookingId: child.id, recipientMemberId: child.memberId },
-        child.member.email,
-        child.member.firstName,
+        { bookingId: child.id, recipientMemberId: bookingOwner(child).memberId },
+        bookingOwner(child).member.email,
+        bookingOwner(child).member.firstName,
         child.checkIn,
         child.checkOut,
         0,
@@ -460,7 +461,7 @@ async function performBookingCancellation(
   // amount, refund method/destination, Stripe path, cancellation email, and
   // audit are all identical regardless of which authorized actor triggered it.
   if (
-    booking.memberId !== sessionUserId &&
+    bookingOwner(booking).memberId !== sessionUserId &&
     sessionUserRole !== "ADMIN" &&
     !hasBookingsEditAccess
   ) {
@@ -631,7 +632,7 @@ async function performBookingCancellation(
       // existing claim tx, so the claim's atomic status flip remains the
       // exactly-once guarantee for the (guardless) restore.
       const creditRestoredCents = await restoreCreditFromBooking(
-        fresh.memberId,
+        bookingOwner(fresh).memberId,
         bookingId,
         tx
       );
@@ -724,9 +725,9 @@ async function performBookingCancellation(
     // per-cancel email choice suppresses the same email.
     if (!suppressCustomerNotification && notifyMember) {
       sendBookingCancelledEmail(
-        { bookingId: fresh.id, recipientMemberId: fresh.memberId },
-        fresh.member.email,
-        fresh.member.firstName,
+        { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
+        bookingOwner(fresh).member.email,
+        bookingOwner(fresh).member.firstName,
         fresh.checkIn,
         fresh.checkOut,
         0,
@@ -812,7 +813,7 @@ async function performBookingCancellation(
       // invariant (#1547). restoreCreditFromBooking has no internal replay
       // guard; this claim's atomic status flip is its exactly-once guarantee.
       const creditRestoredCents = await restoreCreditFromBooking(
-        fresh.memberId,
+        bookingOwner(fresh).memberId,
         bookingId,
         tx
       );
@@ -878,9 +879,9 @@ async function performBookingCancellation(
 
     if (notifyMember) {
       sendBookingCancelledEmail(
-        { bookingId: fresh.id, recipientMemberId: fresh.memberId },
-        fresh.member.email,
-        fresh.member.firstName,
+        { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
+        bookingOwner(fresh).member.email,
+        bookingOwner(fresh).member.firstName,
         fresh.checkIn,
         fresh.checkOut,
         0,
@@ -979,7 +980,7 @@ async function performBookingCancellation(
       // member-ledger lock second before inspecting deallocation state or
       // repairing/reading precise allocation slices. Inbound Xero repair and
       // allocation/deallocation workers use this same member key.
-      await lockMemberCreditLedger(fresh.memberId, tx);
+      await lockMemberCreditLedger(bookingOwner(fresh).memberId, tx);
 
       if (
         fresh.payment &&
@@ -1041,7 +1042,7 @@ async function performBookingCancellation(
       // 100% restore — ledger truth, NO override argument (owner decision:
       // nothing was captured, so no cancellation-policy tiering).
       const creditRestoredCents = await restoreCreditFromBooking(
-        fresh.memberId,
+        bookingOwner(fresh).memberId,
         bookingId,
         tx
       );
@@ -1244,9 +1245,9 @@ async function performBookingCancellation(
 
     if (notifyMember) {
       sendBookingCancelledEmail(
-        { bookingId: fresh.id, recipientMemberId: fresh.memberId },
-        fresh.member.email,
-        fresh.member.firstName,
+        { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
+        bookingOwner(fresh).member.email,
+        bookingOwner(fresh).member.firstName,
         fresh.checkIn,
         fresh.checkOut,
         0,
@@ -1451,7 +1452,7 @@ async function performBookingCancellation(
         policy,
       );
       creditRestoredCents = await restoreCreditFromBooking(
-        fresh.memberId,
+        bookingOwner(fresh).memberId,
         bookingId,
         tx,
         creditToRestore,
@@ -1576,7 +1577,7 @@ async function performBookingCancellation(
         store: tx,
       });
       await createCancellationCredit(
-        fresh.memberId,
+        bookingOwner(fresh).memberId,
         refundAmountCents,
         bookingId,
         undefined,
@@ -1767,9 +1768,9 @@ async function performBookingCancellation(
 
     if (notifyMember) {
       sendBookingCancelledEmail(
-        { bookingId: fresh.id, recipientMemberId: fresh.memberId },
-        fresh.member.email,
-        fresh.member.firstName,
+        { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
+        bookingOwner(fresh).member.email,
+        bookingOwner(fresh).member.firstName,
         fresh.checkIn,
         fresh.checkOut,
         refundAmountCents,
@@ -1783,7 +1784,7 @@ async function performBookingCancellation(
     // rule 2): the switch silences the MEMBER, and somebody still has to be
     // told there is cash to hand back.
     sendAdminManualRefundTaskAlert({
-      memberName: `${fresh.member.firstName} ${fresh.member.lastName}`,
+      memberName: `${bookingOwner(fresh).member.firstName} ${bookingOwner(fresh).member.lastName}`,
       checkIn: fresh.checkIn,
       checkOut: fresh.checkOut,
       refundAmountCents,
@@ -1875,9 +1876,9 @@ async function performBookingCancellation(
 
     if (notifyMember) {
       sendBookingCancelledEmail(
-        { bookingId: fresh.id, recipientMemberId: fresh.memberId },
-        fresh.member.email,
-        fresh.member.firstName,
+        { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
+        bookingOwner(fresh).member.email,
+        bookingOwner(fresh).member.firstName,
         fresh.checkIn,
         fresh.checkOut,
         refundAmountCents,
@@ -2046,9 +2047,9 @@ async function performBookingCancellation(
 
     if (notifyMember) {
       sendBookingCancelledEmail(
-        { bookingId: fresh.id, recipientMemberId: fresh.memberId },
-        fresh.member.email,
-        fresh.member.firstName,
+        { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
+        bookingOwner(fresh).member.email,
+        bookingOwner(fresh).member.firstName,
         fresh.checkIn,
         fresh.checkOut,
         refundAmountCents,
@@ -2110,9 +2111,9 @@ async function performBookingCancellation(
 
   if (notifyMember) {
     sendBookingCancelledEmail(
-      { bookingId: fresh.id, recipientMemberId: fresh.memberId },
-      fresh.member.email,
-      fresh.member.firstName,
+      { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
+      bookingOwner(fresh).member.email,
+      bookingOwner(fresh).member.firstName,
       fresh.checkIn,
       fresh.checkOut,
       0,
@@ -2183,7 +2184,7 @@ function logBookingCancellationAudit({
     action: "booking.cancel",
     memberId: sessionUserId,
     targetId: bookingId,
-    subjectMemberId: booking.memberId,
+    subjectMemberId: bookingOwner(booking).memberId,
     entityType: "Booking",
     entityId: bookingId,
     category: "booking",
@@ -2219,7 +2220,7 @@ function logBookingCancellationAudit({
       action: "booking.exclusiveHold.released",
       memberId: sessionUserId,
       targetId: bookingId,
-      subjectMemberId: booking.memberId,
+      subjectMemberId: bookingOwner(booking).memberId,
       entityType: "Booking",
       entityId: bookingId,
       category: "booking",

@@ -1,5 +1,6 @@
 import { type CreditNote as XeroCreditNote } from "xero-node";
 import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
@@ -763,12 +764,12 @@ export async function repairAccountCreditAllocationBusinessState(
     // keeps the applied total within the payment amount (invariant (b),(d),
     // #1234). DB-only work: no external Xero call runs inside this transaction.
     await prisma.$transaction(async (tx) => {
-      await lockMemberCreditLedger(payment.booking.memberId, tx);
+      await lockMemberCreditLedger(bookingOwner(payment.booking).memberId, tx);
       await assertNoAppliedCreditDeallocationFence(payment.id, tx);
 
       const existingAppliedCredits = await tx.memberCredit.findMany({
         where: {
-          memberId: payment.booking.memberId,
+          memberId: bookingOwner(payment.booking).memberId,
           appliedToBookingId: payment.bookingId,
           type: CreditType.BOOKING_APPLIED,
           OR: [
@@ -863,7 +864,7 @@ export async function repairAccountCreditAllocationBusinessState(
         } else {
           await tx.memberCredit.create({
             data: {
-              memberId: payment.booking.memberId,
+              memberId: bookingOwner(payment.booking).memberId,
               amountCents: expectedAmountCents,
               type: CreditType.BOOKING_APPLIED,
               description: expectedDescription,
@@ -899,7 +900,7 @@ export async function repairAccountCreditAllocationBusinessState(
         }),
         tx.memberCredit.aggregate({
           where: {
-            memberId: payment.booking.memberId,
+            memberId: bookingOwner(payment.booking).memberId,
             appliedToBookingId: payment.bookingId,
             type: CreditType.BOOKING_APPLIED,
             xeroCreditNoteId: null,
@@ -908,7 +909,7 @@ export async function repairAccountCreditAllocationBusinessState(
         }),
         tx.memberCredit.aggregate({
           where: {
-            memberId: payment.booking.memberId,
+            memberId: bookingOwner(payment.booking).memberId,
             appliedToBookingId: payment.bookingId,
             type: CreditType.BOOKING_APPLIED,
           },
@@ -926,7 +927,7 @@ export async function repairAccountCreditAllocationBusinessState(
       if (ledgerDeltaCents !== 0) {
         await tx.memberCredit.create({
           data: {
-            memberId: payment.booking.memberId,
+            memberId: bookingOwner(payment.booking).memberId,
             amountCents: -ledgerDeltaCents,
             type: CreditType.BOOKING_APPLIED,
             description: `Xero allocation reconciliation for booking ${payment.bookingId.slice(0, 8)}`,
@@ -940,7 +941,7 @@ export async function repairAccountCreditAllocationBusinessState(
 
       const aggregate = await tx.memberCredit.aggregate({
         where: {
-          memberId: payment.booking.memberId,
+          memberId: bookingOwner(payment.booking).memberId,
           appliedToBookingId: payment.bookingId,
           type: CreditType.BOOKING_APPLIED,
         },

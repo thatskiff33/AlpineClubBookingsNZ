@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
+import { bookingOwner } from "@/lib/booking-owner";
 import { formatCents } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -862,7 +863,7 @@ export default function AdminWaitlistPage() {
                   <TableCell>
                     <Link
                       href={buildHrefWithReturnTo(
-                        `/admin/members/${entry.memberId}`,
+                        `/admin/members/${bookingOwner(entry).memberId}`,
                         currentWaitlistPath
                       )}
                       className="hover:underline"

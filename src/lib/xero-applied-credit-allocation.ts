@@ -42,6 +42,7 @@ import {
   findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
 } from "./xero-contacts";
+import { bookingOwner } from "@/lib/booking-owner";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import logger from "@/lib/logger";
@@ -466,7 +467,7 @@ export async function allocateAppliedCreditForBooking(
   // 1) LOCAL: plan the allocation and persist the note-allocation join rows under
   // the ledger lock. Mint-slice join rows are written after the note is minted.
   const plan = await prisma.$transaction(async (tx) => {
-    await lockMemberCreditLedger(booking.memberId, tx);
+    await lockMemberCreditLedger(bookingOwner(booking).memberId, tx);
     await assertNoAppliedCreditDeallocationFence(payment.id, tx, {
       // An older allocation must be allowed to complete before a fresh clamp's
       // deallocation. Once that deallocation has a snapshot/checkpoint it is a
@@ -477,7 +478,7 @@ export async function allocateAppliedCreditForBooking(
     if (lockedApplied === 0) {
       return null; // a concurrent run already stamped it
     }
-    const lots = await gatherAppliedCreditLots(booking.memberId, bookingId, tx);
+    const lots = await gatherAppliedCreditLots(bookingOwner(booking).memberId, bookingId, tx);
     const planned = planAppliedCreditAllocation(lots, lockedApplied);
     for (const na of planned.noteAllocations) {
       await tx.memberCreditNoteAllocation.upsert({
@@ -550,7 +551,7 @@ export async function allocateAppliedCreditForBooking(
   if (plan.mintTotalCents > 0) {
     remainderNoteId = await mintAppliedCreditRemainderNote({
       bookingId,
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       paymentId: payment.id,
       amountCents: plan.mintTotalCents,
       // Goodwill and a member's own refunded money post to different Xero
@@ -562,7 +563,7 @@ export async function allocateAppliedCreditForBooking(
     const mintedNoteId = remainderNoteId;
 
     await prisma.$transaction(async (tx) => {
-      await lockMemberCreditLedger(booking.memberId, tx);
+      await lockMemberCreditLedger(bookingOwner(booking).memberId, tx);
       for (const ms of plan.mintSlices) {
         await tx.memberCreditNoteAllocation.upsert({
           where: {
@@ -622,7 +623,7 @@ export async function allocateAppliedCreditForBooking(
     plan.noteAllocations[0]?.xeroCreditNoteId ?? remainderNoteId;
   if (representativeNoteId) {
     await prisma.$transaction(async (tx) => {
-      await lockMemberCreditLedger(booking.memberId, tx);
+      await lockMemberCreditLedger(bookingOwner(booking).memberId, tx);
       await tx.memberCredit.updateMany({
         where: {
           appliedToBookingId: bookingId,

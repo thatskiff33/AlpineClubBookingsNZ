@@ -39,7 +39,7 @@ reason: the create's half of the #2698 ordering case — the amendment detection
   cohort, with the reason at the gate.
 
 file: src/lib/capacity.ts
-lines: 1132
+lines: 1133
 reason: `wholeLodgeHoldRepresentedBeds` and `wholeLodgeHeldNightOccupiedBeds`
   are eight lines of arithmetic and about seventy of docblock, and the docblock
   is the deliverable. The pin they replace read `lodgeCapacity` and was correct
@@ -50,6 +50,7 @@ reason: `wholeLodgeHoldRepresentedBeds` and `wholeLodgeHeldNightOccupiedBeds`
   nothing else, and moving them out would separate the rule from the term it is
   about. The rest is the `custodianBeds` field on `NightOccupancy` and the three
   pin sites' comments.
+  #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/lib/bed-allocation-lifecycle.ts
 lines: 2534

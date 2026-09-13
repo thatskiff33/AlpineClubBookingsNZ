@@ -1,4 +1,5 @@
 import { BookingRequestType, BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import { logAudit } from "@/lib/audit";
 import { getBookingRequestSettings } from "@/lib/booking-request";
@@ -114,7 +115,7 @@ export async function sendSchoolAttendeeConfirmationPrompts(
       await sendSchoolAttendeeConfirmationEmail({
         bookingContext: {
           bookingId: booking.id,
-          recipientMemberId: booking.memberId,
+          recipientMemberId: bookingOwner(booking).memberId,
         },
         email: request.contactEmail,
         firstName: request.contactFirstName,
@@ -524,7 +525,7 @@ export async function resendSchoolAttendeeConfirmation({
   await sendSchoolAttendeeConfirmationEmail({
     bookingContext: {
       bookingId: booking.id,
-      recipientMemberId: booking.memberId,
+      recipientMemberId: bookingOwner(booking).memberId,
     },
     email: request.contactEmail,
     firstName: request.contactFirstName,

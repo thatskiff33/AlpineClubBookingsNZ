@@ -1,4 +1,5 @@
 import { EmailLogStatus, BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 
 const WAITLIST_OFFER_TEMPLATE_NAME = "waitlist-offer";
@@ -75,7 +76,7 @@ function emailLogMatchesBooking(
   booking: WaitlistOfferBooking,
 ) {
   return (
-    emailLog.to === booking.member.email &&
+    emailLog.to === bookingOwner(booking).member.email &&
     emailLog.createdAt >= getLookupStart(booking)
   );
 }
@@ -239,7 +240,7 @@ export async function getWaitlistOfferEmailDeliveries(
     return lookupStart < earliest ? lookupStart : earliest;
   }, getLookupStart(firstLookupBooking));
   const recipients = Array.from(
-    new Set(lookupBookings.map((booking) => booking.member.email)),
+    new Set(lookupBookings.map((booking) => bookingOwner(booking).member.email)),
   );
   const emailLogs = await prisma.emailLog.findMany({
     where: {

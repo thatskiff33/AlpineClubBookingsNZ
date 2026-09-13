@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { bookingOwner } from "@/lib/booking-owner";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 // The create wizard's own prediction + column translation, imported rather than
 // re-implemented (MG4 #2309). The first cut of this panel wrote its own copy of
@@ -1780,7 +1781,7 @@ export function EditBookingPanel({
           getExistingGuestRange={getExistingGuestRange}
           quote={quote}
           forMemberId={
-            booking.viewerRole === "ADMIN" ? booking.memberId : undefined
+            booking.viewerRole === "ADMIN" ? bookingOwner(booking).memberId : undefined
           }
           lodgeId={booking.lodgeId}
           onRemovePromo={() => setPromoAction({ type: "remove" })}

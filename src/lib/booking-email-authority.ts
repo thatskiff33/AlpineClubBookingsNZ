@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { hasAdminAccess } from "@/lib/access-roles";
@@ -111,7 +112,7 @@ export async function resolveBookingEmailLink(params: {
     }
 
     const authority: BookingEmailRecipientAuthority =
-      booking.memberId === recipientMemberId
+      bookingOwner(booking).memberId === recipientMemberId
         ? "signed-in-booking-owner"
         : booking.guests.length > 0
           ? "signed-in-linked-member"

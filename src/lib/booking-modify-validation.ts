@@ -16,6 +16,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
 import { ApiError } from "@/lib/api-error";
 import {
@@ -523,7 +524,7 @@ export function assertBookingModifiable(
   { role, actorId }: { role: Role; actorId: string },
 ): asserts booking is LoadedBookingForModify {
   if (!booking) throw new ApiError("Booking not found", 404);
-  if (booking.memberId !== actorId && role !== "ADMIN") {
+  if (bookingOwner(booking).memberId !== actorId && role !== "ADMIN") {
     throw new ApiError("Forbidden", 403);
   }
   if (!canModifyBookingStatusForRole(booking.status, role)) {

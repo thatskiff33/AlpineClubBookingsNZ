@@ -36,6 +36,7 @@
  *   codes and statuses for both audiences.
  */
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 // hasIssuedPrimaryXeroInvoice is the same derivation applyPaymentAdjustments
 // feeds queueXeroBookingEditSettlement (#1729): settled-lifecycle status plus
@@ -562,7 +563,7 @@ export async function readXeroLockGuardDateEditBooking(
   // own default (the override callers rely on it).
   if (
     (options?.audience ?? "admin") === "member" &&
-    booking.memberId !== options?.actorMemberId
+    bookingOwner(booking).memberId !== options?.actorMemberId
   ) {
     return null;
   }

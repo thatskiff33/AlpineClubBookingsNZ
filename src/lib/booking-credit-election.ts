@@ -1,4 +1,5 @@
 import { BookingStatus, PaymentStatus, type Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
   applyCreditToBooking,
@@ -127,7 +128,7 @@ export async function consumeStoredCreditElection(
 
   if (!lockTarget || lockTarget.creditElectionCents == null) return null;
 
-  await lockMemberCreditLedger(lockTarget.memberId, tx);
+  await lockMemberCreditLedger(bookingOwner(lockTarget).memberId, tx);
 
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
@@ -163,7 +164,7 @@ export async function consumeStoredCreditElection(
 
   if (claimed.count === 0) return null;
 
-  const availableBalanceCents = await getMemberCreditBalance(booking.memberId, tx);
+  const availableBalanceCents = await getMemberCreditBalance(bookingOwner(booking).memberId, tx);
   // Credit may already have been applied to this booking by another path (an
   // admin, or a legacy flow). The election can only claim the REMAINING price,
   // never re-cover a slice that is already covered.
@@ -203,7 +204,7 @@ export async function consumeStoredCreditElection(
 
   if (creditAppliedCents > 0) {
     await applyCreditToBooking(
-      booking.memberId,
+      bookingOwner(booking).memberId,
       creditAppliedCents,
       bookingId,
       tx,

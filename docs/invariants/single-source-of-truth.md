@@ -350,7 +350,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 79 test files, two test
+  `stripComments`, and since #3164 a lint rule enforces it.** 80 test files, two test
   helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
@@ -510,3 +510,33 @@ are permanent: never renumbered, never reused.
   share. **Prefer the broader instrument for the second one**: over-reporting is
   visible and gets fixed, while a second instrument blind in the same place as
   the first is a rubber stamp that reads as corroboration.
+
+## INV-SSOT-005
+
+Who owns a booking is answered by `bookingOwner()` in
+`src/lib/booking-owner.ts` and nowhere else. Stage 3 of programme #2912
+(#3368). Reasoning: that module's docblock.
+
+- **One accessor, and a census that keeps it one.** The owning party used to be
+  read straight off the row in several hundred places, each assuming the answer
+  is a person and that there always is one. Stage 4 (#3369) makes the member
+  link optional and both assumptions stop being true, so the question has to
+  have one home before it can have a second answer.
+  `booking-owner-census.test.ts` reads every file under `src/` and `scripts/`
+  from disk and fails when a direct read comes back, and states its own blind
+  spots; the accessor's body is the single exemption.
+- **While the column is still required the accessor is the IDENTITY**, which is
+  what makes a sweep this wide checkable hunk by hunk: the value returned is the
+  value that was already there, so no hunk has behaviour to preserve by
+  argument.
+- **A comparison against a signed-in actor stays a comparison against a member,
+  and keeps failing closed.** A person signs in; an organisation does not. So
+  "is this my booking?" is correctly "no" for an organisation-owned one. The
+  refusal a school liaison then meets is a product question this programme
+  deliberately does not answer.
+- **The credit ledger stays a MEMBER ledger.** Credit belongs to a person's
+  account, so a booking with no member has none to lock and no balance to read.
+  Stage 4 branches at each member-keyed call site rather than handing a helper
+  an empty key, which would degenerate to a shared advisory key (`INV-LOCK`).
+- **Measure both published site lists by running the census.** A list restated
+  by hand is a list that has already drifted (`INV-SSOT-004`).
