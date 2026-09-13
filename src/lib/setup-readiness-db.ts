@@ -4,10 +4,13 @@ import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
 import { resolveEnvironmentRole } from "@/lib/environment-role";
 import { readWithheldApplicationEmail } from "@/lib/environment-safety-withheld";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
+import { BOOKABLE_AGE_TIER_VALUES } from "@/lib/age-tier-schema";
 import {
   computeMembershipTypeRateGaps,
-  type SetupDatabaseSnapshot,
-} from "@/lib/setup-readiness";
+  formatMembershipTypeRateGap,
+  selectTypesRequiringHutRates,
+} from "@/lib/membership-type-rate-coverage";
+import { type SetupDatabaseSnapshot } from "@/lib/setup-readiness";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
@@ -177,22 +180,36 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     }),
   ]);
 
-  // Missing-rate readiness (#1930, E4): every ACTIVE MEMBER_RATE membership
-  // type must carry tier-complete rate rows (every bookable age tier, or a
-  // flat all-ages row) for every active or future season, or bookings for
-  // that type × those dates hard-throw at pricing time. Archived types are
-  // skipped — they only price history. The tier-aware coverage rule lives in
-  // computeMembershipTypeRateGaps (setup-readiness.ts).
+  // Missing-rate readiness (#1930, E4; widened by #2933): every ACTIVE
+  // RATE-BEARING membership type must carry tier-complete rate rows (every
+  // bookable age tier, or a flat all-ages row) for every active or future
+  // season, or bookings for that type × those dates hard-throw at pricing time.
+  // Archived types are skipped — they only price history.
+  //
+  // "Rate-bearing" is `INV-MOD-007` and is asked exactly once, in
+  // `membership-type-rate-coverage.ts`. It used to be asked HERE as the Prisma
+  // filter `bookingBehavior: "MEMBER_RATE"`, which silently omitted the built-in
+  // NON_MEMBER type — the type every non-member guest prices from — so the one
+  // set of missing rates an ordinary public booking hits first was the one set
+  // nothing warned about (#2933). The filter is now the shared predicate, over
+  // active types.
   const [
-    memberRateTypes,
+    activeMembershipTypes,
     currentAndFutureSeasons,
     existingTypeSeasonRates,
     configuredAgeTiers,
     basedOnAgeTierTypes,
   ] = await Promise.all([
     prisma.membershipType.findMany({
-      where: { isActive: true, bookingBehavior: "MEMBER_RATE" },
-      select: { id: true, name: true, ageGroupsApply: true },
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        key: true,
+        bookingBehavior: true,
+        isActive: true,
+        ageGroupsApply: true,
+      },
     }),
     prisma.season.findMany({
       where: { OR: [{ active: true }, { endDate: { gte: now } }] },
@@ -231,12 +248,15 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
       ? basedOnAgeTierTypes.map((type) => type.name)
       : [];
   const membershipTypeRateGaps = computeMembershipTypeRateGaps({
-    types: memberRateTypes,
+    types: selectTypesRequiringHutRates(activeMembershipTypes),
     seasons: currentAndFutureSeasons,
     rateRows: existingTypeSeasonRates,
+    // A club running a SUBSET of the four tiers is judged against its own
+    // subset (#2009); an unconfigured club falls back to the four the runtime
+    // would price.
     bookableAgeTiers:
-      bookableAgeTiers.length > 0 ? bookableAgeTiers : undefined,
-  });
+      bookableAgeTiers.length > 0 ? bookableAgeTiers : BOOKABLE_AGE_TIER_VALUES,
+  }).map(formatMembershipTypeRateGap);
 
   // Public {{hut-fees}} readiness (#2129): the embed renders one nightly-rate
   // column per publicly-listed active membership type that carries rate rows

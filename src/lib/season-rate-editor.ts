@@ -9,6 +9,7 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
+import { isRateBearingMembershipType } from "@/lib/membership-type-rate-coverage";
 
 // One editor rate row. `ageTier` is null for a flat type (ageGroupsApply=false)
 // and set per tier otherwise. Prices are GST-inclusive integer cents.
@@ -96,8 +97,9 @@ type MembershipTypeReadDelegate = {
  * A membership type may carry hut rate rows iff it prices from its own rows:
  * every `MEMBER_RATE` type, plus the built-in `NON_MEMBER` type (the non-member
  * rate holder). `NON_MEMBER_RATE` (except `NON_MEMBER`) and `BLOCK_BOOKING`
- * types carry zero own rows — the D2 invariant. Also rejects duplicate
- * (membershipTypeId, ageTier) rows. Returns an error string, or null when valid.
+ * types carry zero own rows — the D2 invariant, `INV-MOD-007`, asked in one
+ * place since #2933. Also rejects duplicate (membershipTypeId, ageTier) rows.
+ * Returns an error string, or null when valid.
  */
 export async function validateMembershipTypeSeasonRates(
   db: MembershipTypeReadDelegate,
@@ -123,9 +125,7 @@ export async function validateMembershipTypeSeasonRates(
     if (!type) {
       return `Unknown membership type: ${id}`;
     }
-    const rateBearing =
-      type.bookingBehavior === "MEMBER_RATE" || type.key === "NON_MEMBER";
-    if (!rateBearing) {
+    if (!isRateBearingMembershipType(type)) {
       return `Membership type "${type.key}" does not carry its own hut rates.`;
     }
   }

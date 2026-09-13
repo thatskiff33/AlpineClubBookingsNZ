@@ -182,69 +182,14 @@ export interface SetupDatabaseSnapshot {
   defaultLodgeCapacity?: number | null;
 }
 
-// One membership type × season pair for the rate-gap check (#1930, E4).
-export interface MembershipTypeRateGapType {
-  id: string;
-  name: string;
-  ageGroupsApply: boolean;
-}
-
-export interface MembershipTypeRateGapSeason {
-  id: string;
-  name: string;
-}
-
-export interface MembershipTypeRateGapRow {
-  seasonId: string;
-  membershipTypeId: string;
-  ageTier: string | null;
-}
-
-/**
- * Tier-aware missing-rate readiness (#1930, E4). A (type, season) pair is
- * covered when a booking for ANY bookable age tier can price:
- *   - ageGroupsApply=true: every bookable tier has an exact row, OR a flat
- *     (NULL-ageTier) row exists (the engine falls back exact-tier -> flat);
- *   - ageGroupsApply=false: the single flat row exists (tier rows alone are a
- *     shape anomaly the write surfaces reject — flag them).
- * Anything less means some guest hard-throws at pricing. Callers pass ACTIVE
- * MEMBER_RATE types only — archived types price history and are skipped.
- */
-export function computeMembershipTypeRateGaps(input: {
-  types: MembershipTypeRateGapType[];
-  seasons: MembershipTypeRateGapSeason[];
-  rateRows: MembershipTypeRateGapRow[];
-  bookableAgeTiers?: readonly string[];
-}): string[] {
-  const bookableTiers = input.bookableAgeTiers ?? bookableAgeTierEnum.options;
-  const tiersByPair = new Map<string, Set<string | null>>();
-  for (const row of input.rateRows) {
-    const key = `${row.membershipTypeId}::${row.seasonId}`;
-    const set = tiersByPair.get(key) ?? new Set<string | null>();
-    set.add(row.ageTier);
-    tiersByPair.set(key, set);
-  }
-
-  const gaps: string[] = [];
-  for (const type of input.types) {
-    for (const season of input.seasons) {
-      const tiers = tiersByPair.get(`${type.id}::${season.id}`);
-      const hasFlat = tiers?.has(null) ?? false;
-      if (type.ageGroupsApply) {
-        if (hasFlat) continue;
-        const missingTiers = bookableTiers.filter((tier) => !tiers?.has(tier));
-        if (missingTiers.length === 0) continue;
-        gaps.push(
-          `${type.name} — ${season.name} (missing ${missingTiers.join(", ")})`,
-        );
-      } else {
-        if (hasFlat) continue;
-        gaps.push(`${type.name} — ${season.name} (missing flat all-ages rate)`);
-      }
-    }
-  }
-  return gaps;
-}
+/*
+  The rate-gap computation and the "which types owe rates" rule moved to
+  `@/lib/membership-type-rate-coverage` (#2933). They are one rule
+  (`INV-MOD-007`) that the admin Hut Fees screen now reads too, and this module
+  cannot be imported from a browser bundle — it reads `node:fs`. What arrives
+  here is the RESULT, on `SetupDatabaseSnapshot.membershipTypeRateGaps`, already
+  formatted by `formatMembershipTypeRateGap`.
+*/
 
 interface SetupStepCheck {
   id: SetupStepId;

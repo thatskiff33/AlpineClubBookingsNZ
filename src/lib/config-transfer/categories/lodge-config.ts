@@ -5,6 +5,7 @@ import {
   cleanedLiteralWarning,
   stripCleanedLiterals,
 } from "../cleaned-literals";
+import { isRateBearingMembershipType } from "@/lib/membership-type-rate-coverage";
 import { serialiseCsv } from "../csv";
 import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
@@ -651,10 +652,12 @@ function parseLodgeFolder(
     // flat row for flat types).
     let rowShapeValid = true;
     if (membershipType) {
-      const rateBearing =
-        membershipType.bookingBehavior === "MEMBER_RATE" ||
-        membershipTypeKey === "NON_MEMBER";
-      if (!rateBearing) {
+      if (
+        !isRateBearingMembershipType({
+          key: membershipTypeKey,
+          bookingBehavior: membershipType.bookingBehavior,
+        })
+      ) {
         errors.push(
           `${paths.rates}: row ${i + 2}: membership type "${membershipTypeKey}" does not carry its own hut rates (${membershipType.bookingBehavior} types own zero rate rows)`,
         );
