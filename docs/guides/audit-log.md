@@ -379,45 +379,82 @@ specific ways of slipping past the build's count were found while reviewing this
 change and all six were closed, each with its own test. Your **older** history is
 a different matter, and the rest of this section is about that.
 
-**Entries recorded before this release still have no category**, and there is no
-way to tell from the entry itself. Filling those in is a separate change, done
-once and reviewed on its own, and it has not happened yet — so everything below
-still applies to your older history.
+**Entries recorded before the category became mandatory had none**, and there
+was no way to tell from the entry itself. **This release fills those in, once,
+from an exact list** (#2581). The upgrade gives each older entry the category its
+event type records today — matched by the entry's exact event name against a
+reviewed list of event types, never by pattern or by guessing from the name. On
+the deployment the list was measured on, that was 1,885 entries across 83 event
+types; every one of the 83 was proven against the code that records that event
+type now, or, for three event types the platform no longer records at all,
+against the code that used to. The upgrade changes **one field** on those
+entries. The date, who did it, who it was about, the summary, the stored details
+and the retention fields are exactly as they were — and see the retention note
+below for what that means.
 
-**On this screen every one of those entries is still listed**, and the Category
-filter tries to place them: when you pick a category it also matches
-uncategorised entries whose action *looks* like that category, so filtering by
-*Payments* does find a credit adjustment that recorded no category. Treat that as
-a helpful guess rather than a guarantee — it is pattern-matching on the action
-name, it has no rules at all for *System*, and it will miss, for example, an
-uncategorised display-layout change under *Lodge*. **If you are looking for
-something specific and the category filter comes up short, clear it and search by
-event type, member or date instead** — the entry is there.
+**Four older entries had a category that was not a recognised value** (`EMAIL`
+on two, `membership` on two), written before the list of eleven was closed. No
+filter or tool could find them under those names. The club's owner decided they
+are corrected in the same upgrade to the value their event type records today,
+named individually; no other entry that already had a category is touched.
 
-**In AI Diagnostics it costs a lot.** Those tools filter on the stored category
-and nothing else, so an entry without one is returned by none of them. If you ask
-the assistant about a subscription reconcile or a booking-policy change and it
-says nothing matched, that is not evidence it did not happen — it means no
-*categorised* entry matched. The assistant is told to say so and to point you
-here. **Always confirm on this screen before concluding an event did not occur.**
+**Which older entries still have no category.** Two kinds. An event type that is
+not on the list — which can only happen on a deployment whose history differs
+from the one the list was measured on — is left exactly as it was. And an event
+type the club's owner decided to *withhold* from the fill-in is left as it was
+too, on purpose. Whether any older entries appear on, or leave, a member's own
+activity page as a result of gaining a category is a separate decision the owner
+takes for this upgrade; the release notes for it say what was decided. For any
+entry left without a category, everything in the next two paragraphs still
+applies.
 
-This has been fixed at the source, over three changes: the categories and the
-automated count landed first, giving each of those 82 places a category landed in
-this release, and filling in the historical entries is last and still to come.
-Until it does, treat an empty AI Diagnostics result as "look in Admin → Audit
-Log", never as "it did not happen".
+**On this screen every uncategorised entry is still listed**, and the Category
+filter tries to place it: when you pick a category it also matches uncategorised
+entries whose action *looks* like that category. Treat that as a helpful guess
+rather than a guarantee — it is pattern-matching on the action name, it has no
+rules at all for *System*, and it can miss. **If you are looking for something
+specific and the category filter comes up short, clear it and search by event
+type, member or date instead** — the entry is there. For entries that *did* gain
+a category, the stored category now decides where the filter places them, so a
+few older entries answer to a different filter than they used to: a setup invite
+sent before the upgrade is now under *Security* rather than *Account*, a Xero
+invoice run under *Xero* rather than *Payments*.
 
-**The retention change this release makes, stated plainly because it is real.**
-An entry recorded with no category also got no retention class and no expiry, so
-those entries were kept indefinitely rather than aging out. Now that all 82 kinds
-record a category, **new** entries of those kinds are classified `critical` and
-carry a **seven-year** expiry from the day they are recorded — the longest class
-the platform has, and the same one a booking or payment entry already gets. Two
-things follow: nothing is deleted sooner than seven years from now because of
-this, and **entries already in the database are untouched** — they keep their
-missing retention class until the historical change decides what to do about
-them. If your club needs some of these kept beyond seven years, say so before
-that horizon; it is a setting, not a law.
+**In AI Diagnostics an uncategorised entry is invisible.** Those tools filter on
+the stored category and nothing else, so an entry without one is returned by
+none of them, and the assistant is told to say so and point you here. After this
+upgrade that now applies only to the entries described two paragraphs above; the
+older entries that gained a category are correlated by the same tool, behind the
+same permission, as new entries of that event type. **Still confirm on this
+screen before concluding an event did not occur**, because the disclosure is
+honest rather than hypothetical.
+
+**You will see the upgrade record itself.** One new entry, *"Upgrade gave
+historical activity records with no category the category their event type
+records today…"*, filed under **Admin**, carries how many entries had no category
+before, how many were given one (by category and by event type), the four
+corrections, and how many were left. The upgrade notes explain how to read it.
+
+**Why the column stays optional.** With the fill-in done, the database could in
+principle refuse an entry with no category. It does not, and that is deliberate:
+any deployment whose history holds an event type not on the list still has
+entries with no category, an event type the owner withheld still does, and
+refusing them would mean inventing a category for evidence that has none — which
+is the one thing this whole change refused to do. A constraint stays a separate
+decision for after this release has run and its record has been read.
+
+**The retention change the previous release made, stated plainly because it is
+real.** An entry recorded with no category also got no retention class and no
+expiry, so those entries were kept indefinitely rather than aging out. Now that
+all 82 kinds record a category, **new** entries of those kinds are classified
+`critical` and carry a **seven-year** expiry from the day they are recorded — the
+longest class the platform has, and the same one a booking or payment entry
+already gets. Two things follow: nothing is deleted sooner than seven years from
+now because of this, and **the older entries are still untouched on retention** —
+giving them a category (above) deliberately did *not* give them an expiry, so
+they remain kept indefinitely until the club decides otherwise, separately. If
+your club needs some of these kept beyond seven years, say so before that
+horizon; it is a setting, not a law.
 
 **What "expires" means for these entries: deletion, not filing.** The archive
 only takes the two shorter-lived classes, so a `critical` entry is never copied

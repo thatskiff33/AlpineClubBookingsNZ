@@ -477,9 +477,11 @@ export const DIAGNOSTICS_LODGE_CORRELATION_TOOL_ID =
  *    (membership-gated and support-only respectively).
  *
  * THE ABSENT CATEGORY IS THE SAME FAIL-CLOSED DEFAULT, ONE STEP FURTHER OUT, and it is
- * not hypothetical: no production writer omits a category any more (#2581 child 2), but
- * every row written before that runtime deployed does, and the historical backfill is
- * #2581's third child. The admin
+ * not hypothetical: no production writer omits a category any more (#2581 child 2), and
+ * the rows written before that runtime deployed were given one by #2581's third child
+ * (`20260923010000_backfill_historical_audit_categories`, exact-action list only) —
+ * but a row whose action was on no list, or one the owner withheld at the
+ * member-timeline boundary, is still null and still unreachable here. The admin
  * audit-log screen already treats the null case as ordinary — `audit-query.ts` infers a
  * category from the action for display (`inferAuditCategoryFromAction`) and its category
  * filter matches `{ category: null }` against a table of legacy action patterns
@@ -498,7 +500,7 @@ export const DIAGNOSTICS_LODGE_CORRELATION_TOOL_ID =
  * it needs a fresh look at the `(category, createdAt)` index against a 5-second statement
  * timeout. The owner refused that route on #2581: the rows get a category at the SOURCE
  * instead (#2581 child 2, done), and the historical rows get one only through a reviewed
- * exact-action mapping (#2581 child 3, outstanding).
+ * exact-action mapping (#2581 child 3, `HISTORICAL_NULL_CATEGORY_MAP_2581`).
  *
  * WHAT THESE SETS ARE NOT, stated plainly because an earlier revision of this comment
  * claimed otherwise and AID-6B/6C are told to extend the taxonomy on this reasoning.

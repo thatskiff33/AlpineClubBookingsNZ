@@ -1176,6 +1176,185 @@ code, and this migration is not `windowed`, so it ships no `rollback.sql`. Your
 pre-migration backup (step 3 of the generic procedure) is the only way back, and
 the club's own record of what happened is the audit entry above.
 
+### One-off categorisation of older activity entries with no category (#2581)
+
+`20260923010000_backfill_historical_audit_categories` is a **data-only rewrite**.
+It adds and removes no schema and is safe to run in the ordinary deploy window
+with the previous app colour still serving. Like the bed-allocation rewrite
+above, it wants **one post-cutover action** (below).
+
+**What it fixes.** Until the category became mandatory (the previous release,
+#2676/#2732), many of the platform's writers recorded activity entries with **no
+category at all**. The category is written onto the row and never worked out
+again when you look at it, so every entry those writers recorded before that
+release still has none: **1,885 of 6,559 entries on the deployment this was
+measured on, across 83 distinct event types**, dated April to August 2026. Such
+an entry is returned by **no AI Diagnostics correlation tool** (they filter on the
+stored category and nothing else) and is placed by **Admin → Audit Log**'s
+Category filter only through a guess from its event name.
+
+**What it changes, exactly.** `category` goes from `NULL` to the category the
+event type records today, for exactly the event types on a reviewed list, matched
+by **exact event name**, and on nothing else. The list is one literal table in
+the migration — 83 (event name, category) pairs — and the reviewed decision
+behind each pair, with its evidence, is `HISTORICAL_NULL_CATEGORY_MAP_2581` in
+`scripts/audit/audit-writer-census-manifest.ts`; a test holds the two equal in
+both directions. Every pair was proven one of three ways: the code that records
+that exact event type today carries that category (80 of 83), corroborated where
+the corrected runtime had already recorded the same event type *with* a category
+on the measured deployment (28 of 83, all agreeing); or, for the three
+`COMMITTEE_MEMBER_*` event types nothing records any more, the repository history
+of the code that did. **Nothing is matched by prefix or pattern, and nothing
+falls back to Admin or System** because it was hard to place. What the measured
+deployment moves, by category:
+
+| Category | Entries | Event types, in brief |
+| --- | --- | --- |
+| Admin | 702 | notification-preference changes, the two bulk member actions, the retired committee roster |
+| Security | 540 | setup invitations and password-reset emails sent |
+| Bookings | 190 | booking lifecycle, promotions, seasons, booking policies and periods, age tiers |
+| Xero | 163 | links, pushes, retries, mappings, grouping rules |
+| Family | 150 | family groups, dependants, login-holder swaps |
+| Payments | 71 | booking payments, refund requests, fee configuration, subscription billing |
+| Lodge | 40 | display templates, layouts and devices, the lodge record |
+| Account | 24 | membership applications |
+| Privacy | 4 | deletion requests, issue reports |
+| Communication | 1 | an email suppression cleared |
+
+**Four entries had a category that was not a recognised value** — `EMAIL` on two
+`EMAIL_SUPPRESSION_CLEARED` entries and `membership` on one
+`membership_application.nominator_replaced` and one
+`membership_application.nomination_workflow_refreshed` — written before the list
+of eleven was closed, and findable by no filter or tool. **The club's owner
+decided (13 September 2026) they are corrected in the same migration**, to
+`communication` and `account` respectively, each named by its prior value *and*
+exact event name; this is an explicit exception to the rule that an entry which
+already has a category is never rewritten, and that rule otherwise stands — the
+migration's verification proves no other categorised entry moves.
+
+`category` is **the only column in every `SET` clause**. The date, the actor, who
+it was about, the summary, the stored details, the IP address, `retentionClass`
+and `expiresAt` all keep the bytes they were written with. **On retention that
+means these entries keep having none**: an entry written with no category was
+also written with no retention class and no expiry, so it is kept indefinitely,
+and this migration deliberately does *not* derive the seven-year `critical`
+expiry from the new category — stamping an expiry onto 1,885 historical entries
+is a retention decision the club takes separately, if at all.
+
+**Who can see what afterwards.** This *is* a readership change, in three places:
+
+- **AI Diagnostics.** Every entry that gains a category moves from "returned by
+  no tool" to "returned by the tool for its category, behind that tool's
+  permission": Bookings needs Support and Bookings, Payments and Xero need
+  Support and Finance, Account/Family/Privacy/Communication need Support and
+  Membership, Lodge needs Support and Lodge, and Admin and Security need Support
+  alone. That is the same gate each event type's *new* entries already sit
+  behind, now applied to the older ones too.
+- **Admin → Audit Log.** Nothing changes in what anyone can *see* — it is a
+  Support surface with no category gate. What changes is where the Category
+  filter *places* these entries: the stored category now wins over the guess, so
+  for example setup invitations answer to **Security** rather than Account, and
+  `XERO_INVOICE_GENERATED` to **Xero** rather than Payments *and* Xero.
+- **A member's own activity page.** An entry with no category appears there
+  today only if the guess from its event name lands on a member-visible
+  category; once categorised, visibility follows the stored category. For 56 of
+  the 83 event types nothing changes in either direction. For **27 event types
+  (841 entries on the measured deployment) it does**, and the repository's rule
+  (`INV-OPS-012`) makes that the club owner's decision rather than the
+  migration's. Those 27 sit in a **separate block of the migration** that can be
+  removed whole or by group:
+  - **632 entries leave a member's page:** `member.bulk-deactivate` and
+    `member.bulk-reactivate` are on the deactivated member's own page today via
+    the guess and record `admin` today, which is not member-visible. The owner
+    declined this same withdrawal for these actions' already-categorised twins on
+    #2763.
+  - **3 entries leave the acting officer's own page only:** two Xero invoice
+    actions, visible today only because the guess reads "INVOICE" as Payments.
+  - **206 entries appear on a page — almost always only the acting officer's
+    own:** booking rules and promotions (147), fee configuration and
+    subscription billing (57), and issue reports (2). The exceptions that reach
+    somebody else: `fee-configuration.set_member_billing_family` (3 entries; the
+    billed member) and `issue.reported` (the reporter, who the writer's own
+    comment says is meant to see it).
+  - The four corrected entries are member-invisible today and land on
+    member-visible categories: one reaches the replacement nominator it names;
+    the other three reach only the acting officer.
+
+  The release notes record which of those groups the owner accepted. A withheld
+  group stays uncategorised with everything the guide says about such entries.
+
+**How to see what was changed.** The migration writes one
+`AUDIT_CATEGORY_BACKFILLED` entry with no actor, filed under **Admin**. Find it
+under **Admin → Audit Log** around your upgrade time, or:
+
+```sql
+SELECT "createdAt", jsonb_pretty("metadata")
+FROM "AuditLog"
+WHERE "action" = 'AUDIT_CATEGORY_BACKFILLED'
+  AND "metadata" ->> 'source' LIKE 'migration:20260923010000%';
+```
+
+`metadata -> 'measured'` holds what PostgreSQL counted in the same statement as
+the rewrite: `nullBefore` (entries with no category, table-wide),
+`mappedNullBefore` (of those, how many were on the list), `rewritten`,
+`rewrittenByCategory`, `rewrittenByAction`, and `correctedNonCanonical`
+(`EMAIL` and `membership` counts). `metadata -> 'derived'` holds `nullAfter`,
+`unmappedNullRemaining` (entries with no category that were on no list),
+`emailAfter` and `membershipAfter`, computed from the measurements. On the
+measured deployment expect `nullBefore` 1885, `rewritten` 1885, `nullAfter` 0,
+`unmappedNullRemaining` 0 and both corrections 2 — **if a block was withheld,
+`nullAfter` equals that block's entry count instead**, and that is correct.
+
+**Verify it yourself** — the postflight the issue asks for, read-only:
+
+```sql
+-- Entries still without a category, by event name (expect only withheld or unlisted ones).
+SELECT "action", count(*) FROM "AuditLog"
+WHERE "category" IS NULL GROUP BY 1 ORDER BY 2 DESC;
+
+-- Nothing left on a value outside the taxonomy (expect no rows).
+SELECT "category", count(*) FROM "AuditLog"
+WHERE "category" IS NOT NULL
+  AND "category" NOT IN ('account','booking','payment','family','admin',
+                         'security','lodge','xero','communication','privacy','system')
+GROUP BY 1;
+```
+
+**Re-running is safe.** Every predicate is the state its statement destroys, so a
+second run finds nothing left to move, and the record entry is written only when
+something actually moved — a replay rewrites no row and appends no row.
+
+**Post-upgrade action — recommended, and the runbook asks for it.** `prisma
+migrate deploy` runs **before** cutover. On a deployment that has *not* yet run
+the mandatory-category runtime, the previous colour is still recording entries
+with no category during that window, and they stay that way unless the statement
+runs again. Run the same file verbatim once cutover is complete
+([`PRODUCTION_UPGRADE_RUNBOOK.md`](PRODUCTION_UPGRADE_RUNBOOK.md) §3.2):
+
+```bash
+psql "$DATABASE_URL" \
+  -f prisma/migrations/20260923010000_backfill_historical_audit_categories/migration.sql
+```
+
+On a deployment already running the mandatory-category runtime (the measured one
+cut over on 17 August 2026 and has written no uncategorised entry since), the
+re-run finds nothing and appends nothing. Both outcomes are correct.
+
+**There is no rollback.** A committed data rewrite survives a rollback of the
+code, and this migration is not `windowed`, so it ships no `rollback.sql`. Your
+pre-migration backup is the only way back, and the club's own record of what
+happened is the audit entry above.
+
+**Should the column now be made `NOT NULL`?** Assessed, and **no, not in this
+release.** Three reasons, each of which alone would settle it: a deployment
+whose history differs from the measured one may hold an event type on no list,
+and those entries stay null by design; any block the owner withholds stays null;
+and forcing the constraint would require inventing a category for those entries,
+which is the one thing #2581 refused to do. A constraint remains a separate,
+later decision under the blue/green expand/contract policy, taken after this
+release has run and its `unmappedNullRemaining` has been read on real
+deployments.
+
 ---
 
 ## v0.13.1 → v0.13.2

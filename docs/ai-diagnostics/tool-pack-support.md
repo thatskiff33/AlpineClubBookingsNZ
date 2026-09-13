@@ -258,10 +258,17 @@ each site was given is recorded site by site in `APPLIED_AUDIT_CATEGORIES`
 table against the measured tree on every run, so a later reclassification is a named
 failure rather than a silent change of readership.
 
-**The gap has stopped growing; it has not closed.** Every row written before that runtime
-deployed still carries no category, and those rows are still invisible to every
-correlation entry. Giving them one is a separate, independently reviewable data change
-(#2581's third child) that has not run, so the disclosure below stays exactly as it is.
+**The gap stopped growing with child 2, and child 3 closes the measured part of it.**
+Every row written before that runtime deployed carried no category and was invisible to
+every correlation entry. `20260923010000_backfill_historical_audit_categories` (#2581's
+third child) gives those rows the category their exact action records today, from the
+reviewed list in `HISTORICAL_NULL_CATEGORY_MAP_2581` — 83 actions, 1,885 rows on the
+measured deployment — so they are now returned by the entry for that category, behind that
+entry's areas, exactly as new rows of the same action are. What stays null, and therefore
+stays outside every entry: a row whose action is on no list (a fork whose history differs
+from the measured one), and any action the owner withheld because categorising it would
+move rows across the member-timeline boundary (`INV-OPS-012`). The disclosure below
+therefore stays, scoped to that residual rather than to the whole pre-#2581 history.
 
 Those figures used to be quoted here as "81 of about 350", which was a hand count and was
 stale. They are measured on every CI run now, and a **new** uncategorised audit writer
@@ -322,9 +329,11 @@ and no `retentionClass`, and the writer derives a retention class only when one 
 three is present. So every one of those rows was stored with **no expiry at all** — never
 archived, never pruned. Giving them a category was therefore also a retention change, not
 a metadata tidy-up: all 82 write paths now classify `critical`, which is a **seven-year**
-expiry measured from the event. Rows already written keep their `NULL` retention class
-until #2581's third child decides what to do about them, so nothing that exists today
-becomes deletable because of this change.
+expiry measured from the event. Rows already written keep their `NULL` retention class:
+#2581's third child gave them a category and deliberately derived **no** expiry from it,
+so nothing that existed before either change becomes deletable because of it. Stamping a
+retention class onto those historical rows is a separate decision, if the club ever takes
+it.
 
 The shared statement filters on `"category" = ANY (…)`, which is NULL — not true — for a
 row with no category, so **such a row is returned by none of the five entries.** It is not
