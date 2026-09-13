@@ -22,9 +22,11 @@
  * resolver, the API route, the seed and the admin client component can all
  * import it.
  */
+import {
+  normalizeXeroAccountClass,
+  type XeroAccountClass,
+} from "@/lib/xero-account-class";
 
-/** The Xero account types this product's pickers filter on. */
-export type XeroAccountType = "REVENUE" | "EXPENSE" | "BANK";
 
 export type XeroAccountMappingDefinition = {
   /** The `XeroAccountMapping.key` column value. Permanent: rows are keyed by it. */
@@ -34,11 +36,22 @@ export type XeroAccountMappingDefinition = {
   /** Admin picker help text. */
   readonly description: string;
   /**
-   * REQUIRED (`INV-INT-021`): the only Xero account type the picker offers for
-   * this key. Goodwill is typed `EXPENSE` because goodwill is a cost the club
-   * chose to bear, not a reduction of what it billed (owner, 10 Aug 2026).
+   * REQUIRED (`INV-INT-021`): the Xero account CLASS this key's picker offers.
+   * Class, not type — type has four separate expense-class values and the
+   * single field meaning "this is an expense account" is the class. Goodwill is
+   * `EXPENSE` because goodwill is a cost the club chose to bear, not a
+   * reduction of what it billed (owner, 10 Aug 2026).
    */
-  readonly accountType: XeroAccountType;
+  readonly accountClass: XeroAccountClass;
+  /**
+   * OPTIONAL narrowing WITHIN that class, for a key that wants less than the
+   * whole of it — `stripeBankAccount` wants a bank account, which is one type
+   * inside class `ASSET`. Every listed type must belong to the declared class;
+   * `xero-account-mapping-registry.test.ts` holds that. Omitted, the key offers
+   * the whole class, which is what a broad question like "an expense account"
+   * needs.
+   */
+  readonly accountTypes?: readonly string[];
   /** Application default when no row exists or the row's code is null. */
   readonly defaultCode: string | null;
   /**
@@ -54,14 +67,16 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     key: "hutFeesIncome",
     label: "Hut Fees Income",
     description: "Sales account for booking income line items",
-    accountType: "REVENUE",
+    accountClass: "REVENUE",
+    accountTypes: ["REVENUE"],
     defaultCode: "200",
   },
   {
     key: "hutFeeRefunds",
     label: "Hut Fee Refunds",
     description: "Account for refund credit notes",
-    accountType: "REVENUE",
+    accountClass: "REVENUE",
+    accountTypes: ["REVENUE"],
     defaultCode: "200",
   },
   {
@@ -69,7 +84,11 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     label: "Goodwill & Write-Offs",
     description:
       "Expense account for discretionary goodwill — admin-granted account credit applied to an Internet Banking booking. Keeping it separate from refunds lets the accounts show what the club billed and what it chose not to collect, instead of netting the two together.",
-    accountType: "EXPENSE",
+    // The WHOLE expense class, with no type narrowing. On the standard New
+    // Zealand chart the range a treasurer puts write-offs in is typed
+    // OVERHEADS, so narrowing to type EXPENSE would render an empty picker and
+    // leave the club on the fallback for ever.
+    accountClass: "EXPENSE",
     defaultCode: null,
     fallbackKey: "hutFeeRefunds",
   },
@@ -77,21 +96,26 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     key: "stripeBankAccount",
     label: "Stripe Bank Account",
     description: "Bank account used to record Stripe payments",
-    accountType: "BANK",
+    // A bank account is one type inside class ASSET; this key wants that type
+    // and nothing else, so the narrowing is the whole filter here.
+    accountClass: "ASSET",
+    accountTypes: ["BANK"],
     defaultCode: "606",
   },
   {
     key: "stripeFees",
     label: "Stripe Fees",
     description: "Expense account for Stripe transaction fees (optional)",
-    accountType: "EXPENSE",
+    accountClass: "EXPENSE",
+    accountTypes: ["EXPENSE"],
     defaultCode: null,
   },
   {
     key: "subscriptionIncome",
     label: "Subscription Income",
     description: "Account code used to detect Annual Membership Fee invoices",
-    accountType: "REVENUE",
+    accountClass: "REVENUE",
+    accountTypes: ["REVENUE"],
     defaultCode: "203",
   },
   {
@@ -99,7 +123,8 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     label: "Membership Cancellation Credits",
     description:
       "Credit note account and item used to reverse unpaid Annual Membership Fee invoices when membership cancellation is approved",
-    accountType: "REVENUE",
+    accountClass: "REVENUE",
+    accountTypes: ["REVENUE"],
     defaultCode: "203",
   },
 ] as const satisfies readonly XeroAccountMappingDefinition[];
@@ -166,12 +191,33 @@ export const MAPPING_DESCRIPTIONS: Record<string, string> = {
   ...byKey(XERO_ITEM_ONLY_MAPPING_DEFINITIONS, (d) => d.description),
 };
 
-/** `INV-INT-021`: the Xero account type each key's picker may offer. */
-export const MAPPING_TYPE_FILTER: Record<AccountMappingKey, XeroAccountType> =
-  byKey(XERO_ACCOUNT_MAPPING_DEFINITIONS, (d) => d.accountType) as Record<
-    AccountMappingKey,
-    XeroAccountType
-  >;
+/** The accounts one key's picker may offer (`INV-INT-021`). */
+export type MappingAccountFilter = {
+  readonly accountClass: XeroAccountClass;
+  readonly accountTypes?: readonly string[];
+};
+
+/** `INV-INT-021`: the account filter each key's picker applies. */
+export const MAPPING_ACCOUNT_FILTERS: Record<
+  AccountMappingKey,
+  MappingAccountFilter
+> = byKey(XERO_ACCOUNT_MAPPING_DEFINITIONS, (d) => ({
+  accountClass: d.accountClass,
+  ...("accountTypes" in d ? { accountTypes: d.accountTypes } : {}),
+})) as Record<AccountMappingKey, MappingAccountFilter>;
+
+/**
+ * The word the setup screen uses for the kind of account a key wants — "bank",
+ * "revenue", "expense". A key narrowed to one type is named by that type,
+ * because that is what an admin is being asked to pick; a key that offers a
+ * whole class is named by the class.
+ */
+export function describeMappingAccountFilter(key: AccountMappingKey): string {
+  const filter = MAPPING_ACCOUNT_FILTERS[key];
+  const narrowed =
+    filter.accountTypes?.length === 1 ? filter.accountTypes[0] : null;
+  return (narrowed ?? filter.accountClass).toLowerCase();
+}
 
 /** Application default code per key — `null` for an optional mapping. */
 export const ACCOUNT_MAPPING_DEFAULTS: Record<string, string | null> = byKey(
@@ -194,14 +240,26 @@ export const ACCOUNT_MAPPING_FALLBACK_KEYS: Readonly<
  *
  * The filter lives here rather than inline in the picker so "goodwill offers
  * expense accounts only" is a fact one unit test can hold, and so a picker
- * cannot come to filter on anything other than the key's declared type.
+ * cannot come to filter on anything other than the key's declared filter.
+ *
+ * It matches on the account's CLASS — the one field that means "this is an
+ * expense account", and the same field the finance reports classify by (see
+ * `xero-account-class.ts`). A chart row whose class the snapshot does not carry
+ * still answers the narrower TYPE question, so a key that declares its types
+ * keeps offering exactly the accounts it offered before #2717 even then; a key
+ * that asks the broad class question drops such a row rather than guess.
  */
-export function accountsForMappingKey<Account extends { type: string }>(
-  key: AccountMappingKey,
-  accounts: readonly Account[],
-): Account[] {
-  const accountType = MAPPING_TYPE_FILTER[key];
-  return accounts.filter((account) => account.type === accountType);
+export function accountsForMappingKey<
+  Account extends { type: string; class?: string | null },
+>(key: AccountMappingKey, accounts: readonly Account[]): Account[] {
+  const filter = MAPPING_ACCOUNT_FILTERS[key];
+  const typeMatches = (account: Account) =>
+    filter.accountTypes == null || filter.accountTypes.includes(account.type);
+  return accounts.filter((account) => {
+    const accountClass = normalizeXeroAccountClass(account.class);
+    if (accountClass) return accountClass === filter.accountClass && typeMatches(account);
+    return filter.accountTypes != null && typeMatches(account);
+  });
 }
 
 export function isAccountMappingKey(key: string): key is AccountMappingKey {

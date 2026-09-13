@@ -25,6 +25,7 @@ import {
   UNMAPPED_FINANCE_CATEGORY_ID,
 } from "@/lib/finance-report-mappings";
 import { must } from "@/lib/indexed-access";
+import { normalizeXeroAccountClass } from "@/lib/xero-account-class";
 
 /** Full-history query floor; Xero orgs do not predate this. */
 const MATRIX_FROM_MONTH = "2000-01";
@@ -129,9 +130,15 @@ export async function buildFinanceRatioMatrix(input: {
     }
 
     const mapped = categoryByCode.get(normalizeCode(record.accountCode));
+    // Same reading of the account CLASS the P&L view and the admin account
+    // pickers use, from the one module that defines it (#2717). Unchanged
+    // behaviour: anything that is not REVENUE still falls into EXPENSE, so no
+    // row is dropped from both views.
     const kind =
       mapped?.kind ??
-      (record.accountClass?.toUpperCase() === "REVENUE" ? "REVENUE" : "EXPENSE");
+      (normalizeXeroAccountClass(record.accountClass) === "REVENUE"
+        ? "REVENUE"
+        : "EXPENSE");
 
     if (mapped) {
       addCentsAtMonth(seriesById.get(mapped.id)!, index, record.amountCents);

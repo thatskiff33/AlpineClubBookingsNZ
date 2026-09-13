@@ -34,7 +34,8 @@ import {
   accountsForMappingKey,
   MAPPING_DESCRIPTIONS,
   MAPPING_LABELS,
-  MAPPING_TYPE_FILTER,
+  describeMappingAccountFilter,
+  MAPPING_ACCOUNT_FILTERS,
   XERO_ACCOUNT_MAPPING_DEFINITIONS,
   XERO_ITEM_ONLY_MAPPING_DEFINITIONS,
   XERO_MAPPING_WRITABLE_KEYS,
@@ -43,24 +44,58 @@ import {
   type AccountMappingKey,
 } from "@/lib/xero-account-mapping-keys";
 import {
+  XERO_ACCOUNT_CLASSES,
+  normalizeXeroAccountClass,
+} from "@/lib/xero-account-class";
+import {
   getResolvedAccountMapping,
   getResolvedAccountMappingWithFallback,
   isCodeExplicitlyConfigured,
 } from "@/lib/xero-mappings";
 
-const ACCOUNT_TYPES = ["REVENUE", "EXPENSE", "BANK"];
+/**
+ * Xero's `Type` values that belong to each `Class`, for the narrowings this
+ * product declares. Deliberately NOT a full provider taxonomy: the registry
+ * filters on class and narrows only where a key asks for less, so this table
+ * only has to cover the types the definitions actually name.
+ */
+const TYPES_BY_CLASS: Record<string, readonly string[]> = {
+  REVENUE: ["REVENUE", "SALES", "OTHERINCOME"],
+  EXPENSE: ["EXPENSE", "OVERHEADS", "DIRECTCOSTS", "DEPRECIATN"],
+  ASSET: ["BANK", "CURRENT", "FIXED", "INVENTORY", "NONCURRENT", "PREPAYMENT"],
+};
 
-describe("INV-INT-021: every account mapping key carries a type filter", () => {
-  it("names exactly one Xero account type per key, with no key left out", () => {
+describe("INV-INT-021: every account mapping key carries an account filter", () => {
+  it("names exactly one Xero account CLASS per key, with no key left out", () => {
     for (const definition of XERO_ACCOUNT_MAPPING_DEFINITIONS) {
-      expect(ACCOUNT_TYPES).toContain(definition.accountType);
+      expect(XERO_ACCOUNT_CLASSES).toContain(definition.accountClass);
       // The picker reads the derived record, so a key missing from it would
-      // render an unfiltered account list — every Xero account, of every type.
-      expect(MAPPING_TYPE_FILTER[definition.key]).toBe(definition.accountType);
+      // render an unfiltered account list — every Xero account, of every kind.
+      expect(MAPPING_ACCOUNT_FILTERS[definition.key].accountClass).toBe(
+        definition.accountClass,
+      );
     }
-    expect(Object.keys(MAPPING_TYPE_FILTER).sort()).toEqual(
+    expect(Object.keys(MAPPING_ACCOUNT_FILTERS).sort()).toEqual(
       [...ACCOUNT_MAPPING_KEYS].sort(),
     );
+  });
+
+  it("keeps every declared type narrowing INSIDE its declared class", () => {
+    // A narrowing that stepped outside its class would silently offer the wrong
+    // kind of account while the registry still claimed the right class.
+    for (const definition of XERO_ACCOUNT_MAPPING_DEFINITIONS) {
+      const narrowing: readonly string[] =
+        "accountTypes" in definition ? definition.accountTypes : [];
+      for (const type of narrowing) {
+        expect(TYPES_BY_CLASS[definition.accountClass] ?? []).toContain(type);
+      }
+    }
+  });
+
+  it("describes each filter in a word the setup screen can put in a sentence", () => {
+    expect(describeMappingAccountFilter("goodwillWriteOffs")).toBe("expense");
+    expect(describeMappingAccountFilter("stripeBankAccount")).toBe("bank");
+    expect(describeMappingAccountFilter("hutFeeRefunds")).toBe("revenue");
   });
 
   it("gives every key a label and a description the setup screen can render", () => {
@@ -104,7 +139,39 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
   it("is filtered to EXPENSE accounts, because goodwill is a cost not a discount", () => {
     // Revenue stays at what was billed and goodwill shows as its own cost line.
     // A REVENUE filter here would put it back to contra-revenue silently.
-    expect(MAPPING_TYPE_FILTER.goodwillWriteOffs).toBe("EXPENSE");
+    expect(MAPPING_ACCOUNT_FILTERS.goodwillWriteOffs.accountClass).toBe("EXPENSE");
+  });
+
+  it("offers the WHOLE expense class, not just accounts typed EXPENSE", () => {
+    // The bug this pins: Xero's type enumeration has four expense-class values,
+    // and on the standard New Zealand chart the range a treasurer puts
+    // write-offs in is typed OVERHEADS. Narrowed to type EXPENSE the picker
+    // renders only its empty-state message, with no explanation and no
+    // override, and the club stays on the fallback for ever — which arrives at
+    // "you may not configure this", the neighbour of the option the owner
+    // explicitly rejected.
+    expect(MAPPING_ACCOUNT_FILTERS.goodwillWriteOffs.accountTypes).toBeUndefined();
+    const nzStandardChart = [
+      { code: "200", name: "Sales", type: "REVENUE", class: "REVENUE" },
+      { code: "404", name: "Bank Fees", type: "OVERHEADS", class: "EXPENSE" },
+      { code: "429", name: "General Expenses", type: "OVERHEADS", class: "EXPENSE" },
+      { code: "310", name: "Cost of Goods Sold", type: "DIRECTCOSTS", class: "EXPENSE" },
+      { code: "620", name: "Prepayments", type: "PREPAYMENT", class: "ASSET" },
+    ];
+    expect(
+      accountsForMappingKey("goodwillWriteOffs", nzStandardChart).map((a) => a.code),
+    ).toEqual(["404", "429", "310"]);
+  });
+
+  it("still offers a class-less chart row to a key that declares its types", () => {
+    // A snapshot Xero returned without a Class must not empty a picker that has
+    // worked since before #2717; the narrower type question still answers it.
+    const noClass = [{ code: "200", name: "Hut Fees", type: "REVENUE", class: "" }];
+    expect(accountsForMappingKey("hutFeeRefunds", noClass).map((a) => a.code)).toEqual([
+      "200",
+    ]);
+    expect(accountsForMappingKey("goodwillWriteOffs", noClass)).toEqual([]);
+    expect(normalizeXeroAccountClass("")).toBeNull();
   });
 
   it("falls back to hutFeeRefunds and ships with no default code of its own", () => {
@@ -114,10 +181,10 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
 
   it("offers the picker EXPENSE accounts only, and never a revenue or bank one", () => {
     const chartOfAccounts = [
-      { code: "200", name: "Hut Fees", type: "REVENUE" },
-      { code: "404", name: "Goodwill", type: "EXPENSE" },
-      { code: "477", name: "Donations Made", type: "EXPENSE" },
-      { code: "606", name: "Business Bank Account", type: "BANK" },
+      { code: "200", name: "Hut Fees", type: "REVENUE", class: "REVENUE" },
+      { code: "404", name: "Goodwill", type: "EXPENSE", class: "EXPENSE" },
+      { code: "477", name: "Donations Made", type: "OVERHEADS", class: "EXPENSE" },
+      { code: "606", name: "Business Bank Account", type: "BANK", class: "ASSET" },
     ];
     expect(
       accountsForMappingKey("goodwillWriteOffs", chartOfAccounts).map((a) => a.code),
@@ -133,7 +200,8 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
   });
 
   it("leaves the ordinary refund mapping on REVENUE, untouched", () => {
-    expect(MAPPING_TYPE_FILTER.hutFeeRefunds).toBe("REVENUE");
+    expect(MAPPING_ACCOUNT_FILTERS.hutFeeRefunds.accountClass).toBe("REVENUE");
+    expect(MAPPING_ACCOUNT_FILTERS.hutFeeRefunds.accountTypes).toEqual(["REVENUE"]);
     expect(ACCOUNT_MAPPING_FALLBACK_KEYS.hutFeeRefunds).toBeUndefined();
   });
 });
@@ -234,5 +302,39 @@ describe("getResolvedAccountMappingWithFallback (INV-INT-021)", () => {
       sourceKey: "hutFeesIncome",
       usingFallback: false,
     });
+  });
+});
+
+/**
+ * The picker and the finance reports must not hold two answers to "is this an
+ * expense account?" (#2717, `INV-SSOT-001`).
+ *
+ * Before #2717 they did: the picker compared the account TYPE to "EXPENSE"
+ * while the profit-and-loss view and the ratio explorer classified by the
+ * account CLASS — and the two disagree on the very range a treasurer puts
+ * write-offs in. Read from disk because the rule is about which helper each
+ * module NAMES; no behavioural test states it as plainly.
+ */
+describe("INV-SSOT-001: one reading of a Xero account's class", () => {
+  const CLASS_READERS = [
+    "src/lib/finance-monthly-pnl.ts",
+    "src/lib/finance-ratio-insights.ts",
+    "src/lib/xero-account-mapping-keys.ts",
+  ];
+
+  it.each(CLASS_READERS)("%s reads the class through the one module", async (file) => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const source = readFileSync(resolve(file), "utf-8");
+    expect(
+      source.includes("normalizeXeroAccountClass"),
+      `${file} classifies a Xero account without the one helper (INV-SSOT-001)`,
+    ).toBe(true);
+    expect(
+      /accountClass\?\.toUpperCase\(\)\s*===/.test(source),
+      `${file} compares a raw account class string; route it through ` +
+        "normalizeXeroAccountClass so the admin pickers and these reports " +
+        "cannot drift apart (INV-SSOT-001, #2717)",
+    ).toBe(false);
   });
 });
