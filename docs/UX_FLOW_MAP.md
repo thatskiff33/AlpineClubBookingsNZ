@@ -46,6 +46,39 @@ optimistic callbacks. A view-only role sees one section banner and disabled
 Edit/Save affordances; the API independently enforces `bookings:view` on GET and
 `bookings:edit` on PUT.
 
+A refused load or save keeps its states distinct and surfaces no internal detail
+(#2931). They are told apart by what the BODY says, never by the status alone:
+`/api/admin/bed-allocation` is module-gated, so 404 is both "the module is off"
+and "the caller is not signed in" (`moduleGatedNotFoundResponse` in
+`src/lib/session-guards.ts`, deliberate — one anonymous probe must not be able
+to read which optional modules a club runs). The module refusal therefore names
+itself with `code: MODULE_DISABLED`, set only past the permission guard, and the
+card reads the name:
+
+- `MODULE_DISABLED` — the module is off, and the copy names the `support` role
+  that can turn it on rather than telling a bookings officer to do it. Only
+  reachable by switching the module off while the board is open: the
+  `/admin/bed-allocation` page is itself feature-gated, so with the module
+  already off the whole board is a 404 page and this card never renders.
+- 404 without that code, and 401 — the sign-in behind the tab has expired.
+- 403 — permission-specific. The save keeps `ADMIN_FORBIDDEN_SAVE_REASON`; the
+  load has its own read-shaped sentence, since "this change was not saved" is
+  the wrong tense for a read. Either way the guard's OWN curated 403 sentences
+  ("Two-factor verification required", "Password change required", "Account is
+  deactivated") win over the generic role copy — only the bare word "Forbidden"
+  is replaced.
+- Everything else shows the server's own non-empty `{ error }` sentence, read as
+  JSON and projected to that one field, so a zod `details`, a Prisma `meta` or a
+  proxy's HTML error page can never reach the screen. An unreadable or blank
+  reply falls back to the card's own wording, and a 200 whose body is not the
+  promised shape does too rather than putting a `TypeError` on the page.
+
+The write body is `BedAllocationSettingsWriteBody`, the single write contract in
+`src/lib/bed-allocation-settings.ts` that the route's `.strict()` schema is
+checked against with `satisfies` — never a spread of the loaded settings, whose
+six read-only provenance fields the schema refuses. The projection helpers live
+in `src/lib/api-error-message.ts`.
+
 ## Reviewed bed-allocation removal (#2594)
 
 All removal triggers share one **Remove bed allocations** dialog: a chip menu,
