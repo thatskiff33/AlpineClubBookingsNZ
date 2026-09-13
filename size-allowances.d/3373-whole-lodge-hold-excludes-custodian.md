@@ -39,7 +39,7 @@ reason: the create's half of the #2698 ordering case — the amendment detection
   cohort, with the reason at the gate.
 
 file: src/lib/capacity.ts
-lines: 1126
+lines: 1132
 reason: `wholeLodgeHoldRepresentedBeds` and `wholeLodgeHeldNightOccupiedBeds`
   are eight lines of arithmetic and about seventy of docblock, and the docblock
   is the deliverable. The pin they replace read `lodgeCapacity` and was correct
@@ -59,7 +59,7 @@ reason: four lines. The planner feed gains the custodian-hold argument the
   property that makes no bed-night claimed twice true rather than coincidental.
 
 file: src/app/(admin)/admin/hut-leaders/page.tsx
-lines: 1350
+lines: 1357
 reason: the officer's Accept/Decline card for the ordering case, its state, its
   focus effect, and the two request paths that can raise it (the create form's
   POST and the inline bed change's PUT). It is written beside the existing

@@ -373,10 +373,13 @@ export async function POST(req: NextRequest) {
     clubSeasonYear(await clubTimeZone()),
   );
 
-  for (let i = 0; i < rows.length; i++) {
-    const rowNum = getImportRowNumber(rows[i], i);
+  // `rows.entries()` rather than a counting loop: the index is only ever used
+  // to number the row for the admin's error report, and iterating the array
+  // hands the row over as an `ImportRow` instead of a lookup the compiler has
+  // to treat as possibly absent (#2801).
+  for (const [i, row] of rows.entries()) {
+    const rowNum = getImportRowNumber(row, i);
 
-    const row = rows[i];
     const email = row.email.toLowerCase().trim();
     const names = deriveMemberImportNameFields(row);
     const identity = {

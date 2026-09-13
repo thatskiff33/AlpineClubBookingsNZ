@@ -29,12 +29,15 @@
  * `[A-Za-z_][A-Za-z0-9_]*`), `--` line comments, and nested block comments.
  */
 
+import { must } from "../../src/lib/indexed-access";
+
 /** True when `value[index]` begins a valid dollar-quote tag; returns the tag. */
 function dollarTagAt(value: string, index: number): string | null {
   let cursor = index + 1;
   let first = true;
   while (cursor < value.length) {
-    const char = value[cursor];
+    // The loop condition just above is exactly what makes this in range.
+    const char = must(value[cursor], `dollarTagAt: cursor ${cursor} out of range for a string of length ${value.length}`);
     if (char === "$") return value.slice(index, cursor + 1);
     if (first) {
       if (!/[A-Za-z_]/.test(char)) return null;
@@ -167,7 +170,8 @@ export function splitSqlStatements(sql: string): string[] {
 function hasExecutableText(statement: string): boolean {
   let index = 0;
   while (index < statement.length) {
-    const char = statement[index];
+    // The loop condition just above is exactly what makes this in range.
+    const char = must(statement[index], `hasExecutableText: index ${index} out of range for a string of length ${statement.length}`);
     if (/\s/.test(char)) {
       index += 1;
       continue;

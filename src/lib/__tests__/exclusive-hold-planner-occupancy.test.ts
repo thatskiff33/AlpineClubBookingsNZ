@@ -458,7 +458,7 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
   });
 
   /**
-   * #2698 / `INV-CAP-035` — a whole-lodge hold's represented bed set excludes
+   * #2698 / `INV-CAP-038` — a whole-lodge hold's represented bed set excludes
    * the bed-nights a custodian holds.
    *
    * The hold covers 2026-07-01 and 2026-07-02 (half-open `[checkIn,
@@ -559,14 +559,14 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
      * Engine/planner parity, per night: the count the capacity engine says a
      * hold represents ({@link wholeLodgeHoldRepresentedBeds}) is the number of
      * rows the planner actually emits for it. The two consumers of
-     * `INV-CAP-035` work in different shapes — a count and a bed set — and this
+     * `INV-CAP-038` work in different shapes — a count and a bed set — and this
      * is what stops one of them being changed without the other.
      *
      * CONDITIONAL, and the case below records on what: the engine counts
      * EFFECTIVE CAPACITY and the planner walks BED STOCK, so the identity holds
      * where the two are equal — `lodgeCapacity` is fixed to `ROOM.beds.length`
      * here for exactly that reason. A capped lodge is the documented exception
-     * (`INV-CAP-035`), not a failure of this assertion.
+     * (`INV-CAP-038`), not a failure of this assertion.
      *
      * Mutation-verified: deleting the `isCustodianHeldBedNight` guard from the
      * planner makes the planner emit 2 where the engine says 1, and deleting
@@ -601,7 +601,7 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
         );
         expect(
           plannerRows.length,
-          `INV-CAP-035: the planner and the capacity engine disagree about how many beds the hold represents on ${nightKey}`,
+          `INV-CAP-038: the planner and the capacity engine disagree about how many beds the hold represents on ${nightKey}`,
         ).toBe(wholeLodgeHoldRepresentedBeds(lodgeCapacity, custodianBeds));
         // And the partition is total: hold beds + custodian beds = the lodge.
         expect(
@@ -629,7 +629,7 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
      * fact the #155 payload contract and ADR-001 decision 6 rest on. What #2698
      * added is a guard and an invariant sentence that read as more general than
      * the identity is, so the narrower claim is written down here and qualified
-     * in `INV-CAP-035`.
+     * in `INV-CAP-038`.
      *
      * A historic hold on a since-deactivated bed diverges the same way and for
      * the same reason: the planner's stock shrank, the recorded capacity did
@@ -657,7 +657,7 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
       expect(wholeLodgeHoldRepresentedBeds(cappedCapacity, custodianBeds)).toBe(0);
       expect(
         plannerRows.length,
-        "INV-CAP-035's parity identity is conditional on capacity equalling bed stock; a capped lodge is expected to differ here, and this case exists so that stays a recorded fact rather than a surprise",
+        "INV-CAP-038's parity identity is conditional on capacity equalling bed stock; a capped lodge is expected to differ here, and this case exists so that stays a recorded fact rather than a surprise",
       ).not.toBe(wholeLodgeHoldRepresentedBeds(cappedCapacity, custodianBeds));
 
       // The number a member or an engine can SEE is unchanged: a held night is

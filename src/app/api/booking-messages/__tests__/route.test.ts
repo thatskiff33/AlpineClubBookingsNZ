@@ -19,7 +19,7 @@ vi.mock("@/lib/prisma", () => ({
 // to which tokens it emits is visible here.
 vi.mock("@/lib/email-message-settings", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/email-message-settings")>();
+    (await importOriginal()) as typeof import("@/lib/email-message-settings");
   return { ...actual, loadEmailMessageSettings: mockLoadEmailMessageSettings };
 });
 

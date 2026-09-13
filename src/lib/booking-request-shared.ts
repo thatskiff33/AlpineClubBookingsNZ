@@ -158,11 +158,29 @@ export function buildApprovalGuestNights(params: {
     engine.every((cents) => Number.isInteger(cents)) &&
     engine.reduce((sum, cents) => sum + cents, 0) === params.priceCents
   ) {
-    return nightDates.map((stayDate, index) => ({
+    // The engine vector was just checked to be the same length as the night
+    // list, so each night has its amount; reading it here is what says so, and
+    // a short vector falls through to the even split below exactly as a
+    // length mismatch already did (#2800).
+    const enginePriced = nightDates.map((stayDate, index) => ({
       stayDate,
       priceCents: engine[index],
-      priceSource: "SOLD",
+      // `as const` because this local has no contextual type to pin the literal
+      // against, unlike the even-split return below; without it the source
+      // widens to `string` and no longer satisfies the provenance union (#3275).
+      priceSource: "SOLD" as const,
     }));
+    if (
+      enginePriced.every(
+        // The predicate keeps the whole element type rather than restating a
+        // shape: restating one silently drops `priceSource` and the narrowed
+        // array stops satisfying `ApprovalGuestNight[]` (#3275 + #2800).
+        (night): night is typeof night & { priceCents: number } =>
+          night.priceCents !== undefined,
+      )
+    ) {
+      return enginePriced;
+    }
   }
   const base = Math.floor(params.priceCents / count);
   const remainder = params.priceCents - base * count;

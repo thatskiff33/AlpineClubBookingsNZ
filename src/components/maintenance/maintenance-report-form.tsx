@@ -211,7 +211,7 @@ export function MaintenanceReportForm({
       {lodges ? (
         <div className="space-y-2">
           <Label htmlFor="maintenance-lodge">Which lodge is this about?</Label>
-          {lodges.length === 1 ? (
+          {lodges.length === 1 && lodges[0] ? (
             <p className="text-sm text-muted-foreground">{lodges[0].name}</p>
           ) : (
             <Select value={lodgeId} onValueChange={setLodgeId}>

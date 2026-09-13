@@ -373,8 +373,9 @@ export async function exportAdultMemberHosting(
   ctx: ExportContext,
 ): Promise<BundleEntry> {
   const current = await loadCurrent(ctx.db);
-  if (current.errors.length > 0) {
-    throw new ConfigTransferBundleError(current.errors[0]);
+  const [firstCurrentError] = current.errors;
+  if (firstCurrentError !== undefined) {
+    throw new ConfigTransferBundleError(firstCurrentError);
   }
   const rows = [...current.byScope.values()]
     .sort((a, b) => a.scope.localeCompare(b.scope))
@@ -466,8 +467,9 @@ export async function applyAdultMemberHosting(
     throw new Error(`${ADULT_MEMBER_HOSTING_FILE} is required`);
   }
   const current = await loadCurrent(ctx.tx);
-  if (current.errors.length > 0) {
-    throw new ConfigTransferBundleError(current.errors[0]);
+  const [firstCurrentError] = current.errors;
+  if (firstCurrentError !== undefined) {
+    throw new ConfigTransferBundleError(firstCurrentError);
   }
   const errors: string[] = [];
   const parsed = parseHosting(

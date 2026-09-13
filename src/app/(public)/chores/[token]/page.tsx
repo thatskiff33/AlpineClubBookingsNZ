@@ -87,9 +87,18 @@ export default function GuestChorePage() {
   // for, and there is no sensible fallback heading to show in its place.
   const formattedDate = formatClubLongWeekdayDate(requireCalendarDate(data.date));
 
-  const groups: Record<string, Assignment[]> = { MORNING: [], EVENING: [], ANYTIME: [] };
+  // The catch-all bucket is held by name as well as by key — it IS the array
+  // under `ANYTIME`, so pushing to it is the same write — which makes the
+  // fallback a value rather than a second lookup of an open-keyed record
+  // (#2801).
+  const anytimeGroup: Assignment[] = [];
+  const groups: Record<string, Assignment[]> = {
+    MORNING: [],
+    EVENING: [],
+    ANYTIME: anytimeGroup,
+  };
   for (const a of data.assignments) {
-    (groups[a.choreTimeOfDay] ?? groups.ANYTIME).push(a);
+    (groups[a.choreTimeOfDay] ?? anytimeGroup).push(a);
   }
 
   return (

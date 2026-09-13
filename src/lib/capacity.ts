@@ -185,7 +185,7 @@ function buildWholeLodgeHoldIndex(
 }
 
 /**
- * How many beds a whole-lodge hold REPRESENTS on one night (`INV-CAP-035`,
+ * How many beds a whole-lodge hold REPRESENTS on one night (`INV-CAP-038`,
  * #2698): the lodge's capacity less the beds a custodian holds that night.
  *
  * ADR-001 gives the holding group sole occupancy of the lodge, and until #2698
@@ -220,7 +220,7 @@ export function wholeLodgeHoldRepresentedBeds(
 
 /**
  * The occupancy a held night is PINNED to (ADR-001 decision 6): the hold's own
- * represented beds plus the custodian beds it excludes (`INV-CAP-035`). Equal
+ * represented beds plus the custodian beds it excludes (`INV-CAP-038`). Equal
  * to `lodgeCapacity` on every reachable input — that is the proof the two sets
  * partition the lodge — so writing it this way costs nothing and makes a future
  * hold that re-claimed the custodian's bed fail the contract test instead of
@@ -480,7 +480,7 @@ export interface NightOccupancy {
   /**
    * Beds a custodian holds this night (term 2, #2286) — already inside
    * `occupiedBeds`, surfaced separately so a caller pinning a held night can
-   * compose the pin out of the two DISJOINT sets `INV-CAP-035` defines: the
+   * compose the pin out of the two DISJOINT sets `INV-CAP-038` defines: the
    * hold's represented beds ({@link wholeLodgeHoldRepresentedBeds}) and the
    * custodian's. Without it every pin site has to write `lodgeCapacity` and
    * take the partition on trust.
@@ -524,7 +524,7 @@ export interface NightOccupancy {
  * 4. **Whole-lodge holds (ADR-001, #118)** — reported as a per-night flag,
  *    because what a held night should look like is a caller decision. What the
  *    hold REPRESENTS is not: since #2698 its bed set excludes the bed-nights a
- *    custodian holds (`INV-CAP-035`), so every caller that pins a held night
+ *    custodian holds (`INV-CAP-038`), so every caller that pins a held night
  *    composes the pin from {@link wholeLodgeHoldRepresentedBeds} and the
  *    `custodianBeds` reported beside the flag, which are disjoint and together
  *    are the lodge. Term 2 is reported twice for that reason — once inside
@@ -616,7 +616,7 @@ export async function computeNightOccupancy(input: {
       reservationCount(night),
     wholeLodgeHeld: isNightWholeLodgeHeld(night, holdIndex),
     // Term 2 again, reported on its own so term 4's pin can subtract it
-    // (INV-CAP-035, #2698). Same counter, same holds — never a second read.
+    // (INV-CAP-038, #2698). Same counter, same holds — never a second read.
     custodianBeds: custodianCount(night),
   });
 }
@@ -659,7 +659,7 @@ export async function checkCapacity(
       // a genuinely full lodge, and occupiedBeds + availableBeds must equal
       // lodgeCapacity on every night, not just full ones.
       //
-      // Composed from the two disjoint sets INV-CAP-035 defines rather than
+      // Composed from the two disjoint sets INV-CAP-038 defines rather than
       // written as `lodgeCapacity`: the hold represents every bed EXCEPT the
       // custodian's, and the custodian occupies exactly those (#2698). The
       // total is the same full lodge; what changes is that it is now derived
@@ -905,7 +905,13 @@ export async function checkCapacityForPartnerSharedAdmission(
   // partner's-own-booking case, where excludeBookingId removes the partner's
   // existing row from occupancy), or from the partner's other capacity-
   // holding bookings at this lodge. Never from an unverified caller claim.
-  const coverageBySharer: Array<Set<string>> = [];
+  // Each sharer carries its own coverage set, rather than a parallel array
+  // read back by position: the pairing is then a fact of the type, not of two
+  // loops staying in step (#2799).
+  const sharersWithCoverage: Array<{
+    sharer: (typeof sharers)[number];
+    covered: Set<string>;
+  }> = [];
   for (const sharer of sharers) {
     const covered = new Set<string>();
     const proposedPartnerRows = ordinaryGuests.filter(
@@ -968,7 +974,7 @@ export async function checkCapacityForPartnerSharedAdmission(
         if (present) covered.add(nightKey);
       }
     }
-    coverageBySharer.push(covered);
+    sharersWithCoverage.push({ sharer, covered });
   }
 
   // Base occupancy from the one implementation. The custodian term carries an
@@ -1004,11 +1010,11 @@ export async function checkCapacityForPartnerSharedAdmission(
     }
 
     let sharersPresent = 0;
-    for (const [index, sharer] of sharers.entries()) {
+    for (const { sharer, covered } of sharersWithCoverage) {
       if (countActiveGuestsForNight([sharer.range], night, envelope) === 0) {
         continue;
       }
-      if (!coverageBySharer[index].has(nightKey)) {
+      if (!covered.has(nightKey)) {
         // A shared slot exists only on nights the partner also stays.
         reason ??=
           "The partner is not staying on every night requested for the shared guest.";
@@ -1112,7 +1118,7 @@ export async function getMonthAvailability(
     // the hold — a member could tell it apart from a full lodge.
     //
     // The full lodge is composed from the hold's represented beds plus the
-    // custodian beds it excludes (INV-CAP-035, #2698) — the same number, taken
+    // custodian beds it excludes (INV-CAP-038, #2698) — the same number, taken
     // from the partition rather than asserted.
     availability.set(
       key,

@@ -405,12 +405,22 @@ export const AUDIT_CENSUS_TOTALS = {
   // the merged tree (468 sites, 2261 files scanned), not by adding one to the
   // literal: #3214 landed on `main` first, so this branch's own delta reads
   // 467 -> 468 after the merge where it read 466 -> 467 before it.
-  // 468 -> 470 (#2698): the hut-leader assignment create, update and delete
+  // 468 -> 470 (#3340): the two rows in `superseded-additional-refund.ts` - the
+  // permanent record that a superseded capture was refunded, and the `critical`
+  // escalation for when the notice that should accompany it could not be
+  // assembled. Until #3340 that refund left NO record anywhere: Stripe's own
+  // receipt was the entire notice, a member wrote in asking what had happened,
+  // and that query is the only reason the money leak underneath was found.
+  // Both are `payment`, both are categorised at the site, so neither joins
+  // `UNCATEGORISED_AUDIT_WRITERS`. Re-MEASURED with `npm run audit:census` on
+  // this branch (470 sites), never by adding two to the literal.
+  //
+  // 470 -> 472 (#2698): the hut-leader assignment create, update and delete
   // gain audit rows they never had — `lodge.hut-leader-assignment.created` /
   // `.updated` / `.deleted`, category `lodge` per the audit guide's roster row
   // — plus `recordWholeLodgeHoldAmendment` in `custodian-assignment.ts`, which
   // records the officer's explicit acceptance that a custodian bed narrows an
-  // existing whole-lodge hold (INV-CAP-035), category `booking` to match the
+  // existing whole-lodge hold (INV-CAP-038), category `booking` to match the
   // exclusive-hold writer it answers. Coverage is derived rather than stored,
   // so that row IS the amendment, not a note about one.
   //
@@ -424,8 +434,9 @@ export const AUDIT_CENSUS_TOTALS = {
   // 470 -> 471 (#3367): `takeXeroContactFromSchoolsOwnMember` records the ONE
   // transfer of a Xero contact between two local records (`INV-INT-018`). It
   // writes through `createAuditLog(params, tx)` on the caller's transaction, so
-  // the audit row and the hand-over it describes commit together.
-  writeSites: 471,
+  // the audit row and the hand-over it describes commit together. Re-measured as
+  // 473 after the merge with the epic, which brought two writers of its own.
+  writeSites: 473,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -467,7 +478,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // and the two submit records. None sits inside the submit transaction, so a
     // failed audit write never fails a submitted report.
     // 255 -> 261 (#2992): all six club-post moderation writers use `logAudit`.
-    logAudit: { total: 262, uncategorised: 0 },
+    // 262 -> 264 (#3340): the two supersede-refund rows above. `logAudit` rather
+    // than an awaited `createAuditLog` for the same reason as the other rows in
+    // this sink that record a completed money movement - the epilogue runs after
+    // the refund has already been made at Stripe, and must never throw into the
+    // recovery worker and replay a refund for the sake of a bookkeeping row.
+    logAudit: { total: 264, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -672,7 +688,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // A card request that could not be withdrawn is a live instrument against an
     // invoice the club has already raised unpaid, and the person who has to go
     // and reconcile the two is the one who reconciles the club's money.
-    payment: 42,
+    // 42 -> 44 (#3340): the supersede-refund record and its failed-notice
+    // escalation. Money left the club with nobody deciding it should, and the
+    // person who reconciles that is the one who reconciles the club's money -
+    // the same audience, for the same reason, as every row above it.
+    payment: 44,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

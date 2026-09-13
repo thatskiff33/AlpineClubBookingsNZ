@@ -1288,13 +1288,20 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // at the site and named in none of the four per-site maps, so both land
     // unpinned. 468 sites MEASURED on the merged tree with `npm run audit:census`
     // minus 127 pinned; `pinned` is unchanged, so no existing classification moved.
-    // 341 -> 343 (#2698): TWO new writers, for FOUR new actions.
+    // 341 -> 343 (#3340): the supersede-refund record and its failed-notice
+    // escalation, both in `superseded-additional-refund.ts`. Categorised
+    // `payment` at the site and named in none of the four per-site maps, so both
+    // land unpinned. 470 sites MEASURED on this branch with
+    // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
+    // existing classification moved.
+    //
+    // 343 -> 345 (#2698): TWO new writers, for FOUR new actions.
     // `recordHutLeaderAssignmentAudit` is one shared writer covering the
     // hut-leader assignment create, update and delete — which recorded nothing
     // at all before — under category `lodge`, the audit guide's roster row.
     // `recordWholeLodgeHoldAmendment` records the officer's explicit acceptance
     // that a custodian bed leaves an existing whole-lodge hold's represented
-    // set (INV-CAP-035), under `booking` to match the exclusive-hold writer it
+    // set (INV-CAP-038), under `booking` to match the exclusive-hold writer it
     // answers. Both are categorised at the site and named in none of the four
     // per-site maps, so both land unpinned. 470 sites MEASURED with
     // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
@@ -1307,9 +1314,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // moved from a school's invented member record to the school's own record
     // (INV-INT-018). Categorised `xero` at the site and named in none of the
     // four per-site maps, so it lands unpinned like every other new feature's
-    // writer. 471 sites MEASURED with `npm run audit:census` minus 127 pinned;
-    // `pinned` is unchanged, so no existing classification moved.
-    ).toEqual({ pinned: 127, unpinned: 344 });
+    // writer. Re-measured after the merge with the epic, which brought two
+    // writers of its own: 473 sites MEASURED with `npm run audit:census` minus
+    // 127 pinned; `pinned` is unchanged, so no existing classification moved.
+    ).toEqual({ pinned: 127, unpinned: 346 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

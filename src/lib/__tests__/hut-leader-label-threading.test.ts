@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // custom value and prove it reaches server-rendered surfaces at runtime.
 vi.mock("@/config/club-identity", async (importActual) => {
   const actual =
-    await importActual<typeof import("@/config/club-identity")>();
+    (await importActual()) as typeof import("@/config/club-identity");
   return { ...actual, CLUB_HUT_LEADER_LABEL: "Warden" };
 });
 

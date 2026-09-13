@@ -68,7 +68,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return {
     ...actual,
     checkCapacityForGuestRanges: h.checkCapacityForGuestRanges,
@@ -146,9 +146,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 vi.mock("@/lib/adult-member-hosting-review", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/adult-member-hosting-review")
-  >();
+  const actual = (await importOriginal()) as typeof import("@/lib/adult-member-hosting-review");
   return {
     ...actual,
     reconcileAdultMemberHostingReviewWithSiblings: h.reconcileHosting,

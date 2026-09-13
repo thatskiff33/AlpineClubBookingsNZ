@@ -91,7 +91,7 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
       // when the holding booking's own headcount is small.
       //
       // Composed from the hold's represented beds plus the custodian beds it
-      // excludes (INV-CAP-035, #2698), which is the same full lodge — the
+      // excludes (INV-CAP-038, #2698), which is the same full lodge — the
       // warning's threshold is unchanged by the exclusion, and pinning it this
       // way is what keeps that true by construction rather than by inspection.
       const occupiedBeds = reading.wholeLodgeHeld

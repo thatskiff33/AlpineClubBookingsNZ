@@ -797,10 +797,13 @@ function ZoneGrid(props: ZoneGridProps) {
         : { display: "grid", gridTemplateColumns: "1fr 14rem", gap: "0.5rem", height: "100%" };
 
   if (model.skeleton === "side-rail") {
+    // The main cell is zone 0 by the side-rail skeleton's own rule; a model
+    // with no zones at all has no main cell to draw, which is what the type
+    // was pointing at and what the rail-only render now says (#2801).
     const [main, ...rail] = model.zones;
     return (
       <div style={gridStyle}>
-        <ZoneCell {...props} zone={main} index={0} />
+        {main ? <ZoneCell {...props} zone={main} index={0} /> : null}
         <div className="flex flex-col gap-2">
           {rail.map((zone, i) => (
             <ZoneCell key={zone.key} {...props} zone={zone} index={i + 1} />

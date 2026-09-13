@@ -540,7 +540,23 @@ const CENSUS_CEILING = {
    * three zone-free exports. Both modules now import them; neither resolves a
    * timezone. Re-measured, not incremented.
    *
-   * 221 -> 222 (#2698): the same shape again. The hut-leader route sat exactly
+   * 221 -> 224 (#2958): the same benign split shape as #3128 and #3232, at the
+   * largest scale yet. `bookings/[id]/page.tsx` carried the whole surface's
+   * single `date-only` import; the behaviour-preserving decomposition
+   * moved its sections and projections verbatim into route-local modules, and
+   * four of them took the zone-free helper they were already calling with them:
+   * `_lib/booking-detail-consent.ts` (`eachDateOnlyInRange`, feeding
+   * `formatConsentNightsLabel`), `_lib/booking-detail-editor-data.ts`,
+   * `_lib/booking-detail-linked-party.ts` and
+   * `_components/booking-stay-preferences.tsx` (`formatDateOnly`). The page
+   * itself no longer imports the adapter, so one importer became four: -1 +4.
+   * No call was added, removed or changed, none of the four resolves a
+   * timezone, and every club-facing instant on the page still comes from the
+   * one `clubTime()` the shell resolves (CT-4, #2870; INV-CONFIG-002).
+   * Re-measured against the branch base, and re-measured again after the merge
+   * of the epic branch, per the warning above.
+   *
+   * 224 -> 225 (#2698): the same shape again. The hut-leader route sat exactly
    * on its file-size ceiling, and the gate refuses an allowance for a file that
    * was inside its budget, so the audit blocks moved into
    * `hut-leader-assignment-audit.ts` and took `formatDateOnly` with them. That
@@ -550,7 +566,7 @@ const CENSUS_CEILING = {
    * arrive date-only and are written into an audit payload unchanged.
    * Re-measured, not incremented.
    */
-  dateOnlyImporters: 222,
+  dateOnlyImporters: 225,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

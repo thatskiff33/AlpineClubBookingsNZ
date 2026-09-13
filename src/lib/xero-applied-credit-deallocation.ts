@@ -312,11 +312,15 @@ function isEventualConsistencyShapedTotal(params: {
   const unknown = observed.filter(
     (allocation) => !knownIds.includes(allocation.allocationID),
   );
+  // "No unknown allocation, or exactly one that is the recreate" said as a
+  // first with no rest, so the amount compared below is a value this
+  // expression already holds (#2800).
+  const [soleUnknown, ...extraUnknown] = unknown;
   const unknownIsSoleRecreate =
-    unknown.length === 0 ||
-    (unknown.length === 1 &&
+    soleUnknown === undefined ||
+    (extraUnknown.length === 0 &&
       targetCents > 0 &&
-      unknown[0].amountCents === targetCents);
+      soleUnknown.amountCents === targetCents);
   if (!unknownIsSoleRecreate) return false;
   return (
     providerTotal === preTotal ||

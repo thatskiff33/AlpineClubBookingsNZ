@@ -94,7 +94,7 @@ import { prisma } from "@/lib/prisma";
  * ## The custodian exclusion is imported, not restated (#2698)
  *
  * A hold's represented bed set excludes a bed-night a custodian holds
- * (`INV-CAP-035`). That rule is decided in exactly one place —
+ * (`INV-CAP-038`). That rule is decided in exactly one place —
  * `isCustodianHeldBedNight` in `custodian-occupancy.ts` — and this module
  * subtracts through it rather than re-deriving "is this bed the custodian's
  * tonight" from an inclusive-inclusive assignment range a second time. The
@@ -307,7 +307,7 @@ export interface WholeLodgeHoldOccupiedBedNight {
  * conservative choice for the #1768 room-mix guard, and one that leaks nothing
  * about who the held group actually is.
  *
- * ## The custodian exclusion (`INV-CAP-035`, #2698)
+ * ## The custodian exclusion (`INV-CAP-038`, #2698)
  *
  * `custodianHolds` is REQUIRED rather than optional, and that is the point: a
  * caller that forgets it is a compile error rather than a hold quietly
@@ -354,7 +354,7 @@ export function wholeLodgeHoldOccupiedBedNightsForPlanner(
       if (!isHeld(room.lodgeId ?? null, nightKey)) continue;
       for (const bed of room.beds) {
         if (!bed.active) continue;
-        // INV-CAP-035: this bed-night is the custodian's, not the held group's.
+        // INV-CAP-038: this bed-night is the custodian's, not the held group's.
         if (isCustodianHeldBedNight(custodianHolds, bed.id, nightKey)) continue;
         const key = `${bed.id}:${nightKey}`;
         if (seen.has(key)) continue;

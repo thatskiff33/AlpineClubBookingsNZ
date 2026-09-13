@@ -125,7 +125,14 @@ export function splitLayoutBody(bodyHtml: string): LayoutBodySegment[] {
     if (match.index > lastIndex) {
       segments.push({ type: "html", html: bodyHtml.slice(lastIndex, match.index) });
     }
-    segments.push({ type: "area", key: match[1] });
+    const areaKey = match[1];
+    // Unreachable: the pattern's one capture group has no `?` quantifier.
+    if (areaKey === undefined) {
+      throw new InvalidDisplayLayoutError(
+        "area placeholder matched with no captured key",
+      );
+    }
+    segments.push({ type: "area", key: areaKey });
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < bodyHtml.length) {
@@ -179,9 +186,12 @@ export function validateHtmlModuleEmbeds(html: string, where: string): void {
           `to {module, options} slot content, not embed tokens)`
       );
     }
-    if (!isModuleName(strict[1])) {
+    // The strict pattern's one capture group has no `?` quantifier, so a
+    // successful match always carries it.
+    const moduleName = strict[1];
+    if (moduleName === undefined || !isModuleName(moduleName)) {
       throw new InvalidDisplayLayoutError(
-        `${where} embeds unknown module "${strict[1]}" ` +
+        `${where} embeds unknown module "${moduleName ?? token}" ` +
           `(known: ${DISPLAY_MODULE_NAMES.join(", ")})`
       );
     }

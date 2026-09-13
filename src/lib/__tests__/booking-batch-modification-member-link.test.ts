@@ -32,12 +32,12 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: h.transaction } }));
 
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return { ...actual, acquireLodgeCapacityLock: h.acquireLodgeCapacityLock };
 });
 
 vi.mock("@/lib/booking-modify", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-modify")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-modify");
   return {
     ...actual,
     isQuotePricedBooking: h.isQuotePricedBooking,
@@ -48,7 +48,7 @@ vi.mock("@/lib/booking-modify", async (importOriginal) => {
 
 vi.mock("@/lib/member-guest-add-policy", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/member-guest-add-policy")>();
+    (await importOriginal()) as typeof import("@/lib/member-guest-add-policy");
   return { ...actual, loadMemberGuestAddPolicy: h.loadMemberGuestAddPolicy };
 });
 

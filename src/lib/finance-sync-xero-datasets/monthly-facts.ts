@@ -72,7 +72,10 @@ function attachMonthlyFacts(input: {
     provisionalFromMonth: input.currentMonth,
   });
 
-  if (extraction.months.length === 0) {
+  // The earliest parsed month is what the snapshot's period starts at, and
+  // reading it here is what says the report parsed any month at all (#2800).
+  const firstExtractedMonth = extraction.months[0];
+  if (firstExtractedMonth === undefined) {
     throw new Error(
       `${input.operation} returned a report without parseable monthly period columns`
     );
@@ -93,7 +96,7 @@ function attachMonthlyFacts(input: {
   return {
     ...input.snapshot,
     periodStart: parseRequiredDateOnly(
-      monthStartString(extraction.months[0]),
+      monthStartString(firstExtractedMonth),
       "periodStart"
     ),
     monthlyFacts: {

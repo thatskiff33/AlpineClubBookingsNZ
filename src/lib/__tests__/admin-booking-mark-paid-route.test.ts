@@ -24,9 +24,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("@/lib/manual-booking-payment", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/manual-booking-payment")
-  >("@/lib/manual-booking-payment");
+  const actual = (await vi.importActual("@/lib/manual-booking-payment")) as typeof import("@/lib/manual-booking-payment");
   return { ...actual, applyManualBookingPayment: mocks.applyManualBookingPayment };
 });
 vi.mock("server-only", () => ({}));
@@ -175,9 +173,7 @@ describe("POST /api/admin/bookings/[id]/mark-paid", () => {
   });
 
   it("surfaces a domain refusal with its own status and message", async () => {
-    const { ManualBookingPaymentError } = await vi.importActual<
-      typeof import("@/lib/payment-reconciliation")
-    >("@/lib/payment-reconciliation");
+    const { ManualBookingPaymentError } = (await vi.importActual("@/lib/payment-reconciliation")) as typeof import("@/lib/payment-reconciliation");
     mocks.applyManualBookingPayment.mockRejectedValue(
       new ManualBookingPaymentError(
         "This booking has an outstanding Xero invoice — record the payment against the invoice in Xero instead.",

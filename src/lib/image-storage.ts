@@ -85,7 +85,6 @@ export function resolveInImagesRoot(rel: string): string | null {
   // Why that satisfies both Semgrep and CodeQL's six `js/path-injection`
   // alerts is recorded once in docs/SECURITY-ATTACK-SURFACE.md ->
   // "Image Manager path containment" (#2841).
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const resolved = path.resolve(IMAGES_ROOT, normalized);
   if (
     resolved !== IMAGES_ROOT &&

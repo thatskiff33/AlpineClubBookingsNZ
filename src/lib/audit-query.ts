@@ -5,6 +5,7 @@ import {
   AUDIT_CATEGORY_LABELS,
   type AuditCategory,
 } from "./audit-categories";
+import { formatCents } from "./utils";
 
 /**
  * The Admin Audit Log's category filter, DERIVED from the canonical taxonomy
@@ -409,10 +410,6 @@ function titleCaseAction(action: string): string {
     .join(" ");
 }
 
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
-
 function humanizeKey(key: string): string {
   return titleCaseAction(
     key
@@ -446,12 +443,23 @@ function stringMetadataValue(
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function formatMetadataFragment(key: string, value: Prisma.JsonValue): string | null {
+// test seam (#3302): this used to be its own hard-coded "$" + toFixed(2)
+// formatter with no fixture; exported so the switch to the shared,
+// currency-aware `formatCents` is asserted rather than merely claimed.
+export function formatMetadataFragment(key: string, value: Prisma.JsonValue): string | null {
   if (value === null) {
     return null;
   }
   if (typeof value === "number" && /cents$/i.test(key)) {
-    return `${humanizeKey(key)} ${formatCents(value)}`;
+    // #3302 review (equivalence lens F8): this reads a JSON number straight
+    // from stored audit metadata with no writer-side guarantee it is an
+    // integer. `Math.round` before `formatCents` (matching
+    // `xero-operation-summaries.ts`'s own guard on the same shared helper)
+    // keeps money integer cents at this call site regardless of what a
+    // caller stored, and removes a rounding-MODE difference the review
+    // measured between the old `.toFixed(2)` body and `Intl.NumberFormat`
+    // at exactly a half-cent (1.5 rounded to 2c one way and 1c the other).
+    return `${humanizeKey(key)} ${formatCents(Math.round(value))}`;
   }
   if (typeof value === "boolean") {
     return `${humanizeKey(key)} ${value ? "yes" : "no"}`;
@@ -903,8 +911,9 @@ export function buildAuditDrilldownLinks(params: {
     actionFallbackDrilldownLink(params.action, params.targetId)
   );
 
-  if (links.length > 1 && !links.some((link) => link.primary)) {
-    links[0].primary = true;
+  const [firstLink] = links;
+  if (links.length > 1 && firstLink && !links.some((link) => link.primary)) {
+    firstLink.primary = true;
   }
 
   return links;

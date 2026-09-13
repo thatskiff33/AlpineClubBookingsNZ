@@ -96,6 +96,13 @@ function createCssColorConverter(ownerDocument: Document = document) {
 
       context.fillRect(0, 0, 1, 1);
       const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+      // Unreachable: `getImageData(0, 0, 1, 1)` always returns exactly 4
+      // RGBA bytes. If it ever didn't, this is the same "can't resolve"
+      // outcome the function already returns for a genuine parse failure.
+      if (red === undefined || green === undefined || blue === undefined || alpha === undefined) {
+        cache.set(trimmedExpression, null);
+        return null;
+      }
       const resolvedColor =
         alpha === 255
           ? `rgb(${red}, ${green}, ${blue})`
@@ -404,6 +411,11 @@ function canvasLooksBlankBlack(canvas: HTMLCanvasElement) {
           Math.round((canvas.height * (row + 0.5)) / rows)
         );
         const [red, green, blue, alpha] = context.getImageData(x, y, 1, 1).data;
+        // Unreachable: getImageData(x, y, 1, 1) always returns exactly 4
+        // RGBA bytes; an unread sample is simply not counted.
+        if (red === undefined || green === undefined || blue === undefined || alpha === undefined) {
+          continue;
+        }
         sampledPixels += 1;
 
         if (alpha > 245 && red < 12 && green < 12 && blue < 12) {

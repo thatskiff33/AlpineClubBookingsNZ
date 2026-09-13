@@ -50,7 +50,7 @@ const editableData = {
   membershipTypes: [{
     id: "type-1", key: "FULL", name: "Full", isActive: true,
     annualFees: [{ id: "fee-1", ageTier: null, amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_MEMBER", prorationRule: "NONE" }],
-    joiningFees: [{ id: "joining-1", ageTier: "ADULT", amountCents: 5000, effectiveFrom: "2026-01-01", effectiveTo: null }],
+    joiningFees: [{ id: "joining-1", ageTier: "ADULT", amountCents: 123456, effectiveFrom: "2026-01-01", effectiveTo: null }],
   }],
   familyGroups: [{
     id: "family-1", name: "Example family", billingMemberId: "member-1", billingException: false,
@@ -235,6 +235,15 @@ describe("fee configuration page", () => {
     expect(screen.queryByRole("combobox", { name: "Billing member" })).toBeNull();
     // Saved values still render (fee schedule + billing member as static text).
     expect(screen.getByText("$100.00")).toBeTruthy();
+    // The joining fee renders through the shared `formatCents` (#3325): the
+    // club's configured currency, grouped — a hand-rolled or hard-coded
+    // formatter would print "$1234.56" or a fixed "NZ$". The row's span also
+    // carries the date range, so match the exact amount prefix.
+    expect(
+      screen.getByText((_, element) =>
+        element?.tagName === "SPAN" && (element.textContent ?? "").startsWith("$1,234.56 · "),
+      ),
+    ).toBeTruthy();
     expect(screen.getByText(/Alex Example/)).toBeTruthy();
   });
 
@@ -628,5 +637,39 @@ describe("fee configuration page", () => {
     selectRadixOption("Proration", /Remaining months/);
     expect(screen.getByRole("checkbox")).toBeTruthy();
     expect(screen.queryByText("Prorate n/a")).toBeNull();
+  });
+
+  // The amount labels used to hard-code "(NZD)"; they now read the club's
+  // configured currency code (#3325). The literal "(NZD)" pins above are the
+  // byte-identical proof under the default configuration; this case is what
+  // makes the code path discriminate — a fresh import under a different
+  // configured currency must label the inputs with THAT code.
+  it("labels the amount inputs with the configured currency code, not a hard-coded NZD (#3325)", async () => {
+    vi.resetModules();
+    vi.doMock("@/config/operational", () => ({
+      APP_CURRENCY: "AUD",
+      APP_STRIPE_CURRENCY: "aud",
+      APP_TIME_ZONE: "Australia/Sydney",
+      APP_LOCALE: "en-AU",
+    }));
+    try {
+      const { FinanceFeesSections } = await import("@/app/(admin)/admin/fees/_components/finance-fees-sections");
+      // The fresh module tree has its own club-time context object, so the
+      // render helper's (static) provider would not be seen; wrap with the
+      // freshly imported one.
+      const { ClubTimeProvider: FreshClubTimeProvider } = await import("@/components/club-time-provider");
+      stubFetch(response(true, editableData));
+      render(<FinanceFeesSections />, {
+        wrapper: ({ children }) => (
+          <FreshClubTimeProvider zone="Australia/Sydney">{children}</FreshClubTimeProvider>
+        ),
+      });
+      fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+      expect(screen.getByLabelText("Annual amount (AUD)")).toBeTruthy();
+      expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
+    } finally {
+      vi.doUnmock("@/config/operational");
+      vi.resetModules();
+    }
   });
 });

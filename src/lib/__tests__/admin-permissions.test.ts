@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { stripComments } from "./support/strip-comments";
 import {
   bookingManagementAuthorizationRole,
   ANY_ADMIN_ADMISSION_PATHS,
@@ -416,13 +417,26 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
 // it — and in particular the owner must keep seeing their own card and NOT this.
 // ---------------------------------------------------------------------------
 describe("outstanding additional payment panel visibility (#2350)", () => {
+  // #2958: both render sites live in the page's payment-cards section.
+  //
+  // CODE ONLY, through the canonical stripper, for the same reason the
+  // bed-allocation describe below gives: the assertions here match a chain of
+  // clauses across a bounded window, and a comment sitting between two of them
+  // spends that window without changing any code. One did — a four-line note
+  // explaining #3340's predicate pushed the two ends more than 200 characters
+  // apart and reddened this test while the rule it pins was perfectly intact.
+  // Stripping also makes the negative assertion below honest: it forbids a
+  // RESTATEMENT of the rule, and prose quoting the old two-clause form is not
+  // one.
   const bookingPageSource = () =>
-    fs.readFileSync(
-      path.join(
-        process.cwd(),
-        "src/app/(authenticated)/bookings/[id]/page.tsx",
+    stripComments(
+      fs.readFileSync(
+        path.join(
+          process.cwd(),
+          "src/app/(authenticated)/bookings/[id]/_components/booking-payment-cards.tsx",
+        ),
+        "utf8",
       ),
-      "utf8",
     );
 
   const canSeePanel = (accessRoles: AppAccessRole[], isBookingOwner = false) =>
@@ -488,25 +502,91 @@ describe("outstanding additional payment panel visibility (#2350)", () => {
     offering a cancelled booking's owner a payment form (see
     src/components/__tests__/additional-payment-card-gate.test.ts). The owner
     gate itself is unchanged, which is what this pin is for.
+
+    #3340 replaced the trailing "is there an uncollected ask" pair with a CALL to
+    `isAdditionalAmountUncollected`, the one predicate that answers it - a
+    behaviour-identical refactor (`payment.additionalAmountCents > 0 &&
+    payment.additionalPaymentStatus !== "SUCCEEDED"`, which is what that function
+    is). This pin follows it rather than holding the restated form in place: what
+    it is for is the OWNER half of the condition, and pinning a copy of a rule
+    that has just been given one home would be asking for the copy back.
   */
   it("leaves the member's own owner-only card exactly where it was (#1303)", () => {
     const source = bookingPageSource();
 
     expect(source).toMatch(
-      /booking\.payment &&\s*isBookingOwner &&\s*!isDeleted &&\s*isAdditionalPayableBookingStatus\(booking\.status\) &&\s*booking\.payment\.additionalAmountCents > 0 &&\s*booking\.payment\.additionalPaymentStatus !== "SUCCEEDED" && \(\s*<AdditionalPaymentCard/,
+      /booking\.payment &&\s*isBookingOwner &&\s*!isDeleted &&\s*isAdditionalPayableBookingStatus\(booking\.status\) &&[\s\S]{0,200}?isAdditionalAmountUncollected\(booking\.payment\) && \(\s*<AdditionalPaymentCard/,
+    );
+    // The ask half is a CALL, never a restatement: a second copy of the rule on
+    // this page is what #3340 removed (`INV-SSOT-001`).
+    expect(source).not.toMatch(
+      /isBookingOwner[\s\S]{0,400}additionalPaymentStatus !== "SUCCEEDED"/,
     );
   });
 });
 
 describe("in-booking bed allocation panel visibility (#2252)", () => {
-  const bookingPageSource = () =>
-    fs.readFileSync(
-      path.join(
-        process.cwd(),
-        "src/app/(authenticated)/bookings/[id]/page.tsx",
-      ),
-      "utf8",
+  const ROUTE_DIR = "src/app/(authenticated)/bookings/[id]";
+  /*
+    CODE ONLY, through the canonical stripper. The anchor-order assertion below
+    finds each id by `indexOf`, so an id merely MENTIONED in a comment — the
+    docblock of a future section explaining which anchor it owns, say — would
+    win that lookup ahead of the real render site and the ordering check would
+    be reading prose. Every assertion in this describe matches code.
+  */
+  const routeSource = (relative: string) =>
+    stripComments(
+      fs.readFileSync(path.join(process.cwd(), ROUTE_DIR, relative), "utf8"),
     );
+  const bookingPageSource = () => routeSource("page.tsx");
+  // #2958: the gate is defined in the edit-access module and rendered in the
+  // stay-preferences section.
+  const editAccessSource = () =>
+    routeSource("_lib/booking-detail-edit-access.ts");
+  const stayPreferencesSource = () =>
+    routeSource("_components/booking-stay-preferences.tsx");
+  /**
+   * Every section component in `_components/`, mapped from its exported name to
+   * its file, read FROM THE DIRECTORY rather than from the page's import text.
+   *
+   * The import-text version of this worked and was fragile in two ways a future
+   * edit would not notice: it matched a single-line `import { X } from "./_components/y";`,
+   * so reformatting one import across lines dropped that section from the
+   * composition silently, and it keyed on a `Booking` name prefix, so renaming a
+   * section did the same. Reading the directory keys on what is actually there.
+   */
+  const sectionSources = () => {
+    const dir = path.join(process.cwd(), ROUTE_DIR, "_components");
+    const map = new Map<string, string>();
+    for (const entry of fs.readdirSync(dir)) {
+      if (!entry.endsWith(".tsx") || entry.endsWith(".test.tsx")) continue;
+      const source = routeSource(`_components/${entry}`);
+      for (const match of source.matchAll(/export function (\w+)/g)) {
+        map.set(match[1]!, source);
+      }
+    }
+    return map;
+  };
+  /**
+   * The page's markup as the browser receives it: the page shell with each
+   * section it composes replaced by that section's source, in render order.
+   * Anchors declared on the page and anchors rendered inside a section therefore
+   * sit in DOM order in the returned text.
+   */
+  const composedBookingPageSource = () => {
+    const page = bookingPageSource();
+    const sections = sectionSources();
+    // Vacuity guard: an empty or halved map would compose the shell alone, and
+    // every anchor rendered inside a section would read as simply absent.
+    expect(sections.size, "no section components found").toBeGreaterThan(5);
+    const composed = page.replace(
+      /<([A-Z]\w+)\b/g,
+      (tag, name: string) => sections.get(name) ?? tag,
+    );
+    // …and the composition really happened: the shell alone is shorter.
+    expect(composed.length).toBeGreaterThan(page.length);
+    return composed;
+  };
 
   const canSeePanel = (accessRoles: AppAccessRole[]) => {
     const subject = { accessRoles };
@@ -538,11 +618,12 @@ describe("in-booking bed allocation panel visibility (#2252)", () => {
   });
 
   it("renders the panel only behind canSeeAdminTools AND the bedAllocation module flag", () => {
-    const source = bookingPageSource();
+    const gateSource = editAccessSource();
+    const source = stayPreferencesSource();
 
     // ONE named gate, defined as exactly that conjunction: the routes 404 when
     // the module is off, and the member-invisibility half is this gate.
-    expect(source).toMatch(
+    expect(gateSource).toMatch(
       /const showBedAllocationPanel =\s*canSeeAdminTools && modules\.bedAllocation;/,
     );
     // The render site is that gate and nothing looser…
@@ -576,7 +657,7 @@ describe("in-booking bed allocation panel visibility (#2252)", () => {
      * This pins the general rule, not just the one anchor: every id declared in
      * BOOKING_SECTIONS must appear in the page's markup in the declared order.
      */
-    const source = bookingPageSource();
+    const source = composedBookingPageSource();
 
     const declared = Array.from(
       source
@@ -1039,6 +1120,28 @@ describe("matrix-derived finance access", () => {
     expect(hasFinanceViewerAccess({ accessRoles: ["ADMIN_CONTENT"] })).toBe(
       false,
     );
+  });
+
+  it("reads access role rows and ignores a stale legacy financeAccessLevel", () => {
+    // Moved from finance-auth.test.ts when the finance-auth wrappers were
+    // deleted (#3264): the legacy column is display/back-compat only.
+    expect(
+      hasFinanceManagerAccess({
+        role: "USER",
+        financeAccessLevel: "MANAGER",
+        accessRoles: [{ role: "FINANCE_USER" }],
+      }),
+    ).toBe(false);
+    expect(
+      hasFinanceManagerAccess({ financeAccessLevel: "MANAGER", accessRoles: [] }),
+    ).toBe(false);
+    expect(
+      hasFinanceViewerAccess({
+        role: "LODGE",
+        financeAccessLevel: "NONE",
+        accessRoles: [{ role: "LODGE" }, { role: "FINANCE_USER" }],
+      }),
+    ).toBe(true);
   });
 
   it("derives finance access from custom definitions", () => {

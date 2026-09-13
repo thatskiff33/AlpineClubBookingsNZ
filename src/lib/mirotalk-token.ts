@@ -129,8 +129,13 @@ export function parseExpiresToSeconds(value: string | undefined): number {
   if (!raw) return 3600;
   const match = /^(\d+)\s*([smhd]?)$/i.exec(raw);
   if (!match) return 3600;
-  const amount = Number(match[1]);
-  switch (match[2].toLowerCase()) {
+  // Both capture groups are what the pattern is for; without them there is no
+  // duration to read and the documented one-hour default stands (#2800).
+  const amountText = match[1];
+  const unit = match[2];
+  if (amountText === undefined || unit === undefined) return 3600;
+  const amount = Number(amountText);
+  switch (unit.toLowerCase()) {
     case "s":
     case "":
       return amount;

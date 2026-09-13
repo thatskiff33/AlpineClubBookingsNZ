@@ -37,7 +37,7 @@ import { prisma } from "@/lib/prisma";
  *   and nothing else.
  * - The DELETE holds the same key since #2698, because removing a custodian bed
  *   hold WIDENS the represented bed set of every overlapping whole-lodge hold
- *   (`INV-CAP-035`) — a capacity move that ran on the base client outside any
+ *   (`INV-CAP-038`) — a capacity move that ran on the base client outside any
  *   transaction until then. It creates no overlap, so it still runs no overlap
  *   read.
  * - The #2698 AMEND path, and only that path, additionally takes the global

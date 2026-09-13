@@ -202,7 +202,7 @@ vi.mock("bcryptjs", () => ({
 // Keep the real BookingMemberNightConflictError; only the assertion is a spy.
 vi.mock("@/lib/booking-member-night-conflicts", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/booking-member-night-conflicts")>();
+    (await importOriginal()) as typeof import("@/lib/booking-member-night-conflicts");
   return {
     ...actual,
     assertNoBookingMemberNightConflicts: vi.fn().mockResolvedValue(undefined),

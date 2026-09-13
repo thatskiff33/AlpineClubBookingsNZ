@@ -134,7 +134,7 @@ export interface WholeLodgeHoldAmendment {
  * decision 9 Aug 2026).
  *
  * A custodian bed hold created or changed over nights an EXISTING whole-lodge
- * hold already covers narrows that hold's represented bed set (`INV-CAP-035`).
+ * hold already covers narrows that hold's represented bed set (`INV-CAP-038`).
  * That is somebody else's sole-occupancy booking, so it is not rewritten
  * silently: the write is refused, the officer is shown which nights and which
  * holds, and only an explicit `amendOverlappingHolds` re-send goes through — as
@@ -285,7 +285,7 @@ export async function validateCustodianBedHold(input: {
   // The whole-lodge hold flag is deliberately NOT pinned here, and since #2698
   // the reason is an arithmetic fact rather than a bare policy. A hold's
   // represented bed set EXCLUDES the bed-nights a custodian holds
-  // (INV-CAP-035), so holding a bed on an exclusively held night takes that bed
+  // (INV-CAP-038), so holding a bed on an exclusively held night takes that bed
   // out of the held group's set and adds it to the custodian's: the lodge's
   // occupancy is unchanged and there is nothing over-capacity about it. Pinning
   // would turn this advisory count into a hard "lodge is full" on every held
@@ -346,7 +346,7 @@ export async function validateCustodianBedHold(input: {
 
 /**
  * Which existing whole-lodge holds this custodian bed hold would narrow
- * (#2698, `INV-CAP-035`) — the ordering case, and nothing else.
+ * (#2698, `INV-CAP-038`) — the ordering case, and nothing else.
  *
  * Runs inside the caller's locked transaction, on the caller's client, so the
  * hold set it reads is the one the write commits against. The routes call it
@@ -449,7 +449,7 @@ export function wholeLodgeHoldAmendmentNights(
  *
  * **This audit row IS the amendment.** Coverage is derived at read time — the
  * hold's represented bed set is computed from the live custodian holds every
- * time anything asks (`INV-CAP-035`) — so there is no bed set on the hold row
+ * time anything asks (`INV-CAP-038`) — so there is no bed set on the hold row
  * to edit and no column to write. What the decision requires to be durable and
  * atomic is therefore the officer's acceptance itself, and it is written on the
  * SAME transaction as the custodian assignment that caused it: accept commits

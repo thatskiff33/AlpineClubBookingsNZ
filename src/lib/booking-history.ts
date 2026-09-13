@@ -6,7 +6,7 @@ import {
   type BookingHistoryModification,
 } from "@/lib/booking-history-modification-narrative";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
-import { formatCents } from "@/lib/utils";
+import { formatCents, formatSignedCents } from "@/lib/utils";
 
 export type BookingHistoryTone = "default" | "success" | "warning" | "danger";
 
@@ -117,14 +117,6 @@ interface BuildBookingHistoryOptions {
    * always has rather than making a claim about money it has not checked.
    */
   financialReviewPending?: boolean;
-}
-
-function formatSignedCents(cents: number): string {
-  if (cents === 0) {
-    return formatCents(0);
-  }
-
-  return `${cents > 0 ? "+" : "-"}${formatCents(Math.abs(cents))}`;
 }
 
 function parseAuditDetails(details: string | null): Record<string, unknown> | null {

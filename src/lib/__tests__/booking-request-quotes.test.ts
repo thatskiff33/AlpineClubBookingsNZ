@@ -88,9 +88,7 @@ const mockSendQuoteEmail = mocks.mockSendQuoteEmail;
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prismaMock }));
 
 vi.mock("@/lib/adult-member-hosting-queue-participants", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/adult-member-hosting-queue-participants")
-  >("@/lib/adult-member-hosting-queue-participants");
+  const actual = (await vi.importActual("@/lib/adult-member-hosting-queue-participants")) as typeof import("@/lib/adult-member-hosting-queue-participants");
   return {
     ...actual,
     lockActiveBookingRequestLinkedMembers:
@@ -222,7 +220,7 @@ vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
 // Keep the real BookingMemberNightConflictError; only the assertion is a spy.
 vi.mock("@/lib/booking-member-night-conflicts", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/booking-member-night-conflicts")>();
+    (await importOriginal()) as typeof import("@/lib/booking-member-night-conflicts");
   return {
     ...actual,
     assertNoBookingMemberNightConflicts: vi.fn().mockResolvedValue(undefined),

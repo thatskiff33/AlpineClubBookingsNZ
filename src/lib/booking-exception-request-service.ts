@@ -302,21 +302,35 @@ export function buildProposalPartyFromGuests(
   const allNights = [
     ...new Set([...bookingNights, ...guestNights.flat()]),
   ].sort();
-  const envelopeCheckIn = allNights.length > 0
-    ? parseDateOnly(allNights[0])
-    : checkIn;
-  const envelopeCheckOut = allNights.length > 0
-    ? addDaysDateOnly(parseDateOnly(allNights[allNights.length - 1]), 1)
-    : checkOut;
+  // Both ends of the expanded envelope; with no night at all the stated range
+  // stands, which is what the length checks said (#2800, INV-DATE).
+  const firstNightKey = allNights[0];
+  const lastNightKey = allNights.at(-1);
+  const envelopeCheckIn =
+    firstNightKey !== undefined ? parseDateOnly(firstNightKey) : checkIn;
+  const envelopeCheckOut =
+    lastNightKey !== undefined
+      ? addDaysDateOnly(parseDateOnly(lastNightKey), 1)
+      : checkOut;
 
-  const proposalGuests: ProposalGuest[] = guests.map((guest, index) => ({
-    firstName: guest.firstName,
-    lastName: guest.lastName,
-    ageTier: guest.ageTier,
-    isMember: guest.isMember,
-    memberId: guest.memberId ?? null,
-    nights: guestNights[index],
-  }));
+  // Each guest carries the nights derived for it rather than a second list read
+  // back by position (#2800).
+  const proposalGuests: ProposalGuest[] = guestNights.map((nights, index) => {
+    const guest = guests[index];
+    if (guest === undefined) {
+      throw new Error(
+        `Exception proposal derived nights for ${guestNights.length} guest(s) from ${guests.length}`,
+      );
+    }
+    return {
+      firstName: guest.firstName,
+      lastName: guest.lastName,
+      ageTier: guest.ageTier,
+      isMember: guest.isMember,
+      memberId: guest.memberId ?? null,
+      nights,
+    };
+  });
   return canonicalizeProposalParty({
     checkIn: formatDateOnly(envelopeCheckIn),
     checkOut: formatDateOnly(envelopeCheckOut),
@@ -452,15 +466,27 @@ export function buildModificationProposalParties(args: {
     }),
   );
 
+  // `resolveModificationStayRanges` returns one resolved range per added guest,
+  // in input order. A guest with none has no nights to propose and no envelope
+  // to freeze the review against, so it refuses rather than proposing a party
+  // the officer would then approve blind (#2800, INV-EXCEPT).
   const proposedAdded: ProposalGuest[] = (delta.addGuests ?? []).map(
-    (guest, index) => ({
-      firstName: guest.firstName,
-      lastName: guest.lastName,
-      ageTier: guest.ageTier,
-      isMember: guest.isMember,
-      memberId: guest.memberId ?? null,
-      nights: nightsForResolvedRange(resolved.added[index]),
-    }),
+    (guest, index) => {
+      const range = resolved.added[index];
+      if (range === undefined) {
+        throw new Error(
+          `Exception proposal has no resolved stay range for added guest ${index + 1} of ${resolved.added.length}`,
+        );
+      }
+      return {
+        firstName: guest.firstName,
+        lastName: guest.lastName,
+        ageTier: guest.ageTier,
+        isMember: guest.isMember,
+        memberId: guest.memberId ?? null,
+        nights: nightsForResolvedRange(range),
+      };
+    },
   );
 
   const base = canonicalizeProposalParty({

@@ -17,7 +17,7 @@ import { hasAdminAreaAccess } from "@/lib/admin-permissions";
  * Used by CancelBookingButton to show amounts before the user confirms.
  */
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {

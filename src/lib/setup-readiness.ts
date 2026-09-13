@@ -1966,7 +1966,6 @@ function buildAddressAutocompleteCheck(
 }
 
 function buildFinanceDashboardCheck(
-  env: Env,
   db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
 ): SetupStepCheck {
@@ -2098,7 +2097,7 @@ export function buildSetupReadiness(
       buildOperationalXeroCheck(env, input.database, progress),
     ],
     finance: [
-      buildFinanceDashboardCheck(env, input.database, progress),
+      buildFinanceDashboardCheck(input.database, progress),
       buildXeroMappingCheck(input.database, progress),
     ],
   };

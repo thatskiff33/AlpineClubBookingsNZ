@@ -100,7 +100,7 @@ vi.mock("@/lib/xero", () => ({
   findOrCreateXeroContact: vi.fn(),
 }));
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
   return {
     ...actual,
     upsertXeroObjectLink: mockUpsertXeroObjectLink,

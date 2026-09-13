@@ -39,7 +39,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/xero-contact-create-recovery", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/xero-contact-create-recovery")>();
+    (await importOriginal()) as typeof import("@/lib/xero-contact-create-recovery");
   return {
     ...actual,
     recordProviderCreatedContactPendingLocalLink:
@@ -75,7 +75,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
   return {
     ...actual,
     buildXeroIdempotencyKey: vi.fn((...parts: unknown[]) => parts.join(":")),
@@ -87,7 +87,7 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 });
 
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-api-client")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
   return {
     ...actual,
     getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,

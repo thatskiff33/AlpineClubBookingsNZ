@@ -18,8 +18,12 @@ import logger from "@/lib/logger";
 import { PUBLIC_LAYOUT_CACHE_TAGS } from "@/lib/public-layout-cache";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 import {
+  // The upsert below keeps its own `select`: it is a WRITE, and the shared read
+  // helper cannot serve it — but its RETURNING must still name only the live
+  // columns (#175), so it spreads the canonical constant rather than a literal.
   CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   MODULE_KEYS,
+  readClubModuleSettingsRecord,
   type ModuleKey,
   type ModuleSettingsValues,
 } from "@/config/modules";
@@ -85,10 +89,7 @@ export async function PUT(request: Request) {
     );
   }
 
-  const existing = await prisma.clubModuleSettings.findUnique({
-    where: { id: CLUB_MODULE_SETTINGS_ID },
-    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
-  });
+  const existing = await readClubModuleSettingsRecord(prisma);
   const before = normalizeClubModuleSettings(existing);
   const after = parsed.data.settings;
   const changes = getChanges(before, after);

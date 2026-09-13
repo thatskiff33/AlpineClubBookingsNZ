@@ -62,6 +62,7 @@ import {
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { sizeAdditionalAskCents } from "@/lib/additional-payment-ask";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
@@ -682,22 +683,61 @@ export async function POST(
        */
       const parked = addEvidence.occurrences.length > 0;
 
+      /**
+       * The breakdown row for one position of the party pass.
+       *
+       * `fullPriceBreakdown.guests` is index-aligned with `allGuestsForPricing`
+       * by the pricing engine's construction, but `PriceBreakdown` declares no
+       * length relation to its input, so a short breakdown type-checks cleanly
+       * and would otherwise be read past. A missing row here is a wiring defect
+       * in whoever built the breakdown, and there is no honest amount to sell a
+       * night at or to promo-allocate against — refused by name, never guessed
+       * (#3031, #2801). One home for that condition: both readers below go
+       * through it, so neither repeats the answer.
+       */
+      const pricedPartyMember = (index: number) => {
+        const priced = fullPriceBreakdown.guests[index];
+        if (priced === undefined) {
+          throw new Error(
+            `The add-guest route has no priced guest at breakdown position ${index} of ${fullPriceBreakdown.guests.length} (#3031).`
+          );
+        }
+        return priced;
+      };
+
       // Create BookingGuest records from their slice of the full-party
       // breakdown, persisting one BookingGuestNight row per priced night
       // (#1093) so added guests join the uniform night-row model: without
       // rows, a later edit would reprice their whole stay at current season
       // rates instead of honouring the prices they booked at (#1036).
+      //
+      // Each created guest's promo-allocation row is built in this same pass
+      // (#2801): the created `BookingGuest`, the normalized input it came from
+      // and the breakdown row that priced it are all in hand here, so they are
+      // carried together instead of being three arrays re-indexed against each
+      // other afterwards.
       const createdGuests: BookingGuest[] = [];
-      for (let i = 0; i < normalizedNewGuests.length; i++) {
-        const priced = fullPriceBreakdown.guests[booking.guests.length + i];
+      type PartyGuestNightRate = {
+        bookingGuestId: string;
+        memberId: string | null;
+        isMember: boolean;
+        perNightRates: ReturnType<typeof pricedPartyMember>["perNightCents"];
+        nightDates: ReturnType<typeof pricedPartyMember>["nightDates"];
+        firstNight: Date;
+      };
+      const newGuestNightRates: PartyGuestNightRate[] = [];
+      for (const [newGuestIndex, newGuest] of normalizedNewGuests.entries()) {
+        const priced = pricedPartyMember(
+          booking.guests.length + newGuestIndex
+        );
         const guest = await tx.bookingGuest.create({
           data: {
             bookingId,
-            firstName: normalizedNewGuests[i].firstName,
-            lastName: normalizedNewGuests[i].lastName,
-            ageTier: normalizedNewGuests[i].ageTier,
-            isMember: normalizedNewGuests[i].isMember,
-            memberId: normalizedNewGuests[i].memberId || null,
+            firstName: newGuest.firstName,
+            lastName: newGuest.lastName,
+            ageTier: newGuest.ageTier,
+            isMember: newGuest.isMember,
+            memberId: newGuest.memberId || null,
             stayStart: booking.checkIn,
             stayEnd: booking.checkOut,
             priceCents: priced.priceCents,
@@ -708,7 +748,7 @@ export async function POST(
             // `buildMemberGuestConsentWrite`. Spread only when present: a
             // family-scope or non-member guest writes exactly what it wrote
             // before.
-            ...(normalizedNewGuests[i].memberGuestConsent ?? {}),
+            ...(newGuest.memberGuestConsent ?? {}),
             nights: {
               create: (priced.nightDates ?? []).map((stayDate, k) => ({
                 stayDate,
@@ -731,22 +771,39 @@ export async function POST(
           },
         });
         createdGuests.push(guest);
+        newGuestNightRates.push({
+          bookingGuestId: guest.id,
+          memberId: newGuest.memberId ?? null,
+          isMember: newGuest.isMember,
+          perNightRates: priced.perNightCents,
+          nightDates: priced.nightDates,
+          // nightDates carry each guest's actual priced nights (partial stays
+          // included); firstNight remains the booking's check-in so internal
+          // work-party promos date their window from the stay start.
+          firstNight: booking.checkIn,
+        });
       }
 
-      const guestNightRates = allGuestsForPricing.map((guest, index) => ({
-        bookingGuestId:
-          index < booking.guests.length
-            ? booking.guests[index].id
-            : createdGuests[index - booking.guests.length]?.id ?? null,
-        memberId: guest.memberId ?? null,
-        isMember: guest.isMember,
-        perNightRates: fullPriceBreakdown.guests[index].perNightCents,
-        nightDates: fullPriceBreakdown.guests[index].nightDates,
-        // nightDates carry each guest's actual priced nights (partial stays
-        // included); firstNight remains the booking's check-in so internal
-        // work-party promos date their window from the stay start.
-        firstNight: booking.checkIn,
-      }));
+      // The party in the order the pricing pass saw it: the existing guests
+      // (whose pricing inputs `allGuestsForPricing` derives from these very
+      // rows, position for position), then the guests created above in arrival
+      // order. Each half reads its own source, so no position is looked up in
+      // an array it did not come from — which is also why `bookingGuestId` is
+      // now always a real id rather than a nullable one.
+      const guestNightRates: PartyGuestNightRate[] = [
+        ...booking.guests.map((guest, index) => {
+          const priced = pricedPartyMember(index);
+          return {
+            bookingGuestId: guest.id,
+            memberId: guest.memberId ?? null,
+            isMember: guest.isMember,
+            perNightRates: priced.perNightCents,
+            nightDates: priced.nightDates,
+            firstNight: booking.checkIn,
+          };
+        }),
+        ...newGuestNightRates,
+      ];
 
       // #3166: on a parked add the booking's stored total is written back
       // unchanged. The guests created above carry their own real prices; what
@@ -929,7 +986,43 @@ export async function POST(
         hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
       const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
 
-      if ((hasSucceededPayment || hasIssuedXeroInvoice) && priceDiffCents > 0) {
+      /**
+       * #3340: THE FIFTH ASK-SIZING DOOR, and the one the first round missed.
+       *
+       * The other four reach `sizeAdditionalAskCents` through
+       * `applyPaymentAdjustments`; this door settles for itself, so it calls the
+       * one home directly rather than restating a bare delta (`INV-SSOT-001`).
+       * It is fully wired into the same machinery -
+       * `createModificationAdditionalPaymentIntent` below mints through
+       * `queueSupersededAdditionalIntentCancellations`, which RETIRES every other
+       * outstanding ADDITIONAL intent on this payment - so a delta-sized ask here
+       * deletes the unpaid balance of the ask it replaces. A $130 booking paid,
+       * edited +$70 unpaid, then a guest added at +$70 asked for $70 and left $70
+       * owed by nobody: byte-for-byte the #3340 leak, at a door the fix had not
+       * reached. `isBookingFullyPaidForGuestNameEdits` returns false while an ask
+       * is outstanding, so nothing upstream refuses the sequence.
+       *
+       * The two arms stay separate, exactly as `applyPaymentAdjustments` keeps
+       * them. The STRIPE ask folds the superseded balance in because minting
+       * retires it; the Xero arm sizes a SUPPLEMENTARY INVOICE for THIS edit,
+       * which supersedes nothing and is collected alongside whatever came before
+       * it - folding a Stripe balance into that figure would invoice the same
+       * money twice. Stripe wins where both are true, which is the order
+       * `applyPaymentAdjustments` already uses.
+       *
+       * The payment read here is the post-lock re-read (`pg_advisory_xact_lock(1)`
+       * plus the per-lodge key, above), so the ask being superseded is read under
+       * the same locks that serialise every counterpart writer in this route.
+       */
+      if (hasSucceededPayment && priceDiffCents > 0) {
+        additionalAmountCents = sizeAdditionalAskCents({
+          priceDiffCents,
+          // A guest add never charges one; the route passes 0 to the Xero
+          // settlement and to the member's email for the same reason.
+          changeFeeCents: 0,
+          payment: booking.payment,
+        });
+      } else if (hasIssuedXeroInvoice && priceDiffCents > 0) {
         additionalAmountCents = priceDiffCents;
       }
 

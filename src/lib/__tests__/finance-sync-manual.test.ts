@@ -19,9 +19,7 @@ vi.mock("@/lib/finance-sync-datasets", () => ({
 }));
 
 vi.mock("@/lib/finance-sync-service", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/finance-sync-service")>(
-    "@/lib/finance-sync-service"
-  );
+  const actual = (await vi.importActual("@/lib/finance-sync-service")) as typeof import("@/lib/finance-sync-service");
 
   return {
     ...actual,

@@ -34,15 +34,20 @@ function parseScreenshot(
     return null;
   }
 
-  const match = screenshotDataUrl.match(
-    /^data:(image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=]+)$/
-  );
-  if (!match) {
+  // Both captures are mandatory in the pattern, so "the pattern matched" and
+  // "both parts are here" are one condition — read out of the destructure and
+  // answered by the one 400 that already existed (#2801).
+  const [, matchedContentType, base64Payload] =
+    screenshotDataUrl.match(
+      /^data:(image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=]+)$/
+    ) ?? [];
+  if (matchedContentType === undefined || base64Payload === undefined) {
     throw new ApiError("Screenshot format is invalid", 400);
   }
 
-  const contentType = match[1] === "image/jpg" ? "image/jpeg" : match[1];
-  const content = Buffer.from(match[2], "base64");
+  const contentType =
+    matchedContentType === "image/jpg" ? "image/jpeg" : matchedContentType;
+  const content = Buffer.from(base64Payload, "base64");
   if (content.length > MAX_SCREENSHOT_BYTES) {
     throw new ApiError("Screenshot is too large to submit", 400);
   }

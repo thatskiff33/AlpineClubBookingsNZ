@@ -201,7 +201,7 @@ export async function PUT(
  *
  * Under the lodge capacity key since #2698 — removing a custodian bed hold
  * widens the represented bed set of every overlapping whole-lodge hold
- * (`INV-CAP-035`), which is a capacity move. The key, the locked re-read and
+ * (`INV-CAP-038`), which is a capacity move. The key, the locked re-read and
  * the audited delete live in `hut-leader-assignment-service.ts`; the response
  * contract here is unchanged.
  */
