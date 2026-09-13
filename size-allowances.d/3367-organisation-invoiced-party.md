@@ -47,7 +47,7 @@ reason: Six lines, and five of them are the comment. One call site changes from
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1450
+lines: 1458
 reason: Thirty-six lines, admitting the ORGANISATION case on the retry screen.
   The screen gated contact create and update on `localModel === "Member"`, so an
   officer replaying a school's failed contact operation was told it "requires a

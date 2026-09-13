@@ -418,6 +418,14 @@ function partialInvoiceOperationHasPaymentFault(
   if (payload.paymentSkipped === true) return false;
   if (payload.invoiceEmailError != null) return false;
   if (payload.invoiceEmailWithheldByNoEmails === true) return false;
+  // #2929: the creation-time "do not email the member" withhold is the SAME
+  // hazard as the switch above and is checked beside it. `paymentSkipped`
+  // normally catches an Internet Banking operation first -- but the
+  // no-emails line proves that is not something to rely on, because it is
+  // load-bearing on a payload that carries no `paymentSkipped` at all, and the
+  // cost of being wrong here is a bank payment recorded against an invoice the
+  // member has not paid.
+  if (payload.invoiceEmailWithheldByCreationChoice === true) return false;
   return true;
 }
 
