@@ -780,6 +780,13 @@ derivation).
   neither configured beds nor a capacity is unbookable rather than overbookable
   until it is set up (the setup-readiness Club Config check warns on a
   default lodge left at 0).
+- The arithmetic itself has **one home**, `src/lib/lodge-effective-capacity.ts`
+  (`INV-SSOT-001`): `getLodgeCapacityStatus` resolves through it, and the admin
+  lodge configuration screen previews the same function against an unsaved
+  value, so what an officer is told cannot drift from what the save does. A
+  configured capacity **above** the active bed count is accepted and explained
+  on that screen — the beds simply bind until more are activated — never
+  refused and never silently rewritten (#2724).
 
 ### INV-CAP-004
 

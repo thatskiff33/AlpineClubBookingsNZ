@@ -251,6 +251,27 @@ Only an **explicit** per-lodge capacity acts as a ceiling. The unconfigured
 fallback (0) is never a ceiling, so enabling Bed Allocation on a lodge keeps
 using the bed count unless a capacity is set.
 
+**Where the arithmetic lives (#2724).** The three steps above are one pure
+function, `resolveEffectiveLodgeCapacity` in
+`src/lib/lodge-effective-capacity.ts` — deliberately free of Prisma, config and
+React imports so both sides can read it (`INV-SSOT-001`).
+`getLodgeCapacityStatus` resolves the real figure through it, and the admin
+lodge configuration screen (`/admin/lodges/[id]`) previews the same function
+against a capacity the admin has typed but not yet saved. That is what stops
+the explanation on screen drifting from what the server will do; an import
+census in `src/lib/__tests__/lodge-effective-capacity.test.ts` records that
+those two are the only readers.
+
+**Capacity above the bed count is allowed, and explained (#2724).** An admin
+may deliberately set a capacity higher than the beds installed so far, meaning
+to install the rest later. The save is accepted — blocking it would remove a
+useful configuration, and rewriting it would lose the intent — and the screen
+names the three figures instead: the configured capacity, the active bed count,
+and the effective capacity that governs until more beds are activated. Step 1
+above is what makes accepting it safe: with beds present, no configured value
+can ever resolve above them. The existing below-the-beds capping warning is
+unchanged.
+
 ## Scenario table
 
 | Bed Allocation | Active beds | Capacity set | Effective capacity | `source` |
