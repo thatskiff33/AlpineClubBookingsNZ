@@ -57,10 +57,14 @@ describe("stripe-config resolvers", () => {
   it("clearStripeWebhookVerified deletes the marker row", async () => {
     mockDeleteCredential.mockResolvedValue(undefined);
     await clearStripeWebhookVerified();
-    expect(mockDeleteCredential).toHaveBeenCalledWith(
-      STRIPE_PROVIDER,
-      STRIPE_WEBHOOK_VERIFIED_KEY,
-    );
+    expect(mockDeleteCredential).toHaveBeenCalledWith({
+      provider: STRIPE_PROVIDER,
+      key: STRIPE_WEBHOOK_VERIFIED_KEY,
+      // Verify-reset is a NAMED background writer (#2723), distinguishable in
+      // the audit log from the admin whose credential write triggered it.
+      actor: { kind: "system", actor: "stripe-verify-reset" },
+      expect: { expect: "any" },
+    });
   });
 
   it("recordStripeWebhookVerified never throws even when the store errors", async () => {

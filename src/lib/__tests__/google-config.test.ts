@@ -124,9 +124,13 @@ describe("verified marker writes", () => {
   it("clearGoogleVerified deletes the marker row", async () => {
     mockDeleteIntegrationCredential.mockResolvedValue(undefined);
     await clearGoogleVerified();
-    expect(mockDeleteIntegrationCredential).toHaveBeenCalledWith(
-      "google",
-      "verified_at",
-    );
+    expect(mockDeleteIntegrationCredential).toHaveBeenCalledWith({
+      provider: "google",
+      key: "verified_at",
+      // Verify-reset is a NAMED background writer (#2723), distinguishable in
+      // the audit log from the admin whose credential write triggered it.
+      actor: { kind: "system", actor: "google-verify-reset" },
+      expect: { expect: "any" },
+    });
   });
 });

@@ -740,3 +740,33 @@ does.
 - **The alternative was recording the school's invented member.** That member is
   exactly what stage 4 removes, so the subject would have pointed at a record
   nobody can sign in as and nobody is keeping.
+
+## INV-PRIV-019
+
+Every mutation of the encrypted integration-credential store names its writer,
+and the writer is a person or a NAMED background actor, never an absence.
+Decided on #2723.
+
+- **`actor` is a required argument on every mutator**, so a write with no
+  attribution does not compile. Omission used to be the default: the store took
+  `updatedByUserId?: string | null`, and five of nine production call sites
+  passed nothing, storing the same `null` a background write stores.
+- **A system write NAMES itself** from the closed `CREDENTIAL_SYSTEM_ACTORS`
+  list, so the audit row says WHICH background writer touched the secret, not
+  merely that no person did. `assertCredentialActor` is the runtime half, and an
+  `admin` actor must carry a non-empty member id.
+- **The secret and its audit row are ONE local transaction.** The row is written
+  with `createAuditLog` on the transaction's own client, so a failed audit rolls
+  the secret back; it used to land two awaits later in a different module.
+- **A stale write LOSES.** Every set and delete declares what it expected to
+  find, and a compare-and-set claims the exact `(ciphertext, iv, authTag)` tuple
+  it read. A loser changes nothing and records nothing.
+- **A read records nothing**: the token generator on the Xero decrypt path makes
+  no audit noise, and a delete matching no row writes none.
+- **No plaintext reaches audit, log or error output.** The audit payload is
+  built from a type with no field a value fits into, and the store calls no
+  logger. That is a property of its own doors, not of a redactor:
+  `INV-PRIV-011`'s list is blind to any door that never calls the logger.
+- **The proof is mechanical.** `credential-actor-census.test.ts` enumerates
+  every writer from the tree; the scanner test seeds an actorless writer, and a
+  bypass reaching the table directly, and proves each is reported.

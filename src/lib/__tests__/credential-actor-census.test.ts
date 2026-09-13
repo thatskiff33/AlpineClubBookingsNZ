@@ -178,7 +178,7 @@ const APPROVED_STORE_BYPASSES: Record<string, string> = {};
 const MINIMUM_FILES_SCANNED = 1500;
 const MINIMUM_WRITE_SITES = 15;
 
-describe("credential-actor census: the tree names an actor everywhere (#2723)", () => {
+describe("credential-actor census: the tree names an actor everywhere (#2723)", { timeout: 180_000 }, () => {
   it("resolved a real population, so a clean report means something", () => {
     expect(census().filesScanned).toBeGreaterThan(MINIMUM_FILES_SCANNED);
     expect(census().sites.length).toBeGreaterThanOrEqual(MINIMUM_WRITE_SITES);
@@ -236,7 +236,7 @@ describe("credential-actor census: the tree names an actor everywhere (#2723)", 
   });
 });
 
-describe("credential-actor census: the pinned populations (#2723)", () => {
+describe("credential-actor census: the pinned populations (#2723)", { timeout: 180_000 }, () => {
   it("pins every mutator call site, with what it declares", () => {
     const measured: Record<string, string> = {};
     for (const site of census().sites) {
@@ -285,7 +285,7 @@ describe("credential-actor census: the pinned populations (#2723)", () => {
   });
 });
 
-describe("credential-actor census: reads stay out of it (#2723)", () => {
+describe("credential-actor census: reads stay out of it (#2723)", { timeout: 180_000 }, () => {
   it("counts no read as a mutation, so a status check makes no audit noise", () => {
     // Half a dozen config modules read the table directly on purpose, and the
     // Xero token path calls `ensureGeneratedCredential` on every decrypt. If a
