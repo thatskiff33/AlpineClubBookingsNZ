@@ -177,6 +177,17 @@ export async function PATCH(
       outcome: "success",
       summary: "Admin approved booking awaiting review",
       details: parsed.data.adminNotes,
+      // #2695 - DECLARED MEMBER-FACING, and this preserves what the member
+      // reads today rather than widening it. `adminNotes` is #2562's
+      // MEMBER-FACING half of a deliberate pair: it is already emailed to the
+      // member on this decision, while `internalNotes` "reaches no member
+      // surface" and is kept out of this row entirely - only
+      // `internalNoteRecorded` says one exists. Without the declaration the
+      // default-deny reader would take the officer's explanation off the
+      // member's own timeline, which is the blunt outcome #2695 refused.
+      memberDisclosure: parsed.data.adminNotes
+        ? { visibility: "member-facing", text: parsed.data.adminNotes }
+        : { visibility: "internal" },
       metadata: { decision: "APPROVED", ...notifyAuditFields },
       ipAddress,
     });
@@ -322,6 +333,17 @@ export async function PATCH(
     outcome: "success",
     summary: "Admin rejected booking awaiting review",
     details: parsed.data.adminNotes,
+    // #2695 - DECLARED MEMBER-FACING, and this preserves what the member
+    // reads today rather than widening it. `adminNotes` is #2562's
+    // MEMBER-FACING half of a deliberate pair: it is already emailed to the
+    // member on this decision, while `internalNotes` "reaches no member
+    // surface" and is kept out of this row entirely - only
+    // `internalNoteRecorded` says one exists. Without the declaration the
+    // default-deny reader would take the officer's explanation off the
+    // member's own timeline, which is the blunt outcome #2695 refused.
+    memberDisclosure: parsed.data.adminNotes
+      ? { visibility: "member-facing", text: parsed.data.adminNotes }
+      : { visibility: "internal" },
     metadata: { decision: "REJECTED", ...notifyAuditFields },
     ipAddress,
   });

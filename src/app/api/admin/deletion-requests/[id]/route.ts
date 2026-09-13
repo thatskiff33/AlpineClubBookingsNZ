@@ -1199,6 +1199,12 @@ export async function POST(
       entityType: "Member",
       entityId: member.id,
       details: `Account anonymised. Cancelled ${cancelledBookingIds.length} future bookings.${body.note ? ` Note: ${body.note}` : ""}`,
+      // #2695 - DECLARED INTERNAL, for the same reason its rejection sibling at
+      // `:592` is. The note is the administrator's, typed on the same form,
+      // and the default is already deny - this says so out loud so the pair
+      // reads as one decision rather than as one writer somebody thought about
+      // and another they did not.
+      memberDisclosure: { visibility: "internal" },
       ipAddress: ip,
       metadata: {
         detachedEmailInheritorIds: detachedFamilyLinks.emailInheritors.map(
