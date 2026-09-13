@@ -51,6 +51,7 @@
  *
  */
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { stableDigest } from "@/lib/stable-digest";
 import { isDeletedAccountMarker } from "@/lib/xero-contact-create-recovery";
@@ -227,7 +228,19 @@ async function findSchoolBookingContactIds(): Promise<Set<string>> {
   ]);
 
   const ids = new Set<string>();
-  for (const booking of bookings) ids.add(booking.memberId);
+  /*
+    Through `bookingOwner()` rather than off the column (`INV-SSOT-005`, #3368).
+    Reading `booking.memberId` here is exactly the question that accessor owns,
+    and stage 4 (#3369) makes the link optional — at which point an
+    organisation-linked booking may have no member at all, which is precisely
+    the row this loop is looking at. The accessor is the identity today, so this
+    reads the same value; when it stops being, this site changes with every
+    other one instead of being found by hand.
+  */
+  for (const booking of bookings) {
+    const { memberId } = bookingOwner(booking);
+    if (memberId) ids.add(memberId);
+  }
   for (const request of requests) {
     if (request.convertedMemberId) ids.add(request.convertedMemberId);
   }

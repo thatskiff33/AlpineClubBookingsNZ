@@ -462,6 +462,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // every other /api/admin/xero surface (the route guard itself narrows the
   // POST to finance:view with per-action finance:edit checks).
   "/api/admin/xero/member-grouping": "finance",
+  // #2939: the missing-contact census (GET, finance:view) and the bounded
+  // seeding run (POST, finance:edit). Both are finance.
+  "/api/admin/xero/missing-contacts": "finance",
   "/api/admin/xero/missing-invoices": "finance",
   "/api/admin/xero/operations": "finance",
   "/api/admin/xero/operations/[id]/mark-non-replayable": "finance",
