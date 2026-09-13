@@ -1,5 +1,6 @@
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
+import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import {
   queueSupersededAdditionalIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
@@ -26,7 +27,25 @@ import {
 export type BookingModificationPaymentContext = {
   pendingRefundAmountCents: number;
   paymentId: string | null;
-  additionalAmountCents: number;
+  /**
+   * WHAT THIS EDIT ASKS FOR, AND WHAT ASKING FOR IT WILL ABSORB (#3371).
+   *
+   * A plain `additionalAmountCents: number` used to live here, and it is the
+   * shape the money leaked through twice: minting this ask retires every other
+   * live one on the payment, so a figure sized without them deletes their unpaid
+   * balance. `AdditionalAsk` can only be built by `@/lib/additional-payment-ask`,
+   * and every constructor that can return a positive one is handed the payment
+   * whose ask is about to be retired - so a future writer cannot hand the minter
+   * a bare delta, and cannot record the total without the carried part beside
+   * it.
+   *
+   * Paths that ask for nothing through this instrument - a reduction, a Xero-only
+   * edit - pass `NO_ADDITIONAL_ASK`, which is zero and therefore never mints.
+   * A caller that also needs a plain number for an email, a response body or the
+   * Xero leg keeps its own field for it; those are different figures and the
+   * Xero one must NOT carry a superseded Stripe balance.
+   */
+  additionalAsk: AdditionalAsk;
   hasSucceededPayment: boolean;
   /**
    * #3181: whether this booking's PRIMARY Xero invoice had already been issued
@@ -164,6 +183,14 @@ export async function executeBookingModificationRefund({
  * how $230 of debt became a $30 ask. `payment-recovery-keys.ts` holds the full
  * reasoning and both builders.
  *
+ * IT TAKES AN `AdditionalAsk`, NOT A NUMBER (#3371). Because minting retires
+ * every other live ADDITIONAL intent on the payment, the figure has to include
+ * their unpaid balance AND say how much of itself that balance is - this row is
+ * the only place that fact survives, since the intents it came from are about to
+ * be cancelled. Pairing the two in one value that only
+ * `@/lib/additional-payment-ask` can build is what stops a future caller doing
+ * one and not the other. `INV-PAY-098` is the rule.
+ *
  * THE CALLER READS THE RESULT, and must. This function swallows a provider
  * failure by design - the ordinary edit path has to return the member's saved
  * change, and the recovery row it writes is the retry. A caller for whom
@@ -202,7 +229,7 @@ export async function createModificationAdditionalPaymentIntent({
   additionalPaymentIntentId: string | undefined;
 }> {
   if (
-    result.additionalAmountCents <= 0 ||
+    result.additionalAsk.amountCents <= 0 ||
     !result.hasSucceededPayment ||
     !result.paymentId
   ) {
@@ -224,7 +251,7 @@ export async function createModificationAdditionalPaymentIntent({
     }
 
     const pi = await createPaymentIntent({
-      amountCents: result.additionalAmountCents,
+      amountCents: result.additionalAsk.amountCents,
       customerId,
       metadata: {
         bookingId,
@@ -255,7 +282,13 @@ export async function createModificationAdditionalPaymentIntent({
       paymentId: result.paymentId,
       kind: PaymentTransactionKind.ADDITIONAL,
       paymentIntentId: pi.id,
-      amountCents: result.additionalAmountCents,
+      amountCents: result.additionalAsk.amountCents,
+      // #3371: the row records what this ask absorbed from the intents the
+      // cancel below is about to retire. Written in the SAME upsert as the
+      // amount, from the same value, so the two cannot be sized from different
+      // inputs and the provenance cannot be forgotten. Once those rows are
+      // cancelled it is not recoverable from anything.
+      carriedAskCents: result.additionalAsk.carriedCents,
       status: PaymentStatus.PENDING,
       reason,
       stripeCustomerId: customerId,
@@ -290,7 +323,7 @@ export async function createModificationAdditionalPaymentIntent({
         buildAdditionalIntentRecoveryIdempotencyKey(
           result.bookingModificationId,
         ),
-      amountCents: result.additionalAmountCents,
+      amountCents: result.additionalAsk.amountCents,
       stripeIdempotencyKey: idempotencyKey,
       // #3181: the EDIT's answer, frozen here because this is the last moment it
       // is known. The replay reads it back rather than re-deriving one.
