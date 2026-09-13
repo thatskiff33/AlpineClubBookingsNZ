@@ -139,6 +139,23 @@ describe("#3277 canonical stored-money reader census", () => {
     before(rebase, "const freshlyRecordedMoneyBuildUp", "store.booking.updateMany");
   });
 
+  it("renders modification source metadata where guest removal and review rebase appear", () => {
+    const history = productionCode("src/lib/booking-history.ts");
+    expect(history).toMatch(
+      /const moneyBuildUpNote = moneyBuildUpNoteOf\(modification\);[\s\S]{0,120}detailParts\.push\(moneyBuildUpNote\)/,
+    );
+    const narrative = productionCode(
+      "src/lib/booking-history-modification-narrative.ts",
+    );
+    for (const source of [
+      "STORED",
+      "DERIVED_COMPATIBILITY_FALLBACK",
+      "BASE_EVIDENCE_UNKNOWN",
+    ]) {
+      expect(narrative).toContain(`source === "${source}"`);
+    }
+  });
+
   it("mutation-proves that dropping loader, selection, classification, or history is caught", () => {
     const site: ReaderSite = {
       reads: 1,

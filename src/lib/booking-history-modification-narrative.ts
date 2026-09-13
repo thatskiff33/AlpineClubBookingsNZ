@@ -1,4 +1,5 @@
 import { formatCents } from "@/lib/utils";
+import type { BookingMoneyBuildUpHistoryMetadata } from "@/lib/booking-money-build-up";
 
 /**
  * HOW A STORED `BookingModification` ROW IS DESCRIBED IN WORDS.
@@ -73,6 +74,48 @@ export function memberFacingNoteOf(
       : {};
   const note = next[key];
   return typeof note === "string" && note.trim().length > 0 ? note : null;
+}
+
+const MONEY_BUILD_UP_FALLBACK_LABELS: Record<string, string> = {
+  STORED_SIDE_DEFECT: "the stored evidence is incomplete or inconsistent",
+  DERIVATION_DEFECT: "the current calculation needs investigation",
+  LEGITIMATE_DIVERGENCE: "the two methods legitimately describe different states",
+};
+
+/**
+ * The member/officer-visible explanation of Stage 3's source verdict. The
+ * writer stores the canonical metadata in `newData`; this reader translates it
+ * without exposing internal enum names. Historical rows simply have no note.
+ */
+export function moneyBuildUpNoteOf(
+  modification: BookingHistoryModification,
+): string | null {
+  const next =
+    modification.newData && typeof modification.newData === "object"
+      ? (modification.newData as Partial<BookingMoneyBuildUpHistoryMetadata>)
+      : {};
+  const source = next.moneyBuildUpSource;
+  const derivedCents = next.moneyBuildUpDerivedCents;
+  if (source === "STORED" && Number.isInteger(next.moneyBuildUpStoredCents)) {
+    return `Price source: stored booking build-up (${formatCents(next.moneyBuildUpStoredCents!)}), confirmed against the current calculation.`;
+  }
+  if (
+    source === "DERIVED_COMPATIBILITY_FALLBACK" &&
+    Number.isInteger(derivedCents)
+  ) {
+    const stored = Number.isInteger(next.moneyBuildUpStoredCents)
+      ? `; the stored build-up was ${formatCents(next.moneyBuildUpStoredCents!)}`
+      : "";
+    const classification = next.moneyBuildUpFallbackClassification
+      ? MONEY_BUILD_UP_FALLBACK_LABELS[next.moneyBuildUpFallbackClassification]
+      : null;
+    const reason = classification ? ` because ${classification}` : "";
+    return `Price source: current calculation (${formatCents(derivedCents!)}) retained${stored}${reason}.`;
+  }
+  if (source === "BASE_EVIDENCE_UNKNOWN") {
+    return "Price source: stored sold-price evidence was not exact enough to use; the source is recorded as unknown.";
+  }
+  return null;
 }
 
 export function describeModification(modification: BookingHistoryModification): string | null {
