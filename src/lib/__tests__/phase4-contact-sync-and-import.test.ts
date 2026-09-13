@@ -268,6 +268,14 @@ describe("Phase 4 contact sync and cached import", () => {
     // created. That is the conservative reading, and it is the one the live
     // site's imported contacts present.
     mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue(null);
+    /*
+      #2939: nobody else holds the contact, which is the ordinary case. Set
+      HERE rather than only at the hoisted declaration, because `mockResolvedValue`
+      survives `vi.clearAllMocks()` — a test that gives this a holder to drive
+      the `INV-INT-018` refusal would otherwise refuse every later test in the
+      file too.
+    */
+    mocks.prisma.organisation.findFirst.mockResolvedValue(null);
     mocks.prisma.xeroContactGroupCache.deleteMany.mockResolvedValue({ count: 0 });
     mocks.prisma.xeroContactGroupCache.findMany.mockResolvedValue([]);
     mocks.prisma.xeroContactGroupCache.upsert.mockResolvedValue({});
