@@ -344,6 +344,68 @@ entry rather than the menu the screen sits under, and both are left that way on
 purpose — filing issue reports under `admin` would have made them readable by
 more people, not fewer.
 
+### What a member reads on their own timeline (#2695)
+
+A member can see some of these entries about themselves, on their own profile
+page. Which entries they see is the Category, as above. **What they read of each
+one is a separate decision, and from this release the club makes it on purpose.**
+
+It used to be made by accident. An entry's free-text note was shown to the member
+whenever it happened to be an ordinary sentence, and hidden whenever it happened
+to be stored as structured data — a difference nobody chose and nobody could see
+from the screen. Two consequences were live:
+
+- An administrator declining an account-deletion request typed a note on the same
+  form as the **Do not notify the member** tick, and the member read the note on
+  their own timeline anyway. The tick suppressed the email and nothing else.
+- A member receiving a credit adjustment read a sentence written for officers,
+  naming two internal record numbers and the member who requested it.
+
+Now each event states what the member may read, and **an event that says nothing
+shows the member nothing**. So a new kind of entry can never publish an officer's
+words by accident; somebody has to decide to publish them.
+
+**What a member sees today**, and it is deliberately a short list:
+
+- the **reason for a credit adjustment** — why their balance moved, which is the
+  only explanation they ever get for it, now written for them rather than
+  borrowed from the officers' copy;
+- the **note on a booking decision** — review approve or decline, a booking change
+  request, and a policy-exception decision. This is the note the member already
+  reads with the decision: on a booking review it is shown on their own booking
+  page as the **Admin note**, and on the other two it is emailed with the
+  decision. The officer's *private* note has never been on the audit entry at
+  all. A policy-exception *approval* written without a note publishes nothing —
+  what the entry records in that case is the internal code for the rule that was
+  waived, which is not a sentence written for anybody.
+
+Everything else shows the member what happened, when, and who did it — and not an
+officer's free text. **Officers lose nothing:** every entry keeps its full wording
+on this screen.
+
+**The same rule now covers the download.** Profile → Export my data used to put
+the stored note of every entry about that member into the file, whatever it said
+— so a deletion-decline note written under **Do not notify the member** came back
+in the download even though it had never appeared on screen. The file now carries
+the same words the member's own history shows, and nothing else.
+
+**Three things worth knowing.** The change applies to entries recorded *before*
+this release too, so a deletion-decline note written last year stops being visible
+to the member from the day you upgrade. Nothing is deleted — the note is still
+here, for anyone with the access to read this screen. **That cuts both ways:** an
+older entry states nothing about the member either, so a member who received a
+credit adjustment last season no longer sees the recorded reason for it. The
+credit, its amount and its date are unaffected, and the reason is still on the
+entry for you to read. And the two levers are separate: a Category change moves
+whole *entries* on and off a member's timeline, while this decides the *words*
+within one. Neither does the other's job.
+
+**One member-facing screen is outside this rule, on purpose.** A member's own
+booking page shows the reason a payment failed, which is read from the entry the
+payment attempt wrote. That page decides its own readership — it is the surface
+the owner ruled on in September 2026 — and this rule governs the audit history
+and the data download rather than every page that happens to quote an entry.
+
 ### Some entries have no category at all
 
 `Category` is optional in the database, and **82 of the platform's places that

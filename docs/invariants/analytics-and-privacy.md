@@ -248,15 +248,13 @@ and #2763's bulk member-record rows were not.
   precisely the case at the two bulk writers below; "it has no subject member" is
   not a reason to treat a move into `account`, `booking`, `payment`, `family`,
   `security`, `communication` or `privacy` as invisible.
-  **Whether a member should see a given event is meant to be declared per event at
-  the writing site and denied by default — that is DECIDED (#2695, 9 Aug 2026) and
-  NOT YET BUILT.** No such mechanism exists in the tree today: member visibility is
-  entirely a function of the category, so until #2695 lands the category is the
-  only lever there is, and an event withdrawn by a re-classification has no
-  declaration path in the meantime. Do not reach for a member-visible category in
-  order to achieve visibility, and do not accept one as the price of tidying
-  labels: audit rows are append-only, so publishing administrative activity to
-  members cannot be quietly undone.
+  **Whether a member reads a given event's FREE TEXT is declared per event at the
+  writing site and denied by default — DECIDED (#2695, 9 Aug 2026) and now
+  BUILT; `INV-PRIV-017` is the rule.** That lever decides text only. The
+  category still decides whether the row reaches the timeline at all, so do not
+  reach for a member-visible category in order to achieve visibility, and do not
+  accept one as the price of tidying labels: audit rows are append-only, so
+  publishing administrative activity to members cannot be quietly undone.
 - **A ROW'S STORED `details` CAN BE READ SOMEWHERE OTHER THAN THE AUDIT LOG, AND
   THAT SECOND DOOR IS ITS OWN DECIDED READERSHIP** (#3232 D4, owner, 4 September
   2026). The category answers "who finds this row in the Audit Log, and does the
@@ -350,16 +348,13 @@ and #2763's bulk member-record rows were not.
   one of them to `admin` fails CI with the withdrawal named. Moving them is a
   readership change and needs the owner's decision, exactly as this one did — not
   a sweep, and not an inference from a rule that never covered them.
-- **#2755 satisfies #2695's acceptance criterion 5 by re-classification, not by
-  gating, and that is not the same thing.** #2695 lists `member.bulk-deactivate` —
-  whose `details` is the plain sentence `Bulk deactivate: Jane Doe (jane@…)` — as
-  one of three writers whose free text reaches a member timeline, and asks for it
-  to stop. Filing the writer `admin` does stop it, because the row leaves the
-  member-visible query altogether. But the mechanism #2695 is about is untouched:
-  `src/lib/audit-query.ts` still returns `details` on a shape test
-  (`hasLegacyMetadata ? null : log.details`) rather than an audience test, and
-  `member.deletion_rejected` and `member.credit.adjustment.approve` still hand a
-  member an administrator's free text. Do not treat that criterion as delivered.
+- **#2755 satisfied #2695's acceptance criterion 5 by re-classification rather
+  than by gating, which is not the same thing.** Filing `member.bulk-deactivate`
+  `admin` took the row out of the member-visible query and left
+  `src/lib/audit-query.ts` deciding `details` on a shape test. #2695 has since
+  replaced that with a declaration (`INV-PRIV-017`). Kept because the confusion
+  recurs: a re-classification moves ROWS, a declaration decides TEXT, and
+  neither substitutes for the other.
 - **Two groups stay `admin` as a recorded decision, not as an unexamined
   default.** #2730 reviewed all 118 writers that said `admin` and moved 22 to
   `lodge`; the rule it actually applied was *did this site split a subsystem* —
@@ -685,3 +680,36 @@ enforced by what the server BUILDS rather than by what a component renders.
   canonical helpers, restates the tier test instead of asking for the
   capabilities, or puts a value in a `title` / `aria-label` / `data-*` attribute.
   Every one of those assertions names this id.
+
+## INV-PRIV-017
+
+What a member reads of an audit row's FREE TEXT is a property of the event,
+declared where the row is written and denied when nothing is declared. Owner
+decision, 9 August 2026 (#2695). Reasoning: `src/lib/audit-member-disclosure.ts`.
+
+- **A site declares, or the member reads nothing.**
+  `memberDisclosure: { visibility: "member-facing", text }` or
+  `{ visibility: "internal" }`. Both member-facing audit channels — the member
+  timeline and `/api/member/data-export` — show that sentence or nothing, and
+  neither reads `details`, `metadata` or either's shape.
+  Omitting it means internal, so no writer can publish by forgetting.
+- **The sentence is neither forgeable nor droppable.** One reserved `metadata`
+  key `src/lib/audit.ts` owns: stripped from caller metadata, re-attached only
+  from a declaration, after the payload is sanitised. So the metadata budget
+  bounds the CALLER'S payload, not the stored column, which a sentence can
+  exceed by the free-text limit.
+- **Two things a member reads off a row are NOT this rule's.** The `summary`
+  column: the short title on every row, derived from the row's columns and
+  sanitised like `details` — denying its 188 writers is a readership change
+  reserved to the owner. And the booking page's replay of two payment-failure
+  `details` to the booking's own member, gated by `buildBookingHistoryItems`'s
+  required audience argument (#3232 D4).
+- **Adding a member-facing site widens member readership and is the owner's
+  (`INV-PRIV-012`); removing one is not.** The six are pinned in
+  `MEMBER_FACING_AUDIT_WRITERS_2695`. This decides TEXT; the category still
+  decides whether the row reaches a timeline at all.
+- **It reclassifies nothing**, so `INV-OPS-012` owes no backfill — and the cost
+  falls both ways. A pre-release row declares nothing, so a member loses an older
+  officer note — the point — and an older credit adjustment's recorded reason,
+  which is not. Nothing is altered; a backfill would publish undeclared text, so
+  it is the owner's call.

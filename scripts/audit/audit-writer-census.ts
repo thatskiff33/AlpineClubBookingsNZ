@@ -77,6 +77,15 @@
  * than literal. Those are the reason the TYPE and the RUNTIME assertion in
  * `src/lib/audit.ts` are the primary defences and this census is the backstop.
  *
+ * One boundary is deliberately drawn narrower than the rest. An event object
+ * with a key this walk cannot NAME — a computed key, a getter — fails closed
+ * for `category` and for `memberDisclosure`, which are the two columns a gate
+ * reads (#2695). `omitsRetentionInputs` and `hasEntityIdentifier` still read
+ * such an object as simply lacking the key, which is the behaviour they have
+ * always had: neither decides who may read a row, so widening them would move
+ * pinned sets for no safety gained. No site in the tree uses either shape
+ * today; if one appears, those two booleans are the ones to revisit.
+ *
  * Run it: `npm run audit:census` prints a deterministic TSV of every site.
  */
 import { readdirSync, readFileSync } from "node:fs";
@@ -158,6 +167,46 @@ export type AuditCategoryEvidence =
   | { kind: "forwarded"; expression: string }
   | { kind: "absent" };
 
+/**
+ * What the call site says about what the SUBJECT MEMBER may read (#2695).
+ *
+ *  - `internal`      `memberDisclosure: { visibility: "internal" }` — the member
+ *                    reads no free text from this event.
+ *  - `member-facing` `{ visibility: "member-facing", text: … }` — the site
+ *                    publishes one purpose-written sentence to the member. This
+ *                    is the population the manifest pins, because adding to it
+ *                    widens what a member is shown.
+ *  - `forwarded`     decided somewhere a reviewer cannot see it here.
+ *  - `absent`        no declaration at all, which the reader treats exactly as
+ *                    `internal`. This is the DEFAULT and it is the safe answer,
+ *                    which is why — unlike `category` — it is not a finding.
+ */
+export type AuditMemberDisclosureEvidence =
+  | { kind: "internal" }
+  | { kind: "member-facing" }
+  | { kind: "forwarded"; expression: string }
+  | { kind: "absent" };
+
+/**
+ * The shape of a free-text channel the event object supplies.
+ *
+ * `details` and `summary` are the two columns whose contents used to reach a
+ * member's own timeline without anybody deciding they should (#2695). The
+ * reader is default-deny now, so this is not a gate — it is the MEASUREMENT
+ * that makes "re-census every event currently rendered to members" reproducible
+ * instead of a hand count that goes stale.
+ *
+ *  - `constant`  a string literal, or a template with no substitution: a fixed
+ *                phrase from the vocabulary, carrying no run-time values.
+ *  - `dynamic`   a template with substitutions, or any other expression: the
+ *                shape that carries ids, names and an administrator's typing.
+ */
+export type AuditFreeTextEvidence =
+  | { kind: "absent" }
+  | { kind: "constant" }
+  | { kind: "dynamic" }
+  | { kind: "forwarded" };
+
 export type AuditWriteSite = {
   /** Repo-relative POSIX path. */
   file: string;
@@ -177,6 +226,12 @@ export type AuditWriteSite = {
   /** The `action` value when it is a plain literal, else a description. */
   action: string;
   category: AuditCategoryEvidence;
+  /** What the site declares the subject member may read (#2695). */
+  memberDisclosure: AuditMemberDisclosureEvidence;
+  /** The shape of the `details` free-text channel. */
+  detailsText: AuditFreeTextEvidence;
+  /** The shape of the `summary` free-text channel. */
+  summaryText: AuditFreeTextEvidence;
   /** True when the event object also omits `severity` and `retentionClass`. */
   omitsRetentionInputs: boolean;
   /** True when the event object names an `entityType` or `entityId`. */
@@ -277,10 +332,24 @@ type TopLevelProperty =
  * `exclusivity-request-write-sites.test.ts` reads its own payloads. A spread of
  * anything opaque — an identifier, a call result — still fails closed, because
  * its keys are decided somewhere a reviewer cannot see.
+ *
+ * `unreadableKeys` ALSO covers a property whose NAME the parser cannot resolve,
+ * and that is not hypothetical tidiness (#2695 review). A computed key —
+ * `{ [SOME_CONSTANT]: … }`, or even `{ ["memberDisclosure"]: … }` — and a getter
+ * (`{ get memberDisclosure() { … } }`) both compile, both set the key at run
+ * time, and both used to be DROPPED here: the walk skipped what it could not
+ * name, so the object measured as though the key were absent. For `category`
+ * that reported an omission that is not one; for `memberDisclosure` it was
+ * worse, because `absent` is the safe answer and therefore the unpinned one —
+ * a real member-facing declaration would have measured as neither declared nor
+ * forwarded, i.e. invisible to the census while the reader honoured it and the
+ * member read the text. Anything this walk cannot name now marks the whole
+ * object unreadable, which puts every lookup on it into the pinned `forwarded`
+ * population instead.
  */
 type ResolvedObject = {
   keys: Map<string, TopLevelProperty>;
-  opaqueSpread: boolean;
+  unreadableKeys: boolean;
 };
 
 function spreadLiterals(expression: ts.Expression): ts.ObjectLiteralExpression[] | null {
@@ -303,12 +372,20 @@ function spreadLiterals(expression: ts.Expression): ts.ObjectLiteralExpression[]
 
 function resolveObjectLiteral(literal: ts.ObjectLiteralExpression): ResolvedObject {
   const keys = new Map<string, TopLevelProperty>();
-  let opaqueSpread = false;
+  let unreadableKeys = false;
 
   for (const property of literal.properties) {
     if (ts.isPropertyAssignment(property)) {
       const name = propertyName(property.name);
-      if (name) keys.set(name, { kind: "assignment", value: property.initializer });
+      if (!name) {
+        // A COMPUTED key: `{ [KEY]: … }`, or a numeric one. It sets some key at
+        // run time and the parser cannot say which, so every lookup on this
+        // object has to fail closed rather than report the key it asked for as
+        // absent.
+        unreadableKeys = true;
+        continue;
+      }
+      keys.set(name, { kind: "assignment", value: property.initializer });
       continue;
     }
     if (ts.isShorthandPropertyAssignment(property)) {
@@ -321,12 +398,12 @@ function resolveObjectLiteral(literal: ts.ObjectLiteralExpression): ResolvedObje
     if (ts.isSpreadAssignment(property)) {
       const branches = spreadLiterals(property.expression);
       if (!branches) {
-        opaqueSpread = true;
+        unreadableKeys = true;
         continue;
       }
       for (const branch of branches) {
         const resolved = resolveObjectLiteral(branch);
-        opaqueSpread = opaqueSpread || resolved.opaqueSpread;
+        unreadableKeys = unreadableKeys || resolved.unreadableKeys;
         for (const [name, value] of resolved.keys) {
           // A key that arrives through a spread may or may not be present at
           // runtime, so its VALUE is not readable even when its name is.
@@ -334,10 +411,16 @@ function resolveObjectLiteral(literal: ts.ObjectLiteralExpression): ResolvedObje
           void value;
         }
       }
+      continue;
     }
+    // A getter, a setter, a method, or whatever the language adds next. Each
+    // can name a key this census reads and none of them holds an initialiser
+    // expression to read, so the object is unreadable rather than short of one
+    // property.
+    unreadableKeys = true;
   }
 
-  return { keys, opaqueSpread };
+  return { keys, unreadableKeys };
 }
 
 function findTopLevelProperty(
@@ -445,11 +528,131 @@ function combineCategory(
     : { kind: "conditional", values };
 }
 
+/**
+ * The member-disclosure evidence for one event object (#2695).
+ *
+ * Read from an object LITERAL, which is why the declaration is written as one
+ * at every call site: `{ visibility: "member-facing" }` is readable here
+ * without resolving an imported constant, and a census that had to resolve
+ * imports would fail closed on every re-export.
+ */
+function resolveMemberDisclosure(
+  event: ResolvedObject,
+): AuditMemberDisclosureEvidence {
+  const property = findTopLevelProperty(event, "memberDisclosure");
+  if (!property) {
+    return event.unreadableKeys
+      ? { kind: "forwarded", expression: "unreadable keys" }
+      : { kind: "absent" };
+  }
+  if (property.kind === "opaque") {
+    return { kind: "forwarded", expression: property.text };
+  }
+
+  return resolveDisclosureExpression(property.value);
+}
+
+/**
+ * One declaration expression.
+ *
+ * A CONDITIONAL between two declarations is read rather than failed closed,
+ * because it is the honest shape wherever the text is optional: an officer's
+ * member-facing note exists or it does not, and
+ * `{ visibility: "member-facing", text }` cannot be written without a `text`.
+ * The WIDER branch decides, so a site that publishes on one path is counted as
+ * publishing.
+ */
+function resolveDisclosureExpression(
+  expression: ts.Expression,
+): AuditMemberDisclosureEvidence {
+  const value = unwrap(expression);
+
+  if (ts.isConditionalExpression(value)) {
+    const branches = [value.whenTrue, value.whenFalse].map(
+      resolveDisclosureExpression,
+    );
+    const forwarded = branches.find((branch) => branch.kind === "forwarded");
+    if (forwarded) return forwarded;
+    return branches.some((branch) => branch.kind === "member-facing")
+      ? { kind: "member-facing" }
+      : { kind: "internal" };
+  }
+
+  if (!ts.isObjectLiteralExpression(value)) {
+    return { kind: "forwarded", expression: collapse(value.getText()) };
+  }
+
+  const visibility = findTopLevelProperty(
+    resolveObjectLiteral(value),
+    "visibility",
+  );
+  if (!visibility || visibility.kind === "opaque") {
+    return { kind: "forwarded", expression: collapse(value.getText()) };
+  }
+  const literal = literalText(unwrap(visibility.value));
+  if (literal === "internal") return { kind: "internal" };
+  if (literal === "member-facing") return { kind: "member-facing" };
+  return { kind: "forwarded", expression: collapse(value.getText()) };
+}
+
+/**
+ * Take the WIDEST reading across a multi-row write: one element that publishes
+ * to a member makes the site a member-facing site, because it writes such a
+ * row. `forwarded` outranks the two literals for the same fail-closed reason
+ * the category combiner has.
+ */
+function combineMemberDisclosure(
+  events: readonly ResolvedObject[] | null,
+  fallbackExpression: string,
+): AuditMemberDisclosureEvidence {
+  if (!events || events.length === 0) {
+    return { kind: "forwarded", expression: fallbackExpression };
+  }
+  const each = events.map(resolveMemberDisclosure);
+  const forwarded = each.find((evidence) => evidence.kind === "forwarded");
+  if (forwarded) return forwarded;
+  if (each.some((evidence) => evidence.kind === "member-facing")) {
+    return { kind: "member-facing" };
+  }
+  return each.some((evidence) => evidence.kind === "internal")
+    ? { kind: "internal" }
+    : { kind: "absent" };
+}
+
+function resolveFreeText(
+  event: ResolvedObject,
+  key: "details" | "summary",
+): AuditFreeTextEvidence {
+  const property = findTopLevelProperty(event, key);
+  if (!property) {
+    return event.unreadableKeys ? { kind: "forwarded" } : { kind: "absent" };
+  }
+  if (property.kind === "opaque") return { kind: "forwarded" };
+
+  const value = unwrap(property.value);
+  if (literalText(value) !== null) return { kind: "constant" };
+  return { kind: "dynamic" };
+}
+
+/** The weakest (most revealing) reading across a multi-row write. */
+function combineFreeText(
+  events: readonly ResolvedObject[] | null,
+  key: "details" | "summary",
+): AuditFreeTextEvidence {
+  if (!events || events.length === 0) return { kind: "forwarded" };
+  const each = events.map((event) => resolveFreeText(event, key));
+  for (const kind of ["forwarded", "dynamic", "constant"] as const) {
+    const hit = each.find((evidence) => evidence.kind === kind);
+    if (hit) return hit;
+  }
+  return { kind: "absent" };
+}
+
 function resolveCategory(event: ResolvedObject): AuditCategoryEvidence {
   const property = findTopLevelProperty(event, "category");
   if (!property) {
-    return event.opaqueSpread
-      ? { kind: "forwarded", expression: "opaque spread" }
+    return event.unreadableKeys
+      ? { kind: "forwarded", expression: "unreadable keys" }
       : { kind: "absent" };
   }
   if (property.kind === "opaque") {
@@ -668,6 +871,9 @@ function scanFile(file: string, repoRoot: string): AuditWriteSite[] {
     events: readonly ResolvedObject[] | null,
   ) => {
     const symbol = symbolChain(node);
+    const payloadText = ts.isCallExpression(node)
+      ? collapse(node.arguments[0]?.getText() ?? "(no argument)")
+      : "(no argument)";
     const key = `${relativePath}::${symbol}`;
     const ordinal = ordinals.get(key) ?? 0;
     ordinals.set(key, ordinal + 1);
@@ -681,6 +887,11 @@ function scanFile(file: string, repoRoot: string): AuditWriteSite[] {
       producesRow,
       action,
       category,
+      memberDisclosure: producesRow
+        ? combineMemberDisclosure(events, payloadText)
+        : { kind: "absent" },
+      detailsText: producesRow ? combineFreeText(events, "details") : { kind: "absent" },
+      summaryText: producesRow ? combineFreeText(events, "summary") : { kind: "absent" },
       // ANY element omitting retention inputs flags the site, and EVERY element
       // must name an entity before the site counts as identified: both take the
       // pessimistic reading of a multi-row write, and both are unchanged for the
@@ -1069,6 +1280,15 @@ export type AuditWriterCensus = {
   forwarded: readonly AuditWriteSite[];
   /** Row-producing sites choosing between category literals. */
   conditional: readonly AuditWriteSite[];
+  /**
+   * Row-producing sites that publish a purpose-written sentence to the subject
+   * member (#2695), sorted by id. This is the population the manifest pins:
+   * adding to it widens what a member is shown, which is a readership decision
+   * rather than a tidy-up (`INV-PRIV-012`).
+   */
+  memberFacing: readonly AuditWriteSite[];
+  /** Row-producing sites whose member disclosure is decided outside the call. */
+  memberDisclosureForwarded: readonly AuditWriteSite[];
   /** Literal category value to the number of sites writing it. */
   categoryCounts: Readonly<Record<string, number>>;
   /** Sink to `{ total, uncategorised }`. */
@@ -1150,6 +1370,12 @@ export function scanAuditWriterCensus(
     uncategorised: sites.filter((site) => site.category.kind === "absent"),
     forwarded: sites.filter((site) => site.category.kind === "forwarded"),
     conditional: sites.filter((site) => site.category.kind === "conditional"),
+    memberFacing: sites.filter(
+      (site) => site.memberDisclosure.kind === "member-facing",
+    ),
+    memberDisclosureForwarded: sites.filter(
+      (site) => site.memberDisclosure.kind === "forwarded",
+    ),
     categoryCounts,
     sinkCounts,
     sqlStatements,
@@ -1173,7 +1399,32 @@ export function describeCategory(evidence: AuditCategoryEvidence): string {
   }
 }
 
-const TSV_HEADER = [
+/** How a site's member-disclosure declaration reads in the TSV (#2695). */
+export function describeMemberDisclosure(
+  evidence: AuditMemberDisclosureEvidence,
+): string {
+  return evidence.kind === "forwarded"
+    ? `forwarded:${evidence.expression}`
+    : evidence.kind === "absent"
+      ? "(absent)"
+      : evidence.kind;
+}
+
+/**
+ * The column names, IN THE ORDER THE ROW BUILDERS BELOW WRITE THEM.
+ *
+ * A human reads this file to perform "re-census every event currently rendered
+ * to members" (#2695's acceptance criterion), so a header that has drifted from
+ * the rows is worse than no header at all: three columns were added to both row
+ * builders and not to this list, which left the ninth column named
+ * `omitsRetentionInputs` while carrying a disclosure, and three columns with no
+ * name whatever. Nothing tested the renderer, so nothing said so.
+ *
+ * `renderCensusTsv`'s contract test now counts every row's fields against this
+ * list, so the next column added to a builder and not named here fails offline
+ * instead of mislabelling the artifact an acceptance criterion depends on.
+ */
+const TSV_COLUMNS = [
   "id",
   "file",
   "symbol",
@@ -1182,9 +1433,17 @@ const TSV_HEADER = [
   "producesRow",
   "action",
   "category",
+  "memberDisclosure",
+  "detailsText",
+  "summaryText",
   "omitsRetentionInputs",
   "hasEntityIdentifier",
-].join("\t");
+] as const;
+
+/** The column names, for the contract test that counts them against the rows. */
+export const AUDIT_CENSUS_TSV_COLUMNS: readonly string[] = TSV_COLUMNS;
+
+const TSV_HEADER = TSV_COLUMNS.join("\t");
 
 /** A deterministic TSV of the whole census, newest analysis first in id order. */
 export function renderCensusTsv(census: AuditWriterCensus): string {
@@ -1198,6 +1457,9 @@ export function renderCensusTsv(census: AuditWriterCensus): string {
       String(site.producesRow),
       site.action,
       describeCategory(site.category),
+      describeMemberDisclosure(site.memberDisclosure),
+      site.detailsText.kind,
+      site.summaryText.kind,
       String(site.omitsRetentionInputs),
       String(site.hasEntityIdentifier),
     ].join("\t"),
@@ -1218,6 +1480,9 @@ export function renderCensusTsv(census: AuditWriterCensus): string {
           ? "named"
           : "(absent)"
         : "(dml)",
+      "(absent)",
+      "(sql)",
+      "(sql)",
       "false",
       "false",
     ].join("\t"),
@@ -1236,6 +1501,8 @@ function main(): void {
       `uncategorised:        ${census.uncategorised.length}`,
       `forwarded category:   ${census.forwarded.length}`,
       `conditional category: ${census.conditional.length}`,
+      `member-facing sites:  ${census.memberFacing.length}`,
+      `forwarded disclosure: ${census.memberDisclosureForwarded.length}`,
       `non-producing DML:    ${census.nonProducingDml.length}`,
       `migration SQL on AuditLog: ${census.sqlStatements.length}`,
       `category values:      ${JSON.stringify(census.categoryCounts)}`,

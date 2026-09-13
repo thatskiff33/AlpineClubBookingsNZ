@@ -909,6 +909,52 @@ describe("PATCH — the officer-note split", () => {
     expect(JSON.stringify(entry)).not.toContain("Watch the pattern");
   });
 
+  it("publishes the officer's note to the member, and the policy codes to nobody", async () => {
+    // #2695 (`INV-PRIV-017`) fix round. The approval's `details` falls back to
+    // the REVIEWED POLICY CODES when an officer approves without writing
+    // anything — `MINIMUM_STAY` and its siblings — and the first cut of the
+    // declaration published that fallback, under a comment describing only the
+    // notes field. A code is an internal identifier for the rule that was
+    // waived, not a sentence written for a member, so the no-note branch
+    // declares internal and the member reads nothing from the row.
+    await PATCH(
+      patchRequest({
+        action: "approve",
+        source: "MODIFICATION",
+        expectedVersion: 3,
+        confirm: true,
+      }),
+      { params },
+    );
+    const withoutNote = mocks.logAudit.mock.calls[0][0] as {
+      details?: unknown;
+      memberDisclosure?: unknown;
+    };
+    // The officers still get the codes: this narrows what the MEMBER reads, not
+    // what the trail records.
+    expect(withoutNote.details).toBe("MINIMUM_STAY");
+    expect(withoutNote.memberDisclosure).toEqual({ visibility: "internal" });
+
+    mocks.logAudit.mockClear();
+    await PATCH(
+      patchRequest({
+        action: "approve",
+        source: "MODIFICATION",
+        expectedVersion: 3,
+        confirm: true,
+        adminNotes: "Allowed this once, the lodge was empty.",
+      }),
+      { params },
+    );
+    const withNote = mocks.logAudit.mock.calls[0][0] as {
+      memberDisclosure?: unknown;
+    };
+    expect(withNote.memberDisclosure).toEqual({
+      visibility: "member-facing",
+      text: "Allowed this once, the lodge was empty.",
+    });
+  });
+
   it("does not satisfy the hosting-override reason rule with an internal note", async () => {
     mocks.bcrFindFirst.mockResolvedValue(modificationRow([HOSTING]));
     const res = await PATCH(
