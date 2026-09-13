@@ -25,9 +25,17 @@
  * So the instruction is written once, onto the operation row itself, and every
  * dispatcher reads it back from there. {@link readXeroInvoiceEmailInstruction}
  * is the only way to turn what is stored into something typed, so an unknown or
- * corrupt value can never be mistaken for a withhold **or** for a send: it
- * parses to `null`, which callers read as "no instruction was recorded", which
- * is what every row written before this feature existed honestly is.
+ * corrupt value can never be mistaken for a WITHHOLD: it parses to `null`,
+ * which callers read as "no instruction was recorded", which is what every row
+ * written before this feature existed honestly is.
+ *
+ * `null` is then treated exactly like `SEND`, and that is FAIL-OPEN on purpose.
+ * The member owes this invoice and the email is how they learn it, so a typo in
+ * a future enqueuer must not silently stop invoices reaching members. Do not
+ * read across from the per-booking "No emails" switch, which fails CLOSED on an
+ * unknown answer: there the unknown is "did an administrator promise this member
+ * silence?", and breaking that promise is the direction you cannot take back.
+ * The two adjacent withhold mechanisms genuinely have opposite failure modes.
  *
  * ## WHY A COLUMN RATHER THAN THE QUEUED PAYLOAD
  *

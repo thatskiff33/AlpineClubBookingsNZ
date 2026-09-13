@@ -24,7 +24,17 @@
  * creation-time "do not email the member" choice withholds that booking's Xero
  * invoice email on a booking whose switch has never been on, so this banner's
  * wording says the messages were deliberately withheld and stops short of
- * naming a cause it cannot know. What withheld each one is on its own row.
+ * naming a cause it cannot know.
+ *
+ * AND IT DOES NOT NAME ONE. This banner groups by TEMPLATE, and a group carries
+ * a label, a count, a representative subject, a timestamp and a remedy — no
+ * reason. The reason each withhold happened is recorded on the `EmailLog` row's
+ * `errorMessage` and is read from the database, not from any screen. Deliberate,
+ * for now: the remedy line is identical whichever decision withheld a Xero
+ * invoice email — the invoice exists, only the send was withheld, and Xero is
+ * where it is sent from — so plumbing a per-group reason through would change
+ * nothing an officer does. Say "deliberately withheld"; do not say the banner
+ * tells them which decision it was.
  *
  * Presentational and admin-only: the booking page mounts it inside its
  * admin-tools gate and never computes the withheld list for a member. Nothing

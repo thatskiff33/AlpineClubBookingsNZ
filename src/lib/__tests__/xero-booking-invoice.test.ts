@@ -885,11 +885,23 @@ describe("createXeroInvoiceForBooking", () => {
     });
 
     /*
-      THE NAMED TEST the issue's last acceptance criterion asks for: delete the
+      THE NAMED TEST the issue's last acceptance criterion asks for.
+
+      THE MUTATION THAT FAILS IT: delete `!invoiceEmailWithheldByCreationChoice`
+      from the `invoiceEmailPolicy` conjunction in xero-booking-invoices.ts —
+      the gate that decides whether `sendXeroInvoiceEmail` is reached at all.
+      Xero is then asked to email the invoice the officer chose not to send and
+      the first assertion below fails.
+
+      NOT the mutation you might reach for first. Deleting the
       `xeroInvoiceEmailIsWithheldAtCreation(...)` term from
-      `invoiceEmailWithheldByCreationChoice` in xero-booking-invoices.ts and this
-      test fails, because Xero is then asked to email the invoice the officer
-      chose not to send.
+      `invoiceEmailWithheldByCreationChoice` itself leaves that flag ALWAYS
+      true, so the email is still withheld and this test still passes. (The
+      suite as a whole does discriminate — "emails the invoice exactly as before
+      when the officer chose to send" fails on that one — but the criterion asks
+      for a NAMED test, and a comment pointing the next reader at the wrong edit
+      is worse than no comment at all: they make it, see green, and conclude the
+      suppression is untested.)
     */
     it("withholds the Xero invoice email when the officer who created the booking chose not to email the member (#2929)", async () => {
       operationSays("WITHHELD_AT_CREATION");
@@ -1085,6 +1097,48 @@ describe("createXeroInvoiceForBooking", () => {
         invoiceEmailWithheldByNoEmails: true,
         invoiceEmailWithheldByCreationChoice: false,
       });
+    });
+
+    /*
+      ONE SUBJECT PER TEMPLATE, whichever decision withheld it (#2929 fix
+      round).
+
+      The withheld-emails banner groups by TEMPLATE NAME and renders a single
+      representative subject for the group — whichever row is newest. Two
+      withhold sites spelling the wording out separately therefore makes one
+      kind of withheld email show two different subjects depending on which
+      happened last, which reads to an officer as two different messages. The
+      wording now lives in one constant above both sites; this is the guard that
+      keeps it there.
+    */
+    it("gives the same withheld subject whichever decision withheld it", async () => {
+      function subjectOfWithheldRow(index: number): string {
+        const call = mocks.prisma.emailLog.create.mock.calls[index] as [
+          { data: { subject: string } },
+        ];
+        return call[0].data.subject;
+      }
+
+      // The creation-time choice, on a booking whose switch was never used.
+      operationSays("WITHHELD_AT_CREATION");
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+
+      // The persistent switch, with no creation-time instruction at all.
+      operationSays(null);
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        internetBankingBooking({ noEmails: true }),
+      );
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+
+      expect(mocks.prisma.emailLog.create).toHaveBeenCalledTimes(2);
+      expect(subjectOfWithheldRow(1)).toBe(subjectOfWithheldRow(0));
+      expect(subjectOfWithheldRow(0)).toContain(
+        "for your Internet Banking booking payment",
+      );
     });
 
     /*

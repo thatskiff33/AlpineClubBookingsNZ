@@ -502,10 +502,24 @@ export async function createXeroInvoiceForBooking(
     A self-minted operation has no enqueuer and therefore no instruction, so
     reading it back would be asking a row what we just wrote into it.
 
-    NOT wrapped in a try/catch, and that is the fail-closed choice: if this read
-    throws, the whole invoice creation fails before any invoice exists and
-    before any email could be sent. There is no path here on which an unreadable
-    instruction results in a send.
+    HOW THIS FAILS, stated exactly, because the neighbouring switch gate below
+    fails the OTHER WAY and the two must not be confused:
+
+      - the read THROWING is the only fail-closed case, and it is deliberately
+        not wrapped in a try/catch: the whole invoice creation fails before any
+        invoice exists and before any email could be sent;
+      - an UNRECOGNISED stored value, and a `syncOperationId` naming a row that
+        is not there, both resolve to `null` and therefore SEND. That is
+        fail-OPEN, and it is the right direction HERE and only here. A withhold
+        nobody asked for is not safe: the member owes this money and the invoice
+        is how they learn it, so a typo in some future enqueuer must never
+        silently stop invoices reaching members. The switch below is the
+        opposite because its unknown answer is "we could not tell whether an
+        administrator promised this member silence", and breaking that promise
+        is the unrecoverable direction there.
+
+    So `null` here means "no instruction was recorded", which is what every row
+    written before #2929 honestly is, and it is treated identically to SEND.
   */
   const queuedInvoiceEmailInstruction = options?.syncOperationId
     ? readXeroInvoiceEmailInstruction(
@@ -861,6 +875,22 @@ export async function createXeroInvoiceForBooking(
       );
     }
 
+    /*
+      ONE subject for this pseudo-template, shared by every reason it can be
+      withheld (#2929).
+
+      The withheld-emails banner groups by TEMPLATE NAME and renders a single
+      representative subject for the group — the most recent row's. Two withhold
+      sites spelling the subject out separately therefore makes one kind of
+      withheld email show two different subjects depending on which row happens
+      to be newest, which reads to an officer as two different messages. There
+      is no registry entry to hold this (we never render or transmit it), so the
+      one home is here, above both sites.
+    */
+    const withheldInvoiceEmailSubject = `Xero invoice ${
+      createdInvoice.invoiceNumber ?? createdInvoice.invoiceID ?? "(unnumbered)"
+    } for your Internet Banking booking payment`;
+
     let invoiceEmailResponseBody: unknown = null;
     let invoiceEmailError: unknown = null;
     const shouldEmailInvoice =
@@ -909,9 +939,7 @@ export async function createXeroInvoiceForBooking(
       await recordWithheldBookingEmail({
         bookingId,
         templateName: XERO_BOOKING_INVOICE_EMAIL_TEMPLATE,
-        subject: `Xero invoice ${
-          createdInvoice.invoiceNumber ?? createdInvoice.invoiceID ?? "(unnumbered)"
-        } for your Internet Banking booking payment`,
+        subject: withheldInvoiceEmailSubject,
         to: bookingOwner(booking).member.email,
         detail:
           'Withheld: this booking has the "No emails" switch turned on. The invoice exists in Xero but was not emailed.',
@@ -958,9 +986,7 @@ export async function createXeroInvoiceForBooking(
       await recordWithheldBookingEmail({
         bookingId,
         templateName: XERO_BOOKING_INVOICE_EMAIL_TEMPLATE,
-        subject: `Xero invoice ${
-          createdInvoice.invoiceNumber ?? createdInvoice.invoiceID ?? "(unnumbered)"
-        } for your Internet Banking booking payment`,
+        subject: withheldInvoiceEmailSubject,
         to: bookingOwner(booking).member.email,
         detail:
           "Withheld: the administrator who created this booking chose not to email the member. The invoice exists in Xero but was not emailed.",

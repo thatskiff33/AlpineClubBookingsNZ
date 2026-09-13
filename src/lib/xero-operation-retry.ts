@@ -425,6 +425,20 @@ function partialInvoiceOperationHasPaymentFault(
   // load-bearing on a payload that carries no `paymentSkipped` at all, and the
   // cost of being wrong here is a bank payment recorded against an invoice the
   // member has not paid.
+  //
+  // WHAT THIS LINE ACTUALLY GOVERNS, stated as strongly as it holds and no
+  // stronger. The ORDER above decides the live cases, not this line: a payload
+  // carrying `paymentSkipped: true` has already returned, and an
+  // `invoiceEmailError` has too, so this is reached only by a payload that
+  // carries a creation-choice withhold and NEITHER of those. That conjunction
+  // is impossible today in two independent ways -- a payment write error needs
+  // a captured CARD payment, while this withhold needs an INTERNET_BANKING
+  // one; and a creation-choice withhold is a complete, intended outcome that
+  // completes the operation SUCCEEDED rather than PARTIAL, so no PARTIAL
+  // payload ever carries it. The line therefore has no live traffic at all and
+  // is pure defence, exactly like the no-emails line beside it: it is here so
+  // that a future payload shape which DOES reach it cannot be repaired into a
+  // false settlement.
   if (payload.invoiceEmailWithheldByCreationChoice === true) return false;
   return true;
 }
