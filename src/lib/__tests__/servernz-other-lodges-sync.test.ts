@@ -26,6 +26,17 @@ vi.mock("@/lib/servernz-api", () => ({
   pullOtherLodges: (...args: unknown[]) => mockPullOtherLodges(...args),
 }));
 
+const mockLoggerWarn = vi.fn();
+
+vi.mock("@/lib/logger", () => ({
+  default: {
+    warn: (...args: unknown[]) => mockLoggerWarn(...args),
+    error: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
 const mockLoadSettings = vi.fn();
 const mockRecordUpload = vi.fn();
 const mockRecordDownload = vi.fn();
@@ -361,8 +372,24 @@ describe("download cursor overlap", () => {
       ["2026-06-20T10:00:00.000Z", "2026-06-20T09:59:00.000Z"],
       // Day boundary: borrows from the previous day, not clamped at midnight.
       ["2026-06-20T00:00:30.000Z", "2026-06-19T23:59:30.000Z"],
-      // Year boundary, and a non-UTC offset the server is free to send.
-      ["2027-01-01T13:00:00+13:00", "2026-12-31T23:59:00.000Z"],
+      // Year boundary, and a non-UTC offset, RE-EMITTED in that same offset
+      // rather than normalised to Z. Normalising gives 2026-12-31T23:59:00Z,
+      // which is the right instant but sorts EARLIER or LATER than the stored
+      // value depending on the sign — see the west-of-UTC case below.
+      ["2027-01-01T13:00:00+13:00", "2027-01-01T12:59:00.000+13:00"],
+      // West of UTC is where normalising to Z actively breaks a server that
+      // compares the cursor as TEXT: "2026-06-20T10:05:30-05:00" normalises to
+      // "2026-06-20T15:04:30.000Z", which sorts AFTER the stored value — the
+      // overlap inverted into a five-hour jump FORWARD, skipping rows.
+      ["2026-06-20T10:05:30-05:00", "2026-06-20T10:04:30.000-05:00"],
+      // Four legal ISO-8601 spellings a central server is free to send, and
+      // which a hand-rolled `T..Z`-shaped regex passed through untouched — so
+      // the overlap was inert against a server written in Python (isoformat()),
+      // .NET, or reading a Postgres timestamptz straight out.
+      ["2026-06-20T10:05Z", "2026-06-20T10:04:00.000Z"],
+      ["2026-06-20T10:05:30+1300", "2026-06-20T10:04:30.000+1300"],
+      ["2026-06-20t10:05:30Z", "2026-06-20t10:04:30.000Z"],
+      ["2026-06-20 10:05:30Z", "2026-06-20 10:04:30.000Z"],
     ];
 
     for (const [stored, requested] of cases) {
@@ -379,6 +406,13 @@ describe("download cursor overlap", () => {
       await downloadOtherClubsFromServer();
 
       expect(mockPullOtherLodges).toHaveBeenCalledWith(requested);
+      // Strictly earlier as TEXT as well as as an instant, because a server is
+      // free to treat an opaque-by-contract cursor as a string key. Preserving
+      // the separator and the offset is what makes both readings agree.
+      expect(requested < stored).toBe(true);
+      expect(new Date(requested).getTime()).toBeLessThan(new Date(stored).getTime());
+      // A cursor the overlap CAN step is never reported as inert.
+      expect(mockLoggerWarn).not.toHaveBeenCalled();
     }
   });
 
@@ -402,6 +436,12 @@ describe("download cursor overlap", () => {
   });
 
   it("counts a row the overlap re-delivers unchanged as unchanged, not as a change", async () => {
+    // INSIDE the overlap window — the sixty seconds before the cursor — so this
+    // row is in the pull ONLY because of the overlap. Stamped after the cursor
+    // instead it would be an ordinary new-change row, and "an identical row is
+    // written nowhere" would be a property of every pull rather than of the
+    // repeat this test is named for.
+    const insideWindow = "2026-06-20T10:05:00.000Z";
     mockLoadSettings.mockResolvedValue({
       ...SETTINGS,
       otherLodgesCursor: "2026-06-20T10:05:30.000Z",
@@ -409,13 +449,21 @@ describe("download cursor overlap", () => {
     mockPullOtherLodges.mockResolvedValue({
       // The first row is the repeat the overlap deliberately re-fetched; the
       // second is the genuine change the pull was for.
-      lodges: [remoteLodge("Aorangi Ski Club"), remoteLodge("Arlberg Ski Club", { bedCapacity: 30 })],
+      lodges: [
+        remoteLodge("Aorangi Ski Club", { updatedAt: insideWindow }),
+        remoteLodge("Arlberg Ski Club", {
+          bedCapacity: 30,
+          updatedAt: "2026-06-20T11:00:00.000Z",
+        }),
+      ],
       count: 2,
       cursor: "2026-06-21T00:00:00.000Z",
       dropped: 0,
     });
     mockFindUnique
-      .mockResolvedValueOnce(localCopyOf("ol_1", "2026-06-19T00:00:00.000Z"))
+      // Already applied on an earlier pass, carrying the server's own timestamp
+      // (rule 1) — exactly the state the overlap re-delivers into.
+      .mockResolvedValueOnce(localCopyOf("ol_1", insideWindow))
       .mockResolvedValueOnce(localCopyOf("ol_2", "2026-06-19T00:00:00.000Z"));
 
     const result = await downloadOtherClubsFromServer();
@@ -432,14 +480,21 @@ describe("download cursor overlap", () => {
       otherLodgesCursor: "2026-06-20T10:05:30.000Z",
     });
     mockPullOtherLodges.mockResolvedValue({
-      lodges: [remoteLodge("Aorangi Ski Club", { bedCapacity: 30 })],
+      // Stamped INSIDE the overlap window, so it is genuinely a row the overlap
+      // re-offered rather than an ordinary new remote change.
+      lodges: [
+        remoteLodge("Aorangi Ski Club", {
+          bedCapacity: 30,
+          updatedAt: "2026-06-20T10:05:00.000Z",
+        }),
+      ],
       count: 1,
       cursor: "2026-06-21T00:00:00.000Z",
       dropped: 0,
     });
     // Corrected locally after the server's copy — the overlap re-offering that
     // older copy must not become a way to undo the club's own edit.
-    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-20T00:00:00.000Z"));
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-06-20T12:00:00.000Z"));
 
     const result = await downloadOtherClubsFromServer();
 
@@ -492,5 +547,90 @@ describe("download cursor overlap", () => {
 
     await expect(downloadOtherClubsFromServer()).rejects.toThrow("write failed");
     expect(mockRecordDownload).not.toHaveBeenCalled();
+  });
+
+  it("never lets the durable cursor rewind, even when the server echoes the overlapped request", async () => {
+    // THE REWIND THE OVERLAP MADE POSSIBLE. A cursor endpoint ordinarily answers
+    // with the newest row it returned, and echoes `since` when the page is
+    // empty. A quiet night is then: stored C, request C - 60s, no rows, echo
+    // C - 60s — and storing that answer moves the watermark BACKWARDS a minute.
+    // The next quiet run rewinds another, an admin pressing Download
+    // accelerates it, and the re-fetch grows without bound. Quiet nights are
+    // this registry's normal state, so this is the common case, not the corner.
+    const stored = "2026-06-20T10:05:30.000Z";
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesCursor: stored });
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [],
+      count: 0,
+      cursor: "2026-06-20T10:04:30.000Z",
+      dropped: 0,
+    });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockPullOtherLodges).toHaveBeenCalledWith("2026-06-20T10:04:30.000Z");
+    expect(mockRecordDownload).toHaveBeenCalledWith(stored);
+  });
+
+  it("still advances to a server watermark that is genuinely later", async () => {
+    // The other half of monotonic: refusing to rewind must not turn into
+    // refusing to move, which would freeze the sync at its first cursor.
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesCursor: "2026-06-20T10:05:30.000Z",
+    });
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [],
+      count: 0,
+      cursor: "2026-06-20T10:05:30.001Z",
+      dropped: 0,
+    });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-20T10:05:30.001Z");
+  });
+
+  it("passes a cursor it cannot read as an instant through untouched, and says so", async () => {
+    // The cursor is contractually opaque, so the overlap cannot always apply —
+    // and an overlap that is not applying looks EXACTLY like one that is, in
+    // every summary an operator sees. The log line is the only signal that this
+    // protection has been doing nothing since the day it shipped.
+    const cases = [
+      // An opaque token or sequence number: no time in it to step back from.
+      "c-100",
+      // Zone-less, so it names a wall-clock reading rather than a moment.
+      // Stepping it would resolve it in the HOST's zone — twelve or thirteen
+      // hours out on a New Zealand deployment, silently.
+      "2026-06-20T10:05:30",
+      // A date that does not exist. `Date.parse` rolls it forward to 2 March,
+      // so a step back from it lands nearly two days LATER than the stored
+      // cursor and skips every row in between — this defect, amplified.
+      "2026-02-30T00:00:00Z",
+    ];
+
+    for (const stored of cases) {
+      vi.clearAllMocks();
+      mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesCursor: stored });
+      mockRecordDownload.mockResolvedValue(undefined);
+      mockPullOtherLodges.mockResolvedValue({
+        lodges: [],
+        count: 0,
+        cursor: "c-200",
+        dropped: 0,
+      });
+
+      await downloadOtherClubsFromServer();
+
+      expect(mockPullOtherLodges).toHaveBeenCalledWith(stored);
+      // Unreadable on both sides, so the server's answer still stands: the
+      // monotonic guard narrows nothing it cannot order.
+      expect(mockRecordDownload).toHaveBeenCalledWith("c-200");
+      expect(mockLoggerWarn).toHaveBeenCalledTimes(1);
+      expect(mockLoggerWarn).toHaveBeenCalledWith(
+        { cursor: stored },
+        expect.stringContaining("NOT being applied"),
+      );
+    }
   });
 });
