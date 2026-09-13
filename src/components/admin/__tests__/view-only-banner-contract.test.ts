@@ -293,8 +293,12 @@ const FIGURES = {
    * gating it would refuse a view-only admin the way out of a prompt they could
    * not have acted on, exactly as #2999's Cancel reasons. MEASURED by re-running
    * this census.
+   *
+   * 347 -> 348 (#2938): Hut Fees' "New season from this", which opens a new
+   * season pre-filled from an existing one's rates. It writes when saved, so it
+   * is gated like the Edit beside it. MEASURED by re-running this census.
    */
-  callSites: 347,
+  callSites: 348,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -303,8 +307,10 @@ const FIGURES = {
    * 292 -> 293 (#3214): so does the night-price control.
    * 293 -> 294 (#2698): so does the custodian/whole-lodge-hold amendment
    * control, whose Accept sits under the hut-leaders page's own banner.
+   * 294 -> 295 (#2938): so does the copy-a-season control, which sits under the
+   * Hut Fees section's own banner alongside Edit, Deactivate and Delete.
    */
-  optOuts: 294,
+  optOuts: 295,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -315,8 +321,10 @@ const FIGURES = {
    * 258 -> 259 (#3214): the night-price section's banner and its button are in
    * one file, so it is static rather than vouched — the button sits in a child
    * COMPONENT, but the static rule is about the FILE.
+   * 259 -> 261 (#3214/#2938): the running total above had already reached 260;
+   * Hut Fees' copy control is the 261st, and its banner is in the same file.
    */
-  staticOptOuts: 260,
+  staticOptOuts: 261,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
