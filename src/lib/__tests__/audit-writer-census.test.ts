@@ -1345,7 +1345,11 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // site and named in none of the four per-site maps, so all four land
     // unpinned and `pinned` does not move. RE-MEASURED on the MERGED tree with
     // `npm run audit:census`, never by adding the two branches' deltas together.
-    ).toEqual({ pinned: 127, unpinned: 349 });
+    // 349 -> 350 (#2939): the missing-contact seeding summary row, categorised
+    // `xero` at the site and named in none of the four per-site maps, so it
+    // lands unpinned and `pinned` does not move. 477 sites MEASURED with
+    // `npm run audit:census` minus 127 pinned.
+    ).toEqual({ pinned: 127, unpinned: 350 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

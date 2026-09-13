@@ -463,7 +463,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // new writers are disjoint and all categorised at the site, so none joins
   // `UNCATEGORISED_AUDIT_WRITERS`. Re-MEASURED on the MERGED tree with
   // `npm run audit:census`, never by adding the two deltas together.
-  writeSites: 476,
+  // 476 -> 477 (#2939): the missing-contact seeding run's one summary row per
+  // chunk, in `/api/admin/xero/missing-contacts`. Categorised `xero` at the
+  // site and named in none of the four per-site maps, so it lands unpinned.
+  // MEASURED with `npm run audit:census`, not by adding one to the literal.
+  writeSites: 477,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -530,7 +534,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // this sink that record a completed money movement - the epilogue runs after
     // the refund has already been made at Stripe, and must never throw into the
     // recovery worker and replay a refund for the sake of a bookkeeping row.
-    logAudit: { total: 264, uncategorised: 0 },
+    // 264 -> 265 (#2939): the missing-contact seeding summary, above. Not an
+    // awaited `createAuditLog`: it is written after a chunk whose provider
+    // writes have already happened, so a rejected audit write must not turn a
+    // completed run into an error the operator would repeat.
+    logAudit: { total: 265, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -950,7 +958,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // category every other writer of a member's Xero contact link already uses
     // (`xero.contact.synced_to_member`), so this keeps the subsystem uniform —
     // the test `INV-PRIV-013` applies. Nobody's readership changes.
-    xero: 36,
+    xero: 37,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership
