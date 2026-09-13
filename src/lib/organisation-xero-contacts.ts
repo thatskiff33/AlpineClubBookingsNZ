@@ -74,7 +74,6 @@
  * that still fires for anybody else.
  */
 import type { XeroClient } from "xero-node";
-import type { Prisma } from "@prisma/client";
 
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -86,17 +85,12 @@ import {
 } from "@/lib/xero-api-client";
 import {
   buildXeroIdempotencyKey,
-  buildXeroPayloadHash,
   completeXeroSyncOperation,
   failXeroSyncOperation,
   sanitizeForJson,
   startXeroSyncOperation,
-  upsertXeroObjectLink,
 } from "@/lib/xero-sync";
-import {
-  resolveXeroContactEmailPolicy,
-  type XeroContactEmailPolicy,
-} from "@/lib/xero-contact-containment";
+import { resolveXeroContactEmailPolicy } from "@/lib/xero-contact-containment";
 import { ensureXeroContactContained } from "@/lib/xero-contact-containment-proof";
 import {
   buildXeroContactDisplayName,
@@ -121,7 +115,7 @@ import {
   takeXeroContactFromSchoolsOwnMember,
   type XeroContactTransferFromMember,
 } from "@/lib/xero-contact-home";
-import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
+
 /** The advisory-lock keyspace for one organisation's contact link. */
 export function organisationXeroContactLockKey(organisationId: string): string {
   return `xero-organisation-contact:${organisationId}`;
