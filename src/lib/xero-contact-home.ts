@@ -308,7 +308,7 @@ export type XeroContactTransferFromMember = {
  * this contact was matched FOR is the school these legs recognise. An earlier
  * revision compared whitespace and case only. That was stricter than the search
  * that produced the candidate, so a school recorded once as `St. Peter's
- * College` and typed on its return as `St Peters College` was handed to this
+ * College` and typed on its return as `St Peter's College` was handed to this
  * transfer by Xero and then judged a different school by leg 1: no evidence,
  * the refusal below threw, and the invoice failed on every replay for ever. A
  * proof may never be stricter than the match that produced its candidate.

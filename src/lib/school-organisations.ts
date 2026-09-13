@@ -34,7 +34,7 @@
  *
  * The proof is deliberately COARSER than the claim, and never the other way
  * round. Xero's own name search folds punctuation and accents, so it hands back
- * one contact for `St. Peter's College` and `St Peters College`; a proof that
+ * one contact for `St. Peter's College` and `St Peter's College`; a proof that
  * called those two different schools would refuse the very row the search
  * accepted, and school names are full of apostrophes and full stops. Coarser is
  * safe — every name that claims a record also satisfies the proof — whereas
@@ -89,7 +89,7 @@ export function normaliseOrganisationName(name: string): string {
  * decide whether a school's own history names the school whose contact the
  * provider just handed back, and the provider handed it back under exactly this
  * rule. A comparison of its own here would refuse a school recorded once as
- * `St. Peter's College` and typed on its return as `St Peters College`, and that
+ * `St. Peter's College` and typed on its return as `St Peter's College`, and that
  * school's invoice would then fail on every replay, for ever.
  *
  * It is a FOLDING, not a fuzzy match: `Tokoroa Primary` and `Tokoroa Primary

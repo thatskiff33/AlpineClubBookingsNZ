@@ -16,7 +16,7 @@
  * This normalisation is deliberately coarse: it folds case, decomposes
  * compatibility forms, strips diacritics, and turns every run of
  * non-alphanumeric characters into a single space. So Xero's exact-name search
- * treats `St. Peter's College`, `St Peters College` and `ST PETERS  COLLEGE` as
+ * treats `St. Peter's College`, `St Peter's College` and `ST  PETER'S COLLEGE` as
  * one name, and hands back the same contact for any of them.
  *
  * Anything that then has to PROVE that contact belongs where the search said it
