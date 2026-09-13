@@ -325,12 +325,15 @@ docker run --label agent-lane.shared=true ...   # deliberately shared, not per-i
 
 Two rules make the check trustworthy rather than merely convenient:
 
-- **Never give per-issue infrastructure a shared name.** `tacbookings`,
-  `tacbookings-staging` and `tacbookings-measure` are reserved Compose projects —
-  production/local, the E2E stack, and #2663's measurement stack. The reporter
-  treats all three as shared and will never offer them for removal, and it adds
-  this host's own `COMPOSE_PROJECT_NAME` and `E2E_COMPOSE_PROJECT` to that set,
-  because both defaults are environment-configurable.
+- **Never give per-issue infrastructure a shared name.** `tacbookings` and
+  `tacbookings-staging` are reserved Compose projects — production/local and
+  the E2E stack. The reporter treats both as shared and will never offer them
+  for removal, and it adds this host's own `COMPOSE_PROJECT_NAME` and
+  `E2E_COMPOSE_PROJECT` to that set, because both defaults are
+  environment-configurable. (`tacbookings-measure`, #2663's measurement stack,
+  was a third reserved name here until the tree it belonged to was removed
+  whole by #3382 — that Compose project can no longer exist, so the reservation
+  went with it.)
 - **If a stack is deliberately shared across lanes, label it
   `agent-lane.shared=true`** and say so in the issue, rather than letting it look
   like debris somebody may eventually clear. Surrounding whitespace and casing are

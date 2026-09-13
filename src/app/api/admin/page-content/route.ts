@@ -484,7 +484,7 @@ export async function PATCH(request: NextRequest) {
  * **Why this method exists at all.** Every other way public page content can
  * change already clears the stored public site; deletion was the one supported
  * lifecycle step with no writer, so the measurement gate could not prove
- * deletion invalidation the way it proves the other 39 writers'. This is that
+ * deletion invalidation the way it proved the other 39 writers'. This is that
  * writer. It needs no new public-site behaviour: the `(website)/[...slug]`
  * catch-all already answers 404 for an address with no published row, so a
  * deleted page 404s through the same path a hidden one does (D-B2(a)).
@@ -502,11 +502,11 @@ export async function PATCH(request: NextRequest) {
  *
  * **Route shape (D-B7(a)).** `DELETE` on the collection with the id in the body,
  * not a new `[id]/route.ts`. Both mutating methods here already address a page
- * that way; it keeps this route's deliberate 401-shaped forbidden response, which
- * the admin panel already handles; and the preserved MC-03D measurement harness
- * watches THIS file for a DELETE export, so a sibling file would be invisible to
- * it. The REST-shaped alternative reads better and is a legitimate preference —
- * it would just require widening that scan in the same change.
+ * that way; it keeps this route's deliberate 401-shaped forbidden response,
+ * which the admin panel already handles. It also once let the MC-03D
+ * measurement harness watch THIS file alone for a DELETE export; that harness
+ * is gone (#3382) but the shape was never only about it. The REST-shaped
+ * alternative reads better and is still a legitimate future preference.
  *
  * **References are reported, not blocking (D-B4(a)).** In-content links are free
  * text an officer can spell any number of ways, so a substring check that refused

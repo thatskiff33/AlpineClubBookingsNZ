@@ -8,7 +8,7 @@ import {
   walkCalendarToMonth,
 } from "./calendar-navigation";
 import type { Persona } from "./personas";
-import { calendarDayLabel, type StayWindow } from "./stay-dates";
+import { calendarDayLabel, monthKeyParts, type StayWindow } from "./stay-dates";
 
 // Per-night occupied-bed counts from the authenticated availability API. The
 // capacity-lock assertion compares these before and after a booking.
@@ -19,7 +19,7 @@ export async function fetchOccupiedBeds(
   const months = new Set(nights.map((night) => night.slice(0, 7)));
   const occupied: Record<string, number> = {};
   for (const month of months) {
-    const [year, monthNumber] = month.split("-").map(Number);
+    const { year, month: monthNumber } = monthKeyParts(month);
     const response = await page.request.get(
       `/api/availability?year=${year}&month=${monthNumber - 1}`,
     );
