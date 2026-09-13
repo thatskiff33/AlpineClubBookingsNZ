@@ -164,7 +164,10 @@ stay. Sending the corrected quote holds beds again automatically, or you can hol
 them yourself. The one exception is a correction that changes **only** the
 catering preference — a hold does not depend on it, so the beds stay put. Those
 kept beds are freed automatically once the request's last quote window lapses,
-the same way a hold behind a query or a change request is.
+the same way a hold behind a query or a change request is — **but only if a quote
+was ever sent on it.** A request you held beds for and never quoted has no such
+window, so nothing frees those beds for you: use **Release hold** when you no
+longer want them.
 
 **If you change who is in the group, the member links go with it.** When you
 have linked one of the guests to a club member, that link points at a PLACE in

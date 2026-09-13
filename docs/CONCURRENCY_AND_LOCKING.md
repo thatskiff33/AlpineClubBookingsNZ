@@ -3303,19 +3303,22 @@ registry entry is what the next writer reasons from. Both
 `version: request.version` (#1923). The correction's version bump therefore
 settles that race in both directions on its own.
 
-**The counterparts that a version fence did NOT close** are the three quote
+**The counterparts that a version fence did NOT close** are the four quote
 writers in `src/lib/booking-request-quotes.ts`, and they are the ones this
 writer actually had to be reconciled against. A **decline** sets a TERMINAL
 status, so a guard reading "not declined, not cancelled" was a complete fence
 against it. A **correction sets a LIVE one** — `VERIFIED`, still quoteable,
-still acceptable, still correctable — so that same guard sees nothing. Each is
-reconciled at the writer, per the checklist in `AGENTS.md`:
+still acceptable, still correctable — so that same guard sees nothing. Three are
+reconciled at the writer, per the checklist in `AGENTS.md`; the fourth is
+deliberately left, and the row says so rather than the table quietly listing
+three:
 
 | Writer | What a correction did to it | How it is fenced now |
 | --- | --- | --- |
 | `createBookingRequestQuote` | a plain update restored the retired price, option totals and stale positional member links over the corrected row | claims on `version: request.version`, and throws before any quote row is touched |
 | `sendBookingRequestQuote` | an unguarded quote flip turned a `SUPERSEDED` quote back into a live `SENT` one with a fresh response token — priced on the pre-correction party, against the post-correction dates, with no beds held, because the correction's release runs afterwards | claims the quote row while it is still `DRAFT`/`SENT`; count 0 rolls the whole transaction back, and the email is outside it |
 | `respondToBookingRequestQuote` (the accept re-arm) | a bare unlocked update wrote the retired quote's price and snapshot and then converted — the corrected school resolved to an organisation and that organisation's invoice queued to Xero at yesterday's price | takes `lock(1)` itself and re-reads the quote's status under it; only `SUPERSEDED`/`CANCELLED` block the re-arm, so #1232's double-accept replay still works |
+| `respondToBookingRequestQuote` (the MODIFY/QUERY branch) | it flips a freshly corrected request to `MODIFICATION_REQUESTED`/`QUERY_PENDING` from a quote link that was live a moment ago, and its bare quote update re-stamped a quote the correction had already `SUPERSEDED` | **deliberately NOT lock-fenced, and not in `GLOBAL_LOCK_SITE_REGISTRY`.** It writes a status and the requester's own message and nothing else — no price, no accepted snapshot, no hold, no conversion — and both states it can reach are correctable and swept exactly as `VERIFIED` is, so a fence would buy a cosmetic status by discarding a message from the person whose booking it is. Only the quote write was narrowed, to `DRAFT`/`SENT`, which is what every other supersede writer in the tree already claims on. A future version that writes a price or converts takes the key and joins the registry |
 
 It joins no capacity tier because it creates no booking and claims no bed. The
 `AWAITING_REVIEW` hold a corrected request may still be carrying is released

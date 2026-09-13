@@ -10,7 +10,9 @@
 - Beds held for a request are **released when it is corrected**, because a hold is
   built out of the request's dates, party and contact — except a correction that
   changes only the catering preference, which a hold does not depend on. Beds kept
-  that way are freed automatically once the request's last quote window lapses. A
+  that way are freed automatically once the request's last quote window lapses —
+  though a request that was never quoted has no such window, so its beds stay held
+  until an officer releases them. A
   release that cannot be made is reported as a correction that saved with its beds
   still held, never as a failed save — and so is anything else that goes wrong
   after the correction has been written, so an officer is never invited to re-type

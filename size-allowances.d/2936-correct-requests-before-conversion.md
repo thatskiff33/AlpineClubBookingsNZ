@@ -42,8 +42,8 @@ reason: six lines, and five of them are the comment. The code is one field:
   in the tree that says so.
 
 file: src/lib/booking-request-quotes.ts
-lines: 1834
-reason: sixty-nine lines across the three quote writers, and they are not a
+lines: 1875
+reason: a hundred and ten lines across the four quote writers, and they are not a
   feature — they are this issue's own counterpart reconciliation, which the
   concurrency checklist requires and which cannot be done anywhere but at each
   writer. The correction sets a LIVE status (VERIFIED) where decline sets a
@@ -60,3 +60,19 @@ reason: sixty-nine lines across the three quote writers, and they are not a
   requester's four responses and the hold — but doing it inside a fix round on
   three concurrency fences would put the fences in a diff nobody could review
   against the writers they guard.
+  The second fix round added forty-one, and about thirty-five of them are
+  comment. A review lens found that "the three quote writers" was an
+  enumeration that had missed one: the requester's MODIFY/QUERY branch matches
+  the same criterion and was neither fenced nor named, while a new comment
+  beside the accept claimed every other branch already took the lock. The code
+  change there is four lines — the quote supersede becomes a DRAFT/SENT claim,
+  which is what every other supersede writer in the tree already does, so a
+  retired quote cannot be re-stamped with the requester's timestamp. The rest
+  is the paragraph saying the status flip is DELIBERATELY left unfenced and
+  why (it writes a status and the requester's own words; fencing it would
+  discard a message from the person whose booking it is), the correction to
+  the accept's overclaim, and one clause on the send saying the rollback does
+  not cover the hold, which committed before the transaction opened. Every one
+  of those sentences belongs at the writer it describes: a reader deciding
+  whether to copy the guard beside them is the exact reader who has to be told
+  which of the four is not one.

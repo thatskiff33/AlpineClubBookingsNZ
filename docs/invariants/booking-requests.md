@@ -192,34 +192,35 @@ Pinned by `src/lib/__tests__/booking-request-corrections.test.ts` and
 
 **A corrected school name is stored only against the school record the officer
 was actually shown.** Since #3367 approval resolves `schoolName` to an
-`Organisation` inside its own transaction, and that record owns the school's
-durable Xero customer (`INV-INT-018`, `INV-INT-020`) — so correcting the name is
-a choice about which school the club is about to invoice, not a spelling fix.
+`Organisation` owning that school's durable Xero customer (`INV-INT-018`,
+`INV-INT-020`), so correcting the name chooses which school the club invoices.
 
 - **The correction carries an acknowledgement, not a tick**: `outcome`
   `"existing"` naming the record's id, or `"new"` naming none.
   `assertSchoolRecordOutcomeAcknowledged`
-  (`src/lib/school-organisation-preview.ts`) refuses every other pairing —
-  including the right outcome pointed at the wrong record — with a `409` that
-  names the school.
+  (`src/lib/school-organisation-preview.ts`) refuses every other pairing — the
+  right outcome pointed at the wrong record included — with a `409` naming the
+  school.
 - **It is checked against a preview re-read INSIDE the claim transaction**,
   under `pg_advisory_xact_lock(1)`, never against the one the screen rendered.
-  Approvals are the only writer of those records and take that key, so no record
-  can appear in between: that is what makes the confirmation a fence, and it is
-  what the correction holds the key FOR. It is NOT what fences the conversion's
-  own write — both approvals
-  claim on `version` (#1923) — and the counterparts a version fence did not
-  close are the three quote writers, reconciled at each writer
-  (`INV-LOCK-001`; `docs/CONCURRENCY_AND_LOCKING.md`).
-- **The preview only ever reads.** `resolveOrCreateSchoolOrganisation` may run
-  only inside the approval transaction; the preview asks the same question of
-  the same filter (`schoolOrganisationNameClaim`) with the same ordering.
-- **The name is normalised once** (`normaliseSchoolNameForStorage`), so the
-  string previewed is the string stored.
-- **The contact people it names are the ones the provider names**: the same cap
-  (`MAX_XERO_ORGANISATION_CONTACT_PERSONS`), newest-first ordering and
-  de-duplication identity as `readOrganisationForXeroContact`, borrowed rather
-  than restated (`INV-SSOT`).
+  Approvals are the only writer of those records and take that key, so none can
+  appear in between. The key is NOT what fences the conversion's own write: both
+  approvals claim on `version` (#1923). What a version fence did not close are
+  the four quote writers — three fenced at the writer, and the fourth (the
+  MODIFY/QUERY response) deliberately left, writing a status and the requester's
+  message and nothing else (`INV-LOCK-001`;
+  `docs/CONCURRENCY_AND_LOCKING.md`).
+- **The preview only ever reads.** `resolveOrCreateSchoolOrganisation` runs only
+  inside the approval transaction; the preview asks the same filter
+  (`schoolOrganisationNameClaim`) with the same ordering.
+- **The name is normalised once** (`normaliseSchoolNameForStorage`).
+- **The contact people it names are shaped and de-duplicated as the provider's
+  are** — one cap (`MAX_XERO_ORGANISATION_CONTACT_PERSONS`), one newest-first
+  ordering, one shaping (`xeroContactPersonFromMember`) and one identity, shared
+  with `readOrganisationForXeroContact` rather than restated (`INV-SSOT`). The
+  ROLE scope is deliberately NOT shared: the preview reads `TEACHER` rows alone,
+  because it answers what approval would displace and
+  `reconcileOrganisationTeachers` replaces teachers alone.
 - **A correction never writes the link.** It changes what approval will resolve,
   not what it has resolved.
 

@@ -1098,20 +1098,39 @@ correction that SAVED with its beds still held, never as a failed save, and so i
 every other post-claim failure: the whole block is wrapped the way decline's is.
 
 Beds a correction keeps, or fails to release, are swept by
-`cron-quote-expiry-reminders`' stale-hold phase, which selects `VERIFIED`
-alongside `MODIFICATION_REQUESTED` and `QUERY_PENDING` for exactly this reason —
-`VERIFIED` is where a correction leaves the request, and the expiry phase cannot
-see it because the correction has just superseded the `SENT` quote that phase
-selects on.
+`cron-quote-expiry-reminders`' stale-hold phase **once the request's last quote
+response window has lapsed**, which is what selecting `VERIFIED` alongside
+`MODIFICATION_REQUESTED` and `QUERY_PENDING` bought — `VERIFIED` is where a
+correction leaves the request, and the expiry phase cannot see it because the
+correction has just superseded the `SENT` quote that phase selects on.
+
+**That qualifier is load-bearing, not throat-clearing.** The deadline is
+`max(responseTokenExpiresAt)` across the request's quotes, and only a SENT quote
+ever writes one — so a request that has never had a quote sent has no window, no
+deadline, and is skipped on every tick for ever. Beds held on such a request by
+the officer's own "Hold slots" and then kept by a catering-only correction (or
+left behind by a release that failed) have **no** cron recovery at all; the
+officer's Release button is the only thing that frees them. That is the same rule
+that protects a deliberate re-hold (#1296) rather than a gap in this sweep, and
+it is why the page says "once the window lapses" rather than "are swept".
 
 **What a correction is NOT fenced by, and what it is.** `VERIFIED` is a LIVE
 status, not decline's terminal one, so every writer guarding on "not `DECLINED`,
-not `CANCELLED`" sees a corrected request as ordinary. The three quote writers
-are therefore fenced individually: the quote save claims on the request's
+not `CANCELLED`" sees a corrected request as ordinary. Three of the four quote
+writers are therefore fenced individually: the quote save claims on the request's
 `version`, the quote send claims the quote row while it is still `DRAFT`/`SENT`,
 and the accept re-arm takes `pg_advisory_xact_lock(1)` and re-reads the quote's
 status under it, refusing only a `SUPERSEDED`/`CANCELLED` one so #1232's
 double-accept replay still works.
+
+The fourth — the `MODIFY`/`QUERY` response — is **deliberately left unfenced**,
+so a requester acting on a quote link that was live a moment ago can still move a
+freshly corrected request to `MODIFICATION_REQUESTED`/`QUERY_PENDING`. It writes
+a status and the requester's own message and nothing else: no price, no accepted
+snapshot, no hold, no conversion, and both states it can reach are correctable
+and swept exactly as `VERIFIED` is. Only its quote write was narrowed, to
+`DRAFT`/`SENT`, so it can no longer re-stamp the supersede mark the correction
+made. `docs/CONCURRENCY_AND_LOCKING.md` carries the same split.
 
 Because `QUOTE_SENT` (and other quote-bearing states) DO carry a live `SENT`
 quote a requester could still act on, broadening decline reintroduces a
