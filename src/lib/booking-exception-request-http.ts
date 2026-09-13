@@ -11,6 +11,7 @@ import {
   NoEligiblePolicyExceptionError,
   OpenExceptionRequestConflictError,
   PolicyExceptionCapacityUnavailableError,
+  PolicyExceptionDependantIdentityError,
 } from "@/lib/booking-exception-request-service";
 
 /**
@@ -47,6 +48,17 @@ export function mapExceptionRequestError(error: unknown): NextResponse {
   // capacity conflict, mapped like the other request-creation conflicts.
   if (error instanceof PolicyExceptionCapacityUnavailableError) {
     return NextResponse.json({ error: error.message }, { status: 409 });
+  }
+  // #2721: the proposed party names one of the requester's OWN recorded
+  // dependants as a free-text guest and has not said which person is meant. The
+  // create route's own code and sentence, so the wizard's single handler covers
+  // both create doors. The collisions are deliberately not echoed here either —
+  // see `DependantIdentityRefusal.collisions`.
+  if (error instanceof PolicyExceptionDependantIdentityError) {
+    return NextResponse.json(
+      { error: error.refusal.error, code: error.refusal.code },
+      { status: error.refusal.status },
+    );
   }
   // #2526: a member id the requester may not book, or a member whose profile is
   // not complete enough. Refused HERE rather than freezing a party the approval

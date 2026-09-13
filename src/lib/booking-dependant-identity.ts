@@ -119,6 +119,27 @@ export type DependantIdentityDeclaration = z.infer<
 >;
 
 /**
+ * Read declarations back out of stored JSON without trusting them.
+ *
+ * A policy-exception request carries the booker's answers from submit time to
+ * approval time, and approval re-runs the guard rather than believing them: a
+ * declaration that does not describe a collision the booker's CURRENT records
+ * still support is refused there exactly as it is on the create route. So this
+ * only has to answer "is this the right shape", and anything else is no
+ * declarations at all — which fails closed, because the guard then has nothing
+ * covering the collision.
+ */
+export function parseStoredDependantIdentityDeclarations(
+  value: unknown,
+): DependantIdentityDeclaration[] {
+  const parsed = z
+    .array(dependantIdentityDeclarationSchema)
+    .max(50)
+    .safeParse(value);
+  return parsed.success ? parsed.data : [];
+}
+
+/**
  * The party shape this guard reads. Deliberately just the three fields, so it
  * can be handed the wizard's guest rows and the route's NORMALISED guest inputs
  * without either side converting.
@@ -141,9 +162,13 @@ export type DependantIdentityRefusal = {
   status: 409 | 400;
   error: string;
   /**
-   * The collisions still unanswered, for the wizard to draw the choice against.
-   * Only ever the booker's OWN dependants, so it discloses nothing they did not
-   * supply or already possess. Empty on a tampering refusal.
+   * The collisions still unanswered. Empty on a tampering refusal.
+   *
+   * IN-PROCESS ONLY — deliberately not part of any HTTP body (#2721 review). It
+   * was, and no consumer read it: a client meeting this refusal has a stale
+   * picture by definition, so the wizard re-reads the authoritative list rather
+   * than trusting the refusal's account of it. What is left here is the reason a
+   * refusal happened, for the caller that wants to log or explain it.
    */
   collisions: OwnDependantCollision[];
 };
@@ -190,10 +215,14 @@ export async function loadBookerDependants(
  *
  * A row with a `memberId` is already on the member path and is skipped — that is
  * the outcome this guard exists to produce, so a booker who has resolved one
- * collision is not asked about it again. On the server the party has been
- * through `normalizeBookingGuestInputs` first, which strips a `memberId` that
- * did not resolve to a bookable member; so a forged `isMember: true`, or an id
- * that names nobody, arrives here as the free-text row it really is.
+ * collision is not asked about it again.
+ *
+ * THIS FUNCTION TRUSTS THE `memberId` IT IS GIVEN, which is why it is not the
+ * server's entry point. The wizard may call it directly: the only member ids it
+ * can put on a row are ones it was handed from the booker's own family list.
+ * Every server caller goes through {@link checkOwnDependantIdentity}, which is
+ * handed the ids that actually resolved and therefore cannot be fooled by a
+ * forged one.
  *
  * A row missing either name part mints no key (see `normalizePersonFullName`)
  * and therefore collides with nothing.
@@ -332,15 +361,44 @@ export const DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE =
  * a TAMPERED declaration is refused even when the party would otherwise be
  * clean, so a caller cannot park a forged declaration in a payload and have it
  * ignored until the day it silently covers a real collision.
+ *
+ * ## `memberPathMemberIds` is required, and that is the forgery defence
+ *
+ * Which rows are "already on the member path" is the whole question a forged
+ * `isMember: true` or an invented member id is trying to answer for itself. This
+ * used to be settled by a PRECONDITION — callers had to hand in a party that had
+ * already been through `normalizeBookingGuestInputs`, which strips a `memberId`
+ * that resolved to nobody — and a precondition spelled out in a comment is one a
+ * future edit compiles straight past: hoisting this call above the
+ * normalisation, or passing the raw parsed guests because they are in scope and
+ * read the same, restored the original defect with the guard present, every test
+ * green (`INV-SSOT`, "prefer unrepresentable over policed").
+ *
+ * So the caller passes the ids that ACTUALLY resolved to a bookable member —
+ * the keys of the linked-member map every server create path already builds —
+ * and a row is treated as member-linked only if its id is in that set. The guard
+ * no longer depends on anything having happened to the party first. It is a
+ * required argument rather than an optional one for the same reason: there is no
+ * value it can silently default to that is safe.
  */
 export function checkOwnDependantIdentity(params: {
   party: ReadonlyArray<DependantIdentityPartyMember>;
+  /**
+   * The member ids on this party that resolved to a real, bookable member.
+   * Anything else on a row is not a member link, whatever the row claims.
+   */
+  memberPathMemberIds: ReadonlySet<string>;
   dependants: ReadonlyArray<BookerDependant>;
   declarations?: ReadonlyArray<DependantIdentityDeclaration>;
 }): DependantIdentityRefusal | null {
   const declarations = params.declarations ?? [];
   const collisions = findOwnDependantNameCollisions(
-    params.party,
+    params.party.map((guest) => {
+      const memberId = guest.memberId?.trim();
+      return memberId && params.memberPathMemberIds.has(memberId)
+        ? guest
+        : { ...guest, memberId: null };
+    }),
     params.dependants,
   );
 

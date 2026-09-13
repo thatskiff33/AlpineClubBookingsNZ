@@ -1999,6 +1999,15 @@ export function useBookingWizard() {
         checkIn: checkIn!,
         checkOut: checkOut!,
         guests: buildGuestPayload(),
+        // #2721: an exception request is a CREATE DOOR — approving one builds a
+        // confirmed booking — so it carries the same answers the ordinary create
+        // does. Sending the party without them stripped the declarations from
+        // the one sanctioned route to this door, so a member who had answered
+        // the question honestly was refused as though they had not.
+        dependantIdentityDeclarations:
+          liveDependantIdentityDeclarations.length > 0
+            ? liveDependantIdentityDeclarations
+            : undefined,
         memberMessage: input.memberMessage,
         supersedeRequestId: input.supersedeRequestId ?? undefined,
       }),
@@ -2011,6 +2020,20 @@ export function useBookingWizard() {
           : "The request could not be sent. Try again.",
       ) as Error & { code?: string };
       if (typeof data?.code === "string") failure.code = data.code;
+      // #2721: the exception door refuses in the create route's own codes, so it
+      // gets the create route's own recovery — re-read the family list and send
+      // the member to the step that can draw the question. Reaching it means the
+      // wizard's picture was stale, and the request panel sits on the review
+      // step where the question cannot be answered.
+      if (
+        failure.code === DEPENDANT_IDENTITY_UNRESOLVED_CODE ||
+        failure.code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE
+      ) {
+        handleDependantIdentityRefusal(
+          failure.code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
+          failure.message,
+        );
+      }
       throw failure;
     }
     return {

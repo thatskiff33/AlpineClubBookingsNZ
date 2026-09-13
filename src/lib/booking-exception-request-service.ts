@@ -34,6 +34,12 @@ import {
   assertLinkedBookingMembersCanBeBooked,
   resolveLinkedBookingMembersWithBoundary,
 } from "@/lib/booking-guests";
+import {
+  checkOwnDependantIdentity,
+  loadBookerDependants,
+  type DependantIdentityDeclaration,
+  type DependantIdentityRefusal,
+} from "@/lib/booking-dependant-identity";
 import { loadMemberGuestAddPolicy } from "@/lib/member-guest-add-policy";
 import {
   toMemberExceptionProposal,
@@ -163,6 +169,30 @@ export class PolicyExceptionCapacityUnavailableError extends Error {
   }
 }
 
+/**
+ * The proposed party names one of the requester's OWN recorded dependants as a
+ * free-text guest, and they have not said which person they mean (#2721,
+ * `INV-GUEST-019`).
+ *
+ * A policy-exception request is a CREATE DOOR: approving one builds a confirmed
+ * booking. Without this, the exception path was a complete way around the
+ * create route's guard — a member typed their own child's name, an officer
+ * approved it, and the child landed on the provisional, bumpable, separately
+ * invoiced non-member split. The officer approving it is not a compensating
+ * control, because the whole premise of the rule is that a name is not identity;
+ * the officer cannot tell which person was meant either.
+ *
+ * The refusal carries the create route's own code and sentence, so the wizard's
+ * one handler covers both doors and a member who meets it on either is told the
+ * same thing about the same state.
+ */
+export class PolicyExceptionDependantIdentityError extends Error {
+  constructor(readonly refusal: DependantIdentityRefusal) {
+    super(refusal.error);
+    this.name = "PolicyExceptionDependantIdentityError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
@@ -198,6 +228,13 @@ export interface CreateNewBookingExceptionRequestInput {
   checkOut: Date;
   guests: ExceptionRequestGuestInput[];
   memberMessage: string;
+  /**
+   * The requester's answers to "this guest has the same name as your own
+   * recorded dependant" (#2721). Verified here against their authoritative
+   * records, and frozen alongside the proposal so the approval can verify them
+   * again against the records as they stand THEN.
+   */
+  dependantIdentityDeclarations?: DependantIdentityDeclaration[];
   /** When set, the member is replacing THIS open request of theirs. */
   supersedeRequestId?: string | null;
 }
@@ -1204,8 +1241,9 @@ export interface CreatedExceptionRequest {
 async function assertRequestedPartyMemberGuestsAllowed(args: {
   requestedByMemberId: string;
   memberIds: Array<string | null | undefined>;
-}): Promise<void> {
-  if (!args.memberIds.some((memberId) => Boolean(memberId))) return;
+}): Promise<ReadonlySet<string>> {
+  if (!args.memberIds.some((memberId) => Boolean(memberId)))
+    return new Set<string>();
   const policy = await loadMemberGuestAddPolicy();
   const { members, boundary } = await resolveLinkedBookingMembersWithBoundary(
     prisma,
@@ -1226,6 +1264,49 @@ async function assertRequestedPartyMemberGuestsAllowed(args: {
       crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
     },
   );
+  // The ids that really resolved, for the own-dependant guard (#2721). It must
+  // not take a row's word for being on the member path, and this call has
+  // already done the work of finding out.
+  return new Set(members.keys());
+}
+
+/**
+ * Refuse a proposed party that names one of the requester's own recorded
+ * dependants as a free-text guest without saying which person is meant (#2721,
+ * `INV-GUEST-019`), and hand back the declarations to freeze with the proposal.
+ *
+ * WHY THE QUESTION IS ASKED AT SUBMIT TIME. The requester IS the booker and is
+ * at the wizard, so this is the only moment at which the question can be
+ * answered by the person who knows. An officer meeting it days later cannot
+ * answer it — the whole rule exists because a name is not identity — and the
+ * parent is not at the screen. Approval re-runs the guard against the records as
+ * they stand then, which is the stale window this cannot cover on its own.
+ *
+ * The dependant read is skipped for a party that is all member-linked and
+ * carries no declaration, exactly as on the create route.
+ */
+async function resolveRequestedPartyDependantIdentity(args: {
+  requestedByMemberId: string;
+  guests: ExceptionRequestGuestInput[];
+  memberPathMemberIds: ReadonlySet<string>;
+  declarations: DependantIdentityDeclaration[] | undefined;
+}): Promise<DependantIdentityDeclaration[]> {
+  const declarations = args.declarations ?? [];
+  const anyFreeText = args.guests.some(
+    (guest) =>
+      !guest.memberId?.trim() ||
+      !args.memberPathMemberIds.has(guest.memberId.trim()),
+  );
+  if (!anyFreeText && declarations.length === 0) return [];
+
+  const refusal = checkOwnDependantIdentity({
+    party: args.guests,
+    memberPathMemberIds: args.memberPathMemberIds,
+    dependants: await loadBookerDependants(prisma, args.requestedByMemberId),
+    declarations,
+  });
+  if (refusal) throw new PolicyExceptionDependantIdentityError(refusal);
+  return declarations;
 }
 
 /**
@@ -1241,10 +1322,20 @@ export async function createNewBookingExceptionRequest(
 ): Promise<CreatedExceptionRequest> {
   const memberMessage = normalizeMemberMessage(input.memberMessage);
 
-  await assertRequestedPartyMemberGuestsAllowed({
+  const memberPathMemberIds = await assertRequestedPartyMemberGuestsAllowed({
     requestedByMemberId: input.requestedByMemberId,
     memberIds: input.guests.map((guest) => guest.memberId),
   });
+
+  // #2721: a policy-exception request is a create door, so it asks the
+  // own-dependant question before anything is frozen.
+  const dependantIdentityDeclarations =
+    await resolveRequestedPartyDependantIdentity({
+      requestedByMemberId: input.requestedByMemberId,
+      guests: input.guests,
+      memberPathMemberIds,
+      declarations: input.dependantIdentityDeclarations,
+    });
 
   const proposedParty = buildProposalPartyFromGuests(
     input.checkIn,
@@ -1312,7 +1403,28 @@ export async function createNewBookingExceptionRequest(
           requestedByMemberId: input.requestedByMemberId,
           status: "REQUESTED",
           attemptCount,
-          proposalSnapshot: frozen.snapshot as unknown as Prisma.InputJsonValue,
+          /**
+           * The frozen proposal, plus — and strictly BESIDE it — the #2721
+           * own-dependant answers, so approval can re-run the guard without
+           * refusing every party the member legitimately declared.
+           *
+           * WHY THIS DOES NOT MOVE THE HASH. `canonicalizeProposalSnapshot`
+           * names the fields it hashes (`kind`, `lodgeId`, `proposed`, and a
+           * modification's `base`), so a sibling key is invisible to
+           * `computeProposalHash` by construction — every `proposalHash` stored
+           * before this change still validates, and a test pins that. The
+           * declarations are therefore NOT tamper-proofed by the hash, and they
+           * do not need to be: approval re-verifies each one against the
+           * requester's authoritative records as they stand then, so a forged
+           * declaration can only ever waive a collision that genuinely exists
+           * for this booker — the same guarantee the create route gives.
+           */
+          proposalSnapshot: {
+            ...frozen.snapshot,
+            ...(dependantIdentityDeclarations.length > 0
+              ? { dependantIdentityDeclarations }
+              : {}),
+          } as unknown as Prisma.InputJsonValue,
           proposalHash: frozen.proposalHash,
           frozenEvidence:
             frozen.frozenEvidence as unknown as Prisma.InputJsonValue,

@@ -408,6 +408,14 @@ export async function POST(request: NextRequest) {
     ? { kind: "ADMIN", adminMemberId: session.user.id }
     : { kind: "MEMBER" };
   let memberGuestEntries = new Map<string, MemberGuestConsentWritePlanEntry>();
+  /**
+   * The member ids on this party that actually resolved to a bookable member —
+   * the own-dependant guard's forgery defence (#2721, `INV-GUEST-019`). Hoisted
+   * out of the try so the guard below can be handed it; see
+   * `checkOwnDependantIdentity` for why it is an argument rather than a
+   * precondition about the party's provenance.
+   */
+  let memberPathMemberIds: ReadonlySet<string> = new Set<string>();
 
   try {
     const { members: linkedMembers, boundary } =
@@ -444,6 +452,7 @@ export async function POST(request: NextRequest) {
         crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
       }
     );
+    memberPathMemberIds = new Set(linkedMembers.keys());
     const normalizedGuests = normalizeBookingGuestInputs(guests, linkedMembers);
     const consentPlan = planMemberGuestConsentWrites({
       guests: normalizeGuestStayRanges(normalizedGuests, { checkIn, checkOut }),
@@ -481,12 +490,11 @@ export async function POST(request: NextRequest) {
   /**
    * OWN-DEPENDANT IDENTITY (#2721, `INV-GUEST-019`).
    *
-   * Run on `guestInputs` — the party AFTER `normalizeBookingGuestInputs`, which
-   * has already stripped any `memberId` that did not resolve to a bookable
-   * member. So "no member id here" means the row really is heading for the
-   * non-member guest split, whatever the client asserted, and a forged
-   * `isMember: true` or an invented member id cannot walk past this by
-   * pretending the row is already on the member path.
+   * `memberPathMemberIds` is what makes "already on the member path" a fact
+   * rather than a claim: it holds the ids that really resolved to a bookable
+   * member, so a forged `isMember: true` or an invented member id is read as
+   * the free-text row it is. The guard takes it as a required argument, so this
+   * cannot be weakened by moving the call or by passing a different party.
    *
    * Placed BEFORE the person-night, hosting and capacity pre-flights and before
    * any create service, so a party that is about to put a member on the
@@ -515,6 +523,7 @@ export async function POST(request: NextRequest) {
     );
     const dependantIdentityRefusal = checkOwnDependantIdentity({
       party: guestInputs,
+      memberPathMemberIds,
       dependants: bookerDependants,
       declarations: dependantIdentityDeclarations,
     });
@@ -523,9 +532,13 @@ export async function POST(request: NextRequest) {
         {
           code: dependantIdentityRefusal.code,
           error: dependantIdentityRefusal.error,
-          // Only ever the booker's OWN dependants, so this echoes back nothing
-          // they did not already possess. A tampering refusal carries none.
-          dependantCollisions: dependantIdentityRefusal.collisions,
+          // The collisions are deliberately NOT echoed (#2721 review). They were,
+          // and nothing read them: the wizard re-derives the question from
+          // `/api/members/family`, because a refusal this client did not expect
+          // is by definition one whose cached list is stale — and it has to
+          // re-read that list anyway to draw the answers, which the response
+          // body does not carry. Names and member ids travelling to no consumer
+          // are a payload waiting for someone to start trusting it.
         },
         { status: dependantIdentityRefusal.status },
       );

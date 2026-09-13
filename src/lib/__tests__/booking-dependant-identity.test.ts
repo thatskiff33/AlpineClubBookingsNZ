@@ -202,10 +202,25 @@ describe("the declaration shape: no generic override is expressible", () => {
   });
 });
 
+/**
+ * The member ids these fixtures use that really resolve to a bookable member.
+ * The guard takes this rather than believing a row's own `memberId`, so an id
+ * outside this set is treated as the free-text row it really is — see the
+ * forgery cases at the end of this describe.
+ */
+const RESOLVED_MEMBER_IDS: ReadonlySet<string> = new Set([
+  "booker-1",
+  "dep-sam",
+  "dep-sam-1",
+  "dep-sam-2",
+  "dep-ana",
+]);
+
 describe("checkOwnDependantIdentity", () => {
   it("lets an ordinary non-member guest through untouched", () => {
     expect(
       checkOwnDependantIdentity({
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
         party: [freeTextGuest("Kiri", "Ngata")],
         dependants: DEPENDANTS,
       }),
@@ -214,6 +229,7 @@ describe("checkOwnDependantIdentity", () => {
 
   it("REFUSES the original defect: an own dependant typed as free text", () => {
     const refusal = checkOwnDependantIdentity({
+      memberPathMemberIds: RESOLVED_MEMBER_IDS,
       party: [
         memberGuest("Pat", "Smith", "booker-1"),
         freeTextGuest("Sam", "Smith"),
@@ -231,6 +247,7 @@ describe("checkOwnDependantIdentity", () => {
   it("allows the guest path once the booker names the dependant it is not", () => {
     expect(
       checkOwnDependantIdentity({
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
         party: [freeTextGuest("Sam", "Smith")],
         dependants: DEPENDANTS,
         declarations: [declaration("dep-sam", "Sam", "Smith")],
@@ -244,6 +261,7 @@ describe("checkOwnDependantIdentity", () => {
       { id: "dep-sam-2", firstName: "Sam", lastName: "Smith" },
     ];
     const refusal = checkOwnDependantIdentity({
+      memberPathMemberIds: RESOLVED_MEMBER_IDS,
       party: [freeTextGuest("Sam", "Smith")],
       dependants: twoSams,
       declarations: [declaration("dep-sam-1", "Sam", "Smith")],
@@ -252,6 +270,7 @@ describe("checkOwnDependantIdentity", () => {
     expect(refusal?.code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
     expect(
       checkOwnDependantIdentity({
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
         party: [freeTextGuest("Sam", "Smith")],
         dependants: twoSams,
         declarations: [
@@ -265,6 +284,7 @@ describe("checkOwnDependantIdentity", () => {
   describe("tampering", () => {
     it("refuses a fabricated dependant id", () => {
       const refusal = checkOwnDependantIdentity({
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
         party: [freeTextGuest("Sam", "Smith")],
         dependants: DEPENDANTS,
         declarations: [declaration("dep-does-not-exist", "Sam", "Smith")],
@@ -280,6 +300,7 @@ describe("checkOwnDependantIdentity", () => {
       // simply not in it — which is the same shape as a fabricated id, and
       // deliberately gets the same answer rather than a distinguishable one.
       const refusal = checkOwnDependantIdentity({
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
         party: [freeTextGuest("Sam", "Smith")],
         dependants: DEPENDANTS,
         declarations: [declaration("another-familys-child", "Sam", "Smith")],
@@ -289,6 +310,7 @@ describe("checkOwnDependantIdentity", () => {
 
     it("refuses an UNRELATED own dependant — one this collision was never about", () => {
       const refusal = checkOwnDependantIdentity({
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
         party: [freeTextGuest("Sam", "Smith")],
         dependants: DEPENDANTS,
         // Ana really is the booker's dependant. She is not the person the
@@ -300,6 +322,7 @@ describe("checkOwnDependantIdentity", () => {
 
     it("refuses a STALE declaration whose guest name has since changed", () => {
       const refusal = checkOwnDependantIdentity({
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
         party: [freeTextGuest("Kiri", "Ngata")],
         dependants: DEPENDANTS,
         declarations: [declaration("dep-sam", "Sam", "Smith")],
@@ -312,6 +335,7 @@ describe("checkOwnDependantIdentity", () => {
       // recorded the dependant as "Sam Smith-Ngata", so the collision the
       // booker answered no longer exists.
       const refusal = checkOwnDependantIdentity({
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
         party: [freeTextGuest("Sam", "Smith")],
         dependants: [
           { id: "dep-sam", firstName: "Sam", lastName: "Smith-Ngata" },
@@ -325,6 +349,7 @@ describe("checkOwnDependantIdentity", () => {
       // A caller cannot leave a forged answer lying in the payload waiting for
       // the day it silently covers a real collision.
       const refusal = checkOwnDependantIdentity({
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
         party: [memberGuest("Pat", "Smith", "booker-1")],
         dependants: DEPENDANTS,
         declarations: [declaration("dep-sam", "Sam", "Smith")],
@@ -334,6 +359,7 @@ describe("checkOwnDependantIdentity", () => {
 
     it("refuses a tampered declaration even when the party is otherwise clean", () => {
       const refusal = checkOwnDependantIdentity({
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
         party: [
           freeTextGuest("Sam", "Smith"),
           freeTextGuest("Kiri", "Ngata"),
@@ -345,6 +371,57 @@ describe("checkOwnDependantIdentity", () => {
         ],
       });
       expect(refusal?.code).toBe(DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE);
+    });
+  });
+
+  /*
+    THE FORGERY DEFENCE IS THE ARGUMENT, NOT A PRECONDITION (#2721 review).
+
+    "Which rows are already on the member path" is the question a forged
+    `isMember: true` or an invented member id exists to answer for itself. It
+    used to be settled by requiring callers to hand in an already-normalised
+    party — a precondition a future edit compiles straight past, restoring the
+    original defect with the guard present and every test green. These cases
+    exercise the guard against a RAW party, which is what the argument makes
+    safe.
+  */
+  describe("a member id that resolved to nobody is not a member path", () => {
+    it("REFUSES an own dependant wearing an invented member id", () => {
+      const refusal = checkOwnDependantIdentity({
+        // Nothing has stripped this row's id: the guard is handed the raw party
+        // and the ids that really resolved, and works it out itself.
+        memberPathMemberIds: RESOLVED_MEMBER_IDS,
+        party: [memberGuest("Sam", "Smith", "member-that-does-not-exist")],
+        dependants: DEPENDANTS,
+      });
+      expect(refusal?.code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
+      expect(refusal?.collisions[0]?.dependants.map((d) => d.id)).toEqual([
+        "dep-sam",
+      ]);
+    });
+
+    it("REFUSES an own dependant wearing a member id that exists but did not resolve", () => {
+      // A real member who is not bookable by this booker never enters the
+      // linked-member map, so the row is heading for the guest split whatever
+      // its `memberId` says.
+      const refusal = checkOwnDependantIdentity({
+        memberPathMemberIds: new Set(["booker-1"]),
+        party: [memberGuest("Sam", "Smith", "dep-sam")],
+        dependants: DEPENDANTS,
+      });
+      expect(refusal?.code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
+    });
+
+    it("asks nothing once the SAME row's id really resolves", () => {
+      // The outcome the guard exists to produce: the dependant is on the member
+      // path, so there is no question left to ask.
+      expect(
+        checkOwnDependantIdentity({
+          memberPathMemberIds: RESOLVED_MEMBER_IDS,
+          party: [memberGuest("Sam", "Smith", "dep-sam")],
+          dependants: DEPENDANTS,
+        }),
+      ).toBeNull();
     });
   });
 });
