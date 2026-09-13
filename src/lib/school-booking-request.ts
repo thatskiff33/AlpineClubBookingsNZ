@@ -44,6 +44,7 @@ import {
   type ResolvedSchoolOrganisation,
 } from "@/lib/school-organisations";
 import { reconcileOrganisationTeachers } from "@/lib/organisation-xero-contact-persons";
+import { bookingOwner } from "@/lib/booking-owner";
 import { issueActionToken } from "@/lib/action-tokens";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -1015,9 +1016,9 @@ export async function approveSchoolBookingRequest(input: {
         // fail the accept: fall back to a fresh non-login SCHOOL contact (the
         // pre-#1255 default owner) and flag an admin. Auto-created owners always
         // pass, so this is a no-op except for a changed-state mapped contact.
-        let ownerId = held.memberId;
+        let ownerId = bookingOwner(held).memberId;
         try {
-          await assertMappableOwnerContact(tx, held.memberId);
+          await assertMappableOwnerContact(tx, bookingOwner(held).memberId);
         } catch (err) {
           if (!(err instanceof BookingRequestError)) throw err;
           const substitute = await tx.member.create({
@@ -1041,7 +1042,7 @@ export async function approveSchoolBookingRequest(input: {
           });
           ownerId = substitute.id;
           ownerSubstitution = {
-            invalidMemberId: held.memberId,
+            invalidMemberId: bookingOwner(held).memberId,
             substituteMemberId: substitute.id,
             reason: err.message,
           };

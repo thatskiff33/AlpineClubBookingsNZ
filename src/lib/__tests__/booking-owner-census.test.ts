@@ -52,7 +52,7 @@ import {
   relativeSource,
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
-import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
 
 /**
  * The ONE file allowed to read the column directly: the accessor's own body,
@@ -68,13 +68,44 @@ const READ =
 const DELEGATE_BINDING =
   /([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?[A-Za-z_$][\w$.]*\.booking\s*\.\s*(?:findUnique|findUniqueOrThrow|findFirst|findFirstOrThrow|findMany|create|update|upsert)\b/g;
 
-/** `bookings.map((b) => …)` — the callback's parameter is a booking. */
+/**
+ * `bookings.map((b) => …)` — the callback's parameter is a booking.
+ *
+ * The name ends in "ookings" after at least one character, which is how
+ * `bookings`, `allBookings` and `payment.bookings` are all one pattern.
+ * Requiring a leading character AND then an upper- or lower-case B — the
+ * obvious way, and how this was first written — silently excluded the bare
+ * `bookings`, the commonest spelling in the tree. The fixture below caught it.
+ */
 const ITERATION_BINDING =
-  /[A-Za-z_$][\w$.]*[Bb]ookings\s*\??\.\s*(?:map|flatMap|filter|forEach|find|findIndex|some|every|reduce)\s*\(\s*\(?\s*([A-Za-z_$][\w$]*)/g;
+  /[A-Za-z_$][\w$.]*ookings\s*\??\.\s*(?:map|flatMap|filter|forEach|find|findIndex|some|every|reduce)\s*\(\s*\(?\s*([A-Za-z_$][\w$]*)/g;
 
-/** A destructure of the owner off a booking, which would walk around the READ. */
+/**
+ * A destructure of the owner off a booking, which would walk around the READ.
+ * Ends in "ooking" for the same reason the iteration rule ends in "ookings":
+ * the bare `= booking` is the spelling that matters most, and a leading
+ * character class could not see it.
+ */
 const DESTRUCTURE =
-  /(?:const|let|var)\s*\{[^}]*\b(?:member|memberId)\b[^}]*\}\s*=\s*[A-Za-z_$][\w$.]*[Bb]ooking\b/g;
+  /(?:const|let|var)\s*\{[^}]*\b(?:member|memberId)\b[^}]*\}\s*=\s*[A-Za-z_$][\w$.]*ooking\b/g;
+
+/**
+ * `row.booking` — whatever `row` is, it is not itself a booking.
+ *
+ * The one exclusion the alias rules need, and a STRUCTURAL fact rather than an
+ * allowlist, which is why it is written as a rule. The admin work-parties
+ * table iterates `detail.attendingBookings`, whose rows are ATTENDANCE
+ * records: each carries both the attendee (`row.member`) and the booking
+ * (`row.booking`). The iteration rule cannot tell a list of bookings from a
+ * list of rows ABOUT bookings by the name alone — but a value with a booking
+ * hanging off it has answered the question itself.
+ *
+ * Scoped to the two ALIAS rules and deliberately not to the name rule: it must
+ * never be able to excuse `payment.booking.member`, where the value named for
+ * a booking IS the booking.
+ */
+const CARRIES_A_BOOKING =
+  /(?<![\w$])([A-Za-z_$][\w$]*)\s*\??\.\s*booking(?![\w$])/g;
 
 type Hit = { file: string; line: number; via: string; text: string };
 
@@ -87,12 +118,13 @@ function scan(): { hits: Hit[]; destructures: Hit[]; files: number; code: Map<st
     .filter((file) => /^(?:src|scripts)\//.test(file) && file !== ACCESSOR);
 
   for (const file of files) {
-    const source = stripComments(readFileSync(file, "utf8"));
+    const source = stripCommentsAndStrings(readFileSync(file, "utf8"));
     code.set(file, source);
 
     const aliases = new Set<string>();
     for (const [, name] of source.matchAll(DELEGATE_BINDING)) aliases.add(name);
     for (const [, name] of source.matchAll(ITERATION_BINDING)) aliases.add(name);
+    for (const [, name] of source.matchAll(CARRIES_A_BOOKING)) aliases.delete(name);
 
     source.split("\n").forEach((text, index) => {
       for (const match of text.matchAll(READ)) {
@@ -163,6 +195,7 @@ describe("#3368: a booking's owner is read in exactly one place", () => {
       const aliases = new Set<string>();
       for (const [, name] of code.matchAll(DELEGATE_BINDING)) aliases.add(name);
       for (const [, name] of code.matchAll(ITERATION_BINDING)) aliases.add(name);
+      for (const [, name] of code.matchAll(CARRIES_A_BOOKING)) aliases.delete(name);
       const found = [...code.matchAll(READ)].filter(([, prefix, last]) => {
         const bare = (prefix ?? "").replace(/\s/g, "") === "";
         return /booking$/i.test(last) || (bare && aliases.has(last));
@@ -178,6 +211,24 @@ describe("#3368: a booking's owner is read in exactly one place", () => {
     const found = [...routed.matchAll(READ)].filter(([, , last]) =>
       /booking$/i.test(last),
     );
+    expect(found).toEqual([]);
+  });
+
+  it("does NOT fire on a row that merely CARRIES a booking", () => {
+    // `detail.attendingBookings.map((row) => row.member.firstName)` in the
+    // admin work-parties table: `row` is an attendance record, and its
+    // `member` is the ATTENDEE, not a booking's owner. Without this rule the
+    // census could only pass by carrying an allowlist.
+    const code =
+      "attendingBookings.map((row) => row.member.firstName + row.booking.status);";
+    const aliases = new Set<string>();
+    for (const [, name] of code.matchAll(ITERATION_BINDING)) aliases.add(name);
+    expect(aliases.has("row"), "the iteration rule should bind it").toBe(true);
+    for (const [, name] of code.matchAll(CARRIES_A_BOOKING)) aliases.delete(name);
+    const found = [...code.matchAll(READ)].filter(([, prefix, last]) => {
+      const bare = (prefix ?? "").replace(/\s/g, "") === "";
+      return /booking$/i.test(last) || (bare && aliases.has(last));
+    });
     expect(found).toEqual([]);
   });
 
@@ -248,7 +299,73 @@ describe("#3368: the two families stage 4 (#3369) has to answer for", () => {
 });
 
 /** Measured, not counted by hand. Re-measure by running this test. */
-const OWNERSHIP_COMPARISON_SITES: readonly string[] = [];
+const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:37",
+  "src/app/(authenticated)/bookings/[id]/page.tsx:187",
+  "src/app/(authenticated)/bookings/page.tsx:134",
+  "src/app/api/bookings/[id]/additional-payment-secret/route.ts:52",
+  "src/app/api/bookings/[id]/arrival-time/route.ts:140",
+  "src/app/api/bookings/[id]/arrival-time/route.ts:248",
+  "src/app/api/bookings/[id]/arrival-time/route.ts:298",
+  "src/app/api/bookings/[id]/arrival-time/route.ts:367",
+  "src/app/api/bookings/[id]/cancel-preview/route.ts:49",
+  "src/app/api/bookings/[id]/change-requests/route.ts:211",
+  "src/app/api/bookings/[id]/change-requests/route.ts:539",
+  "src/app/api/bookings/[id]/confirm-draft/route.ts:90",
+  "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:69",
+  "src/app/api/bookings/[id]/confirm-payment/route.ts:80",
+  "src/app/api/bookings/[id]/exception-requests/route.ts:120",
+  "src/app/api/bookings/[id]/guests/route.ts:317",
+  "src/app/api/bookings/[id]/modify-quote/route.ts:332",
+  "src/app/api/bookings/[id]/notes/route.ts:47",
+  "src/app/api/bookings/[id]/refund-request/route.ts:225",
+  "src/app/api/bookings/[id]/refund-request/route.ts:41",
+  "src/app/api/bookings/[id]/requested-room/options/route.ts:85",
+  "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:66",
+  "src/app/api/payments/create-payment-intent/route.ts:131",
+  "src/app/api/payments/create-setup-intent/route.ts:54",
+  "src/app/api/payments/switch-to-internet-banking/route.ts:113",
+  "src/lib/adult-member-hosting-review.ts:2875",
+  "src/lib/adult-member-hosting-review.ts:3115",
+  "src/lib/booking-batch-modification-service.ts:973",
+  "src/lib/booking-cancel.ts:464",
+  "src/lib/booking-date-modification-service.ts:376",
+  "src/lib/booking-delete.ts:121",
+  "src/lib/booking-delete.ts:70",
+  "src/lib/booking-email-authority.ts:115",
+  "src/lib/booking-guest-removal-service.ts:417",
+  "src/lib/booking-guest-removal-service.ts:751",
+  "src/lib/booking-linked-date-move-service.ts:233",
+  "src/lib/booking-member-night-conflicts.ts:352",
+  "src/lib/booking-modify-validation.ts:527",
+  "src/lib/group-booking.ts:264",
+  "src/lib/kiosk-access.ts:232",
+  "src/lib/manual-refund-task-queue-payload.ts:153",
+  "src/lib/requested-room-write.ts:62",
+  "src/lib/waitlist-cross-lodge.ts:334",
+  "src/lib/waitlist-cross-lodge.ts:522",
+  "src/lib/waitlist.ts:1075",
+  "src/lib/waitlist.ts:933",
+  "src/lib/xero-period-lock-guard.ts:566",
+];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
-const MEMBER_KEYED_HELPER_SITES: readonly string[] = [];
+const MEMBER_KEYED_HELPER_SITES: readonly string[] = [
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:82",
+  "src/app/api/bookings/[id]/modify-quote/route.ts:740",
+  "src/app/api/payments/switch-to-internet-banking/route.ts:235",
+  "src/lib/booking-cancel.ts:336",
+  "src/lib/booking-cancel.ts:983",
+  "src/lib/booking-credit-election.ts:131",
+  "src/lib/booking-credit-election.ts:167",
+  "src/lib/diagnostics/tools/packs/finance-evidence.ts:559",
+  "src/lib/internet-banking-payment-cron.ts:80",
+  "src/lib/organisation-xero-contacts.ts:160",
+  "src/lib/payment-reconciliation.ts:1370",
+  "src/lib/payment-reconciliation.ts:406",
+  "src/lib/xero-applied-credit-allocation.ts:422",
+  "src/lib/xero-applied-credit-allocation.ts:514",
+  "src/lib/xero-applied-credit-allocation.ts:574",
+  "src/lib/xero-applied-credit-deallocation.ts:710",
+  "src/lib/xero-inbound/credit-note-repairs.ts:767",
+];
