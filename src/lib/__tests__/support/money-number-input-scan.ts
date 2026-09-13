@@ -22,26 +22,76 @@ import ts from "typescript";
  * text away before it ran.
  *
  * The hard part is discrimination, not detection. Counts, percentages and
- * durations are legitimately `type="number"` — there are around eighty such
- * boxes in this tree — and a guard that flagged all of them would be switched
- * off within a week. So this scanner classifies each control from ITS OWN
- * source text, which is where the state name, the id, the placeholder and the
- * change handler all live:
+ * durations are legitimately `type="number"` — SEVENTY-THREE such boxes remain
+ * in this tree, measured rather than estimated — and a guard that flagged them
+ * would be switched off within a week.
  *
- * - a NON-MONEY unit named anywhere in the control wins outright: a percentage,
- *   or a duration in days/weeks/months/years/hours/minutes/seconds. That
- *   precedence is what keeps "Card Refund %" (`rule.refundPercentage`) and
- *   "Invoice due days" (`dueDays`) out, even though "refund" and "invoice" are
- *   money words;
- * - otherwise a money word — amount, price, dollar, cent, fee, rate, cost,
- *   charge, refund, currency, or a literal `$` — makes it a money box.
+ * ## What identifies a control
  *
- * Reading the control's own text rather than a nearby label is deliberate. The
- * percentage columns in `cancellation-rules-editor.tsx` carry no label of their
- * own: their headings sit in a `<TableHead>` list well above, next to
- * "Card Fixed Fee ($)", so any proximity-based identity would read the fee
- * heading onto the percentage box and report a false positive in the one file
+ * FOUR THINGS, and deliberately nothing else: its `id`, its `value`, its
+ * `placeholder`, and the text of the label bound to it — a `<Label htmlFor>`
+ * naming its literal id, or its own `aria-label`.
+ *
+ * The whole opening element is NOT read, and that is a fix rather than an
+ * oversight (#2932 review). Class names, inline styles, `aria-describedby` ids
+ * and change-handler bodies all bleed identity that is not the control's: a
+ * guest-count box sharing a hint id that contains "amount" reads as money, and
+ * — the other direction, and worse — a `className` or style holding a literal
+ * `%` silences the guard on a real money box, with nothing on screen to say
+ * that a layout attribute had disarmed it.
+ *
+ * Identity comes from the control rather than from proximity for a separate
+ * reason. The percentage columns in `cancellation-rules-editor.tsx` carry no
+ * label of their own: their headings sit in a `<TableHead>` list well above,
+ * next to "Card Fixed Fee ($)", so any nearest-text identity reads the fee
+ * heading onto the percentage box and reports a false positive in the one file
  * that already does this correctly.
+ *
+ * ## How that text is read
+ *
+ * Identifiers here are overwhelmingly camelCase and kebab-case, so the text is
+ * SPLIT ON CASE before any word is matched: `nightlyRate` becomes
+ * `nightly Rate`, `rateInputs` becomes `rate Inputs`, `dueDays` becomes
+ * `due Days`. Without that split a `\b`-anchored word never matches this
+ * repository's dominant naming convention at all — `\brates?\b` misses every
+ * one of `nightlyRate`, `rateInputs` and `unitCost`, which was most of what
+ * this scanner claimed to read (#2932 review). Splitting is also what lets the
+ * short, ambiguous words keep their boundaries: `\bcents?\b` still refuses to
+ * fire on "percent".
+ *
+ * Template-literal interpolation is stripped first. Leaving it in made a
+ * literal `$` match every templated id in the tree — six false positives on
+ * counts and durations, measured.
+ *
+ * ## The precedence
+ *
+ * 1. A PERCENTAGE wins outright. A percentage off a price is not money however
+ *    many money words surround it, and "Card Refund %"
+ *    (`rule.refundPercentage`) is exactly that.
+ * 2. A DURATION — days, weeks, months, years, hours, minutes, seconds, a TTL —
+ *    wins UNLESS the control also carries a literal currency symbol. That is
+ *    the narrowed form (#2932 review): a blanket duration win classified
+ *    "Price per year ($)" as not-money, so the override written to keep
+ *    "Invoice due days" out was also a hole a real money box could sit in. The
+ *    currency symbol is what tells the two apart.
+ * 3. Otherwise a money word decides — amount, price, dollar, cent, fee, rate,
+ *    cost, charge, refund, currency, deposit, balance, discount, donation,
+ *    levy, tax, payment, budget, or a literal `$`.
+ * 4. Failing all of those, `step="0.01"` alone is enough. Cent precision on a
+ *    number control is a money claim in its own right, and it is the one signal
+ *    renaming a state variable or a helper cannot erase. Measured on this tree:
+ *    no `type="number"` control uses a cent-precision step for anything but
+ *    money, and the single 0.01 step elsewhere is the photo editor's zoom — a
+ *    `type="range"` slider this scanner never looks at.
+ *
+ * ## What it cannot see, stated because the rest of this reads as complete
+ *
+ * - Only a LITERAL `type="number"` attribute is matched. A spread
+ *   (`{...someProps}`) or a computed type is invisible to it.
+ * - A label is associated only through a literal `htmlFor`. A money box whose
+ *   id is computed — `id={key}` with `<Label htmlFor={key}>` — must therefore
+ *   carry its identity in its own `id`, `value`, `placeholder` or `aria-label`;
+ *   the label text beside it is not read.
  */
 const REPO = process.cwd();
 const SKIPPED_DIRECTORIES = new Set([
@@ -54,17 +104,36 @@ const SKIPPED_DIRECTORIES = new Set([
 ]);
 const TEST_FILE = /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$/;
 
-/**
- * A unit that is not money, named anywhere in the control. Checked FIRST and
- * wins: a percentage OFF a price, or a deadline measured in days, is not a
- * money box however many money words surround it.
- */
-const NON_MONEY_UNIT =
-  /percent|%|\bdays?\b|\bweeks?\b|\bmonths?\b|\byears?\b|\bhours?\b|\bminutes?\b|\bseconds?\b|ttl/i;
+/** A percentage. Checked first, and wins outright. */
+const PERCENTAGE = /percent|%/i;
 
-/** A money word. Only consulted once `NON_MONEY_UNIT` has not matched. */
+/**
+ * A duration. Wins unless a currency symbol is also present — precedence step 2
+ * in the docblock above.
+ */
+const DURATION_UNIT =
+  /\b(?:days?|weeks?|months?|years?|hours?|minutes?|seconds?|ttls?)\b/i;
+
+/** A literal currency symbol, after template interpolation has been stripped. */
+const CURRENCY_SYMBOL = /\$/;
+
+/**
+ * A money word.
+ *
+ * The long, distinctive ones match as substrings, so "pricing", "surcharge" and
+ * "prepayment" all count. The short ones — cent, fee, rate, cost, tax, levy —
+ * keep `\b` boundaries, because unbounded they fire on "percent", "coffee",
+ * "generate" and "costume". Case-splitting the text before matching is what
+ * makes those boundaries reachable on camelCase names at all.
+ *
+ * "total" is deliberately NOT here, and it is the one word the #2932 review
+ * proposed that this tree refutes: `maxRedemptionsTotal` ("Total redemptions
+ * allowed") is a count, and admitting the word flags it. The school-quote box
+ * the word was wanted for is identified twice over without it — by its `price-`
+ * id and by its cent-precision step.
+ */
 const MONEY_WORD =
-  /amount|price|dollar|\bcents?\b|\bfees?\b|\brates?\b|\bcosts?\b|charge|refund|currency|\$/i;
+  /amount|price|dollar|charge|refund|currency|deposit|balance|discount|donation|payment|budget|\b(?:cents?|fees?|rates?|costs?|taxe?s?|lev(?:y|ies))\b|\$/i;
 
 /**
  * A template-literal interpolation opener. Stripped before classification: an
@@ -74,6 +143,44 @@ const MONEY_WORD =
  */
 const TEMPLATE_INTERPOLATION = /\$\{/g;
 
+/** The `step` values that assert cent precision. */
+const CENT_PRECISION_STEP = new Set(["0.01", ".01"]);
+
+/** The attributes that carry a control's own identity. Nothing else is read. */
+const IDENTITY_ATTRIBUTES = new Set([
+  "id",
+  "value",
+  "placeholder",
+  "aria-label",
+]);
+
+/**
+ * Every directory the walk must actually reach for its silence to mean
+ * anything, and the reason this is a list of names rather than a total.
+ *
+ * A total only says the walk was big. These say it went to the right places:
+ * add any one of `app`, `admin`, `components`, `booking-policies`,
+ * `booking-requests`, `ui` or `edit-booking` to `SKIPPED_DIRECTORIES` and the
+ * guard fails naming the subtree it stopped reading, instead of quietly
+ * scanning a fraction of the tree and reporting clean. Two of the seven boxes
+ * this guard was written for live under `src/components/admin/booking-requests`,
+ * which is why that one is named at its own depth.
+ *
+ * A total would also have to be re-measured by every sibling lane editing an
+ * admin or booking surface. These prefixes do not move.
+ */
+export const REQUIRED_SCANNED_SUBTREES = [
+  "src/app/(admin)/admin",
+  "src/app/(authenticated)",
+  "src/app/(public)",
+  "src/app/(website-dynamic)",
+  "src/components/admin",
+  "src/components/admin/booking-policies",
+  "src/components/admin/booking-requests",
+  "src/components/edit-booking",
+  "src/components/ui",
+] as const;
+
 export type MoneyNumberInput = {
   /** Repository-relative, forward-slashed. */
   file: string;
@@ -81,15 +188,22 @@ export type MoneyNumberInput = {
   line: number;
   /** The tag name, e.g. `Input`. */
   tag: string;
-  /** The money word that classified it. */
+  /** The money signal that classified it. */
   matched: string;
 };
 
 /**
  * The escape hatch, and the only one — never an inline comment or a disable.
  * Each entry names a repository-relative file and states in writing why a money
- * box there may stay a browser number control. It is EMPTY, and an empty list
- * is the claim: every money box in this tree is spelled `MONEY_INPUT_PROPS`.
+ * box there may stay a browser number control.
+ *
+ * It is EMPTY, and here is exactly what that proves and what it does not. It
+ * proves that NO CONTROL THIS SCANNER READS AS MONEY IS A BROWSER NUMBER INPUT.
+ * It does NOT prove that every money box in this tree is spelled
+ * `MONEY_INPUT_PROPS`: a money box the classifier cannot identify is silence,
+ * not an exemption, and the limits in the docblock above say where that silence
+ * lives. The weaker claim is the true one, and a guard sold as proving more than
+ * it proves is a defect this repository has shipped before.
  */
 export const MONEY_NUMBER_INPUT_EXEMPTIONS: ReadonlyArray<{
   file: string;
@@ -113,31 +227,86 @@ export function jsxSourceFiles(root: string = REPO): string[] {
   return files;
 }
 
-function isNumberTypeAttribute(attribute: ts.JsxAttributeLike): boolean {
-  if (!ts.isJsxAttribute(attribute)) return false;
-  if (attribute.name.getText() !== "type") return false;
+function attributeName(attribute: ts.JsxAttributeLike): string | null {
+  return ts.isJsxAttribute(attribute) ? attribute.name.getText() : null;
+}
+
+/** The literal string an attribute holds, or `null` when it is not a literal. */
+function literalAttributeValue(attribute: ts.JsxAttributeLike): string | null {
+  if (!ts.isJsxAttribute(attribute) || !attribute.initializer) return null;
   const value = attribute.initializer;
-  if (!value) return false;
-  if (ts.isStringLiteral(value)) return value.text === "number";
+  if (ts.isStringLiteral(value)) return value.text;
   if (
     ts.isJsxExpression(value) &&
     value.expression &&
     ts.isStringLiteralLike(value.expression)
   ) {
-    return value.expression.text === "number";
+    return value.expression.text;
+  }
+  return null;
+}
+
+function isNumberTypeAttribute(attribute: ts.JsxAttributeLike): boolean {
+  return (
+    attributeName(attribute) === "type" &&
+    literalAttributeValue(attribute) === "number"
+  );
+}
+
+/** `step="0.01"`, `step=".01"` or `step={0.01}` — cent precision, however spelled. */
+function hasCentPrecisionStep(
+  node: ts.JsxOpeningElement | ts.JsxSelfClosingElement,
+): boolean {
+  for (const attribute of node.attributes.properties) {
+    if (attributeName(attribute) !== "step") continue;
+    const literal = literalAttributeValue(attribute);
+    if (literal !== null && CENT_PRECISION_STEP.has(literal)) return true;
+    if (
+      ts.isJsxAttribute(attribute) &&
+      attribute.initializer &&
+      ts.isJsxExpression(attribute.initializer) &&
+      attribute.initializer.expression &&
+      ts.isNumericLiteral(attribute.initializer.expression) &&
+      CENT_PRECISION_STEP.has(attribute.initializer.expression.text)
+    ) {
+      return true;
+    }
   }
   return false;
 }
 
 /**
- * Classify one control's own source text. Exported so the guard can drive it
- * with fixtures in both directions without touching the filesystem.
+ * Split identifier text on case and underscore so `\b`-anchored words can reach
+ * camelCase and snake_case names. `nightlyRate` -> `nightly Rate`,
+ * `XEROFeeCents` -> `XERO Fee Cents`, `unit_cost` -> `unit cost`.
  */
-export function classifyNumberInput(controlText: string): string | null {
-  const text = controlText.replace(TEMPLATE_INTERPOLATION, " ");
-  if (NON_MONEY_UNIT.test(text)) return null;
+function splitIdentifierWords(text: string): string {
+  return text
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/_/g, " ");
+}
+
+/**
+ * Classify one control from its identity text. Exported so the guard can drive
+ * it with fixtures in both directions without touching the filesystem.
+ *
+ * `identityText` is the control's `id`, `value`, `placeholder` and bound label
+ * — NOT its whole opening element. `centPrecisionStep` is the structural signal
+ * from `step`, which is not text at all.
+ */
+export function classifyNumberInput(
+  identityText: string,
+  centPrecisionStep = false,
+): string | null {
+  const text = splitIdentifierWords(
+    identityText.replace(TEMPLATE_INTERPOLATION, " "),
+  );
+  if (PERCENTAGE.test(text)) return null;
+  if (DURATION_UNIT.test(text) && !CURRENCY_SYMBOL.test(text)) return null;
   const money = MONEY_WORD.exec(text);
-  return money ? money[0] : null;
+  if (money) return money[0];
+  return centPrecisionStep ? 'step="0.01"' : null;
 }
 
 /** `<Label htmlFor="literal">…</Label>` text, keyed by the id it names. */
@@ -148,18 +317,13 @@ function collectLabelText(parsed: ts.SourceFile): Map<string, string> {
       const tag = node.openingElement.tagName.getText();
       if (tag === "Label" || tag === "label") {
         for (const attribute of node.openingElement.attributes.properties) {
-          if (
-            ts.isJsxAttribute(attribute) &&
-            attribute.name.getText() === "htmlFor" &&
-            attribute.initializer &&
-            ts.isStringLiteral(attribute.initializer)
-          ) {
-            const key = attribute.initializer.text;
-            labels.set(
-              key,
-              `${labels.get(key) ?? ""} ${node.children.map((child) => child.getText()).join(" ")}`,
-            );
-          }
+          if (attributeName(attribute) !== "htmlFor") continue;
+          const key = literalAttributeValue(attribute);
+          if (key === null) continue;
+          labels.set(
+            key,
+            `${labels.get(key) ?? ""} ${node.children.map((child) => child.getText()).join(" ")}`,
+          );
         }
       }
     }
@@ -169,21 +333,26 @@ function collectLabelText(parsed: ts.SourceFile): Map<string, string> {
   return labels;
 }
 
-/** A control's own `id`, when it is a plain string rather than a template. */
-function literalId(
+/**
+ * The control's own identity text: `id`, `value`, `placeholder`, `aria-label`,
+ * plus the text of a label that explicitly names its literal id. Nothing else
+ * from the element is read — see the docblock above for why.
+ */
+function identityText(
   node: ts.JsxOpeningElement | ts.JsxSelfClosingElement,
-): string | null {
+  labels: Map<string, string>,
+): string {
+  const parts: string[] = [];
+  let literalIdValue: string | null = null;
   for (const attribute of node.attributes.properties) {
-    if (
-      ts.isJsxAttribute(attribute) &&
-      attribute.name.getText() === "id" &&
-      attribute.initializer &&
-      ts.isStringLiteral(attribute.initializer)
-    ) {
-      return attribute.initializer.text;
-    }
+    const name = attributeName(attribute);
+    if (name === null || !IDENTITY_ATTRIBUTES.has(name)) continue;
+    if (!ts.isJsxAttribute(attribute) || !attribute.initializer) continue;
+    parts.push(attribute.initializer.getText());
+    if (name === "id") literalIdValue = literalAttributeValue(attribute);
   }
-  return null;
+  if (literalIdValue !== null) parts.push(labels.get(literalIdValue) ?? "");
+  return parts.join(" ");
 }
 
 /** Every money-classified `type="number"` control in one file's source. */
@@ -203,13 +372,10 @@ export function scanSourceForMoneyNumberInputs(
   const visit = (node: ts.Node) => {
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       if (node.attributes.properties.some(isNumberTypeAttribute)) {
-        const id = literalId(node);
-        // The control's own text, plus the text of a label that explicitly
-        // names its id. Only an `htmlFor` association counts — proximity does
-        // not — so a heading sitting above an unrelated box cannot be read
-        // onto it.
-        const text = `${node.getText()} ${(id && labels.get(id)) ?? ""}`;
-        const matched = classifyNumberInput(text);
+        const matched = classifyNumberInput(
+          identityText(node, labels),
+          hasCentPrecisionStep(node),
+        );
         if (matched) {
           found.push({
             file,
