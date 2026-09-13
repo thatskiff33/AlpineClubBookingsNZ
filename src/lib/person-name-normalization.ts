@@ -31,8 +31,20 @@
  * an empty part as "no name to compare" rather than as a match: an empty string
  * equals another empty string, which would make two half-filled guest rows
  * collide with each other and with an unnamed member.
+ *
+ * A MISSING value is the same answer rather than a throw, and the reason is the
+ * shape of the callers rather than tidiness. Both of them are GUARDS reading a
+ * party row: the #2721 collision detector runs over proposed booking guests on
+ * the server and again in the wizard, where a row is half-built while it is
+ * being typed. A guard that throws on a row it cannot read turns a refusal the
+ * member could act on into a 500 they cannot, and it fails in the loud
+ * direction for a value that could never have matched anybody anyway. The
+ * declared type still says `string`, so a typed caller is told to pass one.
  */
-export function normalizePersonNamePart(value: string): string {
+export function normalizePersonNamePart(
+  value: string | null | undefined,
+): string {
+  if (typeof value !== "string") return "";
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
@@ -47,8 +59,8 @@ export function normalizePersonNamePart(value: string): string {
  * testing the two parts themselves, so that decision has one home too.
  */
 export function normalizePersonFullName(
-  firstName: string,
-  lastName: string,
+  firstName: string | null | undefined,
+  lastName: string | null | undefined,
 ): string {
   const first = normalizePersonNamePart(firstName);
   const last = normalizePersonNamePart(lastName);

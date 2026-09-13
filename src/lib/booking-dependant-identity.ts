@@ -171,6 +171,11 @@ export async function loadBookerDependants(
   return db.member.findMany({
     where: {
       active: true,
+      // Nobody is their own dependant. A self parent link is a data error rather
+      // than a relationship, and left in it would ask a booker who typed their
+      // own name whether they are their own child — a question with no sensible
+      // answer, and one that would block their booking until they picked one.
+      NOT: { id },
       // NOT the family group, NOT the club. See the privacy note in the file
       // header before widening this by one clause.
       OR: [{ parentMemberId: id }, { secondaryParentId: id }],

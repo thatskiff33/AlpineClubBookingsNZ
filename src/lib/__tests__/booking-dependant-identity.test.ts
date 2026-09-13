@@ -69,6 +69,8 @@ describe("loadBookerDependants: the candidate set is parent links and nothing wi
     // prevent, and each would change this object.
     expect(args.where).toEqual({
       active: true,
+      // Nobody is their own dependant — a self parent link is a data error.
+      NOT: { id: "booker-1" },
       OR: [{ parentMemberId: "booker-1" }, { secondaryParentId: "booker-1" }],
     });
     // Only the three fields the collision question needs. No email, no address,

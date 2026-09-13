@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GuestData } from "@/components/guest-form";
 import { DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE } from "@/lib/booking-dependant-identity";
+import type { FamilyMember } from "@/app/(authenticated)/book/_components/types";
 
 /*
   #2721 — the wizard must stop an own recorded dependant BEFORE the guest split
@@ -60,7 +61,7 @@ const SELF = {
   missingFields: [],
 };
 
-const SAM = {
+const SAM: FamilyMember = {
   id: "dep-sam",
   firstName: "Sam",
   lastName: "Smith",
