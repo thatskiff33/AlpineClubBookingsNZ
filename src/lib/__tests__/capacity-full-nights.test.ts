@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { stripComments } from "./support/strip-comments";
 import { join } from "node:path";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { parseDateOnly } from "@/lib/date-only";
@@ -102,26 +103,49 @@ describe("getCapacityFullNights — a held night is a full night (#2930)", () =>
 /**
  * The SSOT half of the same fix, and it is a disk scan on purpose.
  *
- * Five byte-identical copies of this predicate is how one defect became five
- * (`INV-SSOT-001`). A census that only imported the canonical helper could not
- * see a sixth copy reappearing beside it, because a copy has no import edge to
- * the thing it copies — which is exactly the class `npm run test:related` is
- * blind to and this file is therefore in `test:named` territory.
+ * WHAT WAS ACTUALLY IN THE TREE, re-measured against `origin/epic/2725-mad`
+ * rather than carried from the first draft, which said "five byte-identical
+ * copies" and was wrong in both directions.
  *
- * WHAT IT DOES NOT CATCH, stated because a guard described more strongly than it
- * holds is worse than no guard: it matches the NAME. A copy of the same
- * arithmetic under a different name — `fullNightsFor`, `capacityShortNights` —
- * passes this, and so does an inline `.filter((n) => n.availableBeds < 0)` at a
- * call site. Mutation-verified both ways: a `getCapacityFullNights2` and a
- * renamed probe both slipped through, and only an exact re-declaration failed
- * it. It is a ratchet against the specific regression that happened here, not a
- * proof that the predicate exists in one place.
+ * Eleven non-test files under `src/` spelled `availableBeds < 0`:
+ *
+ * - FOUR named definitions of `getCapacityFullNights` — `booking-create-guests.ts`,
+ *   `booking-request-quotes.ts`, `booking-request-shared.ts`, `group-booking.ts` —
+ *   reached from EIGHT call sites across five modules (`booking-create.ts` twice,
+ *   `booking-request-quotes.ts`, `booking-request.ts`, `group-booking.ts`, and
+ *   `school-booking-request.ts` three times, importing the third definition
+ *   rather than holding a fifth);
+ * - SIX inline re-spellings under no name at all — the three admin overbook
+ *   routes, `group-settlement.ts`, the booking-edit quote's own night list and
+ *   the edit panel's over-capacity list;
+ * - and ONE that is a different rule with the same shape,
+ *   `overCapacityNights` in `over-capacity-confirmation.ts`, which adds
+ *   `&& !night.wholeLodgeHeld`.
+ *
+ * Two survive: this predicate and that one. Everything else imports one of them.
+ *
+ * A census that only imported the canonical helper could not see any of that,
+ * because a copy has no import edge to the thing it copies — which is exactly
+ * the class `npm run test:related` is blind to, and why this file is in
+ * `test:named` territory.
  */
-describe("there is exactly one definition of the capacity full-night list", () => {
-  it("no module re-declares it", () => {
-    const root = join(process.cwd(), "src");
-    const offenders: string[] = [];
+describe("the capacity refusal predicate is defined in exactly two places (#2930)", () => {
+  /** Every tracked TypeScript tree a copy could hide in. */
+  const TREES = ["src", "scripts", "e2e"];
 
+  /**
+   * The two modules allowed to spell the comparison, and what each one means.
+   * Held nights are the difference: this one counts them as full, that one
+   * excludes them because no admin override may reach one (`INV-CAP-021`,
+   * ADR-001 decisions 5 and 6). Never negotiable, never distinguishable.
+   */
+  const CANONICAL = [
+    join("src", "lib", "capacity-full-nights.ts"),
+    join("src", "lib", "over-capacity-confirmation.ts"),
+  ];
+
+  function sourceFiles(): string[] {
+    const found: string[] = [];
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name);
@@ -131,20 +155,80 @@ describe("there is exactly one definition of the capacity full-night list", () =
           continue;
         }
         if (!entry.name.endsWith(".ts") && !entry.name.endsWith(".tsx")) continue;
-        if (full.endsWith(join("lib", "capacity-full-nights.ts"))) continue;
-        const source = readFileSync(full, "utf8");
-        if (/function\s+getCapacityFullNights\s*\(/.test(source)) {
-          offenders.push(full);
-        }
+        if (entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx")) continue;
+        found.push(full);
       }
     };
-    walk(root);
+    for (const tree of TREES) {
+      const root = join(process.cwd(), tree);
+      if (!existsSync(root)) continue;
+      walk(root);
+    }
+    return found;
+  }
+
+  /**
+   * THE COMPARISON ITSELF, not the name it is given.
+   *
+   * The first version of this census matched `function getCapacityFullNights(`
+   * and nothing else, while its title claimed to prove there was exactly one
+   * definition. A same-named arrow function defeated it, a renamed copy defeated
+   * it, and — the shape that actually happened here — an inline
+   * `.filter(n => n.availableBeds < 0)` at a call site defeated it completely.
+   * Six of those were live in the tree while that census passed.
+   *
+   * Comments are blanked first (`INV-SSOT-004`'s one stripper), so the prose
+   * above and in the modules themselves can quote the defect without tripping
+   * the guard that catches it.
+   */
+  it("no other module compares availableBeds against zero", () => {
+    const offenders = sourceFiles().filter((file) => {
+      if (CANONICAL.some((canonical) => file.endsWith(canonical))) return false;
+      return /availableBeds\s*[<>]=?\s*0/.test(
+        stripComments(readFileSync(file, "utf8")),
+      );
+    });
 
     expect(
       offenders,
-      "INV-SSOT-001: getCapacityFullNights is defined in src/lib/capacity-full-nights.ts " +
-        "and imported from there. A second definition is how #2930's hold-privacy leak " +
-        "reached five call sites at once — import it instead of copying it.",
+      "INV-SSOT-001: the nights a capacity refusal names are decided in " +
+        "src/lib/capacity-full-nights.ts (held nights INCLUDED, for a member) and " +
+        "src/lib/over-capacity-confirmation.ts (held nights EXCLUDED, for an admin " +
+        "override). Import one of them. #2930's hold-privacy leak reached eleven " +
+        "files at once because this comparison was written out by hand at each of " +
+        "them, and a held night sits at exactly 0 rather than below it — so every " +
+        "copy silently dropped the held nights from the list it was building.",
+    ).toEqual([]);
+  });
+
+  /**
+   * The name, still — because the two guards fail differently and say different
+   * things. This one catches a genuine re-declaration that happens to avoid the
+   * comparison (delegating to a copied helper, say); the one above catches a
+   * copy under any other name.
+   *
+   * WIDENED to the declaration forms that are really equivalent: a `function`
+   * declaration, a `const`/`let`/`var` bound to an arrow or a function
+   * expression, and an object-literal or class method. It still matches TEXT, so
+   * a copy assembled at runtime or produced by a code generator is out of its
+   * reach — mutation-verified: `const getCapacityFullNights = (n) => []` and
+   * `getCapacityFullNights(n) { return []; }` both fail it now, where both
+   * passed the name-only predecessor.
+   */
+  it("nothing re-declares getCapacityFullNights under that name", () => {
+    const DECLARATION =
+      /(?:function\s+getCapacityFullNights\s*[(<]|(?:const|let|var)\s+getCapacityFullNights\s*(?::[^=]+)?=|^\s*(?:async\s+)?getCapacityFullNights\s*[(<])/m;
+
+    const offenders = sourceFiles().filter(
+      (file) =>
+        !file.endsWith(join("src", "lib", "capacity-full-nights.ts")) &&
+        DECLARATION.test(stripComments(readFileSync(file, "utf8"))),
+    );
+
+    expect(
+      offenders,
+      "INV-SSOT-001: getCapacityFullNights is defined in " +
+        "src/lib/capacity-full-nights.ts and imported from there.",
     ).toEqual([]);
   });
 });

@@ -1627,11 +1627,14 @@ export function EditBookingPanel({
   // stale-quote apply 409 (saveOverCapacityNights).
   const overCapacityConfirmActive =
     Boolean(quote?.overCapacityConfirmRequired) || Boolean(saveOverCapacityNights);
-  const overCapacityNightList = (
-    quote?.overCapacityConfirmRequired
-      ? quote.nightDetails ?? []
-      : saveOverCapacityNights ?? []
-  ).filter((night) => night.availableBeds < 0);
+  // #2930: no client-side re-filter. Both sources are already the server's
+  // `overCapacityNights()` output — the quote's since this change, the 409's all
+  // along — so the `availableBeds < 0` spelling that used to sit here was a
+  // second copy of a rule whose one home excludes held nights as well
+  // (`INV-SSOT-001`; a held night is never confirmable, ADR-001 decision 5).
+  const overCapacityNightList = quote?.overCapacityConfirmRequired
+    ? quote.nightDetails ?? []
+    : saveOverCapacityNights ?? [];
   const capacityOk = quote
     ? overCapacityConfirmActive
       ? confirmOverCapacity

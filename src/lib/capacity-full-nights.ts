@@ -3,10 +3,18 @@ import { formatDateOnly } from "@/lib/date-only";
 /**
  * The nights a capacity refusal names, in ONE place (#2930, `INV-SSOT-001`).
  *
- * This predicate was written out FIVE times — `booking-create-guests.ts`,
- * `booking-request-shared.ts`, `booking-request-quotes.ts`, `group-booking.ts`
- * and a private copy in `school-booking-request.ts`'s import of the second —
- * with byte-identical bodies, and every one of them carried the same defect.
+ * Measured against `origin/epic/2725-mad` before this module existed: ELEVEN
+ * non-test files under `src/` spelled the comparison `availableBeds < 0`. FOUR
+ * were byte-identical definitions of this function —
+ * `booking-create-guests.ts`, `booking-request-quotes.ts`,
+ * `booking-request-shared.ts`, `group-booking.ts` — reached from EIGHT call
+ * sites across five modules, `school-booking-request.ts` importing the third
+ * rather than holding a fifth. SIX more were inline, under no name at all: the
+ * three admin overbook routes, `group-settlement.ts`, the booking-edit quote's
+ * night list and the edit panel's over-capacity list. The eleventh is
+ * `overCapacityNights`, a deliberately different rule (see below).
+ *
+ * Every one of the ten carried the same defect.
  * They filtered `availableBeds < 0` alone, and a whole-lodge-held night's
  * `availableBeds` is PINNED to 0, never negative (`INV-CAP-021`; the pin is what
  * keeps an admin over-capacity override out of a held night, ADR-001 decision

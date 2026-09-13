@@ -31,7 +31,10 @@ import {
   checkCapacityForGuestRanges,
   type NightAvailability,
 } from "@/lib/capacity";
-import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
+import {
+  overCapacityNights,
+  wholeLodgeBlockedNights,
+} from "@/lib/over-capacity-confirmation";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -43,7 +46,6 @@ import {
 import { bookingPromoEmailOptions } from "@/lib/booking-promo-email-options";
 import { createStructuredAuditLog, getAuditRequestContext } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { formatDateOnly } from "@/lib/date-only";
 import {
   savedPaymentMethodForBooking,
   savedPaymentMethodRowStamp,
@@ -58,10 +60,18 @@ const confirmPendingGuestsSchema = z.object({
   notifyMember: z.boolean().optional(),
 });
 
+/**
+ * The dates of the confirmable over-capacity nights (#2930).
+ *
+ * A thin projection of the ONE definition rather than a second copy of its
+ * filter (`INV-SSOT-001`): this route's 409 carries dates alone, where the other
+ * two carry the bed numbers with them. `overCapacityNights` excludes
+ * whole-lodge-held nights by name (`INV-CAP-021`, ADR-001 decision 5) — the
+ * inline `availableBeds < 0` this replaces got that right only by accident, via
+ * the pin that keeps a held night at 0 rather than negative.
+ */
 function getOverbookedNightDates(nightDetails: NightAvailability[]): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => formatDateOnly(night.date));
+  return overCapacityNights({ nightDetails }).map((night) => night.date);
 }
 
 /**

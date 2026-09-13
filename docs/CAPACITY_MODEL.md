@@ -355,13 +355,27 @@ EMPTY list where genuine fullness produced a populated one. The member wizard
 renders whatever it is handed, so this surfaced as "the lodge is at capacity on
 **0 nights**": a tell, in plain sight, in the one place decision 6 is about.
 
+Three member surfaces carried it, not one. The create path said "0 nights"; the
+booking-EDIT quote drew the same "not enough beds" heading over an empty list
+where an ordinary full lodge drew an itemised one, and itemised it with each
+night's SHORTFALL, which a held night has none of; and the group settlement
+refusal handed the organiser an empty `fullNights` the same way. All three now
+name the nights through the one helper, and the member-facing payloads carry
+dates only — the per-night bed numbers survive solely on the admin
+over-capacity confirm, which `adminOverride` gates.
+
 `getCapacityFullNights` (`src/lib/capacity-full-nights.ts`) now counts a held
 night as a full night, so both refusals carry the same list. It is the mirror of
 `overCapacityNights()`, which excludes held nights precisely because an admin
 override may never reach one: never negotiable, and never distinguishable. The
-helper had FIVE byte-identical copies when the defect was found, which is how one
-mistake reached five refusal paths at once; it is now one module with a census
-test (`INV-SSOT-001`).
+comparison `availableBeds < 0` was written out in ELEVEN non-test files when the
+defect was found — four byte-identical definitions of this helper reached from
+eight call sites, six more inline under no name at all (three admin overbook
+routes, group settlement, the booking-edit quote's night list and the edit
+panel's over-capacity list), and `overCapacityNights` itself. That is how one
+mistake reached every refusal path at once. Two definitions now remain, this one
+and `overCapacityNights`, held there by a census test (`INV-SSOT-001`) that
+matches the comparison rather than the name.
 
 **A member may waitlist over a held night, and cannot be promoted off it.**
 Since #2930 a full future night is selectable in the member calendar — that is
