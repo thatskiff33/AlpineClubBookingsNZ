@@ -151,7 +151,7 @@ vi.mock("@/components/admin/bed-range-assign-dialog", () => ({
   BedRangeAssignDialog: () => null,
 }));
 vi.mock(
-  "@/app/(admin)/admin/bed-allocation/_components/allocation-preferences-section",
+  "@/components/admin/allocation-preferences-section",
   () => ({
     AllocationPreferencesSection: () => (
       <div data-testid="allocation-preferences" />

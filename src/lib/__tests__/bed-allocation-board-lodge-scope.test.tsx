@@ -118,7 +118,7 @@ vi.mock("@/components/admin/bed-range-assign-dialog", () => ({
 }));
 // Its own suite covers it; here it would only add a second endpoint to fake.
 vi.mock(
-  "@/app/(admin)/admin/bed-allocation/_components/allocation-preferences-section",
+  "@/components/admin/allocation-preferences-section",
   () => ({
     AllocationPreferencesSection: () => (
       <div data-testid="allocation-preferences" />

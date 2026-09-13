@@ -96,7 +96,7 @@ import {
   describeBedAllocationDrop,
 } from "./_components/allocation-drag-feedback";
 import { useSyncedScroll } from "./_components/use-synced-scroll";
-import { AllocationPreferencesSection } from "./_components/allocation-preferences-section";
+import { AllocationPreferencesSection } from "@/components/admin/allocation-preferences-section";
 import { useScopedDashboard } from "./_components/use-scoped-dashboard";
 import {
   bedAllocationRemovalCategoryForAnchor,
