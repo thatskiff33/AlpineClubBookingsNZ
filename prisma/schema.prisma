@@ -4517,6 +4517,25 @@ model AiAssistantSettings {
   updatedByMemberId  String?
 }
 
+// Deployment-specific NZD -> club-currency conversion rate for AI spend
+// (#3354, INV-CONFIG-001), shared by BOTH AI modules (the page-help assistant
+// and AI Diagnostics) — one home, so the two caps can never be priced at two
+// rates. The provider price tables stay in NZD cents; this rate converts each
+// estimate into the club's configured currency (APP_CURRENCY) before it is
+// booked or compared with a cap. Stored as an INTEGER in parts per million
+// (1 NZD = clubUnitsPerNzdMicros / 1_000_000 club units; 920000 = 0.92), so no
+// float or Decimal is ever stored (INV-MONEY). Never read when APP_CURRENCY is
+// NZD (identity); absent for a non-NZD club it is treated as identity and the
+// admin page says the rate is not set. rateSetAt/rateSetByMemberId are shown on
+// the settings page because a stale rate drifts silently. rateSetByMemberId is
+// a PLAIN STRING with NO foreign key (audit-only), like updatedByMemberId above.
+model AiSpendCurrencySettings {
+  id                    String   @id @default("default")
+  clubUnitsPerNzdMicros Int
+  rateSetAt             DateTime
+  rateSetByMemberId     String?
+}
+
 // ---------------------------------------------------------------------------
 // AI Diagnostics — SEPARATE admin-only capability (AID-2, #2371, epic #2369)
 // ---------------------------------------------------------------------------
