@@ -370,18 +370,12 @@ export default function RefundRequestsPage() {
 
     const payment = req.booking.payment
     if (payment) {
-      // #2932: compare in integer cents and render ONCE through the canonical
-      // plain formatter. This used to divide both amounts by 100 and compare
-      // the resulting doubles, which is float money arithmetic on the way into
-      // a money box (`INV-MONEY-001`, `INV-MONEY-003`).
-      const maxRefundableCents = payment.amountCents - payment.refundedAmountCents
-      setApprovedAmount(
-        formatCentsPlain(
-          req.requestedAmountCents
-            ? Math.min(req.requestedAmountCents, maxRefundableCents)
-            : maxRefundableCents
-        )
-      )
+      // #2932: compare in integer cents, render ONCE through the canonical plain
+      // formatter. This divided both amounts by 100 and compared the resulting
+      // doubles - float money arithmetic into a money box (`INV-MONEY-003`).
+      const max = payment.amountCents - payment.refundedAmountCents
+      const requested = req.requestedAmountCents
+      setApprovedAmount(formatCentsPlain(requested ? Math.min(requested, max) : max))
     }
   }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   MONEY_NUMBER_INPUT_EXEMPTIONS,
@@ -26,6 +26,14 @@ import {
   money box, and it stays silent on a seeded count, percentage and duration —
   rather than only proving that the tree is currently clean.
 */
+
+/*
+  The tree walk parses every non-test `.tsx` with the TypeScript parser, which
+  costs a few seconds on its own and more under parallel load. Vitest's 5000 ms
+  default expires there, so the budget is stated rather than left to luck - the
+  same reasoning as `money-cents-guard.test.ts`, which pays an ESLint bootstrap.
+*/
+vi.setConfig({ testTimeout: 60_000 });
 
 /**
  * A money box, spelled the wrong way. The shape a future change would add.
