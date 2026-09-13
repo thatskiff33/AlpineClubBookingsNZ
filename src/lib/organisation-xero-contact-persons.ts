@@ -510,8 +510,11 @@ export async function upsertOrganisationContactLink(
       xeroObjectId: input.xeroContactId,
       xeroObjectUrl: buildXeroContactUrl(input.xeroContactId),
       role: "CONTACT",
-      // MERGED, never replaced. The two facts this row's metadata carries are
-      // written by two different calls at two different times: `linkedVia` —
+      // MERGED, never replaced — and this is the ONE outbound writer that
+      // merges, which `XeroObjectLinkInput.mergeMetadata` names as the
+      // exception rather than leaving it to look like a mistake. The two facts
+      // this row's metadata carries are written by two different calls at two
+      // different times: `linkedVia` —
       // whether the contact was `created` or adopted by `name_match` — is
       // written once when the link is first made, and the contact-persons
       // fingerprint is rewritten on every refresh that sends an update. A plain

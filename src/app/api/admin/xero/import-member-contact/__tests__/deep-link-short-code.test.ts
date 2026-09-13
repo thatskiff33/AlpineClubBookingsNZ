@@ -259,8 +259,16 @@ describe("POST /api/admin/xero/import-member-contact deep links (#2314)", () => 
     expect(response.status).toBe(409);
     expect(body.error).toContain("New Plymouth Primary School");
     expect(body.heldBy).toEqual({ kind: "ORGANISATION", id: "org-1" });
-    // The lock is taken before anything else in the transaction.
+    // The contact-home key is taken, and taken BEFORE the member insert —
+    // asserted by call order rather than by the raw statement merely having run,
+    // because "a raw statement executed" would still hold with the lock moved
+    // after the create. INV-LOCK-002 makes the contact-home key the outer lock
+    // relative to any Member row lock; the route's own docblock explains why
+    // the refusal can nevertheless sit after the insert.
     expect(mocks.txExecuteRaw).toHaveBeenCalled();
+    expect(mocks.txExecuteRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.memberCreate.mock.invocationCallOrder[0],
+    );
     // And no member survives the refusal: the throw rolls the create back, and
     // nothing outside the transaction was told an import happened.
     expect(mocks.upsertXeroObjectLink).not.toHaveBeenCalled();

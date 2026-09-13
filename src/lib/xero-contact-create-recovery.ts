@@ -266,6 +266,13 @@ async function lockMemberRowForXeroFence(
  * Account deletion takes the same row FOR UPDATE, so either it commits first
  * and this writer observes the canonical anonymisation marker, or this short
  * local-link transaction commits before deletion can continue.
+ *
+ * **A caller that is linking a Xero CONTACT id must already hold that contact's
+ * home key** (`lockXeroContactHome`, `xero-contact-home.ts`) when it calls this:
+ * the contact-home key is the OUTER lock relative to any `Member` row lock
+ * (`INV-LOCK-002`), because the organisation-side transfer holds it while taking
+ * a row lock of its own. Deletion and merge, which link no contact, simply take
+ * the row.
  */
 export async function lockMemberForXeroContactLink(
   db: ContactLinkMemberFenceDb,
@@ -442,10 +449,21 @@ export async function applyInboundMemberContactPatch(
  * Fence a manual Xero link against an ambiguous provider create.
  *
  * Provider contact verification happens before the caller's short transaction.
- * Inside it, this exact target Member row is the first lock. The active create
+ * Inside it, this exact target Member row is locked and the active create
  * reservation is then re-read under that lock, so either the reservation wins
  * and manual linking refuses, or the manual link commits before a later create
  * reservation can re-read the authoritative `xeroContactId`.
+ *
+ * **THIS IS NOT THE TRANSACTION'S FIRST LOCK, AND MUST NOT BE MADE ONE
+ * (`INV-LOCK-002`, `INV-INT-018`).** The caller takes the contact-home advisory
+ * key — `lockXeroContactHome` in `xero-contact-home.ts` — BEFORE calling this,
+ * because the organisation-side transfer takes a `Member` ROW lock while
+ * holding that key. A writer that took the row first and then waited for the
+ * key would close a deadlock cycle with it, and Postgres would abort one side
+ * with `40P01`. An earlier revision of this docblock said the target row was
+ * the first lock; it was describing that deadlock. `docs/CONCURRENCY_AND_LOCKING.md`
+ * → "One Xero contact, one local home" carries the full order for all four
+ * linkers.
  */
 export async function lockMemberForManualXeroContactLink(
   db: ManualContactLinkFenceDb,

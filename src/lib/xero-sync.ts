@@ -43,8 +43,23 @@ export interface XeroObjectLinkInput {
    * {status,total,appliedAmount,remainingCredit} onto links whose outbound
    * writer stored {amountCents,watermarkCents} — a replace destroyed the
    * per-delta idempotency/covering inputs minutes after every refund credit
-   * note was created. Only inbound writers should set this; outbound writers
-   * own their metadata shape and keep replace semantics.
+   * note was created.
+   *
+   * THE TEST IS "DOES ONE CALL KNOW THE WHOLE SHAPE?", NOT "IS THIS INBOUND?".
+   * A writer that composes its row's metadata from ONE call owns that shape and
+   * keeps replace semantics, which is every outbound writer but one. Inbound
+   * reconcile is the original case because it writes half of a shape somebody
+   * else wrote.
+   *
+   * The exception is OUTBOUND and deliberate (#3367):
+   * `upsertOrganisationContactLink` sets this because a school's contact link
+   * carries two facts written at two different times — `linkedVia`, recorded
+   * once when the link is first made, and the contact-persons fingerprint,
+   * rewritten on every refresh. Replacing would mean the FIRST refresh silently
+   * dropped the provenance the adopted-contact reshape depends on, and the
+   * reshape would then never run. Its own comment says so at the call site;
+   * "correcting" it back to replace on the strength of the general rule
+   * disables that reshape without failing anything.
    */
   mergeMetadata?: boolean;
 }
