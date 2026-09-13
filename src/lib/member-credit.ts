@@ -900,12 +900,20 @@ export async function reviewAdminAdjustmentRequest(
         // sketched were refused: each would have taken it away.
         //
         // Written out rather than reusing `details` above, and that is the
-        // point: `details` is the officers' record and names the adjustment
-        // request, the credit row and the member who asked for it — three
-        // internal identifiers and a second person, none of which may cross to
-        // the member (`INV-PRIV-012`). And `formatAdjustmentAmount` renders raw
-        // cents (`+2500 cents`) for an operator; a member reads money, so the
-        // direction is a word and the amount unsigned.
+        // point: `details` is the officers' record. It names the credit row and
+        // the member who asked for the adjustment, and NEITHER reaches any
+        // member surface (`INV-PRIV-012`). And `formatAdjustmentAmount` renders
+        // raw cents (`+2500 cents`) for an operator; a member reads money, so
+        // the direction is a word and the amount unsigned.
+        //
+        // The claim is narrowed to the free text on purpose. The adjustment
+        // REQUEST's id is this row's `entityId`, and the timeline returns
+        // `entityType`/`entityId` to both audiences — so that one identifier
+        // does cross, as an opaque handle on the member's own request rather
+        // than as an explanation of it. Withholding it would be a change to
+        // every row on the member timeline rather than to this sentence, so
+        // this says what is true here instead of asserting a gate that is not
+        // there.
         memberDisclosure: {
           visibility: "member-facing",
           text:

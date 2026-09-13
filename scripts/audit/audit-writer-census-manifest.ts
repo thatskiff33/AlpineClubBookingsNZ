@@ -1962,10 +1962,19 @@ export const APPROVED_MIGRATION_AUDIT_SQL: Readonly<Record<string, string>> = {
  * map is where that shows up: a second member-facing site is a named CI failure
  * naming the action it would publish, not a quiet line in a route.
  *
- * ONE ENTRY, and it is the one the owner decided on 9 August 2026. The credit
- * adjustment approval is the only explanation a member ever gets for why their
- * balance moved, which is why both fixes #2695 originally sketched were refused:
- * each would have taken it away along with everything else.
+ * SIX ENTRIES, in two groups, and the split is the thing to read before adding
+ * a seventh. ONE is the owner's decision of 9 August 2026: the credit
+ * adjustment approval, the only explanation a member ever gets for why their
+ * balance moved, which is why both fixes #2695 originally sketched were
+ * refused — each would have taken it away along with everything else. The
+ * other FIVE are #2562's `adminNotes` writers, which are not new disclosures at
+ * all: a member reads that note today, and the five declarations are what keep
+ * it when the reader turned default-deny.
+ *
+ * EACH ENTRY SAYS WHAT ITS SITE PUBLISHES, in the comment above it, because the
+ * pinned VALUE can only be the action — it is measured from the tree and
+ * compared literally. "Which action" and "what text a member ends up reading"
+ * are different questions, and only the second one is the readership.
  *
  * MEASURED FROM THE TREE, so editing the route fails this and not only the
  * table. The entry pins the ACTION as well as the site because the identity is
@@ -1977,6 +1986,11 @@ export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
   Record<string, string>
 > = {
   // ─── The owner's decision of 9 August 2026 ──────────────────────────────────
+  // PUBLISHES: a sentence written for the member — the direction in words, the
+  // amount as money, and the officer's `description` of why. Not the row's
+  // `details`, which is the officers' record and names the credit row and the
+  // member who requested the adjustment.
+  //
   // The only explanation a member ever gets for why their credit balance moved.
   // Nothing else on any member surface carries it, which is exactly why both
   // fixes #2695 originally sketched were refused: each would have removed it.
@@ -1993,16 +2007,29 @@ export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
   // member-facing half is already emailed to the member on the same decision.
   // Denying it here would have taken an officer's explanation off the member's
   // own timeline while leaving it in their inbox.
-  // One site, two actions: the census records the conditional verbatim, which is
-  // what makes an edit to either branch a visible diff here.
+  // PUBLISHES: the officer's `adminNotes` on the decision, and nothing when
+  // there is none. One site, two actions: the census records the conditional
+  // verbatim, which is what makes an edit to either branch a visible diff here.
   "src/app/api/admin/booking-change-requests/[id]/route.ts::PATCH#0":
     "(dynamic) parsed.data.status === \"APPROVED\" ? \"booking-change-request.approve\" : \"booking-change-request.reject\"",
+  // PUBLISHES: `adminNotes`, which a refusal cannot omit — the route rejects a
+  // refusal without one — and which `notifyMemberOfRefusal` emails as well.
   "src/app/api/admin/booking-exception-requests/[id]/route.ts::PATCH#0":
     "booking-policy-exception-request.reject",
+  // PUBLISHES: `adminNotes` ONLY. This site's `details` falls back to the
+  // reviewed policy codes when an officer approves without writing anything,
+  // and those are internal identifiers for the rule that was waived rather than
+  // text written for a member, so that branch declares internal.
   "src/app/api/admin/booking-exception-requests/[id]/route.ts::PATCH#2":
     "booking-policy-exception-request.approve",
+  // PUBLISHES: `adminNotes`, which is also stored as the booking's
+  // `adminReviewNotes` and shown to the member on their own booking page. The
+  // email can be suppressed here by "do not notify"; the booking page cannot,
+  // which is why declaring it is preservation rather than widening.
   "src/app/api/admin/bookings/[id]/review/route.ts::PATCH#0":
     "booking.review.approve",
+  // PUBLISHES: the same, for the rejection. A rejection cannot omit the note —
+  // the route's schema requires one.
   "src/app/api/admin/bookings/[id]/review/route.ts::PATCH#1":
     "booking.review.reject",
 };

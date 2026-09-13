@@ -178,9 +178,17 @@ export async function PATCH(
       summary: "Admin approved booking awaiting review",
       details: parsed.data.adminNotes,
       // #2695 (`INV-PRIV-017`) - member-facing, which PRESERVES what the member
-      // reads today rather than widening it: `adminNotes` is #2562's member-facing
-      // half, already emailed to them with this decision, while `internalNotes`
-      // reaches no member surface and is not in this row at all.
+      // reads today rather than widening it. `adminNotes` is #2562's member-facing
+      // half and it is THE BOOKING'S OWN DISPLAYED DECISION REASON: it is stored as
+      // `adminReviewNotes` above and the member reads it on their own booking page,
+      // under "Admin note:".
+      //
+      // NOT "already emailed to them with this decision", which is the obvious
+      // reason and is false on a live path — `notifyMember: false` suppresses the
+      // email on exactly this route, and a later reader who checks that claim and
+      // finds it wrong could reasonably "fix" it by withdrawing the declaration.
+      // The booking page is what makes this a preservation rather than a widening.
+      // `internalNotes` reaches no member surface and is not in this row at all.
       memberDisclosure: parsed.data.adminNotes
         ? { visibility: "member-facing", text: parsed.data.adminNotes }
         : { visibility: "internal" },
@@ -330,9 +338,17 @@ export async function PATCH(
     summary: "Admin rejected booking awaiting review",
     details: parsed.data.adminNotes,
     // #2695 (`INV-PRIV-017`) - member-facing, which PRESERVES what the member
-    // reads today rather than widening it: `adminNotes` is #2562's member-facing
-    // half, already emailed to them with this decision, while `internalNotes`
-    // reaches no member surface and is not in this row at all.
+    // reads today rather than widening it. `adminNotes` is #2562's member-facing
+    // half and it is THE BOOKING'S OWN DISPLAYED DECISION REASON: it is stored as
+    // `adminReviewNotes` above and the member reads it on their own booking page,
+    // under "Admin note:".
+    //
+    // NOT "already emailed to them with this decision", which is the obvious
+    // reason and is false on a live path — `notifyMember: false` suppresses the
+    // email on exactly this route, and a later reader who checks that claim and
+    // finds it wrong could reasonably "fix" it by withdrawing the declaration.
+    // The booking page is what makes this a preservation rather than a widening.
+    // `internalNotes` reaches no member surface and is not in this row at all.
     memberDisclosure: parsed.data.adminNotes
       ? { visibility: "member-facing", text: parsed.data.adminNotes }
       : { visibility: "internal" },
