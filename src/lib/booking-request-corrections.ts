@@ -41,11 +41,14 @@
  *     Xero — will be shown as the people to talk to. The preview names who
  *     would be displaced; the audit row records it.
  *
- * Neither happens HERE. `BookingRequest.organisationId` is still written only
- * at conversion, and this module creates no record and touches no contact:
- * correcting a request changes what approval will resolve, not what it has
- * resolved. That separation is deliberate — the resolve's unique-name claim is
- * the approval transaction's own global lock, and moving it earlier would mint
+ * Neither happens HERE, and this module deliberately does not so much as NAME
+ * the school link — stage 2's census keeps the set of files that read it small
+ * and argued-for, and `school-organisation-preview.ts` is the one file this
+ * issue adds to it. The link on the request is still written only at
+ * conversion; nothing here creates a record or touches a contact. Correcting a
+ * request changes what approval will resolve, not what it has resolved, and
+ * that separation is deliberate: the resolve's unique-name claim is the
+ * approval transaction's own global lock, and moving it earlier would mint
  * records for requests that are never approved.
  *
  * ## Locking (`INV-LOCK-001`, `INV-LOCK-002`)

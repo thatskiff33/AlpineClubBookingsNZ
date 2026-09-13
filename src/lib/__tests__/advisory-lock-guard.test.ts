@@ -706,6 +706,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "correctBookingRequest#1",
+    tier: "GLOBAL",
+    reason:
+      "#2936: correcting an unconverted request writes the envelope approval is about to read, so it must exclude the conversion that takes this same key first — otherwise a request commits as CONVERTED while claiming dates its booking does not have, and the conversion's own write is not version-guarded so the claim alone cannot close it. It takes NO per-lodge key: it creates no booking and claims no bed, and the stale hold it releases is cancelled afterwards, outside this transaction, by the shared cancel path that takes both tiers itself.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "approveMemberWholeLodgeRequest#1",
     tier: "GLOBAL",
     reason:
