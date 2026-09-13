@@ -3,11 +3,12 @@
 Audience: Developer, Agent.
 
 Prefix defined in this file: **`INV-REQ`** — which of a Booking Officer's two
-notes a member reads, and what the member's own request area is allowed to say
-about a request's state.
+notes a member reads, what the member's own request area is allowed to say about
+a request's state, and what an officer may correct on a request before it is
+converted.
 
-Read this file when you are changing booking-request notes and the member's own
-request area.
+Read this file when you are changing booking-request notes, the member's own
+request area, or the officer's correction of an unconverted request.
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -149,3 +150,114 @@ intentions:
   `exceptionEligible: true` on every violation, and a known capacity mode. One
   unrecognised violation disqualifies the whole refusal, because a request can only
   override the rules it froze.
+
+## Correcting a request before it is converted (#2936)
+
+### INV-REQ-008
+
+**Correcting an unconverted request re-opens it, in the claim's own
+transaction.** `correctBookingRequest` (`src/lib/booking-request-corrections.ts`)
+is the one writer; every price and every quote on a request was computed from
+the shape it corrects, so none of them may outlive the correction.
+
+- **Every `DRAFT` and `SENT` quote becomes `SUPERSEDED`**, `priceCents`,
+  `pricedByMemberId` and `pricedAt` are cleared and the status returns to
+  `VERIFIED`, in the transaction that claims the row. No edit is small enough to
+  skip it; the quote status is `SUPERSEDED`, never `CANCELLED`.
+- **An accepted quote refuses the correction (`409`) on either evidence**: a
+  quote row at `ACCEPTED`, or the request's own `acceptedQuoteId`.
+- **The guarded claim fences on all four together** — `version`, a correctable
+  status, `convertedBookingId: null`, `acceptedQuoteId: null` — so each refusal
+  holds under a race, and a lost claim writes nothing.
+- **Correctable is the six live, undecided states**
+  (`CORRECTABLE_BOOKING_REQUEST_STATUSES`); `NEW` is excluded because the
+  requester has not confirmed their own address.
+- **A row whose stored party cannot be read back is refused, not guessed**
+  (#2342's rule).
+- **A correction that rewrites the party clears `linkedGuestMembers` in the same
+  claim.** Those links are keyed by POSITION and resolved by index, so a
+  rewritten list would give one member's identity to whoever now stands in their
+  place. Cleared only when the list changed; the count is returned, audited and
+  shown, and the officer re-links before quoting.
+- **The REQUEST's type decides the shape, not the payload's.** A school half on
+  a general request, or a guest list on a school one, is refused.
+- **Every post-claim failure is reported as a correction that SAVED**, not only
+  the hold release's own: the whole block is wrapped as `declineBookingRequest`'s
+  is, because a retry would refuse on the bumped version.
+
+Pinned by `src/lib/__tests__/booking-request-corrections.test.ts` and
+`src/lib/__tests__/admin-booking-request-correction-routes.test.ts`.
+
+### INV-REQ-009
+
+**A corrected school name is stored only against the school record the officer
+was actually shown.** Since #3367 approval resolves `schoolName` to an
+`Organisation` owning that school's durable Xero customer (`INV-INT-018`,
+`INV-INT-020`), so correcting the name chooses which school the club invoices.
+
+- **The correction carries an acknowledgement, not a tick**: `outcome`
+  `"existing"` naming the record's id, or `"new"` naming none.
+  `assertSchoolRecordOutcomeAcknowledged`
+  (`src/lib/school-organisation-preview.ts`) refuses every other pairing — the
+  right outcome pointed at the wrong record included — with a `409` naming the
+  school.
+- **It is checked against a preview re-read INSIDE the claim transaction**,
+  under `pg_advisory_xact_lock(1)`, never against the one the screen rendered.
+  Approvals are the only writer of those records and take that key, so none can
+  appear in between. The key is NOT what fences the conversion's own write: both
+  approvals claim on `version` (#1923). What a version fence did not close are
+  the four quote writers — three fenced at the writer, and the fourth (the
+  MODIFY/QUERY response) deliberately left, writing a status and the requester's
+  message and nothing else (`INV-LOCK-001`;
+  `docs/CONCURRENCY_AND_LOCKING.md`).
+- **The preview only ever reads.** `resolveOrCreateSchoolOrganisation` runs only
+  inside the approval transaction; the preview asks the same filter
+  (`schoolOrganisationNameClaim`) with the same ordering.
+- **The name is normalised once** (`normaliseSchoolNameForStorage`).
+- **The contact people it names are shaped and de-duplicated as the provider's
+  are** — one cap (`MAX_XERO_ORGANISATION_CONTACT_PERSONS`), one newest-first
+  ordering, one shaping (`xeroContactPersonFromMember`) and one identity, shared
+  with `readOrganisationForXeroContact` rather than restated (`INV-SSOT`). The
+  ROLE scope is deliberately NOT shared: the preview reads `TEACHER` rows alone,
+  because it answers what approval would displace and
+  `reconcileOrganisationTeachers` replaces teachers alone.
+- **A correction never writes the link.** It changes what approval will resolve,
+  not what it has resolved.
+
+Pinned by `src/lib/__tests__/school-organisation-preview.test.ts` and
+`src/lib/__tests__/organisation-reader-contract.test.ts`.
+
+### INV-REQ-010
+
+**A corrected request never keeps beds held for the shape it no longer has.** A
+hold is a whole `AWAITING_REVIEW` booking built from the request's nights, guest
+rows and owner, so every corrected field except the catering preference
+invalidates it.
+
+- **A catering-only correction keeps the hold**: that is the one corrected field
+  a hold never reads, because it selects quote options, not beds.
+- **Every other correction releases it**, through the shared `cancelBooking`
+  path with the requester's cancellation email suppressed and
+  `requireRequestHold: true`, so a hold a requester accepted in between is
+  refused rather than clobbered.
+- **The release runs AFTER the claim has committed and outside every
+  transaction.** `cancelBooking` takes `pg_advisory_xact_lock(1)` and opens
+  transactions of its own, so nesting it self-deadlocks. This is
+  `declineBookingRequest`'s composition exactly, its member-guest read included.
+- **A release that fails is reported as a correction that SAVED**
+  (`BookingRequestCorrectionCommittedError`), never as a failed save and never
+  as a clean success, and **the audit row is written before that error is
+  rethrown** (`holdOutcome: "releaseFailed"`). The caller must not retry: a
+  retry would refuse on the bumped version.
+- **A pointer to a hold no longer live is detached**, the Release-hold route's
+  own repair.
+- **Beds a correction KEEPS are still swept.** `VERIFIED` joins the stale-hold
+  phase of `cron-quote-expiry-reminders`: a correction leaves exactly that state
+  and both recovery phases used to miss it, so a catering-only correction — or
+  any whose release failed — sterilised its beds with no cron recovery at all.
+  The existing deadline rule still keeps a hold on a request that never had a
+  response window, which protects a deliberate "Hold slots".
+- **Availability is re-measured after the release and is ADVISORY.** A
+  correction is never refused for it.
+
+Pinned by `src/lib/__tests__/booking-request-corrections.test.ts`.

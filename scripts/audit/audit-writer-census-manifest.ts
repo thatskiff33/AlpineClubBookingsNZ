@@ -463,11 +463,24 @@ export const AUDIT_CENSUS_TOTALS = {
   // new writers are disjoint and all categorised at the site, so none joins
   // `UNCATEGORISED_AUDIT_WRITERS`. Re-MEASURED on the MERGED tree with
   // `npm run audit:census`, never by adding the two deltas together.
-  // 476 -> 477 (#2939): the missing-contact seeding run's one summary row per
-  // chunk, in `/api/admin/xero/missing-contacts`. Categorised `xero` at the
-  // site and named in none of the four per-site maps, so it lands unpinned.
-  // MEASURED with `npm run audit:census`, not by adding one to the literal.
-  writeSites: 477,
+  // 476 -> 477 (#2936): `booking_request.corrected`, the record that an officer
+  // corrected an unconverted school or public request before it was converted.
+  // `logAudit` after the guarded claim has committed, carrying what changed, why,
+  // the previous envelope and price, how many quotes it retired, and — on a
+  // school request — the school record the corrected name will resolve to and the
+  // contact people its teachers would displace (#3367), because that replacement
+  // happens later in a different transaction and this is where the decision
+  // causing it was taken. Categorised `booking` at the site, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. Re-MEASURED by RUNNING
+  // `npm run audit:census` on this tree (477 sites, 2349 files scanned), never by
+  // adding one to the literal.
+  // 477 -> 478 (#2939, merged with the epic): the missing-contact seeding run's
+  // one summary row per chunk, in `/api/admin/xero/missing-contacts`.
+  // Categorised `xero` at the site and named in none of the four per-site maps,
+  // so it lands unpinned. #2936's row and this one are disjoint writers, so the
+  // merged total is 478 — RE-MEASURED on the MERGED tree with
+  // `npm run audit:census`, never by adding the two branches' deltas together.
+  writeSites: 478,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -534,11 +547,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // this sink that record a completed money movement - the epilogue runs after
     // the refund has already been made at Stripe, and must never throw into the
     // recovery worker and replay a refund for the sake of a bookkeeping row.
-    // 264 -> 265 (#2939): the missing-contact seeding summary, above. Not an
+    // 265 -> 266 (#2939): the missing-contact seeding summary, above. Not an
     // awaited `createAuditLog`: it is written after a chunk whose provider
     // writes have already happened, so a rejected audit write must not turn a
     // completed run into an error the operator would repeat.
-    logAudit: { total: 265, uncategorised: 0 },
+    logAudit: { total: 266, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -718,7 +731,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // per-booking breakdown never reach a member surface — what is left is a
     // `details` sentence naming no booking, no nights and no party
     // (`INV-PRIV`).
-    booking: 103,
+    booking: 104,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the

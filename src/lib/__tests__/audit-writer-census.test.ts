@@ -1345,11 +1345,16 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // site and named in none of the four per-site maps, so all four land
     // unpinned and `pinned` does not move. RE-MEASURED on the MERGED tree with
     // `npm run audit:census`, never by adding the two branches' deltas together.
-    // 349 -> 350 (#2939): the missing-contact seeding summary row, categorised
-    // `xero` at the site and named in none of the four per-site maps, so it
-    // lands unpinned and `pinned` does not move. 477 sites MEASURED with
-    // `npm run audit:census` minus 127 pinned.
-    ).toEqual({ pinned: 127, unpinned: 350 });
+    // 349 -> 350 (#2936): `booking_request.corrected`, categorised `booking` at
+    // the site and named in none of the four per-site maps, so it lands unpinned
+    // and `pinned` does not move.
+    // 350 -> 351 (#2939, merged with the epic): the missing-contact seeding
+    // summary row, categorised `xero` at the site and named in none of the four
+    // per-site maps, so it lands unpinned and `pinned` still does not move. The
+    // two branches' rows are disjoint writers, so the merged figure is 351 —
+    // 478 sites RE-MEASURED on the MERGED tree with
+    // `npm run audit:census` minus 127 pinned, never by adding the two deltas.
+    ).toEqual({ pinned: 127, unpinned: 351 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

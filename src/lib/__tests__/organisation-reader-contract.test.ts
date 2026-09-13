@@ -395,6 +395,13 @@ const DECLARED_FILES: Record<string, string> = {
     "INV-INT-018: the two-homes refusal, which reads the Organisation holding " +
     "a Xero contact id so a member cannot claim it as well, and the ONE " +
     "transfer that lets a school take the contact its own invented member holds",
+  // ---- added by #2936 (request correction before conversion) -----------
+  "src/lib/school-organisation-preview.ts":
+    "the READ-ONLY half of the resolve: which record a corrected school name " +
+    "would claim, and which contact people that request's teachers would " +
+    "replace, so an officer confirms the consequence before it is written. It " +
+    "creates nothing, and it is the ONLY new file that names the link — every " +
+    "consumer downstream takes its plain-string answer instead",
   // ---- added by #2939 (bulk person-contact seeding) -------------------
   "src/lib/xero-missing-contact-seeding.ts":
     "INV-INT-022: the read-only census of unlinked person members reads the " +

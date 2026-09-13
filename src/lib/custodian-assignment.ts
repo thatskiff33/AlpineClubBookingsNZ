@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { MODULE_DISABLED_ERROR_CODE } from "@/lib/api-error-message";
 import { createAuditLog } from "@/lib/audit";
 import {
   computeNightOccupancy,
@@ -74,7 +75,7 @@ export class CustodianBedHoldError extends Error {
       | "BED_WRONG_LODGE"
       | "BED_HELD_BY_ANOTHER_CUSTODIAN"
       | "BED_HAS_ALLOCATIONS"
-      | "MODULE_DISABLED" = "BED_NOT_FOUND",
+      | typeof MODULE_DISABLED_ERROR_CODE = "BED_NOT_FOUND",
     /** The offending nights, when the refusal is per night. */
     readonly nights: string[] = [],
   ) {
