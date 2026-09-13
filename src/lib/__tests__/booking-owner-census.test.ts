@@ -363,9 +363,9 @@ const MEMBER_KEYED_HELPER_SITES: readonly string[] = [
   "src/lib/organisation-xero-contacts.ts:160",
   "src/lib/payment-reconciliation.ts:1370",
   "src/lib/payment-reconciliation.ts:406",
-  "src/lib/xero-applied-credit-allocation.ts:422",
-  "src/lib/xero-applied-credit-allocation.ts:514",
-  "src/lib/xero-applied-credit-allocation.ts:574",
+  "src/lib/xero-applied-credit-allocation.ts:470",
+  "src/lib/xero-applied-credit-allocation.ts:566",
+  "src/lib/xero-applied-credit-allocation.ts:626",
   "src/lib/xero-applied-credit-deallocation.ts:710",
   "src/lib/xero-inbound/credit-note-repairs.ts:767",
 ];

@@ -483,6 +483,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "respondToBookingRequestQuote#2",
+    tier: "GLOBAL",
+    reason:
+      "#2936: the accept re-arm, which used to be a bare unlocked update guarded only on the request not being DECLINED/CANCELLED. A correction (`correctBookingRequest`, which holds this key) leaves the request VERIFIED and SUPERSEDES the quote, so that guard passed — and the accept then wrote the retired quote's price and snapshot onto the corrected envelope and converted it, queueing the corrected school's Xero invoice at yesterday's price. The key orders this re-arm against the correction so the quote's status can be re-read under it as the evidence; the claim itself stays status-guarded. Taken alone: the re-arm creates no booking and claims no bed, and the conversion that follows opens its own two-tier transaction after this one has committed.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "approveBookingRequest#1",
     tier: "GLOBAL",
     reason:
@@ -704,6 +711,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     reason:
       "#2593: both fresh creation and held reuse reconcile bed allocations in this transaction, so the global tier fences cancellation and pruning while the concrete lodge tier serialises the capacity claim.",
     invariant: "INV-LOCK-002",
+  },
+  {
+    site: "correctBookingRequest#1",
+    tier: "GLOBAL",
+    reason:
+      "#2936: the key is what makes the school-record preview re-read inside this transaction a FENCE rather than a snapshot. The correction stores a school name the officer acknowledged as either an existing record or a new one, and `resolveOrCreateSchoolOrganisation` — whose unique-name claim is the approval transaction's hold of this very key — is the only writer of those records. Excluding approval is therefore what lets the re-read promise that no record appeared between the preview and the claim, so the acknowledgement pins an identity instead of describing a stale one. It is NOT what fences the conversion's own write: both approvals claim on `version: request.version` (#1923), so the correction's version bump already loses to a conversion in flight and wins ahead of one. The counterparts that were NOT closed by a version fence, and are reconciled per-writer rather than by this key, are the FOUR quote writers in `booking-request-quotes.ts`, none of which took a lock and all of which fenced only on 'not declined, not cancelled' — a set that a correction's VERIFIED is in: `createBookingRequestQuote` now claims on the request version, `sendBookingRequestQuote` now claims the quote row while it is still DRAFT/SENT, and the accept re-arm in `respondToBookingRequestQuote` now takes this key itself (see `respondToBookingRequestQuote#2`). The fourth, that function's MODIFY/QUERY branch, is deliberately NOT fenced and so is deliberately absent from this registry: it writes a status and the requester's message and nothing else — no price, no snapshot, no hold, no conversion — so a correction it races loses a status rather than money or a bed, and refusing it would throw away the requester's words. Its quote write is narrowed to DRAFT/SENT so it cannot re-stamp a correction's supersede mark; if it ever writes a price or converts, it joins this registry. It takes NO per-lodge key: it creates no booking and claims no bed, and the stale hold it releases is cancelled afterwards, outside this transaction, by the shared cancel path that takes both tiers itself.",
+    invariant: "INV-LOCK-001",
   },
   {
     site: "approveMemberWholeLodgeRequest#1",

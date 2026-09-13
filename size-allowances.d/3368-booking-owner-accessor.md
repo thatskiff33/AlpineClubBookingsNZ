@@ -158,10 +158,6 @@ file: src/lib/booking-modify-plan.ts
 lines: 3013
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
-file: src/lib/booking-request.ts
-lines: 2922
-reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
-
 file: src/lib/cron-confirm-pending.ts
 lines: 1980
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
