@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
-import { parseDecimalDollarsToCents } from "@/lib/money-input";
+import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import {
   JoiningFeePreviewHint,
   useJoiningFeePrefill,
@@ -670,7 +670,7 @@ export default function ApprovalMappingPanel({
               <span className="text-xs font-medium text-muted-foreground">Amount override ($)</span>
               <input
                 className="w-full rounded-md border border-warning-6 px-3 py-2 text-sm"
-                inputMode="decimal"
+                {...MONEY_INPUT_PROPS}
                 placeholder="Use configured amount"
                 value={effectiveFee.amount}
                 onChange={(event) => {
