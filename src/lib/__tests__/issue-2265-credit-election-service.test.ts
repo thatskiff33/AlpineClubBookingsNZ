@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingStatus, CreditType } from "@prisma/client";
+import { parseDateOnly } from "@/lib/date-only";
 
 /**
  * #2265 (epic #2245, E1) — the stored credit election.
@@ -91,7 +92,24 @@ function makeTx({
     // the booking-wide headline/component relation, not individual-night
     // provenance, so an empty adjustment build-up means total === final.
     totalPriceCents: booking.finalPriceCents,
-    guests: [],
+    checkIn: parseDateOnly("2026-08-01"),
+    checkOut: parseDateOnly("2026-08-02"),
+    guests: [
+      {
+        id: "guest-2265",
+        priceCents: booking.finalPriceCents,
+        stayStart: null,
+        stayEnd: null,
+        nights: [
+          {
+            id: "night-2265",
+            stayDate: parseDateOnly("2026-08-01"),
+            priceCents: booking.finalPriceCents,
+            priceSource: "SOLD" as const,
+          },
+        ],
+      },
+    ],
     promoRedemption: null,
     nightAdjustments: [],
   };

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { deriveNightAdjustmentState } from "@/lib/night-adjustment-write";
+import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 
 export const BOOKING_MONEY_BUILD_UP_INVARIANT = "INV-MONEY-030";
 
@@ -96,12 +97,17 @@ type BookingMoneyBuildUpStore = Pick<Prisma.TransactionClient, "booking">;
 function exactBaseAmount(
   operation: BookingMoneyBuildUpOperation,
   booking: {
+    checkIn: Date;
+    checkOut: Date;
     totalPriceCents: number;
     guests: Array<{
       id: string;
       priceCents: number;
+      stayStart: Date | null;
+      stayEnd: Date | null;
       nights: Array<{
         id: string;
+        stayDate: Date;
         priceCents: number | null;
         priceSource: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN";
       }>;
@@ -111,41 +117,36 @@ function exactBaseAmount(
 ): BookingMoneyBaseEvidence {
   if (operation === "GUEST_REMOVAL") {
     const guest = booking.guests.find((candidate) => candidate.id === bookingGuestId);
-    return guest && Number.isInteger(guest.priceCents) && guest.priceCents >= 0
-      ? { kind: "EXACT", amountCents: guest.priceCents }
-      : { kind: "UNKNOWN", reason: "NO_STORED_NIGHT_PRICES" };
-  }
-  if (operation === "CREDIT_ELECTION" || operation === "XERO_PROMO_LINE") {
-    return Number.isInteger(booking.totalPriceCents) && booking.totalPriceCents >= 0
-      ? { kind: "EXACT", amountCents: booking.totalPriceCents }
-      : { kind: "UNKNOWN", reason: "STORED_TOTAL_MISMATCH" };
+    if (!guest) {
+      return { kind: "UNKNOWN", reason: "NO_STORED_NIGHT_PRICES" };
+    }
+    const evidence = storedSoldPriceEvidenceForGuest(guest, booking, "WHOLE_GUEST");
+    return evidence.kind === "exact"
+      ? { kind: "EXACT", amountCents: evidence.totalCents }
+      : { kind: "UNKNOWN", reason: evidence.cause };
   }
 
+  const grain = operation === "REVIEW_REBASE" ? "INDIVIDUAL_NIGHT" : "WHOLE_GUEST";
   if (booking.guests.length === 0) {
     return { kind: "UNKNOWN", reason: "NO_STORED_NIGHT_PRICES" };
   }
   let totalCents = 0;
   for (const guest of booking.guests) {
-    if (guest.nights.length === 0) {
-      return { kind: "UNKNOWN", reason: "NO_STORED_NIGHT_PRICES" };
+    const evidence = storedSoldPriceEvidenceForGuest(guest, booking, grain);
+    if (evidence.kind === "unusable") {
+      return { kind: "UNKNOWN", reason: evidence.cause };
     }
-    if (guest.nights.some((night) => night.priceCents === null)) {
-      return { kind: "UNKNOWN", reason: "PARTIAL_STORED_NIGHT_PRICES" };
-    }
-    if (
-      guest.nights.some(
-        (night) => night.priceSource === "EVEN_SPLIT" || night.priceSource === "UNKNOWN",
-      )
-    ) {
-      return { kind: "UNKNOWN", reason: "INEXACT_STORED_NIGHT_PRICES" };
-    }
-    const nightTotal = guest.nights.reduce((sum, night) => sum + night.priceCents!, 0);
-    if (nightTotal !== guest.priceCents) {
-      return { kind: "UNKNOWN", reason: "STORED_TOTAL_MISMATCH" };
-    }
-    totalCents += guest.priceCents;
+    totalCents += evidence.totalCents;
   }
-  return { kind: "EXACT", amountCents: totalCents };
+  if (operation === "REVIEW_REBASE") {
+    // A review rebase deliberately replaces a stale booking headline with the
+    // exact surviving-night total. Requiring the old headline to agree here
+    // would make the operation incapable of correcting that stale value.
+    return { kind: "EXACT", amountCents: totalCents };
+  }
+  return totalCents === booking.totalPriceCents
+    ? { kind: "EXACT", amountCents: totalCents }
+    : { kind: "UNKNOWN", reason: "STORED_TOTAL_MISMATCH" };
 }
 
 /**
@@ -165,11 +166,22 @@ export async function readBookingMoneyBuildUp(
     where: { id: args.bookingId },
     select: {
       totalPriceCents: true,
+      checkIn: true,
+      checkOut: true,
       guests: {
         select: {
           id: true,
           priceCents: true,
-          nights: { select: { id: true, priceCents: true, priceSource: true } },
+          stayStart: true,
+          stayEnd: true,
+          nights: {
+            select: {
+              id: true,
+              stayDate: true,
+              priceCents: true,
+              priceSource: true,
+            },
+          },
         },
       },
       promoRedemption: {
@@ -191,24 +203,12 @@ export async function readBookingMoneyBuildUp(
   if (!booking) {
     refuse(`${args.purpose}: booking ${args.bookingId} does not exist`);
   }
-  // Prisma always materialises selected to-many relations as arrays. Older
-  // unit fixtures often return only the fields their original consumer read;
-  // an omitted additive relation means the fixture has no recorded Stage 2
-  // evidence, which must take D3's compatibility fallback rather than crash.
-  const guests = booking.guests ?? [];
-  const nightAdjustments = booking.nightAdjustments ?? [];
-  const redemption = booking.promoRedemption
-    ? {
-        ...booking.promoRedemption,
-        allocations: booking.promoRedemption.allocations ?? [],
-      }
-    : null;
   const guestIdByNightId = new Map(
-    guests.flatMap((guest) =>
-      (guest.nights ?? []).map((night) => [night.id, guest.id] as const),
+    booking.guests.flatMap((guest) =>
+      guest.nights.map((night) => [night.id, guest.id] as const),
     ),
   );
-  const rows = nightAdjustments.map((row) => {
+  const rows = booking.nightAdjustments.map((row) => {
     const bookingGuestId =
       row.bookingGuestId ??
       (row.bookingGuestNightId
@@ -228,11 +228,11 @@ export async function readBookingMoneyBuildUp(
     ...(args.bookingGuestId ? { bookingGuestId: args.bookingGuestId } : {}),
     baseEvidence: exactBaseAmount(
       args.purpose,
-      { ...booking, guests },
+      booking,
       args.bookingGuestId,
     ),
     rows,
-    redemption,
+    redemption: booking.promoRedemption,
   };
 }
 
@@ -250,6 +250,20 @@ export function selectLoadedBookingMoneyBuildUp(
       ? { mismatchClassification: args.mismatchClassification }
       : {}),
   });
+}
+
+/**
+ * The amount Stage 3 may feed into today's writer under D3. An unknown base has
+ * no stored candidate, so the existing derived amount remains authoritative;
+ * every other selection already carries either the identical stored amount or
+ * the explicitly classified derived compatibility fallback.
+ */
+export function d3CompatibleBookingMoneyBuildUpCents(
+  selection: BookingMoneyBuildUpSelection,
+): number {
+  return selection.source === "BASE_EVIDENCE_UNKNOWN"
+    ? selection.derivedCents
+    : selection.selectedCents;
 }
 
 function buildUpHistoryMetadata(args: {

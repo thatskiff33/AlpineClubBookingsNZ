@@ -23,38 +23,49 @@ import { BOOKING_MONEY_BUILD_UP_INVARIANT } from "@/lib/booking-money-build-up";
 const REPO = process.cwd();
 const READ = /(?<!function\s)\breadBookingMoneyBuildUp\s*\(/g;
 const SELECT = /\bselectLoadedBookingMoneyBuildUp\s*\(/g;
+const RESOLVE = /(?<!function\s)\bd3CompatibleBookingMoneyBuildUpCents\s*\(/g;
 
 type ReaderSite = {
   reads: number;
   selections: number;
+  resolutions: number;
   operation: string;
   historySink: RegExp;
+  amountSink: RegExp;
 };
 
 const NAMED_READERS: Record<string, ReaderSite> = {
   "src/lib/booking-guest-removal-service.ts": {
     reads: 1,
     selections: 1,
+    resolutions: 1,
     operation: "GUEST_REMOVAL",
     historySink: /\.\.\.moneyBuildUpSelection\.historyMetadata/,
+    amountSink: /const priceDiffCents = d3CompatibleBookingMoneyBuildUpCents\(moneyBuildUpSelection\)/,
   },
   "src/lib/booking-review-price-rebase.ts": {
     reads: 2,
     selections: 2,
+    resolutions: 1,
     operation: "REVIEW_REBASE",
     historySink: /\.\.\.(?:outcome\.)?moneyBuildUpSelection\.historyMetadata/,
+    amountSink: /const verifiedNewFinalPriceCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}moneyBuildUpSelection[\s\S]{0,800}finalPriceCents: verifiedNewFinalPriceCents/,
   },
   "src/lib/booking-credit-election.ts": {
     reads: 1,
     selections: 1,
+    resolutions: 1,
     operation: "CREDIT_ELECTION",
     historySink: /moneyBuildUp:\s*moneyBuildUpSelection\.historyMetadata/,
+    amountSink: /const verifiedFinalPriceCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}moneyBuildUpSelection[\s\S]{0,800}verifiedFinalPriceCents - alreadyAppliedCents/,
   },
   "src/lib/xero-booking-invoices.ts": {
     reads: 1,
     selections: 1,
+    resolutions: 1,
     operation: "XERO_PROMO_LINE",
-    historySink: /moneyBuildUp:\s*promoMoneyBuildUpSelection\?\.historyMetadata/,
+    historySink: /moneyBuildUp:\s*promoMoneyBuildUpSelection\.historyMetadata/,
+    amountSink: /const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}promoMoneyBuildUpSelection[\s\S]{0,5000}unitAmount: xeroPromoAdjustmentCents \/ 100/,
   },
 };
 
@@ -66,9 +77,11 @@ export function canonicalReaderShape(code: string, site: ReaderSite): boolean {
   return (
     [...code.matchAll(READ)].length === site.reads &&
     [...code.matchAll(SELECT)].length === site.selections &&
+    [...code.matchAll(RESOLVE)].length === site.resolutions &&
     code.includes(`purpose: "${site.operation}"`) &&
     code.includes("mismatchClassification:") &&
-    site.historySink.test(code)
+    site.historySink.test(code) &&
+    site.amountSink.test(code)
   );
 }
 
@@ -90,21 +103,14 @@ describe("#3277 canonical stored-money reader census", () => {
     }
   });
 
-  it("pins D3 at each member-visible path: an unknown base or mismatch keeps today's amount", () => {
-    const removal = productionCode("src/lib/booking-guest-removal-service.ts");
-    expect(removal).toMatch(/source === "BASE_EVIDENCE_UNKNOWN"[\s\S]{0,120}\? derivedPriceDiffCents/);
-
-    const credit = productionCode("src/lib/booking-credit-election.ts");
-    expect(credit).toMatch(/source === "BASE_EVIDENCE_UNKNOWN"[\s\S]{0,120}\? booking\.finalPriceCents/);
-    expect(credit).toMatch(/verifiedFinalPriceCents - alreadyAppliedCents/);
-
-    const xero = productionCode("src/lib/xero-booking-invoices.ts");
-    expect(xero).toMatch(/source === "BASE_EVIDENCE_UNKNOWN"[\s\S]{0,120}\? booking\.promoAdjustmentCents/);
-    expect(xero).toMatch(/unitAmount: xeroPromoAdjustmentCents \/ 100/);
-
-    const rebase = productionCode("src/lib/booking-review-price-rebase.ts");
-    expect(rebase).toMatch(/derivedCents: newFinalPriceCents/);
-    expect(rebase).toMatch(/newFinalPriceCents,/);
+  it("pins the canonical D3 amount resolver into every member-visible amount sink", () => {
+    for (const [file, site] of Object.entries(NAMED_READERS)) {
+      const code = productionCode(file);
+      expect([...code.matchAll(RESOLVE)]).toHaveLength(site.resolutions);
+      expect(code, `${file} must feed the resolved amount into its money sink`).toMatch(
+        site.amountSink,
+      );
+    }
   });
 
   it("pins each reader on the safe side of its mutation or provider boundary", () => {
@@ -126,7 +132,7 @@ describe("#3277 canonical stored-money reader census", () => {
     const xero = productionCode("src/lib/xero-booking-invoices.ts");
     before(xero, "readBookingMoneyBuildUp(prisma", "getAuthenticatedXeroClient()");
     expect(xero).toMatch(
-      /buildRequestPayload:[\s\S]{0,240}moneyBuildUp:\s*promoMoneyBuildUpSelection\?\.historyMetadata/,
+      /buildRequestPayload:[\s\S]{0,240}moneyBuildUp:\s*promoMoneyBuildUpSelection\.historyMetadata/,
     );
 
     const rebase = productionCode("src/lib/booking-review-price-rebase.ts");
@@ -137,22 +143,37 @@ describe("#3277 canonical stored-money reader census", () => {
     const site: ReaderSite = {
       reads: 1,
       selections: 1,
+      resolutions: 1,
       operation: "CREDIT_ELECTION",
       historySink: /moneyBuildUp:\s*selection\.historyMetadata/,
+      amountSink: /const amount = d3CompatibleBookingMoneyBuildUpCents\(selection\);[\s\S]*write\(amount\)/,
     };
     const complete = `
       readBookingMoneyBuildUp(tx, { purpose: "CREDIT_ELECTION" });
       selectLoadedBookingMoneyBuildUp(loaded, { mismatchClassification: "STORED_SIDE_DEFECT" });
+      const amount = d3CompatibleBookingMoneyBuildUpCents(selection);
+      write(amount);
       return { moneyBuildUp: selection.historyMetadata };
     `;
     expect(canonicalReaderShape(complete, site)).toBe(true);
     for (const token of [
       "readBookingMoneyBuildUp",
       "selectLoadedBookingMoneyBuildUp",
+      "d3CompatibleBookingMoneyBuildUpCents",
+      "write(amount)",
       "mismatchClassification:",
       "moneyBuildUp: selection.historyMetadata",
     ]) {
       expect(canonicalReaderShape(complete.replace(token, "dropped"), site)).toBe(false);
     }
+    expect(
+      canonicalReaderShape(
+        complete.replace(
+          "const amount = d3CompatibleBookingMoneyBuildUpCents(selection);",
+          "const amount = selection.derivedCents;",
+        ),
+        site,
+      ),
+    ).toBe(false);
   });
 });
