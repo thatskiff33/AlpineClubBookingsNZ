@@ -74,11 +74,30 @@ const db = vi.hoisted(() => {
     membershipType: {
       findMany: async (args: { where?: unknown }) => {
         state.membershipTypeWheres.push(args?.where);
+        const where = args?.where as
+          | {
+              isActive?: boolean;
+              bookingBehavior?: string;
+              subscriptionBehavior?: string;
+            }
+          | undefined;
         // The #2041 soft-check reads the same table for a different question.
         // It is the only other caller and it names the behaviour it wants.
-        const where = args?.where as { subscriptionBehavior?: string } | undefined;
         if (where?.subscriptionBehavior) return [];
-        return state.membershipTypes.filter((type) => type.isActive);
+        /*
+          The fake HONOURS the filter, which is the whole point of it. A fake
+          that ignored `where` would answer a narrowed query with every row and
+          the behavioural cases below would pass against the very defect they
+          exist to catch — measured, when the mutation proof for this suite
+          restored `bookingBehavior: "MEMBER_RATE"` and only the shape
+          assertion noticed.
+        */
+        return state.membershipTypes.filter(
+          (type) =>
+            (where?.isActive === undefined || type.isActive === where.isActive) &&
+            (where?.bookingBehavior === undefined ||
+              type.bookingBehavior === where.bookingBehavior),
+        );
       },
     },
     membershipTypeSeasonRate: { findMany: async () => state.rateRows },
