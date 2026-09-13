@@ -1302,7 +1302,14 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // incremented — the round before this one moved the assertion and left the
     // arithmetic above it stale, which is the drift these bump lines exist to
     // prevent and which a review caught here rather than CI.
-    ).toEqual({ pinned: 127, unpinned: 343 });
+    // 343 -> 344 (#3367): one new writer,
+    // `xero.contact.moved_to_organisation` — the record that a Xero contact
+    // moved from a school's invented member record to the school's own record
+    // (INV-INT-018). Categorised `xero` at the site and named in none of the
+    // four per-site maps, so it lands unpinned like every other new feature's
+    // writer. 471 sites MEASURED with `npm run audit:census` minus 127 pinned;
+    // `pinned` is unchanged, so no existing classification moved.
+    ).toEqual({ pinned: 127, unpinned: 344 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

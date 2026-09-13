@@ -421,7 +421,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // and the `lodge` category decision needs one home. Both categorised at the
   // site, so neither joins `UNCATEGORISED_AUDIT_WRITERS` below. Measured by
   // RUNNING the census, never by adding to the literal.
-  writeSites: 470,
+  // 470 -> 471 (#3367): `takeXeroContactFromSchoolsOwnMember` records the ONE
+  // transfer of a Xero contact between two local records (`INV-INT-018`). It
+  // writes through `createAuditLog(params, tx)` on the caller's transaction, so
+  // the audit row and the hand-over it describes commit together.
+  writeSites: 471,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -519,7 +523,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // the write's own transaction — a rolled-back assignment records nothing,
     // which is what makes accept-writes-both-or-neither a transaction rather
     // than a cleanup path.
-    createAuditLog: { total: 124, uncategorised: 0 },
+    createAuditLog: { total: 125, uncategorised: 0 }, // +1 (#3367)
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -844,7 +848,12 @@ export const AUDIT_CENSUS_TOTALS = {
     lodge: 66,
     // 19 -> 34 (#2581 child 2): the fifteen Xero settings, mapping, replay and
     // retry writers. `xero` is `support` plus `finance`.
-    xero: 34,
+    //
+    // 34 -> 35 (#3367): `xero.contact.moved_to_organisation`. `xero` is the
+    // category every other writer of a member's Xero contact link already uses
+    // (`xero.contact.synced_to_member`), so this keeps the subsystem uniform —
+    // the test `INV-PRIV-013` applies. Nobody's readership changes.
+    xero: 35,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership
