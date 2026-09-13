@@ -911,9 +911,12 @@ The rules are:
   body, and the status is terminal).
 - **A `SKIPPED_NO_EMAILS` row means the club decided, not that the switch is
   on** (#2929). The on-behalf create's "do not email the member" choice writes
-  one too, on a booking whose switch may never have been used, so the row's
-  `errorMessage` names which decision withheld it and no surface may read the
-  status alone as evidence of the switch.
+  one too, on a booking whose switch may never have been used, so the status
+  alone is not evidence of the switch. Which decision withheld it is recorded in
+  the row's `errorMessage`; no admin surface renders that today — the withheld-
+  emails banner groups by template and carries no reason, deliberately, because
+  the remedy is the same either way — so it is read from the database, and
+  nothing may present the banner as telling an officer which decision it was.
 
 ### INV-LOCKOUT-058
 
@@ -968,9 +971,10 @@ The rules are:
 
 ### INV-LOCKOUT-061
 
-- **Xero-sent invoice emails are gated too, which SUPERSEDES the #1705 carve-out
-  above for this switch only.** #1705 decided the Internet Banking invoice email
-  is outside the per-action `notifyMember` choice and always sent. D10 says the
+- **Xero-sent invoice emails are gated too, and this switch was the FIRST of two
+  things that supersede the #1705 carve-out above.** #1705 decided the Internet
+  Banking invoice email is outside the per-action `notifyMember` choice and
+  always sent. D10 says the
   per-booking switch "suppresses everything", so when it is on the
   `emailInvoice` call is skipped and a withheld audit row is written naming the
   invoice. **The invoice itself still exists in Xero and is unchanged** — only
@@ -983,8 +987,15 @@ The rules are:
   on an email-only PARTIAL: every one of them is an Internet Banking booking
   whose Xero payment is deliberately skipped, so recording a payment would
   falsely settle an unpaid invoice. That repair is refused for email-only
-  PARTIALs. The per-action `notifyMember` carve-out is untouched: with the switch
-  off, the invoice email is still always sent. The group settlement invoice is
+  PARTIALs. **The #1705 carve-out is now superseded a SECOND time, by #2929**:
+  with this switch off, the invoice email is still always sent EXCEPT on the one
+  create that raised it, where an on-behalf officer chose "do not email the
+  member". That choice withholds that one invoice email and nothing else; it is
+  a separate mechanism with a separate record (`XeroSyncOperation
+  .invoiceEmailDelivery`), it sets nothing persistent, and it is reported under
+  its own key so it can never be read as this switch. `INV-LOCKOUT-041` states
+  it in full. Every other later booking email, and every invoice email raised by
+  any other path, is unaffected. The group settlement invoice is
   one combined bill addressed to and paid by the **organiser**, so it is gated on
   the organiser's own booking and on nothing else — a joiner's switch does not
   suppress the organiser's bill, and each joiner's own group emails are gated on
@@ -1222,11 +1233,25 @@ withholds it for that one invoice creation. The invoice is still raised and
 AUTHORISED; only the send is skipped, recorded as a `SKIPPED_NO_EMAILS` row
 naming this reason and reported on the sync operation under its own key.
 Nothing persistent moves — `Booking.noEmails`, the Xero contact's address and
-every later booking email are untouched — and no other booking-invoice enqueuer
-expresses a choice here. The instruction is **persisted** on
+every later booking email are untouched. The instruction is **persisted** on
 `XeroSyncOperation.invoiceEmailDelivery`, written once at enqueue like
 `queueType` and never updated, so an outbox retry days later still withholds
 deliberately rather than sending because a caller flag is gone.
+**Every booking-invoice enqueuer must state its instruction**, and the option is
+required-and-nullable so that a new one is a compile error until its author
+does. Only the on-behalf create has a choice to express; the other fourteen pass
+`null`, meaning "no choice here". `null` **inherits** the most recent instruction
+recorded against the same correlation key — which is the same invoice — so a
+RE-MINT of a failed booking-invoice operation by the admin missing-invoices
+sweep, force-sync or the repair pass keeps the withhold instead of quietly
+sending. A booking nobody withheld has no prior instruction and inherits
+nothing.
+**The withhold does NOT reach a booking left `PAYMENT_PENDING` behind a
+non-member hold**, whose invoice the confirm cron (or an officer's
+confirm-pending-guests) enqueues days later. The creation choice is spent by
+then — that later confirmation emails the member its own booking-confirmed mail
+regardless of it — and `confirm-pending-guests` asks the officer again at that
+point.
 
 ### INV-LOCKOUT-042
 
