@@ -175,6 +175,7 @@ function frozenBooking(overrides?: Record<string, unknown>) {
     memberId: "member-1",
     lodgeId: null,
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    checkOut: new Date("2026-08-03T00:00:00.000Z"),
     totalPriceCents: 24_000,
     discountCents: 0,
     promoAdjustmentCents: 0,
@@ -182,21 +183,31 @@ function frozenBooking(overrides?: Record<string, unknown>) {
     // No promotion on the default booking, so `recalculateBookingPromo` answers
     // zero without reading anything. The promotion cases install their own.
     promoRedemption: null,
+    nightAdjustments: [],
     guests: [
       {
         id: "guest-1",
         priceCents: guestOneTotal,
         memberId: "member-1",
         isMember: true,
+        stayStart: null,
+        stayEnd: null,
         // The strand's rows AS THIS TRANSACTION HAS JUST LEFT THEM: the night
         // that always carried $40.00, and the one the officer has just priced.
         // They reconcile to the strand's total by construction, which is what
         // `INV-MOD-028` requires before the booking may be re-priced from them.
         nights: [
-          { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
           {
+            id: "guest-1-night-1",
+            stayDate: new Date("2026-08-01T00:00:00.000Z"),
+            priceCents: 4_000,
+            priceSource: "SOLD",
+          },
+          {
+            id: "guest-1-night-2",
             stayDate: new Date("2026-08-02T00:00:00.000Z"),
             priceCents: guestOneTotal - 4_000,
+            priceSource: "SOLD",
           },
         ],
       },
@@ -205,9 +216,21 @@ function frozenBooking(overrides?: Record<string, unknown>) {
         priceCents: 8_000,
         memberId: null,
         isMember: false,
+        stayStart: null,
+        stayEnd: null,
         nights: [
-          { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
-          { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 4_000 },
+          {
+            id: "guest-2-night-1",
+            stayDate: new Date("2026-08-01T00:00:00.000Z"),
+            priceCents: 4_000,
+            priceSource: "SOLD",
+          },
+          {
+            id: "guest-2-night-2",
+            stayDate: new Date("2026-08-02T00:00:00.000Z"),
+            priceCents: 4_000,
+            priceSource: "SOLD",
+          },
         ],
       },
     ],
@@ -2012,14 +2035,20 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
             priceCents: 8_000,
             memberId: null,
             isMember: false,
+            stayStart: null,
+            stayEnd: null,
             nights: [
               {
+                id: "guest-2-night-1",
                 stayDate: new Date("2026-08-01T00:00:00.000Z"),
                 priceCents: 4_000,
+                priceSource: "SOLD",
               },
               {
+                id: "guest-2-night-2",
                 stayDate: new Date("2026-08-02T00:00:00.000Z"),
                 priceCents: 4_000,
+                priceSource: "SOLD",
               },
             ],
           },
