@@ -158,6 +158,46 @@ export type AuditCategoryEvidence =
   | { kind: "forwarded"; expression: string }
   | { kind: "absent" };
 
+/**
+ * What the call site says about what the SUBJECT MEMBER may read (#2695).
+ *
+ *  - `internal`      `memberDisclosure: { visibility: "internal" }` — the member
+ *                    reads no free text from this event.
+ *  - `member-facing` `{ visibility: "member-facing", text: … }` — the site
+ *                    publishes one purpose-written sentence to the member. This
+ *                    is the population the manifest pins, because adding to it
+ *                    widens what a member is shown.
+ *  - `forwarded`     decided somewhere a reviewer cannot see it here.
+ *  - `absent`        no declaration at all, which the reader treats exactly as
+ *                    `internal`. This is the DEFAULT and it is the safe answer,
+ *                    which is why — unlike `category` — it is not a finding.
+ */
+export type AuditMemberDisclosureEvidence =
+  | { kind: "internal" }
+  | { kind: "member-facing" }
+  | { kind: "forwarded"; expression: string }
+  | { kind: "absent" };
+
+/**
+ * The shape of a free-text channel the event object supplies.
+ *
+ * `details` and `summary` are the two columns whose contents used to reach a
+ * member's own timeline without anybody deciding they should (#2695). The
+ * reader is default-deny now, so this is not a gate — it is the MEASUREMENT
+ * that makes "re-census every event currently rendered to members" reproducible
+ * instead of a hand count that goes stale.
+ *
+ *  - `constant`  a string literal, or a template with no substitution: a fixed
+ *                phrase from the vocabulary, carrying no run-time values.
+ *  - `dynamic`   a template with substitutions, or any other expression: the
+ *                shape that carries ids, names and an administrator's typing.
+ */
+export type AuditFreeTextEvidence =
+  | { kind: "absent" }
+  | { kind: "constant" }
+  | { kind: "dynamic" }
+  | { kind: "forwarded" };
+
 export type AuditWriteSite = {
   /** Repo-relative POSIX path. */
   file: string;
@@ -177,6 +217,12 @@ export type AuditWriteSite = {
   /** The `action` value when it is a plain literal, else a description. */
   action: string;
   category: AuditCategoryEvidence;
+  /** What the site declares the subject member may read (#2695). */
+  memberDisclosure: AuditMemberDisclosureEvidence;
+  /** The shape of the `details` free-text channel. */
+  detailsText: AuditFreeTextEvidence;
+  /** The shape of the `summary` free-text channel. */
+  summaryText: AuditFreeTextEvidence;
   /** True when the event object also omits `severity` and `retentionClass`. */
   omitsRetentionInputs: boolean;
   /** True when the event object names an `entityType` or `entityId`. */
@@ -445,6 +491,126 @@ function combineCategory(
     : { kind: "conditional", values };
 }
 
+/**
+ * The member-disclosure evidence for one event object (#2695).
+ *
+ * Read from an object LITERAL, which is why the declaration is written as one
+ * at every call site: `{ visibility: "member-facing" }` is readable here
+ * without resolving an imported constant, and a census that had to resolve
+ * imports would fail closed on every re-export.
+ */
+function resolveMemberDisclosure(
+  event: ResolvedObject,
+): AuditMemberDisclosureEvidence {
+  const property = findTopLevelProperty(event, "memberDisclosure");
+  if (!property) {
+    return event.opaqueSpread
+      ? { kind: "forwarded", expression: "opaque spread" }
+      : { kind: "absent" };
+  }
+  if (property.kind === "opaque") {
+    return { kind: "forwarded", expression: property.text };
+  }
+
+  return resolveDisclosureExpression(property.value);
+}
+
+/**
+ * One declaration expression.
+ *
+ * A CONDITIONAL between two declarations is read rather than failed closed,
+ * because it is the honest shape wherever the text is optional: an officer's
+ * member-facing note exists or it does not, and
+ * `{ visibility: "member-facing", text }` cannot be written without a `text`.
+ * The WIDER branch decides, so a site that publishes on one path is counted as
+ * publishing.
+ */
+function resolveDisclosureExpression(
+  expression: ts.Expression,
+): AuditMemberDisclosureEvidence {
+  const value = unwrap(expression);
+
+  if (ts.isConditionalExpression(value)) {
+    const branches = [value.whenTrue, value.whenFalse].map(
+      resolveDisclosureExpression,
+    );
+    const forwarded = branches.find((branch) => branch.kind === "forwarded");
+    if (forwarded) return forwarded;
+    return branches.some((branch) => branch.kind === "member-facing")
+      ? { kind: "member-facing" }
+      : { kind: "internal" };
+  }
+
+  if (!ts.isObjectLiteralExpression(value)) {
+    return { kind: "forwarded", expression: collapse(value.getText()) };
+  }
+
+  const visibility = findTopLevelProperty(
+    resolveObjectLiteral(value),
+    "visibility",
+  );
+  if (!visibility || visibility.kind === "opaque") {
+    return { kind: "forwarded", expression: collapse(value.getText()) };
+  }
+  const literal = literalText(unwrap(visibility.value));
+  if (literal === "internal") return { kind: "internal" };
+  if (literal === "member-facing") return { kind: "member-facing" };
+  return { kind: "forwarded", expression: collapse(value.getText()) };
+}
+
+/**
+ * Take the WIDEST reading across a multi-row write: one element that publishes
+ * to a member makes the site a member-facing site, because it writes such a
+ * row. `forwarded` outranks the two literals for the same fail-closed reason
+ * the category combiner has.
+ */
+function combineMemberDisclosure(
+  events: readonly ResolvedObject[] | null,
+  fallbackExpression: string,
+): AuditMemberDisclosureEvidence {
+  if (!events || events.length === 0) {
+    return { kind: "forwarded", expression: fallbackExpression };
+  }
+  const each = events.map(resolveMemberDisclosure);
+  const forwarded = each.find((evidence) => evidence.kind === "forwarded");
+  if (forwarded) return forwarded;
+  if (each.some((evidence) => evidence.kind === "member-facing")) {
+    return { kind: "member-facing" };
+  }
+  return each.some((evidence) => evidence.kind === "internal")
+    ? { kind: "internal" }
+    : { kind: "absent" };
+}
+
+function resolveFreeText(
+  event: ResolvedObject,
+  key: "details" | "summary",
+): AuditFreeTextEvidence {
+  const property = findTopLevelProperty(event, key);
+  if (!property) {
+    return event.opaqueSpread ? { kind: "forwarded" } : { kind: "absent" };
+  }
+  if (property.kind === "opaque") return { kind: "forwarded" };
+
+  const value = unwrap(property.value);
+  if (literalText(value) !== null) return { kind: "constant" };
+  return { kind: "dynamic" };
+}
+
+/** The weakest (most revealing) reading across a multi-row write. */
+function combineFreeText(
+  events: readonly ResolvedObject[] | null,
+  key: "details" | "summary",
+): AuditFreeTextEvidence {
+  if (!events || events.length === 0) return { kind: "forwarded" };
+  const each = events.map((event) => resolveFreeText(event, key));
+  for (const kind of ["forwarded", "dynamic", "constant"] as const) {
+    const hit = each.find((evidence) => evidence.kind === kind);
+    if (hit) return hit;
+  }
+  return { kind: "absent" };
+}
+
 function resolveCategory(event: ResolvedObject): AuditCategoryEvidence {
   const property = findTopLevelProperty(event, "category");
   if (!property) {
@@ -668,6 +834,9 @@ function scanFile(file: string, repoRoot: string): AuditWriteSite[] {
     events: readonly ResolvedObject[] | null,
   ) => {
     const symbol = symbolChain(node);
+    const payloadText = ts.isCallExpression(node)
+      ? collapse(node.arguments[0]?.getText() ?? "(no argument)")
+      : "(no argument)";
     const key = `${relativePath}::${symbol}`;
     const ordinal = ordinals.get(key) ?? 0;
     ordinals.set(key, ordinal + 1);
@@ -681,6 +850,11 @@ function scanFile(file: string, repoRoot: string): AuditWriteSite[] {
       producesRow,
       action,
       category,
+      memberDisclosure: producesRow
+        ? combineMemberDisclosure(events, payloadText)
+        : { kind: "absent" },
+      detailsText: producesRow ? combineFreeText(events, "details") : { kind: "absent" },
+      summaryText: producesRow ? combineFreeText(events, "summary") : { kind: "absent" },
       // ANY element omitting retention inputs flags the site, and EVERY element
       // must name an entity before the site counts as identified: both take the
       // pessimistic reading of a multi-row write, and both are unchanged for the
@@ -1069,6 +1243,15 @@ export type AuditWriterCensus = {
   forwarded: readonly AuditWriteSite[];
   /** Row-producing sites choosing between category literals. */
   conditional: readonly AuditWriteSite[];
+  /**
+   * Row-producing sites that publish a purpose-written sentence to the subject
+   * member (#2695), sorted by id. This is the population the manifest pins:
+   * adding to it widens what a member is shown, which is a readership decision
+   * rather than a tidy-up (`INV-PRIV-012`).
+   */
+  memberFacing: readonly AuditWriteSite[];
+  /** Row-producing sites whose member disclosure is decided outside the call. */
+  memberDisclosureForwarded: readonly AuditWriteSite[];
   /** Literal category value to the number of sites writing it. */
   categoryCounts: Readonly<Record<string, number>>;
   /** Sink to `{ total, uncategorised }`. */
@@ -1150,6 +1333,12 @@ export function scanAuditWriterCensus(
     uncategorised: sites.filter((site) => site.category.kind === "absent"),
     forwarded: sites.filter((site) => site.category.kind === "forwarded"),
     conditional: sites.filter((site) => site.category.kind === "conditional"),
+    memberFacing: sites.filter(
+      (site) => site.memberDisclosure.kind === "member-facing",
+    ),
+    memberDisclosureForwarded: sites.filter(
+      (site) => site.memberDisclosure.kind === "forwarded",
+    ),
     categoryCounts,
     sinkCounts,
     sqlStatements,
@@ -1171,6 +1360,17 @@ export function describeCategory(evidence: AuditCategoryEvidence): string {
     case "absent":
       return "(absent)";
   }
+}
+
+/** How a site's member-disclosure declaration reads in the TSV (#2695). */
+export function describeMemberDisclosure(
+  evidence: AuditMemberDisclosureEvidence,
+): string {
+  return evidence.kind === "forwarded"
+    ? `forwarded:${evidence.expression}`
+    : evidence.kind === "absent"
+      ? "(absent)"
+      : evidence.kind;
 }
 
 const TSV_HEADER = [
@@ -1198,6 +1398,9 @@ export function renderCensusTsv(census: AuditWriterCensus): string {
       String(site.producesRow),
       site.action,
       describeCategory(site.category),
+      describeMemberDisclosure(site.memberDisclosure),
+      site.detailsText.kind,
+      site.summaryText.kind,
       String(site.omitsRetentionInputs),
       String(site.hasEntityIdentifier),
     ].join("\t"),
@@ -1218,6 +1421,9 @@ export function renderCensusTsv(census: AuditWriterCensus): string {
           ? "named"
           : "(absent)"
         : "(dml)",
+      "(absent)",
+      "(sql)",
+      "(sql)",
       "false",
       "false",
     ].join("\t"),
@@ -1236,6 +1442,8 @@ function main(): void {
       `uncategorised:        ${census.uncategorised.length}`,
       `forwarded category:   ${census.forwarded.length}`,
       `conditional category: ${census.conditional.length}`,
+      `member-facing sites:  ${census.memberFacing.length}`,
+      `forwarded disclosure: ${census.memberDisclosureForwarded.length}`,
       `non-producing DML:    ${census.nonProducingDml.length}`,
       `migration SQL on AuditLog: ${census.sqlStatements.length}`,
       `category values:      ${JSON.stringify(census.categoryCounts)}`,

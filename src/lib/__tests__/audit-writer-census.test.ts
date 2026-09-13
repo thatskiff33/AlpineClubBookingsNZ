@@ -57,6 +57,8 @@ import {
   LODGE_GATED_ADMIN_SUBSYSTEM_PREFIXES_2765,
   MEMBERSHIP_GATED_LOCKER_SITES_2765,
   MEMBER_RECORD_ACTION_LITERAL_FILES_2755,
+  APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695,
+  MEMBER_FACING_AUDIT_WRITERS_2695,
   MEMBER_RECORD_ADMIN_ACTIONS_2755,
   MEMBER_RECORD_ADMIN_CATEGORIES_2755,
   MEMBER_RECORD_ADMIN_SURFACES_2755,
@@ -1516,6 +1518,92 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         "pass a literal, or add the site to APPROVED_FORWARDED_CATEGORY_SITES with " +
         "the reason its indirection cannot drop or invent a category.",
     ).toEqual(Object.keys(APPROVED_FORWARDED_CATEGORY_SITES).sort());
+  });
+
+  it("publishes free text to a member from exactly the pinned write sites (#2695)", () => {
+    // WHAT WOULD BREAK THIS. A second site declaring
+    // `memberDisclosure: { visibility: "member-facing", text }`. That is a
+    // WIDENING of member readership, which `INV-PRIV-012` reserves to the owner,
+    // and this is where it stops being invisible: the failure names the action
+    // whose words would start reaching the member it is about.
+    //
+    // The opposite direction is deliberately NOT gated. Deleting a declaration
+    // leaves the reader publishing nothing, because the reader is default-deny —
+    // so a removal can only narrow, and a narrowing needs no pin.
+    const measured = Object.fromEntries(
+      census()
+        .memberFacing.map((site) => [site.id, site.action])
+        .sort(([a], [b]) => String(a).localeCompare(String(b))),
+    );
+
+    expect(
+      measured,
+      "An audit write site publishes free text to the member it is about. That " +
+        "widens what a member reads about their own account, which is the " +
+        "owner's decision (INV-PRIV-012), not a lane's. Add it to " +
+        "MEMBER_FACING_AUDIT_WRITERS_2695 with its action once the decision " +
+        "exists — and check the declared text carries no internal id, no other " +
+        "person and no officer-private note.",
+    ).toEqual(MEMBER_FACING_AUDIT_WRITERS_2695);
+
+    expect(
+      census().memberFacing.length,
+      "The pinned member-facing COUNT and the pinned member-facing SITES " +
+        "disagree. A swap between two sites leaves the count unchanged, which " +
+        "is why both are pinned.",
+    ).toBe(AUDIT_CENSUS_TOTALS.memberFacingSites);
+  });
+
+  it("bounds what the disclosure census cannot see, rather than claiming it sees everything (#2695)", () => {
+    // An unreadable DISCLOSURE is not an unreadable CATEGORY. The safe answer to
+    // a category is the one that has to be supplied, so an unreadable one is a
+    // hazard; the safe answer to a disclosure is the ABSENT one, so a site the
+    // scanner cannot read still cannot leak — the reader publishes nothing
+    // unless it finds a declared sentence on the stored row. This list therefore
+    // records the boundary of the measurement instead of holding a gate shut,
+    // and that is exactly why it is still pinned: "one member-facing site" is
+    // only worth saying alongside "and seven the scanner cannot read".
+    expect(
+      ids(census().memberDisclosureForwarded),
+      "A write site's member-disclosure declaration is decided outside the call " +
+        "site. It cannot leak — the reader denies by default — but it is outside " +
+        "the census's sight, so record it in " +
+        "APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695 with the reason.",
+    ).toEqual(Object.keys(APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695).sort());
+
+    expect(census().memberDisclosureForwarded.length).toBe(
+      AUDIT_CENSUS_TOTALS.memberDisclosureForwarded,
+    );
+  });
+
+  it("declares member-facing text only where the row can actually reach that member (#2695)", () => {
+    // A `member-facing` declaration on a row a member never sees is not a leak,
+    // it is a lie in the source: it tells the next reader that the club decided
+    // to publish something it does not publish. The two levers are separate by
+    // design (INV-PRIV-012) and this is where they are checked against each
+    // other — the CATEGORY decides whether the row reaches the member's
+    // timeline at all, the DECLARATION decides what of it they read.
+    const memberVisible = new Set<string>(
+      MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS.map((option) => option.value).filter(
+        (value) => value !== "all",
+      ),
+    );
+
+    const stranded = census()
+      .memberFacing.filter(
+        (site) =>
+          site.category.kind !== "literal" ||
+          !memberVisible.has(site.category.value),
+      )
+      .map((site) => `${site.id} (${describeCategory(site.category)})`);
+
+    expect(
+      stranded,
+      "A write site declares member-facing text while its category keeps the " +
+        "row off every member timeline. Either the declaration is dead and " +
+        "should go, or the category is wrong — and moving a category across the " +
+        "member-visible boundary is the owner's decision (INV-OPS-012).",
+    ).toEqual([]);
   });
 
   it("has exactly the approved non-row-producing AuditLog statements", () => {
