@@ -254,6 +254,46 @@ describe("availability state: months accumulate and missing is not zero (#2930)"
     });
   });
 
+  it("renders a night MISSING from an otherwise-loaded month as unknown, not as empty", async () => {
+    /*
+      The sharper half of the same rule, and the one a failed-fetch test cannot
+      reach. Here the month DID load and the capacity IS known, so the
+      denominator is fine — but one night is absent from the map. Reading that
+      absence as zero occupancy invents a completely empty lodge on a night
+      nobody counted, and it does so with full confidence: the cell renders the
+      success token and "20 of 20 beds free".
+
+      Mutation-verified: flipping the reader back to `?? 0` fails only THIS
+      assertion. The failed-fetch case above passes either way, because there the
+      capacity is unknown too and the null arrives by the other route.
+    */
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          lodgeCapacity: CAPACITY,
+          // ARRIVE is counted. The day after it is simply not in the payload.
+          availability: { [ARRIVE.iso]: 2 },
+          seasons: {},
+        }),
+      })),
+    );
+
+    render(<BookingCalendar onDateSelect={() => {}} />);
+    await goForwardMonths(1);
+
+    await waitFor(() =>
+      expect(dayButton(1, ARRIVE.day).getAttribute("aria-label")).toContain(
+        `${CAPACITY - 2} of ${CAPACITY} beds free`,
+      ),
+    );
+
+    const missing = dayButton(1, ARRIVE.day + 1).getAttribute("aria-label") ?? "";
+    expect(missing).toContain("availability not loaded");
+    expect(missing).not.toContain("beds free");
+  });
+
   it("uses the SELECTED lodge's capacity as the denominator", async () => {
     // A capped second lodge: 8 beds, not the club-identity 20 this grid used to
     // divide by (`INV-CAP-001`).
