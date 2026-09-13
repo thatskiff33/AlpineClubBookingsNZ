@@ -75,12 +75,19 @@ const MEMBER_RATE_FALLBACK_HOLDER_KEY = "FULL";
  * and every type-policy-forced member, `fullTypeId()` for an unplaceable member
  * and for an other-lodge guest).
  *
- * ARCHIVING ONE DOES NOT TAKE IT OUT OF PRICING, which is why they are the
- * exception to the archived-types rule below. Archiving is one click, it is
- * offered for every type — the built-in guard on the membership-type route
- * covers deletion only — and nothing downstream asks whether the key it looked
- * up was active. So an archived `NON_MEMBER` still prices every non-member
- * guest the club takes, from rows the officer can no longer see or set.
+ * NEITHER ARCHIVING ONE NOR RE-ANSWERING ITS BOOKING-BEHAVIOUR QUESTION TAKES
+ * IT OUT OF PRICING, which is why they are the exception to BOTH tests in
+ * `requiresHutRates` below and not only to the archived-types one. The
+ * built-in guard on the membership-type route covers deletion only, so an
+ * officer may archive one of these in one click and may pick a different
+ * booking behaviour for it in one more — the officer screen renders that
+ * selector for every type, and its labels ("Member rate", "Non-member rate")
+ * read like a pricing preference rather than like a structural fact. Neither
+ * edit reaches the resolver, which looks these two up by key and asks nothing
+ * about what it found. So an archived `NON_MEMBER` still prices every
+ * non-member guest the club takes, and a `FULL` re-labelled "Non-member rate"
+ * still prices every unplaceable member and every other-lodge guest — in both
+ * cases from rows the officer can no longer see or set.
  *
  * Deliberately these two and not every built-in. `LIFE` or `FAMILY` reach
  * pricing only when some member actually holds that role or assignment, which
@@ -93,7 +100,7 @@ const KEY_RESOLVED_RATE_HOLDER_KEYS: readonly string[] = [
   MEMBER_RATE_FALLBACK_HOLDER_KEY,
 ];
 
-/** Is this the kind of rate holder archiving cannot retire? */
+/** Is this the kind of rate holder an officer's edits cannot retire? */
 export function isKeyResolvedRateHolder(type: { key: string }): boolean {
   return KEY_RESOLVED_RATE_HOLDER_KEYS.includes(type.key);
 }
@@ -116,6 +123,16 @@ export interface RateBearingMembershipTypeShape {
  * `!== "NON_MEMBER_RATE"`. `BLOCK_BOOKING` is a third value and it is not a
  * rate-bearer — the mirror of `INV-MOD-031`, which makes the same point about
  * the opposite question.
+ *
+ * **This is the behaviour question alone, and it is not the whole coverage
+ * rule.** `FULL` answers it `true` only because its booking behaviour SAYS
+ * `MEMBER_RATE` today, and that is an officer-editable field; what makes `FULL`
+ * owe rows regardless is `isKeyResolvedRateHolder`, which `requiresHutRates`
+ * asks first. Do not fold the key-resolved set in here to close that: `FULL` is
+ * not rate-bearing BECAUSE of a behaviour value, the two comparisons in this
+ * expression are the positive anchor
+ * `rate-bearing-membership-type-census.test.ts` matches to prove its patterns
+ * still work, and widening this would leave that anchor matching nothing.
  */
 export function isRateBearingMembershipType(
   type: RateBearingMembershipTypeShape,
@@ -124,6 +141,34 @@ export function isRateBearingMembershipType(
     type.bookingBehavior === "MEMBER_RATE" ||
     type.key === NON_MEMBER_RATE_HOLDER_KEY
   );
+}
+
+/**
+ * MAY this type hold hut rate rows at all — the question every WRITE surface
+ * asks (`INV-MOD-007`).
+ *
+ * The read side asks `requiresHutRates`: does this type owe rows *now*. The
+ * write side asks something weaker and timeless: would a row saved here ever be
+ * read? Season create/update, the Xero hut-fee item-code route and the two
+ * config-transfer importers all reject a row for a type that owns none, because
+ * such a row is unreadable by construction and saving it would be a lie about
+ * what the club charges.
+ *
+ * **The two questions must agree about the key-resolved pair or the product
+ * contradicts itself.** They are the same set for the same reason — the engine
+ * reads their rows by key — so a `FULL` whose booking behaviour an officer has
+ * re-answered still holds rows, exactly as it still owes them. Before these two
+ * predicates were separated, that officer was told on the Hut Fees screen to set
+ * a rate the season save then refused, naming a type the engine was at that
+ * moment pricing from.
+ *
+ * What it does NOT relax is the archived/active question. Activity is a read-side
+ * scoping concern — is this work an operator can usefully act on now — and has
+ * never gated a write; a rate row for a club's own archived `MEMBER_RATE` type
+ * is still readable pricing history and is still allowed.
+ */
+export function holdsHutRateRows(type: RateBearingMembershipTypeShape): boolean {
+  return isKeyResolvedRateHolder(type) || isRateBearingMembershipType(type);
 }
 
 /** A membership type as the "does it owe rates *now*" question sees it. */
@@ -138,19 +183,33 @@ export interface HutRateRequirementShape extends RateBearingMembershipTypeShape 
  * member's assignment, so an archived one is mostly pricing history, and a
  * missing rate on it is not work an operator can usefully act on.
  *
- * **The two key-resolved holders are the exception, because archiving does not
- * retire them** (`isKeyResolvedRateHolder`). Archive the built-in `NON_MEMBER`
- * and every non-member guest still prices from its rows — while the fee grid,
- * which filters on this very rule, stops showing it, so the officer cannot set
- * one; a new season gets no rows for it; and the first public booking in that
- * season throws outright. That is the same defect #2933 exists to close,
- * pointing the other way, so the rule follows what actually PRICES rather than
- * what is merely offered. Whether archiving one should be possible at all is a
- * separate question about the membership-type route, not about this rule.
+ * **The two key-resolved holders answer `true` before either test runs**
+ * (`isKeyResolvedRateHolder`), and the ORDER below is the point. They owe rows
+ * because the resolver reaches them by key and asks nothing about what it
+ * found, so no field on the row can excuse them — not `isActive`, and not
+ * `bookingBehavior` either.
+ *
+ * Both fields are one officer click away, and both fail the same way. Archive
+ * the built-in `NON_MEMBER` and every non-member guest still prices from its
+ * rows; give the built-in `FULL` a different booking behaviour — which the
+ * membership-types screen offers for every type, labelled like a pricing
+ * preference — and every unplaceable member and every other-lodge guest still
+ * prices from ITS rows. In each case the fee grid, which filters on this very
+ * rule, stops showing the type, so the officer cannot set a rate; a season
+ * created from that grid gets no rows for it; the warning panel and setup
+ * readiness both say nothing; and the first booking that needs it throws
+ * outright. That is the defect #2933 exists to close, pointing the other way,
+ * so the rule follows what actually PRICES rather than what the row currently
+ * says about itself.
+ *
+ * Everything else is judged on both tests together: rate-bearing by behaviour,
+ * AND active. Whether an officer should be able to archive or re-behaviour a
+ * built-in at all is a separate question about the membership-type route, not
+ * about this rule — this rule only declines to be fooled by the answer.
  */
 export function requiresHutRates(type: HutRateRequirementShape): boolean {
-  if (!isRateBearingMembershipType(type)) return false;
-  return type.isActive || isKeyResolvedRateHolder(type);
+  if (isKeyResolvedRateHolder(type)) return true;
+  return isRateBearingMembershipType(type) && type.isActive;
 }
 
 /** Every type from `types` that owes hut rates, in the order given. */

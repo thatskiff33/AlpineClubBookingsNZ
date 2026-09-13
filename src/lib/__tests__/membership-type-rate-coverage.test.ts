@@ -4,6 +4,7 @@ import { requireCalendarDate } from "@/lib/club-time";
 import {
   computeMembershipTypeRateGaps,
   formatMembershipTypeRateGap,
+  holdsHutRateRows,
   isKeyResolvedRateHolder,
   isRateBearingMembershipType,
   requiresHutRates,
@@ -79,6 +80,90 @@ describe("which membership types carry their own hut rates (INV-MOD-007)", () =>
     // Being key-resolved does not make a non-rate-bearing type owe rows.
     expect(isKeyResolvedRateHolder(ASSOCIATE)).toBe(false);
     expect(requiresHutRates({ ...ADMIN, isActive: false })).toBe(false);
+  });
+
+  it("still asks for rates on a key-resolved holder whose BEHAVIOUR was edited", () => {
+    /*
+      The other half of the same door, and the one that is easier to walk
+      through by accident. `NON_MEMBER` holds its place in the rule by KEY, so
+      an edit to its booking behaviour changes nothing here. `FULL` does not:
+      before the two tests below were reordered it qualified solely through
+      `bookingBehavior === "MEMBER_RATE"`, and that field is editable on a
+      built-in type — the route's built-in guard covers deletion only, and the
+      membership-types screen renders the behaviour selector for every type
+      with the labels "Member rate" / "Non-member rate", which read like a
+      pricing preference rather than a structural fact.
+
+      Pick either other value for the built-in `FULL` and pricing is unchanged:
+      `fullTypeId()` resolves it by key for an unplaceable member and for an
+      other-lodge guest, and asks nothing about the row it found. But `FULL`
+      would have dropped out of the coverage rule — out of the fee grid, out of
+      any season created from it, out of the panel and out of readiness — while
+      still throwing at pricing time. Exactly the #2933 defect, moved from the
+      active flag onto the behaviour field.
+    */
+    for (const behavior of ["NON_MEMBER_RATE", "BLOCK_BOOKING"]) {
+      expect(requiresHutRates({ ...FULL, bookingBehavior: behavior })).toBe(true);
+      expect(requiresHutRates({ ...NON_MEMBER, bookingBehavior: behavior })).toBe(
+        true,
+      );
+      // Archived AND re-behavioured: still priced by key, so still owed.
+      expect(
+        requiresHutRates({ ...FULL, bookingBehavior: behavior, isActive: false }),
+      ).toBe(true);
+    }
+    // And the reorder did not make the behaviour test vacuous for everyone
+    // else: an ordinary type re-labelled away from MEMBER_RATE stops owing.
+    expect(
+      requiresHutRates({
+        key: "STUDENT",
+        bookingBehavior: "NON_MEMBER_RATE",
+        isActive: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("lets the write surfaces save every row the warning asks for", () => {
+    /*
+      The read side (`requiresHutRates`) and the write side
+      (`holdsHutRateRows`) must agree about the key-resolved pair, or the
+      product contradicts itself: the Hut Fees panel names a missing rate and
+      the season save — which validates through `holdsHutRateRows` in
+      `season-rate-editor.ts`, as do the Xero item-code route and both
+      config-transfer importers — refuses to store it, blocking the whole
+      season save while the engine is at that moment pricing from that type.
+
+      So: everything the read side asks for, the write side accepts.
+    */
+    const everyShape = ["MEMBER_RATE", "NON_MEMBER_RATE", "BLOCK_BOOKING"].flatMap(
+      (bookingBehavior) =>
+        [true, false].flatMap((isActive) =>
+          ["FULL", "NON_MEMBER", "ASSOCIATE", "ADMIN", "STUDENT"].map((key) => ({
+            key,
+            bookingBehavior,
+            isActive,
+          })),
+        ),
+    );
+    for (const type of everyShape) {
+      if (requiresHutRates(type)) {
+        expect(holdsHutRateRows(type), `${type.key}/${type.bookingBehavior}`).toBe(
+          true,
+        );
+      }
+    }
+
+    // The write side is deliberately WIDER in exactly one direction: activity
+    // is a read-side scoping question and has never gated a write, so an
+    // archived MEMBER_RATE type's rows stay savable pricing history.
+    const RETIRED = { key: "STUDENT", bookingBehavior: "MEMBER_RATE", isActive: false };
+    expect(requiresHutRates(RETIRED)).toBe(false);
+    expect(holdsHutRateRows(RETIRED)).toBe(true);
+
+    // And it is not wider than that: a type whose rows nothing reads still
+    // cannot have any saved.
+    expect(holdsHutRateRows(ASSOCIATE)).toBe(false);
+    expect(holdsHutRateRows(ADMIN)).toBe(false);
   });
 
   it("selects exactly the types that owe rates, in the order given", () => {
