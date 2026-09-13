@@ -392,6 +392,50 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
 
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
+
+  /*
+    #2929 — the on-behalf "do not email the member" choice is persisted on the
+    operation at enqueue, and this is the seam where it becomes durable. Read
+    the reverse of these assertions as the failure they prevent: an enqueuer
+    that silently dropped the instruction would leave the dispatcher with
+    nothing to read, and a member would receive the invoice email the officer
+    chose to withhold.
+  */
+  it("persists the creation-time invoice-email instruction the create passed it (#2929)", async () => {
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      createdByMemberId: "admin_1",
+      invoiceEmailDelivery: "WITHHELD_AT_CREATION",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceEmailDelivery: "WITHHELD_AT_CREATION" }),
+    );
+    // NOT in the payload, and that is the whole design: the booking-invoice
+    // handler rewrites `requestPayload` wholesale before its first provider
+    // call, so an instruction kept there would survive the happy path and
+    // vanish on exactly the retry that needs it.
+    const [input] = mocks.startXeroSyncOperation.mock.calls[0];
+    expect(JSON.stringify(input.requestPayload)).not.toContain(
+      "WITHHELD_AT_CREATION",
+    );
+  });
+
+  it("records no instruction for the fourteen enqueuers that have no choice to express (#2929)", async () => {
+    // Every other caller of this function — confirm-draft, waitlist-confirm,
+    // charge-saved-method, switch-to-internet-banking, confirm-pending-guests,
+    // cron-confirm-pending, group settlement, the school-booking-request
+    // conversion, the booking-edit settlement, the admin payment-invoice
+    // service, the invoice queue, and the admin missing-invoices, force-sync
+    // and repair surfaces — omits the option. They must keep behaving exactly
+    // as they did before this issue.
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      createdByMemberId: "admin_1",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceEmailDelivery: null }),
+    );
+  });
 });
 
 describe("enqueueXeroBookingInvoiceUpdateOperation", () => {
