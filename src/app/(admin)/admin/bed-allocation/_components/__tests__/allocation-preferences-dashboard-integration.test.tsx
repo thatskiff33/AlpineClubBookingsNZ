@@ -63,6 +63,15 @@ function settingsResponse(autoAllocationEnabled: boolean) {
       settings: {
         autoAllocationEnabled,
         allocationPriorityOrder: ["BOOKING_COHESION"],
+        // The read-only provenance the settings route really sends beside the
+        // two editable fields (#2931). A fixture without it lets the editor
+        // spread unknown keys into a `.strict()` write contract and still pass.
+        authoritativeLodgeId: "lodge-1",
+        settingsId: "lodge-1",
+        source: "LODGE",
+        fallback: "NONE",
+        updatedByMemberId: "admin-1",
+        updatedAt: "2026-07-01T00:00:00.000Z",
       },
     }),
     { status: 200 },

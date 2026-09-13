@@ -38,6 +38,7 @@ import {
 } from "@/components/admin/bed-type-indicator";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import type { LodgeCapacityStatus } from "@/lib/lodge-capacity";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
@@ -126,15 +127,6 @@ const EMPTY_BED_DRAFT: BedDraft = {
   bedType: "SINGLE",
   bunkGroup: "",
 };
-
-async function readApiError(response: Response, fallback: string) {
-  try {
-    const body = (await response.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function roomEditFromRoom(room: DashboardRoom): RoomDraft {
   return {
@@ -424,7 +416,7 @@ export function RoomsBedsManager({
         return;
       }
       if (!response.ok) {
-        throw new Error(await readApiError(response, "Failed to load rooms and beds"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Failed to load rooms and beds"));
       }
 
       const data = (await response.json()) as RoomsBedsPayload;
@@ -505,7 +497,7 @@ export function RoomsBedsManager({
     try {
       const response = await request();
       if (!response.ok) {
-        throw new Error(await readApiError(response, "Request failed"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Request failed"));
       }
       if (activeScopeRef.current !== requestedScope) return false;
       toast.success(success);
@@ -756,7 +748,7 @@ export function RoomsBedsManager({
         method: "DELETE",
       });
       if (!response.ok) {
-        const message = await readApiError(response, "Failed to delete room");
+        const message = await apiErrorMessageFromResponse(response, "Failed to delete room");
         setDeleteErrors((current) => ({ ...current, [roomId]: message }));
         return;
       }

@@ -190,7 +190,24 @@ export async function recordOtherLodgesUpload(at: Date = new Date()): Promise<vo
   });
 }
 
-/** Record a successful download, persisting the incremental cursor. */
+/**
+ * Record a successful download, persisting the incremental cursor.
+ *
+ * WHAT BELONGS IN `cursor` IS THE SERVER'S OWN WATERMARK, and never the value the
+ * caller asked WITH. The Other Clubs pull deliberately requests a bounded window
+ * before the stored cursor to cover commit-order races (#2995), so "what we
+ * asked for" and "how far the server says we have got" are two different values
+ * and only the second may be stored. Storing the request value would turn a
+ * one-minute re-ask into a watermark that slides backwards a minute per run.
+ *
+ * IT MUST ALSO NEVER MOVE BACKWARDS. A server that echoes `since` when a page is
+ * empty hands the overlapped request value straight back as its answer, so
+ * persisting the response uncritically has the same effect by a different route.
+ * `advancedDownloadCursor` in `servernz-other-lodges-sync.ts` is where that
+ * comparison is made — it holds both the stored and the returned value, which
+ * this writer does not — and it is the reason nothing here needs to re-read the
+ * row. Do not "tidy up" either rule by storing whatever the caller had in hand.
+ */
 export async function recordOtherLodgesDownload(cursor: string | null): Promise<void> {
   await prisma.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
