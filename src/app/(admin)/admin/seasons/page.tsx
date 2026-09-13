@@ -298,33 +298,33 @@ export default function SeasonsPage() {
   function renderSeasonCard(season: Season) {
     return (
       <Card key={season.id}>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <CardTitle className="text-xl">{season.name}</CardTitle>
-            <Badge variant={season.type === "WINTER" ? "default" : "secondary"}>{season.type}</Badge>
-            <Badge variant={season.active ? "default" : "outline"}>{season.active ? "Active" : "Inactive"}</Badge>
-          </div>
-          {canEdit && (
-            <div className="flex space-x-2">
-              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
-                {season.active ? "Deactivate" : "Activate"}
-              </ViewOnlyActionButton>
-              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEdit(season)}>
-                Edit window
-              </ViewOnlyActionButton>
-              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
-                Delete
-              </ViewOnlyActionButton>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <CardTitle className="text-xl">{season.name}</CardTitle>
+              <Badge variant={season.type === "WINTER" ? "default" : "secondary"}>{season.type}</Badge>
+              <Badge variant={season.active ? "default" : "outline"}>{season.active ? "Active" : "Inactive"}</Badge>
             </div>
-          )}
-        </div>
-        <CardDescription>
-          {formatSeasonEdge(season.startDate)} &mdash;{" "}
-          {formatSeasonEdge(season.endDate)}
-        </CardDescription>
-      </CardHeader>
-    </Card>
+            {canEdit && (
+              <div className="flex space-x-2">
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
+                  {season.active ? "Deactivate" : "Activate"}
+                </ViewOnlyActionButton>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEdit(season)}>
+                  Edit window
+                </ViewOnlyActionButton>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
+                  Delete
+                </ViewOnlyActionButton>
+              </div>
+            )}
+          </div>
+          <CardDescription>
+            {formatSeasonEdge(season.startDate)} &mdash;{" "}
+            {formatSeasonEdge(season.endDate)}
+          </CardDescription>
+        </CardHeader>
+      </Card>
     )
   }
 

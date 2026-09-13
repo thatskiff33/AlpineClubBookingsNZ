@@ -21,12 +21,18 @@
  * ## Accessibility
  *
  * A gap is a standing fact about data already on screen, not the outcome of
- * something the officer just did, so this is ordinary prose in a `<section>`
- * with an accessible name — NOT a live region. A `role="alert"` here would be
- * announced on arrival, ahead of the page's own heading, once per hole, and
- * would interrupt whatever the user was reading whenever the list reloads.
- * `FocusedActionError` next door is the right shape for the other case: a
- * refusal the officer's own Save just produced.
+ * something the officer just did, so this is ordinary prose — NOT a live
+ * region. A `role="alert"` here would be announced on arrival, ahead of the
+ * page's own heading, once per hole, and would interrupt whatever the user was
+ * reading whenever the list reloads. `FocusedActionError` next door is the
+ * right shape for the other case: a refusal the officer's own Save produced.
+ *
+ * `role="note"` rather than a named `<section>`, which was the first shape
+ * here. A named section is a `region` LANDMARK, and a club with three holes in
+ * its schedule would put three of them in the landmark list, ahead of and
+ * competing with the page's real ones. `note` marks the block as the aside it
+ * is without that cost, and the prose carries its own name — the second
+ * sentence names both seasons — so nothing is lost by not labelling it.
  *
  * The dates are read out in the club's own medium format, and the night count
  * is spelled out beside them, because "1 Oct 2026 — 30 Nov 2026" alone leaves a
@@ -55,8 +61,8 @@ function describeGap(gap: SeasonCoverageGap): string {
  */
 export function SeasonCoverageGapNotice({ gap }: { gap: SeasonCoverageGap }) {
   return (
-    <section
-      aria-label={`Nights with no season between ${gap.afterSeasonName} and ${gap.beforeSeasonName}`}
+    <div
+      role="note"
       className="rounded-md border border-dashed border-destructive/50 bg-destructive/5 p-3 text-sm"
     >
       <p className="font-semibold text-destructive">
@@ -69,7 +75,7 @@ export function SeasonCoverageGapNotice({ gap }: { gap: SeasonCoverageGap }) {
         neighbouring season&apos;s rates are used instead. Extend one of the two
         windows, or add a season to cover the nights.
       </p>
-    </section>
+    </div>
   );
 }
 
