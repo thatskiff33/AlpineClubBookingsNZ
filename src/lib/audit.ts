@@ -257,7 +257,9 @@ function metadataJsonLimit(options?: AuditMetadataOptions): number {
  * measured `"amountCents":1` case: `audit-structured-detail.ts`, which owns the
  * rule. What is decided HERE is the two boundaries around it. A payload that
  * FITS takes the text rule unchanged, byte for byte, so no row whose meaning
- * anybody already relies on moves (`INV-OPS-012`). And on the over-budget path
+ * anybody already relies on moves — a design choice of this change, not
+ * `INV-OPS-012`, which an earlier draft cited for it and which is about
+ * reclassifying a stored `category`. And on the over-budget path
  * the payload is re-sanitised as METADATA rather than as text.
  *
  * WHAT THAT SECOND BOUNDARY REALLY DOES, because the first draft of this

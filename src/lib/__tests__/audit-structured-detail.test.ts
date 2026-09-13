@@ -552,7 +552,9 @@ describe("who the recovered detail reaches (#2704 with #2695)", () => {
     // Formatted as the money figure it is, which is the structured rendering
     // working — under the old rule this slot held a fragment of raw JSON.
     expect(entry.description).toContain("$12,345.67");
-    // `INV-OPS-012`: the recovery is a view, so the stored record stays visible.
+    // The recovery is a view, so the stored record stays visible beside it. A
+    // property of this module, held HERE — not `INV-OPS-012`, which an earlier
+    // draft cited for it and which is about reclassifying a stored `category`.
     expect(entry.details).toBe(CLIPPED);
   });
 
@@ -660,7 +662,10 @@ describe("who the recovered detail reaches (#2704 with #2695)", () => {
    * triggered: the member read a broken JSON blob, payment-intent id and all.
    * The claim rests on a property of two call sites — `stripe-webhook-service`
    * and `payments/charge-saved-method` both put the member-readable text in
-   * `errorMessage` — so the property is what is pinned here.
+   * `errorMessage` — so the property is what is pinned here. This surface is
+   * the decided second door of `INV-PRIV-012` and is named in `INV-PRIV-017`;
+   * both put the readership decision at the surface, which is why a WRITE-side
+   * change to what that surface reads owes a test rather than an argument.
    */
   it("narrows, and cannot widen, what a member's own booking page reads", () => {
     const stored =

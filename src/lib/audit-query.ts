@@ -1172,7 +1172,9 @@ function projectFreeTextForAudience(params: {
     // is shown whole in the metadata panel, so repeating it is noise; a
     // RECOVERED one is a derived view, so the stored string stays on screen as
     // the club's actual record. The officer reads both, never a rendering
-    // standing in for the record.
+    // standing in for the record. (A property of this reader, held by its own
+    // test — not `INV-OPS-012`, which an earlier draft cited here and which
+    // governs reclassifying a stored `category`.)
     details: legacyMetadata ? null : log.details,
   };
 }

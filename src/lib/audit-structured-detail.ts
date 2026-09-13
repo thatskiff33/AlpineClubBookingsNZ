@@ -59,18 +59,30 @@
  * RECOVERY IS A DERIVED VIEW AND NEVER REPLACES THE RECORD. A recovered row
  * keeps its raw stored text on screen alongside the recovered fields, so the
  * officer reads the club's actual history and a convenience rendering of it,
- * not a rendering standing in for it (`INV-OPS-012`: a code change never moves
- * the rows already written). The reserved marker below is what keeps the two
- * distinguishable on the screen.
+ * not a rendering standing in for it. The reserved marker below is what keeps
+ * the two distinguishable on the screen. That is a property of this module and
+ * its one reader, held by the named test beside it — NOT an invariant, and in
+ * particular not `INV-OPS-012`, which an earlier draft cited three times across
+ * this change. That rule is about reclassifying a stored row's `category` and
+ * what the backfill owes; the only true thing it has to say here is what
+ * `INV-PRIV-017` says about itself — this change reclassifies nothing, so
+ * `INV-OPS-012` owes nothing. Nothing already written is rewritten either way.
  *
  * NO AUDIENCE DECISION LIVES HERE, AND THAT IS DELIBERATE. #2695 made what a
  * member reads an explicit declaration at the write site, read by one function
  * for both audiences, so nothing a member sees depends any more on whether a
  * payload parses or how long it is. This module therefore changes what an
- * AUTHORISED reader is shown and cannot widen a readership even in principle —
- * `details` reaches no member timeline and no data export. Keep it that way: if
- * a future change makes a member read anything derived here, the decision is
- * `INV-PRIV-017`'s and it belongs at the write site, not in this file.
+ * AUTHORISED reader is shown, and the audit log's own two member channels — the
+ * member timeline and the data export — read neither `details` nor its shape.
+ *
+ * ONE SURFACE OUTSIDE THE AUDIT LOG DOES READ A ROW'S `details` TO A MEMBER,
+ * and it is decided rather than incidental: the booking page's replay of the two
+ * payment-failure actions to the booking's own member, named in `INV-PRIV-017`
+ * and bound by `INV-PRIV-012`'s rule that a second door is its own decided
+ * readership. The WRITE side here changes what that page has to read, so it is
+ * pinned in the tests rather than reasoned about. If a future change makes a
+ * member read anything else derived here, that is those two rules' decision and
+ * it belongs at the write site, not in this file.
  *
  * This module holds no `server-only` marker on purpose. `audit-query.ts` is
  * reached from a client component's import graph and `audit.ts` is not, and
