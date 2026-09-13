@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useLayoutEffect, useMemo, useState, useCallback, useRef } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -23,6 +23,12 @@ import {
   formatPayloadCalendarDay,
 } from "../_lib/calendar-day";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
+import { useClubTime } from "@/components/club-time-provider"
+import {
+  SeasonCoverageGapNotice,
+  SeasonCoverageGapSummary,
+} from "@/components/admin/season-coverage-warning"
+import { buildSeasonTimeline, type TimelineSeason } from "@/lib/season-timeline"
 
 // Season WINDOWS only (#1933, E7): name, type, dates, and active state per
 // lodge. Nightly rates moved to the consolidated Fees console (Fees → Hut Fees)
@@ -138,6 +144,55 @@ export default function SeasonsPage() {
     return () => controller.abort()
   }, [fetchSeasons])
 
+  /*
+    #2938 — the windows IN ORDER, with the nights nothing prices marked between
+    them.
+
+    This page is where an officer MOVES a season's window, so it is the page
+    where a hole in the schedule is most cheaply closed — and until now it
+    listed the windows in whatever order the API returned them, which is not
+    chronological and moves between refreshes. `buildSeasonTimeline` sorts them
+    totally and slots each gap immediately before the season that resumes cover.
+    The canonical date rules it applies (inclusive-both-edges windows, so two
+    seasons abut when the later starts the day after the earlier ends; only
+    ACTIVE seasons counting as cover) live in `@/lib/season-timeline`.
+
+    "Today" is the CLUB's day (`INV-DATE-019`), from the bound kernel and never
+    the browser's clock; it drops a hole that is wholly in the past, which is
+    not work anybody can still do. A season whose edges this page cannot decode
+    is listed after the timeline and judged by nothing.
+  */
+  const clubToday = useClubTime().today()
+  const { timeline, undatedSeasons } = useMemo(() => {
+    const dated: Array<TimelineSeason & { season: Season }> = []
+    const undated: Season[] = []
+    for (const season of seasons) {
+      const startDate = calendarDayFromPayload(season.startDate)
+      const endDate = calendarDayFromPayload(season.endDate)
+      if (startDate === null || endDate === null) {
+        undated.push(season)
+        continue
+      }
+      dated.push({
+        id: season.id,
+        name: season.name,
+        active: season.active,
+        startDate,
+        endDate,
+        season,
+      })
+    }
+    return {
+      timeline: buildSeasonTimeline({ seasons: dated, notBefore: clubToday }),
+      undatedSeasons: undated,
+    }
+  }, [clubToday, seasons])
+
+  const coverageGaps = useMemo(
+    () => timeline.flatMap((entry) => (entry.kind === "gap" ? [entry.gap] : [])),
+    [timeline],
+  )
+
   function resetForm() {
     setName("")
     setType("WINTER")
@@ -233,6 +288,44 @@ export default function SeasonsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error")
     }
+  }
+
+  /*
+    One season's card, lifted out of the list so the timeline can render it in
+    two places — in chronological order, and again for a season whose dates this
+    page could not decode — without a second copy drifting from the first.
+  */
+  function renderSeasonCard(season: Season) {
+    return (
+      <Card key={season.id}>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <CardTitle className="text-xl">{season.name}</CardTitle>
+            <Badge variant={season.type === "WINTER" ? "default" : "secondary"}>{season.type}</Badge>
+            <Badge variant={season.active ? "default" : "outline"}>{season.active ? "Active" : "Inactive"}</Badge>
+          </div>
+          {canEdit && (
+            <div className="flex space-x-2">
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
+                {season.active ? "Deactivate" : "Activate"}
+              </ViewOnlyActionButton>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEdit(season)}>
+                Edit window
+              </ViewOnlyActionButton>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
+                Delete
+              </ViewOnlyActionButton>
+            </div>
+          )}
+        </div>
+        <CardDescription>
+          {formatSeasonEdge(season.startDate)} &mdash;{" "}
+          {formatSeasonEdge(season.endDate)}
+        </CardDescription>
+      </CardHeader>
+    </Card>
+    )
   }
 
   /*
@@ -356,36 +449,20 @@ export default function SeasonsPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {seasons.map((season) => (
-            <Card key={season.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <CardTitle className="text-xl">{season.name}</CardTitle>
-                    <Badge variant={season.type === "WINTER" ? "default" : "secondary"}>{season.type}</Badge>
-                    <Badge variant={season.active ? "default" : "outline"}>{season.active ? "Active" : "Inactive"}</Badge>
-                  </div>
-                  {canEdit && (
-                    <div className="flex space-x-2">
-                      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
-                        {season.active ? "Deactivate" : "Activate"}
-                      </ViewOnlyActionButton>
-                      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEdit(season)}>
-                        Edit window
-                      </ViewOnlyActionButton>
-                      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
-                        Delete
-                      </ViewOnlyActionButton>
-                    </div>
-                  )}
-                </div>
-                <CardDescription>
-                  {formatSeasonEdge(season.startDate)} &mdash;{" "}
-                  {formatSeasonEdge(season.endDate)}
-                </CardDescription>
-              </CardHeader>
-            </Card>
-          ))}
+          {/* #2938: the count first, then each hole where it falls. */}
+          <SeasonCoverageGapSummary gaps={coverageGaps} />
+          {timeline.map((entry) =>
+            entry.kind === "gap" ? (
+              <SeasonCoverageGapNotice
+                key={`gap-${entry.gap.afterSeasonId}-${entry.gap.beforeSeasonId}`}
+                gap={entry.gap}
+              />
+            ) : (
+              renderSeasonCard(entry.season.season)
+            ),
+          )}
+          {/* Dates this page could not read: listed, never judged. */}
+          {undatedSeasons.map((season) => renderSeasonCard(season))}
         </div>
       )}
       </div>
