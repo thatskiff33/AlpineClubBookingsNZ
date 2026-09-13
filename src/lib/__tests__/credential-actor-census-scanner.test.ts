@@ -194,6 +194,67 @@ describe("credential-actor census scanner: writers that skip the store (#2723)",
     ]);
   });
 
+  it("REPORTS the two `…AndReturn` writes a deny-list of methods missed", () => {
+    // THE FIXTURE THAT DISCRIMINATES THE INVERSION. This census shipped with a
+    // hand-written deny-list of seven mutating methods; the generated delegate
+    // has seventeen, and these two were not among the seven — so a writer could
+    // rewrite the stored ciphertext, iv and auth tag, name no actor, write no
+    // audit row, and be reported as no bypass at all. Restore the deny-list and
+    // this test goes red while the real-tree contract stays green, because the
+    // real tree contains neither call.
+    const census = tree({
+      "src/lane.ts": `
+        import { prisma } from "@/lib/prisma";
+        export async function save() {
+          await prisma.integrationCredential.createManyAndReturn({ data: [] });
+          await prisma.integrationCredential.updateManyAndReturn({
+            where: {},
+            data: {},
+          });
+        }
+      `,
+    });
+
+    expect(census.bypasses.map((bypass) => bypass.statement)).toEqual([
+      "integrationCredential.createManyAndReturn",
+      "integrationCredential.updateManyAndReturn",
+    ]);
+  });
+
+  it("REPORTS a delegate destructured under a DIFFERENT name", () => {
+    // The unrenamed form was caught only by accident, through the bare-identifier
+    // fallback in `isCredentialDelegate`. Rename the binding and the receiver is
+    // an ordinary local the walk had never been taught to follow.
+    const census = tree({
+      "src/lane.ts": `
+        export async function save(tx: any) {
+          const { integrationCredential: creds } = tx;
+          await creds.deleteMany({ where: {} });
+        }
+      `,
+    });
+
+    expect(census.bypasses.map((bypass) => bypass.statement)).toEqual([
+      "integrationCredential.deleteMany",
+    ]);
+  });
+
+  it("REPORTS a delegate handed on through a SECOND alias", () => {
+    const census = tree({
+      "src/lane.ts": `
+        export async function save(tx: any) {
+          const first = tx.integrationCredential;
+          const second = first;
+          await second.update({ where: {}, data: {} });
+        }
+      `,
+    });
+
+    expect(census.bypasses.map((bypass) => bypass.statement)).toEqual([
+      "integrationCredential.update",
+    ]);
+  });
+
   it("REPORTS a delegate reached by element access", () => {
     // Bypass 2 from the same review.
     const census = tree({
@@ -328,6 +389,51 @@ describe("credential-actor census scanner: reading the call site (#2723)", () =>
       },
     ]);
     expect(census.actorless).toHaveLength(0);
+  });
+
+  it("counts a mutator imported under a DIFFERENT name", () => {
+    // Matching the callee's spelling alone drops this site out of the pinned
+    // population entirely — and that population is what makes the contract test
+    // strong, because a new writer cannot be added without editing the pinned
+    // map in the same diff. The required argument still catches the omission
+    // here; what the rename defeated was the census's completeness claim.
+    const census = tree({
+      "src/lane.ts": `
+        import { setIntegrationCredential as save } from "@/lib/integration-credentials";
+        export async function store(value: string) {
+          await save({ provider: "stripe", key: "secret_key", value } as never);
+        }
+      `,
+    });
+
+    expect(sites(census)).toEqual([
+      {
+        mutator: "setIntegrationCredential",
+        actor: "(absent)",
+        expectation: "(absent)",
+      },
+    ]);
+    expect(census.actorless).toHaveLength(1);
+  });
+
+  it("counts a mutator parked in a local", () => {
+    const census = tree({
+      "src/lane.ts": `
+        import { deleteIntegrationCredential } from "@/lib/integration-credentials";
+        const drop = deleteIntegrationCredential;
+        export async function clear() {
+          await drop({ provider: "google", key: "verified_at" } as never);
+        }
+      `,
+    });
+
+    expect(sites(census)).toEqual([
+      {
+        mutator: "deleteIntegrationCredential",
+        actor: "(absent)",
+        expectation: "(absent)",
+      },
+    ]);
   });
 
   it("does not count the store's own internal calls", () => {

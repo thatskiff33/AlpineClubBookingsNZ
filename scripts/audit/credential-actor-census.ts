@@ -26,14 +26,25 @@
  *
  * and one way to go round them all:
  *
- *  4. `<client>.integrationCredential.<mutating DML>(…)` — a direct Prisma write
- *     that never reaches the store, so no required argument can catch it.
+ *  4. `<client>.integrationCredential.<anything but a read>(…)` — a direct
+ *     Prisma write that never reaches the store, so no required argument can
+ *     catch it.
  *
  * Form 4 is inventoried separately as a BYPASS. The store module itself is the
- * approved home for those statements; anywhere else is a finding. Delegate
- * aliases (`const rows = tx.integrationCredential`) and element access
- * (`tx["integrationCredential"]`) are both followed, because the audit census's
- * review demonstrated each as a silent bypass of a property-access-only check.
+ * approved home for those statements; anywhere else is a finding. The delegate's
+ * mutating surface is defined by INVERSION — anything that is not one of the
+ * eight reads in `DELEGATE_READ_METHODS` — because a deny-list of writes missed
+ * `createManyAndReturn` and `updateManyAndReturn` and would miss whatever Prisma
+ * adds next. Element access (`tx["integrationCredential"]`), a declared alias
+ * (`const rows = tx.integrationCredential`), a destructure renamed or not
+ * (`const { integrationCredential: rows } = tx`) and a second alias hop are all
+ * followed, because the audit census's review demonstrated the first two as
+ * silent bypasses of a property-access-only check and this census's own review
+ * demonstrated the rest.
+ *
+ * A mutator reached under a RENAMED IMPORT (`import { setIntegrationCredential
+ * as save }`) or parked in a local is followed the same way, so it stays in the
+ * pinned write-site population rather than dropping out of the measurement.
  *
  * ONE FORM IS NOT TYPESCRIPT AT ALL: raw SQL DML against `"IntegrationCredential"`
  * in a migration, or through `$executeRaw*` from TypeScript. Both are scanned,
@@ -62,6 +73,7 @@ import {
   listSourceFiles,
   literalText,
   parseSourceFile,
+  propertyName,
   resolveObjectLiteral,
   symbolChain,
   toPosix,
@@ -99,16 +111,42 @@ const MUTATORS_REQUIRING_EXPECTATION: ReadonlySet<string> = new Set([
 /** The Prisma delegate a bypass reaches. */
 const CREDENTIAL_DELEGATE = "integrationCredential";
 
-/** Prisma methods on that delegate that change stored credential material. */
-const MUTATING_DML = new Set([
-  "create",
-  "createMany",
-  "upsert",
-  "update",
-  "updateMany",
-  "delete",
-  "deleteMany",
+/**
+ * The delegate's READ surface — and everything else on it counts as a mutation.
+ *
+ * THE SET IS INVERTED ON PURPOSE, and it is the one design decision in this file
+ * worth arguing about. The obvious shape is a deny-list of mutating methods, and
+ * that is what this census shipped with: seven names, `create` … `deleteMany`.
+ * The generated delegate has seventeen. `createManyAndReturn` and
+ * `updateManyAndReturn` were not among the seven, so a writer could rewrite a
+ * stored ciphertext, iv and auth tag with one of them, name no actor, write no
+ * audit row, and be reported as no bypass at all — measured against this very
+ * scanner before the inversion.
+ *
+ * A deny-list of mutations fails OPEN on the next Prisma release, because the
+ * methods that get added are mostly write shapes. The read surface —
+ * `findUnique`, `findMany`, `count`, `aggregate`, `groupBy` and their variants —
+ * is small and has been stable for years, so an allow-list of reads fails
+ * CLOSED: a method nobody here has heard of is reported, a reviewer looks at it
+ * once, and either it is a genuine write or it joins this list with a reason.
+ * A false finding costs one reading; a false clean costs an unattributable
+ * secret rewrite.
+ */
+const DELEGATE_READ_METHODS: ReadonlySet<string> = new Set([
+  "aggregate",
+  "count",
+  "findFirst",
+  "findFirstOrThrow",
+  "findMany",
+  "findUnique",
+  "findUniqueOrThrow",
+  "groupBy",
 ]);
+
+/** Does this delegate method change stored credential material? */
+function isMutatingDelegateMethod(method: string): boolean {
+  return !DELEGATE_READ_METHODS.has(method);
+}
 
 const RAW_SQL_METHODS = new Set([
   "$executeRaw",
@@ -253,20 +291,119 @@ function isCredentialDelegate(expression: ts.Expression): boolean {
   return ts.isIdentifier(inner) && inner.text === CREDENTIAL_DELEGATE;
 }
 
-/** Locals holding the delegate, so `const c = tx.integrationCredential` counts. */
+/**
+ * Grow a set of names by following identifier-to-identifier copies until it
+ * stops growing, so a chain of aliases is followed however long it is.
+ */
+function followCopies<T>(
+  seed: Map<string, T>,
+  copies: readonly { from: string; to: string }[],
+): Map<string, T> {
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const copy of copies) {
+      const value = seed.get(copy.from);
+      if (value !== undefined && !seed.has(copy.to)) {
+        seed.set(copy.to, value);
+        grew = true;
+      }
+    }
+  }
+  return seed;
+}
+
+/**
+ * Local names that hold the credential delegate.
+ *
+ * FOUR SHAPES, and only the first was followed before #2723's review:
+ *
+ *   const rows = tx.integrationCredential;              // a declared alias
+ *   const { integrationCredential } = tx;               // destructured
+ *   const { integrationCredential: rows } = tx;         // destructured, RENAMED
+ *   const rows = tx.integrationCredential; const r = rows;  // a second hop
+ *
+ * The unrenamed destructure used to be caught only by accident — the receiver is
+ * then the bare identifier `integrationCredential`, which `isCredentialDelegate`
+ * matches as a last resort — so the renamed form and every second hop were
+ * invisible. They are followed explicitly now, because "caught by accident" is
+ * what stops being true the moment somebody renames a variable.
+ */
 function collectDelegateAliases(ast: ts.SourceFile): Set<string> {
-  const aliases = new Set<string>();
+  const aliases = new Map<string, true>();
+  const copies: { from: string; to: string }[] = [];
+
   eachNode(ast, (node) => {
-    if (!ts.isVariableDeclaration(node)) return;
-    if (
-      ts.isIdentifier(node.name) &&
-      node.initializer &&
-      isCredentialDelegate(node.initializer)
-    ) {
-      aliases.add(node.name.text);
+    if (!ts.isVariableDeclaration(node) || !node.initializer) return;
+
+    if (ts.isIdentifier(node.name)) {
+      if (isCredentialDelegate(node.initializer)) {
+        aliases.set(node.name.text, true);
+        return;
+      }
+      const inner = unwrap(node.initializer);
+      // `const r = rows;` — recorded now, resolved once every direct alias is in.
+      if (ts.isIdentifier(inner)) {
+        copies.push({ from: inner.text, to: node.name.text });
+      }
+      return;
+    }
+
+    if (ts.isObjectBindingPattern(node.name)) {
+      for (const element of node.name.elements) {
+        const source = element.propertyName
+          ? propertyName(element.propertyName)
+          : ts.isIdentifier(element.name)
+            ? element.name.text
+            : null;
+        if (source !== CREDENTIAL_DELEGATE) continue;
+        if (ts.isIdentifier(element.name)) aliases.set(element.name.text, true);
+      }
     }
   });
-  return aliases;
+
+  return new Set(followCopies(aliases, copies).keys());
+}
+
+/**
+ * Local names that hold a store MUTATOR, so a renamed import still counts.
+ *
+ *   import { setIntegrationCredential as save } from "@/lib/integration-credentials";
+ *   const save = setIntegrationCredential;
+ *
+ * Matching the callee's spelling alone would drop both out of the pinned write-
+ * site population entirely — and that population is what makes the contract test
+ * strong: a new writer cannot be added without editing the pinned map in the
+ * same diff. The required ARGUMENT still catches an omission at either site, so
+ * this closes a completeness gap rather than a live hole; the census is not
+ * allowed to claim a completeness it does not have.
+ */
+function collectMutatorAliases(ast: ts.SourceFile): Map<string, CredentialMutator> {
+  const isMutator = (name: string): name is CredentialMutator =>
+    (CREDENTIAL_MUTATORS as readonly string[]).includes(name);
+  const aliases = new Map<string, CredentialMutator>();
+  const copies: { from: string; to: string }[] = [];
+
+  eachNode(ast, (node) => {
+    if (ts.isImportSpecifier(node)) {
+      const imported = node.propertyName?.text ?? node.name.text;
+      if (isMutator(imported)) aliases.set(node.name.text, imported);
+      return;
+    }
+    if (!ts.isVariableDeclaration(node) || !node.initializer) return;
+    if (!ts.isIdentifier(node.name)) return;
+    const inner = unwrap(node.initializer);
+    if (ts.isIdentifier(inner)) {
+      if (isMutator(inner.text)) aliases.set(node.name.text, inner.text);
+      else copies.push({ from: inner.text, to: node.name.text });
+      return;
+    }
+    if (ts.isPropertyAccessExpression(inner) && isMutator(inner.name.text)) {
+      aliases.set(node.name.text, inner.name.text);
+    }
+  });
+
+  return followCopies(aliases, copies);
 }
 
 /** `INSERT`/`UPDATE`/`DELETE` against the table, in one SQL string. */
@@ -298,6 +435,7 @@ function scanFile(file: string, repoRoot: string): {
   const relativePath = toPosix(relative(repoRoot, file));
   const ast = parseSourceFile(file);
   const aliases = collectDelegateAliases(ast);
+  const mutatorAliases = collectMutatorAliases(ast);
   const sites: CredentialWriteSite[] = [];
   const bypasses: CredentialBypassSite[] = [];
   const ordinals = new Map<string, number>();
@@ -324,13 +462,17 @@ function scanFile(file: string, repoRoot: string): {
         ? callee.name.text
         : null;
 
-    if (
-      calleeName !== null &&
-      (CREDENTIAL_MUTATORS as readonly string[]).includes(calleeName)
-    ) {
+    const mutatorCalled =
+      calleeName === null
+        ? null
+        : (CREDENTIAL_MUTATORS as readonly string[]).includes(calleeName)
+          ? (calleeName as CredentialMutator)
+          : (mutatorAliases.get(calleeName) ?? null);
+
+    if (mutatorCalled !== null) {
       if (!isBoundaryModule(relativePath)) {
         const params = resolveParams(node.arguments[0]);
-        const mutator = calleeName as CredentialMutator;
+        const mutator = mutatorCalled;
         sites.push({
           file: relativePath,
           id: nextId(symbol),
@@ -358,7 +500,7 @@ function scanFile(file: string, repoRoot: string): {
           aliases.has((unwrap(receiver) as ts.Identifier).text));
       if (
         method !== null &&
-        MUTATING_DML.has(method) &&
+        isMutatingDelegateMethod(method) &&
         receiverIsDelegate &&
         !isBoundaryModule(relativePath)
       ) {
