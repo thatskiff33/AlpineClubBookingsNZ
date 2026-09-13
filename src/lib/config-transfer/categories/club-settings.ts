@@ -188,10 +188,8 @@ export function excludedColumnsFor(spec: SingletonSpec): Record<string, string> 
 // AiAssistantSettings (the AI spend-cap singleton, id="default"). The monthly
 // budget is a deployment-specific operational spend control, not portable club
 // configuration — a source club's cap should never silently reset a target's.
-// A fresh import keeps the target's own cap (the schema default, in the target's
-// configured currency) and the target operator sets their own. (Recorded epic
-// decision; the reasoning is stated once, on the `AiAssistantSettings` and
-// `AiSpendCurrencySettings` entries in `singleton-models.ts`.)
+// A fresh import keeps the target's own cap in its configured currency. (Epic
+// decision; reasoning stated once on the entries in `singleton-models.ts`.)
 //
 // SAME DISPOSITION, DELIBERATELY, for AI Diagnostics (AID-2, #2371): none of the
 // four Diagnostics tables travels. DiagnosticsSettings holds a deployment-local
