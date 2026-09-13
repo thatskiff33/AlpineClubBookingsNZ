@@ -162,7 +162,12 @@ that AID-3…AID-8 built the diagnostics product on — the deployed-knowledge
 bundle, typed structured page context, SELECT-only tool substrate, tool packs,
 and UI arrived in those children. AID-2 shares nothing
 with the page-help assistant at the credential, budget, or metering layer
-(ADR-001). All money is NZD integer cents.
+(ADR-001). All money is integer cents of the club's configured currency: the
+price table is in NZD cents and each estimate is converted through the
+administrator-set NZD-to-club-currency rate (#3354, one setting shared with the
+page-help assistant, `AiSpendCurrencySettings`) before it is reserved, booked or
+compared with the budget. For a New Zealand club that rate is identity and
+nothing is read.
 
 ### What AID-2 delivers
 
@@ -171,8 +176,8 @@ with the page-help assistant at the credential, budget, or metering layer
 - A **dedicated Anthropic credential** — provider `anthropic-diagnostics`, key
   `api_key`, in the encrypted `IntegrationCredential` store. NEVER the page-help
   `anthropic` key, and no fallback to it.
-- A **deployment-local monthly budget** in NZ integer cents
-  (`DiagnosticsSettings`, ships at **NZ$0 = hard-off**).
+- A **deployment-local monthly budget** in integer cents of the club's
+  configured currency (`DiagnosticsSettings`, ships at **0 = hard-off**).
 - **Concurrency-safe budget reservation** that reserves per provider roundtrip
   and bounds the multi-tool loop.
 - **Fail-closed metering** with a circuit breaker.
@@ -202,8 +207,10 @@ above**; AID-2 implements them as follows.
      set (like `magicLink`/`googleLogin`) — enabling a paid, separately-keyed
      product is a per-deployment decision;
    - `DiagnosticsSettings` (the budget) is **not registered** as a travelling
-     singleton (mirrors `AiAssistantSettings`, and stricter — the NZ$0 default
+     singleton (mirrors `AiAssistantSettings`, and stricter — the zero default
      means an import can never plant a spend cap a target did not choose);
+     nor is `AiSpendCurrencySettings` (#3354), the NZD-to-club-currency rate
+     both AI modules share — it is a property of the deployment's currency;
    - the three usage tables are runtime metering, never configuration;
    - the dedicated credential lives in the encrypted credential store, which is
      outside config-transfer entirely (secrets never travel).
@@ -244,7 +251,12 @@ layer). The price table
 (`AI_DIAGNOSTICS_PRICE_TABLE_NZ_CENTS_PER_MTOK` in `ai-diagnostics-usage.ts`) is
 Anthropic's USD list prices × a deliberately conservative **FX of 1.8 NZD/USD**
 (the same FX as page-help), so the estimate over-counts the true bill and the cap
-trips early:
+trips early. Pricing is therefore **two steps** (#3354): USD → NZD through this
+fixed table, then NZD → the club's configured currency through the
+administrator-set rate in `AiSpendCurrencySettings` (`convertNzdCentsToClubCents`
+in `ai-spend-currency.ts`, rounded up; identity for a New Zealand club or when no
+rate is set). Every stored cents figure — the reservation, the settled cost, the
+budget — is in the club's currency:
 
 | Model | USD in/out/cache-write/cache-read per MTok | NZ cents in/out/cw/cr per MTok |
 |---|---|---|
@@ -255,8 +267,11 @@ trips early:
 An **unknown** model is priced at the highest known row (fail-expensive), so a
 future model swap can never silently under-count. `estimateDiagnosticsCostCents`
 `Math.ceil`s the summed per-token cost and bills at least 1 cent whenever any
-usage is present (0 only for a token-free error). **UPDATE THIS TABLE** whenever
-Anthropic changes prices or the FX drifts materially.
+usage is present (0 only for a token-free error); the club-currency conversion
+also rounds up, so a positive estimate never converts to zero. **UPDATE THIS
+TABLE** whenever Anthropic changes prices or the FX drifts materially; the
+administrator maintains the second step on the settings page, which shows when
+the rate was last set.
 
 #### Reservation size and the multi-tool loop
 
@@ -304,7 +319,8 @@ Every gate denies the paid call on doubt — the concrete realisation of ADR-005
   either of those: `moduleEnabled: null` with a `module_flags_unreadable` blocker,
   which blocks like any other but says *we could not tell* rather than *it is off*
   (#2803). A surface rendering readiness must never show `null` as "off".
-- **Budget** defaults to NZ$0, so enabling the module alone authorises nothing.
+- **Budget** defaults to 0 in the club's configured currency, so enabling the
+  module alone authorises nothing.
 - The **rate limiters** are all `authSensitive`, so a degraded shared-store
   fallback runs at limit/4 — a store outage tightens, never loosens, the
   paid-call backstop.
@@ -332,6 +348,13 @@ EXPAND — see the ledger row in
 - `DiagnosticsUsageMonthly` (settled rollup, unique `month`)
 - `DiagnosticsBudgetReservation` (live per-roundtrip reservations, `expiresAt`)
 - `DiagnosticsUsageEvent` (approved-metadata event log)
+
+Migration `20260913020000_ai_spend_currency_settings` (#3354, additive EXPAND)
+later added `AiSpendCurrencySettings` — the NZD-to-club-currency rate singleton
+(id `default`, no seed row, no foreign key) shared with the page-help assistant.
+It is read inside the reserve and settle transactions under the same per-month
+advisory lock as the budget, one primary-key read of a one-row table, and never
+read at all when the club's currency is NZD.
 
 No foreign keys (metering must never block a `Member` change), no seeded rows
 (the settings singleton is created on first write, and a positive budget is a

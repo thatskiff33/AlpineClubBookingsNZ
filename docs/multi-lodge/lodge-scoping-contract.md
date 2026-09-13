@@ -572,6 +572,13 @@ new ADR:
   question set at every lodge, and the photo/retention/anonymous-QR policy is a
   club decision (#2780). The reports and their per-lodge QR signs above are
   lodge-scoped; the questions asked and the policy governing them are not.
+- AI spend settings (`AiAssistantSettings`, `DiagnosticsSettings`, and the
+  `AiSpendCurrencySettings` conversion-rate singleton added by #3354): each is
+  one `id = "default"` row. The two AI modules are club-wide paid products with
+  one credential and one monthly cap apiece, and the rate that turns the NZD
+  provider price table into the club's configured currency is a property of
+  the deployment (one `APP_CURRENCY`), not of a building. A per-lodge rate
+  would have nothing to mean, because no lodge is billed for AI separately.
 - Member message board (`ClubPost`, `ClubPostImage`, `ClubPostReport`, the
   `commsPortal` module): a post carries no `lodgeId`, decided as D-C1 on epic
   #2992 and delivered by #2993. Two reasons, and the first is the binding one.

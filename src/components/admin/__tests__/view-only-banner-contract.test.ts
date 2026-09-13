@@ -286,16 +286,22 @@ const FIGURES = {
    * 345 -> 346 (#3214): the booking page's "Record what these nights sold for"
    * control. One per unreadable guest strand at RUN time, but one render site in
    * the source, which is what this census counts. MEASURED by re-running it.
+   *
+   * 346 -> 349 (#3354): the shared "Currency for AI spend" card
+   * (`ai-spend-currency-card.tsx`) adds Set/Change rate, Save rate and Cancel.
+   * One component rendered on two pages is ONE file to this census. MEASURED by
+   * re-running it.
    */
-  callSites: 346,
+  callSites: 349,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
    * 285 -> 289 (#2998): all four of the moderation queue's controls opt out.
    * 289 -> 292 (#2999): so do the Retention section's three.
    * 292 -> 293 (#3214): so does the night-price control.
+   * 293 -> 296 (#3354): so do the AI spend currency card's three.
    */
-  optOuts: 293,
+  optOuts: 296,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -306,8 +312,10 @@ const FIGURES = {
    * 258 -> 259 (#3214): the night-price section's banner and its button are in
    * one file, so it is static rather than vouched — the button sits in a child
    * COMPONENT, but the static rule is about the FILE.
+   * 259 -> 262 (#3354): the AI spend currency card heads itself with its own
+   * banner, so its three controls are static.
    */
-  staticOptOuts: 259,
+  staticOptOuts: 262,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -347,8 +355,12 @@ const FIGURES = {
    * one, for every strand it lists rather than one per strand — the permission
    * is the same for all of them, so saying it per guest would say it three times
    * on a three-guest booking.
+   *
+   * 92 -> 93 (#3354): the AI spend currency card heads itself with one banner,
+   * mounted above its loading early-return, and carries it onto both AI
+   * settings pages — one component, counted once.
    */
-  bannerComponents: 92,
+  bannerComponents: 93,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
