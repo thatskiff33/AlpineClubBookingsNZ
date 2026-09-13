@@ -66,7 +66,10 @@
  *    fails "renders a legacy clipped payload as fields, and keeps the raw
  *    record beside them";
  *  - dropping the reserved-key filter from the description fallback fails "does
- *    not let a bookkeeping key become the officer's description".
+ *    not let a bookkeeping key become the officer's description";
+ *  - and each half of the totality guard, probed separately: removing the
+ *    undefined-value filter fails "is total" with the TypeError it exists to
+ *    prevent, removing the over-budget return fails the same test on the null.
  */
 import { describe, expect, it } from "vitest";
 
@@ -510,6 +513,30 @@ describe("reducing a payload that will not fit (#2704)", () => {
     expect(parsed.password).toBe("[REDACTED]");
     expect(parsed[REDUCED_DETAIL_KEYS.truncated]).toBeUndefined();
     expect(parsed[REDUCED_DETAIL_KEYS.droppedKeys]).toBeUndefined();
+  });
+
+  /**
+   * THE TWO POSTCONDITIONS THE MODULE NOW CLAIMS UNCONDITIONALLY (#2704
+   * review). Neither case is reachable from the two production callers, which
+   * pass 1000 and 24,000 and whose values come from a JSON parse or the
+   * sanitiser — but the function is exported and takes `unknown`, so
+   * "conditionally correct" is the wrong shape for it to have.
+   */
+  it("is total: no value makes it throw, and it never returns text over budget", () => {
+    // `JSON.stringify` writes nothing for these, so they are not fields — and
+    // measuring one used to read `undefined.length` and throw.
+    const withGaps = reduceStructuredDetail(
+      { absent: undefined, gone: () => "x", kept: "k", big: "b".repeat(2000) },
+      200,
+    );
+    const parsed = JSON.parse(withGaps?.text ?? "") as Record<string, unknown>;
+    expect(parsed.kept).toBe("k");
+    expect("absent" in parsed).toBe(false);
+    expect(withGaps?.droppedKeys).not.toContain("absent");
+
+    // A budget too small for the reserved block: null, so the caller keeps what
+    // it had rather than being handed text longer than the budget it set.
+    expect(reduceStructuredDetail({ a: "x".repeat(100) }, 40)).toBeNull();
   });
 
   it("leaves prose over the limit on the honest text clip", () => {
