@@ -69,6 +69,12 @@ export type CorrectableBookingRequest = {
   cateringPreference: "CATERED" | "NON_CATERED" | "QUOTE_BOTH" | null;
   guests: Array<{ firstName: string; lastName: string; ageTier: string }>;
   heldBookingId: string | null;
+  /**
+   * #2936: the admin-made "this guest IS this member" links, which are keyed by
+   * POSITION in the guest list above. Correcting the party rewrites that list,
+   * so the server clears them and the form says so before the officer saves.
+   */
+  linkedGuestMembers: Array<{ guestIndex: number; memberId: string }>;
 };
 
 type SchoolRecord = {
@@ -234,6 +240,14 @@ export function BookingRequestCorrectionEditor(props: {
       const parts = [
         "Request corrected — re-price and re-quote it",
         data.supersededQuoteCount ? "the previous quote was withdrawn" : null,
+        // The links went with the party they were keyed to. Said out loud,
+        // because a guest who quietly stopped being a member is priced and
+        // invoiced as a stranger.
+        data.clearedMemberLinkCount
+          ? `${data.clearedMemberLinkCount} member ${
+              data.clearedMemberLinkCount === 1 ? "link was" : "links were"
+            } cleared — link them again before quoting`
+          : null,
         data.holdOutcome === "released" ? "held beds released" : null,
         data.availability && data.availability.available === false
           ? "the lodge is full on some of the new nights"
@@ -578,6 +592,18 @@ export function BookingRequestCorrectionEditor(props: {
           onChange={(event) => setReason(event.target.value)}
         />
       </div>
+
+      {request.linkedGuestMembers.length > 0 ? (
+        <p className="rounded-md border border-warning-6 bg-warning-2 p-2 text-xs">
+          {request.linkedGuestMembers.length === 1
+            ? "One guest on this request is linked to a club member."
+            : `${request.linkedGuestMembers.length} guests on this request are linked to club members.`}{" "}
+          Those links point at places in the list below, so changing who is in
+          the group clears them — link the right people again before you price
+          or quote it. Correcting only the dates, the contact details or the
+          catering keeps them.
+        </p>
+      ) : null}
 
       {request.heldBookingId ? (
         <p className="rounded-md border border-warning-6 bg-warning-2 p-2 text-xs">

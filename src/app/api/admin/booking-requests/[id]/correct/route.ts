@@ -145,6 +145,7 @@ export async function POST(
       changedFields: result.changedFields,
       holdOutcome: result.holdOutcome,
       supersededQuoteCount: result.supersededQuoteCount,
+      clearedMemberLinkCount: result.clearedMemberLinkCount,
       schoolRecord: result.schoolRecord,
       availability: result.availability,
     });

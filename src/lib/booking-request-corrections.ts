@@ -184,6 +184,12 @@ export type BookingRequestCorrectionResult = {
   holdOutcome: CorrectionHoldOutcome;
   /** How many DRAFT/SENT quotes this correction retired. */
   supersededQuoteCount: number;
+  /**
+   * How many admin-made member links this correction cleared, because the party
+   * it rewrote is what those links were keyed to. Non-zero means the officer
+   * must re-link before quoting, and the panel says so.
+   */
+  clearedMemberLinkCount: number;
   /** The school record the corrected name claims. Null for a GENERAL request. */
   schoolRecord: SchoolRecordPreview | null;
   /**
@@ -302,7 +308,9 @@ export async function correctBookingRequest(
   // guessing, because the officer's corrected list would silently become the
   // whole truth about a party nobody can now compare it against.
   parseBookingRequestGuests(request.guests);
-  parseBookingRequestLinkedGuestMembers(request.linkedGuestMembers);
+  const storedLinks = parseBookingRequestLinkedGuestMembers(
+    request.linkedGuestMembers,
+  );
 
   if (request.version !== input.expectedVersion) {
     throw new BookingRequestError(
@@ -421,6 +429,32 @@ export async function correctBookingRequest(
     (field) => field !== "cateringPreference",
   );
 
+  /**
+   * THE MEMBER LINKS ARE KEYED BY POSITION, AND A CORRECTION REWRITES THE LIST.
+   *
+   * `linkedGuestMembers` says "guest number one IS this member", and every
+   * consumer — pricing, the hold's guest rows, the night-conflict check, the
+   * member-guest consent plan, conversion — resolves it by INDEX. This write
+   * replaces the guest list wholesale, and for a school request it regenerates
+   * it from the teachers and the counts, so a teacher dropping out shifts every
+   * row after them up by one. Left alone, index one would still be claimed as
+   * that member: a child row priced at member rates, checked for night
+   * conflicts against a stranger, and emailed to tell them the club has put
+   * them on a lodge booking. The mirror case silently drops a link, turning a
+   * linked member into a non-member — the exact outcome #2342's strict re-read
+   * in `createBookingRequestQuote` exists to prevent.
+   *
+   * So a correction that moves the party CLEARS the links, in the same claim,
+   * and the officer is told to re-link before quoting. Keeping them would be
+   * guessing at identity, which is the one thing this surface refuses to do
+   * (#2342's rule, and this issue's own "identity stays correct through edit
+   * and later conversion"). A correction that leaves the list byte-identical —
+   * dates only, catering only, a contact detail — moves no position and keeps
+   * every link.
+   */
+  const partyChanged = changedFields.includes("guests");
+  const clearedMemberLinkCount = partyChanged ? storedLinks.length : 0;
+
   // ---- the claim ----------------------------------------------------------
   const correctedAt = new Date();
   const claim = await prisma.$transaction(async (tx) => {
@@ -455,6 +489,12 @@ export async function correctBookingRequest(
         contactLastName,
         contactEmail,
         contactPhone,
+        // Positional links cannot survive a rewritten list — see above. Written
+        // inside the claim, so the party and its links move together or not at
+        // all; an untouched list keeps its links untouched.
+        ...(partyChanged
+          ? { linkedGuestMembers: [] as unknown as Prisma.InputJsonValue }
+          : {}),
         ...(input.school
           ? {
               schoolName,
@@ -552,6 +592,9 @@ export async function correctBookingRequest(
       // the old shape", which is what an officer reading this row needs to know.
       holdOutcome: hold.released ? hold.outcome : "releaseFailed",
       supersededQuoteCount: claim.supersededQuoteCount,
+      // The links this correction cleared, and why: an officer reading this row
+      // later needs to know the party was re-identified, not just re-typed.
+      clearedMemberLinkCount,
       previousStatus: request.status,
       previousCheckIn: request.checkIn.toISOString(),
       previousCheckOut: request.checkOut.toISOString(),
@@ -597,6 +640,7 @@ export async function correctBookingRequest(
     changedFields,
     holdOutcome: hold.outcome,
     supersededQuoteCount: claim.supersededQuoteCount,
+    clearedMemberLinkCount,
     schoolRecord: claim.preview ?? null,
     availability: {
       available: capacity.available,

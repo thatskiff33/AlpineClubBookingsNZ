@@ -37,6 +37,7 @@ const schoolRequest: CorrectableBookingRequest = {
     { firstName: "School Child", lastName: "1", ageTier: "CHILD" },
   ],
   heldBookingId: null,
+  linkedGuestMembers: [],
 };
 
 const knownRecord = {
@@ -315,5 +316,61 @@ describe("a general request", () => {
       target: { value: "Guest dropped out." },
     });
     expect(screen.getByRole("button", { name: "Save correction" })).toBeEnabled();
+  });
+});
+
+describe("member links keyed to the party", () => {
+  const linkedRequest: CorrectableBookingRequest = {
+    ...schoolRequest,
+    linkedGuestMembers: [{ guestIndex: 1, memberId: "member-42" }],
+  };
+
+  it("warns that changing the group clears the links, before anything is saved", async () => {
+    renderEditor(linkedRequest);
+    await openForm();
+    expect(
+      screen.getByText(/linked to a club member/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/link the right people again before you price/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says how many links the save cleared, so the officer re-links", async () => {
+    const onCorrected = vi.fn();
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes("/school-record")) {
+        return { ok: true, json: async () => ({ schoolRecord: knownRecord }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          changedFields: ["guests"],
+          holdOutcome: "none",
+          supersededQuoteCount: 0,
+          clearedMemberLinkCount: 1,
+          availability: { available: true, fullNights: [] },
+        }),
+      };
+    });
+    renderEditor(linkedRequest, { onCorrected });
+    await openForm();
+    fireEvent.change(screen.getByLabelText("Why are you correcting it?"), {
+      target: { value: "A teacher dropped out." },
+    });
+    await waitFor(() => expect(screen.getByRole("checkbox")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+
+    await waitFor(() => expect(onCorrected).toHaveBeenCalled());
+    expect(onCorrected).toHaveBeenCalledWith(
+      expect.stringMatching(/1 member link was cleared — link them again before quoting/),
+    );
+  });
+
+  it("says nothing about links when the request has none", async () => {
+    renderEditor();
+    await openForm();
+    expect(screen.queryByText(/linked to a club member/i)).not.toBeInTheDocument();
   });
 });

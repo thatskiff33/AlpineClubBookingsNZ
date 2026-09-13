@@ -1575,6 +1575,28 @@ export function PublicBookingRequestsPanel({
                           request={request}
                           disabled={isActioning}
                           onCorrected={(summary) => {
+                            // #2936: the member links are keyed by POSITION in
+                            // the guest list, so a correction that moves the
+                            // party clears them server-side. This card keeps an
+                            // UNSAVED local copy that wins over the server's
+                            // (`activeMemberLinks`) and survives a refetch — so
+                            // without dropping it here, the next "Save quote"
+                            // would post the stale links straight back and put
+                            // a member on somebody else's row. Dropped whatever
+                            // the correction changed: re-linking is cheap, and
+                            // a wrong link is priced, invoiced and emailed.
+                            setMemberLinks((prev) => {
+                              const next = { ...prev };
+                              delete next[request.id];
+                              return next;
+                            });
+                            setLinkConflicts((prev) => ({
+                              ...prev,
+                              [request.id]: [],
+                            }));
+                            // Let the advisory pre-check fire again for whatever
+                            // links the corrected row comes back with.
+                            linkConflictLoadedRef.current.delete(request.id);
                             toast.success(summary);
                             void fetchRequests();
                           }}

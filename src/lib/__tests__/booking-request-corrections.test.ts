@@ -801,3 +801,133 @@ describe("availability after the correction", () => {
     expect(order).toEqual(["released", "measured"]);
   });
 });
+
+describe("the party and the member links keyed to it move together", () => {
+  /**
+   * THE DEFECT: a school books with two teachers, and the officer has linked
+   * the second — index 1 — to a real club member. A teacher drops out, the
+   * officer corrects the party, and `generateSchoolGuests` rebuilds the list a
+   * row shorter. Index 1 is now a CHILD. A correction that rewrote the list and
+   * left the links alone would hand that child the member's identity: priced at
+   * member rates, checked for night conflicts against them, given their consent
+   * plan, and emailed to tell them the club has put them on a lodge booking.
+   * The mirror case drops a link entirely and quietly turns a linked member
+   * into a non-member.
+   */
+  function twoTeacherRow(overrides: Record<string, unknown> = {}) {
+    return schoolRequestRow({
+      guests: [
+        { firstName: "Ann", lastName: "Baker", ageTier: "ADULT" },
+        { firstName: "Bea", lastName: "Cole", ageTier: "ADULT" },
+        { firstName: "School Child", lastName: "1", ageTier: "CHILD" },
+      ],
+      teachers: [
+        { firstName: "Ann", lastName: "Baker", email: "ann@example.test" },
+        { firstName: "Bea", lastName: "Cole", email: "bea@example.test" },
+      ],
+      linkedGuestMembers: [{ guestIndex: 1, memberId: "member-42" }],
+      ...overrides,
+    });
+  }
+
+  /** The same correction, with the second teacher dropped. */
+  function droppedTeacherInput() {
+    return schoolInput({
+      checkIn: day("2026-08-10"),
+      checkOut: day("2026-08-12"),
+      school: {
+        ...schoolInput().school!,
+        schoolName: "Tokora Primary School",
+        teachers: [
+          { firstName: "Ann", lastName: "Baker", email: "ann@example.test" },
+        ],
+        childCounts: { CHILD: 1 },
+      },
+    });
+  }
+
+  it("clears the links when the party moved, so no member lands on another row", async () => {
+    stubRequest(twoTeacherRow());
+    const result = await correctBookingRequest(droppedTeacherInput());
+
+    expect(result.changedFields).toContain("guests");
+    expect(result.clearedMemberLinkCount).toBe(1);
+    const data = claimData();
+    // The corrected list is a row shorter, and nothing claims index 1 any more.
+    expect(data.guests).toEqual([
+      { firstName: "Ann", lastName: "Baker", ageTier: "ADULT" },
+      { firstName: "School Child", lastName: "1", ageTier: "CHILD" },
+    ]);
+    expect(data.linkedGuestMembers).toEqual([]);
+  });
+
+  it("writes the list and its links in ONE claim, so no interleaving can split them", async () => {
+    // The interleaving this closes: a second write, after the claim committed,
+    // is a window in which the request holds the NEW party and the OLD
+    // positional links — and every consumer resolves those links by index. A
+    // crash, a lost connection or a concurrent reader landing in that window
+    // reads a real member onto somebody else's row. One guarded claim, inside
+    // the transaction, has no such window: the version fence means either both
+    // land or neither does.
+    stubRequest(twoTeacherRow());
+    const order: string[] = [];
+    (prisma.$transaction as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      async (fn: (tx: typeof prisma) => unknown) => {
+        order.push("transaction:open");
+        const out = await fn(prisma);
+        order.push("transaction:commit");
+        return out;
+      },
+    );
+    (prisma.bookingRequest.updateMany as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => {
+        order.push("claim");
+        return { count: 1 };
+      },
+    );
+
+    await correctBookingRequest(droppedTeacherInput());
+
+    // Exactly one request write, and it is inside the claim transaction.
+    expect(order).toEqual(["transaction:open", "claim", "transaction:commit"]);
+    expect(prisma.bookingRequest.updateMany).toHaveBeenCalledTimes(1);
+    const call = (prisma.bookingRequest.updateMany as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0];
+    expect(call.data.guests).toBeDefined();
+    expect(call.data.linkedGuestMembers).toEqual([]);
+    // And the write is fenced, so a correction racing anything that moved the
+    // row claims nothing at all rather than half of it.
+    expect(call.where.version).toBe(4);
+  });
+
+  it("keeps the links when the list did not move a single position", async () => {
+    // Dates only. Every guest is where it was, so every link still names the
+    // person it named — clearing them here would make the officer re-link for
+    // nothing, and an officer who re-links for nothing eventually does not.
+    stubRequest(twoTeacherRow());
+    const result = await correctBookingRequest(
+      schoolInput({
+        school: {
+          ...schoolInput().school!,
+          schoolName: "Tokora Primary School",
+          teachers: [
+            { firstName: "Ann", lastName: "Baker", email: "ann@example.test" },
+            { firstName: "Bea", lastName: "Cole", email: "bea@example.test" },
+          ],
+          childCounts: { CHILD: 1 },
+        },
+      }),
+    );
+
+    expect(result.changedFields).toEqual(["checkIn", "checkOut"]);
+    expect(result.clearedMemberLinkCount).toBe(0);
+    expect(claimData().linkedGuestMembers).toBeUndefined();
+  });
+
+  it("records the cleared links on the audit row", async () => {
+    stubRequest(twoTeacherRow());
+    await correctBookingRequest(droppedTeacherInput());
+    const entry = (logAudit as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(entry.metadata.clearedMemberLinkCount).toBe(1);
+  });
+});
