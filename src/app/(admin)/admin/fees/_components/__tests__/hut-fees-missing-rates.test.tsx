@@ -496,6 +496,51 @@ describe("Hut Fees never invents a rate on save (#2933)", () => {
     ]);
   });
 
+  it("disables Save while the season write is in flight", async () => {
+    /*
+      Not decoration. The rate payload is now assembled BEFORE the save starts,
+      so that a refusal can return without arming the button — and moving that
+      assembly is how `setSaving(true)` came to be dropped entirely in the first
+      draft of this fix, leaving Save live for the whole round trip and a second
+      press able to send the season twice.
+    */
+    let releaseWrite: (() => void) | undefined;
+    mockApi({
+      seasons: [
+        season({
+          membershipTypeRates: [
+            { membershipTypeId: FULL.id, ageTier: null, pricePerNightCents: 4500 },
+          ],
+        }),
+      ],
+    });
+    const passThrough = globalThis.fetch as typeof fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "PUT") {
+          await new Promise<void>((resolve) => {
+            releaseWrite = resolve;
+          });
+          return Response.json({});
+        }
+        return passThrough(input, init);
+      }),
+    );
+    renderSection();
+    await openTheSeasonEditor();
+
+    const save = screen.getByRole("button", { name: "Update Season" });
+    fireEvent.click(save);
+
+    const saving = await screen.findByRole("button", { name: "Saving..." });
+    expect(saving).toBeDisabled();
+    releaseWrite?.();
+    await waitFor(() =>
+      expect(screen.queryByText("Saving...")).not.toBeInTheDocument(),
+    );
+  });
+
   it("refuses a save that would leave the season with no rates at all", async () => {
     mockApi({
       seasons: [

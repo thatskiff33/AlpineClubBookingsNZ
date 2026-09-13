@@ -563,12 +563,13 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       silent zero: the answer to "no rates" is still no rates.
     */
     if (membershipTypeRates.length === 0) {
-      raiseError(
-        "Set at least one nightly rate before saving this season.",
-      );
-      setSaving(false);
+      raiseError("Set at least one nightly rate before saving this season.");
       return;
     }
+
+    // Last, so every refusal above returns before the button is disabled and
+    // the `finally` below is the only thing that has to release it.
+    setSaving(true);
 
     const payload = {
       name,
