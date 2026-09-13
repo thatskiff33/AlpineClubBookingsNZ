@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { dateOnlyParts } from "./stay-dates";
 
 /** The twelve month names the calendar heading can carry, in the club locale. */
 const MONTH_NAMES = Array.from({ length: 12 }, (_, index) =>
@@ -9,20 +10,13 @@ const MONTH_NAMES = Array.from({ length: 12 }, (_, index) =>
 type MonthKey = string;
 
 function monthKeyOfDateOnly(dateOnly: string): MonthKey {
-  const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(dateOnly);
-  if (!match) {
-    throw new Error(`Expected a YYYY-MM-DD date, received ${dateOnly}`);
-  }
-  const month = Number(match[2]);
-  if (month < 1 || month > 12) {
-    throw new Error(`Expected a valid month in ${dateOnly}`);
-  }
-  return `${match[1]}-${match[2]}`;
+  const { year, month } = dateOnlyParts(dateOnly);
+  return `${year}-${String(month).padStart(2, "0")}`;
 }
 
 /** The booking calendar's month heading, e.g. "August 2026". */
 export function calendarMonthHeading(dateOnly: string): string {
-  const [year, month] = dateOnly.split("-").map(Number);
+  const { year, month } = dateOnlyParts(dateOnly);
   return new Date(year, month - 1).toLocaleDateString("en-NZ", {
     month: "long",
     year: "numeric",
@@ -31,16 +25,16 @@ export function calendarMonthHeading(dateOnly: string): string {
 
 /** "August 2026" back to `2026-08`. Throws on anything that is not a heading. */
 export function monthKeyOfHeading(heading: string): MonthKey {
-  const match = /^([A-Za-z]+)\s+(\d{4})$/.exec(heading.trim());
-  const monthIndex = match ? MONTH_NAMES.indexOf(match[1]) : -1;
-  if (!match || monthIndex < 0) {
+  const [, monthName, year] = /^([A-Za-z]+)\s+(\d{4})$/.exec(heading.trim()) ?? [];
+  const monthIndex = monthName === undefined ? -1 : MONTH_NAMES.indexOf(monthName);
+  if (year === undefined || monthIndex < 0) {
     throw new Error(
       `Expected a calendar month heading like "August 2026", received ` +
         `"${heading}". The booking calendar renders one through ` +
         `formatClubMonthYear (src/components/booking-calendar.tsx).`,
     );
   }
-  return `${match[2]}-${String(monthIndex + 1).padStart(2, "0")}`;
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
 }
 
 // How long ONE calendar click may spend becoming actionable (#2626) — a
