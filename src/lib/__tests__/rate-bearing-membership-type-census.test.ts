@@ -90,7 +90,10 @@ describe("INV-MOD-007: the rate-bearing rule is spelled once (#2933)", () => {
       "utf8",
     );
     expect(
-      source.includes("export function isRateBearingMembershipType"),
+      // The open bracket matters. Without it a rename to
+      // `isRateBearingMembershipTypeAnything` still satisfies a substring test,
+      // which is exactly what the mutation proof for this line found.
+      /export function isRateBearingMembershipType\(/.test(source),
       `${CANONICAL_MODULE} no longer exports isRateBearingMembershipType. It is the one home of INV-MOD-007; if it moved, move this census with it rather than letting the comparison quietly stop happening.`,
     ).toBe(true);
   });
