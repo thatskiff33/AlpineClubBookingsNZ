@@ -246,12 +246,27 @@ describe("#3368: a booking's owner is read in exactly one place", () => {
 });
 
 /**
- * The two families stage 4 has to decide site by site.
+ * The two families stage 4 (#3369) HAS NOW DECIDED, site by site.
  *
  * Both are asserted as sorted lists rather than counts: when one changes, the
- * failure shows WHICH site arrived, which is the thing the next stage needs.
- * The #2912 census put the first family at ten and the second at three. Both
- * were floors measured on an older tree; these are the measurement.
+ * failure shows WHICH site arrived. The #2912 census put the first family at
+ * ten and the second at three; both were floors measured on an older tree.
+ *
+ * WHAT EACH LIST MEANS NOW THAT STAGE 4 HAS LANDED:
+ *
+ * - The **ownership comparisons** are unchanged in behaviour and deliberately
+ *   so. Each is still `bookingOwner(x).memberId !== session.user.id`, still
+ *   unconditionally true for an organisation-owned booking, and still means
+ *   "not the actor's own" — which is correct, because an organisation never
+ *   signs in. The decision is recorded in `src/lib/booking-owner.ts`. The list
+ *   stays because entitling a named school liaison to act is a product change
+ *   somebody will one day make, and this is the list they will need.
+ * - The **member-keyed helpers** have collapsed from seventeen to ONE, and the
+ *   collapse is the evidence. Every other site now binds the owner to a local
+ *   and branches on it — no member, no ledger — so it no longer matches a
+ *   pattern that looks for the owner passed straight in. The one that remains
+ *   is a ternary in the diagnostics finance pack, where the branch and the call
+ *   are on the same line; it is guarded exactly like the rest.
  */
 const COMPARISON =
   /bookingOwner\([^()]*\)\.memberId\s*(?:!==|===|!=|==)|(?:!==|===|!=|==)\s*bookingOwner\([^()]*\)\.memberId/;
@@ -309,63 +324,50 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/arrival-time/route.ts:298",
   "src/app/api/bookings/[id]/arrival-time/route.ts:367",
   "src/app/api/bookings/[id]/cancel-preview/route.ts:49",
-  "src/app/api/bookings/[id]/change-requests/route.ts:211",
-  "src/app/api/bookings/[id]/change-requests/route.ts:539",
-  "src/app/api/bookings/[id]/confirm-draft/route.ts:90",
+  "src/app/api/bookings/[id]/change-requests/route.ts:213",
+  "src/app/api/bookings/[id]/change-requests/route.ts:541",
+  "src/app/api/bookings/[id]/confirm-draft/route.ts:170",
+  "src/app/api/bookings/[id]/confirm-draft/route.ts:91",
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:69",
   "src/app/api/bookings/[id]/confirm-payment/route.ts:80",
-  "src/app/api/bookings/[id]/exception-requests/route.ts:120",
-  "src/app/api/bookings/[id]/guests/route.ts:317",
+  "src/app/api/bookings/[id]/exception-requests/route.ts:122",
+  "src/app/api/bookings/[id]/guests/route.ts:319",
   "src/app/api/bookings/[id]/modify-quote/route.ts:332",
   "src/app/api/bookings/[id]/notes/route.ts:47",
-  "src/app/api/bookings/[id]/refund-request/route.ts:225",
-  "src/app/api/bookings/[id]/refund-request/route.ts:41",
+  "src/app/api/bookings/[id]/refund-request/route.ts:226",
+  "src/app/api/bookings/[id]/refund-request/route.ts:42",
   "src/app/api/bookings/[id]/requested-room/options/route.ts:85",
   "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:66",
-  "src/app/api/payments/create-payment-intent/route.ts:131",
-  "src/app/api/payments/create-setup-intent/route.ts:54",
+  "src/app/api/lodge/guests/[date]/route.ts:247",
+  "src/app/api/payments/create-payment-intent/route.ts:136",
+  "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:113",
   "src/lib/adult-member-hosting-review.ts:2875",
   "src/lib/adult-member-hosting-review.ts:3115",
-  "src/lib/booking-batch-modification-service.ts:973",
-  "src/lib/booking-cancel.ts:464",
-  "src/lib/booking-date-modification-service.ts:376",
+  "src/lib/booking-batch-modification-service.ts:975",
+  "src/lib/booking-cancel.ts:479",
+  "src/lib/booking-date-modification-service.ts:378",
   "src/lib/booking-delete.ts:121",
   "src/lib/booking-delete.ts:70",
   "src/lib/booking-email-authority.ts:115",
-  "src/lib/booking-guest-removal-service.ts:417",
-  "src/lib/booking-guest-removal-service.ts:751",
+  "src/lib/booking-guest-removal-service.ts:422",
+  "src/lib/booking-guest-removal-service.ts:756",
   "src/lib/booking-linked-date-move-service.ts:233",
-  "src/lib/booking-member-night-conflicts.ts:352",
+  "src/lib/booking-member-night-conflicts.ts:361",
   "src/lib/booking-modify-validation.ts:527",
+  "src/lib/diagnostics/tools/packs/booking-evidence.ts:1429",
   "src/lib/group-booking.ts:264",
   "src/lib/kiosk-access.ts:232",
-  "src/lib/manual-refund-task-queue-payload.ts:153",
+  "src/lib/manual-refund-task-queue-payload.ts:160",
   "src/lib/requested-room-write.ts:62",
-  "src/lib/waitlist-cross-lodge.ts:334",
-  "src/lib/waitlist-cross-lodge.ts:522",
-  "src/lib/waitlist.ts:1075",
-  "src/lib/waitlist.ts:933",
-  "src/lib/xero-period-lock-guard.ts:566",
+  "src/lib/waitlist-cross-lodge.ts:335",
+  "src/lib/waitlist-cross-lodge.ts:523",
+  "src/lib/waitlist.ts:1079",
+  "src/lib/waitlist.ts:937",
+  "src/lib/xero-period-lock-guard.ts:569",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const MEMBER_KEYED_HELPER_SITES: readonly string[] = [
-  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:82",
-  "src/app/api/bookings/[id]/modify-quote/route.ts:740",
-  "src/app/api/payments/switch-to-internet-banking/route.ts:235",
-  "src/lib/booking-cancel.ts:336",
-  "src/lib/booking-cancel.ts:983",
-  "src/lib/booking-credit-election.ts:131",
-  "src/lib/booking-credit-election.ts:167",
-  "src/lib/diagnostics/tools/packs/finance-evidence.ts:559",
-  "src/lib/internet-banking-payment-cron.ts:80",
-  "src/lib/organisation-xero-contacts.ts:160",
-  "src/lib/payment-reconciliation.ts:1370",
-  "src/lib/payment-reconciliation.ts:406",
-  "src/lib/xero-applied-credit-allocation.ts:470",
-  "src/lib/xero-applied-credit-allocation.ts:566",
-  "src/lib/xero-applied-credit-allocation.ts:626",
-  "src/lib/xero-applied-credit-deallocation.ts:710",
-  "src/lib/xero-inbound/credit-note-repairs.ts:767",
+  "src/lib/diagnostics/tools/packs/finance-evidence.ts:562",
 ];

@@ -244,7 +244,7 @@ async function handleGet(req: NextRequest, dateStr: string) {
   // linkage pass. It still appears on the kiosk list itself, above.
   const groupTripCandidates = bookings.filter(
     (booking): booking is typeof booking & { memberId: string } =>
-      booking.memberId !== null,
+      bookingOwner(booking).memberId !== null,
   );
   const withGroupTrip = await attachKioskGroupTrip(result, groupTripCandidates, { db: prisma, lodgeId, capabilities });
 

@@ -49,21 +49,14 @@
  * migration never applies them.
  */
 
-import { SchoolMemberClassificationKind } from "@prisma/client";
+import {
+  HutLeaderAssignmentSource,
+  Prisma,
+  Role,
+  SchoolMemberClassificationKind,
+} from "@prisma/client";
 
-/**
- * Fold a school name the way {@link normaliseOrganisationName} does, in SQL:
- * trim, collapse internal whitespace, ignore case.
- *
- * This is the CLAIM, the same question `schoolOrganisationNameClaim()` asks
- * Postgres — not the coarser Xero-search folding used to PROVE that a provider
- * contact belongs where the provider said. See the "Two questions" section of
- * `school-organisations.ts`. Coarser folding here would let one school's name
- * prove another school's row, which is a near-miss merge by another route.
- */
-export function foldSchoolNameSql(column: string): string {
-  return `lower(regexp_replace(btrim(${column}), '\\s+', ' ', 'g'))`;
-}
+import { normaliseOrganisationName } from "@/lib/school-organisations";
 
 /**
  * WHICH ROWS THE CUTOVER NEEDS AN ANSWER FOR. Aliased `m` on `"Member"`.
@@ -81,14 +74,51 @@ export function foldSchoolNameSql(column: string): string {
  *   asking the club a question with no consequence, and a census that asks
  *   pointless questions is a census people stop answering.
  *
- * THIS EXACT TEXT IS EMBEDDED IN `20260922020000_backfill_school_bookings.sql`
- * and the contract test compares them. Changing it here without changing the
- * migration is a drift the test fails on.
+ * THIS EXACT TEXT IS EMBEDDED IN
+ * `20260922020000_backfill_school_bookings_to_organisations/migration.sql`, and
+ * `school-member-classification-contract.test.ts` compares them. The migration
+ * has to ask the same question in SQL because it runs as SQL; the census asks
+ * it through Prisma, typed, which is why this constant is documentation AND the
+ * migration's source rather than something the census executes.
  */
 export const SCHOOL_CLASSIFICATION_CANDIDATE_SQL = `m."role" = 'SCHOOL' AND EXISTS (SELECT 1 FROM "Booking" b WHERE b."memberId" = m."id")`;
 
 /**
- * PROOF THAT A ROW IS A SCHOOL, not a person. Aliased `m` on `"Member"`.
+ * What the census reads about one candidate, and how it reads it.
+ *
+ * TYPED, NOT RAW (`INV-OPS-001`, "lock raw, read typed"). An earlier draft of
+ * this tool ran one hand-written statement through `$queryRaw`. That is the
+ * shape #2289 was filed about: a mistyped column arrives as `undefined`, and
+ * `undefined` here would read as "this row has no proof" — handing an officer a
+ * question that was already answered, which is the exact failure this whole
+ * programme exists to stop. It also meant the name folding existed twice, once
+ * in SQL and once in `school-organisations.ts`, which is how two spellings of
+ * "the same school" drift apart.
+ */
+export const SCHOOL_MEMBER_CANDIDATE_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  canLogin: true,
+  xeroContactId: true,
+  _count: { select: { bookings: true } },
+  hutLeaderAssignments: {
+    where: { source: HutLeaderAssignmentSource.SCHOOL_BOOKING },
+    select: { id: true },
+    take: 1,
+  },
+  schoolClassification: { select: { classification: true, decidedBy: true } },
+} satisfies Prisma.MemberSelect;
+
+/** The candidate set, as the same question the migration asks in SQL. */
+export const SCHOOL_MEMBER_CANDIDATE_WHERE = {
+  role: Role.SCHOOL,
+  bookings: { some: {} },
+} satisfies Prisma.MemberWhereInput;
+
+/**
+ * PROOF THAT A ROW IS A SCHOOL, not a person.
  *
  * All three of:
  *
@@ -104,24 +134,27 @@ export const SCHOOL_CLASSIFICATION_CANDIDATE_SQL = `m."role" = 'SCHOOL' AND EXIS
  * the same transaction. Nothing else in the system writes that pair, so a row
  * satisfying it was created as a school by a code path we can read.
  *
- * Names are compared under the claim folding, not raw, because a request typed
- * `  Tokoroa  Primary School ` produced a member named `Tokoroa Primary School`.
- * Neither side is truncated: `"Member"."firstName"` and
- * `"BookingRequest"."schoolName"` are TEXT and VARCHAR(200) respectively, and no
- * school name in the column exceeds either.
+ * Names are compared through {@link isSameSchoolNameClaim}, which is the ONE
+ * folding — the same one `resolveOrCreateSchoolOrganisation` uses to decide
+ * which record a name claims. A second copy here is how "Tokoroa Primary
+ * School" and "Tokoroa  Primary School" would come to mean different things in
+ * the census and in the runtime.
  */
-export const SCHOOL_CLASSIFICATION_ORGANISATION_PROOF_SQL = `btrim(m."lastName") = ''
-  AND m."canLogin" = false
-  AND EXISTS (
-    SELECT 1 FROM "BookingRequest" r
-    WHERE r."convertedMemberId" = m."id"
-      AND r."type" = 'SCHOOL'
-      AND r."schoolName" IS NOT NULL
-      AND ${foldSchoolNameSql('r."schoolName"')} = ${foldSchoolNameSql('m."firstName"')}
-  )`;
+export function provesOrganisation(candidate: {
+  firstName: string;
+  lastName: string;
+  canLogin: boolean;
+  convertedSchoolRequestNames: readonly string[];
+}): boolean {
+  if (candidate.lastName.trim() !== "") return false;
+  if (candidate.canLogin) return false;
+  return candidate.convertedSchoolRequestNames.some((schoolName) =>
+    isSameSchoolNameClaim(schoolName, candidate.firstName),
+  );
+}
 
 /**
- * PROOF THAT A ROW IS A PERSON. Aliased `m` on `"Member"`.
+ * PROOF THAT A ROW IS A PERSON.
  *
  * Any one of:
  *
@@ -132,39 +165,36 @@ export const SCHOOL_CLASSIFICATION_ORGANISATION_PROOF_SQL = `btrim(m."lastName")
  * - it is a school booking's hut leader. `approveSchoolBookingRequest` creates
  *   that assignment for the teacher and for nobody else.
  */
-export const SCHOOL_CLASSIFICATION_PERSON_PROOF_SQL = `m."canLogin" = true
-  OR btrim(m."lastName") <> ''
-  OR EXISTS (
-    SELECT 1 FROM "HutLeaderAssignment" h
-    WHERE h."memberId" = m."id" AND h."source" = 'SCHOOL_BOOKING'
-  )`;
+export function provesPerson(candidate: {
+  lastName: string;
+  canLogin: boolean;
+  isSchoolBookingHutLeader: boolean;
+}): boolean {
+  return (
+    candidate.canLogin ||
+    candidate.lastName.trim() !== "" ||
+    candidate.isSchoolBookingHutLeader
+  );
+}
 
 /**
- * THE CENSUS QUERY. One statement, built from the three constants above so that
- * "what the census counted" and "what the rule says" cannot come apart.
+ * Does this free text name the same school as that record, for the CLAIM?
  *
- * It lives here rather than in the script because a test has to be able to read
- * it, and importing a script that runs on import would run it.
- *
- * Read-only. Every column is either a fact the club recorded or one of the two
- * proofs evaluated by PostgreSQL; nothing is decided in SQL, so
- * {@link classifySchoolMember} stays the only place a verdict is reached.
+ * Trim, collapse internal whitespace, ignore case — `normaliseOrganisationName`
+ * plus a case fold, which is exactly what `schoolOrganisationNameClaim()` asks
+ * Postgres. Deliberately NOT the coarser Xero-search folding, which exists to
+ * PROVE a provider contact belongs where the provider said: coarser here would
+ * let one school's name prove another school's row, which is a near-miss merge
+ * by another route and #2912 forbids one.
  */
-export function censusSql(): string {
-  return `SELECT m."id" AS "id",
-       m."firstName" AS "firstName",
-       m."lastName" AS "lastName",
-       m."email" AS "email",
-       m."xeroContactId" AS "xeroContactId",
-       (SELECT count(*) FROM "Booking" b2 WHERE b2."memberId" = m."id")::int AS "bookingCount",
-       (${SCHOOL_CLASSIFICATION_ORGANISATION_PROOF_SQL}) AS "organisationProof",
-       (${SCHOOL_CLASSIFICATION_PERSON_PROOF_SQL}) AS "personProof",
-       c."classification"::text AS "recorded",
-       c."decidedBy" AS "recordedBy"
-  FROM "Member" m
-  LEFT JOIN "SchoolMemberClassification" c ON c."memberId" = m."id"
- WHERE ${SCHOOL_CLASSIFICATION_CANDIDATE_SQL}
- ORDER BY m."firstName", m."id"`;
+export function isSameSchoolNameClaim(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const a = normaliseOrganisationName(left ?? "").toLowerCase();
+  const b = normaliseOrganisationName(right ?? "").toLowerCase();
+  if (!a || !b) return false;
+  return a === b;
 }
 
 /** What the census can say about one candidate row. */
@@ -172,7 +202,7 @@ export type SchoolMemberClassificationVerdict =
   | SchoolMemberClassificationKind
   | "CANNOT_TELL";
 
-/** One candidate row as the census query returns it. */
+/** One candidate row, as the census resolved it. */
 export type SchoolMemberCandidate = {
   id: string;
   firstName: string;

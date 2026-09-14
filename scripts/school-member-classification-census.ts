@@ -44,16 +44,17 @@
 import "dotenv/config";
 import process from "node:process";
 
-import { Prisma, SchoolMemberClassificationKind } from "@prisma/client";
+import { BookingRequestType, SchoolMemberClassificationKind } from "@prisma/client";
 
-import { z } from "zod";
-
-import { decodeRawRows, rawIntColumn } from "../src/lib/raw-sql-rows";
 import {
   CENSUS_DECIDED_BY,
+  SCHOOL_CLASSIFICATION_CANDIDATE_SQL,
+  SCHOOL_MEMBER_CANDIDATE_SELECT,
+  SCHOOL_MEMBER_CANDIDATE_WHERE,
   censusEvidenceFor,
-  censusSql,
   classifySchoolMember,
+  provesOrganisation,
+  provesPerson,
   type SchoolMemberCandidate,
 } from "../src/lib/school-member-classification";
 import { prisma } from "../src/lib/prisma";
@@ -83,27 +84,64 @@ function parseArgs(argv: string[]): Args {
 }
 
 /**
- * The census row, validated rather than asserted. Every column is named exactly
- * as `censusSql()` aliases it, so a rename on one side becomes a loud failure on
- * the first run instead of a silently empty proof.
+ * THE READ. Typed Prisma, not a hand-written statement.
+ *
+ * Two queries rather than one join, and that is the cheaper shape as well as
+ * the clearer one: the candidate set is small (one row per school-shaped member
+ * that ever booked), and the second query fetches the converted `SCHOOL`
+ * requests for exactly those ids.
+ *
+ * The name comparison happens in TypeScript, through the one folding
+ * `resolveOrCreateSchoolOrganisation` uses. A copy of that folding in SQL is how
+ * the census and the runtime would come to disagree about which record a name
+ * claims (`INV-SSOT`).
  */
-const SCHOOL_MEMBER_CANDIDATE_ROW = z.object({
-  id: z.string(),
-  firstName: z.string(),
-  lastName: z.string(),
-  email: z.string(),
-  xeroContactId: z.string().nullable(),
-  bookingCount: rawIntColumn,
-  organisationProof: z.boolean(),
-  personProof: z.boolean(),
-  recorded: z
-    .enum([
-      SchoolMemberClassificationKind.ORGANISATION,
-      SchoolMemberClassificationKind.PERSON,
-    ])
-    .nullable(),
-  recordedBy: z.string().nullable(),
-});
+async function readCandidates(): Promise<SchoolMemberCandidate[]> {
+  const members = await prisma.member.findMany({
+    where: SCHOOL_MEMBER_CANDIDATE_WHERE,
+    select: SCHOOL_MEMBER_CANDIDATE_SELECT,
+    orderBy: [{ firstName: "asc" }, { id: "asc" }],
+  });
+  if (members.length === 0) return [];
+
+  const convertedRequests = await prisma.bookingRequest.findMany({
+    where: {
+      type: BookingRequestType.SCHOOL,
+      convertedMemberId: { in: members.map((member) => member.id) },
+      schoolName: { not: null },
+    },
+    select: { convertedMemberId: true, schoolName: true },
+  });
+  const namesByMemberId = new Map<string, string[]>();
+  for (const request of convertedRequests) {
+    if (!request.convertedMemberId || !request.schoolName) continue;
+    const names = namesByMemberId.get(request.convertedMemberId) ?? [];
+    names.push(request.schoolName);
+    namesByMemberId.set(request.convertedMemberId, names);
+  }
+
+  return members.map((member) => ({
+    id: member.id,
+    firstName: member.firstName,
+    lastName: member.lastName,
+    email: member.email,
+    bookingCount: member._count.bookings,
+    xeroContactId: member.xeroContactId,
+    organisationProof: provesOrganisation({
+      firstName: member.firstName,
+      lastName: member.lastName,
+      canLogin: member.canLogin,
+      convertedSchoolRequestNames: namesByMemberId.get(member.id) ?? [],
+    }),
+    personProof: provesPerson({
+      lastName: member.lastName,
+      canLogin: member.canLogin,
+      isSchoolBookingHutLeader: member.hutLeaderAssignments.length > 0,
+    }),
+    recorded: member.schoolClassification?.classification ?? null,
+    recordedBy: member.schoolClassification?.decidedBy ?? null,
+  }));
+}
 
 function pad(value: string, width: number): string {
   return value.length >= width ? value : value + " ".repeat(width - value.length);
@@ -125,7 +163,16 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   if (args.sql) {
-    process.stdout.write(`${censusSql()}\n`);
+    // The POPULATION, as an officer can run it against a read-only replica.
+    // The two proofs are applied in TypeScript — see `readCandidates` — so what
+    // this prints is the candidate set the migration itself demands a decision
+    // for, which is the number that decides whether the cutover can proceed.
+    process.stdout.write(
+      `SELECT m."id", m."firstName", m."lastName", m."email"\n` +
+        `  FROM "Member" m\n` +
+        ` WHERE ${SCHOOL_CLASSIFICATION_CANDIDATE_SQL}\n` +
+        ` ORDER BY m."firstName", m."id";\n`,
+    );
     return;
   }
 
@@ -168,21 +215,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // `Prisma.raw` over this module's own constants, never `$queryRawUnsafe`:
-  // `INV-OPS-014` asks that a raw statement be visibly static at the call site,
-  // and `censusSql()` is built entirely from exported constants with nothing
-  // from an argument, an environment or a row in it.
-  //
-  // DECODED, never cast (`INV-OPS-001`, #2289). A hand-written type over a raw
-  // result is a promise nothing checks, and a mistyped column arrives as
-  // `undefined` — which here would read as "this row has no proof" and hand an
-  // officer a question that was already answered. The whole point of this tool
-  // is that its numbers are right.
-  const rows = decodeRawRows(
-    await prisma.$queryRaw(Prisma.raw(censusSql())),
-    SCHOOL_MEMBER_CANDIDATE_ROW,
-    "school member classification census",
-  );
+  const rows = await readCandidates();
 
   const verdicts = rows.map((row) => ({
     row,

@@ -25,11 +25,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   SCHOOL_CLASSIFICATION_CANDIDATE_SQL,
-  SCHOOL_CLASSIFICATION_ORGANISATION_PROOF_SQL,
-  SCHOOL_CLASSIFICATION_PERSON_PROOF_SQL,
-  censusSql,
   classifySchoolMember,
-  foldSchoolNameSql,
+  isSameSchoolNameClaim,
+  provesOrganisation,
+  provesPerson,
 } from "@/lib/school-member-classification";
 
 const BACKFILL_SQL_PATH = path.join(
@@ -105,25 +104,58 @@ describe("#3369: the candidate predicate has exactly one home", () => {
   });
 });
 
-describe("#3369: the census query is built from the shared proofs", () => {
-  const sql = censusSql();
-
-  it("embeds both proofs and the candidate predicate", () => {
-    for (const fragment of [
-      SCHOOL_CLASSIFICATION_CANDIDATE_SQL,
-      SCHOOL_CLASSIFICATION_ORGANISATION_PROOF_SQL,
-      SCHOOL_CLASSIFICATION_PERSON_PROOF_SQL,
-    ]) {
-      expect(normalise(sql)).toContain(normalise(fragment));
-    }
+describe("#3369: the two proofs, and the one folding they share", () => {
+  it("proves a school only from writer-authored evidence, not from a shape", () => {
+    // Blank surname and cannot sign in are necessary but NOT sufficient: the
+    // converted request naming this very row under the same school name is
+    // what makes it a proof rather than a guess about how a name looks.
+    const shapeOnly = {
+      firstName: "Tokoroa Primary School",
+      lastName: "",
+      canLogin: false,
+      convertedSchoolRequestNames: [] as string[],
+    };
+    expect(provesOrganisation(shapeOnly)).toBe(false);
+    expect(
+      provesOrganisation({
+        ...shapeOnly,
+        convertedSchoolRequestNames: ["Tokoroa Primary School"],
+      }),
+    ).toBe(true);
   });
 
-  it("folds a school name the way the claim does, not the way Xero's search does", () => {
-    // Coarser folding here would let one school's name prove another school's
-    // row, which is a near-miss merge by another route (#2912 forbids one).
-    expect(foldSchoolNameSql('m."firstName"')).toBe(
-      `lower(regexp_replace(btrim(m."firstName"), '\\s+', ' ', 'g'))`,
-    );
+  it("refuses the proof for a row that can sign in, or that has a surname", () => {
+    const proved = {
+      firstName: "Tokoroa Primary School",
+      lastName: "",
+      canLogin: false,
+      convertedSchoolRequestNames: ["Tokoroa Primary School"],
+    };
+    expect(provesOrganisation({ ...proved, canLogin: true })).toBe(false);
+    expect(provesOrganisation({ ...proved, lastName: "Ngata" })).toBe(false);
+  });
+
+  it("proves a person from any one of the three teacher marks", () => {
+    const none = {
+      lastName: "",
+      canLogin: false,
+      isSchoolBookingHutLeader: false,
+    };
+    expect(provesPerson(none)).toBe(false);
+    expect(provesPerson({ ...none, canLogin: true })).toBe(true);
+    expect(provesPerson({ ...none, lastName: "Ngata" })).toBe(true);
+    expect(provesPerson({ ...none, isSchoolBookingHutLeader: true })).toBe(true);
+  });
+
+  it("folds a name the way the CLAIM does, and no more coarsely", () => {
+    // Trim, collapse whitespace, ignore case — the same question
+    // `schoolOrganisationNameClaim()` asks Postgres. Coarser folding would let
+    // one school's name prove another school's row, which is a near-miss merge
+    // by another route and #2912 forbids one.
+    expect(isSameSchoolNameClaim("  Tokoroa   Primary School ", "tokoroa primary school")).toBe(true);
+    expect(isSameSchoolNameClaim("Tokoroa Primary", "Tokoroa Primary School")).toBe(false);
+    expect(isSameSchoolNameClaim("St. Peter's College", "St Peters College")).toBe(false);
+    expect(isSameSchoolNameClaim("", "Anything")).toBe(false);
   });
 });
 
