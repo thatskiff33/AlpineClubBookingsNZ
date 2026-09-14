@@ -887,6 +887,30 @@ and reuses the provider-mismatch row shape, but sits in its own block: the
 provider block is headed "Provider state out of step", and a review is the opposite
 situation — local state is exactly right and the club owes a decision.
 
+**A failed Xero invoice now says so on the booking (#3001).** The provider block
+also carries the booking's current `BOOKING_INVOICE` create-operation state,
+which until then was visible only under Admin → Xero → Operations while the
+booking itself looked like it was progressing normally. The wordings differ
+because the remedy inverts on whether anything reached Xero: *No Xero invoice for
+this booking* (nothing was raised — retry); *Check Xero: this booking's invoice
+was left mid-flight* (a worker died or an operator reset a stuck row, and nobody
+can tell from here — look before acting); and the rest, which name the invoice
+and say **do not raise a second one** — the payment not recorded against it, the
+member not sent it (in the three separate wordings its three causes need), or the
+operation part-finished.
+
+**One decision drives both the last sentence and the link label**, so the surface
+cannot offer a Retry beside *do not repeat the action*. **Retry from Xero
+activity** appears only where repeating is safe and the engine will run it:
+nothing reached Xero, or the invoice exists and the club's PAYMENT is what is
+missing — the one case where a retry raises nothing. Everywhere else the label is
+**Resolve from Xero activity**, carrying the engine's own refusal where the
+engine is what refuses (an email-only failure is refused precisely because
+"repairing" it would record a payment against an invoice the member has not
+paid). Full-admin-only at both the read and the render — the same gate the whole
+provider block has always had, not a new one — and an invoice email withheld on
+purpose (#2258, #2929, #3035) is not a failure and raises nothing.
+
 ## Whole-roster staged editing (#2586)
 
 On `/admin/roster`, selecting a lodge night loads a read-only authoritative
