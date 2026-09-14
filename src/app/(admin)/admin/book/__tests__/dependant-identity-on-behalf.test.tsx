@@ -546,6 +546,43 @@ describe("admin booking on behalf — own-dependant identity (#2721)", () => {
     expect(screen.queryByText(/Sam Member is recorded as/)).not.toBeInTheDocument()
   })
 
+  it("forgets an answer given about the previous member when the owner changes", async () => {
+    // What is held is a statement about a named child. Once the booking is for
+    // somebody else it is not an answer to any question this screen is asking.
+    familyPayload = { familyMembers: [], ownDependants: [OWN_DEPENDANT] }
+    await reachGuestStep()
+    fireEvent.click(screen.getByRole("button", { name: "Type Sam Member" }))
+    await screen.findByText("Is this Alex's own family member?")
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "This is a different person with the same name",
+      }),
+    )
+    expect(
+      await screen.findByText(
+        "You have said this is a different person with the same name.",
+      ),
+    ).toBeInTheDocument()
+
+    // The same dependant list is served for the new owner, so the collision is
+    // identical and only the DISCARDED answer can explain the question coming
+    // back.
+    fireEvent.click(screen.getByRole("button", { name: "Pick other member" }))
+    await waitFor(() => expect(callsTo("eligible-family")).toHaveLength(2))
+    fireEvent.click(screen.getByRole("button", { name: "Choose dates" }))
+    await screen.findByTestId("guest-form")
+    fireEvent.click(screen.getByRole("button", { name: "Type Sam Member" }))
+
+    expect(
+      await screen.findByText("Is this Blair's own family member?"),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        "You have said this is a different person with the same name.",
+      ),
+    ).not.toBeInTheDocument()
+  })
+
   it("sends the officer back to the guest step when the server refuses a stale party", async () => {
     // The screen gates first, so this is reached only from a stale tab — but it
     // is the state where "answer the question" is useless advice unless the step

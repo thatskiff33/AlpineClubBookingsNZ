@@ -25,7 +25,7 @@
  * wizard that has already moved past the guest step.
  */
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { AgeTier } from "@prisma/client";
 import type { GuestData } from "@/components/guest-form";
 import {
@@ -73,6 +73,17 @@ export interface AdminDependantIdentity
 }
 
 export function useAdminDependantIdentity(params: {
+  /**
+   * Who this booking is FOR. Changing it discards every answer given about the
+   * previous member.
+   *
+   * Nothing observable depended on that before — the party is emptied on an
+   * owner change, and an answer naming somebody else's dependant is filtered out
+   * of the payload and refused by the server anyway — but "reasoned to be
+   * harmless" is a weaker guarantee than "cannot happen", and what is being held
+   * is a statement about a named child in a family this booking has left.
+   */
+  bookingForMemberId: string | null;
   /** The proposed party, live. */
   guests: GuestData[];
   /**
@@ -92,6 +103,7 @@ export function useAdminDependantIdentity(params: {
   setError: (message: string) => void;
 }): AdminDependantIdentity {
   const {
+    bookingForMemberId,
     guests,
     ownDependants,
     setGuests,
@@ -105,6 +117,16 @@ export function useAdminDependantIdentity(params: {
     party: guests,
     ownDependants,
   });
+
+  // Compared against the PREVIOUS value rather than run on mount, so the first
+  // render does not clear a state nothing has written yet.
+  const lastBookingForMemberId = useRef(bookingForMemberId);
+  const { clearDeclarations } = answers;
+  useEffect(() => {
+    if (lastBookingForMemberId.current === bookingForMemberId) return;
+    lastBookingForMemberId.current = bookingForMemberId;
+    clearDeclarations();
+  }, [bookingForMemberId, clearDeclarations]);
 
   /**
    * The relink matches by NORMALISED NAME and never by index: the officer may

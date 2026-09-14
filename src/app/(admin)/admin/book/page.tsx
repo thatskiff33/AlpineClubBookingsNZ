@@ -437,6 +437,7 @@ export default function AdminBookPage() {
    * The candidate set is the SELECTED MEMBER's dependants, never the officer's.
    */
   const dependantIdentity = useAdminDependantIdentity({
+    bookingForMemberId: selectedMemberId,
     guests,
     ownDependants,
     setGuests,

@@ -134,7 +134,7 @@ reason: one line of code and eight of comment. The refusal's night list now
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/app/(admin)/admin/book/page.tsx
-lines: 1683
+lines: 1684
 reason: twenty-three lines, and eighteen of them are one docblock. The code is
   three lines — the lodge's resolved capacity read as a ceiling only when it is
   positive, and the derived "is the party already there", replacing the same
@@ -152,8 +152,8 @@ reason: twenty-three lines, and eighteen of them are one docblock. The code is
   fallback, so the honest gain is a usable form and a refusal that names its
   cause. Without that sentence the next reader concludes the dead end is gone.
   #2721 then added the own-dependant question to this screen, which is why the
-  figure above is 141 lines higher than #2930 left it. **The seams that did
-  exist were taken first, and they are why it is 141 and not 245**: the panel is
+  figure above is 142 lines higher than #2930 left it. **The seams that did
+  exist were taken first, and they are why it is 142 and not 246**: the panel is
   `_components/dependant-identity-resolution.tsx`, the wiring is
   `_hooks/use-admin-dependant-identity.ts`, and the answer state under that is
   shared with the member wizard in `src/lib/use-dependant-identity-answers.ts`.
