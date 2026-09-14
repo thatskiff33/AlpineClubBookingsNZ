@@ -653,6 +653,12 @@ describe("createXeroInvoiceForBooking", () => {
           invoiceEmailError: expect.any(Error),
           invoiceEmailSkipped: true,
           invoiceEmailWithheldByNoEmails: false,
+          // #3001: WHICH fault, recorded beside the error. The error value is
+          // not redacted and is never read back out of this payload, so without
+          // this key the booking's warning can only say "sending it failed" —
+          // and for THIS cause the obvious remedy, "send it from Xero
+          // yourself", may email a booking whose switch is on.
+          invoiceEmailFailureCause: "NO_EMAILS_UNREADABLE",
         }),
       })
     );
@@ -1164,6 +1170,8 @@ describe("createXeroInvoiceForBooking", () => {
           byCreationChoice: payload.invoiceEmailWithheldByCreationChoice,
           forEnvironment: payload.invoiceEmailWithheldForEnvironment,
           failed: payload.invoiceEmailError !== null,
+          // #3001: three faults share one key, and they need three remedies.
+          cause: payload.invoiceEmailFailureCause ?? null,
         };
       }
 
@@ -1227,6 +1235,7 @@ describe("createXeroInvoiceForBooking", () => {
         byCreationChoice: true,
         forEnvironment: false,
         failed: false,
+        cause: null,
       });
       expect(environmentSafety).toEqual({
         emailed: false,
@@ -1235,6 +1244,7 @@ describe("createXeroInvoiceForBooking", () => {
         byCreationChoice: false,
         forEnvironment: true,
         failed: false,
+        cause: null,
       });
       expect(providerFailure).toEqual({
         emailed: true,
@@ -1243,6 +1253,7 @@ describe("createXeroInvoiceForBooking", () => {
         byCreationChoice: false,
         forEnvironment: false,
         failed: true,
+        cause: "PROVIDER",
       });
       expect(ordinarySend).toEqual({
         emailed: true,
@@ -1251,6 +1262,7 @@ describe("createXeroInvoiceForBooking", () => {
         byCreationChoice: false,
         forEnvironment: false,
         failed: false,
+        cause: null,
       });
 
       // Belt and braces: no two of the four read the same from outside.
