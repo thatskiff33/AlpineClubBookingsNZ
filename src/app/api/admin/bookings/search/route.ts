@@ -150,8 +150,20 @@ export async function GET(request: NextRequest) {
                 ],
               },
             },
-            // #3369: the owner may be an Organisation; bookingOwner() reads both.
-            organisation: { select: { name: true, email: true } },
+          },
+          // #3369: a school's booking is owned by the school, so searching the
+          // member's name alone would never find one. An officer typing the
+          // school's name finds its bookings, which is what they were doing
+          // before this stage — the invented member carried that name.
+          {
+            organisation: {
+              is: {
+                OR: [
+                  { name: { contains: q, mode: "insensitive" } },
+                  { email: { contains: q, mode: "insensitive" } },
+                ],
+              },
+            },
           },
         ],
       },
