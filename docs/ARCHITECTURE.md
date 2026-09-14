@@ -1081,6 +1081,18 @@ Stripe refund with no Xero credit note, waitlist offer whose email needs
 operator action) and feeds the amber "Provider state out of step" block on the
 booking detail Admin tools card — read-only detection mirroring the
 stuck-state queries.
+Since #3001 it also carries the booking's CURRENT `BOOKING_INVOICE` operation
+state, read through `src/lib/booking-invoice-sync-status.ts`. That module is the
+bounded server-side projection the React tree consumes instead of interpreting
+operation rows itself: it finds the row by the booking's own correlation key
+(`xero-booking-invoice-key.ts`) rather than through the payment the row is stored
+against, takes the newest create row so an old failure cannot outvote a later
+success, honours `manuallyResolvedAt`, and asks `getXeroOperationRetryMeta`
+whether a retry is even possible rather than re-deriving it — so the booking page
+and the Xero operations screen cannot describe one row differently. A
+deliberately withheld invoice email (#2258, #2929, #3035) is not a fault and
+raises nothing; only `invoiceEmailError` does. When it fires, the vaguer
+paid-with-no-invoice row is suppressed rather than stacked beneath it.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; `AGENTS.md` → Change Discipline and its routing
