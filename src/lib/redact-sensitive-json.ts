@@ -335,6 +335,64 @@ function isSensitiveJsonKey(key: string) {
 }
 
 /**
+ * THE NAME/VALUE PAIR (#2940). `value` beside `key` is redacted; `value`
+ * anywhere else is left alone.
+ *
+ * WHY THERE IS A RULE AT ALL. The credential routes post
+ * `{ key, value, version }` — `api/admin/integrations/credentials` and
+ * `api/admin/integrations/mirotalk/credentials` both — so the plaintext of a
+ * signing key or a host password arrives in a request body under the key
+ * `value`. Sentry's `beforeSend` passes `event.request.data` through this
+ * module, and an exception raised BEFORE the route's own try/catch (the
+ * permission read, or the audited refusal's own database write) captures that
+ * body. Neither list here reached it: `value` is on neither, and the fragments
+ * match key NAMES, so nothing matched and the secret travelled verbatim.
+ *
+ * WHY NOT AN EXACT `"value"` ENTRY on the denylist, which is the one-line fix.
+ * `value` is not a credential name, it is the second half of a name/value pair,
+ * and this codebase writes that pair with a `label` far more often than with a
+ * `key`: `booking-money-lines.ts` alone builds dozens of `{ label, value }`
+ * display rows carrying money and date ranges, and `audit-query.ts` builds
+ * `{ label, value }` option lists. A denylist entry blanks every one of those in
+ * every log line and in the admin Xero panels, to catch a shape it can identify
+ * precisely — a redactor that blinds the diagnostics is how people stop trusting
+ * the log, which is a security cost of its own.
+ *
+ * WHY THE PAIR IS THE RIGHT TEST. In `{ key, value }` the meaning of `value` is
+ * decided by DATA (whatever `key` happens to say) rather than by schema, so this
+ * module cannot judge it and must assume the worst. Everywhere else `value` has
+ * a schema-defined meaning the surrounding code chose. The `key` itself survives
+ * redaction, so an operational settings echo still says WHICH setting moved —
+ * the diagnostic is narrowed, not deleted.
+ *
+ * STATED LIMIT: this needs the two keys in one object, so it reads a parsed body
+ * (including one parsed out of a string by `redactJsonStringCandidate`) but not
+ * the flat `"key":"…"` text fallback, which fires only when a body is too
+ * mangled to parse and has no sibling context to consult. `password` and
+ * `secret` remain fragments there, as they are here.
+ */
+const PAIR_NAME_KEY = "key";
+const PAIR_VALUE_KEY = "value";
+
+/**
+ * The `value` half of a `{ key, value }` pair, given the object's own keys
+ * already normalised. Both halves are tested in normalised form, so `Key`/
+ * `_value` and any other spelling of the same pair are caught.
+ */
+function isNameValuePairSecret(
+  normalizedKey: string,
+  normalizedSiblingKeys: ReadonlySet<string>
+) {
+  return (
+    normalizedKey === PAIR_VALUE_KEY && normalizedSiblingKeys.has(PAIR_NAME_KEY)
+  );
+}
+
+function normalizedKeySet(keys: readonly string[]): ReadonlySet<string> {
+  return new Set(keys.map(normalizeJsonKey));
+}
+
+/**
  * Query-string keys are the JSON denylist PLUS the generic OAuth/callback names.
  *
  * The union matters in both directions. `code` and `state` are meaningless as
@@ -553,6 +611,10 @@ function redactError(
       result.ownProperties = UNREADABLE_VALUE;
     }
 
+    // The pair rule applies to an error's own properties too: a thrower that
+    // attaches the request body it choked on attaches `{ key, value }` with it.
+    const normalizedOwnKeys = normalizedKeySet(ownKeys);
+
     for (const key of ownKeys) {
       if (
         key === "name" ||
@@ -562,7 +624,10 @@ function redactError(
       ) {
         continue;
       }
-      if (isSensitiveJsonKey(key)) {
+      if (
+        isSensitiveJsonKey(key) ||
+        isNameValuePairSecret(normalizeJsonKey(key), normalizedOwnKeys)
+      ) {
         result[key] = REDACTED_SECRET;
         continue;
       }
@@ -635,9 +700,13 @@ function redactPlainObject(
   }
 
   ctx.entries += keys.length;
+  const normalizedKeys = normalizedKeySet(keys);
   const result: Record<string, unknown> = {};
   for (const key of keys) {
-    if (isSensitiveJsonKey(key)) {
+    if (
+      isSensitiveJsonKey(key) ||
+      isNameValuePairSecret(normalizeJsonKey(key), normalizedKeys)
+    ) {
       result[key] = REDACTED_SECRET;
       continue;
     }
