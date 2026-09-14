@@ -910,7 +910,11 @@ describe("createXeroInvoiceForBooking", () => {
     function internetBankingBooking(
       overrides: Record<string, unknown> = {},
     ) {
-      return {
+      // Through the shared builder, not a bare literal: it is what supplies the
+      // guest ids, the per-guest nights and the adjustments array that the money
+      // build-up projection reads. Written as a literal, this block's bookings
+      // were missing all three the moment #3277 landed on main.
+      return withMoneyBuildUpProjection({
         id: "booking_1",
         memberId: "mem_1",
         member: { id: "mem_1", email: "member@example.test" },
@@ -940,7 +944,7 @@ describe("createXeroInvoiceForBooking", () => {
           source: "INTERNET_BANKING",
         },
         ...overrides,
-      };
+      });
     }
 
     /** What the operation row a dispatcher claimed says about delivery. */
