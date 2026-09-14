@@ -441,14 +441,24 @@ The bounded run; its census is `INV-INT-022`.
 Erasure changes nothing in Xero; this review is how anybody finds out what it
 left behind.
 
-- **No Xero mutation is part of member erasure, and no route could make one.**
-  Both erasure paths — the approved `DeletionRequest` anonymisation and the
-  approved lifecycle `DELETE` — reach exactly ONE Xero module, for the
-  contact-create fence, and take only reads and a refusal from it. The review's
-  own surface is a `GET` with no `POST` sibling, over an engine that writes
-  nothing and calls no provider. Local erasure never waits on Xero, and there is
-  no provider-cleanup queue, destructive retry state or `erasure pending Xero`
-  state for a replay to create.
+- **No erasure path asks Xero to change, archive, blank or delete the member's
+  CONTACT.** Both erasure paths — the approved `DeletionRequest` anonymisation
+  and the approved lifecycle `DELETE` — reach exactly ONE Xero-named module, for
+  the contact-create fence, and take only reads and a refusal from it; neither
+  names a provider call or an outbox enqueue; and `findOrCreateXeroContact`
+  refuses an anonymised member before any provider call, so even a credit note's
+  contact REPAIR cannot mint a contact for the person just erased. Local erasure
+  never waits on Xero, and there is no provider-cleanup queue, destructive retry
+  state or `erasure pending Xero` state for a replay to create.
+- **It is NOT free of Xero writes altogether, and the guard says which.**
+  Erasure cancels the member's future bookings, and cancelling a paid one
+  enqueues a credit note — a write in the accounting LEDGER, identical to any
+  other cancellation's, touching no contact. Every directly imported module that
+  reaches Xero is declared by name with its reason in
+  `member-erasure-no-xero-mutation-contract.test.ts`; a new one fails. That
+  check is deliberately one level deep, because 31 of the 358 modules in the
+  anonymising erasure's transitive graph reach Xero and an allowlist over those
+  would be a census rather than a guard.
 - **A retired contact link is NOT an erasure.** Four other paths retire one —
   the merge-loser teardown, the admin manual unlink, the stale-canonical-link
   cleanup and the `INV-INT-020` transfer — so the erasure is proved POSITIVELY

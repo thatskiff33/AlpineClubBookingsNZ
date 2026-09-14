@@ -388,17 +388,38 @@ Xero contact** panel. It is the mirror image of the missing-contact census
 above: that one finds members with no contact, this one finds contacts with no
 member.
 
-**Erasure performs no Xero mutation, by decision.** Both erasure paths — the
-approved `DeletionRequest` anonymisation in `deletion-requests/[id]/route.ts`,
-and the approved lifecycle `DELETE` in `member-lifecycle-actions.ts` — null
-`Member.xeroContactId`, retire the canonical `CONTACT` link, delete the
-`XeroContactCache` row, and stop. Xero keeps the contact, its history and every
-invoice raised against it. There is therefore no provider-cleanup queue, no
-destructive retry state and no `erasure pending Xero` state, so no replay can
-create provider work. `member-erasure-no-xero-mutation-contract.test.ts` holds
-that as an import ALLOWLIST — each erasure source reaches exactly one Xero
-module, for the contact-create fence — rather than as a blacklist of provider
-function names, which goes stale the day somebody exports a new one.
+**Erasure asks Xero for nothing about the CONTACT, by decision.** Both erasure
+paths — the approved `DeletionRequest` anonymisation in
+`deletion-requests/[id]/route.ts`, and the approved lifecycle `DELETE` in
+`member-lifecycle-actions.ts` — null `Member.xeroContactId`, retire the
+canonical `CONTACT` link, delete the `XeroContactCache` row, and stop. Xero
+keeps the contact, its details, its history and every invoice raised against it.
+There is no provider-cleanup queue, no destructive retry state and no `erasure
+pending Xero` state, so no replay can create provider work.
+
+**It is not free of Xero writes altogether, and the earlier wording said it
+was.** Erasure cancels the member's future `PENDING`/`PAYMENT_PENDING`/
+`CONFIRMED` bookings through `cancelBooking`, which enqueues account,
+modification and refund credit notes and kicks the outbox. Those are ordinary
+cancellation writes in the accounting ledger — the same ones any cancellation
+makes — and they touch no contact, but a treasurer who read "nothing at all
+happens in Xero" could disprove it from their own credit notes. Three things
+hold the narrower claim: neither erasure source names a provider call or an
+outbox enqueue; every DIRECTLY imported module that reaches Xero is declared by
+name with its reason in `member-erasure-no-xero-mutation-contract.test.ts`, of
+which there is exactly one (`booking-cancel`, on the anonymising path); and
+`findOrCreateXeroContact` asserts the member is available for a contact change
+before any provider call, so the credit-note path's own contact repair
+(`retryXeroWriteWithContactRepair`) cannot mint a contact for the member the
+erasure just anonymised.
+
+That import check is one level deep on purpose. Measured on this tree, 358
+modules are reachable from the anonymising erasure and **31** of them reach a
+Xero provider call or an outbox enqueue — an allowlist over that is a census of
+the application, not a guard. The older `/(^|\/)xero/` specifier test was worse
+than depth: it read `membership-cancellation-xero` and
+`organisation-xero-contacts` as not-Xero modules, so either could have been
+imported onto an erasure path and passed unseen.
 
 **Two filters turn retired links into a review.** A retired `CONTACT` link is
 not evidence of an erasure: the merge-loser teardown, the admin manual unlink
