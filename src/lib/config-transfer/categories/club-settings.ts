@@ -258,21 +258,20 @@ export const SINGLETONS: SingletonSpec[] = [
       // nothing leaves the building. The retention window that deletes posts is
       // equally non-travelling -- see ClubPostSettings in MODEL_LEVEL_EXCLUSIONS.
       "commsPortal",
-      // memberLodgeRoster SHOULD-TRAVEL (#2942): "does this club show members
-      // who else is staying?" is a plain capability decision like the two
-      // above -- no credential, no per-install auth choice.
-      //
-      // It travels as the flag ONLY. How much of a name the roster shows is
-      // Lodge.rosterNameGranularity, which sits on a per-lodge row and does
-      // not travel with this category, so an importing club that has not set
-      // it falls back to the roster default rather than inheriting the
-      // source's choice. That split is deliberate: the capability is a club
-      // decision, the disclosure level is a decision about particular
-      // buildings and particular people, and importing the second from
-      // somebody else's deployment is not something an admin would expect.
-      "memberLodgeRoster",
     ],
     excluded: {
+      memberLodgeRoster:
+        "turning the roster on discloses one member's stay pattern to every " +
+        "other member who can book that lodge, and the per-lodge name detail " +
+        "that bounds it (Lodge.rosterNameGranularity) does NOT travel in a " +
+        "bundle. An importing club would therefore switch the feature on at " +
+        "the code default, FULL_NAME, which is the most disclosive of the " +
+        "four levels -- publishing full names on an upgrade nobody opted " +
+        "into, through the import door the default-OFF flag closes at the " +
+        "deploy door (#2942). The first version of this entry had the flag " +
+        "travelling and reasoned that not inheriting the source's dial was " +
+        "the safe direction; it is the opposite, because the fallback is the " +
+        "most permissive value rather than the least",
       multiLodge:
         "retired-but-not-yet-dropped flag; kept out of every read via " +
         "CLUB_MODULE_SETTINGS_COLUMN_SELECT and awaiting a contract DROP (#139)",
@@ -346,7 +345,6 @@ export const SINGLETONS: SingletonSpec[] = [
       aiAssistant: { required: true },
       memberGuests: { required: true },
       commsPortal: { required: true },
-      memberLodgeRoster: { required: true },
     },
     select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     defaults: () => DEFAULT_MODULE_SETTINGS,

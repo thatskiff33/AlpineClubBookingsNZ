@@ -1,3 +1,4 @@
+import { isMinorAgeTier } from "./display-name-granularity";
 import { prisma } from "./prisma";
 import { formatDateOnly, parseDateOnly } from "./date-only";
 import { lodgeNullTolerantScope } from "./lodges";
@@ -85,8 +86,6 @@ export interface CustodianBedHold {
   endDate: string;
 }
 
-const MINOR_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);
-
 /**
  * Truncate a `Date` to its UTC date-only midnight — this module's ONE
  * convention (see the note at the top of the file).
@@ -100,14 +99,18 @@ function truncateToDateOnly(date: Date): Date {
 }
 
 /**
- * Is this age tier a minor? Exported because the custodian slot on the lobby
+ * Is this age tier a minor? Re-exported because the custodian slot on the lobby
  * TV must never individually name a minor at ANY granularity (the display
  * contract in lodge-display-state.ts), and the hut-leaders API warns the admin
  * at assignment time rather than letting them assume a name will appear.
+ *
+ * The ANSWER lives in `display-name-granularity.ts` with the rest of the naming
+ * rules (#2942). This module used to carry its own tier set and its own
+ * function of the same name; two exported `isMinorAgeTier`s with identical
+ * lists is exactly the drift INV-SSOT is about, since a club that adds an age
+ * tier would fix one and leave the other quietly answering the old question.
  */
-export function isMinorAgeTier(ageTier: string | null | undefined): boolean {
-  return ageTier ? MINOR_AGE_TIERS.has(ageTier) : false;
-}
+export { isMinorAgeTier };
 
 /**
  * Does a hold cover any night of `[from, toExclusive)`?

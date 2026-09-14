@@ -1186,8 +1186,11 @@ describe("buildDisplayState member-guest consent exclusion (D-12, #2307)", () =>
     // group and gets the blockout treatment, which withholds individual names.
     // Seven consented plus one PENDING is NOT a group — the eighth person is not
     // going to be there.
-    const { WHOLE_LODGE_MIN_GUESTS, buildDisplayState } = await import(
-      "@/lib/lodge-display-state"
+    const { buildDisplayState } = await import("@/lib/lodge-display-state");
+    // The threshold moved to the shared name-rules module (#2942), which the
+    // member lodge roster applies too; the display imports it from there.
+    const { WHOLE_LODGE_MIN_GUESTS } = await import(
+      "@/lib/display-name-granularity"
     );
     const consented = Array.from({ length: WHOLE_LODGE_MIN_GUESTS - 1 }, (_, i) =>
       withConsent(adultOn(`Con${i}`), null),

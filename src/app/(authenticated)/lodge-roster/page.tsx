@@ -3,13 +3,12 @@ import { Users } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
-import {
-  addCalendarDays,
-  requireCalendarDate,
-} from "@/lib/club-time/calendar-date";
+import { requireCalendarDate } from "@/lib/club-time/calendar-date";
 import { formatClubDate } from "@/lib/club-time/format";
+import { collapseNightRuns } from "@/lib/bed-allocation-board-window";
 import {
   buildMemberLodgeRoster,
+  ROSTER_WINDOW_DAYS,
   type LodgeRoster,
 } from "@/lib/member-lodge-roster";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -56,6 +55,11 @@ export default async function LodgeRosterPage() {
     (lodge) => lodge.people.length > 0 || lodge.groups.length > 0
   );
 
+  // ADR-002 presentation rule: with exactly one active lodge, its name is
+  // redundant everywhere it would otherwise be repeated, so the per-lodge card
+  // chrome comes off and the list stands on its own.
+  const singleLodge = roster.lodges.length === 1;
+
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-8">
       <header className="mb-6">
@@ -64,21 +68,38 @@ export default async function LodgeRosterPage() {
           Who&rsquo;s at the lodge
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Everyone staying over the next 30 nights, at the lodges you can book.
-          Names and nights only.
+          Everyone staying over the next {ROSTER_WINDOW_DAYS} nights, at the{" "}
+          {singleLodge ? "lodge" : "lodges"} you can book. Names and nights
+          only.
+        </p>
+        {/*
+          Said on the page itself, not only in the guide and the help panel.
+          This is the one surface every member of an enabled club actually
+          reaches, and a page that shows other people's stays while staying
+          quiet about your own has the disclosure the wrong way round. There is
+          no opt-out to offer (owner decision D3), so the honest thing is to be
+          plain about it rather than leave it to be discovered.
+        */}
+        <p className="mt-1 text-sm text-muted-foreground">
+          Your own stays appear here too, for every other member who can book
+          that {singleLodge ? "lodge" : "lodge"} to see.
         </p>
       </header>
 
       {!hasAnyone ? (
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            Nobody is booked in over the next 30 nights.
+            Nobody is booked in over the next {ROSTER_WINDOW_DAYS} nights.
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-6">
           {roster.lodges.map((lodge) => (
-            <LodgeSection key={lodge.lodgeId} lodge={lodge} />
+            <LodgeSection
+              key={lodge.lodgeId}
+              lodge={lodge}
+              showLodgeName={!singleLodge}
+            />
           ))}
         </div>
       )}
@@ -86,18 +107,32 @@ export default async function LodgeRosterPage() {
   );
 }
 
-function LodgeSection({ lodge }: { lodge: LodgeRoster }) {
+function LodgeSection({
+  lodge,
+  showLodgeName,
+}: {
+  lodge: LodgeRoster;
+  showLodgeName: boolean;
+}) {
   const empty = lodge.people.length === 0 && lodge.groups.length === 0;
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>{lodge.lodgeName}</CardTitle>
-      </CardHeader>
+      {showLodgeName ? (
+        <CardHeader>
+          {/*
+            `CardTitle` renders a bare div, so the level is said at the call
+            site (#2796). Everything below the page h1 is one of these, so
+            without it a screen-reader heading list holds a single entry for
+            the whole page and no way to move between lodges.
+          */}
+          <CardTitle headingLevel={2}>{lodge.lodgeName}</CardTitle>
+        </CardHeader>
+      ) : null}
       <CardContent>
         {empty ? (
           <p className="text-sm text-muted-foreground">
-            Nobody is booked in over the next 30 nights.
+            Nobody is booked in over the next {ROSTER_WINDOW_DAYS} nights.
           </p>
         ) : (
           <ul className="divide-y">
@@ -109,7 +144,13 @@ function LodgeSection({ lodge }: { lodge: LodgeRoster }) {
                 <span className="font-medium">
                   {group.label}
                   <span className="ml-2 text-sm font-normal text-muted-foreground">
-                    {group.count === 1 ? "1 person" : `${group.count} people`}
+                    {/*
+                      "up to", because `count` is the busiest single night of
+                      this booking, not a total across the range beside it. A
+                      bare number here would claim everyone was present
+                      throughout.
+                    */}
+                    {group.count === 1 ? "1 person" : `up to ${group.count} people`}
                   </span>
                 </span>
                 <Nights nights={group.nights} />
@@ -139,43 +180,21 @@ function LodgeSection({ lodge }: { lodge: LodgeRoster }) {
  * to an envelope would say somebody was here on a night they were not.
  */
 function Nights({ nights }: { nights: string[] }) {
-  const runs = groupIntoRuns(nights);
+  // `collapseNightRuns` is the tree's existing answer to "turn sorted nights
+  // into contiguous runs" and it sorts and de-duplicates on the way, which a
+  // local version would only do by accident of its caller (INV-SSOT).
+  const runs = collapseNightRuns(nights);
   return (
     <span className="text-sm text-muted-foreground">
       {runs
         .map((run) =>
-          run.length === 1
-            ? formatNight(run[0]!)
-            : `${formatNight(run[0]!)} - ${formatNight(run[run.length - 1]!)}`
+          run.firstNight === run.lastNight
+            ? formatNight(run.firstNight)
+            : `${formatNight(run.firstNight)} - ${formatNight(run.lastNight)}`
         )
         .join(", ")}
     </span>
   );
-}
-
-/** Split an ascending list of `YYYY-MM-DD` nights into consecutive runs. */
-function groupIntoRuns(nights: string[]): string[][] {
-  const runs: string[][] = [];
-  for (const night of nights) {
-    const current = runs[runs.length - 1];
-    if (current && isNextDay(current[current.length - 1]!, night)) {
-      current.push(night);
-    } else {
-      runs.push([night]);
-    }
-  }
-  return runs;
-}
-
-/**
- * Step a lodge night with the kernel's own operation rather than by adding
- * 24 hours to an instant. A lodge night is a calendar date and has no zone;
- * arithmetic on a parsed instant is the single most repeated defect in this
- * codebase's history (INV-DATE-019), so it is not done here even where the
- * values happen to be UTC-anchored.
- */
-function isNextDay(previous: string, next: string): boolean {
-  return addCalendarDays(requireCalendarDate(previous), 1) === next;
 }
 
 function formatNight(night: string): string {

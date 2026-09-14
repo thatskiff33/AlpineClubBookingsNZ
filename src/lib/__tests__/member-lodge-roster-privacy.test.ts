@@ -91,10 +91,17 @@ const FORBIDDEN_KEYS = [
   "status",
   "bedId",
   "roomId",
-  "wholeLodgeHold",
   "arrivalTime",
   "groupBookingId",
 ] as const;
+
+/**
+ * Read but never returned. `wholeLodgeHold` decides whether a party had the
+ * building to itself, which is what SUPPRESSES their names — so the module
+ * must select it, and the payload must not carry it. Consulting and
+ * disclosing are different things and this suite checks them separately.
+ */
+const CONSULTED_NOT_DISCLOSED = ["wholeLodgeHold"] as const;
 
 function instant(day: string): Date {
   return new Date(`${day}T00:00:00.000Z`);
@@ -140,9 +147,15 @@ function bookingRow(options: {
   guests: ReturnType<typeof guest>[];
   checkIn?: string;
   checkOut?: string;
+  wholeLodgeHold?: boolean;
 }) {
   return {
     lodgeId: options.lodgeId,
+    // Consulted by the builder as outright sole occupancy, so it is a real
+    // input here rather than a planted secret. Defaults false: a fixture that
+    // held the whole lodge on every booking would suppress every name and the
+    // naming tests below would pass for the wrong reason.
+    wholeLodgeHold: options.wholeLodgeHold ?? false,
     checkIn: instant(options.checkIn ?? TODAY),
     checkOut: instant(options.checkOut ?? "2026-07-05"),
     member: {
@@ -159,7 +172,6 @@ function bookingRow(options: {
     notes: SECRETS.notes,
     totalCents: Number(SECRETS.price),
     status: "PAID",
-    wholeLodgeHold: true,
     groupBooking: { joinCode: SECRETS.joinCode },
   };
 }
@@ -201,6 +213,7 @@ describe("member lodge roster — what the select may name", () => {
       "guests",
       "lodgeId",
       "member",
+      "wholeLodgeHold",
     ]);
     expect(
       Object.keys(MEMBER_ROSTER_BOOKING_SELECT.member.select).sort()
@@ -404,7 +417,9 @@ describe("member lodge roster — the built payload", () => {
       "INV-PRIV-017: COUNTS_ONLY must yield no personal name at all."
     ).not.toContain("Jane");
     expect(payload).not.toContain("Ari");
-    expect(roster.lodges[0]?.countsByNight[TODAY]).toBe(2);
+    // Counts survive as the group rows' own figures; there is no per-night
+    // total in the payload, deliberately.
+    expect(roster.lodges[0]?.groups.map((g) => g.count).sort()).toEqual([1, 1]);
   });
 });
 
@@ -498,6 +513,153 @@ describe("member lodge roster — sole occupancy", () => {
     const roster = await buildMemberLodgeRoster("viewer-1");
     expect(roster.lodges[0]?.people).toEqual([]);
     expect(JSON.stringify(roster)).not.toContain("Teacher");
+  });
+});
+
+describe("member lodge roster — findings from adversarial review", () => {
+  it("suppresses a small party that hired the WHOLE lodge, at any size", async () => {
+    // A whole-lodge hold is sole occupancy outright. Five people who took the
+    // entire building are a private party; without consulting the flag they
+    // fall under the group threshold and get named the moment any second
+    // booking exists in the window.
+    mockPrisma.booking.findMany.mockResolvedValue([
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Jane", lastName: "Smith", ageTier: "ADULT" },
+        guests: Array.from({ length: 5 }, (_, i) =>
+          guest(`Private${i}`, "Smith", "ADULT", [TODAY])
+        ),
+        wholeLodgeHold: true,
+      }),
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Ari", lastName: "Nikau", ageTier: "ADULT" },
+        guests: [guest("Ari", "Nikau", "ADULT", ["2026-07-20"])],
+      }),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    const payload = JSON.stringify(roster);
+    expect(
+      payload,
+      "INV-PRIV-017: a party that hired the whole lodge must not be named, whatever its size."
+    ).not.toContain("Private0");
+    // The row collapses to the booking's own label. With no minor on the
+    // booking that label is the organiser at the lodge's granularity, which is
+    // the lobby display's behaviour too: the PARTY is what is protected here,
+    // not the fact that a booking exists under somebody's name.
+    expect(roster.lodges[0]?.groups.map((g) => g.label)).toEqual([
+      "Jane Smith",
+    ]);
+    expect(roster.lodges[0]?.people.map((p) => p.name)).not.toContain(
+      "Private0 Smith"
+    );
+  });
+
+  it("never puts the hold flag in the payload, though it reads it", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Jane", lastName: "Smith", ageTier: "ADULT" },
+        guests: [guest("Jane", "Smith", "ADULT", [TODAY])],
+        wholeLodgeHold: true,
+      }),
+    ]);
+    const payload = JSON.stringify(await buildMemberLodgeRoster("viewer-1"));
+    for (const key of CONSULTED_NOT_DISCLOSED) {
+      expect(
+        payload,
+        `INV-PRIV-017: "${key}" may be read but must never be serialized.`
+      ).not.toContain(key);
+    }
+  });
+
+  it("applies the minor rule to the WHOLE booking, not just the nights on screen", async () => {
+    // The children join after the window closes. Asking only about the nights
+    // on screen would name the parents today and suppress them tomorrow, and
+    // the flip would announce that a child is on the booking.
+    mockPrisma.booking.findMany.mockResolvedValue([
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Parent", lastName: "Rangi", ageTier: "ADULT" },
+        guests: [
+          guest("Parent", "Rangi", "ADULT", [TODAY]),
+          guest(SECRETS.childFirstName, SECRETS.childLastName, "CHILD", [
+            FIRST_NIGHT_OUTSIDE,
+          ]),
+        ],
+        checkIn: TODAY,
+        checkOut: "2026-08-02",
+      }),
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Ari", lastName: "Nikau", ageTier: "ADULT" },
+        guests: [guest("Ari", "Nikau", "ADULT", [TODAY])],
+      }),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(
+      JSON.stringify(roster),
+      "INV-PRIV-017 (owner decision D1): a booking containing a minor names nobody in it, even when the minor's nights fall outside the window."
+    ).not.toContain("Parent");
+    expect(roster.lodges[0]?.groups.map((g) => g.label)).toContain(
+      "Rangi family"
+    );
+  });
+
+  it("reports a group's BUSIEST night, not everyone who passed through", async () => {
+    // Three people for two nights, three different people for two more. Six
+    // were here; three at a time. A row reading "6 people, 1-5 Jul" beside
+    // that range would be false about every night in it.
+    mockPrisma.booking.findMany.mockResolvedValue([
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Parent", lastName: "Rangi", ageTier: "ADULT" },
+        guests: [
+          ...Array.from({ length: 3 }, (_, i) =>
+            guest(`Early${i}`, "Rangi", "ADULT", [TODAY, "2026-07-02"])
+          ),
+          ...Array.from({ length: 3 }, (_, i) =>
+            guest(`Late${i}`, "Rangi", "ADULT", ["2026-07-04", "2026-07-05"])
+          ),
+          guest(SECRETS.childFirstName, SECRETS.childLastName, "CHILD", [
+            TODAY,
+          ]),
+        ],
+        checkOut: "2026-07-06",
+      }),
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Ari", lastName: "Nikau", ageTier: "ADULT" },
+        guests: [guest("Ari", "Nikau", "ADULT", ["2026-07-20"])],
+      }),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    const group = roster.lodges[0]?.groups[0];
+    expect(group?.count, "the peak night, not the window total").toBe(4);
+  });
+
+  it("does not return a per-night total for anyone to difference", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Jane", lastName: "Smith", ageTier: "ADULT" },
+        guests: [guest("Jane", "Smith", "ADULT", [TODAY])],
+      }),
+    ]);
+    const payload = JSON.stringify(await buildMemberLodgeRoster("viewer-1"));
+    expect(
+      payload,
+      "INV-PRIV-017: a per-night occupancy total is the figure a reader would difference against the availability calendar; it must not be in the payload."
+    ).not.toContain("countsByNight");
+  });
+
+  it("reports the window as half-open, so `to` is one past the last night", async () => {
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(roster.from).toBe(TODAY);
+    expect(roster.to).toBe(FIRST_NIGHT_OUTSIDE);
   });
 });
 
@@ -605,7 +767,7 @@ describe("member lodge roster — the source fence", () => {
   });
 
   it("names no forbidden column anywhere in the module", () => {
-    for (const key of ["joinCode", "dietary", "wholeLodgeHold", "bedId"]) {
+    for (const key of ["joinCode", "dietary", "bedId"]) {
       expect(
         SOURCE,
         `INV-PRIV-017: the roster module must not name "${key}" at all, in a select or anywhere else.`

@@ -4,7 +4,10 @@ import type { DisplayNameGranularity, Prisma } from "@prisma/client";
 
 import { isGuestActiveOnNight } from "./booking-guest-stay-ranges";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "./booking-status";
-import { addCalendarDays } from "./club-time/calendar-date";
+import {
+  addCalendarDays,
+  eachCalendarDate,
+} from "./club-time/calendar-date";
 import type { CalendarDate } from "./club-time/types";
 import { dateOnlyInstantOf } from "./club-time/instant";
 import { clubTime } from "./club-time/server";
@@ -74,6 +77,14 @@ export const MEMBER_ROSTER_BOOKING_SELECT = {
   lodgeId: true,
   checkIn: true,
   checkOut: true,
+  // CONSULTED, NEVER DISCLOSED, and the difference is the whole point. A
+  // whole-lodge hold is authoritative sole occupancy on the lobby display
+  // (`lodge-display-state.ts`), which suppresses the party's names whatever
+  // its size. The roster has to ask the same question or it names a party of
+  // five who hired the entire building. Reading the column is what PROTECTS
+  // them; what would leak is putting it in the payload, and the payload test
+  // asserts the key and the value are both absent from the built result.
+  wholeLodgeHold: true,
   member: {
     select: { firstName: true, lastName: true, ageTier: true },
   },
@@ -108,7 +119,16 @@ export interface RosterPerson {
  */
 export interface RosterGroup {
   label: string;
-  /** How many people the booking has here, across the window. */
+  /**
+   * The MOST people this booking has here on any one night.
+   *
+   * Not the number of distinct people across the window, which is the obvious
+   * reading and the wrong one: drawn beside a night range, "6 people, 1-5 Jul"
+   * would claim six people were present throughout when the booking was three
+   * people arriving and three more replacing them. A peak is the largest true
+   * statement that a single number beside a range can make, and the page words
+   * it as "up to N" so it cannot be read as a nightly total.
+   */
   count: number;
   nights: string[];
 }
@@ -119,12 +139,18 @@ export interface LodgeRoster {
   granularity: DisplayNameGranularity;
   people: RosterPerson[];
   groups: RosterGroup[];
-  /** Total people present per night, keyed `YYYY-MM-DD`. */
-  countsByNight: Record<string, number>;
 }
 
 export interface MemberLodgeRoster {
+  /** First lodge night shown, INCLUSIVE. */
   from: string;
+  /**
+   * One day PAST the last night shown, exclusive — the same half-open shape
+   * every stay window in this codebase uses. With a 30-night window starting
+   * `2026-07-01`, `to` is `2026-07-31` and the last night listed is
+   * `2026-07-30`. Said explicitly because the two field names read as a
+   * symmetric pair and are not one.
+   */
   to: string;
   lodges: LodgeRoster[];
 }
@@ -166,10 +192,7 @@ export async function buildMemberLodgeRoster(
   const from = club.today();
   const to = addCalendarDays(from, ROSTER_WINDOW_DAYS);
 
-  const windowNights: CalendarDate[] = [];
-  for (let i = 0; i < ROSTER_WINDOW_DAYS; i += 1) {
-    windowNights.push(addCalendarDays(from, i));
-  }
+  const windowNights = eachCalendarDate(from, to);
 
   const eligible = await getEligibleLodgeIdsForMember(prisma, memberId);
 
@@ -236,7 +259,12 @@ function buildOneLodgeRoster(
 
   const people: RosterPerson[] = [];
   const groups: RosterGroup[] = [];
-  const countsByNight: Record<string, number> = {};
+
+  // How many people the lodge holds each night, across every booking. Local to
+  // this function and deliberately NOT returned: it is the exact figure a
+  // reader could difference against another surface, and a value that is never
+  // in the payload cannot be rendered by a later edit that forgets why.
+  const lodgeNightTotals = new Map<string, number>();
 
   // PASS ONE: who is present, on which nights, and how many people the lodge
   // holds each night. Sole occupancy cannot be decided until every booking has
@@ -253,7 +281,7 @@ function buildOneLodgeRoster(
     for (const entry of present) {
       for (const night of entry.nights) {
         nightCounts.set(night, (nightCounts.get(night) ?? 0) + 1);
-        countsByNight[night] = (countsByNight[night] ?? 0) + 1;
+        lodgeNightTotals.set(night, (lodgeNightTotals.get(night) ?? 0) + 1);
       }
     }
     return { booking, present, nightCounts };
@@ -280,18 +308,29 @@ function buildOneLodgeRoster(
     // matters — it NAMED two fourteen-person school groups that never
     // overlapped, because the window held two bookings, even though each had
     // the lodge entirely to itself for its whole stay.
+    // A whole-lodge hold is sole occupancy OUTRIGHT, at any party size, which
+    // is how the lobby display reads it. Without this a member who hires the
+    // entire building for five people is fully named the moment any second
+    // booking exists in the window, because five is under the group threshold.
     const isGroup =
       booking.member.ageTier === "NOT_APPLICABLE" ||
       booking.guests.length >= WHOLE_LODGE_MIN_GUESTS;
     const soleOccupancy =
-      isGroup &&
-      nightCounts.size > 0 &&
-      [...nightCounts.entries()].every(
-        ([night, count]) => countsByNight[night] === count
-      );
+      booking.wholeLodgeHold ||
+      (isGroup &&
+        nightCounts.size > 0 &&
+        [...nightCounts.entries()].every(
+          ([night, count]) => lodgeNightTotals.get(night) === count
+        ));
 
-    const containsMinors = present.some((entry) =>
-      isMinorAgeTier(entry.guest.ageTier)
+    // Over the WHOLE booking, not merely the part of it inside the window.
+    // Decision D1 is a property of the booking: "a booking containing a minor
+    // names nobody in it". Asking only about the nights on screen lets a family
+    // whose children join on the 31st be named on the 30th and suppressed the
+    // next day, and the flip itself would announce that a child is on that
+    // booking — the association D1 exists to prevent.
+    const containsMinors = booking.guests.some((guest) =>
+      isMinorAgeTier(guest.ageTier)
     );
 
     const namesAllowed = namesAllowedForBooking({
@@ -308,13 +347,14 @@ function buildOneLodgeRoster(
       // the thing the rule exists to prevent (owner decision D1).
       const nights = new Set<string>();
       for (const entry of present) for (const n of entry.nights) nights.add(n);
+      const peak = Math.max(...nightCounts.values());
       groups.push({
         label: bookingLabel(booking.member, {
           granularity,
           containsMinors,
-          guestCount: present.length,
+          guestCount: peak,
         }),
-        count: present.length,
+        count: peak,
         nights: [...nights].sort(),
       });
       continue;
@@ -344,6 +384,5 @@ function buildOneLodgeRoster(
     granularity,
     people,
     groups,
-    countsByNight,
   };
 }

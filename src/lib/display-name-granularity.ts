@@ -38,8 +38,21 @@ export const DEFAULT_DISPLAY_NAME_GRANULARITY: DisplayNameGranularity =
  */
 export const MINOR_AGE_TIERS: readonly AgeTier[] = ["INFANT", "CHILD", "YOUTH"];
 
-export function isMinorAgeTier(ageTier: AgeTier): boolean {
-  return MINOR_AGE_TIERS.includes(ageTier);
+/**
+ * Is this age tier a minor?
+ *
+ * Accepts a loose string and a nullish value as well as the enum, because the
+ * custodian/hut-leader surfaces read the tier off rows that type it as a plain
+ * string. That breadth is here so there is ONE answer to this question rather
+ * than a strict copy and a loose copy that can disagree the day a club adds an
+ * age tier (they are configurable — Admin -> Age tiers).
+ */
+export function isMinorAgeTier(
+  ageTier: AgeTier | string | null | undefined
+): boolean {
+  return ageTier
+    ? (MINOR_AGE_TIERS as readonly string[]).includes(ageTier)
+    : false;
 }
 
 /**
