@@ -64,6 +64,12 @@ export async function getOperationalRosterGuestsForDate(
     },
     include: {
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      // Without it the accessor has no projection to build and hands the null
+      // member back, so a school's chore group on the roster lost its name and
+      // degraded to "Booking group 3" — the same partial-select defect the two
+      // capacity conflict queries carried.
+      organisation: { select: { name: true, email: true } },
       guests: {
         where: {
           stayStart: { lte: date },
@@ -90,7 +96,7 @@ export async function getOperationalRosterGuestsForDate(
   });
 
   return bookings.flatMap((booking, bookingIndex) => {
-    const ownerName = [bookingOwner(booking).member?.firstName, bookingOwner(booking).member?.lastName]
+    const ownerName = [bookingOwner(booking).member.firstName, bookingOwner(booking).member.lastName]
       .filter(Boolean)
       .join(" ");
     const bookingGroupLabel = ownerName

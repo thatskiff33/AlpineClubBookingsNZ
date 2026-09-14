@@ -17,7 +17,11 @@ import {
   type EditReviewSettlementRoute,
 } from "@/lib/edit-financial-review-settlement";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
-import { createBookingModificationCredit, requireMemberCreditRecipient } from "@/lib/member-credit";
+import {
+  createBookingModificationCredit,
+  requireMemberCreditRecipient,
+  SchoolHasNoCreditAccountError,
+} from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import {
@@ -562,6 +566,15 @@ export async function resolveManualRefundTask(
             "This booking's payment changed while you were closing the task — refresh and try again.",
             409
           );
+        }
+        // #3369: the same class of masking, for the same reason. This route's
+        // catch tests `ManualBookingPaymentError` and nothing else, so a school
+        // booking whose reduction an officer chose to settle as account credit
+        // reported "Could not close the refund task" and a 500 — for a correct
+        // refusal, on a screen that had just offered the choice. The message
+        // says what to do instead, so it has to reach the officer.
+        if (error instanceof SchoolHasNoCreditAccountError) {
+          throw new ManualBookingPaymentError(error.message, error.status);
         }
         throw error;
       }

@@ -514,29 +514,32 @@ are permanent: never renumbered, never reused.
 ## INV-SSOT-005
 
 Who owns a booking is answered by `bookingOwner()` in
-`src/lib/booking-owner.ts` and nowhere else. Stage 3 of programme #2912
-(#3368). Reasoning: that module's docblock.
+`src/lib/booking-owner.ts`, nowhere else. #2912 stage 3 (#3368); reasoning in
+that module's docblock.
 
-- **One accessor, and a census that keeps it one.** The owning party used to be
-  read straight off the row in several hundred places, each assuming the answer
-  is a person and that there always is one. Stage 4 (#3369) makes the member
-  link optional and both assumptions stop being true, so the question has to
-  have one home before it can have a second answer.
-  `booking-owner-census.test.ts` reads every file under `src/` and `scripts/`
-  from disk and fails when a direct read comes back, and states its own blind
-  spots; the accessor's body is the single exemption.
-- **While the column is still required the accessor is the IDENTITY**, which is
-  what makes a sweep this wide checkable hunk by hunk: the value returned is the
-  value that was already there, so no hunk has behaviour to preserve by
-  argument.
+- **One accessor, and a census that keeps it one.** Stage 4 (#3369) makes the
+  member link optional, so the owner is no longer certainly a person nor
+  certainly present. `booking-owner-census.test.ts` reads `src/` and `scripts/`
+  from disk, fails on a direct read, and states its blind spots; the accessor is
+  the single exemption.
+- **While the column was still required the accessor was the IDENTITY**, which
+  is what made a sweep this wide checkable.
 - **A comparison against a signed-in actor stays a comparison against a member,
-  and keeps failing closed.** A person signs in; an organisation does not. So
-  "is this my booking?" is correctly "no" for an organisation-owned one. The
-  refusal a school liaison then meets is a product question this programme
-  deliberately does not answer.
-- **The credit ledger stays a MEMBER ledger.** Credit belongs to a person's
-  account, so a booking with no member has none to lock and no balance to read.
-  Stage 4 branches at each member-keyed call site rather than handing a helper
-  an empty key, which would degenerate to a shared advisory key (`INV-LOCK`).
-- **Measure both published site lists by running the census.** A list restated
-  by hand is a list that has already drifted (`INV-SSOT-004`).
+  and keeps failing closed.** An organisation never signs in, so "is this my
+  booking?" is correctly "no" for one. The refusal a school liaison meets is a
+  product question this programme does not answer (#3369).
+- **The credit ledger stays a MEMBER ledger.** A booking with no member has none
+  to lock and no balance to read, so stage 4 branches at each member-keyed call
+  site rather than passing an empty key, which degenerates to a shared advisory
+  key (`INV-LOCK`).
+- **Selecting the member WITHOUT the organisation is a defect this census cannot
+  see.** The projection needs both relations, so such a query hands a school
+  booking's member back as `null`, with no read to find. The compiler catches
+  every spelling but an optional chain, which the census enumerates as its third
+  family.
+- **A `where` filtering THROUGH the relation is not covered either.**
+  `member: { is: … }` on a nullable to-one drops every organisation-owned
+  booking from a page, its window and its count, with no read and no type error.
+  A reviewer's job; no guard claims otherwise.
+- **Measure all three site lists by running the census** — one restated by hand
+  has already drifted (`INV-SSOT-004`).

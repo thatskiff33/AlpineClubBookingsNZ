@@ -39,11 +39,29 @@
  *
  * ## The lists this publishes, and why they are lists rather than counts
  *
- * Stage 4 (#3369) makes the member link optional. The two families below are
+ * Stage 4 (#3369) makes the member link optional. The three families below are
  * where a missing member is a correctness problem rather than a display one, so
  * this census keeps them enumerated and current — for the next stage to work
  * from, and so nobody re-derives them by hand at the moment they matter.
  * **Re-measure by running this test; never edit a list by incrementing it.**
+ *
+ * ## The blind spot this census has NOT closed, stated rather than implied
+ *
+ * Everything here scans for a property READ. Two #3369 defect shapes have no
+ * read to find, and a reader who takes this census as covering them will be
+ * wrong:
+ *
+ * - **A Prisma `select` that omits `organisation`.** The accessor can only
+ *   build the owner projection when both relations were loaded. The compiler
+ *   catches most of it — `Booking.member` is optional now, so reading through
+ *   it without the projection is a type error — but an OPTIONAL CHAIN
+ *   type-checks and renders a blank. That is the third family below, which is
+ *   why it is enumerated.
+ * - **A `where` clause that filters THROUGH the relation.** `member: { is: … }`
+ *   on a nullable to-one silently excludes every organisation-owned booking
+ *   from a page, its pagination window and its count. There is no read and no
+ *   type error, and nothing distinguishes a deliberate member-only scope from
+ *   an accidental one. This census does not see it and cannot be made to.
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -246,7 +264,7 @@ describe("#3368: a booking's owner is read in exactly one place", () => {
 });
 
 /**
- * The two families stage 4 (#3369) HAS NOW DECIDED, site by site.
+ * The three families stage 4 (#3369) HAS NOW DECIDED, site by site.
  *
  * Both are asserted as sorted lists rather than counts: when one changes, the
  * failure shows WHICH site arrived. The #2912 census put the first family at
@@ -274,6 +292,50 @@ const COMPARISON =
 const MEMBER_KEYED_HELPER =
   /\b(?:lockMemberCreditLedger|getMemberCreditBalance|findOrCreateXeroContact|restoreCreditFromBooking|createBookingModificationCredit)\(\s*\n?\s*bookingOwner\(/;
 
+/**
+ * THE PARTIAL SELECT, seen from the only side a text scan can see it (#3369).
+ *
+ * The census above scans for a property READ. It cannot see a Prisma `select`
+ * that simply OMITS `organisation` — there is no read there to find — and that
+ * omission is the third #3369 defect class: `bookingOwner()` can only build the
+ * owner projection when the caller loaded BOTH relations, so a query that takes
+ * `member` alone hands a school booking's `member` back as `null` and the screen
+ * says "Unknown member". Two capacity conflict queries shipped exactly that.
+ *
+ * WHAT ACTUALLY CATCHES IT is the compiler, in every case but one.
+ * `Booking.member` is optional since #3369, so a caller that selected the member
+ * alone gets `member: M | null` straight through
+ * {@link BookingOwnerView} — and `bookingOwner(x).member.firstName` on that is a
+ * type error. The one escape is an OPTIONAL CHAIN, which type-checks, renders a
+ * blank, and looks like ordinary defensiveness. That is precisely how both
+ * capacity queries passed review.
+ *
+ * So this family is ENUMERATED rather than banned, because the chain has a
+ * legitimate reason too — and, measured across all ten sites, the legitimate
+ * reason is the commoner one. The accessor's own docblock records it: a booking
+ * that NAMES a member whose row could not be read hands back what the caller
+ * has, which is nothing. A caller guarding that documented state loads the
+ * organisation AND writes a chain, and its chain is correct even though the
+ * TYPE says non-null.
+ *
+ * The point of the list, therefore, is not that a chain is wrong. It is that
+ * the two cases are indistinguishable from the chain alone, so each site has to
+ * be TRACED to the query that produced it — and a list is what makes an
+ * untraced new one visible. That tracing found one real defect among ten:
+ * `roster-eligibility.ts` selected the member without the organisation, so a
+ * school's chore group lost its name and degraded to "Booking group 3".
+ *
+ * STILL NOT SEEN, and saying so is the point of writing it down: a `where`
+ * clause that filters THROUGH the relation. `where: { member: { is: … } }` on a
+ * nullable to-one excludes every organisation-owned booking from the page, the
+ * pagination window and the count, with no property read and no type error
+ * anywhere — which is how the admin bookings list search dropped every school
+ * booking. Nothing here can see that shape, and no scanner in this tree can tell
+ * a deliberate member-only scope from an accidental one. It is a reviewer's job.
+ */
+const OPTIONAL_OWNER_READ =
+  /bookingOwner\([^()]*(?:\([^()]*\))?[^()]*\)\s*\?\.|bookingOwner\([^()]*(?:\([^()]*\))?[^()]*\)\.(?:member|memberId)\s*\?\./;
+
 function sitesMatching(pattern: RegExp): string[] {
   const out: string[] = [];
   for (const [file, source] of scanned.code) {
@@ -284,7 +346,7 @@ function sitesMatching(pattern: RegExp): string[] {
   return out.sort();
 }
 
-describe("#3368: the two families stage 4 (#3369) has to answer for", () => {
+describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
   it("enumerates every ownership comparison against an actor", () => {
     const sites = sitesMatching(COMPARISON);
     expect(
@@ -310,6 +372,52 @@ describe("#3368: the two families stage 4 (#3369) has to answer for", () => {
         "(#3369) branches at each of these rather than passing an empty key. " +
         "RE-MEASURE BY RUNNING THIS TEST rather than editing the list.",
     ).toEqual(MEMBER_KEYED_HELPER_SITES);
+  });
+
+  it("enumerates every owner read that survives a missing projection", () => {
+    const sites = sitesMatching(OPTIONAL_OWNER_READ);
+    expect(
+      sites,
+      "The set of optional-chained owner reads has moved. A chain on " +
+        "`bookingOwner(...)` is the ONE spelling of the partial-select defect " +
+        "that type-checks: if the query behind it selected `member` without " +
+        "`organisation`, the accessor cannot build the owner projection, an " +
+        "organisation-owned booking reads back as `null`, and the screen says " +
+        "'Unknown member' or nothing at all. Three queries shipped exactly " +
+        "that in #3369 — two capacity conflict lists and the chore roster. " +
+        "A chain can ALSO be a correct guard against the named-but-unreadable " +
+        "member the accessor documents, and the two are indistinguishable " +
+        "from here. So TRACE a new site to the query that produced it before " +
+        "adding it: if the organisation belongs in that selection, add it and " +
+        "drop the chain. RE-MEASURE BY RUNNING THIS TEST rather than editing " +
+        "the list (`INV-SSOT-005`).",
+    ).toEqual(OPTIONAL_OWNER_READ_SITES);
+  });
+
+  it("FAILS when a new optional-chained owner read appears (fixture proof)", () => {
+    // Both spellings, and the nested-call form the capacity queries used.
+    for (const code of [
+      "const name = bookingOwner(row).member?.firstName;",
+      "const id = bookingOwner(payment.booking)?.memberId;",
+      "if (bookingOwner(booking).member?.email) return;",
+    ]) {
+      expect(OPTIONAL_OWNER_READ.test(code), `no hit for: ${code}`).toBe(true);
+    }
+  });
+
+  it("does NOT fire on an owner read that loaded the whole projection", () => {
+    // The fixed shape. Without this the rule could be "passing" because it
+    // matches every `bookingOwner(` call, which would make the list above a
+    // list of every reader in the tree rather than of the ones at risk.
+    for (const code of [
+      "const name = bookingOwner(row).member.firstName;",
+      "const id = bookingOwner(booking).memberId;",
+      "return bookingOwner(payment.booking).member.email ?? '';",
+    ]) {
+      expect(OPTIONAL_OWNER_READ.test(code), `false hit for: ${code}`).toBe(
+        false,
+      );
+    }
   });
 });
 
@@ -364,6 +472,23 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/waitlist.ts:1079",
   "src/lib/waitlist.ts:937",
   "src/lib/xero-period-lock-guard.ts:569",
+];
+
+/** Measured, not counted by hand. Re-measure by running this test. */
+const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
+  // Every one traced to its query. All nine load the organisation, so each
+  // chain guards the named-but-unreadable member rather than a missing
+  // projection. The tenth — `roster-eligibility.ts:93` — did not, and is fixed
+  // rather than listed.
+  "src/lib/booking-exception-approval.ts:625",
+  "src/lib/diagnostics/tools/packs/booking-evidence.ts:1434",
+  "src/lib/manual-booking-payment.ts:261",
+  "src/lib/member-guest-consent-service.ts:1080",
+  "src/lib/member-guest-consent-service.ts:1153",
+  "src/lib/payment-recovery.ts:2497",
+  "src/lib/payment-recovery.ts:2548",
+  "src/lib/stripe-webhook-service.ts:1027",
+  "src/lib/xero-admin-health.ts:309",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
