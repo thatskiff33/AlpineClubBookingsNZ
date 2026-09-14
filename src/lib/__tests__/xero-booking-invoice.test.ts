@@ -957,7 +957,9 @@ describe("createXeroInvoiceForBooking", () => {
     }
 
     beforeEach(() => {
-      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        withMoneyBuildUpProjection(internetBankingBooking()),
+      );
       mocks.xeroClientInstance.accountingApi.emailInvoice.mockResolvedValue({
         body: {},
       });
@@ -1161,7 +1163,7 @@ describe("createXeroInvoiceForBooking", () => {
       // fact and is what the officer has to act on, so it is the one recorded.
       operationSays("WITHHELD_AT_CREATION");
       mocks.prisma.booking.findUnique.mockResolvedValue(
-        internetBankingBooking({ noEmails: true }),
+        withMoneyBuildUpProjection(internetBankingBooking({ noEmails: true })),
       );
 
       await createXeroInvoiceForBooking("booking_1", {
@@ -1207,7 +1209,7 @@ describe("createXeroInvoiceForBooking", () => {
       // The persistent switch, with no creation-time instruction at all.
       operationSays(null);
       mocks.prisma.booking.findUnique.mockResolvedValue(
-        internetBankingBooking({ noEmails: true }),
+        withMoneyBuildUpProjection(internetBankingBooking({ noEmails: true })),
       );
       await createXeroInvoiceForBooking("booking_1", {
         syncOperationId: "op_1",
@@ -1258,7 +1260,7 @@ describe("createXeroInvoiceForBooking", () => {
       vi.clearAllMocks();
       declareEnvironmentRole("non-production");
       operationSays("SEND");
-      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+      mocks.prisma.booking.findUnique.mockResolvedValue(withMoneyBuildUpProjection(internetBankingBooking()));
       mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
         body: {
           contacts: [
@@ -1278,7 +1280,7 @@ describe("createXeroInvoiceForBooking", () => {
       vi.clearAllMocks();
       declareEnvironmentRole("production");
       operationSays("SEND");
-      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+      mocks.prisma.booking.findUnique.mockResolvedValue(withMoneyBuildUpProjection(internetBankingBooking()));
       mocks.xeroClientInstance.accountingApi.emailInvoice.mockRejectedValue(
         new Error("503 from Xero"),
       );
@@ -1290,7 +1292,7 @@ describe("createXeroInvoiceForBooking", () => {
       // 4. An ordinary send.
       vi.clearAllMocks();
       operationSays("SEND");
-      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+      mocks.prisma.booking.findUnique.mockResolvedValue(withMoneyBuildUpProjection(internetBankingBooking()));
       mocks.xeroClientInstance.accountingApi.emailInvoice.mockResolvedValue({
         body: {},
       });
