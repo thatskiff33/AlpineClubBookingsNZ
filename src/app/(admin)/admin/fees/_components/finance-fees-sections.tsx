@@ -141,15 +141,16 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
   const [stagedBilling, setStagedBilling] = useState<Record<string, string | null>>({});
   const [deleteTarget, setDeleteTarget] = useState<{ action: "DELETE_MEMBERSHIP_FEE" | "DELETE_JOINING_FEE"; id: string; label: string } | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const { scrollToError } = useScrollToFeedback();
+  const { scrollToError, revealEditor } = useScrollToFeedback();
   // The per-fee Edit pencils sit in lists below the form they populate, which
   // renders at the top of the panel — without a scroll nothing visibly changes
-  // on click. Scroll the panel's own top into view (not the page top: these
-  // panels sit below Hut Fees, so the page top would hide them entirely).
+  // on click. Reveal the panel itself (not the page top: these panels sit below
+  // Hut Fees, so the page top would hide them entirely) through the shared
+  // reveal primitive, so the panel also takes focus for keyboard and
+  // screen-reader users (#2934).
   const joiningPanelRef = useRef<HTMLDivElement>(null);
   const membershipPanelRef = useRef<HTMLDivElement>(null);
-  const scrollToPanelTop = (panel: { current: HTMLDivElement | null }) =>
-    panel.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const scrollToPanelTop = revealEditor;
   // #2264 — example amounts move out of the placeholders (grey text inside a
   // money box reads as an amount already entered) and into hints under each
   // field.

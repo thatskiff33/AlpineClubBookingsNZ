@@ -65,14 +65,8 @@ vi.mock("next-auth/react", () => ({
 vi.mock("@/components/club-identity-provider", () => ({
   useClubIdentity: () => ({ hutLeaderLabel: "Hut Leader" }),
 }));
-vi.mock("@/hooks/use-scroll-to-feedback", () => ({
-  useScrollToFeedback: () => ({
-    scrollToError: vi.fn(),
-    scrollToTop: vi.fn(),
-  }),
-}));
-
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 function settings(capacity: number) {
   return {
@@ -143,6 +137,33 @@ describe("LodgeCapacityCard — graceful cross-area 403 (#1548)", () => {
     await waitFor(() => {
       expect(screen.getByText("Failed to load lodge settings")).toBeTruthy();
     });
+    // #2934: the failure is the actionable target, so it takes focus.
+    await expectRecoveryAlertToHoldFocus(screen.getByRole("alert"));
+  });
+
+  it("moves attention to the top of the card when a save succeeds (#2934)", async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(
+        init?.method === "PUT" ? response(200, settings(15)) : response(200, settings(11)),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<LodgeCapacityCard />);
+    await waitFor(() => expect(screen.getByLabelText("Capacity (beds/guests)")).toHaveValue(11));
+    const capacity = screen.getByLabelText("Capacity (beds/guests)");
+    fireEvent.change(capacity, { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.getByText("Lodge settings saved.")).toBeInTheDocument());
+    // Focus leaves the Save button for the card, whose top the success
+    // positioned at — the confirmation and the saved values are what the admin
+    // lands on.
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body));
+    const card = document.activeElement as HTMLElement;
+    expect(card).not.toBe(capacity);
+    expect(card).toContainElement(screen.getByText("Lodge settings saved."));
+    expect(card).toContainElement(capacity);
   });
 });
 

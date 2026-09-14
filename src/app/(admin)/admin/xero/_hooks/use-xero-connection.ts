@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { revealEditor } from "@/hooks/use-scroll-to-feedback"
 import { toSafeXeroOAuthCallbackMessage } from "@/lib/xero-oauth-callback-messages"
 import { SECTION_DEFAULTS, SECTION_STORAGE_KEY, type SectionKey, type XeroStatus } from "../_components/types"
 
@@ -11,6 +12,11 @@ export function useXeroConnection() {
   const [connectSuccess, setConnectSuccess] = useState(false)
   const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>(SECTION_DEFAULTS)
   const [sectionsHydrated, setSectionsHydrated] = useState(false)
+  // A "go to section" request: which section, and a nonce so the same section
+  // can be asked for twice. Opening the section and recording the request land
+  // in one commit, and the effect below runs after that commit — so the section
+  // exists when it is revealed, with no timer guessing at when (#2934).
+  const [revealRequest, setRevealRequest] = useState<{ section: SectionKey; nonce: number } | null>(null)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -31,10 +37,13 @@ export function useXeroConnection() {
 
   const scrollToSection = useCallback((section: SectionKey) => {
     setSectionOpen((prev) => ({ ...prev, [section]: true }))
-    window.setTimeout(() => {
-      document.getElementById(`xero-section-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
-    }, 0)
+    setRevealRequest((prev) => ({ section, nonce: (prev?.nonce ?? 0) + 1 }))
   }, [])
+
+  useEffect(() => {
+    if (!revealRequest) return
+    revealEditor(document.getElementById(`xero-section-${revealRequest.section}`))
+  }, [revealRequest])
 
   const handleConnect = useCallback(() => {
     window.location.href = "/api/admin/xero/connect"

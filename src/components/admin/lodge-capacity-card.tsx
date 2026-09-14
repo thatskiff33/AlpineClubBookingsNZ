@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { useClubIdentity } from "@/components/club-identity-provider";
-import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   MAX_CONFIGURED_LODGE_CAPACITY,
@@ -99,7 +99,6 @@ export function LodgeCapacityCard() {
   useEffect(() => {
     activeLodgeIdRef.current = scopedLodgeId;
   }, [scopedLodgeId]);
-  const { scrollToError, scrollToTop } = useScrollToFeedback();
 
   async function load(
     requestedLodgeId: string,
@@ -172,13 +171,14 @@ export function LodgeCapacityCard() {
     return () => controller.abort();
   }, [scopedLodgeId]);
 
-  useEffect(() => {
-    if (error) scrollToError(feedbackRef);
-  }, [error, scrollToError]);
-
-  useEffect(() => {
-    if (savedMessage) scrollToTop(cardRef);
-  }, [savedMessage, scrollToTop]);
+  // Failure wins, success positions at the top, and neither runs for a
+  // passive re-render — the shared action-attention rule (#2934).
+  useActionAttention({
+    error: error,
+    errorTarget: feedbackRef,
+    success: savedMessage,
+    successTarget: cardRef,
+  });
 
   async function save() {
     // #2701 backstop for the disabled Save button: a PUT with no lodgeId lands

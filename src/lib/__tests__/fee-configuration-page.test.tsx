@@ -31,10 +31,10 @@ const todayIn = (zone: string) =>
     day: "2-digit",
   }).format(new Date());
 
-const mocks = vi.hoisted(() => ({ toastSuccess: vi.fn(), toastError: vi.fn(), scrollToError: vi.fn() }));
+const mocks = vi.hoisted(() => ({ toastSuccess: vi.fn(), toastError: vi.fn(), scrollToError: vi.fn(), revealEditor: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: mocks.toastSuccess, error: mocks.toastError } }));
 vi.mock("@/hooks/use-scroll-to-feedback", () => ({
-  useScrollToFeedback: () => ({ scrollToError: mocks.scrollToError, scrollToTop: vi.fn() }),
+  useScrollToFeedback: () => ({ scrollToError: mocks.scrollToError, scrollToTop: vi.fn(), revealEditor: mocks.revealEditor }),
 }));
 
 // The finance fee sections moved to the consolidated /admin/fees console (#1933,
@@ -245,6 +245,21 @@ describe("fee configuration page", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText(/Alex Example/)).toBeTruthy();
+  });
+
+  it("reveals the fee panel for its Edit button and for each per-fee pencil (#2934)", async () => {
+    // The pencils sit in a list BELOW the form they populate, at the top of the
+    // panel, so without the reveal nothing visibly changes on click. Both
+    // triggers hand the shared reveal primitive the panel itself.
+    stubFetch(response(true, editableData));
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    expect(mocks.revealEditor).toHaveBeenCalledTimes(1);
+    const panel = (mocks.revealEditor.mock.calls[0][0] as { current: HTMLElement | null }).current;
+    expect(panel?.textContent).toContain("Annual membership fees");
+    fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
+    expect(mocks.revealEditor).toHaveBeenCalledTimes(2);
+    expect((mocks.revealEditor.mock.calls[1][0] as { current: HTMLElement | null }).current).toBe(panel);
   });
 
   it("gates the membership form and row controls behind Edit", async () => {

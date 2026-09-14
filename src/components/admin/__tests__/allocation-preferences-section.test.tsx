@@ -133,6 +133,36 @@ describe("AllocationPreferencesSection", () => {
     expect(screen.getAllByText("Disabled")).toHaveLength(2);
   });
 
+  it("moves focus and the viewport to the card on Edit, and never on a re-render (#2934)", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      vi.stubGlobal("fetch", vi.fn(async () => response()));
+      await renderLoaded();
+      // Loading and rendering the section reveals nothing.
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(document.body);
+
+      // Edit unmounts the button that held focus; the card takes it instead.
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      const card = document.activeElement as HTMLElement;
+      expect(card).not.toBe(document.body);
+      expect(card.contains(screen.getByRole("button", { name: "Cancel" }))).toBe(true);
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView.mock.instances[0]).toBe(card);
+
+      // Editing a control re-renders the open editor; that must not pull the
+      // admin back to the top of the card.
+      const toggle = screen.getByRole("checkbox", { name: "Auto allocation enabled" });
+      toggle.focus();
+      fireEvent.click(toggle);
+      expect(document.activeElement).toBe(toggle);
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
   it("renders every disabled priority in canonical order, including empty read-only state", async () => {
     vi.stubGlobal(
       "fetch",
