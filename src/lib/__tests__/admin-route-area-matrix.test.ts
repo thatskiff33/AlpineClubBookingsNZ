@@ -322,6 +322,11 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/lodge-settings": "lodge",
   "/api/admin/lodges": "lodge",
   "/api/admin/lodges/[id]": "lodge",
+  // The member lodge roster's per-lodge name-detail dial (#2942). It sits under
+  // the existing "/api/admin/lodges" prefix on purpose, so the gate it enforces
+  // (`lodge:view` / `lodge:edit`) is the one this map already infers and no new
+  // prefix is invented for one setting.
+  "/api/admin/lodges/[id]/roster-settings": "lodge",
   "/api/admin/maintenance-reports": "lodge",
   "/api/admin/maintenance-reports/[id]": "lodge",
   "/api/admin/maintenance-reports/questions": "lodge",

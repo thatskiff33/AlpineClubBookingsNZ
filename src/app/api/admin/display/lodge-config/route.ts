@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { createAuditLog } from "@/lib/audit";
 import { DISPLAY_CONFIG_KEY_PATTERN } from "@/lib/lodge-display/display-token-catalogue";
+import { DISPLAY_NAME_GRANULARITY_VALUES } from "@/lib/display-name-granularity-choices";
 
 // Per-lodge display settings (fork issue #34): the {{config:<key>}} glob and
 // the name-granularity override. Validation mirrors the serialiser's
@@ -22,8 +23,12 @@ const CONFIG_VALUE_MAX = 500;
 const putSchema = z.object({
   lodgeId: z.string().min(1).optional(),
   displayConfig: z.record(z.string(), z.unknown()).optional(),
+  // The four levels come from the shared choices module (#2942) rather than
+  // being spelled again here: the member lodge roster validates the same enum
+  // on its own route, and two hand-written copies is one place too many for a
+  // list the schema already fixes (`INV-SSOT`).
   displayNameGranularity: z
-    .enum(["FULL_NAME", "FIRST_NAME_SURNAME_INITIAL", "FIRST_NAME_ONLY", "COUNTS_ONLY"])
+    .enum(DISPLAY_NAME_GRANULARITY_VALUES)
     .nullable()
     .optional(),
   displayNotice: z

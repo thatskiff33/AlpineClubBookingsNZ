@@ -18,6 +18,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
+  DISPLAY_NAME_GRANULARITY_LABELS,
+  DISPLAY_NAME_GRANULARITY_VALUES,
+} from "@/lib/display-name-granularity-choices";
+import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -37,12 +41,17 @@ import {
    every row's key box points at this single group-level hint instead. */
 const CONFIG_KEY_HINT_ID = "lodge-display-config-key-hint";
 
+/* The four levels and their wording come from the shared choices module
+   (#2942): the member lodge roster offers the same four, and a second copy of
+   the list here would be a second place to edit when the schema enum moves
+   (`INV-SSOT`). Only the empty "club default" row is local, because what the
+   default IS differs per surface. */
 const GRANULARITY_OPTIONS = [
   { value: "", label: "Club default (first name + surname initial)" },
-  { value: "FULL_NAME", label: "Full names" },
-  { value: "FIRST_NAME_SURNAME_INITIAL", label: "First name + surname initial" },
-  { value: "FIRST_NAME_ONLY", label: "First names only" },
-  { value: "COUNTS_ONLY", label: "Counts only (no names)" },
+  ...DISPLAY_NAME_GRANULARITY_VALUES.map((value) => ({
+    value,
+    label: DISPLAY_NAME_GRANULARITY_LABELS[value],
+  })),
 ];
 
 export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {

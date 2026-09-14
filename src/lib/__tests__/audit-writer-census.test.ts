@@ -798,8 +798,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     ).toEqual(LODGE_GATED_ADMIN_CATEGORIES_2765);
 
     // #2765's fifteen, plus #2749's three other-lodges sites classified under
-    // the same rule on arrival (INV-PRIV-013).
-    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(18);
+    // the same rule on arrival (INV-PRIV-013), plus #2942's member-roster
+    // name-detail writer, classified the same way for the same reason.
+    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(19);
     expect([
       ...new Set(Object.values(LODGE_GATED_ADMIN_CATEGORIES_2765)),
     ]).toEqual(["admin"]);
@@ -997,8 +998,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
       "src/app/api/admin/lockers/route.ts",
     ]);
     // Eight files from #2765's fifteen sites, plus #2749's two other-lodges
-    // route files.
-    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(10);
+    // route files, plus #2942's roster-settings route file.
+    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(11);
     expect(files.filter((file) => gateOf(file) === "other")).toEqual([]);
 
     /*
@@ -1322,7 +1323,16 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // named in none of the four per-site maps, so it lands unpinned.
     // 472 sites MEASURED on this branch with `npm run audit:census` minus 127
     // pinned; `pinned` is unchanged, so no existing classification moved.
-    ).toEqual({ pinned: 127, unpinned: 345 });
+    //
+    // pinned 127 -> 128 (#2942), and `unpinned` does NOT move with it: the
+    // member-roster name-detail writer is the first addition in a while that
+    // lands INSIDE a per-site map rather than outside every one of them. It
+    // sits under `/api/admin/lodges/`, whose writers `INV-PRIV-013` pins as
+    // uniformly `admin`, so it had to be entered in
+    // `LODGE_GATED_ADMIN_CATEGORIES_2765` to keep that premise measured rather
+    // than merely asserted. 473 sites MEASURED on this branch with
+    // `npm run audit:census` minus 128 pinned.
+    ).toEqual({ pinned: 128, unpinned: 345 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
