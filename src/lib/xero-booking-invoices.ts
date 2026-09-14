@@ -72,6 +72,11 @@ import {
   getBookingInvoiceIssueDate,
 } from "./xero-invoice-helpers";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import {
+  bookingMoneyBuildUpFromProjection,
+  d3CompatibleBookingMoneyBuildUpCents,
+  selectLoadedBookingMoneyBuildUp,
+} from "@/lib/booking-money-build-up";
 
 // #1765 — the aggregate Payment statuses that prove cash was captured at some
 // point. Settlement gating must pair one of these with a positive NET capture
@@ -402,7 +407,8 @@ export async function createXeroInvoiceForBooking(
       // item per contiguous run.
       guests: { include: { nights: true } },
       payment: true,
-      promoRedemption: { include: { promoCode: true } },
+      promoRedemption: { include: { promoCode: true, allocations: true } },
+      nightAdjustments: true,
       // #2258: recipient for the withheld-send audit row when the booking's
       // "No emails" switch stops Xero emailing the invoice.
       member: { select: { email: true } },
@@ -531,6 +537,23 @@ export async function createXeroInvoiceForBooking(
         )?.invoiceEmailDelivery,
       )
     : null;
+  // #3277: verify the single aggregate promo line from the stored build-up
+  // before authentication or any provider call. A mismatch remains today's
+  // headline under D3 and its classified fallback is persisted on the uniquely
+  // anchored sync operation below.
+  const recordedMoneyBuildUp = bookingMoneyBuildUpFromProjection(booking, {
+    purpose: "XERO_PROMO_LINE",
+  });
+  const promoMoneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(
+    recordedMoneyBuildUp,
+    {
+      derivedCents: booking.promoAdjustmentCents,
+      mismatchClassification: "STORED_SIDE_DEFECT",
+    },
+  );
+  const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents(
+    promoMoneyBuildUpSelection,
+  );
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
@@ -605,7 +628,7 @@ export async function createXeroInvoiceForBooking(
 
   // Add signed promo adjustment line if applicable. Negative values behave
   // like discounts; positive values are extra revenue.
-  if (booking.promoAdjustmentCents !== 0) {
+  if (xeroPromoAdjustmentCents !== 0) {
     const promo = booking.promoRedemption?.promoCode ?? null;
     const firstGuest = booking.guests[0];
 
@@ -624,7 +647,7 @@ export async function createXeroInvoiceForBooking(
     const discountLineItem: LineItem = {
       description: promo ? `Promo adjustment - ${promo.code}` : "Promo adjustment",
       quantity: 1,
-      unitAmount: booking.promoAdjustmentCents / 100,
+      unitAmount: xeroPromoAdjustmentCents / 100,
       taxType: "OUTPUT2",
     };
     if (discountItemCode) {
@@ -659,7 +682,10 @@ export async function createXeroInvoiceForBooking(
     "v1"
   );
   let operationId = options?.syncOperationId ?? null;
-  const requestPayload = { invoices: [buildInvoice(contactId)] };
+  const requestPayload = {
+    invoices: [buildInvoice(contactId)],
+    moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
+  };
 
   if (operationId) {
     await prisma.xeroSyncOperation.update({
@@ -740,6 +766,10 @@ export async function createXeroInvoiceForBooking(
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
         invoices: [buildInvoice(resolvedContactId)],
+        // Contact repair rewrites the stored operation request. Preserve the
+        // Stage 3 source verdict with the rebuilt invoice instead of erasing
+        // the evidence on the only retry that changes this payload.
+        moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(

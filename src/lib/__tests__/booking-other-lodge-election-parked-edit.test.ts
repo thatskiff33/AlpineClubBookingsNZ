@@ -567,7 +567,7 @@ describe("#3214 acceptance: the refusal's sentence is satisfiable", () => {
     // pricing pass consults. This is what makes step 3 evidence rather than a
     // restated assumption.
     h.calculateModifiedPricing.mockImplementation(async () =>
-      storedSoldPriceEvidenceForGuest(strand, bookingRange).kind === "exact"
+      storedSoldPriceEvidenceForGuest(strand, bookingRange, "WHOLE_GUEST").kind === "exact"
         ? PRICED_RESULT
         : PARKED_RESULT,
     );
@@ -612,7 +612,7 @@ describe("#3214 acceptance: the refusal's sentence is satisfiable", () => {
 
     // What the stay is worth did not move, and the strand now reads back.
     expect(strand.priceCents).toBe(GUEST.priceCents);
-    expect(storedSoldPriceEvidenceForGuest(strand, bookingRange).kind).toBe(
+    expect(storedSoldPriceEvidenceForGuest(strand, bookingRange, "WHOLE_GUEST").kind).toBe(
       "exact",
     );
 
