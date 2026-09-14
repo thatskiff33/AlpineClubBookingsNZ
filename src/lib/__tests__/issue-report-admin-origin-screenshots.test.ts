@@ -19,6 +19,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
+import { accessRoleDefinitionGrid } from "./helpers/access-role-definition-grid";
+
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(async () => null),
@@ -78,26 +80,35 @@ const SUPPORT_VIEWER = [{ role: "ADMIN_READONLY" }];
 /** Full Admin: the literal `ADMIN` role, which also carries support. */
 const FULL_ADMIN = [{ role: "ADMIN" }];
 /**
+ * A member holding exactly the named areas and nothing else, built through the
+ * shared grid so the baseline is DERIVED from `ADMIN_PERMISSION_AREAS` rather
+ * than typed out here. A hand-written seven-column baseline leaves an
+ * eighth area `undefined` the day one is added, which would silently widen
+ * every "holds only this" fixture in this file.
+ */
+function onlyAreas(
+  levels: Parameters<typeof accessRoleDefinitionGrid>[0],
+  id: string
+) {
+  const roleDefinition = accessRoleDefinitionGrid(levels, id);
+  return [{ role: null, roleDefinitionId: id, roleDefinition }];
+}
+
+/**
  * Support:EDIT without Full Admin. No seeded bundle grants that pair — only
  * `ADMIN` has `support: "edit"` — so it takes a club-defined custom role, which
  * is exactly the shape a club would build to let an officer resolve reports.
  */
-const SUPPORT_EDITOR = [
-  {
-    role: null,
-    roleDefinitionId: "def-support-editor",
-    roleDefinition: {
-      id: "def-support-editor",
-      overviewLevel: "NONE",
-      bookingsLevel: "NONE",
-      membershipLevel: "NONE",
-      financeLevel: "NONE",
-      lodgeLevel: "NONE",
-      contentLevel: "NONE",
-      supportLevel: "EDIT",
-    },
-  },
-];
+const SUPPORT_EDITOR = onlyAreas({ supportLevel: "EDIT" }, "def-support-editor");
+
+/**
+ * One area, and deliberately NOT `membership` or `support`: a Lodge officer
+ * with view access to the lodge screens and nothing else. Anything that
+ * narrowed the origin predicate to "could this person see member records"
+ * would classify this reporter MEMBER — and that is route-to-permission
+ * reconstruction wearing a different hat, which the owner rule rejects by name.
+ */
+const LODGE_VIEW_ONLY = onlyAreas({ lodgeLevel: "VIEW" }, "def-lodge-view");
 
 function signedInAs(accessRoles: unknown) {
   mocks.auth.mockResolvedValue({
@@ -223,6 +234,26 @@ describe("#2703 creation derives and persists the screenshot origin", () => {
     expect(storedOrigin()).toBe("ADMIN");
   });
 
+  it("classifies a reporter holding ONE non-membership admin area as ADMIN", async () => {
+    signedInAs([{ role: "USER" }]);
+    mocks.memberFindUnique.mockResolvedValue({
+      id: "viewer-1",
+      firstName: "Robin",
+      lastName: "Lodge",
+      email: "robin@example.com",
+      accessRoles: LODGE_VIEW_ONLY,
+    } as never);
+
+    const response = await createIssueReport(
+      reportBody("http://localhost:3000/book")
+    );
+
+    expect(response.status).toBe(201);
+    // "Any admin area at all", not "an area that can see member records". A
+    // Lodge officer reaches admin screens, so their capture is gated.
+    expect(storedOrigin()).toBe("ADMIN");
+  });
+
   it("classifies as ADMIN when only the signed session still carries admin access", async () => {
     // The record has been stripped of admin roles since the token was minted;
     // the holder may still have had an admin screen open. Either source saying
@@ -344,6 +375,68 @@ describe("#2703 the detail read gates admin-origin pixels", () => {
   });
 });
 
+describe("#2703 the list and the detail read answer 'retained' identically", () => {
+  /**
+   * An expiry the nightly sweep has not reached yet: the blob is still in the
+   * row and `screenshotDeletedAt` is still null, but `screenshotExpiresAt` has
+   * passed. The detail route has always honoured that; the list route used to
+   * answer from the capture and deletion stamps alone and called it retained,
+   * so for the hours in between the queue advertised a screenshot the report
+   * itself refused — and after #2703 the two would have disagreed about
+   * `withheld` as well. One predicate now answers both.
+   */
+  function expiredButUnswept() {
+    return storedReport({
+      screenshotExpiresAt: new Date(Date.now() - DAY_MS),
+      screenshotDeletedAt: null,
+      screenshotDeleteReason: null,
+    });
+  }
+
+  it("calls an expired-but-unswept screenshot expired on the detail read", async () => {
+    signedInAs(FULL_ADMIN);
+    mocks.issueReportFindUnique.mockResolvedValue(expiredButUnswept() as never);
+
+    const { body } = await readDetail();
+
+    expect(body.report.screenshot.disposition).toBe("expired");
+    expect(body.report.screenshot.retained).toBe(false);
+    expect(body.report.screenshot.dataUrl).toBeNull();
+    expect(JSON.stringify(body)).not.toContain(PIXELS);
+  });
+
+  it("calls the same row expired on the list", async () => {
+    signedInAs(FULL_ADMIN);
+    mocks.issueReportFindMany.mockResolvedValue([expiredButUnswept()] as never);
+    mocks.issueReportCount.mockResolvedValue(1 as never);
+
+    const response = await listIssueReports(
+      new NextRequest("http://localhost/api/admin/issue-reports?status=OPEN")
+    );
+    const body = await response.json();
+
+    expect(body.reports[0].screenshot.disposition).toBe("expired");
+    expect(body.reports[0].screenshot.retained).toBe(false);
+    expect(body.reports[0].screenshot.withheld).toBe(false);
+  });
+
+  it("sends the same disposition from both routes for a live screenshot", async () => {
+    signedInAs(SUPPORT_VIEWER);
+    mocks.issueReportFindUnique.mockResolvedValue(storedReport() as never);
+    mocks.issueReportFindMany.mockResolvedValue([storedReport()] as never);
+    mocks.issueReportCount.mockResolvedValue(1 as never);
+
+    const detail = await readDetail();
+    const list = await listIssueReports(
+      new NextRequest("http://localhost/api/admin/issue-reports?status=OPEN")
+    );
+    const listBody = await list.json();
+
+    expect(detail.body.report.screenshot.disposition).toBe("withheld");
+    expect(listBody.reports[0].screenshot.disposition).toBe("withheld");
+  });
+});
+
 describe("#2703 the refusal is audited, and records nothing captured", () => {
   it("writes a withheld row beside the view row, categorised privacy", async () => {
     signedInAs(SUPPORT_VIEWER);
@@ -369,7 +462,11 @@ describe("#2703 the refusal is audited, and records nothing captured", () => {
     const viewed = auditRows("issue_report.admin_viewed");
     expect(viewed).toHaveLength(1);
     expect(viewed[0]?.category).toBe("privacy");
-    expect(viewed[0]?.details).toContain('"screenshotDisposition":"withheld"');
+    // Both fields come off the one classification, so they cannot disagree:
+    // the pixels are still stored, and this caller was refused them.
+    expect(viewed[0]?.details).toBe(
+      JSON.stringify({ hasScreenshot: true, screenshotDisposition: "withheld" })
+    );
   });
 
   it("writes no withheld row when the pixels were served", async () => {
@@ -446,6 +543,10 @@ describe("#2703 the alternate paths cannot bypass the boundary", () => {
     expect(body.report.screenshot.dataUrl).toBeNull();
     expect(body.report.screenshot.withheld).toBe(true);
     expect(JSON.stringify(body)).not.toContain(PIXELS);
+    // An action reply is not a view, and never was audited as one, so the
+    // refusal row belongs to the READ path alone. The docs say exactly this.
+    expect(auditRows("issue_report.admin_viewed")).toHaveLength(0);
+    expect(auditRows("issue_report.screenshot_withheld")).toHaveLength(0);
   });
 
   it("still lets that same officer delete the screenshot they cannot see", async () => {
