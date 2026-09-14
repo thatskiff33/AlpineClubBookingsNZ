@@ -9,6 +9,8 @@ import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-eviden
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
+import { findActivePrimaryInvoiceLink } from "@/lib/xero-booking-invoice-evidence";
 import {
   buildXeroSupplementaryInvoiceKey,
   type XeroSupplementaryInvoiceAnchorModel,
@@ -491,16 +493,12 @@ export async function enqueueXeroBookingInvoiceOperation(
     };
   }
 
-  const existingLink = await prisma.xeroObjectLink.findFirst({
-    where: {
-      localModel: "Payment",
-      localId: booking.payment.id,
-      xeroObjectType: "INVOICE",
-      role: "PRIMARY_INVOICE",
-      active: true,
-    },
-    select: { id: true },
-  });
+  // #3001: the SAME predicate the booking page's warning asks, from its one
+  // home. Both are asking "does an invoice for this booking already exist in
+  // Xero?" — here to refuse a second mint, there to refuse to tell an officer
+  // that no invoice exists. Two spellings of one question is how those two
+  // answers drift apart.
+  const existingLink = await findActivePrimaryInvoiceLink(booking.payment.id);
 
   if (existingLink) {
     return {
@@ -509,12 +507,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     };
   }
 
-  const correlationKey = buildXeroIdempotencyKey(
-    "booking",
-    bookingId,
-    "invoice",
-    "v1"
-  );
+  const correlationKey = buildXeroBookingInvoiceCorrelationKey(bookingId);
 
   const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
     where: {

@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { staleRunningXeroOperationFilter } from "@/lib/xero-stale-operations";
+import {
+  staleRunningXeroOperationFilter,
+  XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
+} from "@/lib/xero-stale-operations";
 import logger from "@/lib/logger";
 
 export async function POST() {
@@ -18,7 +21,7 @@ export async function POST() {
       where: staleRunningXeroOperationFilter(now),
       data: {
         status: "FAILED",
-        lastErrorCode: "ORPHANED_STALE_RUNNING",
+        lastErrorCode: XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
         lastErrorMessage:
           "Operation was stuck RUNNING past the staleness threshold and was reset to FAILED by an operator.",
         completedAt: now,
