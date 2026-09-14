@@ -285,7 +285,7 @@ function completeHostingGuestRows<
     nights?: ReadonlyArray<Record<string, unknown>>;
   },
 >(guests: readonly T[], checkIn: Date, checkOut: Date) {
-  return guests.map((guest) => {
+  return guests.map((guest, guestIndex) => {
     const stayStart = (guest as { stayStart?: Date }).stayStart ?? checkIn;
     const stayEnd = (guest as { stayEnd?: Date }).stayEnd ?? checkOut;
     return {
@@ -293,7 +293,7 @@ function completeHostingGuestRows<
       // what every route in this file assumes when it reprices the full party.
       stayStart,
       stayEnd,
-      // #3031: and a per-night SOLD PRICE that reconciles to the guest's stored
+      // #3031: and a per-night stored price that reconciles to the guest's
       // total. `[]` used to be the default, and it was the pre-#713 row shape -
       // legitimate then, and the unpriceable case now: an edit that gives a
       // night back reads what it was sold for off these rows and refuses to
@@ -306,8 +306,9 @@ function completeHostingGuestRows<
       consentStatus: null as string | null,
       ...guest,
       nights: (
-        guest.nights ?? syntheticSoldNightRows(stayStart, stayEnd, guest.priceCents)
-      ).map((night) => ({
+        guest.nights ?? syntheticEvenSplitNightRows(stayStart, stayEnd, guest.priceCents)
+      ).map((night, nightIndex) => ({
+        id: `guest-${guestIndex + 1}-night-${nightIndex + 1}`,
         priceSource: "UNKNOWN" as const,
         ...night,
       })),
@@ -335,12 +336,12 @@ function completeHostingGuestRows<
  * these rows reconcile, and the invariant says in as many words that an evenly
  * split backfilled strand prices as exact.
  *
- * What matters here is that the rows reconcile to the stored total, because that
- * is the test an edit applies before it will price anything. A guest with no
- * stored total gets no rows - there is nothing to allocate - and that fixture is
- * then deliberately in the unpriceable case.
+ * At whole-guest grain these rows can reconcile to the stored total. At
+ * individual-night grain #3277 keeps their provenance inexact; a fixture that
+ * exercises a quote-authored night must opt into `SOLD` explicitly. A guest
+ * with no stored total gets no rows and remains deliberately unpriceable.
  */
-function syntheticSoldNightRows(
+function syntheticEvenSplitNightRows(
   stayStart: Date,
   stayEnd: Date,
   priceCents: number | undefined,
@@ -368,6 +369,16 @@ function syntheticSoldNightRows(
   }));
 }
 
+function withSoldNightProvenance<T>(booking: T): T {
+  const guests = (booking as {
+    guests: Array<{ nights: Array<{ priceSource: string }> }>;
+  }).guests;
+  for (const guest of guests) {
+    for (const night of guest.nights) night.priceSource = "SOLD";
+  }
+  return booking;
+}
+
 // Helper to make a booking object
 function makeBooking(overrides: Record<string, unknown> = {}) {
   const booking = {
@@ -393,6 +404,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     payment: { id: "p1", bookingId: "bk1", amountCents: 10000, source: "STRIPE", status: "SUCCEEDED", stripePaymentIntentId: "pi_123", xeroInvoiceId: "inv_primary", refundedAmountCents: 0, changeFeeCents: 0 },
     member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
     promoRedemption: null,
+    nightAdjustments: [],
     ...overrides,
   };
   // #2675: applied AFTER the overrides, so a scenario that supplies its own
@@ -810,7 +822,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
 
   it("successfully modifies dates with price recalculation", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
-    const booking = makeBooking();
+    const booking = withSoldNightProvenance(makeBooking());
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
@@ -848,7 +860,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     // here on, so what lands here is what the NEXT edit reads back as evidence
     // (INV-MOD-028).
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
-    const booking = makeBooking();
+    const booking = withSoldNightProvenance(makeBooking());
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
@@ -895,7 +907,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     // nothing. Refusing is the only answer that neither invents money nor
     // silently loses it. Nothing must be committed either.
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
-    const booking = makeBooking();
+    const booking = withSoldNightProvenance(makeBooking());
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
@@ -2679,6 +2691,8 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       promoRedemption: {
         id: "pr1",
         promoCodeId: "promo1",
+        priceAdjustmentCents: 0,
+        allocations: [],
         guestTargets: [],
         promoCode: { id: "promo1", assignments: [] },
       },
@@ -2916,9 +2930,25 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       promoRedemption: {
         id: "pr1",
         promoCodeId: "promo1",
+        priceAdjustmentCents: -2000,
+        allocations: [{ memberId: "m1", priceAdjustmentCents: -2000 }],
         guestTargets: [],
         promoCode: { id: "promo1", assignments: [] },
       },
+      nightAdjustments: [
+        {
+          bookingGuestId: "g1",
+          bookingGuestNightId: null,
+          beneficiaryMemberId: "m1",
+          amountCents: -1000,
+        },
+        {
+          bookingGuestId: "g2",
+          bookingGuestNightId: null,
+          beneficiaryMemberId: "m1",
+          amountCents: -1000,
+        },
+      ],
       ...overrides,
     });
   }

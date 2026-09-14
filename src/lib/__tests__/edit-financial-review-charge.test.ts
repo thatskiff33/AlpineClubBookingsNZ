@@ -375,21 +375,27 @@ beforeEach(() => {
     memberId: "member-1",
     lodgeId: null,
     checkIn: new Date("2026-08-20T00:00:00.000Z"),
+    checkOut: new Date("2026-08-21T00:00:00.000Z"),
     totalPriceCents: 15_000,
     discountCents: 0,
     promoAdjustmentCents: 0,
     finalPriceCents: 15_000,
     promoRedemption: null,
+    nightAdjustments: [],
     guests: [
       {
         id: "guest-1",
         priceCents: 15_000,
         memberId: "member-1",
         isMember: true,
+        stayStart: null,
+        stayEnd: null,
         nights: [
           {
+            id: "guest-night-1",
             stayDate: new Date("2026-08-20T00:00:00.000Z"),
             priceCents: 15_000,
+            priceSource: "SOLD",
           },
         ],
       },

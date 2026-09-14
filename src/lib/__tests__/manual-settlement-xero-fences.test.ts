@@ -229,10 +229,12 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
       checkIn: new Date("2026-08-01"),
       checkOut: new Date("2026-08-03"),
       createdAt: new Date("2026-07-01"),
+      totalPriceCents: 0,
       promoAdjustmentCents: 0,
       guests: [],
       member: { email: "ada@example.org" },
       promoRedemption: null,
+      nightAdjustments: [],
       payment: {
         id: "payment-1",
         xeroInvoiceId: null,

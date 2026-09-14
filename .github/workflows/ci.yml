@@ -461,7 +461,29 @@ jobs:
 
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 75 does not mean a
+    # 75-minute run is acceptable; it means a genuinely wedged job is still
+    # killed rather than burning an hour of budget indefinitely.
+    #
+    # Raised from 30 because a timeout that trips on a HEALTHY run is worse than
+    # a slow one: the job is cancelled mid-`Test`, which reports identically to a
+    # real failure AND skips every step after it - the full suite's result, the
+    # production build, the nonce and cached-route checks, the server-only
+    # boundary proof and the file-size ratchet. The most valuable evidence in the
+    # pipeline is the first thing lost, and it is lost quietly.
+    #
+    # Measured 13-14 Sep 2026. The Tokoroa deployment fork, porting 423dcaf94,
+    # was cancelled TWICE IN A ROW at 30m21s and 30m23s with `Test` still
+    # running, and has carried 75 in its own tree since. Upstream has not tripped
+    # it yet but the margin is thin: fourteen consecutive runs of this job
+    # measured 14.8 to 23.4 minutes, so the worst observed run used 78% of the
+    # old cap and a single slow hosted runner closes the remaining 6.6 minutes.
+    # Raising the backstop is cheap; losing the suite and the build to a
+    # stopwatch is not.
+    #
+    # The real cost underneath is a ~30-minute serial test step, which sharding
+    # would cut - deliberately out of scope here and tracked separately.
+    timeout-minutes: 75
     permissions:
       contents: read
       # The concurrency-declaration gate fetches the CURRENT PR body from the
@@ -1079,6 +1101,15 @@ jobs:
           echo "GIT_COMMIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "KNOWLEDGE_BUNDLE_OBSERVED_AT=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
 
+      # Six image builds across three workflows had no reclaim step, and a
+      # hosted runner's ~14 GB no longer fits this image comfortably (#3424).
+      # The script explains what it removes and why nothing it does may fail
+      # the build; it prints `df -h /` either side so the margin is readable
+      # in the log. Immediately before the build, so it also clears whatever
+      # earlier steps in this job left behind.
+      - name: Reclaim runner disk before building
+        run: bash scripts/ci/reclaim-runner-disk.sh
+
       - name: Build Docker image
         run: |
           docker build \
@@ -1188,6 +1219,15 @@ jobs:
       # export could not cover for it either — prepare_application_images()
       # returns early when using prebuilt images, which is the ordinary GHCR path.
       # Slice-1 review finding.
+      # Six image builds across three workflows had no reclaim step, and a
+      # hosted runner's ~14 GB no longer fits this image comfortably (#3424).
+      # The script explains what it removes and why nothing it does may fail
+      # the build; it prints `df -h /` either side so the margin is readable
+      # in the log. Immediately before the build, so it also clears whatever
+      # earlier steps in this job left behind.
+      - name: Reclaim runner disk before building
+        run: bash scripts/ci/reclaim-runner-disk.sh
+
       - name: Build and push app image
         uses: docker/build-push-action@v7
         with:
@@ -1216,6 +1256,15 @@ jobs:
             exit 1
           fi
           echo "RELEASE_ID is readable in the published app image and matches the built commit."
+
+      # Six image builds across three workflows had no reclaim step, and a
+      # hosted runner's ~14 GB no longer fits this image comfortably (#3424).
+      # The script explains what it removes and why nothing it does may fail
+      # the build; it prints `df -h /` either side so the margin is readable
+      # in the log. Immediately before the build, so it also clears whatever
+      # earlier steps in this job left behind.
+      - name: Reclaim runner disk before building
+        run: bash scripts/ci/reclaim-runner-disk.sh
 
       - name: Build and push migrate image
         uses: docker/build-push-action@v7

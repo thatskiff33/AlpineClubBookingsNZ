@@ -116,7 +116,30 @@ function stripeBooking(overrides: Record<string, unknown> = {}) {
     status: "PAYMENT_PENDING",
     hasNonMembers: false,
     organiserSettled: false,
+    checkIn: new Date("2026-08-01"),
+    checkOut: new Date("2026-08-02"),
+    totalPriceCents: 4500,
     finalPriceCents: 4500,
+    discountCents: 0,
+    promoAdjustmentCents: 0,
+    guests: [
+      {
+        id: "guest-1",
+        priceCents: 4500,
+        stayStart: null,
+        stayEnd: null,
+        nights: [
+          {
+            id: "guest-1-night-1",
+            stayDate: new Date("2026-08-01"),
+            priceCents: 4500,
+            priceSource: "SOLD",
+          },
+        ],
+      },
+    ],
+    promoRedemption: null,
+    nightAdjustments: [],
     payment: {
       source: PaymentSource.STRIPE,
       status: PaymentStatus.PENDING,
@@ -136,8 +159,8 @@ beforeEach(() => {
   });
   mocks.findUnique.mockResolvedValue(stripeBooking());
   // #1881 — the route re-reads the booking under the locks inside the tx before
-  // switching; default it to the same payable snapshot with an empty guest set.
-  mocks.txBookingFindUnique.mockResolvedValue({ ...stripeBooking(), guests: [] });
+  // switching; default it to the same complete payable snapshot.
+  mocks.txBookingFindUnique.mockResolvedValue(stripeBooking());
   mocks.upsert.mockResolvedValue({ id: "payment-1" });
   mocks.bookingUpdate.mockResolvedValue({});
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
@@ -331,7 +354,7 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     // credit was stranded on a booking that could never consume it.
     const withElection = { ...stripeBooking(), creditElectionCents: 2_000 };
     mocks.findUnique.mockResolvedValue(withElection);
-    mocks.txBookingFindUnique.mockResolvedValue({ ...withElection, guests: [] });
+    mocks.txBookingFindUnique.mockResolvedValue(withElection);
     mocks.getMemberCreditBalance.mockResolvedValue(5_000);
     // The route re-reads the ledger AFTER the consumption, so the aggregate
     // reports the newly written BOOKING_APPLIED row.
@@ -349,6 +372,9 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
       2_000,
       BOOKING_ID,
       expect.anything(),
+      expect.objectContaining({
+        description: expect.stringContaining("price source STORED"),
+      }),
     );
     // The invoice is raised for the post-election remainder, and the mirror
     // keeps amountCents + creditAppliedCents = finalPriceCents.

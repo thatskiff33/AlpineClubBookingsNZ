@@ -461,7 +461,7 @@ and the data download rather than every page that happens to quote an entry.
 
 `Category` is optional in the database, and **82 of the platform's places that
 record an audit entry used not to set one**. As of this release **none do**: all
-478 now record a category, measured on every build rather than estimated.
+479 now record a category, measured on every build rather than estimated.
 
 **And a new one can no longer forget.** Recording an entry without a category is
 now refused three separate ways. Giving the 82 places a category and stopping the
@@ -483,7 +483,7 @@ that order and both landing in this release; this is the second:
    maintenance script outside the normal path.
 
 The practical effect for you: an entry recorded the ordinary way — through the
-platform's own recording step, which is how every one of the 478 places does it —
+platform's own recording step, which is how every one of the 479 places does it —
 cannot be born without a category any more. **It is not a mathematical
 guarantee**, and it is worth saying so rather than overclaiming: someone writing
 directly to the database table in a migration, or building a query by hand, is
@@ -492,45 +492,99 @@ specific ways of slipping past the build's count were found while reviewing this
 change and all six were closed, each with its own test. Your **older** history is
 a different matter, and the rest of this section is about that.
 
-**Entries recorded before this release still have no category**, and there is no
-way to tell from the entry itself. Filling those in is a separate change, done
-once and reviewed on its own, and it has not happened yet — so everything below
-still applies to your older history.
+**Entries recorded before the category became mandatory had none**, and there
+was no way to tell from the entry itself. **This release fills those in, once,
+from an exact list** (#2581). The upgrade gives each older entry the category its
+event type records today — matched by the entry's exact event name against a
+reviewed list of event types, never by pattern or by guessing from the name. On
+the deployment the list was measured on, that was 1,885 entries across 83 event
+types; every one of the 83 was proven against the code that records that event
+type now, or, for three event types the platform no longer records at all,
+against the code that used to. The upgrade changes **one field** on those
+entries. The date, who did it, who it was about, the summary, the stored details
+and the retention fields are exactly as they were — and see the retention note
+below for what that means.
 
-**On this screen every one of those entries is still listed**, and the Category
-filter tries to place them: when you pick a category it also matches
-uncategorised entries whose action *looks* like that category, so filtering by
-*Payments* does find a credit adjustment that recorded no category. Treat that as
-a helpful guess rather than a guarantee — it is pattern-matching on the action
-name, it has no rules at all for *System*, and it will miss, for example, an
-uncategorised display-layout change under *Lodge*. **If you are looking for
-something specific and the category filter comes up short, clear it and search by
-event type, member or date instead** — the entry is there.
+**Four older entries had a category that was not a recognised value** (`EMAIL`
+on two, `membership` on two), written before the list of eleven was closed. No
+filter or tool could find them under those names. The club's owner decided they
+are corrected in the same upgrade to the value their event type records today,
+named individually; no other entry that already had a category is touched.
 
-**In AI Diagnostics it costs a lot.** Those tools filter on the stored category
-and nothing else, so an entry without one is returned by none of them. If you ask
-the assistant about a subscription reconcile or a booking-policy change and it
-says nothing matched, that is not evidence it did not happen — it means no
-*categorised* entry matched. The assistant is told to say so and to point you
-here. **Always confirm on this screen before concluding an event did not occur.**
+**Which older entries still have no category.** Only an event type that is not
+on the list — which can only happen on a deployment whose history differs from
+the one the list was measured on — is left exactly as it was. For such an entry,
+everything in the next two paragraphs still applies.
 
-This has been fixed at the source, over three changes: the categories and the
-automated count landed first, giving each of those 82 places a category landed in
-this release, and filling in the historical entries is last and still to come.
-Until it does, treat an empty AI Diagnostics result as "look in Admin → Audit
-Log", never as "it did not happen".
+**Members' own activity pages.** Giving an entry a category can move it onto,
+or off, the page a member sees about their own account, and the repository
+treats that as the club owner's decision rather than the upgrade's. The owner
+decided it on 13 September 2026: **no older entry leaves the page of any member
+other than the officer who acted** — the only entries that leave a page are
+three Xero invoice runs that leave the acting officer's own page (they were there
+only because the guess read "INVOICE" as Payments). In particular, a bulk
+deactivation or reactivation recorded before the category
+became mandatory stays on the deactivated member's own page — it is filed under
+**Account**, the category that event carried at the time, rather than the
+**Admin** it is filed under today — so a member keeps sight of their own
+deactivation, exactly as the owner decided for the already-categorised entries of
+that era. A small number of older entries *appear* on a page for the first time:
+almost all on the acting officer's own page (the club's booking-rule, promotion,
+fee and billing settings they changed), plus three billing-family selections now
+visible to the member they were about, two issue reports visible to the member
+who reported them, and one nomination replacement visible to the replacement
+nominator. Disclosure to the person concerned, and no withdrawal from anyone but
+the acting officer.
 
-**The retention change this release makes, stated plainly because it is real.**
-An entry recorded with no category also got no retention class and no expiry, so
-those entries were kept indefinitely rather than aging out. Now that all 82 kinds
-record a category, **new** entries of those kinds are classified `critical` and
-carry a **seven-year** expiry from the day they are recorded — the longest class
-the platform has, and the same one a booking or payment entry already gets. Two
-things follow: nothing is deleted sooner than seven years from now because of
-this, and **entries already in the database are untouched** — they keep their
-missing retention class until the historical change decides what to do about
-them. If your club needs some of these kept beyond seven years, say so before
-that horizon; it is a setting, not a law.
+**On this screen every uncategorised entry is still listed**, and the Category
+filter tries to place it: when you pick a category it also matches uncategorised
+entries whose action *looks* like that category. Treat that as a helpful guess
+rather than a guarantee — it is pattern-matching on the action name, it has no
+rules at all for *System*, and it can miss. **If you are looking for something
+specific and the category filter comes up short, clear it and search by event
+type, member or date instead** — the entry is there. For entries that *did* gain
+a category, the stored category now decides where the filter places them, so a
+few older entries answer to a different filter than they used to: a setup invite
+sent before the upgrade is now under *Security* rather than *Account*, a Xero
+invoice run under *Xero* rather than *Payments*.
+
+**In AI Diagnostics an uncategorised entry is invisible.** Those tools filter on
+the stored category and nothing else, so an entry without one is returned by
+none of them, and the assistant is told to say so and point you here. After this
+upgrade that now applies only to the entries described two paragraphs above; the
+older entries that gained a category are correlated by the same tool, behind the
+same permission, as new entries of that event type. **Still confirm on this
+screen before concluding an event did not occur**, because the disclosure is
+honest rather than hypothetical.
+
+**You will see the upgrade record itself.** One new entry, *"Upgrade gave
+historical activity records with no category the category their event type
+records today…"*, filed under **Admin**, carries how many entries had no category
+before, how many were given one (by category and by event type), the four
+corrections, and how many were left. The upgrade notes explain how to read it.
+
+**Why the column stays optional.** With the fill-in done, the database could in
+principle refuse an entry with no category. It does not, and that is deliberate:
+any deployment whose history holds an event type not on the list still has
+entries with no category, and refusing them would mean inventing a category for
+evidence that has none — which
+is the one thing this whole change refused to do. A constraint stays a separate
+decision for after this release has run and its record has been read.
+
+**The retention change the previous release made, stated plainly because it is
+real.** An entry recorded with no category also got no retention class and no
+expiry, so those entries were kept indefinitely rather than aging out. Now that
+all 82 kinds record a category, **new** entries of those kinds are classified
+`critical` and carry a **seven-year** expiry from the day they are recorded — the
+longest class the platform has, and the same one a booking or payment entry
+already gets. Two things follow: nothing is deleted sooner than seven years from
+now because of this, and **the older entries are still untouched on retention** —
+giving them a category (above) deliberately did *not* give them an expiry, so
+each keeps whatever retention it was recorded with (none, for every one of those
+writers, so they remain kept indefinitely) until the club decides otherwise,
+separately; the upgrade notes give a query that shows the actual figures. If
+your club needs some of these kept beyond seven years, say so before that
+horizon; it is a setting, not a law.
 
 **What "expires" means for these entries: deletion, not filing.** The archive
 only takes the two shorter-lived classes, so a `critical` entry is never copied
@@ -685,6 +739,28 @@ person to look at and never acted on automatically: a member trying five
 different weekends to find one that suits a friend produces exactly the same
 pattern as somebody probing, and only a human who knows both people can tell
 them apart. Treat it as a conversation to have if it keeps happening.
+
+### Issue-report screenshot entries (#2703)
+
+A screenshot taken by somebody who had admin access is shown only to a Full
+Admin (`INV-PRIV-020`; see [Issue Reports](issue-reports.md) ->
+"Screenshots taken by an officer"). Two `privacy`-category actions record how
+that went, and **neither records anything about what the picture showed**.
+
+| Action | Written when | What it contains |
+| --- | --- | --- |
+| `issue_report.admin_viewed` | Every time an officer opens a report, as before | Now also a `screenshotDisposition` saying which of five things happened to the picture: `viewed` (shown to this officer), `withheld` (exists, but they are not a Full Admin), `expired` (cleared by the 30-day sweep), `deleted` (an administrator deleted it) or `none` (there never was one) |
+| `issue_report.screenshot_withheld` | Each time an officer OPENS a report and is refused an admin-taken screenshot. Resolving or reopening a report is not a view and is not recorded as one, exactly as before this change | Who was refused, which report, and a fixed reason. Severity **important**, so a run of them is easy to spot |
+
+Both are `privacy`, matching every other issue-report event. **Be clear about
+what that does and does not do.** Anyone who can open Admin > Audit Log reads
+these rows in full — that screen is a support-area surface with no
+per-category filter, so `privacy` withholds nothing from a support-only
+officer there. What the category decides is which AI Diagnostics correlation
+entry can return the row, and there `privacy` needs **Support + Membership**.
+It is the right category under `INV-PRIV-012` either way, because that is where
+a member-data row belongs; it is simply not a second access control on top of
+the screen.
 
 ## Troubleshooting
 
