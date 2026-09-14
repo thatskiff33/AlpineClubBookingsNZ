@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -206,13 +207,15 @@ export async function GET(
         member: {
           select: { id: true, firstName: true, lastName: true, email: true },
         },
-        // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        organisation: { select: { name: true, email: true } },
         booking: {
           select: {
             id: true,
             checkIn: true,
             checkOut: true,
+            memberId: true,
+            member: { select: { firstName: true, lastName: true, email: true } },
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
             lodge: { select: { id: true, name: true } },
           },
         },
@@ -222,8 +225,6 @@ export async function GET(
             member: {
               select: { id: true, firstName: true, lastName: true },
             },
-            // #3369: the owner may be an Organisation; bookingOwner() reads both.
-            organisation: { select: { name: true, email: true } },
           },
         },
       },
@@ -233,6 +234,11 @@ export async function GET(
   const useIndexById = new Map<string, number>();
   const perMemberCount = new Map<string, number>();
   for (const row of orderedForCode) {
+    // #3369: "use #2 for this member" counts a MEMBER's uses. A redemption on
+    // an organisation-owned booking names none and spends nobody's
+    // entitlement, so it is not a use of anyone's allowance and carries no
+    // index.
+    if (row.memberId === null) continue;
     const next = (perMemberCount.get(row.memberId) ?? 0) + 1;
     perMemberCount.set(row.memberId, next);
     useIndexById.set(row.id, next);
@@ -241,10 +247,15 @@ export async function GET(
   const rows = redemptions.map((r) => ({
     id: r.id,
     createdAt: r.createdAt.toISOString(),
+    // #3369: the party shown is the booking's OWNER — a member, or the school
+    // whose booking it is. The name and address come from the owner projection,
+    // which is what the invented school member used to supply; the ID is a
+    // MEMBER id and is null for a school, so the panel links only when there is
+    // a member page to link to.
     member: {
-      id: r.member.id,
-      name: memberName(r.member),
-      email: r.member.email,
+      id: r.memberId,
+      name: memberName(bookingOwner(r.booking).member),
+      email: bookingOwner(r.booking).member.email,
     },
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
     organisation: { select: { name: true, email: true } },
@@ -274,7 +285,10 @@ export async function GET(
       r.allocations.length > 1
         ? r.allocations.map((a) => ({
             memberId: a.memberId,
-            name: memberName(a.member),
+            // #3369: an allocation with no member belongs to an
+            // organisation-owned booking's booker slot; the owner projection
+            // names the school.
+            name: a.member ? memberName(a.member) : memberName(bookingOwner(r.booking).member),
             discountCents: a.discountCents,
             freeNightsUsed: a.freeNightsUsed,
           }))

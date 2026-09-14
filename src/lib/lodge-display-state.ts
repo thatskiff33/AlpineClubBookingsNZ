@@ -256,7 +256,14 @@ export function reduceName(
 interface OrganiserShape {
   firstName: string;
   lastName: string;
-  ageTier: AgeTier;
+  /**
+   * `undefined` since #3369, when the booking is owned by an `Organisation`:
+   * an organisation has no age tier. It is read exactly as `NOT_APPLICABLE`
+   * here, which is the value this module already reserves for an organiser who
+   * is not a person — the branch below shows a full name rather than a
+   * person's abbreviated one, and a school's name is not personal data.
+   */
+  ageTier: AgeTier | undefined;
 }
 
 /**
@@ -306,7 +313,7 @@ export function bookingLabel(
 ): string {
   const { granularity, containsMinors, guestCount } = options;
 
-  if (organiser.ageTier === "NOT_APPLICABLE") {
+  if (organiser.ageTier === undefined || organiser.ageTier === "NOT_APPLICABLE") {
     return [organiser.firstName.trim(), organiser.lastName.trim()]
       .filter(Boolean)
       .join(" ");
@@ -722,7 +729,12 @@ export async function buildDisplayState(
     const namesAllowed = namesAllowedForBooking({
       soleOccupancy: soleOccupancyBookingIds.has(booking.id),
       containsMinors,
-      organiserAgeTier: bookingOwner(booking).member.ageTier,
+      // #3369: an ORGANISATION has no age tier, and `NOT_APPLICABLE` is exactly
+      // that — the value this module already reserves for an organiser who is
+      // not a person, and whose branch in `bookingLabel` shows a full name
+      // instead of a person's abbreviated one. A school's name is not personal
+      // data, so the privacy abbreviation was never protecting anything there.
+      organiserAgeTier: bookingOwner(booking).member.ageTier ?? "NOT_APPLICABLE",
       granularity,
     });
 
@@ -878,7 +890,10 @@ export async function buildDisplayState(
       const namesAllowed = namesAllowedForBooking({
         soleOccupancy: soleOccupancyBookingIds.has(assignment.booking.id),
         containsMinors: bookingContainsMinors,
-        organiserAgeTier: bookingOwner(assignment.booking).member.ageTier,
+        // #3369: see the note on the sibling call — an organisation has no age
+        // tier, and `NOT_APPLICABLE` is what that is.
+        organiserAgeTier:
+          bookingOwner(assignment.booking).member.ageTier ?? "NOT_APPLICABLE",
         granularity,
       });
       if (namesAllowed) {
