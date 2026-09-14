@@ -88,7 +88,7 @@ per-route index if you would rather start from a URL.
   booking rules.
 - [Promo Codes](../guides/promo-codes.md) — discount codes and vouchers.
 - [Bed Allocation](../guides/bed-allocation.md) — the drag-and-drop bed board
-  and per-lodge auto-allocation preferences.
+  (its per-lodge auto-allocation preferences are set in Rooms & Beds).
 - [Waitlist](../guides/waitlist.md) — the waitlist queue and force-confirm.
 - [Payments](../guides/payments.md) — the booking-payment ledger and Xero
   invoice state.
@@ -140,8 +140,9 @@ per-route index if you would rather start from a URL.
 
 ### Lodge operations
 
-- [Rooms & Beds](../guides/rooms-beds.md) — the room/bed inventory and the
-  capacity it derives (lodge-scoped).
+- [Rooms & Beds](../guides/rooms-beds.md) — the room/bed inventory, the
+  capacity it derives, and the lodge's auto-allocation preferences
+  (lodge-scoped).
 - [Chore Templates](../guides/chores.md) — the chore library the roster draws
   from (lodge-scoped).
 - [Chore Roster](../guides/roster.md) — the daily chore board: generate,

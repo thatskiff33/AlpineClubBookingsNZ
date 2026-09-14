@@ -34,8 +34,11 @@ Rooms & Beds card follows the `bedAllocation` module.
 
 2. Choose a card:
    - **Rooms & Beds** (`/admin/rooms-beds`) — configure lodge rooms, active
-     beds, and the bed-allocation inventory. (When the `bedAllocation` module is
-     on, a lodge's capacity is its active bed count.)
+     beds, the bed-allocation inventory, and that lodge's
+     [allocation preferences](rooms-beds.md#set-this-lodges-allocation-preferences)
+     — whether placements are proposed automatically, and what the board tries
+     to keep together first. (When the `bedAllocation` module is on, a lodge's
+     capacity is its active bed count.)
    - **Booking Messages** (`/admin/booking-messages`) — edit the member-facing
      booking, payment, cancellation, and group-booking copy. See the
      [Booking Messages](booking-messages.md) guide.
@@ -189,7 +192,7 @@ screen.
 
 | Card | Goes to | What it configures | Gating |
 | --- | --- | --- | --- |
-| Rooms & Beds | `/admin/rooms-beds` | Lodge rooms, active beds, bed-allocation inventory | Follows the `bedAllocation` module |
+| Rooms & Beds | `/admin/rooms-beds` | Lodge rooms, active beds, bed-allocation inventory, and per-lodge allocation preferences | Follows the `bedAllocation` module |
 | Booking Messages | `/admin/booking-messages` | Member-facing booking/payment/cancellation/group copy | Support permission area |
 | Member guests (card on this page) | — | Ask-first vs tell, consent waiting period, name-search privacy toggles | Bookings permission area (view = read-only) |
 

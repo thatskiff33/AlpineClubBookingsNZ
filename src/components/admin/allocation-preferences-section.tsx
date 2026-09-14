@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { ArrowDown, ArrowUp, GripVertical } from "lucide-react";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { PolicyFeedback } from "@/components/admin/booking-policies/policy-feedback";
+import { LODGE_OPTIONS_RETRY_LABEL } from "@/components/admin/lodge-options-status";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +29,10 @@ import {
   type BedAllocationSettingsWriteBody,
   type EffectiveBedAllocationSettings,
 } from "@/lib/bed-allocation-settings";
+import type {
+  LodgeOptionScopeOnLodge,
+  SettledLodgeOptionScope,
+} from "@/lib/lodge-option-scope";
 
 /**
  * The editable half of the settings payload, DERIVED from the server's own type
@@ -44,7 +49,23 @@ import {
 type AllocationPreferencesDraft = Pick<
   EffectiveBedAllocationSettings,
   "autoAllocationEnabled" | "allocationPriorityOrder"
->;
+> & {
+  /**
+   * The lodge this draft was LOADED from, carried in the draft itself so that
+   * the save can only ever write back to it (#2937).
+   *
+   * Dirty state must never cross lodge scope: an officer who edits, switches
+   * lodge and saves must not have their edits written onto the lodge they
+   * switched to. {@link AllocationPreferencesPanel} already keys this component
+   * by lodge, so a switch unmounts the draft outright and the crossing cannot
+   * begin — but that guarantee lives in the CALLER, one `key` away from being
+   * dropped by the next person who moves this card. Taking the write target out
+   * of the render-time prop and into the loaded draft makes the bad write
+   * unrepresentable instead: a stale draft names a stale lodge, and the newly
+   * chosen lodge is not a value it can reach.
+   */
+  readonly lodgeId: string;
+};
 
 /**
  * Why a refused load or save is not diagnosed from the status code (#2931).
@@ -171,9 +192,11 @@ function settingsOf(payload: unknown): EffectiveBedAllocationSettings | null {
  * than an identity function wearing a cast.
  */
 function toDraft(
+  lodgeId: string,
   settings: EffectiveBedAllocationSettings,
 ): AllocationPreferencesDraft {
   return {
+    lodgeId,
     autoAllocationEnabled: settings.autoAllocationEnabled,
     allocationPriorityOrder: settings.allocationPriorityOrder,
   };
@@ -187,28 +210,24 @@ const LABELS: Record<BedAllocationPriority, string> = {
 };
 
 interface AllocationPreferencesSectionProps {
-  lodgeId: string;
+  /**
+   * A scope that has SETTLED on one lodge — the only state this editor accepts.
+   *
+   * The narrowed variant of the shared type rather than a bare `lodgeId`, so
+   * "only a settled lodge is a write target" is a fact about the props and not
+   * a rule a host has to remember. {@link AllocationPreferencesPanel} is what
+   * produces one, by discriminating the scope it was handed.
+   */
+  scope: LodgeOptionScopeOnLodge;
   canEdit: boolean | undefined;
-  onSaved: (settings: AllocationPreferencesDraft) => Promise<void> | void;
-  renderViewOnlyBanner?: boolean;
 }
 
 export function AllocationPreferencesSection({
-  lodgeId,
+  scope,
   canEdit,
-  onSaved,
-  renderViewOnlyBanner = true,
 }: AllocationPreferencesSectionProps) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    // React StrictMode rehearses setup -> cleanup -> setup. Re-arm the guard in
-    // setup so the real mounted instance still refreshes its parent after Save.
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const lodgeId = scope.lodgeId;
   const endpoint = `/api/admin/bed-allocation/settings?lodgeId=${encodeURIComponent(lodgeId)}`;
   const section = useSectionEditState<AllocationPreferencesDraft>({
     load: async (signal) => {
@@ -222,13 +241,15 @@ export function AllocationPreferencesSection({
       }
       const settings = settingsOf(await response.json().catch(() => null));
       if (!settings) throw new Error(LOAD_FALLBACK);
-      return toDraft(settings);
+      return toDraft(lodgeId, settings);
     },
     save: async (draft) => {
       // The write contract, field by field and TYPED by it — never a spread of
       // the draft. The annotation is what makes a stray field a compile error.
       const writeBody: BedAllocationSettingsWriteBody = {
-        lodgeId,
+        // The DRAFT's lodge, never the render-time prop: see
+        // `AllocationPreferencesDraft.lodgeId`.
+        lodgeId: draft.lodgeId,
         autoAllocationEnabled: draft.autoAllocationEnabled,
         allocationPriorityOrder: draft.allocationPriorityOrder,
       };
@@ -246,11 +267,7 @@ export function AllocationPreferencesSection({
       }
       const settings = settingsOf(await response.json().catch(() => null));
       if (!settings) throw new Error(UNREADABLE_SAVE_REPLY);
-      const saved = toDraft(settings);
-      // The section is keyed by lodge. A save may finish after a scope change;
-      // never let that stale completion refresh its former parent's board.
-      if (mountedRef.current) await onSaved(saved);
-      return saved;
+      return toDraft(draft.lodgeId, settings);
     },
     successMessage: "Allocation preferences saved",
     loadErrorFallback: LOAD_FALLBACK,
@@ -290,12 +307,10 @@ export function AllocationPreferencesSection({
 
   return (
     <div>
-      {renderViewOnlyBanner ? (
-        <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
-          Your admin role can view allocation preferences but cannot change
-          them. Bookings edit access is required.
-        </AdminViewOnlySectionBanner>
-      ) : null}
+      <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+        Your admin role can view allocation preferences but cannot change them.
+        Bookings edit access is required.
+      </AdminViewOnlySectionBanner>
       <PolicyFeedback
         error={section.error}
         success={section.success}
@@ -473,5 +488,101 @@ export function AllocationPreferencesSection({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/**
+ * What the Allocation preferences card says when there is no lodge to edit.
+ *
+ * One sentence per scope state, because "Choose a lodge to continue" is only
+ * true in one of them: a club with no active lodge has nothing to choose, a
+ * role without lodge access cannot choose, and a failed lodge list is an outage
+ * rather than a choice (#2701, carried across in #2937).
+ *
+ * `failed` deliberately points at the retry the page already renders through
+ * `LodgeScopeStatusNotice` rather than growing a second button. That is the
+ * canonical handling, stated by `LodgeOptionsUnavailableNotice` itself:
+ * retrying the lodge list is what brings every lodge-scoped card back, "so
+ * there is one button, not two".
+ */
+function scopeReason(
+  scope: Exclude<SettledLodgeOptionScope, { kind: "lodge" }>,
+): string {
+  switch (scope.kind) {
+    case "all":
+      return "Preferences are set per lodge. Choose a single lodge to see and edit them.";
+    case "forbidden":
+      return "Preferences are set per lodge, and your admin role cannot choose one. Ask for lodge access if you need to change them.";
+    case "failed":
+      return `The lodge list could not be loaded, so preferences cannot be shown or changed. Use ${LODGE_OPTIONS_RETRY_LABEL} above.`;
+    case "empty":
+      return "This club has no active lodge, so there are no preferences to show.";
+    case "loading":
+      return "Loading lodge…";
+  }
+}
+
+/**
+ * The ONE mount point for the allocation preferences editor (#2937).
+ *
+ * It takes the whole {@link SettledLodgeOptionScope} rather than a `lodgeId`,
+ * which is what makes the binding contract's five states structural instead of
+ * remembered:
+ *
+ * - `lodge`     — the editor, keyed by that lodge, loading/editing/saving it
+ *                 and nothing else;
+ * - `all`       — visible, read-only, with the select-a-lodge prompt. There is
+ *                 no write target and no "apply to every lodge" reading of it;
+ * - `loading`   — says so, and fetches nothing. It cannot guess a lodge because
+ *                 a `loading` scope carries no lodge id to guess WITH;
+ * - `failed`    — the canonical failure and its one retry, no write target;
+ * - `forbidden` — permission wording, no edit path.
+ *
+ * (`empty` is the sixth state of the shared type — a club with no active lodge
+ * — and is handled beside them rather than left to fall through.)
+ *
+ * The editor cannot be handed a lodge that no scope settled on: it takes the
+ * narrowed {@link LodgeOptionScopeOnLodge} — the `lodge` variant of the shared
+ * type — rather than a bare lodge id, so the only way to reach it is to
+ * discriminate a real scope, which is what this function does. The per-lodge
+ * `key` lives here too, rather than at each call site.
+ *
+ * That is a guarantee about the SHAPE, not about the mounting. The editor is
+ * still exported, because its own suites drive it directly; mounting it through
+ * this panel is a convention, and the reason to keep it is that this is where
+ * the five non-`lodge` states are answered.
+ *
+ * Rooms & Beds, its only host today, does not offer a club-wide view of its
+ * inventory, so `all` is defensive there rather than reachable. It is still
+ * implemented and tested: the state is part of the shared scope type, the next
+ * host may well offer it, and the failure mode it prevents — an "all lodges"
+ * view that silently acquires a write target — is the one this issue exists to
+ * make impossible.
+ */
+export function AllocationPreferencesPanel({
+  scope,
+  canEdit,
+}: {
+  scope: SettledLodgeOptionScope;
+  canEdit: boolean | undefined;
+}) {
+  if (scope.kind === "lodge") {
+    return (
+      <AllocationPreferencesSection
+        key={scope.lodgeId}
+        scope={scope}
+        canEdit={canEdit}
+      />
+    );
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Allocation preferences</CardTitle>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">
+        {scopeReason(scope)}
+      </CardContent>
+    </Card>
   );
 }
