@@ -197,7 +197,7 @@ function describeFaultKind(
       return {
         label: "Check Xero: this booking's invoice was left mid-flight",
         state:
-          "This booking's invoice operation stopped part-way and never reported what happened, so the club cannot tell from here whether Xero holds an invoice for it. Check Xero for an invoice against this booking BEFORE doing anything else — if one is there, raising another would double-bill the member. The booking itself is unchanged.",
+          "This booking's invoice operation stopped part-way and never reported what happened, so the club cannot tell from here whether Xero holds an invoice for it. Check Xero for an invoice against this booking BEFORE doing anything else — if one is there, raising another would double-bill the member. An operation still stuck part-way has to be reset on the Xero operations screen before it can be retried or resolved. The booking itself is unchanged.",
       };
     case "PAYMENT_NOT_RECORDED":
       return {
