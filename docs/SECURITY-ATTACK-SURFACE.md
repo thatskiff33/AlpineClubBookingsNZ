@@ -3243,6 +3243,35 @@ admin who authors CSS — a **content-area** admin, not necessarily a Full Admin
   `appCss` variant (which excludes `rawCss`), as the `(public)` layout did before
   #2818 — not a per-field DOM change.
 
+- **The same oracle on a LIVE secret, and it was reproducible: the kiosk PIN
+  (#2981, 14 Sep 2026).** The residual above is about server-rendered attendee
+  data. This is about what a visitor TYPES. React's controlled-input pattern
+  mirrors the live value into the `value` content attribute, so
+  `input#hut-leader-pin[value^="14"]` read the shared kiosk PIN a character at a
+  time on `/hut-leader-instructions`. Fixed; the rule, the mechanism and the
+  guards are in [`SECURITY.md`](SECURITY.md) → "Secret entry on pages that carry
+  Raw CSS" and are not restated here.
+
+  What belongs in THIS inventory is the measurement, because the issue was opened
+  on jsdom evidence and the whole question was whether a real browser behaves that
+  way. It does. With React 19.2.8, typing a six-digit PIN:
+
+  | Engine | in `el.value` | in the `value` **attribute** | `[value^="14"]` matched | CSS engine applied the rule |
+  | --- | --- | --- | --- | --- |
+  | Chromium 153.0.8010.12 | yes | **yes** | **yes** | **yes** |
+  | Firefox 155.0 | yes | **yes** | **yes** | **yes** |
+  | WebKit 26.6 | yes | **yes** | **yes** | **yes** |
+
+  Identical at every keystroke and after paste, mid-string edit, rerender and
+  submit. Confirmed again on the real page against the staging stack with real
+  saved Raw CSS. The **actor** is the same one this whole section is about — a
+  content/styling admin, not necessarily a Full Admin — and needs no script, since
+  a conditional `url()` in a matched rule is enough under the ratified
+  `style-src 'unsafe-inline'` (D1). The **blast radius** is wider than the other
+  entries here: the kiosk PIN is SHARED and gates both the remote lodge
+  instructions and the kiosk sign-in, so recovery is not confined to one person's
+  session.
+
 - **The same oracle, one hop along: the group-join payment link (#2827).** The
   group-join confirmation page rendered the pay-by-link token into an anchor
   (`<a href="/pay/<payToken>">`) as a "if you are not redirected" fallback. That
@@ -3979,40 +4008,3 @@ global); the G5 observability gap is partially closed by design.
   non-Caddy deploys; the "Caddy always fronts" deployment invariant stands. The
   rate-limiter degraded mode (issue #1142) is documented above.
 
-## Administrator Raw CSS Versus Secret Inputs - 2026-09-14
-
-Issue #2981. **Administrator-authored Raw CSS on `(website)` / `(website-dynamic)`
-could read a typed kiosk PIN one character at a time, and it was reproducible in
-every supported browser engine.** Fixed; the standing rule, the mechanism and the
-guards are stated once in [`SECURITY.md`](SECURITY.md) → "Secret entry on pages
-that carry Raw CSS" and are not restated here.
-
-What this section records is the **measurement**, because the issue was opened on
-jsdom evidence and the whole question was whether a real browser behaves that way.
-It does. On 14 Sep 2026, with React 19.2.8 and the shipped controlled-input shape
-of `input#hut-leader-pin`:
-
-| Engine | typed value in `el.value` | typed value in the `value` **attribute** | `[value^="14"]` matched | CSS engine applied the matched rule |
-| --- | --- | --- | --- | --- |
-| Chromium 153.0.8010.12 | yes | **yes** | **yes** | **yes** (`getComputedStyle` changed per prefix) |
-| Firefox 155.0 | yes | **yes** | **yes** | **yes** |
-| WebKit 26.6 | yes | **yes** | **yes** | **yes** |
-
-Identical at every keystroke and after paste, mid-string edit, rerender and
-submit; `el.defaultValue` tracked the live value throughout, which is the
-mechanism (`react-dom` writes `defaultValue`, and `defaultValue` reflects to the
-`value` content attribute).
-
-- **Actor.** A content/styling administrator, who is deliberately **not** inside
-  the kiosk-PIN trust boundary — the boundary #2827 drew for the group-join
-  payment token. Exfiltration needs no script: a conditional `url()` in a matched
-  rule is enough, and the club's CSP permits `style-src 'unsafe-inline'` (ratified
-  trade-off D1 above) and broad `img-src https:`.
-- **Blast radius.** The kiosk PIN is **shared** and gates the remote lodge
-  instructions plus the kiosk sign-in, so recovery is not confined to one person's
-  session.
-- **Not in scope, and why.** Raw CSS itself stays — the product decision is
-  settled (#2827) and the exposure was narrower than the feature. Ordinary text
-  fields on the same pages are not secrets. `:placeholder-shown` (empty or not)
-  and `:valid`/`:invalid` (satisfies `pattern` or not) remain observable by a
-  stylesheet; neither is character-wise and neither recovers the secret.

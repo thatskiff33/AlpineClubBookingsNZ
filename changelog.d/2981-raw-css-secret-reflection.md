@@ -15,7 +15,7 @@
   test types a known PIN character by character and fails if a single character
   ever becomes readable again.
 
-  Nothing changes for a hut leader — the field looks the same, still accepts
-  only six digits, and still works with a password manager. Nothing changes for
-  an administrator either: the club's Raw CSS feature is untouched and still
-  does everything it did before.
+  Nothing changes for a hut leader: the field looks the same, accepts only six
+  digits as before, and its password-manager behaviour is unchanged. Nothing
+  changes for an administrator either — the club's Raw CSS feature is untouched
+  and still does everything it did before.
