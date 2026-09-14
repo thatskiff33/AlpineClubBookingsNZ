@@ -11,10 +11,7 @@ import {
   type BookingStayRange,
 } from "@/lib/booking-guest-stay-ranges";
 import type { BookingGuestNightPriceSource } from "@prisma/client";
-import {
-  storedNightPriceDetailsByKey,
-  storedNightPricesByKey,
-} from "@/lib/stored-night-price-write";
+import { storedNightPriceDetailsByKey } from "@/lib/stored-night-price-write";
 
 /**
  * #3031 (epic #2797): can this guest strand's stored history price an edit
@@ -23,35 +20,25 @@ import {
  * ## What a stored `BookingGuestNight.priceCents` is, and is not
  *
  * It is the only per-night money this system keeps. Since #3275 each row also
- * records its origin, but this stage deliberately does not use that fact to
- * change a verdict: stage 3 of programme #3272 owns that reader decision.
- * Three historical migrations populated the table with even splits:
- * `20260614090000_add_booking_guest_night` (#713) created the table and divided
- * every existing guest total across its nights;
- * `20260704150000_backfill_booking_guest_nights` (#1098) divided
- * `BookingGuest.priceCents` by the night count for guests with no rows, and
- * `20260810010000_backfill_booking_request_guest_nights` (#2739) did the same
- * for request-derived bookings — its own header says it "deliberately does NOT
- * reprice anything: it reads the stored total and divides it". The new source
- * column distinguishes those migration-authored averages, but stage 1 records
- * that fact without changing a reader decision. This module therefore still
- * tests RECONCILIATION only; stage 3 of programme #3272 owns the deliberate
- * switch to provenance-aware evidence. That is what epic #2797 asks for in as many
- * words — "a deliberate negotiated-flat initial allocation remains valid once
- * stored", and "if required historical amount is missing/unusable or rows do
- * not reconcile … the financial adjustment becomes explicit pending admin
- * review":
+ * records its origin. Stage 3 of programme #3272 uses that origin at the grain
+ * of the operation: reconciliation can prove a whole guest's stored total, but
+ * an individual night is exact only when its row is `SOLD` or
+ * `OFFICER_PRICED`. The two backfill migrations that divided stored guest
+ * totals across nights (`20260704150000`, #1098, and `20260810010000`, #2739)
+ * are therefore distinguishable from live quotes. Their `EVEN_SPLIT` rows may
+ * support a reconciling whole-guest total and never prove one night's sold
+ * price. `UNKNOWN` is treated the same way at individual-night grain and is
+ * never re-derived from the amount, rate table, timestamp, or surrounding
+ * data.
  *
  * > A guest strand is EXACTLY priced when every night it holds carries a stored
  * > non-negative integer price and those prices sum to `BookingGuest.priceCents`
  * > to the cent. Anything else is `financial_review_required`.
  *
- * The visible consequence is deliberate: an evenly-split backfilled booking
- * reconciles, so it prices as exact. The alternative would be refusing to edit
- * a large share of historical bookings, which nothing in the epic asks for. What
- * the rule does buy is that no amount is ever RECONSTRUCTED — every cent this
- * module blesses was read from a row, and a strand whose rows do not add up is
- * handed to a person instead of to arithmetic.
+ * The visible consequence is deliberate: removing an entire evenly-split
+ * guest may use the reconciling guest total, while giving back one of those
+ * nights parks for a person. No amount is reconstructed, and a strand whose
+ * rows do not add up is also handed to a person instead of to arithmetic.
  *
  * ## Why "unusable" rather than "missing"
  *
@@ -82,8 +69,9 @@ import {
 export type HeldNightPrice = {
   date: CalendarDate;
   priceCents: number | null | undefined;
+  priceSource?: BookingGuestNightPriceSource;
 };
-
+export type StoredSoldPriceGrain = "WHOLE_GUEST" | "INDIVIDUAL_NIGHT";
 /**
  * The verdict on one guest strand.
  *
@@ -118,6 +106,7 @@ export type StoredSoldPriceEvidence =
 export function classifyStoredSoldPriceEvidence(
   heldNights: readonly HeldNightPrice[],
   guestTotalCents: number,
+  grain: StoredSoldPriceGrain,
 ): StoredSoldPriceEvidence {
   const usable: Array<{ date: CalendarDate; priceCents: number }> = [];
   const evidence: StoredNightPriceEvidence[] = [];
@@ -144,7 +133,19 @@ export function classifyStoredSoldPriceEvidence(
       nightPrices: evidence,
     };
   }
-
+  if (
+    grain === "INDIVIDUAL_NIGHT" &&
+    heldNights.some(
+      (night) =>
+        night.priceSource === "EVEN_SPLIT" || night.priceSource === "UNKNOWN",
+    )
+  ) {
+    return {
+      kind: "unusable",
+      cause: "INEXACT_STORED_NIGHT_PRICES",
+      nightPrices: evidence,
+    };
+  }
   if (heldNights.length === 0 && guestTotalCents !== 0) {
     // Nothing to reconcile against, and money on the strand. Named as the
     // absence it is rather than as a mismatch: there are no rows to disagree
@@ -368,35 +369,25 @@ export function storedSoldPriceEvidenceForGuest(
     }> | null;
   },
   booking: BookingStayRange,
+  grain: StoredSoldPriceGrain,
 ): StoredSoldPriceEvidence {
-  const priceByKey = storedNightPricesByKey(guest.nights);
+  const detailsByKey = storedNightPriceDetailsByKey(
+    guest.nights?.map((night) => ({
+      ...night,
+      priceSource: night.priceSource ?? "UNKNOWN",
+    })),
+  );
   return classifyStoredSoldPriceEvidence(
     getGuestBedNightKeys(guest, booking).map((key) => ({
       date: requireCalendarDate(key),
-      priceCents: priceByKey.get(key) ?? null,
+      priceCents: detailsByKey.get(key)?.priceCents ?? null,
+      priceSource: detailsByKey.get(key)?.priceSource,
     })),
     guest.priceCents,
+    grain,
   );
 }
 
-/**
- * What is stored against each night a guest already holds, by lodge-night key.
- *
- * `null` means the night carries NO USABLE STORED PRICE: no row, a row loaded
- * without its price, or a row whose value is not non-negative integer cents. The
- * three are one thing to every reader of this map, and the distinction from a
- * stored ZERO is the whole point of the null — zero is a real sold price (a
- * comped night), absence is not a price at all.
- *
- * KEYED THROUGH THE SAME CANONICAL HELPER that builds the night keys, one entry
- * at a time, rather than by re-deriving the key here. A price keyed even
- * slightly differently from its night would never match it, and the failure
- * would be silent — the night would quietly price at today's rate, which is the
- * defect INV-DATE-020 exists for.
- *
- * ONE PROJECTION (`INV-SSOT`). The planner and the removal path both need it and
- * had written it twice, already normalising differently.
- */
 /**
  * One existing guest strand as an edit to a NOT-YET-STARTED booking proposes to
  * leave it (#3166, epic #2797).
@@ -523,6 +514,10 @@ export function preCheckInEditEvidence(args: {
         nights: strand.nights,
       },
       args.booking,
+      surrenderedNightDates.length === heldKeys.length &&
+        addedNightDates.length === 0
+        ? "WHOLE_GUEST"
+        : "INDIVIDUAL_NIGHT",
     );
     storedNightPriceByGuestId.set(
       strand.bookingGuestId,

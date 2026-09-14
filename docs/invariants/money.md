@@ -350,9 +350,41 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   next engine run rewrites it, which is the honest answer. **Account credit is
   not in this table**: it has
   one home, the `MemberCredit` ledger entry with its booking link, and is
-  composed from there, never split across nights. No reader changes and no
-  figure a member sees changes in this stage (D3), pinned by
+  composed from there, never split across nights. Stage 2 added the record and
+  changed no reader or member-visible figure (D3), pinned by
   `promo-money-byte-identical.test.ts`.
+
+
+## INV-MONEY-030
+
+- **Stored money readers use one operation-aware projection and one pure
+  discriminator, preserve today's member-visible amounts, and record which
+  source they used** (#3277, programme #3272; owner-approved D3 blueprint,
+  12 September 2026). The caller names its operation because the required grain
+  differs: whole-guest removal may use a reconciling guest total even when its
+  nights are `EVEN_SPLIT`; review re-base needs exact individual-night
+  provenance; credit election verifies the booking headline; Xero verifies the
+  booking promotion aggregate.
+
+  `selectBookingMoneyBuildUp` returns `STORED`,
+  `DERIVED_COMPATIBILITY_FALLBACK`, or `BASE_EVIDENCE_UNKNOWN`, with its reason,
+  known cents, and history metadata. Stored money is selected only when it is
+  byte-identical to today's result. A disagreement must be classified as
+  `STORED_SIDE_DEFECT`, `DERIVATION_DEFECT`, or `LEGITIMATE_DIVERGENCE`, and
+  today's result still wins. `ADJUSTMENT_BUILDUP_NOT_KNOWN` means historical
+  evidence is missing or unrecorded, not necessarily corrupt. Unknown base
+  evidence has no selectable amount and is never re-derived or defaulted to
+  zero.
+
+  Guest removal decides before deleting its targets and records the verdict on
+  the existing `BookingModification`. Review closure writes a fresh build-up
+  and records the verdict in existing audit and `PRICE_REBASE` history. Credit
+  election preserves its headline, clamp, shortfall, and ledger arithmetic and
+  records the verdict with its atomic credit result. Per-booking Xero invoices
+  retain gross guest/night lines plus one promotion line and record that line's
+  source on the existing operation. Group-settlement totals and their omission
+  of a child promotion line remain unchanged unless a fixture proves a D3 defect
+  and the owner separately approves its correction.
 
 ## INV-MONEY-006
 

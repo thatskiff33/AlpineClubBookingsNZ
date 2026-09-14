@@ -852,34 +852,45 @@ If it says anything else, member email and writes into the club's Xero
 organisation are being held back. Fix `APP_ENVIRONMENT_ROLE` in the production
 `.env` and restart.
 
-### 3.2 Re-run the bed-allocation audit category backfill
+### 3.2 Re-run the audit category backfills
 
-`20260810020000_backfill_bed_allocation_audit_category` (#2751) moves the stored
-audit `category` from `admin` to `lodge` on the bed-allocation and lodge-display
-activity records written before #2730 changed where new ones are filed, so that
-bed-allocation history reads as one run in the Category filter and in AI
-Diagnostics instead of being split at the upgrade date.
+Two data-only migrations rewrite the stored audit `category` and each wants one
+verbatim re-run after cutover, for the same reason: `prisma migrate deploy` runs
+them **before** cutover, while the old colour is still serving and still filing
+records the old way, so anything written in that window is missed unless the
+statement runs again.
 
-`prisma migrate deploy` runs it **before** cutover, while the old colour is still
-serving and still filing new bed-allocation records the old way. Every allocation
-made in that window is written after the statement has already passed, so it keeps
-`admin` permanently unless the statement runs again.
+- `20260810020000_backfill_bed_allocation_audit_category` (#2751) moves
+  `admin` to `lodge` on the bed-allocation and lodge-display records written
+  before #2730 changed where new ones are filed, so that history reads as one
+  run in the Category filter and in AI Diagnostics.
+- `20260923010000_backfill_historical_audit_categories` (#2581) gives the
+  records written with **no category** before the category became mandatory
+  (#2676/#2732) the category their event type records today, from an exact
+  reviewed list, and corrects four records whose category was not a recognised
+  value. On a deployment that already runs the mandatory-category runtime the
+  window writes no uncategorised record, so the re-run finds nothing.
 
-Run the whole `migration.sql` again, verbatim, against the production database
-once cutover is complete:
+Run both files again, verbatim, against the production database once cutover is
+complete:
 
 ```bash
 psql "$DATABASE_URL" \
   -f prisma/migrations/20260810020000_backfill_bed_allocation_audit_category/migration.sql
+psql "$DATABASE_URL" \
+  -f prisma/migrations/20260923010000_backfill_historical_audit_categories/migration.sql
 ```
 
-It is idempotent, so this changes nothing anywhere it already ran: the `WHERE`
-clause is the state the statement destroys, and its `AUDIT_CATEGORY_BACKFILLED`
-record is written only when rows actually moved. Expect either a second such entry
-in **Admin → Audit Log** naming the handful of window rows it picked up, or no new
-entry at all — both are correct outcomes. Skipping this step is not a failure
-either; it leaves those few records under the Admin filter, where **All** still
-finds them.
+Both are idempotent, so this changes nothing anywhere it already ran: each
+`WHERE` clause is the state its statement destroys, and each
+`AUDIT_CATEGORY_BACKFILLED` record is written only when rows actually moved.
+Expect either a second such entry in **Admin → Audit Log** naming the handful of
+window rows it picked up, or no new entry at all — both are correct outcomes.
+Skipping this step is not a failure either; it leaves those few records where
+they were, which **All** in the Category filter still finds. Afterwards, the
+read-only postflight queries in [`UPGRADING.md`](UPGRADING.md) → "One-off
+categorisation of older activity entries" show what, if anything, is still
+uncategorised.
 
 ### 3.3 Historical access-role/membership cleanup window
 
