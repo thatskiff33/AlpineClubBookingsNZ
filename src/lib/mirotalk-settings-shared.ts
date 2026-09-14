@@ -185,7 +185,13 @@ export type MirotalkValidation =
  * club's.
  */
 export function validateMirotalkBaseUrl(value: string): MirotalkValidation {
-  const trimmed = value.trim().replace(/\/+$/, "");
+  // Whitespace only. A trailing slash is dropped AFTER parsing, not before:
+  // stripping it first turned "https://" into "https:", which then failed the
+  // scheme test, got another "https://" bolted on, and parsed cleanly as the
+  // host "https" — so a typo stored as the plausible-looking address
+  // `https://https`. The test that found it is in
+  // mirotalk-settings-shared.test.ts.
+  const trimmed = value.trim();
   if (!trimmed) return { ok: false, reason: "Enter the meeting server address." };
   if (trimmed.length > MIROTALK_BASE_URL_MAX_LENGTH) {
     return {
@@ -226,6 +232,16 @@ export function validateMirotalkBaseUrl(value: string): MirotalkValidation {
       ok: false,
       reason:
         "Remove the query string or the # fragment — the join link appends its own.",
+    };
+  }
+  if (!parsed.hostname.includes(".")) {
+    // A single-label host is not publicly resolvable, and members open this
+    // link from their own phones and home networks. It is also what a typed
+    // fragment ("meet", "https") parses into once a scheme is assumed.
+    return {
+      ok: false,
+      reason:
+        "That does not look like a full address — it needs a domain, for example meet.example.org.",
     };
   }
   if (isBlockedDestinationHost(parsed.hostname)) {
