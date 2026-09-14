@@ -265,7 +265,13 @@ export async function recordBookingNightAdjustments(
   if (redemption) {
     reconcilePromoAdjustmentTargets({
       targets,
-      allocations: redemption.allocations,
+      // #3369: an allocation with no member belongs to an organisation-owned
+      // booking's booker slot, and a night adjustment decomposes a MEMBER's
+      // benefit. There is none to decompose, so such a row is not a target.
+      allocations: redemption.allocations.filter(
+        (allocation): allocation is typeof allocation & { memberId: string } =>
+          allocation.memberId !== null,
+      ),
       priceAdjustmentCents: redemption.priceAdjustmentCents,
       context: writer,
     });

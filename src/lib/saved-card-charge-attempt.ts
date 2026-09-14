@@ -210,9 +210,15 @@ const SAVED_CARD_CHARGE_REASONS: ReadonlySet<string> = new Set(
  */
 export function buildSavedCardChargeMetadata(
   bookingId: string,
-  memberId: string
+  /**
+   * The booking OWNER's member id, or null when it is owned by an
+   * `Organisation` (#3369). It is dashboard-only — nothing downstream reads it
+   * — so the key is simply omitted rather than carrying an empty string or an
+   * organisation id under a name that says member.
+   */
+  memberId: string | null
 ): Record<string, string> {
-  return { bookingId, memberId };
+  return memberId ? { bookingId, memberId } : { bookingId };
 }
 
 /**

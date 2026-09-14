@@ -92,7 +92,7 @@ export function evaluateGuestSelfRemoval({
   isQuotePriced = false,
   today,
 }: {
-  actorMemberId: string;
+  actorMemberId: string | null;
   /** `memberId` on the guest row being removed (null for a non-member guest). */
   guestMemberId: string | null;
   /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
@@ -208,7 +208,7 @@ export function resolveBookingSelfRemovalCard({
   isQuotePriced,
   today,
 }: {
-  actorMemberId: string;
+  actorMemberId: string | null;
   isBookingOwner: boolean;
   /** A full admin, who manages the guest list through the admin tooling. */
   isAdminViewer: boolean;

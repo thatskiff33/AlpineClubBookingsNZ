@@ -285,9 +285,14 @@ export async function PUT(
     // be recorded honestly. Only stamp notifyMember:false when there was an
     // email to suppress; otherwise there was nothing to opt out of.
     const memberEmail = bookingOwner(booking).member.email || refundRequest.member.email;
-    const recipientMemberId = bookingOwner(booking).member.email
-      ? bookingOwner(booking).member.id
-      : refundRequest.member.id;
+    // #3369: the owner where there is a member to name, and otherwise the
+    // person who ASKED for the refund — who is always a member, because
+    // `RefundRequest.memberId` is the requester and stays required. A school's
+    // booking therefore still addresses somebody real.
+    const recipientMemberId =
+      (bookingOwner(booking).member.email
+        ? bookingOwner(booking).member.id
+        : refundRequest.member.id) ?? refundRequest.member.id;
     const notifyAuditFields =
       memberEmail && notifyMember === false ? { notifyMember: false } : {};
 
@@ -374,9 +379,14 @@ export async function PUT(
     // be recorded honestly. Only stamp notifyMember:false when there was an
     // email to suppress; otherwise there was nothing to opt out of.
     const memberEmail = bookingOwner(booking).member.email || refundRequest.member.email;
-    const recipientMemberId = bookingOwner(booking).member.email
-      ? bookingOwner(booking).member.id
-      : refundRequest.member.id;
+    // #3369: the owner where there is a member to name, and otherwise the
+    // person who ASKED for the refund — who is always a member, because
+    // `RefundRequest.memberId` is the requester and stays required. A school's
+    // booking therefore still addresses somebody real.
+    const recipientMemberId =
+      (bookingOwner(booking).member.email
+        ? bookingOwner(booking).member.id
+        : refundRequest.member.id) ?? refundRequest.member.id;
     const notifyAuditFields =
       memberEmail && notifyMember === false ? { notifyMember: false } : {};
 

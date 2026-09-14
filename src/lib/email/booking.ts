@@ -178,7 +178,11 @@ export async function sendBookingConfirmedEmail(
     resolveBookingEmailLink({
       bookingId: bookingContext.bookingId,
       templateName: "booking-confirmed",
-      recipient: { kind: "member", memberId: bookingContext.recipientMemberId },
+      // #3369: a school has no member to name, and the non-login
+      // public-contact kind is what it has effectively always been.
+      recipient: bookingContext.recipientMemberId
+        ? { kind: "member", memberId: bookingContext.recipientMemberId }
+        : { kind: "non-login-public-contact" },
       deliveryAddress: email,
     }).catch((err) => {
       logger.error(
