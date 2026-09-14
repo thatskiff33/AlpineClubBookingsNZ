@@ -19,7 +19,8 @@ import { NextRequest } from "next/server";
   dependants from authenticated data rather than from anything the client sent,
   that it runs on the NORMALISED party so a forged member link cannot walk past
   it, that it runs before any create service, and that an authorised on-behalf
-  create is deliberately exempt.
+  create is guarded TOO — against the dependants of the member the booking is
+  for, never the officer's own.
 */
 
 const h = vi.hoisted(() => ({
@@ -195,7 +196,10 @@ vi.mock("@/lib/family-booking-add-notifications", () => ({
 }));
 
 import { POST } from "@/app/api/bookings/route";
-import { DIFFERENT_PERSON_SAME_NAME } from "@/lib/booking-dependant-identity";
+import {
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
+  DIFFERENT_PERSON_SAME_NAME,
+} from "@/lib/booking-dependant-identity";
 
 // Fixed future nights relative to the repository's frozen clock
 // (2026-07-01), per `docs/TESTING.md`. Never derived from the real calendar.
@@ -567,26 +571,141 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
     });
   });
 
-  it("is skipped on an authorised on-behalf create, like every other member-facing gate on this route", async () => {
-    // The officer has the family in front of them, is audited, and has no wizard
-    // on which to answer a collision question. `isAuthorizedOnBehalf` is the same
-    // flag that passes `skipAuthorization` to the member-guest boundary check.
-    h.managementRole.mockReturnValue("ADMIN");
-    h.hasAdminAccess.mockReturnValue(true);
-    h.hasAccessRole.mockReturnValue(false);
-    h.auth.mockResolvedValue({
-      user: { id: "officer-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
+  /*
+    THE AUTHORISED ON-BEHALF CREATE (owner decision on #2721, D1 option A,
+    15 Sep 2026).
+
+    This path used to skip the guard entirely, on the reasoning that the
+    member-guest boundary check beside it skips too and reads the same flag. The
+    owner removed the exemption because the two are not the same class of check.
+    The boundary check gates the OFFICER'S OWN AUTHORITY, which the officer can
+    see in front of them. This one protects A THIRD PARTY'S BED — a real child on
+    a provisional, bumpable, separately invoiced guest row at non-member prices —
+    and the parent is not at the screen to notice. A silent path is worst exactly
+    where the affected person cannot see it.
+  */
+  describe("an authorised on-behalf create", () => {
+    const OFFICER_ID = "officer-1";
+
+    function signInAsOfficer() {
+      h.managementRole.mockReturnValue("ADMIN");
+      h.hasAdminAccess.mockReturnValue(true);
+      h.hasAccessRole.mockReturnValue(false);
+      h.auth.mockResolvedValue({
+        user: {
+          id: OFFICER_ID,
+          role: "ADMIN",
+          accessRoles: [{ role: "ADMIN" }],
+        },
+      });
+      h.memberFindUnique.mockResolvedValue({ active: true });
+    }
+
+    it("is asked the question too, and writes nothing until it is answered", async () => {
+      signInAsOfficer();
+
+      const res = await POST(
+        makeRequest({
+          guests: OWN_DEPENDANT_AS_FREE_TEXT,
+          forMemberId: BOOKER_ID,
+        }),
+      );
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("DEPENDANT_IDENTITY_UNRESOLVED");
+      expectNoBookingWritten();
     });
-    h.memberFindUnique.mockResolvedValue({ active: true });
 
-    const res = await POST(
-      makeRequest({
-        guests: OWN_DEPENDANT_AS_FREE_TEXT,
-        forMemberId: BOOKER_ID,
-      }),
-    );
+    it("reads the dependants of the member the booking is FOR, never the officer's own", async () => {
+      /*
+        The disclosure half of the rule, and the half a wrong candidate set gets
+        backwards in both directions at once: querying the signed-in officer
+        would miss every real collision on the member's family AND start asking
+        an officer about their own children on somebody else's booking.
 
-    expect(res.status).toBe(201);
-    expect(h.memberFindMany).not.toHaveBeenCalled();
+        Asserted on the WHERE clause rather than on the outcome on purpose — an
+        officer with no dependants of their own produces an empty set and a
+        clean 201, which is indistinguishable from "the guard ran correctly and
+        found nothing". Only the query says which family was asked about.
+      */
+      signInAsOfficer();
+
+      await POST(
+        makeRequest({
+          guests: OWN_DEPENDANT_AS_FREE_TEXT,
+          forMemberId: BOOKER_ID,
+        }),
+      );
+
+      expect(h.memberFindMany).toHaveBeenCalledTimes(1);
+      const where = h.memberFindMany.mock.calls[0]?.[0]?.where;
+      expect(where).toMatchObject({
+        active: true,
+        OR: [{ parentMemberId: BOOKER_ID }, { secondaryParentId: BOOKER_ID }],
+      });
+      expect(JSON.stringify(where)).not.toContain(OFFICER_ID);
+    });
+
+    it("says whose dependant it is, because 'your dependant' is wrong when the reader is not the parent", async () => {
+      signInAsOfficer();
+
+      const res = await POST(
+        makeRequest({
+          guests: OWN_DEPENDANT_AS_FREE_TEXT,
+          forMemberId: BOOKER_ID,
+        }),
+      );
+
+      const { error } = await res.json();
+      expect(error).toBe(DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE);
+      expect(error).not.toContain("your dependant");
+    });
+
+    it("proceeds once the officer declares the guest a different person of the same name", async () => {
+      signInAsOfficer();
+
+      const res = await POST(
+        makeRequest({
+          guests: OWN_DEPENDANT_AS_FREE_TEXT,
+          forMemberId: BOOKER_ID,
+          dependantIdentityDeclarations: [
+            {
+              kind: DIFFERENT_PERSON_SAME_NAME,
+              dependantMemberId: DEPENDANT.id,
+              normalizedName: "sam smith",
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(201);
+    });
+
+    it("refuses a declaration the member's own records do not support, as on the member path", async () => {
+      // An officer cannot waive a collision by naming a dependant who is not
+      // one: the declaration is checked against the booking member's records,
+      // not accepted because an admin sent it.
+      signInAsOfficer();
+
+      const res = await POST(
+        makeRequest({
+          guests: OWN_DEPENDANT_AS_FREE_TEXT,
+          forMemberId: BOOKER_ID,
+          dependantIdentityDeclarations: [
+            {
+              kind: DIFFERENT_PERSON_SAME_NAME,
+              dependantMemberId: "dep-not-theirs",
+              normalizedName: "sam smith",
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe(
+        "DEPENDANT_IDENTITY_DECLARATION_INVALID",
+      );
+      expectNoBookingWritten();
+    });
   });
 });
