@@ -62,8 +62,42 @@
  *   from a page, its pagination window and its count. There is no read and no
  *   type error, and nothing distinguishes a deliberate member-only scope from
  *   an accidental one. This census does not see it and cannot be made to.
+ *
+ * ## The half of that blind spot that turned out to be closable
+ *
+ * The paragraphs above were written believing the compiler held the WRITING
+ * side while only the READING side needed a census. It does not, and the fourth
+ * family below exists because of what that cost.
+ *
+ * A `select` or `include` is checked against the model only at the TOP level of
+ * a Prisma call. A nested one is inferred from the literal itself and then
+ * compared with itself, so a relation key the model does not declare compiles
+ * silently and raises `PrismaClientValidationError` on the first real call:
+ * "Unknown field `organisation` for select statement on model `BookingGuest`".
+ * A `select` written where a FILTER belongs fails the same way. Neither shape
+ * reaches a test that does not execute the query, and `npm run typecheck` is
+ * green for both — measured, not assumed.
+ *
+ * #3369's ownership sweep added `organisation` beside `member` in several
+ * hundred selections, textually, because `member:` is the shape it was looking
+ * for. Thirteen of those landed where no such relation exists — on
+ * `BookingGuest` (the guest's OWN member link, which has nothing to do with who
+ * owns the booking), on `HutLeaderAssignment`, on `MemberSubscription`, on
+ * `MembershipCancellationRequestParticipant` — and two landed inside a `where`.
+ * Every one of them was a crash: the lodge kiosk's guest list, the bed
+ * allocation board, the lodge wall's custodian panel, the member-night conflict
+ * check on the booking-create path, hut-leader eligibility, and three Xero
+ * record pages. They would have shipped.
+ *
+ * So the fourth family does not scan for a read at all. It resolves each
+ * `organisation` selection key back to the model it is written against, through
+ * this repository's own datamodel, and fails when there is no such relation
+ * there. That is a fact about the schema rather than a judgement about intent,
+ * which is exactly why it can be a guard where "is this member-only scope
+ * deliberate?" cannot.
  */
 import { readFileSync } from "node:fs";
+import { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -460,7 +494,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-guest-removal-service.ts:425",
   "src/lib/booking-guest-removal-service.ts:759",
   "src/lib/booking-linked-date-move-service.ts:233",
-  "src/lib/booking-member-night-conflicts.ts:361",
+  "src/lib/booking-member-night-conflicts.ts:359",
   "src/lib/booking-modify-validation.ts:527",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1429",
   "src/lib/group-booking.ts:264",
@@ -494,4 +528,263 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
 /** Measured, not counted by hand. Re-measure by running this test. */
 const MEMBER_KEYED_HELPER_SITES: readonly string[] = [
   "src/lib/diagnostics/tools/packs/finance-evidence.ts:562",
+];
+
+/* -------------------------------------------------------------------------- */
+/* The fourth family: a selection key resolved against the datamodel.          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Keys that structure a Prisma argument rather than name a relation.
+ *
+ * Walking outward from an `organisation` key, these are stepped over; anything
+ * else is a relation field and has to resolve on the model reached so far.
+ */
+const STRUCTURAL_KEYS = new Set([
+  "select", "include", "omit", "data", "where", "is", "isNot", "some",
+  "every", "none", "AND", "OR", "NOT", "create", "update", "connect",
+  "connectOrCreate", "upsert", "orderBy", "_count", "args",
+]);
+
+/** Every model in this repository's datamodel, by name, with its fields. */
+const MODEL_FIELDS = new Map(
+  Prisma.dmmf.datamodel.models.map((model) => [
+    model.name,
+    new Map(model.fields.map((field) => [field.name, field])),
+  ]),
+);
+
+/** `prisma.bookingGuest` -> `BookingGuest`. The delegate naming is mechanical. */
+const MODEL_BY_DELEGATE = new Map(
+  [...MODEL_FIELDS.keys()].map((name) => [
+    name[0].toLowerCase() + name.slice(1),
+    name,
+  ]),
+);
+
+/**
+ * An `organisation` key written as a Prisma SELECTION: `{ select: … }`,
+ * `{ include: … }` or `true`.
+ *
+ * Deliberately not every `organisation: {`. A hand-written TypeScript type
+ * (`organisation: { name: string; email: string | null } | null`) and a
+ * relation FILTER (`organisation: { is: … }`) are both correct and neither is a
+ * selection. The filter is also already checked by the compiler, because a
+ * `where` is typed from the top of the call rather than inferred from its own
+ * literal.
+ */
+const SELECTION_KEY =
+  /(?<![\w$])organisation\s*:\s*(?:true\b|\{\s*(?:select|include)\b)/g;
+
+type Selection = {
+  site: string;
+  /** The model the key is written against, where the walk could reach one. */
+  model: string | undefined;
+  /** Did the walk reach a rooted Prisma call? */
+  rooted: boolean;
+  /** Does that model actually declare an `organisation` relation? */
+  declared: boolean | null;
+  /** Is the key a `select`/`include` sitting inside a `where`? */
+  inFilter: boolean;
+};
+
+/**
+ * Walk outward from each selection key, collecting the key that opened every
+ * enclosing brace, until a dotted callee (`prisma.booking.findMany`) names the
+ * root model — then walk that path back DOWN the datamodel.
+ */
+function selectionsIn(file: string, rawSource: string): Selection[] {
+  const source = stripCommentsAndStrings(rawSource);
+  const found: Selection[] = [];
+  for (const match of source.matchAll(SELECTION_KEY)) {
+    const at = match.index ?? 0;
+    const path: string[] = [];
+    let rootModel: string | undefined;
+    let cursor = at;
+    for (let hop = 0; hop < 40; hop++) {
+      let depth = 0;
+      let open = cursor - 1;
+      for (; open >= 0; open--) {
+        const char = source[open];
+        if (char === "}") depth++;
+        else if (char === "{") {
+          if (depth === 0) break;
+          depth--;
+        }
+      }
+      if (open < 0) break;
+      const before = source
+        .slice(Math.max(0, open - 240), open)
+        .match(/([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?::|\()\s*$/);
+      if (!before) break;
+      const key = before[1].replace(/\s+/g, "");
+      if (key.includes(".")) {
+        rootModel = MODEL_BY_DELEGATE.get(key.split(".").slice(-2)[0]);
+        break;
+      }
+      path.unshift(key);
+      cursor = open;
+    }
+
+    let model = rootModel;
+    let rooted = Boolean(rootModel);
+    for (const key of path) {
+      if (STRUCTURAL_KEYS.has(key)) continue;
+      const field = model ? MODEL_FIELDS.get(model)?.get(key) : undefined;
+      if (!field || field.kind !== "object") {
+        rooted = false;
+        model = undefined;
+        break;
+      }
+      model = field.type;
+    }
+
+    found.push({
+      site: `${file}:${source.slice(0, at).split("\n").length}`,
+      model,
+      rooted,
+      declared: model ? MODEL_FIELDS.get(model)!.has("organisation") : null,
+      inFilter: path.includes("where") && !match[0].trimEnd().endsWith("true"),
+    });
+  }
+  return found;
+}
+
+const selections = [...scanned.code.keys()].flatMap((file) =>
+  selectionsIn(file, readFileSync(file, "utf8")),
+);
+
+describe("#3369: an `organisation` selection names a relation that exists", () => {
+  it("scans a meaningful number of selections", () => {
+    // Without this the assertions below pass on an empty walk, which is
+    // exactly how the sweep's thirteen crashes survived a green suite.
+    expect(selections.length).toBeGreaterThan(80);
+    expect(selections.filter((s) => s.rooted).length).toBeGreaterThan(80);
+  });
+
+  it("finds no selection on a model with no organisation relation", () => {
+    expect(
+      selections
+        .filter((s) => s.rooted && s.declared === false)
+        .map((s) => `${s.site} (model ${s.model})`)
+        .sort(),
+      "A Prisma `select`/`include` names `organisation` on a model that has " +
+        "no such relation. This COMPILES — a nested selection is inferred " +
+        "from its own literal rather than checked against the model — and it " +
+        "throws `PrismaClientValidationError` on the first real call, taking " +
+        "the whole screen with it. Only `Booking`, `BookingRequest` and " +
+        "`OrganisationContact` declare the relation. A guest's `member` is the " +
+        "GUEST's own member link and never the booking's owner, so the owner " +
+        "belongs on the enclosing booking selection rather than beside it.",
+    ).toEqual([]);
+  });
+
+  it("finds no select written where a filter belongs", () => {
+    expect(
+      selections.filter((s) => s.inFilter).map((s) => s.site).sort(),
+      "A `where` clause carries `organisation: { select: … }`. A select is " +
+        "not a filter operator, so this throws `Unknown argument select` — " +
+        "and even spelled correctly as `organisation: { is: … }` it would be " +
+        "ANDed with any sibling `member` filter, which " +
+        "`Booking_owner_exactly_one` makes unsatisfiable, so the search would " +
+        "return nothing for every name. Give the organisation its own OR arm, " +
+        "the way `admin-bookings-service.ts` and `admin-payments-service.ts` " +
+        "do.",
+    ).toEqual([]);
+  });
+
+  it("publishes the selections this walk cannot root", () => {
+    expect(
+      selections.filter((s) => !s.rooted).map((s) => s.site).sort(),
+      "The set of `organisation` selections whose model this walk cannot " +
+        "reach has moved. These are standalone selection constants and Prisma " +
+        "type computations: the literal names no delegate, so nothing here " +
+        "can say which model it is for. Four of them are compile-checked " +
+        "anyway, by `Prisma.validator<Prisma.…Select>()` or by sitting in a " +
+        "type position; the bare `const … = { … } as const` ones are not, and " +
+        "wrapping one in `Prisma.validator` is how it comes off this list. A " +
+        "NEW entry here is a site nothing checks — verify by hand which model " +
+        "it is written against. RE-MEASURE BY RUNNING THIS TEST.",
+    ).toEqual(UNROOTED_ORGANISATION_SELECTIONS);
+  });
+
+  it("FAILS on each shape the #3369 sweep actually shipped (fixture proof)", () => {
+    const guestSelect = `
+      const rows = await prisma.bookingGuest.findMany({
+        select: {
+          member: { select: { id: true } },
+          organisation: { select: { name: true, email: true } },
+        },
+      });`;
+    const nestedGuest = `
+      const rows = await prisma.booking.findMany({
+        select: {
+          organisation: { select: { name: true } },
+          guests: {
+            select: {
+              member: { select: { ageTier: true } },
+              organisation: { select: { name: true } },
+            },
+          },
+        },
+      });`;
+    const filter = `
+      const rows = await prisma.booking.findMany({
+        where: {
+          member: { active: true },
+          organisation: { select: { name: true, email: true } },
+        },
+        select: { id: true },
+      });`;
+
+    const bad = (code: string) =>
+      selectionsIn("fixture.ts", code).filter(
+        (s) => (s.rooted && s.declared === false) || s.inFilter,
+      );
+    expect(bad(guestSelect), "guest select").toHaveLength(1);
+    // The booking's own selection is correct; only the guest's is not.
+    expect(selectionsIn("fixture.ts", nestedGuest)).toHaveLength(2);
+    expect(bad(nestedGuest), "nested guest select").toHaveLength(1);
+    expect(bad(filter), "select used as a filter").toHaveLength(1);
+  });
+
+  it("does NOT fire on the shapes that are correct (fixture proof)", () => {
+    const correct = `
+      const one = await prisma.booking.findUnique({
+        select: { member: { select: { id: true } }, organisation: { select: { name: true } } },
+      });
+      const two = await prisma.payment.findMany({
+        select: { booking: { select: { organisation: { select: { name: true } } } } },
+      });
+      const three = await prisma.bookingRequest.findMany({
+        select: { organisation: { select: { name: true } } },
+      });
+      const four = await prisma.booking.findMany({
+        where: { organisation: { is: { name: { contains: term } } } },
+        select: { id: true },
+      });
+      type Row = { organisation: { name: string; email: string | null } | null };`;
+    const found = selectionsIn("fixture.ts", correct);
+    // The `where` filter spelled `is` and the type declaration are not
+    // SELECTIONS at all, so the pattern must not pick them up: three hits.
+    expect(found).toHaveLength(3);
+    expect(found.filter((s) => !s.rooted)).toEqual([]);
+    expect(found.filter((s) => s.declared === false)).toEqual([]);
+    expect(found.filter((s) => s.inFilter)).toEqual([]);
+  });
+});
+
+/** Measured, not counted by hand. Re-measure by running this test. */
+const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
+  "src/app/api/admin/booking-change-requests/[id]/route.ts:56",
+  "src/app/api/admin/payments/manual-refund-tasks/route.ts:102",
+  "src/lib/bed-allocation-removal.ts:144",
+  "src/lib/cron-additional-payment-reminders.ts:433",
+  "src/lib/cron-confirm-pending.ts:186",
+  "src/lib/diagnostics/tools/packs/booking-evidence.ts:887",
+  "src/lib/payment-link.ts:74",
+  "src/lib/payment-reconciliation.ts:81",
+  "src/lib/stuck-state-dashboard.ts:619",
+  "src/lib/xero-booking-repair-types.ts:172",
+  "src/lib/xero-inbound/invoice-paid-effects.ts:263",
 ];

@@ -89,12 +89,20 @@ interface BookingChangeRequestData {
     checkOut: string;
     status: string;
     finalPriceCents: number;
+    // #3369: NULLABLE, because a school booking is owned by its organisation
+    // and has no member at all. Declaring it non-null here is what let the
+    // sweep past the compiler: the API shape was right and this hand-written
+    // copy of it was not, so `bookingOwner(...).member.firstName` below read a
+    // null at runtime and threw inside the `.map()`, taking the whole queue
+    // down rather than one card. An officer can raise a locked-period change
+    // request on any booking, a school's included.
     member: {
       id: string;
       firstName: string;
       lastName: string;
       email: string;
-    };
+    } | null;
+    organisation: { name: string; email: string | null } | null;
     payment: {
       id: string;
       amountCents: number;
@@ -491,15 +499,24 @@ export function BookingChangeRequestsPanel({
                     >
                       Open booking
                     </Link>
-                    <Link
-                      href={buildHrefWithReturnTo(
-                        `/admin/members/${bookingOwner(request.booking).member.id}`,
-                        currentPath
-                      )}
-                      className="text-info-11 hover:underline"
-                    >
-                      Open member
-                    </Link>
+                    {/*
+                      #3369: the id is a MEMBER id and there is none for a
+                      school, so the link is offered only when there is a member
+                      page behind it — the same answer the promo-redemption
+                      panel gives. A school's own page is not somewhere this
+                      release can send anybody yet.
+                    */}
+                    {bookingOwner(request.booking).member.id ? (
+                      <Link
+                        href={buildHrefWithReturnTo(
+                          `/admin/members/${bookingOwner(request.booking).member.id}`,
+                          currentPath
+                        )}
+                        className="text-info-11 hover:underline"
+                      >
+                        Open member
+                      </Link>
+                    ) : null}
                   </div>
 
                   {request.status === "REQUESTED" ? (

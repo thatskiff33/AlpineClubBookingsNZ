@@ -154,7 +154,6 @@ async function handleGet(req: NextRequest, dateStr: string) {
               phoneNumber: true,
             },
           },
-          organisation: { select: { name: true, email: true } },
           // REQUIRED, not optional (#2631). Without the explicit night rows a
           // sparse stay's internal gap day falls back to the stayStart/stayEnd
           // envelope and reads as presence — a phantom guest on the kiosk, on a

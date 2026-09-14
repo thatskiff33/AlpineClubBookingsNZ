@@ -257,8 +257,6 @@ export async function GET(
       name: memberName(bookingOwner(r.booking).member),
       email: bookingOwner(r.booking).member.email,
     },
-    // #3369: the owner may be an Organisation; bookingOwner() reads both.
-    organisation: { select: { name: true, email: true } },
     booking: {
       id: r.booking.id,
       reference: bookingReference(r.booking.id),
