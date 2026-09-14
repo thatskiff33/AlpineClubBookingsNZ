@@ -338,47 +338,35 @@ function isSensitiveJsonKey(key: string) {
  * THE NAME/VALUE PAIR (#2940). `value` beside `key` is redacted; `value`
  * anywhere else is left alone.
  *
- * WHY THERE IS A RULE AT ALL. The credential routes post
- * `{ key, value, version }` — `api/admin/integrations/credentials` and
- * `api/admin/integrations/mirotalk/credentials` both — so the plaintext of a
- * signing key or a host password arrives in a request body under the key
- * `value`. Sentry's `beforeSend` passes `event.request.data` through this
- * module, and an exception raised BEFORE the route's own try/catch (the
- * permission read, or the audited refusal's own database write) captures that
- * body. Neither list here reached it: `value` is on neither, and the fragments
- * match key NAMES, so nothing matched and the secret travelled verbatim.
+ * The credential routes post `{ key, value, version }`, so a signing key's
+ * plaintext arrives under `value` — which neither list above reached, because
+ * the fragments match key NAMES. Sentry sends `event.request.data` through this
+ * module, and on the MiroTalk credential route two gates sit outside the
+ * handler's own try/catch, so an unhandled throw can capture that body.
  *
- * WHY NOT AN EXACT `"value"` ENTRY on the denylist, which is the one-line fix.
+ * NOT an exact `"value"` denylist entry, which is the shorter and stronger fix.
  * `value` is not a credential name, it is the second half of a name/value pair,
- * and this codebase writes that pair with a `label` far more often than with a
- * `key`: `booking-money-lines.ts` alone builds dozens of `{ label, value }`
- * display rows carrying money and date ranges, and `audit-query.ts` builds
- * `{ label, value }` option lists. A denylist entry blanks every one of those in
- * every log line and in the admin Xero panels, to catch a shape it can identify
- * precisely — a redactor that blinds the diagnostics is how people stop trusting
- * the log, which is a security cost of its own.
+ * and this tree writes that pair with a `label` far more often than with a
+ * `key`: `booking-money-lines.ts` builds dozens of `{ label, value }` rows
+ * carrying money and date ranges, `audit-query.ts` builds `{ label, value }`
+ * option lists. A denylist entry blanks every one in every log line and in the
+ * admin Xero panels, to catch a shape that can be identified precisely — and a
+ * redactor that blinds the diagnostics has a security cost of its own.
  *
- * WHY THE PAIR IS THE RIGHT TEST. In `{ key, value }` the meaning of `value` is
- * decided by DATA (whatever `key` happens to say) rather than by schema, so this
- * module cannot judge it and must assume the worst. Everywhere else `value` has
- * a schema-defined meaning the surrounding code chose. The `key` itself survives
- * redaction, so an operational settings echo still says WHICH setting moved —
- * the diagnostic is narrowed, not deleted.
+ * The pair is the right test because in `{ key, value }` the meaning of the
+ * value is decided by DATA rather than by schema, so this module cannot judge it
+ * and must assume the worst; everywhere else `value` means what the surrounding
+ * code chose. The `key` survives, so a settings echo still says WHICH setting.
  *
- * STATED LIMIT: this needs the two keys in one object, so it reads a parsed body
- * (including one parsed out of a string by `redactJsonStringCandidate`) but not
- * the flat `"key":"…"` text fallback, which fires only when a body is too
- * mangled to parse and has no sibling context to consult. `password` and
- * `secret` remain fragments there, as they are here.
+ * STATED LIMIT: it needs both keys in one object, so it reads a parsed body
+ * (including one parsed out of a string) but not the flat `"key":"…"` text
+ * fallback, which fires only when a body is too mangled to parse and has no
+ * sibling context. `password` and `secret` remain fragments there.
  */
 const PAIR_NAME_KEY = "key";
 const PAIR_VALUE_KEY = "value";
 
-/**
- * The `value` half of a `{ key, value }` pair, given the object's own keys
- * already normalised. Both halves are tested in normalised form, so `Key`/
- * `_value` and any other spelling of the same pair are caught.
- */
+/** The `value` half of a `{ key, value }` pair, both halves normalised. */
 function isNameValuePairSecret(
   normalizedKey: string,
   normalizedSiblingKeys: ReadonlySet<string>
