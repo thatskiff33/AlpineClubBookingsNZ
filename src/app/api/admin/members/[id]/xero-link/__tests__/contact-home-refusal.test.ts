@@ -1,53 +1,53 @@
 /**
- * #3058 — the manual Xero link asks `INV-INT-018`'s one accessor who holds a
- * contact, and asks it BEFORE spending a provider call.
+ * #3058 — the manual Xero link asks who holds a contact BEFORE it spends a
+ * provider call, and asks `INV-INT-018`'s own module rather than answering the
+ * question itself.
  *
- * The invariant itself never broke: `commitManualXeroContactLink` refuses a
- * second home downstream, symmetrically, inside the contact-home lock. What
- * this route owned was the FRIENDLY half — the 409 that tells an officer who
- * has the contact — and it asked the member table alone. Since #3366 an
- * `Organisation` can hold a contact too, so an officer linking a member to a
- * school's own Xero customer passed the friendly refusal, paid for a
- * `getContact` round trip, and then met the raw two-homes error from the
- * commit. The explanation and the enforcement disagreed about which columns
- * count, which is precisely the drift `INV-INT-018` exists to stop.
+ * The rule's behaviour — which columns count, what the refusal says, when it is
+ * a no-op repair rather than a conflict — is proved in
+ * `src/lib/__tests__/xero-contact-link-conflict.test.ts`, beside the module
+ * that owns it. What is proved HERE is what only the route can be wrong about:
+ * the ORDER (before the `getContact`), the status, and that the route does not
+ * grow a second opinion of its own.
  *
- * The fix deliberately raises the SAME refusal the commit would —
- * `assertXeroContactHasNoOtherHome` — rather than composing a second message
- * from a second read of the organisation record. Two reasons: the early message
- * and the enforced one then cannot drift apart, and #3367's reader census keeps
- * the set of files that may name an `Organisation` deliberately small.
+ * Before this, that opinion was a `member.findFirst` on `xeroContactId` over
+ * the member table alone, run AFTER the provider round trip — so since #3366 a
+ * school's ORGANISATION-held contact passed the friendly refusal, cost a Xero
+ * call, and then met the raw two-homes error from the commit.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
-  findXeroContactHomes: vi.fn(),
-  assertXeroContactHasNoOtherHome: vi.fn(),
+  findXeroContactLinkConflict: vi.fn(),
   getAuthenticatedXeroClient: vi.fn(),
   callXeroApi: vi.fn(),
   commitManualXeroContactLink: vi.fn(),
   memberFindUnique: vi.fn(),
-  organisationFindUnique: vi.fn(),
   memberFindFirst: vi.fn(),
-  TwoHomesError: class TwoHomesError extends Error {
-    readonly code = "XERO_CONTACT_TWO_HOMES";
-  },
+  memberFindMany: vi.fn(),
+  organisationFindFirst: vi.fn(),
+  organisationFindUnique: vi.fn(),
+  organisationFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { findUnique: mocks.memberFindUnique, findFirst: mocks.memberFindFirst },
-    organisation: { findUnique: mocks.organisationFindUnique },
+    member: {
+      findUnique: mocks.memberFindUnique,
+      findFirst: mocks.memberFindFirst,
+      findMany: mocks.memberFindMany,
+    },
+    organisation: {
+      findFirst: mocks.organisationFindFirst,
+      findUnique: mocks.organisationFindUnique,
+      findMany: mocks.organisationFindMany,
+    },
   },
 }));
 vi.mock("@/lib/xero-contact-home", () => ({
-  findXeroContactHomes: mocks.findXeroContactHomes,
-  assertXeroContactHasNoOtherHome: mocks.assertXeroContactHasNoOtherHome,
-  // Declared inside the factory, which `vi.mock` hoists: a class declared at
-  // module top level is in its temporal dead zone when the factory runs.
-  XeroContactTwoHomesError: mocks.TwoHomesError,
+  findXeroContactLinkConflict: mocks.findXeroContactLinkConflict,
 }));
 vi.mock("@/lib/xero", () => ({
   callXeroApi: mocks.callXeroApi,
@@ -75,9 +75,7 @@ const params = Promise.resolve({ id: "member-1" });
 
 describe("manual Xero contact link — who already holds it (#3058)", () => {
   beforeEach(() => {
-    for (const stub of Object.values(mocks)) {
-      if (typeof stub === "function" && "mockReset" in stub) stub.mockReset();
-    }
+    for (const stub of Object.values(mocks)) stub.mockReset();
     mocks.requireAdmin.mockResolvedValue({
       ok: true,
       session: { user: { id: "admin-1" } },
@@ -88,69 +86,36 @@ describe("manual Xero contact link — who already holds it (#3058)", () => {
       passwordHash: "hash",
       xeroContactId: null,
     });
-    mocks.findXeroContactHomes.mockResolvedValue(new Map());
-    mocks.assertXeroContactHasNoOtherHome.mockResolvedValue(undefined);
+    mocks.findXeroContactLinkConflict.mockResolvedValue(null);
   });
 
-  it("refuses a school's organisation-held contact, in plain words and before any Xero call", async () => {
-    mocks.assertXeroContactHasNoOtherHome.mockRejectedValue(
-      new mocks.TwoHomesError(
-        'Xero contact contact-9 is already the Xero customer for organisation ' +
-          "St Peter's College, so it cannot also become the member record's Xero customer.",
-      ),
-    );
+  it("refuses before any Xero call, in the words the rule gave it", async () => {
+    mocks.findXeroContactLinkConflict.mockResolvedValue({
+      message:
+        "Xero contact contact-9 is already the Xero customer for organisation " +
+        "St Peter's College (INV-INT-018).",
+    });
 
     const response = await POST(request({ xeroContactId: "contact-9" }), {
       params,
     } as never);
 
     expect(response.status).toBe(409);
-    // The refusal an officer reads is the refusal the commit would raise, word
-    // for word, so the two cannot drift.
+    // Passed through verbatim: the officer's explanation and the refusal the
+    // commit would raise are one string, so they cannot drift apart.
     expect((await response.json()).error).toContain("St Peter's College");
-    expect(mocks.assertXeroContactHasNoOtherHome).toHaveBeenCalledWith(
+    expect(mocks.findXeroContactLinkConflict).toHaveBeenCalledWith(
       expect.anything(),
-      { xeroContactId: "contact-9", home: { kind: "MEMBER", id: "member-1" } },
+      { xeroContactId: "contact-9", claimingMemberId: "member-1" },
     );
-    // The round trip is not spent on a link that can never be made — and the
-    // commit, which is where that refusal otherwise surfaces, is never reached.
+    // The round trip is not spent on a link that can never be made, and the
+    // commit — where that refusal otherwise surfaces, raw — is never reached.
     expect(mocks.getAuthenticatedXeroClient).not.toHaveBeenCalled();
     expect(mocks.callXeroApi).not.toHaveBeenCalled();
     expect(mocks.commitManualXeroContactLink).not.toHaveBeenCalled();
   });
 
-  it("still refuses a contact another MEMBER holds, naming them", async () => {
-    mocks.findXeroContactHomes.mockResolvedValue(
-      new Map([["contact-9", { kind: "MEMBER", id: "member-2" }]]),
-    );
-    mocks.memberFindUnique.mockImplementation(async (args: { where: { id: string } }) =>
-      args.where.id === "member-2"
-        ? { firstName: "Ada", lastName: "Lovelace" }
-        : {
-            id: "member-1",
-            email: "member@example.test",
-            passwordHash: "hash",
-            xeroContactId: null,
-          },
-    );
-
-    const response = await POST(request({ xeroContactId: "contact-9" }), {
-      params,
-    } as never);
-
-    expect(response.status).toBe(409);
-    expect((await response.json()).error).toContain("Ada Lovelace");
-    expect(mocks.commitManualXeroContactLink).not.toHaveBeenCalled();
-  });
-
-  it("does not refuse when the member already holds the contact themselves", async () => {
-    // Re-linking a member to the contact they already hold is a no-op repair,
-    // not a two-homes conflict, and the old member-only check excluded it with
-    // `id: { not: id }`. The accessor answers "held", so the exclusion has to
-    // be made here instead.
-    mocks.findXeroContactHomes.mockResolvedValue(
-      new Map([["contact-9", { kind: "MEMBER", id: "member-1" }]]),
-    );
+  it("goes on to verify the contact when nothing holds it", async () => {
     mocks.getAuthenticatedXeroClient.mockResolvedValue({ xero: {}, tenantId: "t" });
     mocks.callXeroApi.mockResolvedValue({ body: { contacts: [] } });
 
@@ -158,32 +123,28 @@ describe("manual Xero contact link — who already holds it (#3058)", () => {
       params,
     } as never);
 
-    // It got past the home check and on to the provider verification, which is
-    // all this test claims; the 404 is that verification finding no contact.
     expect(mocks.getAuthenticatedXeroClient).toHaveBeenCalled();
+    // The 404 is that verification finding no contact, which is all this test
+    // claims: the ownership question said yes and the route moved on.
     expect(response.status).toBe(404);
   });
 
-  it("never asks the member table on its own about who holds a contact", async () => {
+  it("keeps no second opinion of its own about who holds a contact", async () => {
     /*
-      The SSOT pin. A `member.findFirst` keyed on `xeroContactId` here is a
-      second opinion on which columns count as a local home, and it is the
-      opinion that was wrong about schools. Both halves of the question now go
-      to `xero-contact-home.ts`, which is that rule's one home.
+      The SSOT pin. A `member.findFirst` keyed on `xeroContactId` here — or a
+      read of the organisation record — is a second reader of "which columns
+      count as a local home", and it is the reader that was wrong about schools.
     */
     mocks.getAuthenticatedXeroClient.mockResolvedValue({ xero: {}, tenantId: "t" });
     mocks.callXeroApi.mockResolvedValue({ body: { contacts: [] } });
 
     await POST(request({ xeroContactId: "contact-9" }), { params } as never);
 
-    expect(mocks.findXeroContactHomes).toHaveBeenCalledWith(expect.anything(), [
-      "contact-9",
-    ]);
-    expect(mocks.assertXeroContactHasNoOtherHome).toHaveBeenCalled();
+    expect(mocks.findXeroContactLinkConflict).toHaveBeenCalledTimes(1);
     expect(mocks.memberFindFirst).not.toHaveBeenCalled();
-    // And the organisation record itself is read by nobody here: #3367's
-    // reader census keeps that set small, and the refusal above already names
-    // the school from inside the one file that may.
+    expect(mocks.memberFindMany).not.toHaveBeenCalled();
+    expect(mocks.organisationFindFirst).not.toHaveBeenCalled();
     expect(mocks.organisationFindUnique).not.toHaveBeenCalled();
+    expect(mocks.organisationFindMany).not.toHaveBeenCalled();
   });
 });

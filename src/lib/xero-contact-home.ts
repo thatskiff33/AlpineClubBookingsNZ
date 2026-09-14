@@ -520,6 +520,60 @@ export async function takeXeroContactFromSchoolsOwnMember(
 }
 
 /**
+ * "MAY THIS MEMBER TAKE THIS CONTACT?" — the whole question, in one answer.
+ *
+ * A screen that offers an officer a contact to link has to be able to say NO
+ * before it spends a provider call, and to say WHY in words. That is the same
+ * question {@link assertXeroContactHasNoOtherHome} and the unique constraint
+ * answer at commit time, so it is composed here from them rather than restated
+ * at a call site. Before #3058 the manual-link route restated it — as a
+ * `member.findFirst` on `xeroContactId`, over the member table alone — and so
+ * let a school's ORGANISATION-held contact past a refusal that then arrived,
+ * unexplained, from the commit.
+ *
+ * Returns `null` when the member may take it, which includes the case where
+ * they already hold it: re-linking a member to their own contact is a no-op
+ * repair, not a conflict.
+ *
+ * A READ. It takes no lock and writes nothing, so a contact can still be
+ * claimed between this answer and the commit — which is exactly why the commit
+ * keeps its own refusal under {@link lockXeroContactHome}. This is the
+ * explanation; that is the enforcement.
+ */
+export async function findXeroContactLinkConflict(
+  db: Prisma.TransactionClient,
+  input: { xeroContactId: string; claimingMemberId: string },
+): Promise<{ message: string } | null> {
+  // The ORGANISATION half, raised by the refusal itself so the early message
+  // and the enforced one are one string and cannot drift.
+  try {
+    await assertXeroContactHasNoOtherHome(db, {
+      xeroContactId: input.xeroContactId,
+      home: { kind: "MEMBER", id: input.claimingMemberId },
+    });
+  } catch (error) {
+    if (error instanceof XeroContactTwoHomesError) return { message: error.message };
+    throw error;
+  }
+
+  // The MEMBER half, through the one ownership accessor below.
+  const homes = await findXeroContactHomes(db, [input.xeroContactId]);
+  const heldBy = homes.get(input.xeroContactId);
+  if (!heldBy || heldBy.kind !== "MEMBER" || heldBy.id === input.claimingMemberId) {
+    return null;
+  }
+  const holder = await db.member.findUnique({
+    where: { id: heldBy.id },
+    select: { firstName: true, lastName: true },
+  });
+  return {
+    message: `This Xero contact is already linked to ${
+      holder ? `${holder.firstName} ${holder.lastName}`.trim() : "another member"
+    }`,
+  };
+}
+
+/**
  * WHICH local record holds a Xero contact id right now, for a batch of ids.
  *
  * A READ, and only a read: no lock, no transfer, no refusal. It answers the
