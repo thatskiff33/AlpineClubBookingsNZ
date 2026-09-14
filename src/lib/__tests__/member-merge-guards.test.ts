@@ -351,3 +351,88 @@ describe("open DeletionRequest blocker (M2)", () => {
     expect(deletionRequest.count).toHaveBeenCalledTimes(2); // master AND loser
   });
 });
+
+/**
+ * A SCHOOL IS NOT A PERSON, AND A MERGE SAYS TWO ROWS ARE ONE PERSON (#3369).
+ *
+ * Stage 4 of programme #2912 moves every school's booking onto its own
+ * `Organisation` and leaves the old school-shaped member row behind, holding
+ * nothing but history. Folding one of those into a person — in either direction
+ * — would put a school's past under a person's name, which is the
+ * school-as-person model this whole programme exists to end.
+ *
+ * The refusal reads the RECORDED classification, never the shape of the row, so
+ * it can say which decision it is acting on.
+ */
+function schoolClassification(...memberIds: string[]) {
+  return {
+    ...defaultDelegate(),
+    findMany: vi.fn(
+      ({ where }: { where: { memberId: { in: string[] } } }) =>
+        Promise.resolve(
+          where.memberId.in
+            .filter((id) => memberIds.includes(id))
+            .map((memberId) => ({ memberId })),
+        ),
+    ),
+  };
+}
+
+describe("#3369: member merge refuses a school's record", () => {
+  it("blocks when the DUPLICATE is a school, and names which side", async () => {
+    const blockers = await runGuards({
+      schoolMemberClassification: schoolClassification(LOSER_ID),
+    });
+
+    const blocker = blockers.find((b) => b.code === "organisation_row");
+    expect(blocker).toBeDefined();
+    expect(blocker?.label).toContain("duplicate record is a school");
+    expect(blocker?.label).toContain("merge the organisations instead");
+    expect(blocker?.count).toBe(1);
+  });
+
+  it("blocks when the MASTER is a school", async () => {
+    const blockers = await runGuards({
+      schoolMemberClassification: schoolClassification(MASTER_ID),
+    });
+
+    const blocker = blockers.find((b) => b.code === "organisation_row");
+    expect(blocker?.label).toContain("master record is a school");
+  });
+
+  it("says so plainly when BOTH are schools", async () => {
+    const blockers = await runGuards({
+      schoolMemberClassification: schoolClassification(MASTER_ID, LOSER_ID),
+    });
+
+    const blocker = blockers.find((b) => b.code === "organisation_row");
+    expect(blocker?.label).toBe(
+      "Both records are schools, not people. Merge the two organisation records instead.",
+    );
+    expect(blocker?.count).toBe(2);
+  });
+
+  it("does NOT block an ordinary merge of two people", async () => {
+    // The common case, and the one that must keep working: a real teacher
+    // recorded twice is a person recorded twice, and merges like anybody else.
+    const blockers = await runGuards();
+    expect(blockers.map((b) => b.code)).not.toContain("organisation_row");
+  });
+
+  it("reads only the ORGANISATION classification, so a teacher's row merges", async () => {
+    // The query the guard issues is filtered on `classification:
+    // ORGANISATION`; a PERSON row is invisible to it. Asserting on the filter
+    // rather than on the result is what proves the guard is not simply
+    // refusing every classified row.
+    const findMany = vi.fn().mockResolvedValue([]);
+    await runGuards({
+      schoolMemberClassification: { ...defaultDelegate(), findMany },
+    });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ classification: "ORGANISATION" }),
+      }),
+    );
+  });
+});
