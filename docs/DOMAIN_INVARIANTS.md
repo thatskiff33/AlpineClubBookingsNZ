@@ -688,6 +688,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-016` | Kiosk Group Trip disclosure by tier: linkage ordinal only; never `joinCode` |
 | `INV-PRIV-017` | Member-visible audit text: declared at the write site, denied by default |
 | `INV-PRIV-018` | An audit row's subject is a person; an organisation-owned booking records none |
+| `INV-PRIV-019` | Credential writes name a person or a named system actor, audited atomically |
 
 ## Membership Lifecycle
 
