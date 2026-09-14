@@ -2103,7 +2103,11 @@ export async function approveBookingRequest(input: {
     lodgeId: string;
     memberId: string;
     ownerSubstitution:
-      | { invalidMemberId: string; substituteMemberId: string; reason: string }
+      | {
+          invalidMemberId: string | null;
+          substituteMemberId: string;
+          reason: string;
+        }
       | null;
     alreadyConverted: boolean;
     memberGuestNotificationRows: MemberGuestAddNotificationRow[];
@@ -2278,7 +2282,18 @@ export async function approveBookingRequest(input: {
         // no-op except for a changed-state mapped contact.
         let ownerId = bookingOwner(held).memberId;
         try {
-          await assertMappableOwnerContact(tx, bookingOwner(held).memberId);
+        // #3369: a held booking with no member is owned by an `Organisation`,
+        // which is not a person and cannot serve as this request's booking
+        // contact. Treated exactly as an unmappable contact is — the recovery
+        // below mints a fresh non-login contact from the request's own details
+        // and flags an admin — rather than failing the requester's accept.
+          if (!ownerId) {
+            throw new BookingRequestError(
+              "The held booking has no member contact",
+              409,
+            );
+          }
+          await assertMappableOwnerContact(tx, ownerId);
         } catch (err) {
           // Only recover from validation failures; a real DB/other error must
           // still abort so we never silently substitute on a transient fault.

@@ -551,7 +551,8 @@ type ApproveSchoolBookingRequestOutcome =
       type: "approved";
       requestId: string;
       bookingId: string;
-      schoolMemberId: string;
+      /** Null since #3369 when the held booking is owned by an Organisation. */
+      schoolMemberId: string | null;
       priceCents: number;
       invoiceMode: "xero" | "manual";
       teacherCount: number;
@@ -764,7 +765,8 @@ export async function approveSchoolBookingRequest(input: {
   let conversion: {
     bookingId: string;
     lodgeId: string;
-    schoolMemberId: string;
+    /** Null since #3369 when the booking is owned by an Organisation. */
+    schoolMemberId: string | null;
     // #3367: the school this approval resolved or created. Null only on the
     // idempotent replay path, which writes nothing and owes no correspondence.
     organisation: ResolvedSchoolOrganisation | null;
@@ -1019,7 +1021,18 @@ export async function approveSchoolBookingRequest(input: {
         // pass, so this is a no-op except for a changed-state mapped contact.
         let ownerId = bookingOwner(held).memberId;
         try {
-          await assertMappableOwnerContact(tx, bookingOwner(held).memberId);
+        // #3369: a held booking with no member is owned by an `Organisation`,
+        // which is not a person and cannot serve as this request's booking
+        // contact. Treated exactly as an unmappable contact is — the recovery
+        // below mints a fresh non-login contact from the request's own details
+        // and flags an admin — rather than failing the requester's accept.
+          if (!ownerId) {
+            throw new BookingRequestError(
+              "The held booking has no member contact",
+              409,
+            );
+          }
+          await assertMappableOwnerContact(tx, ownerId);
         } catch (err) {
           if (!(err instanceof BookingRequestError)) throw err;
           const substitute = await tx.member.create({
