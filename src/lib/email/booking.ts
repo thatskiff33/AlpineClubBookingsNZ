@@ -647,7 +647,13 @@ export async function sendBookingPolicyExceptionRefusedEmail(params: {
    */
   bookingContext: { bookingId: string } | "none";
   email: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   firstName: string;
   checkIn: Date;
   checkOut: Date;
@@ -854,7 +860,13 @@ export async function sendBookingCancelledEmail(
 export async function sendSplitGuestPortionCancelledEmail(params: {
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   checkIn: Date;
@@ -906,7 +918,13 @@ export async function sendBookingReviewApprovedEmail(params: {
   checkOut: Date;
   adminNotes: string;
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   // Booking's lodge (multi-lodge phase 8); omitted/null resolves the
   // default lodge identity — always thread the booking's own lodgeId.
   lodgeId?: string | null;
@@ -943,7 +961,13 @@ export async function sendBookingReviewApprovedEmail(params: {
 export async function sendBookingReviewRejectedEmail(params: {
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   checkIn: Date;
@@ -1066,7 +1090,13 @@ export async function sendCheckinReminderEmail(
 export async function sendPreArrivalReminderEmail(params: {
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   checkIn: Date;
@@ -1188,7 +1218,13 @@ export async function sendPreArrivalReminderEmail(params: {
  */
 export async function sendWholeLodgeGuestNamesReminderEmail(params: {
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   checkIn: Date;
@@ -1243,7 +1279,13 @@ export async function sendWholeLodgeGuestNamesReminderEmail(params: {
  */
 export async function sendAdditionalPaymentReminderEmail(params: {
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   additionalAmountCents: number;
@@ -1277,7 +1319,13 @@ export async function sendAdditionalPaymentReminderEmail(params: {
 export async function sendBookingModifiedEmail(params: {
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   modificationType: string;
@@ -1444,7 +1492,13 @@ export async function sendBookingModifiedEmail(params: {
 export async function sendPolicyExceptionRequestExpiredEmail(params: {
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   checkIn: Date;
@@ -1511,7 +1565,13 @@ export async function sendPolicyExceptionRequestExpiredEmail(params: {
 export async function sendHostingCoverageLostEmail(params: {
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   checkIn: Date;
@@ -1551,7 +1611,13 @@ export async function sendHostingCoverageLostEmail(params: {
 export async function sendSetupIntentFailedEmail(params: {
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   checkIn: Date;
@@ -1582,7 +1648,13 @@ export async function sendSetupIntentFailedEmail(params: {
  */
 export async function sendSupersededPaymentRefundedEmail(params: {
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   checkIn: Date;
@@ -1623,7 +1695,13 @@ export async function sendSupersededPaymentRefundedEmail(params: {
  */
 export async function sendSavedCardChargeFailedEmail(params: {
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   checkIn: Date;

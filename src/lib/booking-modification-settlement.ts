@@ -65,7 +65,13 @@ export type BookingModificationPaymentContext = {
   paymentCustomerId: string | null;
   memberEmail: string;
   memberName: string;
-  memberId: string;
+  /**
+   * The booking OWNER's member id, or null when the booking is owned by an
+   * `Organisation` (#3369). `memberEmail` and `memberName` beside it are the
+   * owner's person-shaped projection and are never empty, which is why the
+   * settlement email still reaches a school.
+   */
+  memberId: string | null;
   bookingModificationId: string;
 };
 

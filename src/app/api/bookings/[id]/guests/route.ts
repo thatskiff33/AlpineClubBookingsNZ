@@ -1325,10 +1325,15 @@ export async function POST(
     );
 
     // Send email
-    const member = await prisma.member.findUnique({
-      where: { id: bookingOwner(result.booking).memberId },
-    });
-    if (member && notifyMember !== false) {
+    // #3369: the OWNER, not a re-read of a member row. A school's booking has no
+    // member to re-read, and the projection carries the same person-shaped name
+    // and address the invented school member used to supply — so the school still
+    // receives the message it received before this stage, at the same address.
+    // The relation was loaded in the same transaction, so this is no staler than
+    // the read it replaces.
+    const owner = bookingOwner(result.booking);
+    const member = owner.member;
+    if (notifyMember !== false) {
       /*
         #3032 (epic #2797): whether the club is still working out an amount on
         this booking as the email is written. The booking's CURRENT state, read
@@ -1350,7 +1355,7 @@ export async function POST(
 
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
-        recipientMemberId: member.id,
+        recipientMemberId: owner.memberId,
         email: member.email,
         firstName: member.firstName,
         modificationType: "GUEST_ADD",
