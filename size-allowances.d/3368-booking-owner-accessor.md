@@ -123,7 +123,7 @@ lines: 792
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2532
+lines: 2522
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-cancel.ts
@@ -135,7 +135,7 @@ lines: 2041
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2252
+lines: 2240
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-delete.ts
@@ -151,7 +151,7 @@ lines: 2281
 reason: 2 lines: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1409
+lines: 1399
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-modify-plan.ts

@@ -1,6 +1,6 @@
 # File-size allowances for #3369
 
-Twelve already-over-budget files gain the lines that say what a school booking
+Seven already-over-budget files gain the lines that say what a school booking
 means to them — the branch where a member ledger, a member preference or a
 member id was assumed, and the comment recording which of those was a decision
 rather than a fall-through.
@@ -16,8 +16,13 @@ and it would bury the property this stage has to prove: that a school renders
 the same bytes the invented school member rendered, and that every place where
 it cannot says so.
 
-Ten more files sat at or under their ceiling and are not listed: their branches
-fit inside it.
+Fifteen more files are not listed, and five of them are the interesting ones:
+they sat AT or just under their ceiling, where an allowance is not permitted
+because it would carry a file over budget for the first time. Each was brought
+back inside by shortening what this change added to it — and one of them paid
+for itself properly: the account-credit refusal that four settlement paths
+needed is now `requireMemberCreditRecipient` in `member-credit.ts`, one home
+instead of four copies, which is both the smaller change and the right one.
 
 The #3368 allowance file's numbers were RE-MEASURED rather than duplicated here
 (`size-allowances.d/README.md`: one entry per path). That stage's entries are
@@ -30,25 +35,16 @@ file: src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx
 lines: 818
 reason: fifteen lines. The redemption table linked every row to a member page; a school has no member page, so the cell renders the name and address without a link when the id is null. The branch is JSX and cannot be smaller than the two arms it has. The panel is one table with its filters and its export, and splitting the cell out would put a four-line conditional in its own file.
 
-file: src/app/api/admin/payments/manual-refund-tasks/route.ts
-lines: 251
-reason: one line past the ceiling, and it is the `organisation` selection the owner projection needs to render a school's name on the refund queue. The route is a single read and a single mapping; there is nothing here to split that would not be a file containing one `select`.
 
 file: src/app/api/admin/promo-codes/[id]/redemptions/route.ts
 lines: 401
 reason: twenty-three lines. The row's party is the booking's OWNER now, so the route selects it, names a school through the projection, links only where there is a member page to link to, and skips a redemption that names nobody when counting a member's uses. Each of those is a different question and the comments say which; the route is one handler over one query and splitting it would separate the select from the mapping that reads it.
 
-file: src/app/api/lodge/guests/[date]/route.ts
-lines: 257
-reason: eight lines, seven of them the comment. A group trip is a MEMBER's — the organiser hands out a join code and every joiner books under their own membership — so a school's booking is not offered to the linkage pass, though it still appears on the kiosk list. The filter is three lines; the reason it exists is four, and it is the kind of fact a reader will otherwise re-derive wrongly.
 
 file: src/lib/booking-guests.ts
 lines: 833
 reason: twenty-six lines across two guards and their reasons. With no booker there is nobody to share a family group with and nobody to confirm a delegated profile, so both halves are false — which is the fail-closed side AND exactly what the invented school member already produced, since it belonged to no group. That equivalence is the whole argument that consent behaviour is unchanged for a school, and it is worth the lines to state where the guards are.
 
-file: src/lib/edit-financial-review-charge.ts
-lines: 703
-reason: three lines past the ceiling: one field and its two-line comment. The settlement context gained the owner's first name so the edit emails can address a school without re-reading a member row that does not exist; this path mints an ask and sends nothing, so it carries the field empty and says so rather than leaving a reader to wonder why it is blank.
 
 file: src/lib/email/booking.ts
 lines: 1728
@@ -58,13 +54,7 @@ file: src/lib/group-booking.ts
 lines: 1886
 reason: eleven lines. A group booking is organised by a PERSON who hands out a join code, and a school is not one, so the create refuses in words rather than leaving a required column to fail on a null. Nine of the eleven are the refusal and its reason.
 
-file: src/lib/manual-refund-task-resolution.ts
-lines: 713
-reason: thirteen lines past the ceiling: the account-credit refusal and its reason. A reduction settled as account credit lands in a person's ledger and is spent from their own bookings page; an organisation has no such account, and the invented school member's was unspendable because that row could not sign in. The refusal is three lines and the reason is ten, because whoever meets it needs to know that refunding by the money path is the answer.
 
-file: src/lib/member-guest-consent-notifications.ts
-lines: 703
-reason: three lines past the ceiling: one widened field and its two-line docblock, saying the booking owner is null when a school owns it. The notice composes the self-removal facts itself so the email can never offer a control the server would refuse, and this field is one of those facts.
 
 file: src/lib/member-guest-email-notes.ts
 lines: 831

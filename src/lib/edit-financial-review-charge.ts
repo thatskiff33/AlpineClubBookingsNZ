@@ -534,10 +534,7 @@ export async function syncEditFinancialReviewChargeRequest({
       // `BookingModificationPaymentContext` describes a refund it will not make
       // (`pendingRefundAmountCents` 0) and a settlement it does not choose.
       pendingRefundAmountCents: 0,
-      paymentId,
-      // #3369: carried only because the context type requires it; this path
-      // mints an ask and sends nothing, so the owner's name is never read.
-      memberFirstName: "",
+      paymentId, memberFirstName: "", // #3369: mints an ask, sends nothing.
       additionalAsk: ask,
       hasSucceededPayment:
         hasCapturedPayment(payment) && payment?.source === PaymentSource.STRIPE,

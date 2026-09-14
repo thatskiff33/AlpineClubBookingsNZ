@@ -162,6 +162,29 @@ export async function createCancellationCredit(
  * consumes refundable value like a card refund, so `refundedAmountCents` must
  * reflect it or a later cancel refunds the same cents twice.
  */
+/**
+ * The MEMBER whose account a reduction is being credited to, or a refusal.
+ *
+ * Account credit lands in a person's ledger and is spent from their own
+ * bookings page. An organisation has no such account, and the invented school
+ * member's was unspendable because that row could not sign in — so a school's
+ * reduction cannot be settled this way, and saying so is better than minting a
+ * balance nobody can reach (#3369). Whether a school's reduction should instead
+ * be refunded is a money decision that issue does not make; this refusal is
+ * what puts it in front of a person.
+ *
+ * One home for it because four settlement paths ask the same question, and four
+ * copies of a refusal is four chances to word it differently (`INV-SSOT`).
+ */
+export function requireMemberCreditRecipient(memberId: string | null): string {
+  if (!memberId) {
+    throw new Error(
+      "This booking belongs to a school, which has no account to credit, so the reduction cannot be settled as account credit (#3369).",
+    );
+  }
+  return memberId;
+}
+
 export async function createBookingModificationCredit(
   memberId: string,
   amountCents: number,

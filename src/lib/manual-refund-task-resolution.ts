@@ -17,7 +17,7 @@ import {
   type EditReviewSettlementRoute,
 } from "@/lib/edit-financial-review-settlement";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
-import { createBookingModificationCredit } from "@/lib/member-credit";
+import { createBookingModificationCredit, requireMemberCreditRecipient } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import {
@@ -263,7 +263,6 @@ export async function resolveManualRefundTask(
                 lastName: true,
               },
             },
-            // #3369: the owner may be an Organisation; bookingOwner() reads both.
             organisation: { select: { name: true, email: true } },
             // #3032: the booking's own status and its primary Xero invoice id,
             // for `hasIssuedPrimaryXeroInvoice`. A completion that moves money on
@@ -496,21 +495,8 @@ export async function resolveManualRefundTask(
           // #3032: the canonical account-credit writer, re-entered unchanged.
           // Its exactly-once key is the `BookingModification` id (D-3032-1), and
           // it writes the refund allocation itself when handed a payment id.
-          // #3369: account credit is a MEMBER instrument — it lands in a person's
-          // ledger and is spent from their own bookings page. An organisation has no
-          // such account, and the invented school member's was unspendable because
-          // that row could not sign in. So a school's reduction cannot be settled this
-          // way, and this refuses loudly rather than minting a balance nobody can
-          // reach. Whether a school's reduction should instead be refunded is a money
-          // decision this issue does not make.
-          const modificationCreditMemberId = bookingOwner(task.booking).memberId;
-          if (!modificationCreditMemberId) {
-            throw new Error(
-              "This booking belongs to a school, which has no account to credit, so the reduction cannot be settled as account credit (#3369).",
-            );
-          }
           await createBookingModificationCredit(
-            modificationCreditMemberId,
+            requireMemberCreditRecipient(bookingOwner(task.booking).memberId),
             settlement.amountCents,
             task.bookingId,
             settlementRoute.bookingModificationId,

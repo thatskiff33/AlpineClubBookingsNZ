@@ -80,6 +80,7 @@ import {
   clampAppliedCreditToBookingPrice,
   createBookingModificationCredit,
   deriveBookingAppliedCreditCents,
+  requireMemberCreditRecipient,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import {
@@ -1324,21 +1325,8 @@ export async function modifyBookingDates({
     });
 
     if (accountCreditAmountCents > 0) {
-      // #3369: account credit is a MEMBER instrument — it lands in a person's
-      // ledger and is spent from their own bookings page. An organisation has no
-      // such account, and the invented school member's was unspendable because
-      // that row could not sign in. So a school's reduction cannot be settled this
-      // way, and this refuses loudly rather than minting a balance nobody can
-      // reach. Whether a school's reduction should instead be refunded is a money
-      // decision this issue does not make.
-      const modificationCreditMemberId = bookingOwner(booking).memberId;
-      if (!modificationCreditMemberId) {
-        throw new Error(
-          "This booking belongs to a school, which has no account to credit, so the reduction cannot be settled as account credit (#3369).",
-        );
-      }
       await createBookingModificationCredit(
-        modificationCreditMemberId,
+        requireMemberCreditRecipient(bookingOwner(booking).memberId),
         accountCreditAmountCents,
         bookingId,
         bookingModification.id,

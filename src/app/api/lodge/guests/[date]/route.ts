@@ -154,7 +154,6 @@ async function handleGet(req: NextRequest, dateStr: string) {
               phoneNumber: true,
             },
           },
-          // #3369: the owner may be an Organisation; bookingOwner() reads both.
           organisation: { select: { name: true, email: true } },
           // REQUIRED, not optional (#2631). Without the explicit night rows a
           // sparse stay's internal gap day falls back to the stayStart/stayEnd
@@ -165,7 +164,6 @@ async function handleGet(req: NextRequest, dateStr: string) {
         },
       },
       member: { select: { firstName: true, lastName: true } },
-      // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },
       // #3040: canonical Group Trip identity; tier split in `kiosk-group-trip.ts`.
       ...GROUP_TRIP_IDENTITY_SELECT,
@@ -238,15 +236,10 @@ async function handleGet(req: NextRequest, dateStr: string) {
 
   // #3040: after the filter, so linkage is asked of the list the reader sees.
   const capabilities = kioskGroupTripCapabilities(tier);
-  // #3369: a group trip is a MEMBER's — the organiser hands out a join code and
-  // every joiner books under their own membership. A school's booking is not
-  // part of one and has no member to link through, so it is not offered to the
-  // linkage pass. It still appears on the kiosk list itself, above.
-  const groupTripCandidates = bookings.filter(
-    (booking): booking is typeof booking & { memberId: string } =>
-      bookingOwner(booking).memberId !== null,
-  );
-  const withGroupTrip = await attachKioskGroupTrip(result, groupTripCandidates, { db: prisma, lodgeId, capabilities });
+  // #3369: a group trip is a MEMBER's, so a school's booking is not offered to
+  // the linkage pass. It still appears on the kiosk list itself, above.
+  const linkable = bookings.filter((b): b is typeof b & { memberId: string } => Boolean(bookingOwner(b).memberId));
+  const withGroupTrip = await attachKioskGroupTrip(result, linkable, { db: prisma, lodgeId, capabilities });
 
   return NextResponse.json({
     date: dateStr,

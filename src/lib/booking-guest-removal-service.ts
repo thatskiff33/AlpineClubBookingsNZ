@@ -69,7 +69,10 @@ import {
   editFinancialReviewOccurrence,
   storedSoldPriceEvidenceForGuest,
 } from "@/lib/stored-sold-price-evidence";
-import { createBookingModificationCredit } from "@/lib/member-credit";
+import {
+  createBookingModificationCredit,
+  requireMemberCreditRecipient,
+} from "@/lib/member-credit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
@@ -1149,21 +1152,8 @@ export async function removeBookingGuestInTransaction({
   });
 
   if (paymentImpact.accountCreditAmountCents > 0) {
-    // #3369: account credit is a MEMBER instrument — it lands in a person's
-    // ledger and is spent from their own bookings page. An organisation has no
-    // such account, and the invented school member's was unspendable because
-    // that row could not sign in. So a school's reduction cannot be settled this
-    // way, and this refuses loudly rather than minting a balance nobody can
-    // reach. Whether a school's reduction should instead be refunded is a money
-    // decision this issue does not make.
-    const modificationCreditMemberId = bookingOwner(booking).memberId;
-    if (!modificationCreditMemberId) {
-      throw new Error(
-        "This booking belongs to a school, which has no account to credit, so the reduction cannot be settled as account credit (#3369).",
-      );
-    }
     await createBookingModificationCredit(
-      modificationCreditMemberId,
+      requireMemberCreditRecipient(bookingOwner(booking).memberId),
       paymentImpact.accountCreditAmountCents,
       bookingId,
       bookingModification.id,
