@@ -519,7 +519,9 @@ export async function POST(
       }
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation email after waitlist confirm"));
 
-    void enqueueXeroBookingInvoiceOperation(bookingId)
+    void enqueueXeroBookingInvoiceOperation(bookingId, {
+      invoiceEmailDelivery: null,
+    })
       .then(async (queuedInvoice) => {
         if (!queuedInvoice.queueOperationId) {
           return;

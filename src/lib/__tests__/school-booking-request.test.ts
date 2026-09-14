@@ -2978,6 +2978,8 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
 
     expect(mockedEnqueueInvoice).toHaveBeenCalledWith("booking-wl", {
       createdByMemberId: "admin-1",
+      // #2929: a request conversion has no creation-time email choice.
+      invoiceEmailDelivery: null,
     });
     // #1620 parity with the Internet Banking create path: the owner here is a
     // real member who may be carrying floating credit notes, so they must be

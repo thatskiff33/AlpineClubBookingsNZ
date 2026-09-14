@@ -70,7 +70,7 @@ const SURVIVING_PRIVATE_COPIES = [
  */
 const CONVERGED_BY_THIS_CHANGE = [
   "src/app/(admin)/admin/bed-allocation/page.tsx",
-  "src/app/(admin)/admin/bed-allocation/_components/allocation-preferences-section.tsx",
+  "src/components/admin/allocation-preferences-section.tsx",
   "src/components/admin/bed-allocation-removal-dialog.tsx",
   "src/components/admin/booking-bed-allocation-panel.tsx",
   "src/components/admin/rooms-beds-manager.tsx",

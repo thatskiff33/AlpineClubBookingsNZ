@@ -8,7 +8,6 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ADMIN_VIEW_ONLY_SECTION_HEADING } from "@/components/admin/view-only-action";
 import { MODULE_DISABLED_ERROR_CODE } from "@/lib/api-error-message";
@@ -19,17 +18,16 @@ import {
   ALLOCATION_PREFERENCES_VIEW_FORBIDDEN_REASON,
   AllocationPreferencesSection,
 } from "../allocation-preferences-section";
+import type { LodgeOptionScopeOnLodge } from "@/lib/lodge-option-scope";
 
 /**
- * The EDITABLE half of a settings payload — what the draft is, what a PUT body
- * carries, and what `onSaved` receives.
+ * The EDITABLE half of a settings payload — what the draft is and what a PUT
+ * body carries.
  */
 const LOADED = {
   autoAllocationEnabled: true,
   allocationPriorityOrder: ["BOOKING_COHESION", "STAY_CONTINUITY"],
 };
-type SavedSettings = typeof LOADED;
-
 /**
  * #2931 — the read-only provenance the server ACTUALLY sends alongside those
  * two fields (`EffectiveBedAllocationSettings`). Every fixture here used to be
@@ -56,22 +54,22 @@ function response(settings = LOADED) {
   );
 }
 
-async function renderLoaded(
-  options: {
-    canEdit?: boolean;
-    onSaved?: (settings: SavedSettings) => Promise<void> | void;
-    renderViewOnlyBanner?: boolean;
-  } = {},
-) {
-  const onSaved = options.onSaved ?? vi.fn();
+/**
+ * The settled `lodge` scope this editor takes (#2937). It cannot be handed a
+ * bare lodge id at all: the prop is the narrowed variant of the shared scope
+ * type, so a host that has not settled on a lodge has nothing to pass.
+ */
+const LODGE_ONE: LodgeOptionScopeOnLodge = {
+  kind: "lodge",
+  lodgeId: "lodge-1",
+  lodgeName: "Alpine Lodge",
+};
+
+async function renderLoaded(options: { canEdit?: boolean } = {}) {
   const view = render(
     <AllocationPreferencesSection
-      lodgeId="lodge-1"
+      scope={LODGE_ONE}
       canEdit={options.canEdit ?? true}
-      onSaved={onSaved}
-      {...(options.renderViewOnlyBanner === undefined
-        ? {}
-        : { renderViewOnlyBanner: options.renderViewOnlyBanner })}
     />,
   );
   await waitFor(() =>
@@ -79,7 +77,7 @@ async function renderLoaded(
       screen.getByRole("checkbox", { name: "Auto allocation enabled" }),
     ).toBeTruthy(),
   );
-  return { ...view, onSaved };
+  return view;
 }
 
 afterEach(() => {
@@ -96,11 +94,7 @@ describe("AllocationPreferencesSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(
-      <AllocationPreferencesSection
-        lodgeId="lodge-1"
-        canEdit
-        onSaved={vi.fn()}
-      />,
+      <AllocationPreferencesSection scope={LODGE_ONE} canEdit />,
     );
 
     await waitFor(() =>
@@ -159,11 +153,26 @@ describe("AllocationPreferencesSection", () => {
     ]);
   });
 
-  it("suppresses its banner when the page vouches and still gates view-only Edit", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => response()));
-    await renderLoaded({ canEdit: false, renderViewOnlyBanner: false });
+  /*
+    #2937: the card used to be able to SUPPRESS its own banner, because the
+    bed-allocation page it sat on already carried one for the bookings area and
+    two banners in a row said the same thing twice. Its host is now Bookings
+    Setup -> Rooms & Beds, which states its view-only position for the rooms
+    inventory rather than for this card, so the section states its own — and the
+    suppression prop is gone rather than left as an option nothing passes.
 
-    expect(screen.queryByText(ADMIN_VIEW_ONLY_SECTION_HEADING)).toBeNull();
+    The rule that makes this load-bearing is `view-only-banner-contract`: both
+    control sites here pass `describeReason={false}`, which is only allowed
+    where a banner renders in the SAME FILE. An unconditional banner is what
+    keeps that true no matter who mounts the card.
+  */
+  it("states its own view-only reason and gates Edit on it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response()));
+    await renderLoaded({ canEdit: false });
+
+    expect(
+      screen.getByText(`${ADMIN_VIEW_ONLY_SECTION_HEADING}.`),
+    ).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: "Edit" }) as HTMLButtonElement)
         .disabled,
@@ -342,8 +351,7 @@ describe("AllocationPreferencesSection", () => {
       init?.method === "PUT" ? response(authoritative) : response(),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const onSaved = vi.fn(async () => {});
-    await renderLoaded({ onSaved });
+    await renderLoaded();
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.click(
@@ -353,40 +361,15 @@ describe("AllocationPreferencesSection", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(authoritative));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The write names the lodge the draft was LOADED from (#2937), never a
+    // render-time prop.
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(put?.[1]?.body)).lodgeId).toBe("lodge-1");
     expect(
       screen.queryByRole("button", { name: "Cancel" }),
     ).toBeNull();
     expect(screen.getAllByText("Disabled")).toHaveLength(3);
-  });
-
-  it("refreshes its parent after Save under StrictMode effect rehearsal", async () => {
-    const fetchMock = vi.fn(async () => response());
-    vi.stubGlobal("fetch", fetchMock);
-    const onSaved = vi.fn(async () => {});
-    render(
-      <StrictMode>
-        <AllocationPreferencesSection
-          lodgeId="lodge-1"
-          canEdit
-          onSaved={onSaved}
-        />
-      </StrictMode>,
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy(),
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Disable Keep each booking together",
-      }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
   });
 
   it("disables every edit affordance for the full save window", async () => {
@@ -431,34 +414,6 @@ describe("AllocationPreferencesSection", () => {
     );
   });
 
-  it("does not refresh a former parent after unmount", async () => {
-    let release: (value: Response) => void = () => {};
-    const pending = new Promise<Response>((resolve) => {
-      release = resolve;
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((_url: string, init?: RequestInit) =>
-        init?.method === "PUT" ? pending : Promise.resolve(response()),
-      ),
-    );
-    const onSaved = vi.fn();
-    const view = await renderLoaded({ onSaved });
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Disable Keep each booking together",
-      }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    view.unmount();
-    release(response());
-
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(onSaved).not.toHaveBeenCalled();
-  });
   /**
    * #2931 — the save body is the route's write contract and nothing else.
    *
@@ -656,11 +611,7 @@ describe("AllocationPreferencesSection", () => {
   ])("explains %s when the load fails", async (_case, failure, expected) => {
     vi.stubGlobal("fetch", vi.fn(async () => failure));
     render(
-      <AllocationPreferencesSection
-        lodgeId="lodge-1"
-        canEdit
-        onSaved={vi.fn()}
-      />,
+      <AllocationPreferencesSection scope={LODGE_ONE} canEdit />,
     );
 
     const alert = await screen.findByText(expected);

@@ -89,11 +89,25 @@
  * Run it: `npm run audit:census` prints a deterministic TSV of every site.
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative } from "node:path";
 
 import ts from "typescript";
 
 import { must } from "../../src/lib/indexed-access";
+import {
+  collapseWhitespace as collapse,
+  eachNode,
+  findTopLevelProperty,
+  isDeclarationName,
+  listSourceFiles as listSourceFilesIn,
+  literalText,
+  parseSourceFile as parse,
+  resolveObjectLiteral,
+  symbolChain,
+  unwrap,
+  toPosix,
+  type ResolvedObject,
+} from "./ts-call-site-scan";
 
 /** The module that owns the audit boundary; its own writes are not call sites. */
 export const AUDIT_BOUNDARY_MODULE = "src/lib/audit.ts";
@@ -269,8 +283,6 @@ export type AuditWriteSite = {
 
 const SCAN_ROOTS = ["src", "scripts", "prisma"] as const;
 
-const SOURCE_EXTENSIONS = /\.(ts|tsx|js|mjs|cjs)$/;
-
 /**
  * Directories that hold no production writer. `__tests__`/`__mocks__` and the
  * Playwright tree describe writers or stub them; `generated` is output.
@@ -284,180 +296,6 @@ const SKIP_DIRECTORIES = new Set([
   "fixtures",
   "test-utils",
 ]);
-
-const SKIP_FILES = /(\.test\.|\.spec\.|\.d\.ts$)/;
-
-function toPosix(path: string): string {
-  return path.split(sep).join("/");
-}
-
-function listSourceFiles(dir: string, out: string[]): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (SKIP_DIRECTORIES.has(entry.name)) continue;
-      listSourceFiles(full, out);
-      continue;
-    }
-    if (!SOURCE_EXTENSIONS.test(entry.name)) continue;
-    if (SKIP_FILES.test(entry.name)) continue;
-    out.push(full);
-  }
-  return out;
-}
-
-function parse(file: string): ts.SourceFile {
-  return ts.createSourceFile(
-    file,
-    readFileSync(file, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
-}
-
-function eachNode(node: ts.Node, visit: (node: ts.Node) => void): void {
-  visit(node);
-  node.forEachChild((child) => eachNode(child, visit));
-}
-
-function unwrap(node: ts.Expression): ts.Expression {
-  if (ts.isParenthesizedExpression(node)) return unwrap(node.expression);
-  if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
-    return unwrap(node.expression);
-  }
-  return node;
-}
-
-function literalText(node: ts.Expression): string | null {
-  const inner = unwrap(node);
-  if (ts.isStringLiteral(inner) || ts.isNoSubstitutionTemplateLiteral(inner)) {
-    return inner.text;
-  }
-  return null;
-}
-
-function propertyName(name: ts.PropertyName): string | null {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
-  return null;
-}
-
-type TopLevelProperty =
-  | { kind: "assignment"; value: ts.Expression }
-  | { kind: "opaque"; text: string };
-
-/**
- * A view of an event object's OWN top-level keys, with spreads resolved as far
- * as they can be read at the call site.
- *
- * Spreads matter here for one measured reason: the deletion-rejected writer in
- * `src/app/api/admin/deletion-requests/[id]/route.ts` spreads
- * `...(suppressed ? { metadata } : {})` and passes no category. A census that
- * failed closed on any spread would report that site as "category decided
- * elsewhere" instead of as the omission it is, and the uncategorised count would
- * read 81 rather than 82 — a site quietly moved from the population that has to
- * be fixed into an allowlist. So a spread of INLINE literals (or a conditional /
- * `&&` / `??` between them) contributes its keys, exactly as
- * `exclusivity-request-write-sites.test.ts` reads its own payloads. A spread of
- * anything opaque — an identifier, a call result — still fails closed, because
- * its keys are decided somewhere a reviewer cannot see.
- *
- * `unreadableKeys` ALSO covers a property whose NAME the parser cannot resolve,
- * and that is not hypothetical tidiness (#2695 review). A computed key —
- * `{ [SOME_CONSTANT]: … }`, or even `{ ["memberDisclosure"]: … }` — and a getter
- * (`{ get memberDisclosure() { … } }`) both compile, both set the key at run
- * time, and both used to be DROPPED here: the walk skipped what it could not
- * name, so the object measured as though the key were absent. For `category`
- * that reported an omission that is not one; for `memberDisclosure` it was
- * worse, because `absent` is the safe answer and therefore the unpinned one —
- * a real member-facing declaration would have measured as neither declared nor
- * forwarded, i.e. invisible to the census while the reader honoured it and the
- * member read the text. Anything this walk cannot name now marks the whole
- * object unreadable, which puts every lookup on it into the pinned `forwarded`
- * population instead.
- */
-type ResolvedObject = {
-  keys: Map<string, TopLevelProperty>;
-  unreadableKeys: boolean;
-};
-
-function spreadLiterals(expression: ts.Expression): ts.ObjectLiteralExpression[] | null {
-  const inner = unwrap(expression);
-  if (ts.isObjectLiteralExpression(inner)) return [inner];
-  if (ts.isConditionalExpression(inner)) {
-    const whenTrue = spreadLiterals(inner.whenTrue);
-    const whenFalse = spreadLiterals(inner.whenFalse);
-    return whenTrue && whenFalse ? [...whenTrue, ...whenFalse] : null;
-  }
-  if (ts.isBinaryExpression(inner)) {
-    // `cond && { … }` / `value ?? { … }` — read whichever side is a literal.
-    const left = spreadLiterals(inner.left);
-    const right = spreadLiterals(inner.right);
-    if (left && right) return [...left, ...right];
-    return right ?? left;
-  }
-  return null;
-}
-
-function resolveObjectLiteral(literal: ts.ObjectLiteralExpression): ResolvedObject {
-  const keys = new Map<string, TopLevelProperty>();
-  let unreadableKeys = false;
-
-  for (const property of literal.properties) {
-    if (ts.isPropertyAssignment(property)) {
-      const name = propertyName(property.name);
-      if (!name) {
-        // A COMPUTED key: `{ [KEY]: … }`, or a numeric one. It sets some key at
-        // run time and the parser cannot say which, so every lookup on this
-        // object has to fail closed rather than report the key it asked for as
-        // absent.
-        unreadableKeys = true;
-        continue;
-      }
-      keys.set(name, { kind: "assignment", value: property.initializer });
-      continue;
-    }
-    if (ts.isShorthandPropertyAssignment(property)) {
-      keys.set(property.name.text, {
-        kind: "opaque",
-        text: property.name.text,
-      });
-      continue;
-    }
-    if (ts.isSpreadAssignment(property)) {
-      const branches = spreadLiterals(property.expression);
-      if (!branches) {
-        unreadableKeys = true;
-        continue;
-      }
-      for (const branch of branches) {
-        const resolved = resolveObjectLiteral(branch);
-        unreadableKeys = unreadableKeys || resolved.unreadableKeys;
-        for (const [name, value] of resolved.keys) {
-          // A key that arrives through a spread may or may not be present at
-          // runtime, so its VALUE is not readable even when its name is.
-          keys.set(name, { kind: "opaque", text: `spread ${name}` });
-          void value;
-        }
-      }
-      continue;
-    }
-    // A getter, a setter, a method, or whatever the language adds next. Each
-    // can name a key this census reads and none of them holds an initialiser
-    // expression to read, so the object is unreadable rather than short of one
-    // property.
-    unreadableKeys = true;
-  }
-
-  return { keys, unreadableKeys };
-}
-
-function findTopLevelProperty(
-  resolved: ResolvedObject,
-  key: string,
-): TopLevelProperty | null {
-  return resolved.keys.get(key) ?? null;
-}
 
 /**
  * The event/params objects a write site passes, unwrapped through the structured
@@ -743,10 +581,6 @@ function resolveCategory(event: ResolvedObject): AuditCategoryEvidence {
   return { kind: "forwarded", expression: collapse(value.getText()) };
 }
 
-function collapse(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
 function resolveOneAction(event: ResolvedObject): string {
   const property = findTopLevelProperty(event, "action");
   if (!property) return "(none)";
@@ -761,35 +595,6 @@ function resolveAction(events: readonly ResolvedObject[] | null): string {
   return actions.length === 1
     ? must(actions[0], "resolveAction: length-1 action list has no first element")
     : `(mixed) ${actions.join("|")}`;
-}
-
-/**
- * The enclosing symbol chain, outermost first. Named function declarations,
- * methods, classes and `const fn = …` initialisers all contribute; an anonymous
- * arrow inside one of them does not, so a reformat that wraps a call in another
- * callback does not change the identity.
- */
-function symbolChain(node: ts.Node): string {
-  const names: string[] = [];
-  let cursor: ts.Node | undefined = node.parent;
-  while (cursor) {
-    if (
-      (ts.isFunctionDeclaration(cursor) ||
-        ts.isMethodDeclaration(cursor) ||
-        ts.isClassDeclaration(cursor)) &&
-      cursor.name &&
-      ts.isIdentifier(cursor.name)
-    ) {
-      names.unshift(cursor.name.text);
-    } else if (
-      ts.isVariableDeclaration(cursor) &&
-      ts.isIdentifier(cursor.name)
-    ) {
-      names.unshift(cursor.name.text);
-    }
-    cursor = cursor.parent;
-  }
-  return names.length ? names.join(".") : "<module>";
 }
 
 /**
@@ -917,11 +722,6 @@ function classifyRawSqlText(text: string): "insert" | "mutation" | null {
 function isBoundaryOwnWrite(file: string, sink: AuditWriteSink): boolean {
   if (file !== AUDIT_BOUNDARY_MODULE) return false;
   return sink.startsWith("auditLog.") || sink === "createAuditLog";
-}
-
-/** True when the declaration of a helper is being read rather than a call. */
-function isDeclarationName(call: ts.CallExpression): boolean {
-  return ts.isFunctionDeclaration(call.parent) || ts.isMethodDeclaration(call.parent);
 }
 
 function scanFile(file: string, repoRoot: string): AuditWriteSite[] {
@@ -1407,7 +1207,7 @@ export function scanAuditWriterCensus(
 ): AuditWriterCensus {
   const files: string[] = [];
   for (const root of SCAN_ROOTS) {
-    listSourceFiles(join(repoRoot, root), files);
+    listSourceFilesIn(join(repoRoot, root), files, SKIP_DIRECTORIES);
   }
   files.sort();
 

@@ -384,7 +384,8 @@ async function applyQueuedAction(
   switch (action.type) {
     case "QUEUE_PRIMARY_INVOICE": {
       const result = await deps.enqueueXeroBookingInvoiceOperation(
-        String(action.payload.bookingId)
+        String(action.payload.bookingId),
+        { invoiceEmailDelivery: null }
       );
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;

@@ -37,6 +37,7 @@ import {
   type BedTypeValue,
 } from "@/components/admin/bed-type-indicator";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
+import { AllocationPreferencesPanel } from "@/components/admin/allocation-preferences-section";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
@@ -1489,6 +1490,22 @@ export function RoomsBedsManager({
       ) : null}
         </>
       ) : null}
+
+      {/*
+        #2937: allocation preferences live HERE — Bookings Setup -> Rooms & Beds
+        — rather than on the daily Bed Allocation board, beside the rooms and
+        beds the preferences order guests into. Deliberately OUTSIDE the
+        `lodgeScopeReady` gate above, so the panel states its own per-scope
+        reason instead of vanishing without one; it is total over the scope and
+        offers a write target in exactly one of its states.
+
+        It takes this manager's OWN `lodgeScope`, which is the point of putting
+        it on this page: one lodge selector, one derivation, one committed
+        scope. Nothing here changes the allocation algorithm, what a priority
+        means, who may edit, where the setting is stored, or the route it is
+        read and written through.
+      */}
+      <AllocationPreferencesPanel scope={lodgeScope} canEdit={canEdit} />
     </div>
   );
 }

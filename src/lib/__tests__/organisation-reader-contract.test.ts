@@ -452,6 +452,12 @@ const DECLARED_FILES: Record<string, string> = {
     "replace, so an officer confirms the consequence before it is written. It " +
     "creates nothing, and it is the ONLY new file that names the link — every " +
     "consumer downstream takes its plain-string answer instead",
+  // ---- added by #2939 (bulk person-contact seeding) -------------------
+  "src/lib/xero-missing-contact-seeding.ts":
+    "INV-INT-022: the read-only census of unlinked person members reads the " +
+    "Organisation holding a candidate Xero contact, so a member whose address " +
+    "matches a school's own customer is handed back as ambiguous instead of " +
+    "being pushed into the refusal the funnel would raise a moment later",
   // ---- added by stage 3 (#3368) ---------------------------------------
   "src/lib/booking-owner.ts":
     "the one-home accessor this census's own message names as stage 3: it " +
@@ -735,6 +741,13 @@ describe("#3367: each declared reader still plays its declared part", () => {
       "src/lib/xero-contacts.ts",
       "src/lib/xero-manual-contact-link.ts",
       "src/lib/organisation-xero-contacts.ts",
+      // #2939 closed the two INV-INT-019 named as unguarded. The inbound patch
+      // claims a link from a Xero contact the sync fetched, and the bulk member
+      // import creates a member already holding one; a school's organisation
+      // contact carries the school's own address, so both were doors the
+      // deterministic adoption could walk through unwatched.
+      "src/lib/xero-contact-create-recovery.ts",
+      "src/lib/xero-member-import.ts",
     ]) {
       expect(read(caller), `${caller} must take the refusal`).toContain(
         "assertXeroContactHasNoOtherHome(",

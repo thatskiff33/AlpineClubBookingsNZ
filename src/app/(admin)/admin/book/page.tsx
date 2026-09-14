@@ -727,6 +727,42 @@ export default function AdminBookPage() {
   const showPaymentMethodChoice = internetBankingEnabled && remainingToPay > 0;
 
   /*
+    #2929 — whether THIS create will raise a Xero invoice at all, which is what
+    makes the email-choice dialog's invoice sentence true or false.
+
+    The same discriminator the POST below sends and the create service keys its
+    booking-invoice enqueue on: an invoice is raised only for an Internet
+    Banking payment. Three ordinary situations make it false, and the sentence
+    was a false promise in every one of them —
+
+      - the officer picked Card, so nothing is invoiced;
+      - the club has Internet Banking off, so the card above never renders and
+        EVERY create here is a card create. `/api/payments/options` enables that
+        module only when the Xero integration is on too, so this also covers a
+        club with Xero off entirely, where the create skips the enqueue;
+      - the booking is fully covered by credit (`remainingToPay === 0`), so
+        there is nothing to invoice and again no card renders.
+
+    Being wrong here is not a wording nit: the officer is promised an artefact
+    they can go and send from Xero, and there is none.
+  */
+  const createRaisesXeroInvoice =
+    showPaymentMethodChoice && paymentMethod === "internet_banking";
+
+  /**
+   * The invoice half of the email-choice dialog's explanation, shared by both
+   * of its wordings and rendered only when there is an invoice to describe.
+   */
+  const xeroInvoiceEmailNote = createRaisesXeroInvoice ? (
+    <>
+      {" "}
+      Choosing not to email also stops Xero emailing the Internet Banking
+      invoice for this booking. The invoice is still created, and you can send
+      it from Xero later.
+    </>
+  ) : null;
+
+  /*
     #2160: the view-only explanation lives here, once, at the top of the page —
     announced on arrival and ahead of the controls it explains — instead of on
     each disabled button below. The `role="status"` wrapper is permanently
@@ -1460,16 +1496,16 @@ export default function AdminBookPage() {
                   created either way; by default they are <strong>not</strong>{" "}
                   emailed. Choose to send the standard confirmation / hold email
                   to {selectedMember?.firstName ?? "them"} only if you want to —
-                  your choice is recorded in the audit log. A Xero invoice email
-                  (Internet Banking) is still sent regardless of this choice.
+                  your choice is recorded in the audit log.
+                  {xeroInvoiceEmailNote}
                 </>
               ) : (
                 <>
                   The booking will be created either way. Choose whether{" "}
                   {selectedMember?.firstName ?? "the member"} receives the
                   standard confirmation / hold email — your choice is recorded in
-                  the audit log. A Xero invoice email (Internet Banking) is still
-                  sent regardless of this choice.
+                  the audit log.
+                  {xeroInvoiceEmailNote}
                 </>
               )}
             </DialogDescription>

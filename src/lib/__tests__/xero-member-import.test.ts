@@ -17,6 +17,14 @@ const mocks = vi.hoisted(() => ({
     familyGroupMember: { findFirst: vi.fn(), create: vi.fn(), createMany: vi.fn() },
     passwordResetToken: { create: vi.fn() },
     auditLog: { create: vi.fn() },
+    // #2939: the import's create transactions now take the contact-home
+    // advisory lock and then ask the OTHER table whether this Xero contact is
+    // already a school's customer (INV-INT-018). Both are real calls on the
+    // transaction client, so the mock carries them rather than stubbing the
+    // guard out — a mock that hid the guard would leave every assertion below
+    // passing whether or not the refusal is wired up.
+    organisation: { findFirst: vi.fn() },
+    $executeRaw: vi.fn(),
     $transaction: vi.fn(),
   },
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
@@ -119,6 +127,10 @@ beforeEach(() => {
   mocks.prisma.member.findFirst.mockResolvedValue(null);
   mocks.prisma.member.create.mockResolvedValue({ id: "member_new", email: "new@example.com" });
   mocks.prisma.member.update.mockResolvedValue({});
+  // No other local record holds the contact: the ordinary case, in which the
+  // refusal reads the organisation table and returns.
+  mocks.prisma.organisation.findFirst.mockResolvedValue(null);
+  mocks.prisma.$executeRaw.mockResolvedValue(1);
   mocks.prisma.$transaction.mockImplementation(async (callback) =>
     callback(mocks.prisma),
   );
@@ -131,6 +143,37 @@ beforeEach(() => {
   ]);
   mocks.prisma.xeroContactCache.findMany.mockResolvedValue([makeContact()]);
   mocks.upsertXeroObjectLink.mockResolvedValue({});
+});
+
+describe("Xero member import — the two-homes refusal (#2939)", () => {
+  it("refuses to import a contact that is already a school's Xero customer", async () => {
+    /*
+      INV-INT-018. The reachable-on-purpose case rather than a race: a school's
+      organisation contact carries the school's own address, so that contact can
+      perfectly well sit in a mapped membership group, and importing it would
+      make one Xero customer both a school and a person.
+
+      The refusal fires inside the create transaction, so the member row rolls
+      back with it, and the import's per-contact catch turns it into a reported
+      error rather than a halted run.
+    */
+    mocks.prisma.organisation.findFirst.mockResolvedValue({
+      id: "org_1",
+      name: "Tokoroa Primary School",
+    });
+
+    const result = await importMembersFromXeroGroups(
+      [{ groupId: "group_1", groupName: "Adults", ageTier: "ADULT" }],
+      false,
+    );
+
+    expect(result.created).toBe(0);
+    expect(result.errors).toBe(1);
+    expect(result.errorDetails[0]?.error).toContain("Tokoroa Primary School");
+    // The lock is taken before the refusal can mean anything, and it is taken
+    // on the contact rather than on either record.
+    expect(mocks.prisma.$executeRaw).toHaveBeenCalled();
+  });
 });
 
 describe("Xero member import — membership types (#2108)", () => {

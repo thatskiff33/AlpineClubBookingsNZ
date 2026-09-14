@@ -25,7 +25,7 @@ reason: The school approval transaction gains the resolve-or-create of the
   reads anyway.
 
 file: src/lib/xero-contacts.ts
-lines: 1940
+lines: 2046
 reason: Three lines net. The member payload builder's object literal MOVED OUT
   to `xero-contact-shape.ts`, which the organisation builder shares, so the
   single-source-of-truth direction of this change is a reduction. What is added
@@ -34,9 +34,25 @@ reason: Three lines net. The member payload builder's object literal MOVED OUT
   deterministically rather than by a race — plus two export keywords and their
   docblocks, so the organisation path can share this module's name search and
   duplicate-name predicate rather than copying them.
+  #2939 then added a hundred and twenty-six more lines, ninety-one of them
+  comment: `requireAuthoritativeMatch`, which lets a BULK caller say "if the
+  provider cannot be asked authoritatively, do nothing for this member". It
+  turns a failed Xero search and a name-uniqueness refusal from fall-throughs
+  into refusals, at the two places this function otherwise proceeds on an answer
+  it does not have. The comment weight is the point: the DEFAULTS are right for
+  every existing caller and invert only for a bulk run, so each refusal site
+  carries which trade it is making, or the next reader "fixes" the option away.
+  It cannot live anywhere else — an option that changes what this function does
+  at two specific branches has to be read at those branches, and a wrapper would
+  have to re-implement the search and the recovery to intercept them, which is
+  the duplicate resolution path `INV-SSOT` exists to prevent. The number here is
+  the file's real length rather than a second entry the gate cannot choose
+  between — one file, one allowance, and every fragment in this diff is live
+  because the size gate always judges against `origin/main`, where none of them
+  has merged.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1431
+lines: 1550
 reason: Six lines, and five of them are the comment. One call site changes from
   `findOrCreateXeroContact(booking.memberId, …)` to
   `findOrCreateXeroContactForInvoicedParty(booking, …)`. The comment is there
@@ -47,7 +63,7 @@ reason: Six lines, and five of them are the comment. One call site changes from
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1450
+lines: 1472
 reason: Thirty-six lines, admitting the ORGANISATION case on the retry screen.
   The screen gated contact create and update on `localModel === "Member"`, so an
   officer replaying a school's failed contact operation was told it "requires a
@@ -84,17 +100,23 @@ the invariant and the lock-guard test and left these two sentences teaching the
 order that produced the deadlock, which is exactly how the rule stops holding.
 
 file: src/lib/xero-contact-create-recovery.ts
-lines: 844
+lines: 879
 reason: Fourteen comment lines across two docblocks, no code. The manual-link
   fence called the target `Member` row the transaction's FIRST lock; the
   contact-home key is taken before it, and the sentence as written described the
   deadlock `INV-LOCK-002` now forbids. Both the shared row fence and the
   manual-link fence say the order, because a fifth linker reads whichever one it
   calls. The docblock cannot move: a lock-order rule stated anywhere but at the
-  lock is a rule somebody has to go and find.
+  lock is a rule somebody has to go and find. #2939 then added thirty-five more
+  lines to the same file, twenty-eight of them comment: the contact-home lock,
+  the two-homes refusal at the moment `applyInboundMemberContactPatch` CLAIMS a
+  link, and why each of those two things is where it is. The number here is the
+  file's real length rather than two entries the gate cannot choose between —
+  one file, one allowance — and the #2939 reasoning is in
+  `size-allowances.d/2939-bulk-create-missing-contacts.md` beside it.
 
 file: src/lib/xero-sync.ts
-lines: 883
+lines: 901
 reason: Eleven comment lines on `XeroObjectLinkInput.mergeMetadata`, no code. The
   flag's docblock said only inbound writers set it while one outbound writer
   now does, for a sound reason; two comments contradicting each other is how a

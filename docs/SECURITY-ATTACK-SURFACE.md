@@ -386,6 +386,112 @@ the write endpoint enforces. A provider added there without being added here
 fails `credential-blast-radius-docs-contract.test.ts`, so this list cannot fall
 behind the code again the way the runbook did.
 
+### Who changed a credential, and when (#2723)
+
+**Every mutation of this store names its writer, and the store refuses one that
+does not.** `actor` is a required argument on `setIntegrationCredential`,
+`ensureGeneratedCredential` and `deleteIntegrationCredential`, so a write with
+no attribution does not compile; `assertCredentialActor` catches the value that
+gets past the type (a cast, untyped JavaScript, a forwarded value); and
+`credential-actor-census.test.ts` walks the tree for a writer that skips the
+store altogether. The rule is `INV-PRIV-019`.
+
+The writer is one of exactly two things, and an operator reading the audit log
+can tell them apart:
+
+- a **Full Admin**, recorded as the member id on the row's `updatedByUserId`
+  column and as `actorKind: "admin"` on the audit row;
+- a **named background actor** from the closed `CREDENTIAL_SYSTEM_ACTORS` list,
+  recorded as `actorKind: "system"` with the actor's own name. The row's
+  `updatedByUserId` is `NULL` for these, which is now unambiguous: before #2723
+  the argument was optional, so an omission stored the same `NULL`. Measured on
+  the merge base, the store had **18 production call sites** outside itself and
+  **ten of them stored no attribution at all** — every one of the six deletes
+  and the single generator call, because neither function took an attribution
+  argument, plus three writes that simply omitted the optional one.
+
+#### The background writers, in full (#2723)
+
+This is the whole closed list, and it is held to the code by
+`credential-actor-census.test.ts` — a second hand-written list is the defect
+this page already learnt about once, from the rotation runbook two sections up.
+
+- `google-verify-callback` — a Google OAuth round-trip succeeded, so the
+  non-secret verified marker is stamped.
+- `stripe-webhook-verify` — a signature-verified Stripe TEST-MODE webhook event
+  stamped the webhook marker.
+- `servernz-push-registration` — the shared-post sync registered this install
+  for pushes and stored the secret the central server issued.
+- `xero-token-key-generation` — first use of Xero token encryption generated
+  (or, after an auth-secret change, replaced) the wrapped token key.
+- `e2e-stripe-seed` — the E2E staging stack seeding Stripe test-mode keys.
+  Never a real deployment.
+
+**A verify-RESET is not on this list, deliberately.** Dropping a verified marker
+because a credential changed is part of the administrator's write, so those
+deletes carry that person's member id and request context, not a job's name.
+
+**The audit row commits with the secret or not at all.** Both are written inside
+one transaction, on the same client, so a failed audit rolls the credential
+change back. The admin write route used to build its row two awaits later in a
+different module, which left a window where a rewritten secret had no evidence
+of who rewrote it.
+
+**A stale concurrent write loses rather than winning quietly.** Every set and
+delete declares what it expected to find — nothing there, a specific version, or
+a deliberate unconditional overwrite — and a version claim is applied against the
+exact stored `(ciphertext, iv, authTag)` tuple that was read. Every encrypt draws
+a fresh random IV, so that tuple changes on every write; the loser matches zero
+rows, throws `StaleCredentialWriteError`, changes nothing and records nothing.
+The version token callers hold is a SHA-256 of the tuple, never the tuple, so the
+exposure contract above is unaffected by anything a caller does with it.
+
+**No plaintext reaches the audit row, a log line, or an error.** The audit
+payload is built from a typed evidence shape with no field a credential value
+fits into, and the store calls no logger at all — which matters because the
+log/Sentry redactor (`INV-PRIV-011`) is blind to any door that never calls it.
+`credential-write-contract.test.ts` drives the store with a sentinel secret and
+proves it appears in none of the audit rows, logger calls or errors the store
+emits on a success, a database failure, a lost race and a refused actor. That is
+a claim about the store's own doors; a caller that catches a value and logs it
+itself is outside that boundary.
+
+**Reads make no mutation noise.** The Xero token path calls
+`ensureGeneratedCredential` on every token decrypt; it returns the existing key
+and writes nothing, so no audit row. A delete that matches no row writes none
+either, which keeps verify-reset from burying the real deletions. The Stripe
+webhook marker follows the same rule from the other side: the route stamps it on
+every signature-verified test-mode event, so it is written only when the
+freshness answer would actually change, rather than minting a seven-year row per
+delivery.
+
+**What this contract covers, and what it does not.** Everything above is about
+the `IntegrationCredential` table. Two other secrets are stored elsewhere and
+are outside it, which is worth saying plainly on the page an operator reads to
+plan a rotation or reconstruct an incident:
+
+- **The Xero access and refresh tokens** (`XeroToken`) are their own table, with
+  no actor column and no audit row on any write or delete. `deleteXeroTokens()`
+  wipes them from the verify-reset path described above and from the OAuth
+  disconnect, so an administrator changing a Xero client credential destroys a
+  live provider grant and the trail records the credential write beside it but
+  nothing about the tokens.
+- **A member's TOTP secret** (`Member.totpSecret`) is encrypted at rest and
+  written at enrolment with no audit row of its own.
+
+Neither is a regression — both predate this contract and neither ever carried
+attribution — and neither is in this issue's scope. They are named here so the
+section is not read as covering every stored secret.
+
+**What the census can and cannot see.** It enumerates every DIRECT CALL of the
+three store mutators, found by walking the tree — not every function that
+ultimately causes a credential to change. A wrapper hides its own callers:
+`clearServerNzApiKey` appears, the admin route that calls it does not. That is
+sound rather than a gap, because a wrapper takes the actor as a REQUIRED
+parameter and so cannot supply one itself — the type is what covers its callers,
+and the census covers the wrapper. It is worth stating plainly because "every
+writer" would be a stronger claim than the instrument makes.
+
 - **A database backup + the auth secret decrypts everything.** Anyone who holds
   both a DB dump (or replica) and the auth-secret value can recover every stored
   provider credential. Treat the auth secret with the same care as the database

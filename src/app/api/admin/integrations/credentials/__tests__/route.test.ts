@@ -108,12 +108,24 @@ describe("POST /api/admin/integrations/credentials", () => {
     expect(json).toMatchObject({ ok: true, provider: "xero", key: "client_secret" });
     expect(json.setAt).toBe("2026-07-21T10:00:00.000Z");
 
-    // Audit metadata contains no substring of the submitted secret.
-    expect(mocks.createAuditLog).toHaveBeenCalledTimes(1);
-    const auditArg = mocks.createAuditLog.mock.calls[0][0];
-    expect(JSON.stringify(auditArg)).not.toContain(SECRET_VALUE);
-    expect(auditArg.metadata).toMatchObject({ provider: "xero", key: "client_secret" });
-    expect(auditArg.category).toBe("security");
+    // The audit row is no longer this route's to write (#2723): the store
+    // writes it inside the transaction that writes the secret, so a crash
+    // between the two cannot leave a rewritten credential with no evidence.
+    // What the route still owns is naming the actor and handing the store the
+    // request context, and `credential-write-contract.test.ts` is where the row
+    // itself — and its freedom from the plaintext — is asserted.
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+    const write = mocks.setIntegrationCredential.mock.calls[0][0];
+    expect(JSON.stringify({ ...write, value: undefined })).not.toContain(
+      SECRET_VALUE,
+    );
+    expect(write).toMatchObject({
+      provider: "xero",
+      key: "client_secret",
+      actor: { kind: "admin", memberId: "admin-1" },
+      expect: { expect: "any" },
+    });
+    expect(write.request).toBeDefined();
   });
 
   it("applies verify-reset (drops Xero tokens) on a client-credential write", async () => {
@@ -149,6 +161,15 @@ describe("POST /api/admin/integrations/credentials", () => {
     );
     expect(res.status).toBe(200);
     expect(mocks.clearStripeWebhookVerified).toHaveBeenCalledTimes(1);
+    // ONE administrator, ONE actor, ONE request (#2723 review). The reset used
+    // to hard-code a `stripe-verify-reset` system actor, so a single Save wrote
+    // one row naming the person and one naming a job with a null member.
+    const [resetActor, resetRequest] =
+      mocks.clearStripeWebhookVerified.mock.calls[0];
+    expect(resetActor).toEqual({ kind: "admin", memberId: "admin-1" });
+    expect(resetRequest).toBe(
+      mocks.setIntegrationCredential.mock.calls[0][0].request,
+    );
     // Cross-provider isolation: a Stripe write never touches Xero tokens.
     expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
   });

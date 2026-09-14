@@ -119,6 +119,7 @@ export const adminBookingsAndBedsHelpEntries: HelpEntry[] = [
         "Use auto-allocation for ordinary cases and manual moves for operational exceptions.",
         "When a booking is paid or confirmed, automatic allocation gives Held bookings first claim: it may move a blocking Provisional allocation to a free bed, or return it to the awaiting queue, so a Held booking gets a bed. The manual 'Run auto-allocation' button does not displace; a Held or admin-approved allocation is never displaced.",
         "Approve allocations only after checking room rules, capacity, and any hut-leader notes.",
+        "Auto allocation and the preference order are set per lodge in Bookings Setup -> Rooms & Beds, not on this board. The board links to them for the lodge it is showing.",
       ],
       [
         {

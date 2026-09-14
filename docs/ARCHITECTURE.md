@@ -1119,12 +1119,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **93 components render a banner, and
-298 of the 351 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **94 components render a banner, and
+300 of the 353 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 298 split by WHICH rule
-covers them: **264** pass the literal
+test currently pins, which is the only authority.) Those 300 split by WHICH rule
+covers them: **266** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **34**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the
@@ -3004,7 +3004,14 @@ withholds every member-facing message for a booking, records each withhold as an
 `EmailLog` row with status `SKIPPED_NO_EMAILS`, never touches admin-audience or
 account/security mail, and fails closed if the switch cannot be read. The retry
 cron and the two Xero-sent invoice emails re-check the same switch because they
-bypass `sendEmail`. See `docs/DOMAIN_INVARIANTS.md` for the full contract.
+bypass `sendEmail`. The booking invoice email carries a SECOND, narrower
+withhold that is not the switch (#2929): an on-behalf create's "do not email
+the member" choice, persisted on the outbox operation
+(`XeroSyncOperation.invoiceEmailDelivery`) so a later retry still knows the
+email was withheld deliberately. It writes its own `SKIPPED_NO_EMAILS` row
+naming that reason, sets nothing persistent, and is reported on the sync
+operation under its own key so neither it, the switch, the environment-safety
+suppression nor a provider failure can be mistaken for another. See `docs/DOMAIN_INVARIANTS.md` for the full contract.
 For every live registered template in the booking-scoped suppression inventory,
 that same choke point may add the canonical encoded
 `/bookings/<booking-id>` detail URL (#2362). `booking-email-authority.ts`

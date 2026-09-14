@@ -116,6 +116,11 @@ import {
   type BookingGuestInput,
 } from "@/lib/booking-create";
 import { requireCalendarDate } from "@/lib/club-time";
+import { enqueueXeroBookingInvoiceOperation } from "@/lib/xero-operation-outbox";
+import {
+  XERO_INVOICE_EMAIL_SEND,
+  XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION,
+} from "@/lib/xero-invoice-email-instruction";
 
 // #3123 (`INV-LOCK-004`) — `createConfirmedBooking` is transaction-aware, so its
 // caller resolves the CLUB's day and threads it in. Pinned to the frozen clock's
@@ -630,5 +635,89 @@ describe("createConfirmedBooking forward-dated on-behalf over-capacity (#1767)",
       capacityOverridden: true,
       allowPastDates: false,
     });
+  });
+});
+
+/*
+  #2929 (MAD epic #2725) — the on-behalf "do not email the member" choice does
+  not stop at this application's own confirmation email. It is turned into a
+  typed instruction and RECORDED ON THE OUTBOX OPERATION, because the Xero
+  invoice this create asks for is raised by a worker afterwards, and possibly by
+  an operator retry days afterwards. By then nothing of this request survives
+  except the row.
+
+  These tests pin the create's side of that: what it records, on which paths,
+  and what it still refuses to touch.
+*/
+describe("createConfirmedBooking carries the on-behalf email choice to its invoice (#2929)", () => {
+  const internetBanking = (
+    overrides: Partial<Parameters<typeof createConfirmedBooking>[0]> = {},
+  ) =>
+    baseInput([guest(true, "Alice")], {
+      paymentMethod: "internet_banking",
+      ...overrides,
+    });
+
+  function enqueuedInvoiceOptions() {
+    const call = vi.mocked(enqueueXeroBookingInvoiceOperation).mock.calls.at(-1);
+    return call?.[1];
+  }
+
+  it("records the withhold when the officer chose not to email the member", async () => {
+    await createConfirmedBooking(internetBanking({ notifyMember: false }));
+
+    expect(enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        invoiceEmailDelivery: XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION,
+      }),
+    );
+  });
+
+  it("records a send when the officer made the ordinary choice", async () => {
+    await createConfirmedBooking(internetBanking({ notifyMember: true }));
+
+    expect(enqueuedInvoiceOptions()).toMatchObject({
+      invoiceEmailDelivery: XERO_INVOICE_EMAIL_SEND,
+    });
+  });
+
+  it("records a send when no choice was made at all", async () => {
+    // An absent flag is not a withhold. `notifyMember` is honoured only for
+    // on-behalf creates, and its absence means the officer expressed nothing.
+    await createConfirmedBooking(internetBanking());
+
+    expect(enqueuedInvoiceOptions()).toMatchObject({
+      invoiceEmailDelivery: XERO_INVOICE_EMAIL_SEND,
+    });
+  });
+
+  it("never records a withhold on a member's own booking, whatever flag arrives", async () => {
+    // A member booking for themselves is always emailed (`INV-LOCKOUT-041`), so
+    // there is no choice here to carry — and a stray `notifyMember: false` from
+    // a caller must not become a silent withhold of the member's own invoice.
+    await createConfirmedBooking(
+      internetBanking({ isOnBehalf: false, notifyMember: false }),
+    );
+
+    expect(enqueuedInvoiceOptions()).toMatchObject({
+      invoiceEmailDelivery: XERO_INVOICE_EMAIL_SEND,
+    });
+  });
+
+  it("changes nothing persistent: the switch is not set and no later email is decided here", async () => {
+    await createConfirmedBooking(internetBanking({ notifyMember: false }));
+
+    // The rejected alternative, pinned. `Booking.noEmails` is the BROADER,
+    // persistent setting; this one creation's choice must never become it, or
+    // every later reminder, change and cancellation email would be suppressed
+    // too and an officer would have to find and clear a switch they never set.
+    const createData = vi.mocked(h.bookingCreate).mock.calls[0][0].data;
+    expect(createData).not.toHaveProperty("noEmails");
+    for (const [args] of vi.mocked(h.bookingUpdate).mock.calls) {
+      expect((args as { data?: Record<string, unknown> }).data ?? {}).not.toHaveProperty(
+        "noEmails",
+      );
+    }
   });
 });

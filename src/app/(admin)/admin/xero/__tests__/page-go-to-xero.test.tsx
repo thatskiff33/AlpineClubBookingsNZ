@@ -34,6 +34,7 @@ vi.mock("../_components/panels", async () => {
     HealthAndDiagnosticsPanels: stub,
     InboundEventsPanel: stub,
     MembershipSyncPanel: stub,
+    MissingContactsPanel: stub,
     OperationsPanel: stub,
     SyncResultsPanel: stub,
     UsagePanel: stub,

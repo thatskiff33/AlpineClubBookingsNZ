@@ -1,6 +1,10 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/placeholder-contact-email";
+import {
+  assertXeroContactHasNoOtherHome,
+  lockXeroContactHome,
+} from "@/lib/xero-contact-home";
 import { buildXeroContactUrl, stripXeroOrgShortCode } from "@/lib/xero-links";
 import {
   completeXeroSyncOperation,
@@ -314,6 +318,27 @@ export async function completeMemberContactOperation(
  * predicates are re-evaluated under that lock so an inbound replay cannot
  * overwrite a newer local edit. The pointer and FK-less CONTACT ledger row are
  * committed together; callers must not write either one separately afterward.
+ *
+ * ## IT TAKES THE TWO-HOMES REFUSAL (#2939, `INV-INT-018`)
+ *
+ * `INV-INT-019` used to name this function, and the bulk member import above
+ * it, as the paths that did NOT. That was written when nobody had yet built
+ * anything that had to decide, and it left the sharpest case open rather than
+ * closed: a school's organisation contact carries the school's own contact
+ * address, so an inbound contact sync finding that address on a member would
+ * have linked the school's Xero customer onto a person — the very adoption
+ * `xero-contact-home.ts` calls reachable on purpose, arriving through a door
+ * that was not watching.
+ *
+ * The lock is taken FIRST, before the member row fence, because the
+ * contact-home key is the OUTER lock relative to any `Member` row lock
+ * (`INV-LOCK-002`); taking it after the fence is the deadlock that module's
+ * docblock describes. The refusal then runs only where a link is being
+ * CLAIMED. Where the member already holds this contact there is nothing to
+ * claim: a second home, if one exists, was made by some other writer and
+ * refusing a blank-field backfill would break an unrelated repair without
+ * unmaking it. Claiming is the only moment this function can give a contact a
+ * second home, so claiming is the moment it refuses.
  */
 export async function applyInboundMemberContactPatch(
   input: {
@@ -328,6 +353,9 @@ export async function applyInboundMemberContactPatch(
   linked: boolean;
 }> {
   return db.$transaction(async (tx) => {
+    // INV-INT-018 / INV-LOCK-002: the contact-home key before the member ROW
+    // fence, never after it. See the docblock.
+    await lockXeroContactHome(tx, input.xeroContactId);
     const lockedLink = await lockMemberForXeroContactLink(tx, input.memberId);
     if (
       lockedLink.xeroContactId &&
@@ -358,6 +386,13 @@ export async function applyInboundMemberContactPatch(
     const linked =
       input.setCanonicalLink !== false && current.xeroContactId === null;
     if (linked) {
+      // The refusal, under the key taken above. It reads the OTHER table and
+      // throws `XeroContactTwoHomesError` naming the holder rather than picking
+      // a winner — a school's Xero customer is never adopted by a person.
+      await assertXeroContactHasNoOtherHome(tx, {
+        xeroContactId: input.xeroContactId,
+        home: { kind: "MEMBER", id: input.memberId },
+      });
       data.xeroContactId = input.xeroContactId;
       appliedFields.push("xeroContactId");
     }

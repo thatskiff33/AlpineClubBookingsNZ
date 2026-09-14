@@ -383,6 +383,7 @@ export async function POST(
 
   void enqueueXeroBookingInvoiceOperation(id, {
     createdByMemberId: session.user.id,
+    invoiceEmailDelivery: null,
   })
     .then(async (queuedInvoice) => {
       if (!queuedInvoice.queueOperationId) {

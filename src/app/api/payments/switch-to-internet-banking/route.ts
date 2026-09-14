@@ -424,6 +424,7 @@ export async function POST(request: NextRequest) {
   try {
     const queued = await enqueueXeroBookingInvoiceOperation(booking.id, {
       createdByMemberId: session.user.id,
+      invoiceEmailDelivery: null,
     });
     // #1620 — enqueue the applied-credit allocation AFTER the invoice op (older
     // createdAt → processed first) so the invoice exists when the allocation

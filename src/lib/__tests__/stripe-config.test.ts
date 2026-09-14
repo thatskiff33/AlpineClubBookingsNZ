@@ -37,6 +37,11 @@ import {
   recordStripeWebhookVerified,
 } from "@/lib/stripe-config";
 
+/** `findMany`'s `select: { key, updatedAt }` projection, from pairs. */
+function rows(pairs: [string, Date][]): { key: string; updatedAt: Date }[] {
+  return pairs.map(([key, updatedAt]) => ({ key, updatedAt }));
+}
+
 describe("stripe-config resolvers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -54,18 +59,88 @@ describe("stripe-config resolvers", () => {
     await expect(getOperationalStripeWebhookSecret()).resolves.toBeUndefined();
   });
 
-  it("clearStripeWebhookVerified deletes the marker row", async () => {
+  it("clearStripeWebhookVerified attributes the delete to ITS CALLER", async () => {
+    // As for Google (#2723 review): the one caller is the admin credential
+    // write, so the marker deletion is that administrator's action, not a
+    // background job's.
     mockDeleteCredential.mockResolvedValue(undefined);
-    await clearStripeWebhookVerified();
-    expect(mockDeleteCredential).toHaveBeenCalledWith(
-      STRIPE_PROVIDER,
-      STRIPE_WEBHOOK_VERIFIED_KEY,
+    await clearStripeWebhookVerified(
+      { kind: "admin", memberId: "member-7" },
+      { id: "req-1", ipAddress: null, userAgent: null },
     );
+    expect(mockDeleteCredential).toHaveBeenCalledWith({
+      provider: STRIPE_PROVIDER,
+      key: STRIPE_WEBHOOK_VERIFIED_KEY,
+      actor: { kind: "admin", memberId: "member-7" },
+      expect: { expect: "any" },
+      request: { id: "req-1", ipAddress: null, userAgent: null },
+    });
   });
 
   it("recordStripeWebhookVerified never throws even when the store errors", async () => {
+    mockFindMany.mockResolvedValue(rows([["webhook_secret", new Date()]]));
     mockSetCredential.mockRejectedValue(new Error("weak auth secret"));
     await expect(recordStripeWebhookVerified()).resolves.toBeUndefined();
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The webhook route calls this on EVERY signature-verified test-mode event,
+ * before idempotency handling, and since #2723 every credential mutation mints a
+ * seven-year `security`/`important` audit row. A row per delivery of a freshness
+ * timestamp buries the secret changes an operator came to the log for, so the
+ * marker is stamped only when the freshness answer would change.
+ */
+describe("recordStripeWebhookVerified writes only when it would change the answer (#2723)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockNeedsReentry.mockResolvedValue(false);
+    mockSetCredential.mockResolvedValue(undefined);
+  });
+
+  it("does NOT write when the marker is already fresh", async () => {
+    mockFindMany.mockResolvedValue(
+      rows([
+        ["webhook_secret", new Date("2026-06-01T00:00:00.000Z")],
+        ["webhook_verified", new Date("2026-06-02T00:00:00.000Z")],
+      ]),
+    );
+    await recordStripeWebhookVerified();
+    expect(mockSetCredential).not.toHaveBeenCalled();
+  });
+
+  it("writes when no marker is stored yet", async () => {
+    mockFindMany.mockResolvedValue(
+      rows([["webhook_secret", new Date("2026-06-01T00:00:00.000Z")]]),
+    );
+    await recordStripeWebhookVerified(new Date("2026-06-03T00:00:00.000Z"));
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
+    expect(mockSetCredential.mock.calls[0]?.[0]).toMatchObject({
+      provider: STRIPE_PROVIDER,
+      key: STRIPE_WEBHOOK_VERIFIED_KEY,
+      value: "2026-06-03T00:00:00.000Z",
+      actor: { kind: "system", actor: "stripe-webhook-verify" },
+    });
+  });
+
+  it("writes when the marker is STALE — the secret was swapped after it", async () => {
+    mockFindMany.mockResolvedValue(
+      rows([
+        ["webhook_secret", new Date("2026-06-05T00:00:00.000Z")],
+        ["webhook_verified", new Date("2026-06-02T00:00:00.000Z")],
+      ]),
+    );
+    await recordStripeWebhookVerified();
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes when there is a marker but no stored secret — a marker attesting to nothing is not fresh", async () => {
+    mockFindMany.mockResolvedValue(
+      rows([["webhook_verified", new Date("2026-06-02T00:00:00.000Z")]]),
+    );
+    await recordStripeWebhookVerified();
+    expect(mockSetCredential).toHaveBeenCalledTimes(1);
   });
 });
 

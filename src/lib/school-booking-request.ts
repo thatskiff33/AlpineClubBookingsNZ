@@ -1627,6 +1627,7 @@ export async function approveSchoolBookingRequest(input: {
       try {
         const queued = await enqueueXeroBookingInvoiceOperation(conversion.bookingId, {
           createdByMemberId: input.adminMemberId,
+          invoiceEmailDelivery: null,
         });
         if (queued.queueOperationId) {
           await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
@@ -2616,7 +2617,10 @@ export async function approveMemberWholeLodgeRequest(input: {
       try {
         const queuedInvoice = await enqueueXeroBookingInvoiceOperation(
           conversion.bookingId,
-          { createdByMemberId: input.adminMemberId },
+          {
+            createdByMemberId: input.adminMemberId,
+            invoiceEmailDelivery: null,
+          },
         );
         // #1620 floating-credit parity with the Internet Banking create path
         // (booking-create.ts): allocate the member's existing credit notes

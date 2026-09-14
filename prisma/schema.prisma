@@ -4221,6 +4221,20 @@ model XeroSyncOperation {
   // the column MUST remain immutable after enqueue. Null for REQUEUE, BACKFILL,
   // inbound, and any other row enqueued with no queueType.
   queueType              String?
+  // The creation-time Xero-invoice-email delivery instruction (#2929, MAD epic
+  // #2725), captured once at enqueue and, like `queueType` above, NEVER updated
+  // afterward. "SEND" or "WITHHELD_AT_CREATION"; parsed only through
+  // `readXeroInvoiceEmailInstruction` in src/lib/xero-invoice-email-instruction.ts,
+  // which reads anything else -- including this NULL -- as "no instruction was
+  // recorded", the honest state of every row enqueued by a path with no
+  // on-behalf email choice to express and of every row written before #2929.
+  // It is a COLUMN rather than a `requestPayload` key for the reason the
+  // `queueType` comment above states: the booking-invoice handler rewrites
+  // requestPayload wholesale before its first provider call, and the contact
+  // repair rewrites it again, so a payload key would vanish exactly on the
+  // retry that needs it -- and a retry that cannot tell a deliberate withhold
+  // from a lost flag emails the member the officer chose not to email.
+  invoiceEmailDelivery   String?
   responsePayload        Json?
   xeroObjectType         String?
   xeroObjectId           String?

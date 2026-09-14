@@ -373,7 +373,9 @@ async function savedCardChargeDueAt(
 
 async function queueXeroInvoice(bookingId: string, logMessage: string) {
   try {
-    const queuedInvoice = await enqueueXeroBookingInvoiceOperation(bookingId);
+    const queuedInvoice = await enqueueXeroBookingInvoiceOperation(bookingId, {
+      invoiceEmailDelivery: null,
+    });
     if (queuedInvoice.queueOperationId) {
       await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
       logger.info(

@@ -55,7 +55,7 @@ lines: 477
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/admin/xero/force-sync/route.ts
-lines: 326
+lines: 327
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/bookings/[id]/arrival-time/route.ts
@@ -131,7 +131,7 @@ lines: 2487
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-create.ts
-lines: 2041
+lines: 2060
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-date-modification-service.ts

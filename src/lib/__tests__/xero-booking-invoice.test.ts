@@ -69,6 +69,11 @@ const mocks = vi.hoisted(() => {
     },
     xeroSyncOperation: {
       update: vi.fn(),
+      // #2929: the creation-time invoice-email instruction is read back off the
+      // operation row a dispatcher claimed. Defaults to "no instruction was
+      // recorded", which is every row this application has ever written before
+      // that issue and every row an enqueuer with no on-behalf choice writes.
+      findUnique: vi.fn().mockResolvedValue({ invoiceEmailDelivery: null }),
     },
   };
 
@@ -810,6 +815,452 @@ describe("createXeroInvoiceForBooking", () => {
         mocks.xeroClientInstance.accountingApi.emailInvoice
       ).not.toHaveBeenCalled();
       expect(mocks.prisma.emailLog.create).not.toHaveBeenCalled();
+    });
+  });
+
+  /*
+    #2929 — the administrator's creation-time "do not email the member" choice,
+    carried to the Xero invoice email that same creation raises.
+
+    Every test here drives the INTERNET BANKING path with `syncOperationId`,
+    because that is the whole point: the officer's choice is not a parameter to
+    this function, it is a value on the operation row a dispatcher claimed. The
+    request that made the choice ended long ago.
+  */
+  describe("the creation-time \"do not email the member\" choice", () => {
+    function internetBankingBooking(
+      overrides: Record<string, unknown> = {},
+    ) {
+      return {
+        id: "booking_1",
+        memberId: "mem_1",
+        member: { id: "mem_1", email: "member@example.test" },
+        lodgeId: "lodge_1",
+        checkIn: "2026-07-31T00:00:00.000Z",
+        checkOut: "2026-08-02T00:00:00.000Z",
+        createdAt: "2026-05-15T10:30:00.000Z",
+        discountCents: 0,
+        promoAdjustmentCents: 0,
+        noEmails: false,
+        guests: [
+          {
+            firstName: "Jordan",
+            lastName: "Hartley-Smith",
+            ageTier: "ADULT",
+            isMember: true,
+            priceCents: 10000,
+          },
+        ],
+        payment: {
+          id: "pay_1",
+          status: "PENDING",
+          amountCents: 10000,
+          stripePaymentIntentId: null,
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          source: "INTERNET_BANKING",
+        },
+        ...overrides,
+      };
+    }
+
+    /** What the operation row a dispatcher claimed says about delivery. */
+    function operationSays(invoiceEmailDelivery: string | null) {
+      mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue({
+        invoiceEmailDelivery,
+      });
+    }
+
+    function completionPayload() {
+      const call = mocks.completeXeroSyncOperation.mock.calls.at(-1);
+      return (call?.[1] as { responsePayload: Record<string, unknown> })
+        .responsePayload;
+    }
+
+    beforeEach(() => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+      mocks.xeroClientInstance.accountingApi.emailInvoice.mockResolvedValue({
+        body: {},
+      });
+    });
+
+    /*
+      THE NAMED TEST the issue's last acceptance criterion asks for.
+
+      THE MUTATION THAT FAILS IT: delete `!invoiceEmailWithheldByCreationChoice`
+      from the `invoiceEmailPolicy` conjunction in xero-booking-invoices.ts —
+      the gate that decides whether `sendXeroInvoiceEmail` is reached at all.
+      Xero is then asked to email the invoice the officer chose not to send and
+      the first assertion below fails.
+
+      NOT the mutation you might reach for first. Deleting the
+      `xeroInvoiceEmailIsWithheldAtCreation(...)` term from
+      `invoiceEmailWithheldByCreationChoice` itself leaves that flag ALWAYS
+      true, so the email is still withheld and this test still passes. (The
+      suite as a whole does discriminate — "emails the invoice exactly as before
+      when the officer chose to send" fails on that one — but the criterion asks
+      for a NAMED test, and a comment pointing the next reader at the wrong edit
+      is worse than no comment at all: they make it, see green, and conclude the
+      suppression is untested.)
+    */
+    it("withholds the Xero invoice email when the officer who created the booking chose not to email the member (#2929)", async () => {
+      operationSays("WITHHELD_AT_CREATION");
+
+      await expect(
+        createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1" }),
+      ).resolves.toBe("inv_1");
+
+      // The email, and ONLY the email, is withheld.
+      expect(
+        mocks.xeroClientInstance.accountingApi.emailInvoice,
+      ).not.toHaveBeenCalled();
+      // The invoice is still raised, and still AUTHORISED: the club is owed the
+      // money either way, and Xero is where that one invoice is sent from.
+      expect(
+        mocks.xeroClientInstance.accountingApi.createInvoices,
+      ).toHaveBeenCalled();
+      const [, invoicePayload] =
+        mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls[0];
+      expect(invoicePayload.invoices[0].status).toBe("AUTHORISED");
+      // Its ids are persisted, so no surface thinks the invoice is missing.
+      expect(mocks.prisma.payment.update).toHaveBeenCalled();
+
+      // The withheld-email audit evidence, in the existing vocabulary, naming
+      // THIS reason rather than the switch.
+      expect(mocks.prisma.emailLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          bookingId: "booking_1",
+          templateName: "xero-booking-invoice-email",
+          status: "SKIPPED_NO_EMAILS",
+          to: "member@example.test",
+          htmlBody: null,
+          errorMessage: expect.stringContaining(
+            "chose not to email the member",
+          ),
+        }),
+        select: { id: true },
+      });
+
+      // A deliberate, complete outcome: SUCCEEDED, no error, and reported under
+      // its own key so no operator is told the persistent switch is on.
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_1",
+        expect.objectContaining({ status: "SUCCEEDED" }),
+      );
+      expect(completionPayload()).toMatchObject({
+        invoiceEmailError: null,
+        invoiceEmailSkipped: true,
+        invoiceEmailWithheldByCreationChoice: true,
+        invoiceEmailWithheldByNoEmails: false,
+        invoiceEmailWithheldForEnvironment: false,
+      });
+    });
+
+    it("emails the invoice exactly as before when the officer chose to send", async () => {
+      operationSays("SEND");
+
+      await expect(
+        createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1" }),
+      ).resolves.toBe("inv_1");
+
+      expect(
+        mocks.xeroClientInstance.accountingApi.emailInvoice,
+      ).toHaveBeenCalledWith(
+        "tenant_1",
+        "inv_1",
+        expect.any(Object),
+        "booking:booking_1:invoice-email:inv_1:v1",
+      );
+      expect(mocks.prisma.emailLog.create).not.toHaveBeenCalled();
+      expect(completionPayload()).toMatchObject({
+        invoiceEmailSkipped: false,
+        invoiceEmailWithheldByCreationChoice: false,
+      });
+    });
+
+    it("emails the invoice when the operation records no instruction at all — every row written before #2929", async () => {
+      operationSays(null);
+
+      await expect(
+        createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1" }),
+      ).resolves.toBe("inv_1");
+
+      expect(
+        mocks.xeroClientInstance.accountingApi.emailInvoice,
+      ).toHaveBeenCalled();
+      expect(completionPayload()).toMatchObject({
+        invoiceEmailWithheldByCreationChoice: false,
+      });
+    });
+
+    it("emails the invoice when the stored value is not one this application recognises", async () => {
+      // Fail-open is the RIGHT answer only here: an unrecognised value is not a
+      // withhold anybody asked for, and the member is owed the invoice they have
+      // to pay. A typo in a future enqueuer must not silently stop invoices
+      // reaching members.
+      operationSays("withheld_at_creation");
+
+      await expect(
+        createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1" }),
+      ).resolves.toBe("inv_1");
+
+      expect(
+        mocks.xeroClientInstance.accountingApi.emailInvoice,
+      ).toHaveBeenCalled();
+    });
+
+    it("reads nothing at all when no dispatcher claimed a row for this run", async () => {
+      // A self-minting run has no enqueuer and therefore no instruction; asking
+      // the row we are about to write would be asking ourselves.
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe(
+        "inv_1",
+      );
+
+      expect(
+        mocks.prisma.xeroSyncOperation.findUnique,
+      ).not.toHaveBeenCalled();
+      expect(
+        mocks.xeroClientInstance.accountingApi.emailInvoice,
+      ).toHaveBeenCalled();
+    });
+
+    it("touches nothing persistent: not the switch, not the contact's address", async () => {
+      operationSays("WITHHELD_AT_CREATION");
+
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+
+      // `prisma.booking` in this file's double has no `update` delegate at all,
+      // so a write to Booking.noEmails here could not even be attempted — but
+      // state it, because the rule is what matters and the double may grow one.
+      expect(
+        (mocks.prisma.booking as Record<string, unknown>).update,
+      ).toBeUndefined();
+      // The club's live site never rewrites the contact; that is the copy-only
+      // containment path, and a withhold is not a reason to touch an address.
+      expect(
+        mocks.xeroClientInstance.accountingApi.updateContact,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("survives the payload rewrite, so an operator retry hours later still withholds", async () => {
+      /*
+        THE DURABILITY PROPERTY, and the reason this is a column rather than a
+        `requestPayload` key. This function REWRITES requestPayload wholesale
+        with the Xero invoice request before its first provider call. If the
+        instruction lived there it would be destroyed by the run that then
+        failed, and the retry — which is the execution that actually needs it —
+        would find nothing and email the member.
+      */
+      operationSays("WITHHELD_AT_CREATION");
+
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+
+      // It is read from the column, by name.
+      expect(mocks.prisma.xeroSyncOperation.findUnique).toHaveBeenCalledWith({
+        where: { id: "op_1" },
+        select: { invoiceEmailDelivery: true },
+      });
+      // And nothing this run writes can disturb it: no update through the
+      // client, and no completion payload, names the column.
+      for (const [, args] of mocks.prisma.xeroSyncOperation.update.mock.calls.entries()) {
+        expect(JSON.stringify(args ?? {})).not.toContain("invoiceEmailDelivery");
+      }
+      for (const call of mocks.completeXeroSyncOperation.mock.calls) {
+        expect(Object.keys(call[1] as object)).not.toContain(
+          "invoiceEmailDelivery",
+        );
+      }
+    });
+
+    it("records the SWITCH, not this choice, when a silenced booking also carries one — one reason per event", async () => {
+      // `INV-CONFIG-004`: the four non-delivery outcomes stay distinguishable,
+      // and one event carries one reason. The persistent switch is the broader
+      // fact and is what the officer has to act on, so it is the one recorded.
+      operationSays("WITHHELD_AT_CREATION");
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        internetBankingBooking({ noEmails: true }),
+      );
+
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+
+      expect(
+        mocks.xeroClientInstance.accountingApi.emailInvoice,
+      ).not.toHaveBeenCalled();
+      expect(mocks.prisma.emailLog.create).toHaveBeenCalledTimes(1);
+      expect(completionPayload()).toMatchObject({
+        invoiceEmailWithheldByNoEmails: true,
+        invoiceEmailWithheldByCreationChoice: false,
+      });
+    });
+
+    /*
+      ONE SUBJECT PER TEMPLATE, whichever decision withheld it (#2929 fix
+      round).
+
+      The withheld-emails banner groups by TEMPLATE NAME and renders a single
+      representative subject for the group — whichever row is newest. Two
+      withhold sites spelling the wording out separately therefore makes one
+      kind of withheld email show two different subjects depending on which
+      happened last, which reads to an officer as two different messages. The
+      wording now lives in one constant above both sites; this is the guard that
+      keeps it there.
+    */
+    it("gives the same withheld subject whichever decision withheld it", async () => {
+      function subjectOfWithheldRow(index: number): string {
+        const call = mocks.prisma.emailLog.create.mock.calls[index] as [
+          { data: { subject: string } },
+        ];
+        return call[0].data.subject;
+      }
+
+      // The creation-time choice, on a booking whose switch was never used.
+      operationSays("WITHHELD_AT_CREATION");
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+
+      // The persistent switch, with no creation-time instruction at all.
+      operationSays(null);
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        internetBankingBooking({ noEmails: true }),
+      );
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+
+      expect(mocks.prisma.emailLog.create).toHaveBeenCalledTimes(2);
+      expect(subjectOfWithheldRow(1)).toBe(subjectOfWithheldRow(0));
+      expect(subjectOfWithheldRow(0)).toContain(
+        "for your Internet Banking booking payment",
+      );
+    });
+
+    /*
+      THE FOUR OUTCOMES, side by side (`INV-CONFIG-004`). Three of them send no
+      email, and telling them apart is the whole reason each has its own key: a
+      support call about "the member never got the invoice" is answered
+      differently depending on which of these it was, and three states that look
+      identical from outside are how the next one gets misdiagnosed.
+    */
+    it("keeps business suppression, environment-safety suppression, provider failure and an ordinary send distinguishable", async () => {
+      async function signature() {
+        const payload = completionPayload();
+        return {
+          emailed:
+            mocks.xeroClientInstance.accountingApi.emailInvoice.mock.calls
+              .length > 0,
+          withheldRow: mocks.prisma.emailLog.create.mock.calls.length > 0,
+          status: (
+            mocks.completeXeroSyncOperation.mock.calls.at(-1)?.[1] as {
+              status: string;
+            }
+          ).status,
+          byCreationChoice: payload.invoiceEmailWithheldByCreationChoice,
+          forEnvironment: payload.invoiceEmailWithheldForEnvironment,
+          failed: payload.invoiceEmailError !== null,
+        };
+      }
+
+      // 1. This issue's business-rule suppression.
+      operationSays("WITHHELD_AT_CREATION");
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+      const businessRule = await signature();
+
+      // 2. The environment-safety suppression (#3035): NOT the club's decision,
+      //    so no withheld row is written at all.
+      vi.clearAllMocks();
+      declareEnvironmentRole("non-production");
+      operationSays("SEND");
+      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+      mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+        body: {
+          contacts: [
+            { contactID: "contact_1", emailAddress: "member@example.com" },
+          ],
+        },
+      });
+      mocks.xeroClientInstance.accountingApi.updateContact.mockResolvedValue({
+        body: {},
+      });
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+      const environmentSafety = await signature();
+
+      // 3. An outright provider failure: nothing was decided, something broke.
+      vi.clearAllMocks();
+      declareEnvironmentRole("production");
+      operationSays("SEND");
+      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+      mocks.xeroClientInstance.accountingApi.emailInvoice.mockRejectedValue(
+        new Error("503 from Xero"),
+      );
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+      const providerFailure = await signature();
+
+      // 4. An ordinary send.
+      vi.clearAllMocks();
+      operationSays("SEND");
+      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+      mocks.xeroClientInstance.accountingApi.emailInvoice.mockResolvedValue({
+        body: {},
+      });
+      await createXeroInvoiceForBooking("booking_1", {
+        syncOperationId: "op_1",
+      });
+      const ordinarySend = await signature();
+
+      expect(businessRule).toEqual({
+        emailed: false,
+        withheldRow: true,
+        status: "SUCCEEDED",
+        byCreationChoice: true,
+        forEnvironment: false,
+        failed: false,
+      });
+      expect(environmentSafety).toEqual({
+        emailed: false,
+        withheldRow: false,
+        status: "SUCCEEDED",
+        byCreationChoice: false,
+        forEnvironment: true,
+        failed: false,
+      });
+      expect(providerFailure).toEqual({
+        emailed: true,
+        withheldRow: false,
+        status: "PARTIAL",
+        byCreationChoice: false,
+        forEnvironment: false,
+        failed: true,
+      });
+      expect(ordinarySend).toEqual({
+        emailed: true,
+        withheldRow: false,
+        status: "SUCCEEDED",
+        byCreationChoice: false,
+        forEnvironment: false,
+        failed: false,
+      });
+
+      // Belt and braces: no two of the four read the same from outside.
+      const seen = [
+        businessRule,
+        environmentSafety,
+        providerFailure,
+        ordinarySend,
+      ].map((s) => JSON.stringify(s));
+      expect(new Set(seen).size).toBe(4);
     });
   });
 

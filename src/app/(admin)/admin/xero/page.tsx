@@ -12,6 +12,7 @@ import {
   HealthAndDiagnosticsPanels,
   InboundEventsPanel,
   MembershipSyncPanel,
+  MissingContactsPanel,
   OperationsPanel,
   SyncResultsPanel,
   UsagePanel,
@@ -154,6 +155,15 @@ export default function XeroPage() {
             onMessage={publishMessage}
             onRefreshOperations={refreshOperations}
             onRefreshDiagnostics={refreshDiagnostics}
+          />
+          <MissingContactsPanel
+            connected={connected}
+            open={sectionOpen.missingContacts}
+            onToggle={setSectionState}
+            currentXeroPath={currentXeroPath}
+            shortCode={orgShortCode}
+            onMessage={publishMessage}
+            onRefreshOperations={refreshOperations}
           />
           <MembershipSyncPanel
             connected={connected}

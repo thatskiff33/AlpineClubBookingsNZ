@@ -262,9 +262,15 @@ legitimately depend on being offered an out-of-service lodge.
   customer.
 - **Every writer refuses rather than guesses**, throwing
   `XeroContactTwoHomesError` naming the holder. `xero-contact-home.ts` holds the
-  check, the lock and the transfer. Guarded writers: `findOrCreateXeroContact`
-  phase 2, `commitManualXeroContactLink`, the organisation resolve,
-  `POST /api/admin/xero/import-member-contact`.
+  check, the lock and the transfer. **Every linker in the tree takes it, with no
+  exception but `INV-INT-020`** — and that is MEASURED, not listed:
+  `xero-contact-linker-census.test.ts` reads the tree from disk, finds every
+  site that writes a non-null `xeroContactId` onto a `Member` or an
+  `Organisation`, and fails when the set is not the declared one. A prose list
+  is a memory of the population rather than the population; this one had already
+  drifted, naming five paths while an entry below named a sixth. Clearing the
+  column is not linking and is excluded: an unlink cannot give a contact a
+  second home.
 - **The refusal is SYMMETRIC**: the member resolve searches Xero by email and a
   school's contact carries its invented member's address, so a collision needs
   no race.
@@ -289,10 +295,8 @@ legitimately depend on being offered an out-of-service lodge.
   member: the returning school's contact is taken rather than borrowed, so
   anything left for a fallback to catch is a genuine failure.
 - **A stale contact reference is repaired against the INVOICED party**, not the
-  booking's member. The member repair searches Xero by email, and a school's
-  recorded address is routinely a teacher's own, so repairing a school's invoice
-  through the member can adopt that person's contact — the #2912 prohibition
-  reached indirectly.
+  booking's member: the member repair searches Xero by email, and a school's
+  recorded address is routinely a teacher's own.
 - **The organisation resolve never searches by email**, for the same reason. Its
   only adoption path is a name Xero itself refused to duplicate, and a contact
   adopted that way is re-shaped to the organisation form so a school stops
@@ -301,12 +305,15 @@ legitimately depend on being offered an out-of-service lodge.
   contact-person refresh and the organisation-shape correction record `FAILED`
   and retry on the next resolve; neither throws into the invoice, because a
   contact that already works must not be held hostage to its own shape.
-- **NOT guarded by the refusal:** the bulk member import, which links members
-  onto contacts from mapped contact GROUPS (bulk seeding is #2939's subject), and
-  `applyInboundMemberContactPatch`, which links a member from an inbound Xero
-  contact. `createXeroContactForMember` needs no guard: a contact Xero minted a
-  moment ago can have no other home. Pinned by
-  `src/lib/__tests__/organisation-reader-contract.test.ts`.
+- **This rule exempts no linker, and a two-homes refusal is a TERMINAL SKIP
+  rather than a retry (#2939).** The two once-exempted paths take the
+  `INV-INT-018` key and refusal. The inbound reconciler then skips that
+  participant; the bulk contact sync reports it under `skippedOther`, out of the
+  cursor's retry list. A retry would be permanently red and burn quota, the
+  remedy being in Xero rather than in the loop. Pinned by
+  `xero-contact-linker-census.test.ts`,
+  `xero-two-homes-refusal-callers.test.ts`,
+  `phase4-contact-sync-and-import.test.ts`.
 
 ### INV-INT-020
 
@@ -369,3 +376,60 @@ legitimately depend on being offered an out-of-service lodge.
   routes to it; a member's own money stays on `hutFeeRefunds` even with no note
   yet (`INV-PAY-023`). Pinned by `xero-account-mapping-registry.test.ts`,
   `goodwill-write-off-account.test.ts`.
+
+## Bulk person-contact seeding (#2939)
+
+### INV-INT-022
+
+The read-only census; the run is `INV-INT-023`.
+
+- **The dry run writes nothing** — no `Member` row, operation, outbox entry or
+  audit — and REFUSES while the Xero contact cache has never been refreshed,
+  because every member then looks like "no contact in Xero", the one answer that
+  produces duplicates. It reports that cache's AGE and warns past a week:
+  staleness is what turns "no cached match" into a duplicate.
+- **Schools leave the population.** `Role.SCHOOL`, any member invented as a
+  school's booking contact (both generations of the tie, as `INV-INT-020` reads
+  them, and the request TYPE), anonymised accounts, a dependant who lost an
+  inherited address, other `.invalid` addresses and whoever the shared create
+  gate refuses are all excluded.
+- **Ambiguity is handed back, never guessed, on BOTH matching axes.** A member
+  goes to an operator when the contact on their address is a school's, another
+  member's, one of several, or differently named; when a second unlinked member
+  shares that address; or when Xero already holds an active contact under that
+  member's exact NAME. The name axis is not optional: Xero enforces contact-name
+  uniqueness, so a census reading addresses alone cannot see the collision the
+  provider itself will raise. Pinned by
+  `xero-missing-contact-seeding.test.ts`,
+  `organisation-reader-contract.test.ts`.
+
+### INV-INT-023
+
+The bounded run; its census is `INV-INT-022`.
+
+- **Bulk seeding RESOLVES NOTHING ITSELF.** Every contact comes from calling
+  `findOrCreateXeroContact` once per member, so link-before-create, the
+  member-scoped idempotency key, the `INV-INT-018` and `INV-CONFIG-005` refusals
+  and email containment come from that funnel rather than second copies. It is
+  therefore NOT the bulk path `INV-INT-019` once exempted: holding no
+  transaction across contacts, it takes and releases the contact-home key once
+  per member, as for a single invoice.
+- **The funnel is asked AUTHORITATIVELY, or nothing is done for that member.**
+  `requireAuthoritativeMatch` turns the funnel's two proceed-anyway fallbacks
+  into refusals: a failed Xero search no longer falls through to a create, and a
+  name-uniqueness rejection is no longer recovered by adopting the same-named
+  contact on the NAME alone. Both defaults are right where a blocked invoice is
+  the expensive outcome, and inverted here, where nothing is blocked and a wrong
+  contact is permanent. A refused member is a recorded failure, left unchanged.
+- **A run touches the INTERSECTION** of the reviewed ids with a pushable set
+  recomputed server-side, AND refuses when the plan's digest has moved. The
+  reviewed half excludes anybody eligible only since the review; the recomputed
+  half revalidates every row; the digest covers what neither sees, a member who
+  stays pushable while what would HAPPEN to them changes. The contact returned
+  is compared against the one the plan named. Writes are idempotent by member.
+- **Bounded and non-blocking.** The chunk size is DERIVED from a member's real
+  call cost, which rises when contact grouping is on; a wall-clock budget
+  returns a partial result rather than losing it to a route timeout. A failure
+  is recorded and the chunk continues, the funnel having left that operation
+  `FAILED` and replayable (`INV-INT-019`); a daily limit halts it. Pinned by
+  `xero-missing-contact-seeding.test.ts`, `missing-contacts-panel.test.tsx`.

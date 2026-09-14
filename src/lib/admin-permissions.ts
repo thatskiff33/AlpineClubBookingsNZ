@@ -130,6 +130,16 @@ const ADMIN_ROLE_BUNDLES: Partial<
   },
 };
 
+/**
+ * Rooms & Beds — the room/bed inventory page, and since #2937 the home of each
+ * lodge's allocation preferences. Named here because the area registration, the
+ * OR rule below and the Bed Allocation board's signpost link are the three
+ * places that MUST agree about this path. It is not a rename button for the
+ * tree: the feature-gate list and the hub/help descriptions keep the literal,
+ * each asserted from disk by its own census. `git grep` is still the rename.
+ */
+export const ROOMS_BEDS_PATH = "/admin/rooms-beds";
+
 const ROUTE_AREA_PREFIXES: Array<{
   area: AdminPermissionArea;
   prefixes: readonly string[];
@@ -274,6 +284,13 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/lodges",
       "/admin/work-parties",
       "/admin/lodge-instructions",
+      // Rooms & Beds (#2937). Registered under lodge so the route map resolves
+      // to a concrete area (drift guard) and a lodge admin keeps reaching it;
+      // admission is actually OR (lodge OR bookings) — see isRoomsBedsPath /
+      // canAccessRoomsBedsPage, honoured by canOpenAdminPath and by the hub
+      // cards that link here. Everything the page renders is gated on the
+      // bookings area by RoomsBedsManager, because its data comes entirely from
+      // the bed-allocation APIs.
       "/admin/rooms-beds",
       // Club events calendar (Lodge Operations). The page is lodge-area gated
       // for admin visibility; write access is broadened to committee members in
@@ -804,6 +821,9 @@ export function canOpenAdminPath(
   if (isConsolidatedFeesPath(pathname)) {
     return canAccessConsolidatedFeesPage(matrix);
   }
+  if (isRoomsBedsPath(pathname)) {
+    return canAccessRoomsBedsPage(matrix);
+  }
   const requirement = getAdminRouteRequirement(pathname, "GET");
   if (!requirement) return false;
   return LEVEL_RANK[matrix[requirement.area]] >= LEVEL_RANK[requirement.level];
@@ -846,6 +866,41 @@ export function canAccessConsolidatedFeesPage(
   matrix: AdminPermissionMatrix,
 ): boolean {
   return matrix.bookings !== "none" || matrix.finance !== "none";
+}
+
+/**
+ * Rooms & Beds (#2937), the second page whose admission is an OR — and for the
+ * same reason as the fee console: it serves two areas at once.
+ *
+ * The route is registered under `lodge` because the inventory is lodge-scoped
+ * (ADR-005). But EVERYTHING the page renders is bookings-gated:
+ * `RoomsBedsManager` shows nothing at all below `bookings: view`, and its data
+ * comes entirely from `/api/admin/bed-allocation/*`, which enforce the bookings
+ * area. The page's own header comment has flagged that mismatch since #1548.
+ *
+ * #2937 made it load-bearing by moving the allocation preferences editor here
+ * from the Bed Allocation board, where it needed `bookings: view` alone.
+ * Without this rule it would need `bookings: view` AND `lodge: view`, and two
+ * SEEDED roles — `FINANCE_ADMIN` and `ADMIN_MEMBERSHIP`, both `bookings: view`
+ * with `lodge: none` — would follow the board's new signpost into a silent
+ * redirect, the setting unreachable for them at any level.
+ *
+ * It only ever WIDENS. A bookings-area admin gets exactly what
+ * `/api/admin/bed-allocation` already grants them; a lodge-only admin keeps the
+ * (blank) page the manager has always rendered for them.
+ */
+export function isRoomsBedsPath(pathname: string): boolean {
+  const normalized = normalizePathname(pathname);
+  return (
+    normalized === ROOMS_BEDS_PATH ||
+    normalized.startsWith(`${ROOMS_BEDS_PATH}/`)
+  );
+}
+
+export function canAccessRoomsBedsPage(
+  matrix: AdminPermissionMatrix,
+): boolean {
+  return matrix.lodge !== "none" || matrix.bookings !== "none";
 }
 
 /**
