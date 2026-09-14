@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { requireCalendarDate } from "@/lib/club-time";
 import { parseDateOnly } from "@/lib/date-only";
+import { selectBookingMoneyBuildUp } from "@/lib/booking-money-build-up";
 import {
   calculateBookingPrice,
   type GuestInput,
@@ -162,6 +163,28 @@ async function apply(
   );
   expect(application.error, application.error).toBeUndefined();
   const discount = application.discount!;
+  const storedSelection = selectBookingMoneyBuildUp({
+    operation: "CREDIT_ELECTION",
+    baseEvidence: { kind: "EXACT", amountCents: price.totalPriceCents },
+    rows: discount.adjustmentTargets.map((target) => ({
+      bookingGuestId: `guest-${target.guestIndex}`,
+      beneficiaryMemberId: target.beneficiaryMemberId,
+      amountCents: target.amountCents,
+    })),
+    redemption: {
+      priceAdjustmentCents: discount.priceAdjustmentCents,
+      allocations: discount.allocations.map((allocation) => ({
+        memberId: allocation.memberId,
+        priceAdjustmentCents: allocation.priceAdjustmentCents,
+      })),
+    },
+    derivedCents: price.totalPriceCents + discount.priceAdjustmentCents,
+  });
+  expect(storedSelection).toMatchObject({
+    source: "STORED",
+    storedCents: price.totalPriceCents + discount.priceAdjustmentCents,
+    selectedCents: price.totalPriceCents + discount.priceAdjustmentCents,
+  });
   return {
     price: {
       totalPriceCents: price.totalPriceCents,
@@ -201,6 +224,64 @@ describe("INV-MONEY-029 / D3: the promotion engine's money is byte-identical acr
       [7000, 7000, 5500],
     ]);
     expect(price.guests[1].nightDates).toEqual(NIGHTS);
+  });
+
+  it("classifies a real current-vs-recorded promotion disagreement without changing today's amount", async () => {
+    const guests = partyOf();
+    const price = calculateBookingPrice(CHECK_IN, CHECK_OUT, guests, seasons);
+    const details: BookingDetailsForPromo = {
+      memberId: BOOKER,
+      bookingCheckIn: CHECK_IN,
+      totalPriceCents: price.totalPriceCents,
+      guests: price.guests.map((priced, index) => ({
+        memberId: guests[index].memberId ?? null,
+        isMember: priced.isMember,
+        perNightRates: priced.perNightCents,
+        nightDates: priced.nightDates,
+        firstNight: CHECK_IN,
+      })),
+    };
+    const recorded = await validateAndCalculatePromoDiscount(
+      promoOf({ type: "PERCENTAGE", percentOff: 20 }),
+      details,
+      null,
+      { db: stubDb(), todayAtClub: CLUB_TODAY },
+    );
+    const current = await validateAndCalculatePromoDiscount(
+      promoOf({ type: "PERCENTAGE", percentOff: 25 }),
+      details,
+      null,
+      { db: stubDb(), todayAtClub: CLUB_TODAY },
+    );
+    expect(recorded.error).toBeUndefined();
+    expect(current.error).toBeUndefined();
+    const recordedDiscount = recorded.discount!;
+    const currentFinalCents = price.totalPriceCents + current.discount!.priceAdjustmentCents;
+    const selection = selectBookingMoneyBuildUp({
+      operation: "CREDIT_ELECTION",
+      baseEvidence: { kind: "EXACT", amountCents: price.totalPriceCents },
+      rows: recordedDiscount.adjustmentTargets.map((target) => ({
+        bookingGuestId: `guest-${target.guestIndex}`,
+        beneficiaryMemberId: target.beneficiaryMemberId,
+        amountCents: target.amountCents,
+      })),
+      redemption: {
+        priceAdjustmentCents: recordedDiscount.priceAdjustmentCents,
+        allocations: recordedDiscount.allocations.map((allocation) => ({
+          memberId: allocation.memberId,
+          priceAdjustmentCents: allocation.priceAdjustmentCents,
+        })),
+      },
+      derivedCents: currentFinalCents,
+      mismatchClassification: "LEGITIMATE_DIVERGENCE",
+    });
+    expect(selection).toMatchObject({
+      source: "DERIVED_COMPATIBILITY_FALLBACK",
+      storedCents: 32_400,
+      derivedCents: 30_375,
+      selectedCents: 30_375,
+      fallbackClassification: "LEGITIMATE_DIVERGENCE",
+    });
   });
 
   it("PERCENTAGE, unassigned: 20% off every night of every guest, booker is the beneficiary", async () => {
