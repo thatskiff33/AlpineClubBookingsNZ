@@ -3642,7 +3642,7 @@ visibly new, and someone reads it.
 | --- | --- | --- | --- |
 | `js/request-forgery` | `src/lib/whakapapa-report.server.ts` | false positive | Allowlist barrier, below |
 | `js/path-injection` | `image-manager/images/route.ts` (×2) | false positive | "Image Manager path containment", below |
-| `js/insufficient-password-hash` | `src/lib/mirotalk-token.ts` | false positive | "MiroTalk meeting tokens", below |
+| `js/insufficient-password-hash`, `js/weak-cryptographic-algorithm` | `src/lib/mirotalk-token.ts` | false positive | "MiroTalk meeting tokens", below |
 | `js/insufficient-password-hash`, `js/weak-cryptographic-algorithm` | `mirotalk-token.test.ts` (×2) | used in tests | Same protocol reason, in the round-trip test |
 | `js/incomplete-multi-character-sanitization` | `booking-requests-noindex.test.ts`, `website-page-header-fallback-render.test.tsx` | used in tests | `vi.mock` doubles, "Test-file and harness alerts" below |
 | `js/bad-code-sanitization` | `measurement/**/self-test.mjs` (×3) | used in tests | Harness, never in the runtime image. **Historical** — the `measurement/` tree was removed whole by #3382; these three findings can no longer exist because the file they were raised against does not exist |
@@ -3762,6 +3762,15 @@ and every token minted here stops decrypting; the known-answer vectors in
 `src/lib/__tests__/mirotalk-token.test.ts` exist to catch that. Alerts 26 and 25
 are the same construction in the test's independent decrypt, written to prove the
 round trip against the genuine libraries.
+
+**The same construction is also reported as `js/weak-cryptographic-algorithm`,
+against the source file rather than only the test** — observed on the #2940 head,
+which is the change that last touched `mirotalk-token.ts`. It is the identical MD5
+inside `evpBytesToKey` seen under a second rule id, so the triage above answers it
+unchanged, and the register row now names both ids rather than leaving the second
+looking untriaged. Neither rule blocks a merge: CodeQL is advisory here by
+[the required-check table in `AGENTS.md`](../AGENTS.md). Dismissing either alert in
+the Security tab is an owner action; nothing in this repository can close it.
 
 **What was real: `MIRO_JWT_KEY` had no documented entropy requirement at all.**
 That key does two jobs — it is the AES passphrase for the host username and
