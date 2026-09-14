@@ -433,3 +433,35 @@ The bounded run; its census is `INV-INT-022`.
   is recorded and the chunk continues, the funnel having left that operation
   `FAILED` and replayable (`INV-INT-019`); a daily limit halts it. Pinned by
   `xero-missing-contact-seeding.test.ts`, `missing-contacts-panel.test.tsx`.
+## Erased-member Xero contact review (#3058)
+
+### INV-INT-024
+
+Erasure changes nothing in Xero; this review is how anybody finds out what it
+left behind.
+
+- **No Xero mutation is part of member erasure, and no route could make one.**
+  Both erasure paths — the approved `DeletionRequest` anonymisation and the
+  approved lifecycle `DELETE` — reach exactly ONE Xero module, for the
+  contact-create fence, and take only reads and a refusal from it. The review's
+  own surface is a `GET` with no `POST` sibling, over an engine that writes
+  nothing and calls no provider. Local erasure never waits on Xero, and there is
+  no provider-cleanup queue, destructive retry state or `erasure pending Xero`
+  state for a replay to create.
+- **A retired contact link is NOT an erasure.** Four other paths retire one —
+  the merge-loser teardown, the admin manual unlink, the stale-canonical-link
+  cleanup and the `INV-INT-020` transfer — so the erasure is proved POSITIVELY
+  from whichever durable decision record outlives it. Never from the
+  anonymisation markers, which `INV-LIFE-015` calls a strong signal rather than a
+  schema invariant, and which a hard delete leaves no row to carry.
+- **A contact anything local still points at was never orphaned.** Ownership is
+  read through `INV-INT-018`'s one accessor, over both columns, so a school's
+  live Xero customer is never reported as abandoned.
+- **Ids only, to `finance:view`.** A notice quoting an erased member defeats the
+  erasure it reports on, so a row carries a member id, a contact id, the erasure
+  kind and its date. The contact cache is read for `contactId` and
+  `contactStatus` alone; its other columns hold the erased person's name, email,
+  phone and address, which a later sync re-caches from Xero. Pinned by
+  `xero-erased-member-contact-review.test.ts`,
+  `member-erasure-no-xero-mutation-contract.test.ts`,
+  `erased-member-contacts-panel.test.tsx`.

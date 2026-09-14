@@ -26,6 +26,8 @@ idempotent — retrying the same work never double-charges.
   contact-group membership.
 - You are preparing a club for its first real use and need every member to have
   a Xero customer before invoices start going out.
+- A member has been erased here and you want to know whether they left a Xero
+  customer behind.
 - You are checking the daily Xero API budget or reconciliation health.
 
 ## Step-by-step
@@ -170,6 +172,39 @@ creates a small batch at a time.
 > the same path a booking invoice uses, which searches Xero first and carries a
 > per-member key, so a repeat converges on the one contact rather than making a
 > second.
+
+### Check what an erasure left in Xero
+
+Erasing a member here removes their details from this application and **does
+nothing at all in Xero**. That is deliberate and it is not going to change: Xero
+is the club's accounting system, it is administered separately, and this
+application never edits, archives or deletes anything in it. So where an erased
+member had a Xero customer, that customer is still in Xero — and until now
+nothing told you so.
+
+**Erased members with a Xero contact** on the Xero Sync page is that telling. It
+is a notice and not a tool: there is nothing on it to press, and nothing it does
+can change Xero or this application.
+
+1. Open the section. It lists one line per Xero contact that an erasure left
+   behind, oldest erasure first, with a link straight to that contact in Xero.
+2. Each line says which kind of erasure it was. An **account deletion request**
+   leaves the member record here with the person's details removed, so the id is
+   a link you can follow. A **member delete** removed the record altogether, so
+   the id is shown but goes nowhere.
+3. Decide in Xero, if you decide anything at all. Archiving the contact, merging
+   it with another, editing it or leaving it exactly as it is are all legitimate
+   answers, and this application is not asking for any of them. Invoices and
+   accounting history raised against a contact stay valid and usable whatever
+   you choose.
+4. Once you archive a contact in Xero, the line disappears from the list the
+   next time **Contact Sync** runs — the count of archived ones is shown so you
+   can see the work landing. Until a contact sync has run, the section says
+   plainly that it does not know how Xero holds each contact.
+
+> Nothing here names the erased person. The lines carry an id and a link,
+> because the details are exactly what the erasure removed — and they are still
+> in Xero, where they are yours to read.
 
 ### Set up mappings and import (Xero Setup)
 
