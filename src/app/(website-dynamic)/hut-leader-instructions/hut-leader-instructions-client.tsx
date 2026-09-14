@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { Printer, ShieldAlert, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { SecretInput } from "@/components/ui/secret-input";
+import {
+  HUT_LEADER_PIN_HTML_PATTERN,
+  HUT_LEADER_PIN_LENGTH,
+  isCompleteHutLeaderPin,
+  sanitiseHutLeaderPin,
+} from "@/lib/hut-leader-pin";
 import { Label } from "@/components/ui/label";
 import {
   Card,
@@ -182,15 +188,21 @@ export function HutLeaderInstructionsClient({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="hut-leader-pin">Kiosk PIN</Label>
-            <Input
+            {/*
+              A SecretInput, not an Input, and that is a security boundary
+              rather than a style choice: this page carries the club's Raw CSS.
+              Rule and mechanism: `docs/SECURITY.md` -> "Secret entry on pages
+              that carry Raw CSS" (#2981).
+            */}
+            <SecretInput
               id="hut-leader-pin"
               inputMode="numeric"
               autoComplete="one-time-code"
-              maxLength={6}
-              pattern="\d{6}"
-              placeholder="6-digit PIN"
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              maxLength={HUT_LEADER_PIN_LENGTH}
+              pattern={HUT_LEADER_PIN_HTML_PATTERN}
+              placeholder={`${HUT_LEADER_PIN_LENGTH}-digit PIN`}
+              sanitise={sanitiseHutLeaderPin}
+              onValueChange={setPin}
               className="tracking-[0.4em] text-center text-lg"
             />
           </div>
@@ -198,7 +210,7 @@ export function HutLeaderInstructionsClient({
           <Button
             type="submit"
             className="w-full"
-            disabled={submitting || pin.length !== 6}
+            disabled={submitting || !isCompleteHutLeaderPin(pin)}
           >
             {submitting ? "Checking..." : "View instructions"}
           </Button>

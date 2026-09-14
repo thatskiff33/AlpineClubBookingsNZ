@@ -771,3 +771,35 @@ which carries the before-measurement.
   `credential-actor-census.test.ts` walks the tree; its scanner test proves a
   seeded actorless writer and a seeded bypass are reported. A wrapper hides its
   callers, soundly: it requires an actor, so the type covers them.
+
+## INV-PRIV-020
+
+Issue-report screenshot PIXELS taken by a reporter who held admin access are
+Full-Admin-only. The report's text and diagnostics keep the ordinary
+`support:view` model, because `support` is a separate permission area from
+`membership` and an image otherwise carries member records across that boundary.
+Decided on [#2703](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2703).
+
+- **Origin is DERIVED SERVER-SIDE AT CREATION and persisted** on
+  `IssueReport.screenshotOrigin`, from the reporter's own stored access roles
+  and signed session. The posted `pageUrl`, route-to-permission reconstruction,
+  DOM masking, signed claimed URLs, reporter-permission replay and caller flags
+  are each explicitly not authority, so forging a page address cannot move the
+  classification.
+- **NULL fails closed.** A row written before the column existed is read as
+  admin-origin. There is no backfill; the 30-day retention sweep drains that
+  population.
+- **Every read path takes the same gate** — the list flag, the detail read and
+  the action reply — so no payload announces or serves pixels its caller cannot
+  open. A caller not admitted sees an authorised-withheld state carrying no
+  pixels and nothing describing the image.
+- **Full Admin means the `ADMIN` role**, read off the DB-verified roles the
+  admin guard returns, never a JWT claim.
+- **Deleting stays `support:edit`**: deletion shrinks the exposure, so gating it
+  would keep pixels alive longer.
+- **The audit distinguishes the outcomes** — viewed, withheld, expired, deleted
+  — and records nothing captured. Each time an officer OPENS a report and is
+  refused, a `privacy` row records the refusal; an action reply is not a view
+  and is not audited as one.
+- One home, `src/lib/issue-report-screenshot-access.ts`; proof in
+  `issue-report-admin-origin-screenshots.test.ts`.

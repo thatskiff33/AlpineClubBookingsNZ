@@ -1277,7 +1277,7 @@ describe("#2736 a sparse stay", () => {
       storedSoldPriceEvidenceForGuest(rowsPastEnvelope, {
         checkIn: D("2026-08-20"),
         checkOut: D("2026-08-23"),
-      }).kind,
+      }, "WHOLE_GUEST").kind,
     ).toBe("exact");
 
     const occurrences = reviewOf(
@@ -1411,7 +1411,7 @@ describe("#2736 a sparse stay", () => {
         storedSoldPriceEvidenceForGuest(rowsPastEnvelope, {
           checkIn: D("2026-08-20"),
           checkOut: D("2026-08-22"),
-        }).kind,
+        }, "WHOLE_GUEST").kind,
       ).toBe("exact");
 
       const occurrences = reviewOf(
