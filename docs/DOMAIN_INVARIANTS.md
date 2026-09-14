@@ -332,6 +332,7 @@ Prefix `INV-GUEST`.
 | `INV-GUEST-016` | MG4: edit path, admin parity, request pipeline; no address in URLs |
 | `INV-GUEST-017` | Exactly eight column shapes are legal, and the table lists them |
 | `INV-GUEST-018` | That table is generated from the code table by a test |
+| `INV-GUEST-019` | Own dependants leave the guest split at create doors; exact own-family matching |
 
 ## Booking Modifications
 

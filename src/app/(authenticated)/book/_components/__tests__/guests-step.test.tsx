@@ -48,6 +48,11 @@ function renderGuestsStep(
       memberGuestOpenSearchEnabled={false}
       addMemberGuest={vi.fn()}
       memberGuestAddError={null}
+      dependantIdentityCollisions={[]}
+      declaredDependantMemberIds={[]}
+      bookCollidingGuestAsDependant={vi.fn()}
+      declareDependantDifferentPerson={vi.fn()}
+      withdrawDependantDeclaration={vi.fn()}
       {...overrides}
     />,
   );
@@ -156,6 +161,11 @@ describe("GuestsStep", () => {
         setStep={vi.fn()}
         handleGuestsDone={vi.fn()}
         priceLoading={false}
+        dependantIdentityCollisions={[]}
+        declaredDependantMemberIds={[]}
+        bookCollidingGuestAsDependant={vi.fn()}
+        declareDependantDifferentPerson={vi.fn()}
+        withdrawDependantDeclaration={vi.fn()}
       />,
     );
 
