@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { parseDateOnly } from "@/lib/date-only";
 import {
   deriveNightAdjustmentState,
+  memberBenefitAllocations,
   NIGHT_ADJUSTMENT_INVARIANT,
   reconcilePromoAdjustmentTargets,
   recordBookingNightAdjustments,
@@ -186,6 +187,24 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
     expect(() =>
       reconcilePromoAdjustmentTargets({ ...base, targets: [{ ...TARGETS[0], amountCents: -1500.5 }] }),
     ).toThrow(new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*integer`));
+  });
+});
+
+describe("memberBenefitAllocations (#3369): the rows a night adjustment can decompose", () => {
+  it("drops the booker-slot allocation that names no member and keeps every member's, in order", () => {
+    const first = { memberId: "member-1", priceAdjustmentCents: -1_000 };
+    const school = { memberId: null, priceAdjustmentCents: -4_000 };
+    const second = { memberId: "member-2", priceAdjustmentCents: -500 };
+    expect(memberBenefitAllocations([first, school, second])).toEqual([first, second]);
+    expect(memberBenefitAllocations([school])).toEqual([]);
+  });
+
+  it("leaves a redemption that names only members exactly as it was", () => {
+    const allocations = [
+      { memberId: "member-1", priceAdjustmentCents: -1_000 },
+      { memberId: "member-2", priceAdjustmentCents: -500 },
+    ];
+    expect(memberBenefitAllocations(allocations)).toEqual(allocations);
   });
 });
 

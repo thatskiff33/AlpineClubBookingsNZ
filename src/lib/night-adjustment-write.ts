@@ -91,6 +91,25 @@ function nightKey(bookingGuestId: string, stayDate: Date): string {
  * a missing amount), and overall to the redemption. A beneficiary with any NOT
  * KNOWN row is excluded from both sums, and only from those.
  */
+/**
+ * The allocations a night adjustment can decompose: those that name a member.
+ *
+ * #3369: an allocation with no member belongs to an organisation-owned
+ * booking's booker slot, and a night adjustment decomposes a MEMBER's benefit.
+ * There is none to decompose, so such a row is neither a target for the writer
+ * nor a term in the reader's reconciliation. Both call this, so the
+ * `INV-MONEY-029` identity the writer enforces and the reader re-runs is
+ * computed over the same rows — a second copy of the filter is how the two
+ * would come to disagree.
+ */
+export function memberBenefitAllocations<T extends { memberId: string | null }>(
+  allocations: ReadonlyArray<T>,
+): Array<T & { memberId: string }> {
+  return allocations.filter(
+    (allocation): allocation is T & { memberId: string } => allocation.memberId !== null,
+  );
+}
+
 export function reconcilePromoAdjustmentTargets(params: {
   targets: ReadonlyArray<{ beneficiaryMemberId: string; amountCents: number | null }>;
   allocations: ReadonlyArray<{ memberId: string; priceAdjustmentCents: number }>;
@@ -265,13 +284,7 @@ export async function recordBookingNightAdjustments(
   if (redemption) {
     reconcilePromoAdjustmentTargets({
       targets,
-      // #3369: an allocation with no member belongs to an organisation-owned
-      // booking's booker slot, and a night adjustment decomposes a MEMBER's
-      // benefit. There is none to decompose, so such a row is not a target.
-      allocations: redemption.allocations.filter(
-        (allocation): allocation is typeof allocation & { memberId: string } =>
-          allocation.memberId !== null,
-      ),
+      allocations: memberBenefitAllocations(redemption.allocations),
       priceAdjustmentCents: redemption.priceAdjustmentCents,
       context: writer,
     });
