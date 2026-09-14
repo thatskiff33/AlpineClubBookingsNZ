@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   resolveIntegrationCredential: vi.fn(),
   setIntegrationCredential: vi.fn(),
   deleteIntegrationCredential: vi.fn(),
+  invalidateProviderCredentialCache: vi.fn(),
   createAuditLog: vi.fn(),
 }));
 
@@ -42,6 +43,7 @@ vi.mock("@/lib/integration-credentials", () => ({
   resolveIntegrationCredential: mocks.resolveIntegrationCredential,
   setIntegrationCredential: mocks.setIntegrationCredential,
   deleteIntegrationCredential: mocks.deleteIntegrationCredential,
+  invalidateProviderCredentialCache: mocks.invalidateProviderCredentialCache,
 }));
 
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.createAuditLog }));
@@ -297,6 +299,41 @@ describe("precedence: database, then environment, then derived", () => {
     expect(status.tokenLifetime.source).toBe("derived");
     expect(status.tokenLifetime.effective).toBe("1h");
     expect(status.tokenLifetime.problem).toContain("MIRO_JWT_EXP");
+  });
+
+  it("keeps using an environment lifetime the screen would refuse, and says that too", async () => {
+    // THE SAME COURTESY THE ADDRESS GETS. Without this a club running a
+    // seven-day value saw "in force, from the environment" with no caveat at
+    // all, typed the same value into the box to make it explicit, and was
+    // refused — the page telling them two different things about one value.
+    process.env.MIRO_JWT_EXP = "7d";
+    const status = await getMirotalkConfigurationStatus();
+    expect(status.tokenLifetime.source).toBe("environment");
+    expect(status.tokenLifetime.effective).toBe("7d");
+    expect(status.tokenLifetime.problem).toContain("would not be accepted");
+    // Reported, never refused: an install that works today keeps working.
+    expect(status.tokenLifetime.problem).toContain("in force");
+  });
+
+  it("says nothing about an environment lifetime the screen would accept", async () => {
+    process.env.MIRO_JWT_EXP = "30m";
+    const status = await getMirotalkConfigurationStatus();
+    expect(status.tokenLifetime.source).toBe("environment");
+    expect(status.tokenLifetime.problem).toBeNull();
+  });
+
+  it("reads the secret versions past the store's cache, not out of it", async () => {
+    // THE ONLY CONSUMER THAT DEPENDS ON THE TOKEN BEING CURRENT. Every other
+    // caller passes the unconditional expectation, so a token up to 45 seconds
+    // old costs them nothing; here it is what Save and Clear declare, and it
+    // sits beside an `updatedAt` read straight from the database. Stale, the two
+    // halves disagree: the admin sees the new timestamp with the old version,
+    // presses Clear, is told somebody else got in first and to reload, and
+    // reloading returns the same stale version until the TTL expires.
+    await getMirotalkConfigurationStatus();
+    expect(mocks.invalidateProviderCredentialCache).toHaveBeenCalledWith(
+      "mirotalk",
+    );
   });
 
   it("does NOT fall back to the environment for a secret that no longer decrypts", async () => {

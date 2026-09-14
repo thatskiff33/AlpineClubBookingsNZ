@@ -187,6 +187,9 @@ Three rules are worth knowing before you touch either side.
 - **Nothing is copied from the environment into the club's settings**, ever. A
   value is stored only when an administrator types it and saves, and clearing a
   box hands that setting back to the environment.
+- **Moving the address clears the stored host sign-in.** Those three values only
+  mean anything to the server they were set for, so they go with it — see
+  "Secure, login-free join" below for what that does and does not protect.
 - **A value set on the page needs no restart**; it applies the next time
   somebody opens a meeting. A value set in the environment still needs one,
   because that is what changing an environment variable means.
@@ -296,11 +299,19 @@ Leave all three unset, in both places, to keep the plain link (MiroTalk shows
 its own login prompt).
 
 One consequence worth stating plainly: **the key and the address are a pair.**
-The signing key only means anything to the MiroTalk instance that shares it, so
-moving the meeting server address without changing the key leaves links that
-MiroTalk rejects. The app does not clear the key for you when the address moves,
-because clearing it would only fall back to whatever the environment holds —
-which was set for the old server too. Change both together.
+The signing key only means anything to the MiroTalk instance that shares it, and
+the host username and password have to match one of that instance's `HOST_USERS`
+entries. So **changing the meeting server address clears all three stored
+values**, and the page tells you it has: they belonged to the old server, and
+nobody can read them back out to re-enter them anyway. Set the new server's
+values straight afterwards.
+
+If your installation still sets `MIRO_JWT_KEY`, `MIRO_MEETING_USERNAME` and
+`MIRO_MEETING_PASSWORD` in the environment, clearing the stored values falls
+back to those — which were also set for the old server — so on that installation
+the clearing changes little. Clear the environment variables too, or move those
+three onto this page, if you want the address and the sign-in to travel
+together.
 
 #### Choosing the signing key
 
@@ -355,7 +366,7 @@ in the environment, where there is nobody to tell, grep the container logs for
 | A **Join meeting** link goes to the wrong server, or to `localhost` | Nothing is set on **Admin → Integrations → Video meetings** or in `MIROTALK_URL`, so the address is derived from your app's domain | Open that page: it names the source of every value in force. Set the meeting server address there |
 | An address saved on that page **is not being used** | It failed the page's own rules after it was stored (it is `http://`, carries a sign-in, or names a private address) | The page says which rule and what is being used instead; re-enter a public `https://` address |
 | A join link lands on MiroTalk's **login** prompt | One of the three host sign-in values is missing, so no token is minted | The page shows which are set and from where. All three are needed — a partial set mints nothing, because MiroTalk would reject it |
-| A join link is **rejected** by MiroTalk after it used to work | The signing key and the meeting server no longer match — usually the address moved, or one side was rotated alone | Set the app's signing key to that instance's `JWT_KEY`; they are a pair and change together |
+| A join link is **rejected** by MiroTalk after it used to work | The signing key and the meeting server no longer match — usually one side was rotated alone | Set the app's signing key to that instance's `JWT_KEY`; they are a pair. Moving the address clears the stored sign-in for you, so after a move it is the three new values that are needed |
 | A secret shows **needs re-entering** | It is stored but no longer decrypts, because the app's encryption key changed | Type it again on that page. Until you do, links are unsigned rather than broken |
 | **Calendar** and the dashboard **Events** card have vanished for everyone | The **Events calendar** module was switched off | Turn it back on at **Admin → Modules**; your events are still there |
 | One person gets **Not Found** on `/calendar` while everyone else is fine | That account is an **organisation**, which never sees the calendar | Confirm with `npm run calendar:diagnose-access -- their@email` (it prints the module switch and the organisation check ahead of the write gates); working as designed, but if they should be a member, change their user type on **Admin → Members → [member]** |
@@ -364,7 +375,6 @@ in the environment, where there is nobody to tell, grep the container logs for
 | A committee member cannot **edit or delete** an event  | Working as designed — committee members are create-only; only lodge-edit admins may edit/delete | Grant the member the lodge-edit admin role if they need to edit or delete events                                                 |
 | A repeating event shows on only one month             | The recurrence was not saved (older build)                                                      | Open the event, set **Repeat**, and **Save** (this converts it to a series), or delete and recreate; ensure the app is up to date |
 | Saving or deleting says the event was not found        | Someone else deleted that event (or the whole series) while your dialog was open                | Close the dialog and reload the calendar; the event is already gone, so nothing was lost                                          |
-| **Open meeting link** does nothing / wrong host       | `MIROTALK_URL` is unset or points at the wrong instance                                         | Set `MIROTALK_URL` to your MiroTalk base URL (with `https://`) and restart the app                                                |
 | Camera/mic blocked in the meeting                     | MiroTalk is served over plain HTTP (not localhost) or without a camera/mic `Permissions-Policy` | Serve MiroTalk over HTTPS on its own subdomain with camera/mic allowed                                                            |
 
 ## Related links

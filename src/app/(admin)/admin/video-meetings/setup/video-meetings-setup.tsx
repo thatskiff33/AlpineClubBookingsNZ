@@ -319,6 +319,21 @@ export function VideoMeetingsSetup({
               onChange={(event) => section.setDraft({ baseUrl: event.target.value })}
             />
             <SourceNote field={status.baseUrl} envName="MIROTALK_URL" />
+            {/*
+              WHAT THIS PAGE CANNOT CHANGE, said where the mistake would be
+              made. The address has a counterpart in the deployment — which
+              hostname the reverse proxy answers on and where it reaches
+              MiroTalk — that only whoever runs the server can set. A Full Admin
+              who points this at a host the deployment does not serve breaks
+              every join link, and nothing else on the screen hints that there
+              is a second half.
+            */}
+            <p className="text-xs text-muted-foreground">
+              This has to be a MiroTalk server your deployment already serves —
+              the hostname the reverse proxy answers on is set by whoever runs
+              the server, not here, so changing this to a host they have not set
+              up will break every join link.
+            </p>
             {section.editing && baseUrlCheck && !baseUrlCheck.ok ? (
               <p className="text-xs text-destructive">{baseUrlCheck.reason}</p>
             ) : null}

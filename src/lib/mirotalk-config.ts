@@ -5,6 +5,7 @@ import { getAppBaseUrl } from "@/lib/app-url";
 import { createAuditLog } from "@/lib/audit";
 import {
   deleteIntegrationCredential,
+  invalidateProviderCredentialCache,
   resolveIntegrationCredential,
   setIntegrationCredential,
 } from "@/lib/integration-credentials";
@@ -79,7 +80,10 @@ import {
  * A database value takes effect on the next join click — nothing here is read
  * at build time or cached across requests beyond the credential store's own
  * 45-second cross-process TTL (`integration-credentials.ts`), which is what
- * lets a write in one web container reach the other without a restart. An
+ * lets a write in one web container reach the other without a restart. The
+ * ADMIN STATUS read drops that cache first, because it is the only consumer
+ * whose correctness depends on the concurrency token being current rather than
+ * merely recent. An
  * environment value still needs a restart, because that is what changing an
  * environment variable means. The screen says which of the two an administrator
  * is looking at, so the restart advice matches what is actually being consumed.
@@ -308,12 +312,29 @@ function resolveTokenLifetimeWithoutDatabase(
   if (!raw) return derived;
   const seconds = parseMirotalkLifetimeSeconds(raw);
   if (seconds === null) {
+    // Includes `MIRO_JWT_EXP=0`, which the OLD parser read as a zero-second
+    // token — a link that had expired before it was clicked. It now falls to the
+    // documented default with this note, which is the one place the environment
+    // behaviour genuinely changed rather than merely moving.
     return {
       ...derived,
       problem: `MIRO_JWT_EXP is not a length of time this understands, so the default ${MIROTALK_DEFAULT_TOKEN_LIFETIME} is in force.`,
     };
   }
-  return { value: seconds, display: raw, source: "environment", problem: null };
+  // CHECKED AGAINST THE PAGE'S OWN RULES, exactly as the address branch above
+  // is. Without this an environment value outside 30s–24h read as "in force,
+  // from the environment" with no caveat at all, so an administrator who typed
+  // the same value into the box to make it explicit was refused — the page
+  // telling them two different things about one value.
+  const check = validateMirotalkTokenLifetime(raw);
+  return {
+    value: seconds,
+    display: raw,
+    source: "environment",
+    problem: check.ok
+      ? null
+      : `MIRO_JWT_EXP is in force, but it would not be accepted on this page: ${check.reason}`,
+  };
 }
 
 /**
@@ -494,6 +515,18 @@ function secretStatus(
  * reading this screen must not be told "environment" because a read failed.
  */
 export async function getMirotalkConfigurationStatus(): Promise<MirotalkConfigurationStatus> {
+  // DROP THE CACHED ROWS FIRST. This screen is the first consumer that DEPENDS
+  // on the concurrency token being current: every other caller of the store
+  // passes the unconditional expectation, so a token up to 45 seconds old cost
+  // them nothing. Here the token is what a Save or a Clear declares, and the
+  // status also reads `updatedAt` straight from the database — so without this
+  // the two halves disagree. In the two-container topology `docker-compose.yml`
+  // documents, an administrator would see the new timestamp beside the old
+  // version, press Clear, be told somebody else changed it first and to reload,
+  // and reloading would hand back the same stale version for the rest of the
+  // TTL. They loop, with no way out but waiting. Nothing else pays for it: this
+  // is an admin screen read, not a join click.
+  invalidateProviderCredentialCache(MIROTALK_PROVIDER);
   const resolved = await resolveMirotalk();
 
   // METADATA COLUMNS ONLY — never ciphertext/iv/authTag, and never a value.

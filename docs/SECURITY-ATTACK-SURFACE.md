@@ -3785,19 +3785,50 @@ they are what makes that safe rather than merely convenient.
   `MIROTALK_URL` is deliberately exempt: refusing it would break an installation
   that works today, so it is reported and used.
 
-**One residual exposure, stated rather than fixed.** Whoever can change the
+**The redirect exposure, and what bounds it.** Whoever can change the
 meeting-server address can point join links at a host they control, and that
 host receives the signed token. It cannot read the host credentials inside
 without the signing key — the key never travels — but it gets a blob to attack
-offline, which is the same exposure a weak key carries. Three things bound it:
-changing any of these settings requires **Full Admin** (not merely
-`finance: edit`, which a Treasurer-shaped custom role can hold) and a refused
-attempt is audited; the address must be a public https host; and the token is
-minted per click and short-lived. The Alpine Central Server route additionally
-CLEARS its stored key when its address moves, and that remedy is deliberately
-not copied here: clearing the stored key would fall back to the environment key,
-which was set for the old server too, so it would look like a fix without being
-one.
+offline. That is NOT equivalent to the weak-key exposure above, and the earlier
+wording here said it was: a weak key on its own still requires an attacker to
+already hold a token, and **the redirect is what supplies one**. Since the
+weakness advisory is deliberately never blocking, redirect-plus-weak-key
+compounds into practical recovery of the signing key and the host credentials,
+rather than a blob nobody has.
+
+Five things bound it.
+
+- Changing any of these settings requires **Full Admin** — not merely
+  `finance: edit`, which a Treasurer-shaped custom role can hold — on both
+  routes, and **both routes audit the refusal**: `mirotalk.settings.denied` for
+  the non-secret write and `mirotalk.credentials.denied` for a secret. (The
+  credentials route audited nothing until #2940's review round, which left the
+  higher-risk door the quieter of the two.)
+- The address must be a public `https` host, through the shared rule above.
+- The token is minted per click and short-lived.
+- **Moving the address CLEARS the three stored secrets**, which is the Alpine
+  Central Server remedy copied on its own terms: they are meaningful only to the
+  MiroTalk instance they were paired with, so a genuine move invalidates them
+  exactly as it invalidates the central server's API key. On the installation
+  shape `.env.example` now recommends — the environment variables left empty,
+  everything set on the page — this is the whole fix: the resolver finds nothing
+  to fall back to, the join builder takes its no-token branch, and the redirected
+  host receives nothing at all. It is also the only lever the club has, because
+  a Full Admin cannot read a stored secret back out to re-supply it. **Where the
+  environment still holds those three it is ineffective**, because clearing the
+  stored value falls back to a variable that was set for the old server; it is
+  strictly better in every installation and worse in none.
+- **Every mint records which host it was built for** (`calendar.event.join`
+  carries the meeting-server origin, never the URL, which carries the token),
+  and a settings change records the address it moved from and to. Before that,
+  redirecting the address, waiting for a click and restoring it left no trace
+  anywhere of where the token had gone.
+
+**What is deliberately NOT done**, and is an owner's call rather than an
+implementor's: suppressing the environment fallback whenever the address is
+database-sourced would close the remaining half of the clearing remedy, and
+would break the mixed migration path this change exists to support — an
+installation part-way through moving its configuration onto the page.
 
 ### The Semgrep pair, which outranks the Critical
 
