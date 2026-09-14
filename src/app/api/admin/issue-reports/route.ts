@@ -39,6 +39,7 @@ function summarizeReport(report: {
   resolvedById: string | null;
   resolutionNote: string | null;
   screenshotOrigin: IssueReportOrigin | null;
+  screenshotDeleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
   member: {
@@ -55,7 +56,7 @@ function summarizeReport(report: {
     screenshotOrigin: report.screenshotOrigin,
     screenshotCapturedAt: report.screenshotCapturedAt,
     screenshotDeletedAt: report.screenshotDeletedAt,
-    screenshotDeleteReason: null,
+    screenshotDeleteReason: report.screenshotDeleteReason,
     viewerIsFullAdmin: viewerFullAdmin,
   });
 
@@ -102,6 +103,10 @@ export async function GET(request: NextRequest) {
   }
 
   const { status, page, pageSize } = parsed.data;
+  // Decided once for the whole page rather than per row: it is the same caller
+  // for every row, and re-deriving it inside the map would invite a future
+  // reader to think it could differ (#2703).
+  const viewerFullAdmin = viewerIsFullAdmin(admin.session.user);
   const where =
     status === "ALL"
       ? {}
@@ -125,6 +130,7 @@ export async function GET(request: NextRequest) {
           screenshotCapturedAt: true,
           screenshotExpiresAt: true,
           screenshotDeletedAt: true,
+          screenshotDeleteReason: true,
           browserInfoExpiresAt: true,
           browserInfoDeletedAt: true,
           resolvedAt: true,
@@ -156,9 +162,7 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.json({
-      reports: reports.map((report) =>
-        summarizeReport(report, viewerIsFullAdmin(admin.session.user))
-      ),
+      reports: reports.map((report) => summarizeReport(report, viewerFullAdmin)),
       total,
       page,
       pageSize,
