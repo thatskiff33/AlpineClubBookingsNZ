@@ -395,7 +395,11 @@ export async function ensureGeneratedCredential(params: {
     key: params.key,
     label: params.label,
     value: params.generate(),
-    staleCiphertext: staleRow.ciphertext,
+    stale: {
+      ciphertext: staleRow.ciphertext,
+      iv: staleRow.iv,
+      authTag: staleRow.authTag,
+    },
     actor: params.actor,
   });
 }
@@ -465,10 +469,15 @@ async function createGeneratedCredential(params: {
 /**
  * Replace an UNREADABLE (needs_reentry) row with a fresh value under a
  * create-or-lose discipline: a status-guarded `updateMany` claim keyed on the
- * exact stale ciphertext we read, so only ONE process replaces a given dead row
- * and every loser re-reads the winner's value instead of clobbering it. The
- * stale material is already unrecoverable, so we never risk overwriting a live
- * key here (that case returned above).
+ * exact stale `(ciphertext, iv, authTag)` tuple we read, so only ONE process
+ * replaces a given dead row and every loser re-reads the winner's value instead
+ * of clobbering it. The stale material is already unrecoverable, so we never
+ * risk overwriting a live key here (that case returned above).
+ *
+ * ALL THREE COLUMNS, for the reason spelled out on the delete below: an empty
+ * plaintext encrypts to an empty ciphertext under every IV, so a ciphertext-only
+ * claim is vacuous for that one value and two processes would both believe they
+ * had won. The iv and authTag are fresh on every encrypt whatever the plaintext.
  *
  * The claim and its audit row are one transaction, and the audit row is written
  * only inside the winning branch — a loser changed nothing and records nothing.
@@ -478,7 +487,7 @@ async function replaceUnreadableCredential(params: {
   key: string;
   label: string;
   value: string;
-  staleCiphertext: string;
+  stale: { ciphertext: string; iv: string; authTag: string };
   actor: CredentialActor;
 }): Promise<string> {
   const encrypted = encryptCredential({
@@ -492,9 +501,13 @@ async function replaceUnreadableCredential(params: {
       where: {
         provider: params.provider,
         key: params.key,
-        // Claim only the exact dead row we observed. Once any process replaces it
-        // the ciphertext changes, so a racing writer's claim matches zero rows.
-        ciphertext: params.staleCiphertext,
+        // Claim only the exact dead row we observed. Once any process replaces
+        // it the tuple changes — every encrypt draws a fresh IV, and the auth
+        // tag follows it even when the ciphertext does not — so a racing
+        // writer's claim matches zero rows.
+        ciphertext: params.stale.ciphertext,
+        iv: params.stale.iv,
+        authTag: params.stale.authTag,
       },
       data: {
         ciphertext: encrypted.ciphertext,
@@ -534,6 +547,24 @@ async function replaceUnreadableCredential(params: {
 }
 
 /**
+ * What a delete is claiming, as a VALUE rather than as a convention.
+ *
+ * A zero row count means two different things here, and the first draft told
+ * them apart by asking whether a claim ciphertext had been assigned — a reader
+ * had to know that `undefined` meant "unconditional" and could not see the rule
+ * being relied on. Two named shapes make the discrimination the type's job, and
+ * carry the claimed columns with the branch that has them.
+ */
+type CredentialDeleteClaim =
+  | { readonly kind: "unconditional" }
+  | {
+      readonly kind: "version";
+      readonly ciphertext: string;
+      readonly iv: string;
+      readonly authTag: string;
+    };
+
+/**
  * Delete a single credential row (used by disconnect and verify-reset flows).
  *
  * Deleting nothing is a no-op, NOT an error and NOT an audit row: verify-reset
@@ -556,7 +587,7 @@ export async function deleteIntegrationCredential(params: {
 
   try {
     await prisma.$transaction(async (tx) => {
-      let claimCiphertext: string | undefined;
+      let claim: CredentialDeleteClaim = { kind: "unconditional" };
       if (expectation.expect === "version") {
         const current = await readRowForWrite(tx, params.provider, params.key);
         // Already gone. The caller wanted it absent and it is absent, so this
@@ -570,17 +601,41 @@ export async function deleteIntegrationCredential(params: {
             observedVersion: credentialVersionOf(current),
           });
         }
-        claimCiphertext = current.ciphertext;
+        claim = {
+          kind: "version",
+          ciphertext: current.ciphertext,
+          iv: current.iv,
+          authTag: current.authTag,
+        };
       }
 
       const removed = await tx.integrationCredential.deleteMany({
         where: {
           provider: params.provider,
           key: params.key,
-          // The CLAIM, when a version was declared: a writer that replaced the
-          // row between the read above and here changed its ciphertext, so this
-          // matches nothing.
-          ...(claimCiphertext === undefined ? {} : { ciphertext: claimCiphertext }),
+          // THE CLAIM, when a version was declared, and it names ALL THREE
+          // encrypted columns — the same tuple `applyCredentialWrite` claims.
+          //
+          // Claiming the ciphertext alone is nearly always enough and is exactly
+          // wrong for one value: AES-GCM over an EMPTY plaintext produces an
+          // empty ciphertext whatever the IV, so for a credential holding "" the
+          // stored ciphertext is "" before and after any replacement and a
+          // ciphertext-only claim matches the winner's row. The writer holding
+          // the stale token would then delete the row that replaced it and
+          // report success — a lost race reported as a win, which is the exact
+          // failure this contract exists to remove. The iv and authTag are fresh
+          // on every encrypt whatever the plaintext, so the three together are a
+          // real fence for every value. No production delete takes this path
+          // today (they all pass `any`) and the admin route requires a non-empty
+          // value — but the store is a library, and #2940 is its first
+          // club-editable consumer.
+          ...(claim.kind === "unconditional"
+            ? {}
+            : {
+                ciphertext: claim.ciphertext,
+                iv: claim.iv,
+                authTag: claim.authTag,
+              }),
         },
       });
       if (removed.count === 0) {
@@ -592,7 +647,7 @@ export async function deleteIntegrationCredential(params: {
         // was there a statement ago and somebody replaced it since, which is a
         // LOST RACE, and losing silently is the behaviour this whole contract
         // exists to remove.
-        if (claimCiphertext !== undefined) {
+        if (claim.kind === "version") {
           const winner = await readRowForWrite(tx, params.provider, params.key);
           throw new StaleCredentialWriteError({
             provider: params.provider,

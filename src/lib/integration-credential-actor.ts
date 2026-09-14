@@ -274,17 +274,28 @@ export type CredentialDeleteExpectation =
  * unique violation, which aborts the PostgreSQL transaction and leaves nothing
  * readable from inside it. Either way the caller re-reads: the store drops its
  * cache for the provider before the error leaves, so that re-read is fresh.
+ *
+ * IT IS GENERIC OVER THE EXPECTATION so an error cannot statically claim an
+ * expectation its own throw site forbids. A delete rejects `{ expect: "absent" }`
+ * — "remove a row I believe is not there" is not a thing anybody means — yet a
+ * single `CredentialWriteExpectation` field let an error thrown from the delete
+ * path carry exactly that. The delete path throws
+ * `StaleCredentialWriteError<CredentialDeleteExpectation>` instead, which cannot.
+ * The default parameter keeps every `instanceof` narrowing and every existing
+ * catch unchanged.
  */
-export class StaleCredentialWriteError extends Error {
+export class StaleCredentialWriteError<
+  Expectation extends CredentialWriteExpectation = CredentialWriteExpectation,
+> extends Error {
   readonly provider: string;
   readonly key: string;
-  readonly expectation: CredentialWriteExpectation;
+  readonly expectation: Expectation;
   readonly observedVersion: CredentialVersion | null;
 
   constructor(params: {
     provider: string;
     key: string;
-    expectation: CredentialWriteExpectation;
+    expectation: Expectation;
     observedVersion: CredentialVersion | null;
   }) {
     super(
