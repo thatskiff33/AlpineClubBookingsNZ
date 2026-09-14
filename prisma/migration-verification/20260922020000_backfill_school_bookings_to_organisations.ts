@@ -20,7 +20,7 @@ const ORGANISATIONS = `
          o."email" AS "email",
          o."xeroContactId" AS "xero",
          (o."id" = 'org' || substr(md5('school-organisation:' ||
-            lower(regexp_replace(btrim(o."name"), '\\s+', ' ', 'g'))), 1, 22)) AS "idIsDerived"
+            lower(btrim(left(btrim(regexp_replace(o."name", '\\s+', ' ', 'g')), 200)))), 1, 22)) AS "idIsDerived"
     FROM "Organisation" o
    ORDER BY o."name"
 `;
@@ -81,7 +81,12 @@ const verification: DataMigrationVerification = {
         VALUES
           ('sc-school-a', 'office@tps.test', 'x', 'Tokoroa Primary School', '',
            'SCHOOL', false, 'xero-tps-first', TIMESTAMP '2026-01-01 00:00:00'),
-          ('sc-school-b', 'admin@tps.test', 'x', '  Tokoroa   Primary School ', '',
+          -- A LEADING TAB, not a leading space. PostgreSQL's one-argument
+          -- btrim() strips only the space character, so the first cut of this
+          -- migration folded this row to a name beginning with a space, minted
+          -- a record under it, then failed to resolve that record and raised
+          -- inside the maintenance window. Seeding spaces alone hid it.
+          ('sc-school-b', 'admin@tps.test', 'x', E'\\t Tokoroa   Primary School ', '',
            'SCHOOL', false, 'xero-tps-second', TIMESTAMP '2026-01-02 00:00:00'),
           ('sc-teacher', 'rangi@tps.test', 'x', 'Rangi', 'Teacher',
            'SCHOOL', false, 'xero-rangi', TIMESTAMP '2026-01-03 00:00:00'),
@@ -203,7 +208,7 @@ const verification: DataMigrationVerification = {
             },
             {
               member: "sc-school-b",
-              firstName: "  Tokoroa   Primary School ",
+              firstName: "\t Tokoroa   Primary School ",
               lastName: "",
               xero: "xero-tps-second",
             },
@@ -259,8 +264,8 @@ const verification: DataMigrationVerification = {
     {
       name: "cap the school's name at twenty characters instead of two hundred",
       harm: "Every school with a longer name gets a record under a truncated name. The next booking for that school does not match it, so the club ends up with two records and two Xero customers for one school.",
-      find: `left(regexp_replace(btrim(m."firstName"), '\\s+', ' ', 'g'), 200) AS school_name`,
-      replace: `left(regexp_replace(btrim(m."firstName"), '\\s+', ' ', 'g'), 20) AS school_name`,
+      find: `btrim(left(btrim(regexp_replace(m."firstName", '\\s+', ' ', 'g')), 200)) AS school_name`,
+      replace: `btrim(left(btrim(regexp_replace(m."firstName", '\\s+', ' ', 'g')), 20)) AS school_name`,
     },
     {
       name: "let the later of two spellings win the school's details",

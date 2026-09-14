@@ -64,11 +64,11 @@ ALTER TABLE "PromoRedemptionAllocation" ALTER COLUMN "memberId" DROP NOT NULL;
 --
 -- Registered in prisma/partial-unique-indexes.tsv, which is set-equality
 -- checked against pg_indexes by the migration-drift job.
-CREATE UNIQUE INDEX "PromoRedemptionAllocation_promoRedemption_noMember_unique"
+CREATE UNIQUE INDEX IF NOT EXISTS "PromoRedemptionAllocation_promoRedemption_noMember_unique"
     ON "PromoRedemptionAllocation" ("promoRedemptionId")
     WHERE "memberId" IS NULL;
 
-CREATE UNIQUE INDEX "PromoRedemptionAllocation_promoCode_booking_noMember_unique"
+CREATE UNIQUE INDEX IF NOT EXISTS "PromoRedemptionAllocation_promoCode_booking_noMember_unique"
     ON "PromoRedemptionAllocation" ("promoCodeId", "bookingId")
     WHERE "memberId" IS NULL;
 
@@ -140,9 +140,25 @@ $function$ LANGUAGE plpgsql;
 -- classify and no default.
 --
 -- Created empty and inert. The pre-epic colour never selects the table.
-CREATE TYPE "SchoolMemberClassificationKind" AS ENUM ('ORGANISATION', 'PERSON');
+--
+-- RE-RUNNABLE, and that is load-bearing rather than tidy. Both reverse scripts
+-- deliberately KEEP this table and its enum, because they are an officer's
+-- recorded decisions and the next attempt needs them -- so both documented
+-- roll-forward paths (re-applying migration.sql by hand, and deleting the
+-- `_prisma_migrations` rows then migrating again) re-execute this section
+-- against a database that already has them. A bare CREATE would fail with
+-- "already exists", and the attempt those decisions were preserved FOR could
+-- not start. Everything above is already re-runnable: DROP NOT NULL on a
+-- nullable column is a no-op, and CREATE OR REPLACE FUNCTION replaces.
+DO $classification_kind$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'SchoolMemberClassificationKind') THEN
+        CREATE TYPE "SchoolMemberClassificationKind" AS ENUM ('ORGANISATION', 'PERSON');
+    END IF;
+END;
+$classification_kind$;
 
-CREATE TABLE "SchoolMemberClassification" (
+CREATE TABLE IF NOT EXISTS "SchoolMemberClassification" (
     "memberId" TEXT NOT NULL,
     "classification" "SchoolMemberClassificationKind" NOT NULL,
     "evidence" VARCHAR(500) NOT NULL,
@@ -152,10 +168,21 @@ CREATE TABLE "SchoolMemberClassification" (
     CONSTRAINT "SchoolMemberClassification_pkey" PRIMARY KEY ("memberId")
 );
 
-CREATE INDEX "SchoolMemberClassification_classification_idx" ON "SchoolMemberClassification"("classification");
+CREATE INDEX IF NOT EXISTS "SchoolMemberClassification_classification_idx" ON "SchoolMemberClassification"("classification");
 
 -- CASCADE: the classification is a fact ABOUT this row, so when the row goes it
--- is not about anything.
-ALTER TABLE "SchoolMemberClassification" ADD CONSTRAINT "SchoolMemberClassification_memberId_fkey" FOREIGN KEY ("memberId") REFERENCES "Member"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- is not about anything. ADD CONSTRAINT has no IF NOT EXISTS form, so the
+-- existence check is explicit.
+DO $classification_fkey$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'SchoolMemberClassification_memberId_fkey'
+          AND conrelid = '"SchoolMemberClassification"'::regclass
+    ) THEN
+        ALTER TABLE "SchoolMemberClassification" ADD CONSTRAINT "SchoolMemberClassification_memberId_fkey" FOREIGN KEY ("memberId") REFERENCES "Member"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    END IF;
+END;
+$classification_fkey$;
 
 COMMIT;

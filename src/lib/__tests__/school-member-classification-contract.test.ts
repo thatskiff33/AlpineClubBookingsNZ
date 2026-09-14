@@ -30,14 +30,27 @@ import {
   provesOrganisation,
   provesPerson,
 } from "@/lib/school-member-classification";
+import {
+  foldOrganisationName,
+  schoolNameClaimSql,
+  schoolNameFoldSql,
+} from "@/lib/school-organisations";
 
+const MIGRATIONS_DIR = path.join(process.cwd(), "prisma", "migrations");
 const BACKFILL_SQL_PATH = path.join(
-  process.cwd(),
-  "prisma",
-  "migrations",
+  MIGRATIONS_DIR,
   "20260922020000_backfill_school_bookings_to_organisations",
   "migration.sql",
 );
+/** Every #3369 file that folds a school name, so none of them can drift alone. */
+const NAME_FOLDING_SQL_FILES = [
+  BACKFILL_SQL_PATH,
+  path.join(
+    MIGRATIONS_DIR,
+    "20260922020000_backfill_school_bookings_to_organisations",
+    "rollback.sql",
+  ),
+] as const;
 
 /** Runs of whitespace are not part of the program. Nothing else is folded. */
 function normalise(sql: string): string {
@@ -104,6 +117,98 @@ describe("#3369: the candidate predicate has exactly one home", () => {
   });
 });
 
+describe("#3369: the name fold has exactly one home, in both languages", () => {
+  // The blocker this suite was extended for. The migration's member side folded
+  // as btrim-then-collapse, and PostgreSQL's one-argument btrim strips ONLY the
+  // space character while `\s` also matches a tab — so a school whose stored
+  // name began with a tab kept it through the trim, had it turned into a space
+  // by the collapse, and then matched nothing. The backfill minted a record
+  // whose name began with a space, failed to resolve that record back, and
+  // raised its unresolved-organisation exception in the middle of the
+  // maintenance window. Collapse first and a trim removes it.
+
+  it("folds a leading tab away, in TypeScript", () => {
+    expect(foldOrganisationName("\tTokoroa Primary School")).toBe(
+      "Tokoroa Primary School",
+    );
+    expect(foldOrganisationName("Tokoroa\tPrimary\nSchool  ")).toBe(
+      "Tokoroa Primary School",
+    );
+  });
+
+  it("is idempotent, which is what lets a folded name be folded again", () => {
+    // The backfill stores a folded name in `Organisation.name` and then folds
+    // that stored name again to find the record it has just written. A fold
+    // that were not idempotent would not find it.
+    for (const raw of [
+      "\t Tokoroa   Primary School ",
+      `${"x".repeat(199)} ${"y".repeat(40)}`,
+      "St. Peter's College",
+    ]) {
+      expect(foldOrganisationName(foldOrganisationName(raw))).toBe(
+        foldOrganisationName(raw),
+      );
+    }
+  });
+
+  it("caps at the 200 characters the column holds, and trims what the cut left", () => {
+    const long = `${"a".repeat(199)} b`;
+    expect(foldOrganisationName(long)).toBe("a".repeat(199));
+  });
+
+  it("EVERY fold in the #3369 SQL is the generated one — no hand-written copy", () => {
+    // The strong form. Counting the generated strings alone would pass while a
+    // fifth, hand-written fold sat beside them; this fails unless every
+    // `regexp_replace(` in those files is part of an expression generated here.
+    // The claim form is the fold wrapped in `lower(...)`, so counting the bare
+    // fold accounts for both spellings without double-counting either.
+    const generated = [
+      schoolNameFoldSql('m."firstName"'),
+      schoolNameFoldSql('o."name"'),
+    ];
+    for (const file of NAME_FOLDING_SQL_FILES) {
+      const sql = readFileSync(file, "utf8");
+      const total = sql.split("regexp_replace(").length - 1;
+      const accountedFor = generated.reduce(
+        (sum, expression) => sum + (sql.split(expression).length - 1),
+        0,
+      );
+      expect(
+        total,
+        `${path.basename(path.dirname(file))}/${path.basename(file)} folds a school name ` +
+          `${total} time(s) but only ${accountedFor} of those are the fold in ` +
+          "src/lib/school-organisations.ts. A second spelling of the fold is how " +
+          "one school's name comes to mean two things (`INV-SSOT`).",
+      ).toBe(accountedFor);
+      expect(total).toBeGreaterThan(0);
+      // And the COMPARISON spelling is the generated one too, so a hand-rolled
+      // `lower(...)` around the right fold cannot slip past the count above.
+      expect(sql).toContain(schoolNameClaimSql('o."name"'));
+    }
+  });
+
+  it("FAILS when a SQL fold reverts to the btrim-first order (mutation proof)", () => {
+    const sql = readFileSync(BACKFILL_SQL_PATH, "utf8");
+    const mutated = sql.replace(
+      schoolNameFoldSql('m."firstName"'),
+      `left(regexp_replace(btrim(m."firstName"), '\\s+', ' ', 'g'), 200)`,
+    );
+    expect(mutated, "the mutation must actually change the file").not.toBe(sql);
+    // The claim form is the fold wrapped in `lower(...)`, so counting the bare
+    // fold accounts for both spellings without double-counting either.
+    const generated = [
+      schoolNameFoldSql('m."firstName"'),
+      schoolNameFoldSql('o."name"'),
+    ];
+    const total = mutated.split("regexp_replace(").length - 1;
+    const accountedFor = generated.reduce(
+      (sum, expression) => sum + (mutated.split(expression).length - 1),
+      0,
+    );
+    expect(accountedFor).toBeLessThan(total);
+  });
+});
+
 describe("#3369: the two proofs, and the one folding they share", () => {
   it("proves a school only from writer-authored evidence, not from a shape", () => {
     // Blank surname and cannot sign in are necessary but NOT sufficient: the
@@ -153,6 +258,13 @@ describe("#3369: the two proofs, and the one folding they share", () => {
     // one school's name prove another school's row, which is a near-miss merge
     // by another route and #2912 forbids one.
     expect(isSameSchoolNameClaim("  Tokoroa   Primary School ", "tokoroa primary school")).toBe(true);
+    // A tab is whitespace too, and `btrim` in SQL is not (see the fold suite).
+    expect(isSameSchoolNameClaim("\tTokoroa Primary School", "tokoroa primary school")).toBe(true);
+    // The cap the claim filter applies. Without it this helper called itself
+    // "the ONE folding" while answering a question the claim would not.
+    expect(
+      isSameSchoolNameClaim("a".repeat(200), `${"a".repeat(200)}b`),
+    ).toBe(true);
     expect(isSameSchoolNameClaim("Tokoroa Primary", "Tokoroa Primary School")).toBe(false);
     expect(isSameSchoolNameClaim("St. Peter's College", "St Peters College")).toBe(false);
     expect(isSameSchoolNameClaim("", "Anything")).toBe(false);

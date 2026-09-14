@@ -56,7 +56,7 @@ import {
   SchoolMemberClassificationKind,
 } from "@prisma/client";
 
-import { normaliseOrganisationName } from "@/lib/school-organisations";
+import { foldOrganisationName } from "@/lib/school-organisations";
 
 /**
  * WHICH ROWS THE CUTOVER NEEDS AN ANSWER FOR. Aliased `m` on `"Member"`.
@@ -180,9 +180,13 @@ export function provesPerson(candidate: {
 /**
  * Does this free text name the same school as that record, for the CLAIM?
  *
- * Trim, collapse internal whitespace, ignore case — `normaliseOrganisationName`
- * plus a case fold, which is exactly what `schoolOrganisationNameClaim()` asks
- * Postgres. Deliberately NOT the coarser Xero-search folding, which exists to
+ * `foldOrganisationName` plus a case fold — collapse, trim, cap at the 200
+ * characters `Organisation.name` holds, trim again — which is exactly what
+ * `schoolOrganisationNameClaim()` asks Postgres and exactly what
+ * `schoolNameClaimSql()` asks it in the #3369 migrations. It USED to omit the
+ * cap while calling itself "the ONE folding": a school with a name over two
+ * hundred characters claimed a record here that the claim filter would not have
+ * matched. Deliberately NOT the coarser Xero-search folding, which exists to
  * PROVE a provider contact belongs where the provider said: coarser here would
  * let one school's name prove another school's row, which is a near-miss merge
  * by another route and #2912 forbids one.
@@ -191,8 +195,8 @@ export function isSameSchoolNameClaim(
   left: string | null | undefined,
   right: string | null | undefined,
 ): boolean {
-  const a = normaliseOrganisationName(left ?? "").toLowerCase();
-  const b = normaliseOrganisationName(right ?? "").toLowerCase();
+  const a = foldOrganisationName(left ?? "").toLowerCase();
+  const b = foldOrganisationName(right ?? "").toLowerCase();
   if (!a || !b) return false;
   return a === b;
 }

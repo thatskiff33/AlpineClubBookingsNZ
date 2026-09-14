@@ -61,15 +61,27 @@ $fail_closed$;
 -- who happens to have booked, and nothing about their booking changes.
 --
 -- The school's name is the name the old writer stored in "firstName", folded
--- exactly the way resolveOrCreateSchoolOrganisation() folds it — trim, collapse
--- internal whitespace, ignore case — and capped at the 200 characters
--- "Organisation"."name" holds. No other transformation: a name is evidence, and
--- tidying it is editing evidence.
+-- exactly the way resolveOrCreateSchoolOrganisation() folds it: COLLAPSE every
+-- run of whitespace to one space, THEN trim, then cap at the 200 characters
+-- "Organisation"."name" holds, then trim again. Comparisons add lower().
+--
+-- THE ORDER IS NOT A STYLE CHOICE. PostgreSQL's one-argument btrim() strips
+-- only the space character while '\s' also matches a tab, so trimming first
+-- leaves a leading tab in place for the collapse to turn into a leading SPACE
+-- that nothing then removes -- and the record minted under that name does not
+-- resolve back, which raises section 3's exception in the middle of the
+-- window. The second trim is what makes the fold idempotent, so the folded name
+-- stored in "Organisation"."name" folds to itself when section 3 looks it up.
+-- src/lib/school-organisations.ts is the one home for all of it and
+-- school-member-classification-contract.test.ts fails if this copy drifts.
+--
+-- No other transformation: a name is evidence, and tidying it is editing
+-- evidence.
 CREATE TEMP TABLE "school_backfill_map" ON COMMIT DROP AS
 SELECT
     m."id" AS member_id,
-    left(regexp_replace(btrim(m."firstName"), '\s+', ' ', 'g'), 200) AS school_name,
-    lower(left(regexp_replace(btrim(m."firstName"), '\s+', ' ', 'g'), 200)) AS folded_name,
+    btrim(left(btrim(regexp_replace(m."firstName", '\s+', ' ', 'g')), 200)) AS school_name,
+    lower(btrim(left(btrim(regexp_replace(m."firstName", '\s+', ' ', 'g')), 200))) AS folded_name,
     NULLIF(btrim(m."email"), '') AS school_email,
     m."xeroContactId" AS member_xero_contact_id
 FROM "Member" m
@@ -102,7 +114,7 @@ FROM "school_backfill_map" map
 WHERE NOT EXISTS (
     SELECT 1 FROM "Organisation" o
     WHERE o."kind" = 'SCHOOL'
-      AND lower(regexp_replace(btrim(o."name"), '\s+', ' ', 'g')) = map.folded_name
+      AND lower(btrim(left(btrim(regexp_replace(o."name", '\s+', ' ', 'g')), 200))) = map.folded_name
 )
 ORDER BY map.folded_name, map.member_id;
 
@@ -118,7 +130,7 @@ SELECT DISTINCT ON (map.member_id)
 FROM "school_backfill_map" map
 JOIN "Organisation" o
   ON o."kind" = 'SCHOOL'
- AND lower(regexp_replace(btrim(o."name"), '\s+', ' ', 'g')) = map.folded_name
+ AND lower(btrim(left(btrim(regexp_replace(o."name", '\s+', ' ', 'g')), 200))) = map.folded_name
 ORDER BY map.member_id, o."archivedAt" ASC NULLS FIRST, o."createdAt" ASC, o."id" ASC;
 
 -- Fail closed a second time. A classified row that resolves to no organisation
