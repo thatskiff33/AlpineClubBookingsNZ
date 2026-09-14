@@ -65,15 +65,13 @@ import {
   buildMemberFullName,
   getMissingFieldsForXeroContactCreate,
 } from "@/lib/xero-contacts";
-import {
-  CONTACT_SYNC_CURSOR_RESOURCE,
-  DEFAULT_XERO_SYNC_SCOPE,
-} from "@/lib/xero-inbound/constants";
+import { readXeroContactCacheFreshness } from "@/lib/xero-contact-cache-freshness";
+import { reportContactCacheFreshness } from "@/lib/xero-contact-cache-freshness-shape";
+import { XERO_CONTACT_STATUS_ACTIVE } from "@/lib/xero-contact-status";
 import { getXeroGroupingMode } from "@/lib/xero-member-grouping";
 import {
   CALLS_PER_MEMBER_WITH_GROUPING,
   CALLS_PER_MEMBER_WITHOUT_GROUPING,
-  CONTACT_CACHE_STALE_AFTER_MS,
   DEFAULT_SEEDING_CHUNK,
   DEFAULT_SEEDING_CHUNK_WITH_GROUPING,
   type AmbiguousMemberRow,
@@ -156,9 +154,15 @@ function emptySnapshot(
 ): MissingContactSnapshot {
   return {
     cacheReady: false,
-    contactCacheLastRefreshedAt: lastRefreshedAt,
-    contactCacheAgeHours: null,
-    contactCacheStale: false,
+    // `INV-SSOT` (#3058): spelled by the one mapper, never field by field. Two
+    // screens report this cache's freshness and each used to transcribe three
+    // fields out of the reader's own names, so a fourth fact about the cache
+    // would have reached neither.
+    ...reportContactCacheFreshness({
+      lastRefreshedAt,
+      ageHours: null,
+      stale: false,
+    }),
     plannedDigest: computePlannedDigest([]),
     chunkSize,
     estimatedXeroCallsPerChunk: 0,
@@ -282,7 +286,11 @@ async function loadCachedContacts(): Promise<{
   byNormalisedName: Map<string, CachedContact[]>;
 }> {
   const rows = await prisma.xeroContactCache.findMany({
-    where: { contactStatus: "ACTIVE" },
+    // `INV-SSOT`: which statuses count as a live contact is one fact, and its
+    // home is `xero-contact-status.ts`. Spelling "ACTIVE" here again is how
+    // this census and the erased-member review came to disagree about the same
+    // column (#3058).
+    where: { contactStatus: XERO_CONTACT_STATUS_ACTIVE },
     select: {
       contactId: true,
       name: true,
@@ -321,21 +329,16 @@ async function loadCachedContacts(): Promise<{
 export async function getXeroMissingContactSnapshot(options?: {
   limit?: number;
 }): Promise<MissingContactSnapshot> {
-  const cursor = await prisma.xeroSyncCursor.findUnique({
-    where: {
-      resourceType_scope: {
-        resourceType: CONTACT_SYNC_CURSOR_RESOURCE,
-        scope: DEFAULT_XERO_SYNC_SCOPE,
-      },
-    },
-    select: { lastSuccessfulSyncAt: true },
-  });
-  const lastRefreshedAt = cursor?.lastSuccessfulSyncAt?.toISOString() ?? null;
+  // #3058: the cursor read and the staleness arithmetic moved to
+  // `readXeroContactCacheFreshness`, which the erased-member contact review
+  // (`INV-INT-024`) also calls. Two screens reporting the age of one table must
+  // not be able to disagree about it (`INV-SSOT`).
+  const freshness = await readXeroContactCacheFreshness();
+  const lastRefreshedAt = freshness.lastRefreshedAt;
   const chunkSize = await getSeedingChunkSize();
   if (!lastRefreshedAt) return emptySnapshot(null, chunkSize);
-  const cacheAgeMs = Date.now() - new Date(lastRefreshedAt).getTime();
-  const contactCacheAgeHours = Math.max(0, Math.floor(cacheAgeMs / 3_600_000));
-  const contactCacheStale = cacheAgeMs > CONTACT_CACHE_STALE_AFTER_MS;
+  const contactCacheAgeHours = freshness.ageHours ?? 0;
+  const contactCacheStale = freshness.stale;
 
   const [members, schoolContactIds, cached] = await Promise.all([
     prisma.member.findMany({
@@ -539,9 +542,11 @@ export async function getXeroMissingContactSnapshot(options?: {
 
   return {
     cacheReady: true,
-    contactCacheLastRefreshedAt: lastRefreshedAt,
-    contactCacheAgeHours,
-    contactCacheStale,
+    ...reportContactCacheFreshness({
+      lastRefreshedAt,
+      ageHours: contactCacheAgeHours,
+      stale: contactCacheStale,
+    }),
     plannedDigest: computePlannedDigest(pushableRows),
     chunkSize,
     estimatedXeroCallsPerChunk:

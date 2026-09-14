@@ -433,3 +433,41 @@ The bounded run; its census is `INV-INT-022`.
   is recorded and the chunk continues, the funnel having left that operation
   `FAILED` and replayable (`INV-INT-019`); a daily limit halts it. Pinned by
   `xero-missing-contact-seeding.test.ts`, `missing-contacts-panel.test.tsx`.
+
+## Erased-member Xero contact review (#3058)
+
+### INV-INT-024
+
+No erasure path asks Xero to change, archive, blank or delete the member's
+CONTACT; this review is how anybody finds out what an erasure left behind.
+
+- **No Xero contact write, on any erasure path.** Neither erasure source names a
+  provider call or an outbox enqueue; each reaches one Xero-named module, the
+  contact-create fence; and `findOrCreateXeroContact` refuses an anonymised
+  member before any provider call, so a credit note's contact repair cannot mint
+  one either. Erasure never waits on Xero; no provider-cleanup state exists for
+  a replay to create.
+- **Erasure is not free of Xero writes, and the guard names which.** Cancelling
+  the member's paid future bookings enqueues a credit note — the accounting
+  ledger, not the contact. Every directly imported module reaching Xero is
+  declared in the contract test.
+- **A retired contact link is NOT an erasure.** Four other paths retire one, so
+  the erasure is proved POSITIVELY from a durable decision record — never from
+  the anonymisation markers (`INV-LIFE-015`), which a hard delete leaves no row
+  to carry.
+- **A contact anything local still points at was never orphaned.** Ownership
+  goes through `INV-INT-018`'s one accessor, over both columns.
+- **Ids only; `finance:view` to read, `finance:edit` to check.** A row carries a
+  member id, a contact id, the erasure kind and its date. The contact cache is
+  read for `contactId` and `contactStatus` alone; the live check keeps only the
+  status and writes no `XeroContactCache` row.
+- **A row is retired only by observing Xero, and otherwise stays.** The `POST` —
+  `getContacts` over the listed ids, archived included — is the one thing that
+  makes the list shrink; no document may say Contact Sync does. A contact left
+  live in Xero stays listed indefinitely.
+
+Rationale: [`xero/ARCHITECTURE.md`](../xero/ARCHITECTURE.md). Pinned by
+`xero-erased-member-contact-review.test.ts`,
+`xero-erased-member-contact-status-check.test.ts`,
+`member-erasure-no-xero-mutation-contract.test.ts`,
+`erased-member-contacts-panel.test.tsx`.

@@ -7,7 +7,10 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { getAuditRequestContext } from "@/lib/audit";
 import { isFullAdmin } from "@/lib/access-roles";
 import { requireAdmin } from "@/lib/session-guards";
-import { setIntegrationCredential } from "@/lib/integration-credentials";
+import {
+  INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH,
+  setIntegrationCredential,
+} from "@/lib/integration-credentials";
 import type {
   CredentialActor,
   CredentialRequestContext,
@@ -138,8 +141,9 @@ export async function GET(request: Request) {
 const bodySchema = z.object({
   provider: z.string().min(1).max(64),
   key: z.string().min(1).max(64),
-  // A credential value; capped to a sane length. Never logged, never returned.
-  value: z.string().min(1).max(4096),
+  // A credential value; capped by the store's own bound. Never logged, never
+  // returned.
+  value: z.string().min(1).max(INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH),
 });
 
 async function requireFullAdmin() {

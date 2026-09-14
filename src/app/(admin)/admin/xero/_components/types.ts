@@ -40,6 +40,7 @@ export type SectionKey =
   | "inbound"
   | "contactSync"
   | "missingContacts"
+  | "erasedMemberContacts"
   | "membershipSync"
   | "usage"
   | "mappings"
@@ -57,6 +58,9 @@ export const SECTION_DEFAULTS: Record<SectionKey, boolean> = {
   // #2939: collapsed by default. It is a one-off migration task, not a thing an
   // operator does weekly, and its dry run reads the whole member table.
   missingContacts: false,
+  // #3058: collapsed by default. On a healthy installation it is empty, and it
+  // reports work that belongs in Xero rather than work to do here.
+  erasedMemberContacts: false,
   membershipSync: true,
   usage: false,
   mappings: false,

@@ -162,6 +162,24 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "never agreed to, or hand it a foreign sync position that silently skips rows " +
     "it has never sent — a fresh import keeps the target's own connection, and a " +
     "target with none stays disconnected (fail-closed) — instance-local",
+  MirotalkSettings:
+    "this install's own video-meeting server (#2940), and ServerNzSettings' case " +
+    "almost exactly: baseUrl names the MiroTalk instance THIS club runs, and the " +
+    "three secrets that make a join link work — the signing key and the host " +
+    "username/password — live in the encrypted credential store and never travel. " +
+    "So importing the address is harmful in the one direction it can go: a target " +
+    "club's members would be sent to the SOURCE club's meeting server, holding a " +
+    "token minted with the target's own key, which that server will not accept. " +
+    "The pairing is the point — this change clears the stored secrets whenever an " +
+    "administrator moves the address, precisely because a secret is meaningless to " +
+    "any instance but the one it was set for, and a bundle apply would re-create " +
+    "the mismatch that clearing exists to prevent. The presenter flag and the " +
+    "join-link lifetime are portable-looking club policy, but they are two columns " +
+    "of the same singleton row and mean nothing without an address; the source " +
+    "club's answers are not worth carrying that risk for. A fresh import keeps the " +
+    "target's own settings, and a target with none falls back to its own " +
+    "environment or to the derived meet.<domain> (fail-closed: no address it did " +
+    "not choose) — instance-local",
 };
 
 /**

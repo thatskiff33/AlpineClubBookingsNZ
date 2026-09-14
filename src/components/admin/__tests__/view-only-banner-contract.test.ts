@@ -304,8 +304,19 @@ const FIGURES = {
    *
    * 351 -> 353 (#2939): the missing-Xero-contact panel's two controls — run the
    * dry run, and create the next batch. MEASURED by re-running this census.
+   *
+   * 353 -> 354 (#3058, arriving with the epic merge): the erased-member Xero
+   * contact panel's "Check these in Xero". Its Refresh stays a plain Button.
+   *
+   * 354 -> 359 (#2940): the Video meetings setup screen. Three on the settings
+   * section (Edit, Save, Cancel — Cancel is gated here rather than left a plain
+   * Button because it is the staged-edit hook's Cancel, mounted only while the
+   * section is already in edit mode, which a view-only admin can never reach)
+   * and two in the secrets section, which renders one Save and one Clear per
+   * secret from a single pair of render sites. This census counts render sites,
+   * not the three rows they produce. MEASURED by re-running it.
    */
-  callSites: 353,
+  callSites: 359,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -319,8 +330,13 @@ const FIGURES = {
    * are disjoint. MEASURED on the MERGED tree, never added together.
    * 298 -> 300 (#2939): both of the missing-contact panel's controls opt out
    * under the banner that panel heads itself with.
+   * 300 -> 301 (#3058, arriving with the epic merge): the erased-member panel's
+   * one control opts out under its section banner.
+   *
+   * 301 -> 306 (#2940): all five of the Video meetings screen's controls opt
+   * out — each of its two sections heads itself with its own banner.
    */
-  optOuts: 300,
+  optOuts: 306,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -349,8 +365,21 @@ const FIGURES = {
    * a `disabled:pointer-events-none` button and an sr-only line on a control
    * out of the tab order, which is the weakness the banner exists to fix. So
    * this is an opt-out with the banner in its own file, not an exception.
+   * 266 -> 267 (#3058, arriving with the epic merge): the erased-member panel's
+   * control passes the literal.
+   *
+   * 267 -> 272 (#2940): the Video meetings screen's two banners and all five of
+   * its controls are in one file, so every one of them is static rather than
+   * vouched.
+   *
+   * Each also passes `readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}`,
+   * which is NOT an exception: the reason is what a Full-Admin-only control
+   * says when it has no banner, and here both banners already state the
+   * Full Admin requirement themselves. It is carried so a future render of
+   * these controls outside this file still says the narrower rule rather than
+   * the area one.
    */
-  staticOptOuts: 266,
+  staticOptOuts: 272,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -397,8 +426,16 @@ const FIGURES = {
    *
    * 93 -> 94 (#2939): the missing-Xero-contact panel heads its own section with
    * one banner, above everything the section renders.
+   *
+   * 94 -> 95 (#3058, arriving with the epic merge): the erased-member Xero
+   * contact panel heads itself with its own banner.
+   *
+   * 95 -> 96 (#2940): the Video meetings setup screen. TWO banners, ONE
+   * component — this figure counts files that render one, and the settings
+   * section and the host sign-in section each head themselves with their own,
+   * which is the one-per-SECTION rule rather than one per page.
    */
-  bannerComponents: 94,
+  bannerComponents: 96,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

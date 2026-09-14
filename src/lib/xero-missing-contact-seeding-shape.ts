@@ -32,6 +32,8 @@
  * and both read exactly these declarations.
  */
 
+import type { ReportedContactCacheFreshness } from "./xero-contact-cache-freshness-shape";
+
 /**
  * Xero's per-minute API budget, which is what really bounds a chunk. Stated
  * here rather than imported because it is used as an ARITHMETIC BASIS for the
@@ -164,18 +166,10 @@ export interface AmbiguousMemberRow extends MissingContactMemberRef {
   xeroContactIds: string[];
 }
 
-export interface MissingContactSnapshot {
+export interface MissingContactSnapshot
+  extends ReportedContactCacheFreshness {
   /** False until a contact sync has run once. Every count below is then zero. */
   cacheReady: boolean;
-  contactCacheLastRefreshedAt: string | null;
-  /**
-   * How old that cache is, in whole hours, and whether it is old enough to
-   * mislead. EXISTENCE was checked from the start; AGE was not, and age is
-   * exactly what turns a "no cached match" row into a duplicate — a six-month
-   * old cache reads identically to a five-minute-old one.
-   */
-  contactCacheAgeHours: number | null;
-  contactCacheStale: boolean;
   /** Digest of the full pushable plan, before any row limit is applied. */
   plannedDigest: string;
   /** Members this installation processes per chunk, derived from call cost. */

@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
+import { isBlockedDestinationHost } from "@/lib/private-destination-hosts";
 
 /**
  * Non-secret Alpine Central Server (ServerNZ) connection settings — a singleton
@@ -56,51 +57,6 @@ export function normalizeBaseUrl(value: string | null | undefined): string | nul
   return trimmed.replace(/\/+$/, "");
 }
 
-/**
- * Hosts a sync destination may never resolve to.
- *
- * This is the FIRST request-input-driven outbound fetch in the codebase — every
- * other provider (Xero, Stripe, Google, Anthropic) pins its endpoint in code —
- * so it is also the first place an admin-supplied string decides where a
- * credential is sent. `docs/SECURITY-ATTACK-SURFACE.md` argues `/api/deploy/warmup`
- * is safe precisely BECAUSE no request input reaches it; this endpoint cannot
- * make that argument and needs a real allowlist instead.
- *
- * Literal-form only, deliberately. A DNS name that RESOLVES to a private address
- * is not caught here and cannot be without resolving at request time and pinning
- * the answer (a TOCTOU fix of its own). What this does close is the direct,
- * typed-in case — cloud metadata at 169.254.169.254, `localhost`, and RFC1918
- * space — which is the shape an admin-supplied field actually takes.
- */
-function isBlockedSyncHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (!host) return true;
-  if (host === "localhost" || host.endsWith(".localhost")) return true;
-  // `.local` (mDNS) and `.internal` (common private zone, incl. GCP metadata).
-  if (host.endsWith(".local") || host.endsWith(".internal")) return true;
-  // IPv6 loopback / unspecified, and IPv4-mapped forms of the same.
-  if (host === "::1" || host === "::" || host.startsWith("::ffff:")) return true;
-  // IPv6 unique-local (fc00::/7) and link-local (fe80::/10).
-  if (/^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host)) return true;
-
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (v4) {
-    const [a, b] = v4.slice(1).map(Number);
-    // Fail CLOSED, not open: the 4-group match guarantees both octets are
-    // present, but this function gates an outbound SSRF surface, so an
-    // unreachable gap here must read as "blocked", never as "not blocked".
-    if (a === undefined || b === undefined) return true;
-    if ([a, b].some((n) => Number.isNaN(n) || n > 255)) return true;
-    if (a === 127 || a === 0 || a === 10) return true; // loopback, "this host", RFC1918
-    if (a === 169 && b === 254) return true; // link-local, incl. cloud metadata
-    if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
-    if (a === 192 && b === 168) return true; // RFC1918
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT (RFC6598)
-    if (a >= 224) return true; // multicast and reserved
-  }
-  return false;
-}
-
 export interface BaseUrlValidation {
   ok: boolean;
   /** Present when `ok`; the normalised origin-and-path to store. */
@@ -137,7 +93,7 @@ export function validateCentralServerBaseUrl(value: string): BaseUrlValidation {
   if (parsed.username || parsed.password) {
     return { ok: false, reason: "Remove the username or password from the URL." };
   }
-  if (isBlockedSyncHost(parsed.hostname)) {
+  if (isBlockedDestinationHost(parsed.hostname)) {
     return {
       ok: false,
       reason:

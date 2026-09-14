@@ -189,6 +189,7 @@ between them they decide where a credential is sent.
 | Xero Setup | The Xero connection and accounting configuration (`/admin/xero/setup`) | The `xeroIntegration` module; Xero OAuth credentials and tenant tokens configured server-side |
 | Google Analytics | Its settings in place on the hub: GA4 measurement id, consent-banner mode, banner wording, and **Ask visitors to choose again** | The `analytics` module; finance **view** to see the status, finance **edit** to change anything |
 | Alpine Central Server | The ServerNZ connection and shared-data setup (`/admin/alpine-server/setup`) | The `alpineCentralServer` module; finance **edit** to enable an item or run a sync, **Full Admin** for the server address and API key |
+| Video meetings | The MiroTalk meeting server, join-link behaviour and host sign-in (`/admin/video-meetings/setup`) | Finance **view** to read where every value comes from, **Full Admin** to change any of it — including the three host sign-in secrets. See [Calendar and meetings](calendar.md) |
 | Database Backups | The guided backup setup wizard (`/admin/backups/setup`): S3 credentials, destination, nightly schedule, and a verification run | Support view; the S3 credentials and destination writes require Full Admin. See [Database Backups](backups.md) |
 
 Integrations is a **support**/**finance** area hub; the Xero credentials
