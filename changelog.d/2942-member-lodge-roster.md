@@ -1,0 +1,1 @@
+- Added an optional **member lodge roster**: a signed-in member can see who else is staying, over the next 30 nights, at a lodge they can already book. Names and nights only. Off by default; switch it on at Admin › Modules. How much of a name is shown is set per lodge and defaults to the full name, and a booking that includes a child names nobody in it.
