@@ -263,7 +263,10 @@ function clubDateKey(value: Date, zone: ClubTimeZone) {
  */
 function normalizeAllocations(
   allocations: PromoDiscountAllocation[] | undefined,
-  fallbackMemberId: string,
+  // #3369: NULL when the booking is owned by an Organisation. See the early
+  // return below — an organisation holds no per-member entitlement, so the
+  // booker fallback has nobody to be about.
+  fallbackMemberId: string | null,
   discountCents: number,
   priceAdjustmentCents: number,
   freeNightsUsed: number
@@ -282,6 +285,13 @@ function normalizeAllocations(
       }))
       .filter(isBeneficialPromoAllocation);
   }
+
+  // #3369: the fallback allocation is the BOOKER's, and an organisation-owned
+  // booking has no booker member. No per-member entitlement is spent and no cap
+  // slot is held, so the honest answer is no allocation row at all rather than
+  // one naming nobody. The partial unique indexes 20260922010000 adds are the
+  // backstop for a null that gets in another way, not the reason for this.
+  if (fallbackMemberId === null) return [];
 
   const fallback = {
     memberId: fallbackMemberId,
@@ -1739,7 +1749,12 @@ export async function redeemPromoCode(
   tx: PrismaTx,
   promoCodeId: string,
   bookingId: string,
-  memberId: string,
+  // #3369: the BOOKER, or null when the booking is owned by an Organisation.
+  // The redemption row then names no member and no booker allocation is
+  // written, because an organisation holds no per-member entitlement. Every
+  // per-member cap still counts exactly the rows it counted before, since only
+  // an organisation-owned booking can leave this empty.
+  memberId: string | null,
   discountCents: number,
   priceAdjustmentCents: number,
   freeNightsUsed?: number,
@@ -1830,7 +1845,13 @@ export async function redeemPromoCode(
  */
 export async function replacePromoRedemptionAllocations(
   tx: PrismaTx,
-  redemption: { id: string; promoCodeId: string; bookingId: string; memberId: string },
+  redemption: {
+    id: string;
+    promoCodeId: string;
+    bookingId: string;
+    // #3369: null when the booking is owned by an Organisation.
+    memberId: string | null;
+  },
   discountCents: number,
   priceAdjustmentCents: number,
   freeNightsUsed?: number,

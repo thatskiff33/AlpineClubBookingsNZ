@@ -231,7 +231,16 @@ export async function getExistingBeneficiaryMemberIds(
     select: { memberId: true },
     distinct: ["memberId"],
   });
-  return new Set(rows.map((row) => row.memberId));
+  // #3369: an allocation row can now name no member, when the booking it
+  // belongs to is owned by an Organisation. Such a row is nobody's entitlement
+  // and can never be in `uniqueMemberIds` anyway — the filter above is `in` a
+  // list of real ids — so dropping the nulls narrows the type without changing
+  // one answer.
+  return new Set(
+    rows
+      .map((row) => row.memberId)
+      .filter((memberId): memberId is string => memberId !== null),
+  );
 }
 
 /**
@@ -271,6 +280,11 @@ export async function getBookingBeneficiaryFreeNights(
   });
   const freeNightsByMemberId = new Map<string, number>();
   for (const row of rows) {
+    // #3369: a booker allocation with no member belongs to an
+    // organisation-owned booking. It protects nobody's free nights because
+    // there is nobody, and the budget arithmetic downstream is keyed on a
+    // member id.
+    if (row.memberId === null) continue;
     freeNightsByMemberId.set(
       row.memberId,
       (freeNightsByMemberId.get(row.memberId) ?? 0) + (row.freeNightsUsed ?? 0)
