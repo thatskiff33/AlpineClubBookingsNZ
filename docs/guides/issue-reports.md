@@ -57,7 +57,8 @@ share.
 
 So the system records, when a report is filed, whether the person filing it had
 admin access at the time. If they did, the picture is treated as possibly showing
-another member's record and **only a Full Admin can open it**.
+another member's record and **only a Full Admin can open it**. The rule is
+written down once, as `INV-PRIV-020`.
 
 What you see if you are not a Full Admin:
 
@@ -85,7 +86,8 @@ Two things worth knowing:
   are deleted automatically after 30 days.
 
 If you genuinely need a withheld picture, ask a Full Admin to look at the report
-— every view is recorded in the audit log either way.
+— every time a report is opened is recorded in the audit log either way, and so
+is every refusal.
 
 ## Settings reference
 

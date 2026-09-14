@@ -798,6 +798,8 @@ Decided on [#2703](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/27
 - **Deleting stays `support:edit`**: deletion shrinks the exposure, so gating it
   would keep pixels alive longer.
 - **The audit distinguishes the outcomes** — viewed, withheld, expired, deleted
-  — and records nothing captured. A refusal writes its own `privacy` row.
+  — and records nothing captured. Each time an officer OPENS a report and is
+  refused, a `privacy` row records the refusal; an action reply is not a view
+  and is not audited as one.
 - One home, `src/lib/issue-report-screenshot-access.ts`; proof in
   `issue-report-admin-origin-screenshots.test.ts`.

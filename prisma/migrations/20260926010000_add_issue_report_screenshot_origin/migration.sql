@@ -1,7 +1,8 @@
 BEGIN;
 
--- #2703 (MAD epic #2725): admin-origin issue-report screenshots are
--- Full-Admin-only.
+-- #2703 (MAD epic #2725), INV-PRIV-020: admin-origin issue-report screenshots
+-- are Full-Admin-only. That invariant is the one home for the rule; this
+-- comment covers only the column.
 --
 -- THE DEFECT. Viewing an issue report needs "support: view", and "support" is a
 -- separate permission area from "membership". So an officer given support access

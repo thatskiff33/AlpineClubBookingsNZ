@@ -30,5 +30,9 @@
 
   The audit log now records, for every report an officer opens, whether the
   screenshot was shown, withheld, already expired or previously deleted, and
-  writes a separate entry each time one is withheld. Neither entry records
-  anything about what the picture showed.
+  writes a separate entry each time opening a report is refused the picture.
+  Resolving or reopening a report is not a view and is not recorded as one, as
+  before. Neither entry records anything about what the picture showed, and both
+  are readable by anyone who can already open Admin > Audit Log.
+
+  The rule behind all of this is written down once, as `INV-PRIV-020`.

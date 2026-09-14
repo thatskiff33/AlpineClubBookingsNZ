@@ -689,19 +689,24 @@ them apart. Treat it as a conversation to have if it keeps happening.
 ### Issue-report screenshot entries (#2703)
 
 A screenshot taken by somebody who had admin access is shown only to a Full
-Admin (see [Issue Reports](issue-reports.md) ->
+Admin (`INV-PRIV-020`; see [Issue Reports](issue-reports.md) ->
 "Screenshots taken by an officer"). Two `privacy`-category actions record how
 that went, and **neither records anything about what the picture showed**.
 
 | Action | Written when | What it contains |
 | --- | --- | --- |
 | `issue_report.admin_viewed` | Every time an officer opens a report, as before | Now also a `screenshotDisposition` saying which of five things happened to the picture: `viewed` (shown to this officer), `withheld` (exists, but they are not a Full Admin), `expired` (cleared by the 30-day sweep), `deleted` (an administrator deleted it) or `none` (there never was one) |
-| `issue_report.screenshot_withheld` | Only on a refusal - an officer opened a report and was not shown an admin-taken screenshot | Who was refused, which report, and a fixed reason. Severity **important**, so a run of them is easy to spot |
+| `issue_report.screenshot_withheld` | Each time an officer OPENS a report and is refused an admin-taken screenshot. Resolving or reopening a report is not a view and is not recorded as one, exactly as before this change | Who was refused, which report, and a fixed reason. Severity **important**, so a run of them is easy to spot |
 
-Both are `privacy`, matching every other issue-report event, which means they
-read with **Support + Membership** rather than Support alone. That is deliberate:
-a refusal record is about a member's data, so it should not be readable by
-exactly the officers the refusal was protecting that data from.
+Both are `privacy`, matching every other issue-report event. **Be clear about
+what that does and does not do.** Anyone who can open Admin > Audit Log reads
+these rows in full — that screen is a support-area surface with no
+per-category filter, so `privacy` withholds nothing from a support-only
+officer there. What the category decides is which AI Diagnostics correlation
+entry can return the row, and there `privacy` needs **Support + Membership**.
+It is the right category under `INV-PRIV-012` either way, because that is where
+a member-data row belongs; it is simply not a second access control on top of
+the screen.
 
 ## Troubleshooting
 

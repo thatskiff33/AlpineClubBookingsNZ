@@ -1011,10 +1011,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // `issue.reported`. The issue report stays `privacy` rather than matching
     // its `/admin/issue-reports` support surface (decision 5) — moving it to
     // `admin` would have WIDENED a member's own report to `support:view` alone.
-    // 19 -> 20 (#2703): `issue_report.screenshot_withheld`. It stays `privacy`
-    // for the same reason `issue.reported` does — the row is about a member's
-    // data, so it must not be readable with `support:view` alone, which is
-    // exactly the access the refusal was protecting that data from.
+    // 19 -> 20 (#2703): `issue_report.screenshot_withheld`. `privacy` for the
+    // same reason `issue.reported` is — it is a member-data row — and NOT
+    // because the category hides it from the officer who was refused. It does
+    // not: Admin > Audit Log is a support-area screen with no per-category
+    // filter, so they read it there in full. What the category picks is the AI
+    // Diagnostics correlation entry, which for `privacy` needs membership too.
     privacy: 20,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
