@@ -6,6 +6,7 @@ import {
   MIROTALK_WRITABLE_CREDENTIAL_KEYS,
   isMirotalkCredentialKey,
   isSameMeetingServer,
+  mirotalkSecretsAtRiskFromAddressChange,
   parseMirotalkLifetimeSeconds,
   stripTrailingSlashes,
   validateMirotalkBaseUrl,
@@ -325,5 +326,118 @@ describe("the one loopback rule (#2940 review, T2)", () => {
         expect([host, isBlockedDestinationHost(host)]).toEqual([host, true]);
       }
     }
+  });
+});
+
+describe("warning BEFORE the save, not after (#2940 review, S7)", () => {
+  const secret = (
+    key: (typeof MIROTALK_WRITABLE_CREDENTIAL_KEYS)[number],
+    source: "database" | "environment" | "unset",
+  ) => ({ key, source, version: null, updatedAt: null, needsReentry: false });
+
+  const STORED_SECRETS = [
+    secret(MIROTALK_CREDENTIAL_KEYS.jwtKey, "database"),
+    secret(MIROTALK_CREDENTIAL_KEYS.meetingUsername, "database"),
+    secret(MIROTALK_CREDENTIAL_KEYS.meetingPassword, "database"),
+  ];
+  const IN_FORCE_FROM_ENV = {
+    effective: "https://meet.club.org",
+    source: "environment" as const,
+    problem: null,
+  };
+  const IN_FORCE_FROM_PAGE = {
+    effective: "https://meet.club.org",
+    source: "database" as const,
+    problem: null,
+  };
+
+  it("warns about nothing when the box only writes down the address in force", () => {
+    // The C1 case seen from the page: the admin is moving off the environment
+    // file, which is what the documentation asks for, and nothing is deleted.
+    expect(
+      mirotalkSecretsAtRiskFromAddressChange({
+        secrets: STORED_SECRETS,
+        inForce: IN_FORCE_FROM_ENV,
+        draftBaseUrl: "meet.club.org",
+      }),
+    ).toEqual([]);
+  });
+
+  it("names every stored secret when the address really moves", () => {
+    expect(
+      mirotalkSecretsAtRiskFromAddressChange({
+        secrets: STORED_SECRETS,
+        inForce: IN_FORCE_FROM_ENV,
+        draftBaseUrl: "https://meet.elsewhere.org",
+      }),
+    ).toEqual([
+      MIROTALK_CREDENTIAL_KEYS.jwtKey,
+      MIROTALK_CREDENTIAL_KEYS.meetingUsername,
+      MIROTALK_CREDENTIAL_KEYS.meetingPassword,
+    ]);
+  });
+
+  it("names only the secrets that are actually STORED here", () => {
+    // An environment secret is not in the store, so the clear cannot touch it
+    // and warning about it would be false.
+    expect(
+      mirotalkSecretsAtRiskFromAddressChange({
+        secrets: [
+          secret(MIROTALK_CREDENTIAL_KEYS.jwtKey, "database"),
+          secret(MIROTALK_CREDENTIAL_KEYS.meetingUsername, "environment"),
+          secret(MIROTALK_CREDENTIAL_KEYS.meetingPassword, "unset"),
+        ],
+        inForce: IN_FORCE_FROM_ENV,
+        draftBaseUrl: "https://meet.elsewhere.org",
+      }),
+    ).toEqual([MIROTALK_CREDENTIAL_KEYS.jwtKey]);
+  });
+
+  it("warns when the box is cleared and the box is what governs today", () => {
+    expect(
+      mirotalkSecretsAtRiskFromAddressChange({
+        secrets: STORED_SECRETS,
+        inForce: IN_FORCE_FROM_PAGE,
+        draftBaseUrl: "",
+      }),
+    ).toHaveLength(3);
+  });
+
+  it("does not warn when the box is cleared and was already empty", () => {
+    expect(
+      mirotalkSecretsAtRiskFromAddressChange({
+        secrets: STORED_SECRETS,
+        inForce: IN_FORCE_FROM_ENV,
+        draftBaseUrl: "   ",
+      }),
+    ).toEqual([]);
+  });
+
+  it("warns about nothing when nothing is stored here to lose", () => {
+    expect(
+      mirotalkSecretsAtRiskFromAddressChange({
+        secrets: [
+          secret(MIROTALK_CREDENTIAL_KEYS.jwtKey, "environment"),
+          secret(MIROTALK_CREDENTIAL_KEYS.meetingUsername, "unset"),
+          secret(MIROTALK_CREDENTIAL_KEYS.meetingPassword, "unset"),
+        ],
+        inForce: IN_FORCE_FROM_ENV,
+        draftBaseUrl: "https://meet.elsewhere.org",
+      }),
+    ).toEqual([]);
+  });
+
+  it("warns on a half-typed address rather than staying quiet", () => {
+    // Mid-edit the draft does not validate. The conservative answer is the
+    // warning: it is removed as soon as the address resolves to the same
+    // server, and being told about a deletion that then does not happen is a
+    // far cheaper mistake than the reverse.
+    expect(
+      mirotalkSecretsAtRiskFromAddressChange({
+        secrets: STORED_SECRETS,
+        inForce: IN_FORCE_FROM_ENV,
+        draftBaseUrl: "https://meet.cl",
+      }),
+    ).toHaveLength(3);
   });
 });

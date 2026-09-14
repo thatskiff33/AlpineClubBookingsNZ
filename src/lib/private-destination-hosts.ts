@@ -21,6 +21,24 @@
  * `docs/SECURITY-ATTACK-SURFACE.md` argues `/api/deploy/warmup` is safe
  * precisely BECAUSE no request input reaches it; a field an administrator types
  * cannot make that argument and needs a real rule instead.
+ *
+ * ## The other IPv4 table in this tree, and why it stays where it is
+ *
+ * `email-delivery.ts`'s `isPrivateIpv4` lists the same RFC1918, CGNAT,
+ * link-local and loopback ranges. It was weighed for merging in #2940's review
+ * (T6) and deliberately left alone, for three reasons rather than the usual
+ * one. The SETS are not the same: this one additionally refuses `0.0.0.0/8` and
+ * multicast, which "cannot be a public mail server" has no opinion about. The
+ * FAIL DIRECTIONS are opposite and both are load-bearing — an unrecognised
+ * shape is blocked here and is NOT reported as a private capture there, because
+ * "I could not tell" must come out as the safe answer in each, and the safe
+ * answer differs. And the underlying fact is frozen by IANA allocation, so
+ * there is no drift for a shared home to prevent: these ranges have not moved
+ * in twenty years and will not. A merged table would have to be reassembled
+ * differently by each caller, which buys nothing and buries the asymmetry.
+ *
+ * What a shared home WOULD be good for is a new range appearing. If one ever
+ * does, add it to both and revisit this note.
  */
 
 /**

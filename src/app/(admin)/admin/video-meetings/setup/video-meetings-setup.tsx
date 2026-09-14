@@ -45,7 +45,7 @@ import {
 import {
   MIROTALK_CREDENTIAL_LABELS,
   MIROTALK_ENV_NAMES,
-  isSameMeetingServer,
+  mirotalkSecretsAtRiskFromAddressChange,
   validateMirotalkBaseUrl,
   validateMirotalkTokenLifetime,
   type MirotalkConfigurationStatus,
@@ -245,39 +245,23 @@ export function VideoMeetingsSetup({
    * The secrets this Save would delete, worked out BEFORE it is pressed
    * (#2940 review, S7 and C1).
    *
-   * The page used to say so afterwards, which for a value nobody can read back
-   * is a report of a loss rather than a chance to avoid one. It asks the same
-   * question the server does, through the same helper, so the warning and the
-   * behaviour cannot drift: has the address IN FORCE changed? Merely writing
-   * down the address you are already using is not a move and clears nothing, and
-   * the page must not claim otherwise.
-   *
-   * A blank box means "go back to the environment", so the comparison is against
-   * whatever is in force now for as long as the box stays blank — which is what
-   * `status.baseUrl.effective` holds once the draft is cleared. While editing,
-   * the draft is what is being proposed.
+   * The decision itself is `mirotalkSecretsAtRiskFromAddressChange`, shared with
+   * nothing else on this page on purpose: it has to ask the same question the
+   * server asks, or the warning promises a deletion that does not happen or
+   * stays silent through one that does.
    */
   const secretsAtRisk = section.editing
-    ? status.secrets.filter((secret) => secret.source === "database")
+    ? mirotalkSecretsAtRiskFromAddressChange({
+        secrets: status.secrets,
+        inForce: status.baseUrl,
+        draftBaseUrl: draft.baseUrl,
+      })
     : [];
-  const proposedAddress = draft.baseUrl
-    ? (baseUrlCheck?.ok ? baseUrlCheck.value : draft.baseUrl)
-    : // Emptying the box hands the field back to the environment (or the
-      // derived default). The page cannot compute that value itself — it is the
-      // resolver's — but it is exactly what the status reports when nothing is
-      // stored, so a blank box is only a move when something IS stored today.
-      status.baseUrl.source === "database"
-      ? null
-      : status.baseUrl.effective;
-  const addressWouldMove =
-    proposedAddress === null ||
-    !isSameMeetingServer(proposedAddress, status.baseUrl.effective);
-  const clearWarning =
-    secretsAtRisk.length > 0 && addressWouldMove
-      ? `Saving this will also delete the stored ${secretsAtRisk
-          .map((secret) => MIROTALK_CREDENTIAL_LABELS[secret.key].toLowerCase())
-          .join(", ")}, because ${secretsAtRisk.length === 1 ? "it only means" : "they only mean"} anything to the meeting server ${secretsAtRisk.length === 1 ? "it was" : "they were"} set for. Nobody can read ${secretsAtRisk.length === 1 ? "it" : "them"} back, so have the new server's values to hand before you save.`
-      : null;
+  const clearWarning = secretsAtRisk.length
+    ? `Saving this will also delete the stored ${secretsAtRisk
+        .map((key) => MIROTALK_CREDENTIAL_LABELS[key].toLowerCase())
+        .join(", ")}, because ${secretsAtRisk.length === 1 ? "it only means" : "they only mean"} anything to the meeting server ${secretsAtRisk.length === 1 ? "it was" : "they were"} set for. Nobody can read ${secretsAtRisk.length === 1 ? "it" : "them"} back, so have the new server's values to hand before you save.`
+    : null;
   const lifetimeCheck = draft.tokenLifetime
     ? validateMirotalkTokenLifetime(draft.tokenLifetime)
     : null;

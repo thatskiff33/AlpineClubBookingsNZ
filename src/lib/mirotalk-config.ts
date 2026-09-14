@@ -590,6 +590,16 @@ export async function getMirotalkConfigurationStatus(): Promise<MirotalkConfigur
   // and reloading would hand back the same stale version for the rest of the
   // TTL. They loop, with no way out but waiting. Nothing else pays for it: this
   // is an admin screen read, not a join click.
+  //
+  // THE ACCEPTED COST, weighed in #2940's review (S4). The GET is `finance:
+  // view`, so an admin who may not change any of this can still drop the cache
+  // by reloading the page — each reload costing the next join click one decrypt
+  // per secret instead of a cached read. It is kept because the correctness
+  // above is not optional and nothing cheaper buys it: a read that skipped the
+  // invalidation would hand out a version token the Save and Clear buttons on
+  // the same screen then lose against, which is a loop the administrator cannot
+  // get out of. The cost is bounded by three decrypts, is paid only by
+  // authenticated admins, and is the same work a cold cache does anyway.
   invalidateProviderCredentialCache(MIROTALK_PROVIDER);
   const resolved = await resolveMirotalk();
 

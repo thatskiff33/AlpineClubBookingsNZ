@@ -401,6 +401,49 @@ export function validateMirotalkBaseUrl(value: string): MirotalkValidation {
 }
 
 /**
+ * Which stored secrets a proposed address change would DELETE — worked out
+ * before the Save, so the page can warn instead of report (#2940 review, S7).
+ *
+ * The page used to say so afterwards, and for three values nobody can read back
+ * that is a notification of a loss rather than a chance to avoid one. The
+ * decision lives here, beside {@link isSameMeetingServer}, so the warning and
+ * the server's behaviour ask the SAME question: the route clears only when the
+ * address IN FORCE moves, so a warning keyed on anything else would promise a
+ * deletion that does not happen, or stay silent through one that does.
+ *
+ * Only `database`-sourced secrets are at risk: an environment one is not stored
+ * here and the clear cannot touch it.
+ *
+ * A BLANK BOX means "hand the address back to the environment". The page cannot
+ * compute what that resolves to — that is the resolver's job on the server — but
+ * it does not need to: while nothing is stored, what the status already reports
+ * IS the fallback, so a blank box moves the server only when something is
+ * stored today. That is the one case this answers conservatively.
+ */
+export function mirotalkSecretsAtRiskFromAddressChange(params: {
+  secrets: readonly MirotalkSecretStatus[];
+  inForce: MirotalkFieldStatus;
+  draftBaseUrl: string;
+}): MirotalkCredentialKey[] {
+  const stored = params.secrets.filter((secret) => secret.source === "database");
+  if (stored.length === 0) return [];
+
+  const typed = params.draftBaseUrl.trim();
+  if (!typed) {
+    // Clearing the box is only a move when the box currently governs.
+    return params.inForce.source === "database"
+      ? stored.map((secret) => secret.key)
+      : [];
+  }
+
+  const check = validateMirotalkBaseUrl(typed);
+  const proposed = check.ok ? check.value : typed;
+  return isSameMeetingServer(proposed, params.inForce.effective)
+    ? []
+    : stored.map((secret) => secret.key);
+}
+
+/**
  * Parse a MiroTalk-style lifetime (`"1h"`, `"30m"`, `"45s"`, `"1d"`, or a bare
  * number of seconds) into seconds, or null when it is not one.
  *
