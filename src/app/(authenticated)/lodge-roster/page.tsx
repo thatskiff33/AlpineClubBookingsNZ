@@ -136,9 +136,15 @@ function LodgeSection({
           </p>
         ) : (
           <ul className="divide-y">
-            {lodge.groups.map((group) => (
+            {lodge.groups.map((group, index) => (
               <li
-                key={`group-${group.label}-${group.nights[0] ?? ""}`}
+                // Index-keyed on purpose. A reduced name is not unique — at
+                // FIRST_NAME_ONLY two guests called John collide, and two
+                // "Family of 4" labels starting the same night collide at any
+                // level. The list is server-rendered, static and never
+                // reordered in the browser, so position is the stable identity
+                // here and a name-derived key would only collide.
+                key={`group-${index}`}
                 className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2"
               >
                 <span className="font-medium">
@@ -156,9 +162,9 @@ function LodgeSection({
                 <Nights nights={group.nights} />
               </li>
             ))}
-            {lodge.people.map((person) => (
+            {lodge.people.map((person, index) => (
               <li
-                key={`person-${person.name}-${person.nights[0] ?? ""}`}
+                key={`person-${index}`}
                 className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2"
               >
                 <span className="font-medium">{person.name}</span>

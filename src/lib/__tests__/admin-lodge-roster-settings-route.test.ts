@@ -14,7 +14,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockPrisma, mockRequireAdmin, mockCreateAuditLog, mockModuleFlags } =
   vi.hoisted(() => ({
-    mockPrisma: { lodge: { findUnique: vi.fn(), update: vi.fn() } },
+    // `$transaction` RUNS the callback against the same doubles rather than
+    // returning a canned value, so the read-then-write the route performs
+    // inside it is really exercised. A double that resolved without calling
+    // back would make every assertion below pass without the route doing
+    // anything.
+    mockPrisma: (() => {
+      const client = {
+        lodge: { findUnique: vi.fn(), update: vi.fn() },
+        $transaction: vi.fn(),
+      };
+      client.$transaction.mockImplementation(
+        async (fn: (tx: typeof client) => unknown) => fn(client)
+      );
+      return client;
+    })(),
     mockRequireAdmin: vi.fn(),
     mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
     mockModuleFlags: vi.fn(),

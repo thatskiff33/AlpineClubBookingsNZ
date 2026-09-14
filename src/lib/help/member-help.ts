@@ -466,7 +466,7 @@ const lodgeRosterHelp: HelpPageContent = {
     },
     {
       q: "Why do I only see part of a name?",
-      a: "Your club picks one of four settings, per lodge: the full name, a first name and surname initial like 'Jane S', the first name alone, or no names at all and just a count. Most clubs show full names.",
+      a: "Your club picks one of four settings, per lodge: the full name, a first name and surname initial like 'Jane S', the first name alone, or no names at all and just a count. The setting starts at full names.",
     },
     {
       q: "Why can I not find this page?",

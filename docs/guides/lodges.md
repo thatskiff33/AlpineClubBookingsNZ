@@ -96,7 +96,7 @@ same **lodge edit** permission as the properties above.
 | Travel note | Directions / arrival notes | — | Optional; appears in booking/pre-arrival emails (up to 2000 chars) |
 | Active | Whether the lodge takes new bookings | on | At least one lodge must stay active; inactive lodges are kept for history |
 | Configure | Opens the per-lodge configuration hub | — | Hub cards: rooms/beds, lockers, seasons & rates, chores. Per-lodge display is a separate section, shown only when the `lobbyDisplay` module is on (off by default) |
-| Member roster name detail | How much of a name other members see for this lodge on the member lodge roster | Use the default (full names) | Per lodge, on the hub's **Member roster** card. Four levels: full names, first name plus surname initial, first names only, or counts with no names. Separate from the lobby display's guest name setting, and editable while the Member lodge roster module is off. Whatever you choose, a booking that includes a child, a booking by an organisation, and a group that had the lodge to itself never name anyone |
+| Member roster name detail | How much of a name other members see for this lodge on the member lodge roster | Use the default (full names) | Per lodge, on the hub's **Member roster** card. Four levels: full names, first name plus surname initial, first names only, or counts with no names. Separate from the lobby display's guest name setting, and editable while the Member lodge roster module is off. Whatever you choose, these never name anyone: a booking that includes a child, a booking by an organisation, a booking that hired the whole lodge, and a party of eight or more that was the only booking in the building on every one of its nights |
 
 ### Other lodges
 

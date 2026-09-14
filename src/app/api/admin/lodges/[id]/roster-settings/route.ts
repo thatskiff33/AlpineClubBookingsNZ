@@ -1,3 +1,4 @@
+import type { DisplayNameGranularity } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -109,21 +110,41 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  // Read the previous value before writing it: the audit row's whole value here
-  // is saying which way the disclosure moved, and a row recording only the new
-  // level cannot answer "did somebody widen this".
-  const before = await prisma.lodge.findUnique({
-    where: { id: parsedParams.data.id },
-    select: { id: true, rosterNameGranularity: true },
-  });
+  // Read the previous value and write the new one in ONE transaction: the
+  // audit row's whole value here is saying which way the disclosure moved, and
+  // a row recording only the new level cannot answer "did somebody widen
+  // this". Read and write unserialised would let two administrators saving at
+  // once produce a before/after pair describing neither real transition —
+  // cheap to prevent, and this is the one surface whose job is to be a
+  // truthful record of a privacy change.
+  //
+  // No advisory lock is taken: this is a single-row update of one nullable
+  // enum on `Lodge`, it joins no lifecycle, settlement or capacity cohort, and
+  // `INV-LOCK-001`/`INV-LOCK-002` are unaffected. Last writer wins, which is
+  // what every sibling per-lodge setting does; the transaction is here for the
+  // coherence of the evidence, not for the value.
+  let before: { id: string; rosterNameGranularity: DisplayNameGranularity | null } | null =
+    null;
+  try {
+    before = await prisma.$transaction(async (tx) => {
+      const current = await tx.lodge.findUnique({
+        where: { id: parsedParams.data.id },
+        select: { id: true, rosterNameGranularity: true },
+      });
+      if (!current) return null;
+      await tx.lodge.update({
+        where: { id: parsedParams.data.id },
+        data: { rosterNameGranularity: body.rosterNameGranularity },
+      });
+      return current;
+    });
+  } catch {
+    return NextResponse.json({ error: "Could not save" }, { status: 500 });
+  }
+
   if (!before) {
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
   }
-
-  await prisma.lodge.update({
-    where: { id: parsedParams.data.id },
-    data: { rosterNameGranularity: body.rosterNameGranularity },
-  });
 
   // Category `admin`, matching every other writer under `/api/admin/lodges/`
   // (`LODGE_CREATED`, `LODGE_UPDATED`, and the lodge-settings and

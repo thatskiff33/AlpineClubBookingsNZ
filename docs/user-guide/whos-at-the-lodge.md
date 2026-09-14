@@ -38,7 +38,7 @@ turn it on.
 **How much of a name you see depends on your club.** Your administrator picks
 one of four settings, per lodge: the full name, a first name and surname
 initial ("Jane S"), the first name alone, or no names at all — just how many
-people are staying. Most clubs show full names.
+people are staying. The setting starts at full names.
 
 **Bookings with children under 18 never name anyone.** A booking that includes
 a child shows a family or group label instead — "Smith family", or "Family of
@@ -58,9 +58,12 @@ much of a name it shows.
 finished. A booking somebody has made but not yet paid for does not appear, so
 the lodge may end up busier than the list suggests.
 
-**A lodge booked out by one group shows as a group, not as people.** When a
-single booking has the lodge to itself, it appears under its label rather than
-as a list of names.
+**A group that had the lodge to itself shows as a group, not as people.** A
+booking that hired the whole lodge appears under its label rather than as a
+list of names, whatever its size. So does a party of eight or more that turned
+out to be the only booking in the building on every one of its nights. A
+smaller party that simply happened to be alone is still named — being the only
+people there on a quiet Tuesday is not the same as taking the place over.
 
 ## Related links
 

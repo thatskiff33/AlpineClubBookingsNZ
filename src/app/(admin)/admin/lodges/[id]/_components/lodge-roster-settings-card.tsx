@@ -252,8 +252,9 @@ export function LodgeRosterSettingsCard({ lodgeId }: { lodgeId: string }) {
               This is applied where the roster is built, so no part of the page
               can show more than it allows. Whatever you choose, a booking that
               includes a child never names anyone in it, and neither does a
-              booking by a school or another organisation, or a group that had
-              the lodge to itself.
+              booking by a school or another organisation, a booking that hired
+              the whole lodge, or a party of eight or more that turned out to be
+              the only booking in the building on every one of its nights.
             </p>
             <p className="text-muted-foreground text-xs">
               This is a separate choice from the lobby display&apos;s guest name

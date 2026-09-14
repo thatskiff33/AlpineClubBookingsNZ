@@ -107,20 +107,60 @@ function instant(day: string): Date {
   return new Date(`${day}T00:00:00.000Z`);
 }
 
+/**
+ * A guest with an EXPLICIT night set, which is what most fixtures here want.
+ *
+ * `stayEnd` is the checkout MORNING — one day past the last night — because
+ * the envelope is half-open (`stayStart <= night < stayEnd`). Setting it to
+ * the last night, as this helper first did, is invisible while an explicit
+ * night set is present (the set wins) and silently drops that last night the
+ * moment one is not. A fixture that is only correct because something else
+ * overrides it is the kind of test that agrees with a bug.
+ */
 function guest(
   firstName: string,
   lastName: string,
   ageTier: "ADULT" | "CHILD" | "NOT_APPLICABLE",
   nights: string[]
 ) {
+  const first = nights[0] ?? TODAY;
+  const last = nights[nights.length - 1] ?? TODAY;
   return {
     firstName,
     lastName,
     ageTier,
-    stayStart: instant(nights[0] ?? TODAY),
-    stayEnd: instant(nights[nights.length - 1] ?? TODAY),
+    stayStart: instant(first),
+    stayEnd: instant(nextDay(last)),
     nights: nights.map((stayDate) => ({ stayDate: instant(stayDate) })),
   };
+}
+
+/**
+ * A guest carrying ONLY the half-open envelope, with no explicit night set —
+ * the other shape the canonical presence rule supports, and the one no roster
+ * fixture exercised until review pointed out that the fallback branch of
+ * `isGuestActiveOnNight` was unreached from this suite.
+ */
+function envelopeGuest(
+  firstName: string,
+  lastName: string,
+  firstNight: string,
+  checkoutMorning: string
+) {
+  return {
+    firstName,
+    lastName,
+    ageTier: "ADULT" as const,
+    stayStart: instant(firstNight),
+    stayEnd: instant(checkoutMorning),
+    nights: [] as { stayDate: Date }[],
+  };
+}
+
+function nextDay(day: string): string {
+  const next = new Date(`${day}T00:00:00.000Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
 }
 
 function lodgeRow(
@@ -660,6 +700,56 @@ describe("member lodge roster — findings from adversarial review", () => {
     const roster = await buildMemberLodgeRoster("viewer-1");
     expect(roster.from).toBe(TODAY);
     expect(roster.to).toBe(FIRST_NIGHT_OUTSIDE);
+  });
+});
+
+describe("member lodge roster — the presence rule's other shapes", () => {
+  it("honours a bare half-open envelope, and excludes the checkout morning", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Env", lastName: "Elope", ageTier: "ADULT" },
+        guests: [envelopeGuest("Env", "Elope", TODAY, "2026-07-04")],
+        checkIn: TODAY,
+        checkOut: "2026-07-04",
+      }),
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Ari", lastName: "Nikau", ageTier: "ADULT" },
+        guests: [guest("Ari", "Nikau", "ADULT", ["2026-07-20"])],
+      }),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    const env = roster.lodges[0]?.people.find((p) => p.name === "Env Elope");
+    expect(
+      env?.nights,
+      "the envelope is half-open: three nights, and the checkout morning is not one of them."
+    ).toEqual([TODAY, "2026-07-02", "2026-07-03"]);
+  });
+
+  it("keeps a gap in a non-contiguous stay rather than filling it", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Split", lastName: "Stay", ageTier: "ADULT" },
+        guests: [guest("Split", "Stay", "ADULT", [TODAY, "2026-07-05"])],
+        checkIn: TODAY,
+        checkOut: "2026-07-06",
+      }),
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Ari", lastName: "Nikau", ageTier: "ADULT" },
+        guests: [guest("Ari", "Nikau", "ADULT", ["2026-07-20"])],
+      }),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    const split = roster.lodges[0]?.people.find((p) => p.name === "Split Stay");
+    expect(
+      split?.nights,
+      "a gap is a real absence; the roster must not say somebody was here on a night they were not."
+    ).toEqual([TODAY, "2026-07-05"]);
   });
 });
 

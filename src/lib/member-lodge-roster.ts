@@ -212,8 +212,18 @@ export async function buildMemberLodgeRoster(
   const lodgeIds = lodges.map((lodge) => lodge.id);
 
   // Only bookings that actually overlap the window, and only the two statuses
-  // that mean somebody is really staying. A waitlisted, cancelled, pending or
-  // unpaid booking is not a stay, and a soft-deleted one is not a booking.
+  // every other "who is actually in the building" surface treats as a stay —
+  // the kiosk day list, the week strip, the lobby display and the chore
+  // roster all read the same set, and a roster that disagreed with them would
+  // be a second answer to one question.
+  //
+  // Be precise about what that excludes, because one of them is not obvious: a
+  // CONFIRMED booking is approved, capacity-holding and invoiced, and it very
+  // probably WILL stay — it is simply not paid yet. Those parties are absent
+  // here, so "nobody else is booked in" can be false. That is the narrower of
+  // the two options and it was chosen deliberately at plan review, on the
+  // grounds that under-disclosing is the safe direction for a privacy surface;
+  // the member guide says the same thing in its own words.
   //
   // Holds are absent by construction rather than by exclusion: a whole-lodge
   // hold and a custodian bed hold are not guests on a PAID booking, so nothing

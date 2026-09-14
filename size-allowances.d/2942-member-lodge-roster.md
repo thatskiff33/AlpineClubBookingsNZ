@@ -17,10 +17,14 @@ reason: the lodge configuration hub gains one card linking to the new Member
   change.
 
 file: src/lib/config-transfer/categories/club-settings.ts
-lines: 1159
-reason: the module-flag classification for `memberLodgeRoster` — whether the
-  flag travels in a config bundle, and why the per-lodge name detail
-  deliberately does not travel with it — has to sit inside the should-travel
-  list beside the flag it classifies. That list IS the decision record for
-  every module flag; lifting one entry's reasoning out to another file is how
-  the next reader stops finding it.
+lines: 1157
+reason: the config-transfer classification for `memberLodgeRoster` — that the
+  flag deliberately does NOT travel in a bundle, and why — has to sit in the
+  excluded map beside the flag it classifies. That map IS the decision record
+  for every module flag; lifting one entry's reasoning out to another file is
+  how the next reader stops finding it. The entry is longer than most because
+  the reasoning is counter-intuitive: adversarial review found that letting the
+  flag travel while the per-lodge name detail does not would switch the roster
+  on at the code default, FULL_NAME, which is the most disclosive of the four
+  levels — so the import door would undo what the default-OFF flag closes at
+  the deploy door.
