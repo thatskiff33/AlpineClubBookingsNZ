@@ -457,10 +457,10 @@ CONTACT; this review is how anybody finds out what an erasure left behind.
   to carry.
 - **A contact anything local still points at was never orphaned.** Ownership
   goes through `INV-INT-018`'s one accessor, over both columns.
-- **Ids only, to `finance:view`, on both verbs.** A row carries a member id, a
-  contact id, the erasure kind and its date. The contact cache is read for
-  `contactId` and `contactStatus` alone; the live check keeps only the status
-  and writes no `XeroContactCache` row.
+- **Ids only; `finance:view` to read, `finance:edit` to check.** A row carries a
+  member id, a contact id, the erasure kind and its date. The contact cache is
+  read for `contactId` and `contactStatus` alone; the live check keeps only the
+  status and writes no `XeroContactCache` row.
 - **A row is retired only by observing Xero, and otherwise stays.** The `POST` —
   `getContacts` over the listed ids, archived included — is the one thing that
   makes the list shrink; no document may say Contact Sync does. A contact left

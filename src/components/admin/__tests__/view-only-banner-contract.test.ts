@@ -304,8 +304,13 @@ const FIGURES = {
    *
    * 351 -> 353 (#2939): the missing-Xero-contact panel's two controls — run the
    * dry run, and create the next batch. MEASURED by re-running this census.
+   *
+   * 353 -> 354 (#3058): the erased-member Xero contact panel's "Check these in
+   * Xero". Its Refresh stays a plain Button — it re-reads local state and costs
+   * nothing — so the panel adds one control, not two. MEASURED by re-running
+   * this census.
    */
-  callSites: 353,
+  callSites: 354,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -319,8 +324,10 @@ const FIGURES = {
    * are disjoint. MEASURED on the MERGED tree, never added together.
    * 298 -> 300 (#2939): both of the missing-contact panel's controls opt out
    * under the banner that panel heads itself with.
+   * 300 -> 301 (#3058): so does the erased-member panel's Xero check, under the
+   * banner that panel now heads itself with.
    */
-  optOuts: 300,
+  optOuts: 301,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -349,8 +356,12 @@ const FIGURES = {
    * a `disabled:pointer-events-none` button and an sr-only line on a control
    * out of the tab order, which is the weakness the banner exists to fix. So
    * this is an opt-out with the banner in its own file, not an exception.
+   *
+   * 266 -> 267 (#3058): the erased-member panel's banner and its Xero check are
+   * in one file, so it is static rather than vouched. MEASURED by re-running
+   * this census.
    */
-  staticOptOuts: 266,
+  staticOptOuts: 267,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -397,8 +408,14 @@ const FIGURES = {
    *
    * 93 -> 94 (#2939): the missing-Xero-contact panel heads its own section with
    * one banner, above everything the section renders.
+   *
+   * 94 -> 95 (#3058): the erased-member Xero contact panel heads its own section
+   * with one. It had none while its only Xero control was thought not to be an
+   * edit; the control spends the club's metered Xero allowance and writes, the
+   * route takes `finance:edit`, and the banner is what says so once rather than
+   * per button. MEASURED by re-running this census.
    */
-  bannerComponents: 94,
+  bannerComponents: 95,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

@@ -22,11 +22,26 @@
  * or deleted, and nothing is queued that would. Whatever an officer decides to
  * do about a contact, they do in Xero.
  *
- * `finance:view` is the audience gate on both, matching the sibling
- * missing-contact census: this is treasurer-facing accounting-identity work and
- * the same officers read both screens. It stays a `view` permission on the
- * `POST` because the `POST` edits nothing an officer could be said to own — it
- * refreshes what this screen knows about somebody else's system.
+ * **`finance:view` to read it, `finance:edit` to check it.** The `GET` is the
+ * treasurer audience gate, matching the sibling missing-contact census's `GET`:
+ * accounting-identity work the same officers read. The `POST` is NOT the same
+ * question, and an earlier revision of this comment claimed that census as its
+ * precedent for holding it at `view` — which was false in the one direction
+ * that mattered. `missing-contacts` gates its `POST` at `finance:edit`, and so
+ * do the two mismatch-resync panels whose `POST`s are this one's structural
+ * twins — snapshot, re-ask Xero about the listed ids, write, recompute — by the
+ * route map's own default for a `POST` under `/api/admin/xero`.
+ *
+ * `edit` is right on its own terms, not merely by neighbourhood. The `POST`
+ * spends the club's metered Xero API budget, in batches of fifty ids, with an
+ * explicit `XeroDailyLimitError` branch because exhausting that budget is a
+ * reachable outcome — and once exhausted it stops invoice sync, payment sync
+ * and the outbox for the rest of the day, for everybody. It also writes:
+ * `checkErasedMemberContactStatuses` stamps the observation into the retired
+ * `CONTACT` link's `metadata`. Somebody admitted only to LOOK should be able to
+ * cause neither. The one `finance:view` `POST` under `/api/admin/xero` —
+ * `member-grouping` — earns it by re-checking `finance:edit` inside for every
+ * action except its dry run; there is no dry-run branch here to except.
  */
 import { NextRequest, NextResponse } from "next/server";
 
@@ -60,8 +75,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  // Stated explicitly rather than left to the route map's default, even though
+  // the two now agree: an explicit literal is what wins at runtime, so writing
+  // it here is what a reader of this file — and the route's own test — can see.
   const guard = await requireAdmin({
-    permission: { area: "finance", level: "view" },
+    permission: { area: "finance", level: "edit" },
   });
   if (!guard.ok) return guard.response;
 

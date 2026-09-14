@@ -19,8 +19,11 @@
  * is no row left, so the link would be a 404 dressed as a destination — and the
  * two erasure kinds are otherwise indistinguishable on the screen.
  *
- * Third, nothing on the panel may change anything. The one control that reaches
- * Xero ASKS it a question; there is no action here that writes.
+ * Third, nothing on the panel may change anything IN XERO. The one control that
+ * reaches Xero asks it a question. It is not free, though — it spends the
+ * club's metered Xero allowance and writes what Xero said onto the retired
+ * CONTACT link here — so it is gated at `finance:edit` like the route behind
+ * it, while the list stays readable at `finance:view`.
  *
  * Fourth, the erasure DATE is derived through the club-time kernel. An earlier
  * revision sliced ten characters off the UTC instant, which renders the day
@@ -33,6 +36,16 @@ import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ErasedMemberContactsPanel } from "../erased-member-contacts-panel"
+
+// PARTIAL: `view-only-action.tsx` reads `ADMIN_VIEW_ONLY_ACTION_REASON` from
+// this same module, so replacing it wholesale takes the shared refusal copy
+// with it and every gated button throws on render.
+const editAccess = vi.hoisted(() => ({ canEdit: true as boolean | undefined }))
+vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => {
+  const actual =
+    (await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")
+  return { ...actual, useAdminAreaEditAccess: () => editAccess.canEdit }
+})
 
 const review = {
   needsReview: 2,
@@ -84,6 +97,38 @@ function renderPanel(body: unknown = { review }) {
 describe("erased-member Xero contact panel (#3058)", () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
+    editAccess.canEdit = true
+  })
+
+  it("does not offer a view-only officer the check that spends Xero budget", async () => {
+    /*
+      The route takes `finance:edit` on the POST — it spends the club's metered
+      Xero allowance and stamps what Xero said onto the retired CONTACT link —
+      so a view-only officer pressing this would get a 403 from a live-looking
+      button. The list itself stays readable, which is the point of the panel.
+    */
+    editAccess.canEdit = false
+    renderPanel()
+    await screen.findByText(/2 contacts to look at/i)
+
+    expect(screen.getByRole("button", { name: /check these in xero/i })).toBeDisabled()
+    // Refresh re-reads local state and costs nothing, so it stays live.
+    expect(screen.getByRole("button", { name: /^refresh$/i })).not.toBeDisabled()
+    // And the reason is said once, in the reading order, rather than in a title
+    // on a `disabled:pointer-events-none` control where it never fires.
+    expect(
+      screen.getByText(/spends the club's Xero API allowance/i),
+    ).toBeInTheDocument()
+  })
+
+  it("leaves the check live for an officer who may edit finance", async () => {
+    renderPanel()
+    await screen.findByText(/2 contacts to look at/i)
+
+    expect(
+      screen.getByRole("button", { name: /check these in xero/i }),
+    ).not.toBeDisabled()
+    expect(screen.queryByText(/spends the club's Xero API allowance/i)).toBeNull()
   })
 
   it("emphasises that the club is not being asked to remove anything", async () => {

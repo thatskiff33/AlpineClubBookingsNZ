@@ -4,10 +4,20 @@
  * The erased-member Xero contact review (#3058). `INV-INT-024`.
  *
  * A NOTICE, not a tool. Every other panel on this page acts on something; this
- * one tells an officer something and hands every decision to them. There is no
- * `ViewOnlyActionButton` and therefore no view-only banner — not because the
- * gating was skipped but because nothing here is an edit: the one control that
- * reaches Xero ASKS it a question (`getContacts`) and changes nothing in it.
+ * one tells an officer something and hands every decision to them.
+ *
+ * ONE CONTROL IS STILL GATED, and an earlier revision of this comment argued it
+ * should not be — "nothing here is an edit, because the one control that
+ * reaches Xero ASKS it a question and changes nothing in it". Changing nothing
+ * in XERO is the wrong test. "Check these in Xero" spends the club's metered
+ * Xero API budget, which is finite and shared: exhaust it and invoice sync,
+ * payment sync and the outbox stop for everybody until it resets. And it writes
+ * here, stamping what Xero said onto the retired `CONTACT` link. The route
+ * takes `finance:edit` for exactly that, so the button is a
+ * `ViewOnlyActionButton` under the section's one
+ * `AdminViewOnlySectionBanner` — otherwise a view-only officer would get a live
+ * button that answers 403. Refresh stays an ordinary `Button`: it re-reads
+ * local state, costs nothing and is what the section is FOR.
  *
  * THE COPY IS THE FEATURE, and it is written against one failure mode: an
  * officer reading this list as a to-do list of things the club must delete from
@@ -37,6 +47,11 @@ import { Loader2, RefreshCw, Search } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
@@ -159,6 +174,7 @@ export function ErasedMemberContactsPanel({
   shortCode: string | null
 }) {
   const clubTime = useClubTime()
+  const canEdit = useAdminAreaEditAccess("finance")
   const [review, setReview] = useState<ErasedMemberXeroContactReview | null>(null)
   const [check, setCheck] = useState<StatusCheckSummary | null>(null)
   const [loading, setLoading] = useState(false)
@@ -239,7 +255,17 @@ export function ErasedMemberContactsPanel({
             )}
             Refresh
           </Button>
-          <Button
+          {/*
+            `describeReason={false}`, and the section's banner carries the
+            explanation instead — the same arrangement as the missing-contact
+            panel beside it, for the same measured reason: a kept reason lands
+            in a `title` and an sr-only line on a DISABLED button, and
+            `buttonVariants` sets `disabled:pointer-events-none`, so the title
+            never fires and the sr-only line sits outside the tab order.
+          */}
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
             variant="outline"
             size="sm"
             onClick={() => void runCheck()}
@@ -251,10 +277,14 @@ export function ErasedMemberContactsPanel({
               <Search aria-hidden className="mr-2 size-4" />
             )}
             Check these in Xero
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       }
     >
+      <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-3">
+        You can read this list. Checking these contacts in Xero spends the
+        club&apos;s Xero API allowance, so it needs finance edit access.
+      </AdminViewOnlySectionBanner>
       <div className="space-y-3">
         {/*
           THE LOAD-BEARING SENTENCE, and the only emphasised thing on the panel.

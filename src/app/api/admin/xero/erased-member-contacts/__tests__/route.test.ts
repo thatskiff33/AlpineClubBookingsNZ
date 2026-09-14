@@ -10,9 +10,16 @@
  *
  * The audience matters more than usual on this surface: every row names a
  * member this club has erased, which is information about a person who asked to
- * be forgotten. `finance:view` is the treasurer audience, matching the sibling
- * missing-contact census — and `view`, not `edit`, because there is nothing
- * here to change.
+ * be forgotten. `finance:view` is the treasurer audience for the READ, matching
+ * the sibling missing-contact census's `GET`.
+ *
+ * THE TWO VERBS ARE NOT THE SAME QUESTION, and an earlier revision of this file
+ * pinned them as if they were. The `POST` spends the club's metered Xero API
+ * budget and stamps a durable observation on the retired `CONTACT` link, so it
+ * takes `finance:edit` — the level `missing-contacts`, and both mismatch-resync
+ * panels, already take for a `POST` that re-asks Xero and writes what it said.
+ * A view-only officer can read this list and cannot spend the club's budget
+ * against it; these two assertions are the whole of that rule in force.
  */
 import { NextRequest } from "next/server";
 import { XeroResyncUnavailableError } from "@/lib/xero-mismatch-resync";
@@ -79,6 +86,20 @@ describe("GET /api/admin/xero/erased-member-contacts (#3058)", () => {
     });
   });
 
+  it("stays at view, because reading the list costs the club nothing", async () => {
+    /*
+      The other half of the pair below. Raising the READ to `edit` would be a
+      real loss — a finance officer admitted to look could no longer see what an
+      erasure left behind — and the engine behind this verb makes no provider
+      call and writes no row, so there is nothing here to pay for.
+    */
+    await GET(request());
+
+    expect(mocks.requireAdmin).not.toHaveBeenCalledWith({
+      permission: { area: "finance", level: "edit" },
+    });
+  });
+
   it("reads nothing at all when the guard refuses", async () => {
     const refusal = new Response("no", { status: 403 });
     mocks.requireAdmin.mockResolvedValue({ ok: false, response: refusal });
@@ -115,9 +136,22 @@ describe("POST /api/admin/xero/erased-member-contacts (#3058)", () => {
     mocks.requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
   });
 
-  it("applies the same finance:view gate as the read", async () => {
+  it("takes finance:edit, because it spends Xero budget and writes", async () => {
+    /*
+      NOT the read's gate, and the difference is the point. This verb calls
+      `getContacts` through the metered client — fifty ids a call, up to the
+      route's own row ceiling — and stamps what Xero said onto the retired
+      CONTACT link. Exhausting the club's daily Xero budget stops invoice sync,
+      payment sync and the outbox for everybody until it resets, so an officer
+      admitted only to LOOK must not be able to start this. `missing-contacts`
+      gates its run at `finance:edit` for the same reason, and both
+      mismatch-resync panels take it from the route map's default.
+    */
     await POST(request());
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: { area: "finance", level: "edit" },
+    });
+    expect(mocks.requireAdmin).not.toHaveBeenCalledWith({
       permission: { area: "finance", level: "view" },
     });
   });

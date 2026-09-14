@@ -32,4 +32,7 @@
   member's future bookings, and cancelling one they had paid for raises a credit
   note, exactly as any other cancellation would.
 
-  Only an officer with finance access can see the list.
+  Only an officer with finance access can see the list, and pressing **Check
+  these in Xero** needs finance edit access — it uses a share of the club's daily
+  Xero allowance, and if that runs out, invoice and payment syncing stop until it
+  resets.

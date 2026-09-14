@@ -460,7 +460,20 @@ ran.
 `POST /api/admin/xero/erased-member-contacts` closes that loop. It asks
 `getContacts` about exactly the ids on screen with archived included, keeps ONE
 field of the answer, and stamps it on the retired `CONTACT` link's `metadata`
-(`xero-erased-member-contact-status-check.ts`). It writes no `XeroContactCache`
+(`xero-erased-member-contact-status-check.ts`).
+
+**The two verbs are gated differently, and the split is the point.** The `GET`
+is `finance:view`: it computes from local state, calls no provider and writes
+nothing, so any officer admitted to the treasurer audience may read what an
+erasure left behind. The `POST` is `finance:edit`. It spends the club's metered
+Xero allowance — fifty ids a call, with an explicit `XeroDailyLimitError`
+branch — and once that allowance is gone, invoice sync, payment sync and the
+outbox stop for everybody until it resets; and it writes the observation onto
+the retired link. That is the same level `missing-contacts` takes on its run,
+and the same one the two mismatch-resync panels take from the route map's
+default for a `POST` under `/api/admin/xero`. The panel matches it with an
+`AdminViewOnlySectionBanner` and a `ViewOnlyActionButton` on the check, so a
+view-only officer reads the list and is not offered a button that would 403. It writes no `XeroContactCache`
 row deliberately, for two independent reasons: a full refresh re-imports the
 erased person's name, email, phone, address and the date of birth this
 application writes into the NZBN field; and a status-only stub would give

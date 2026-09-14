@@ -205,6 +205,12 @@ one button that reaches Xero at all only asks it a question.
    Xero about the contacts on the list — archived ones included — and the ones
    you have dealt with drop off it, counted instead of listed.
 
+> **Who can do what here.** Anyone with finance access can read the list.
+> Pressing **Check these in Xero** needs finance *edit* access, because it
+> spends a share of the club's daily Xero allowance — and if that allowance runs
+> out, invoice and payment syncing stop for the rest of the day. If you can see
+> the list but the button is greyed out, that is why.
+
 > **Contact Sync will not do that for you, and nothing else will either.** It
 > only fetches contacts that are *not* archived, so the moment you archive one
 > it becomes invisible to it; and the erasure deleted this application's cached
