@@ -37,10 +37,10 @@ import {
  *
  * Keeping them apart is what stops a member clicking Join from dragging the
  * audit writer and the credential MUTATORS into that request's module graph —
- * the join path needs `resolveIntegrationCredential` and nothing else from the
- * credential store. It also gives the credential-actor census (#2723) one file
- * to name for this feature's three mutator call sites instead of a file it
- * shares with the resolver.
+ * the resolver reaches the credential store for its read and its cache
+ * invalidation only, and for none of its writes. It also gives the
+ * credential-actor census (#2723) one file to name for this feature's three
+ * mutator call sites instead of a file it shares with the resolver.
  *
  * They import the resolver and it never imports them, so the edge stays
  * one-directional: settings-write -> config -> settings-shared.

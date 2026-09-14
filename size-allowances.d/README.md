@@ -120,8 +120,13 @@ naming that path, so the second lane has to **edit the first lane's fragment** �
 re-measuring the number and saying which issues the figure now covers — rather
 than adding one of its own. Two lanes editing one file is exactly what fragment
 directories remove, so expect it, and check the directory for the path you are
-about to declare before you write a new file. (#2940 hit this on
-`src/lib/admin-permissions.ts`, whose allowance #2937 had introduced.)
+about to declare before you write a new file. (#2940 hit this TWICE in one pull
+request — on `src/lib/admin-permissions.ts`, whose allowance #2937 had
+introduced, and again on `src/app/api/admin/integrations/credentials/route.ts`,
+whose allowance came from #2723. The second one is the instructive half: the
+lane had already re-measured the first, and then a later commit in its own fix
+round grew a different file that a different lane had declared. Checking once is
+not enough — check when the diff changes.)
 
 ## Where the rules live
 
