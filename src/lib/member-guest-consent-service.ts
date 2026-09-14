@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { bookingOwnerEmailContext } from "@/lib/booking-email-contract";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -1063,8 +1064,12 @@ async function notifyMemberGuestConsentOutcome(params: {
     if (bookingOwner(booking).member?.email) {
       try {
         await sendMemberGuestConsentOutcomeEmail({
-          bookingId,
-          recipient: { kind: "member", memberId: bookingOwner(booking).member.id },
+          // #3369: a school has no member to name, and the recipient kind that
+          // describes it already exists — see `bookingOwnerEmailContext`.
+          ...bookingOwnerEmailContext(
+            bookingId,
+            bookingOwner(booking).member.id ?? null,
+          ),
           email: bookingOwner(booking).member.email,
           firstName: bookingOwner(booking).member.firstName ?? "",
           checkIn: booking.checkIn,

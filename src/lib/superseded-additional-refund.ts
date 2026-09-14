@@ -112,7 +112,7 @@ export async function reportSupersededPaymentRefund(params: {
       context = {
         memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
         memberEmail: bookingOwner(booking).member.email,
-        memberId: bookingOwner(booking).member.id,
+        memberId: bookingOwner(booking).member.id ?? null,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         lodgeId: booking.lodgeId ?? null,

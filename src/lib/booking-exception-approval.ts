@@ -631,7 +631,12 @@ export function buildPolicyExceptionApprovalHooks(
         booking.status === "CONFIRMED" ||
         booking.payment?.status === "SUCCEEDED";
       await sendBookingPolicyExceptionApprovedEmail(
-        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).member.id },
+        {
+          bookingId: booking.id,
+          // #3369: the OWNING MEMBER, absent for a school. The projection carries
+          // the id only when there is a member to have one.
+          recipientMemberId: bookingOwner(booking).member.id ?? null,
+        },
         bookingOwner(booking).member.email,
         {
           firstName: bookingOwner(booking).member.firstName,

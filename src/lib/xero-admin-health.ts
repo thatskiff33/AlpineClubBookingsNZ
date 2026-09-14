@@ -134,7 +134,7 @@ function formatBookingSnapshot(input: {
   return {
     bookingId: input.id,
     paymentId: input.payment.id,
-    memberId: bookingOwner(input).member.id,
+    memberId: bookingOwner(input).member.id ?? null,
     memberName: `${bookingOwner(input).member.firstName} ${bookingOwner(input).member.lastName}`,
     memberEmail: bookingOwner(input).member.email,
     status: input.status as "PAID",
