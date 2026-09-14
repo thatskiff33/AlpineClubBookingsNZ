@@ -3,41 +3,50 @@
 /**
  * The erased-member Xero contact panel (#3058). `INV-INT-024`.
  *
- * THREE properties are worth a browser-shaped test here, and the first is the
- * one the whole issue turns on.
+ * The properties worth a browser-shaped test here, and the first is the one the
+ * whole issue turns on.
  *
  * The panel must not read as a to-do list of things the club has to delete from
  * Xero. That is not a style preference: the settled contract is that this
- * application performs no Xero mutation as part of erasure and makes no claim
- * about what Xero should hold, so a screen implying otherwise would be the
- * feature shipping the exact instruction it was created to avoid giving. It is
- * asserted on the rendered text because that is what an officer reads.
+ * application makes no claim about what Xero should hold, so a screen implying
+ * otherwise would be the feature shipping the exact instruction it was created
+ * to avoid giving. It is asserted on the rendered text because that is what an
+ * officer reads — including the EMPHASIS, because an earlier revision bolded
+ * the backlog count and left the load-bearing sentence in grey above it, so a
+ * treasurer skimming took away a bolded number.
  *
  * Second, a hard-deleted member must not be offered a member-page link. There
  * is no row left, so the link would be a 404 dressed as a destination — and the
  * two erasure kinds are otherwise indistinguishable on the screen.
  *
- * Third, nothing on the panel may be an action. A button that wrote would be a
- * far worse defect than a wrong sentence, and it is exactly the kind that gets
- * added later "for convenience".
+ * Third, nothing on the panel may change anything. The one control that reaches
+ * Xero ASKS it a question; there is no action here that writes.
+ *
+ * Fourth, the erasure DATE is derived through the club-time kernel. An earlier
+ * revision sliced ten characters off the UTC instant, which renders the day
+ * before for most of the New Zealand working day — on a list sold on working
+ * oldest-first by date.
  */
 
 import "@testing-library/jest-dom/vitest"
-import { render, screen, waitFor } from "@/lib/__tests__/support/club-time-render"
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ErasedMemberContactsPanel } from "../erased-member-contacts-panel"
 
 const review = {
   needsReview: 2,
-  alreadyArchivedInXero: 1,
+  alreadyRetiredInXero: 1,
   rows: [
     {
       memberId: "member-anon",
       xeroContactId: "xero-contact-anon",
       erasure: "ANONYMISED_BY_DELETION_REQUEST" as const,
-      erasedAt: "2026-03-04T00:00:00.000Z",
+      // 16:30 UTC on 4 March is already 05:30 on 5 March at the club, so a
+      // naive `slice(0, 10)` prints "2026-03-04" and the panel is a day out.
+      erasedAt: "2026-03-04T16:30:00.000Z",
       contactStatus: "ACTIVE" as const,
+      contactStatusCheckedAt: "2026-06-20T00:00:00.000Z",
     },
     {
       memberId: "member-gone",
@@ -45,20 +54,23 @@ const review = {
       erasure: "HARD_DELETED" as const,
       erasedAt: "2026-04-05T00:00:00.000Z",
       contactStatus: "UNKNOWN" as const,
+      contactStatusCheckedAt: null,
     },
   ],
   truncated: false,
+  lastContactStatusCheckAt: "2026-06-20T00:00:00.000Z",
   contactCacheLastRefreshedAt: "2026-06-01T00:00:00.000Z",
   contactCacheAgeHours: 2,
   contactCacheStale: false,
 }
 
 function renderPanel(body: unknown = { review }) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({ ok: true, json: async () => body }) as unknown as Response),
+  const fetchMock = vi.fn(
+    async (_url: string, _init?: RequestInit) =>
+      ({ ok: true, json: async () => body }) as unknown as Response,
   )
-  return render(
+  vi.stubGlobal("fetch", fetchMock)
+  render(
     <ErasedMemberContactsPanel
       open
       onToggle={() => {}}
@@ -66,6 +78,7 @@ function renderPanel(body: unknown = { review }) {
       shortCode="ABC123"
     />,
   )
+  return fetchMock
 }
 
 describe("erased-member Xero contact panel (#3058)", () => {
@@ -73,19 +86,46 @@ describe("erased-member Xero contact panel (#3058)", () => {
     vi.unstubAllGlobals()
   })
 
-  it("says the club is not being asked to remove anything from Xero", async () => {
+  it("emphasises that the club is not being asked to remove anything", async () => {
     renderPanel()
     await screen.findByText(/2 contacts to look at/i)
 
-    expect(
-      screen.getByText(/never edits, archives or deletes anything in/i),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/not asking for anything to be removed/i),
-    ).toBeInTheDocument()
+    const headline = screen.getByText(/not asking for anything to be removed from Xero/i)
+    expect(headline).toBeInTheDocument()
+    /*
+      The ONE emphasised thing. If the count is bolded and this is not, the
+      panel's own design goal is inverted — which is what shipped before.
+    */
+    expect(headline.className).toContain("font-medium")
+    expect(screen.getByText(/2 contacts to look at/i).className).not.toContain("font-medium")
     expect(
       screen.getByText(/decision for whoever\s+administers Xero/i),
     ).toBeInTheDocument()
+  })
+
+  it("does not claim erasure changes nothing at all in Xero", async () => {
+    /*
+      It DOES change something: erasure cancels the member's future bookings,
+      and cancelling a paid one raises a credit note. The true, narrower claim
+      is about the contact, and the panel must make that one instead.
+    */
+    renderPanel()
+    await screen.findByText(/2 contacts to look at/i)
+
+    expect(screen.queryByText(/never edits, archives or deletes anything in/i)).toBeNull()
+    expect(screen.queryByText(/removes their details from this application and does nothing else/i)).toBeNull()
+    expect(
+      screen.getByText(/does not ask Xero to\s+change, archive or delete their contact/i),
+    ).toBeInTheDocument()
+  })
+
+  it("renders the erasure date on the club's calendar, not UTC's", async () => {
+    renderPanel()
+    await screen.findByText(/2 contacts to look at/i)
+
+    // 2026-03-04T16:30Z is 5 March at the club. The naive slice printed 4 March.
+    expect(screen.getByText(/Erased 5 Mar 2026/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Erased 2026-03-04/)).toBeNull()
   })
 
   it("links an anonymised member to their record and a hard-deleted one to nothing", async () => {
@@ -105,7 +145,7 @@ describe("erased-member Xero contact panel (#3058)", () => {
     expect(hardDeleted.tagName).not.toBe("A")
   })
 
-  it("offers every contact to Xero and nothing to press here", async () => {
+  it("offers every contact to Xero, and only reads on this page", async () => {
     renderPanel()
     await screen.findByText(/2 contacts to look at/i)
 
@@ -113,39 +153,94 @@ describe("erased-member Xero contact panel (#3058)", () => {
     expect(xeroLinks).toHaveLength(2)
 
     /*
-      The only two controls are the section's own collapse toggle — which
-      carries `aria-expanded` and navigates nothing — and Refresh, which
-      re-reads. Anything else would be an action on a screen whose entire
-      contract is that it takes none, and that is the kind of control that gets
-      added later "for convenience".
+      The controls are the section's own collapse toggle — which carries
+      `aria-expanded` and navigates nothing — Refresh, which re-reads locally,
+      and the Xero status check, which asks Xero a question and changes nothing
+      in it. Anything else would be an action on a screen whose entire contract
+      is that it takes none, and that is the kind of control that gets added
+      later "for convenience".
     */
     const actionable = screen
       .getAllByRole("button")
       .filter((button) => !button.hasAttribute("aria-expanded"))
       .map((button) => button.textContent?.trim().toLowerCase())
-    expect(actionable).toEqual(["refresh"])
+    expect(actionable).toEqual(["refresh", "check these in xero"])
   })
 
-  it("counts the contacts somebody has already archived in Xero", async () => {
+  it("checks the listed contacts in Xero with a POST, and reports what came back", async () => {
+    const fetchMock = renderPanel()
+    await screen.findByText(/2 contacts to look at/i)
+
+    fetchMock.mockImplementation(
+      async (_url: string, _init?: RequestInit) =>
+        ({
+          ok: true,
+          json: async () => ({
+            review: { ...review, needsReview: 1, alreadyRetiredInXero: 2, rows: [review.rows[1]] },
+            check: {
+              checkedContacts: 2,
+              observedContacts: 2,
+              notFoundInXero: 0,
+              retiredInXero: 1,
+              checkedAt: "2026-06-25T00:00:00.000Z",
+            },
+          }),
+        }) as unknown as Response,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /check these in xero/i }))
+
+    await screen.findByText(/Asked Xero about 2 contacts/i)
+    expect(screen.getByText(/1 contact to look at/i)).toBeInTheDocument()
+
+    const method = fetchMock.mock.calls.at(-1)?.[1]?.method
+    expect(method).toBe("POST")
+  })
+
+  it("counts the contacts somebody has already dealt with in Xero", async () => {
     renderPanel()
-    await screen.findByText(/1 more is already archived in Xero/i)
+    await screen.findByText(/1 more has already been archived or erased in Xero/i)
   })
 
-  it("says plainly when nothing was left behind", async () => {
+  it("does not contradict itself when the work is finished", async () => {
+    /*
+      The state the archived count exists to celebrate, and the one the earlier
+      revision handled worst: it printed "0 contacts to look at. 3 more are
+      already archived" directly above "No erasure has left a Xero contact
+      behind". Both sentences, at once, about the same three contacts.
+    */
     renderPanel({
-      review: { ...review, needsReview: 0, alreadyArchivedInXero: 0, rows: [] },
+      review: { ...review, needsReview: 0, alreadyRetiredInXero: 3, rows: [] },
+    })
+
+    await screen.findByText(/Nothing left to look at/i)
+    expect(
+      screen.getByText(/All 3 contacts an erasure left behind have been archived or erased in Xero/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/No erasure in this application has left a Xero contact behind/i),
+    ).toBeNull()
+  })
+
+  it("says plainly when nothing was left behind at all", async () => {
+    renderPanel({
+      review: { ...review, needsReview: 0, alreadyRetiredInXero: 0, rows: [] },
     })
     await screen.findByText(/No erasure in this application has left a Xero contact behind/i)
   })
 
-  it("warns that a stale cache can keep an archived contact listed", async () => {
+  it("does not promise that Contact Sync will make the list shrink", async () => {
+    /*
+      It cannot. The bulk contact sync fetches changed contacts with archived
+      ones excluded, and the erasure deleted the contact's cache row — so an
+      archived contact is invisible to it for ever. Four places used to say
+      otherwise.
+    */
     renderPanel({
-      review: { ...review, contactCacheAgeHours: 400, contactCacheStale: true },
+      review: { ...review, lastContactStatusCheckAt: null },
     })
     await waitFor(() =>
-      expect(
-        screen.getByText(/may still be listed/i),
-      ).toBeInTheDocument(),
+      expect(screen.getByText(/Contact Sync will not tell you/i)).toBeInTheDocument(),
     )
   })
 })

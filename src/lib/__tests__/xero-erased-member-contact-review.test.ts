@@ -104,8 +104,25 @@ import { getErasedMemberXeroContactReview } from "@/lib/xero-erased-member-conta
 const { reads } = mocks;
 
 /** A retired `Member` → `CONTACT` link, which is the review's candidate list. */
-function retiredLink(memberId: string, contactId: string) {
-  return { localId: memberId, xeroObjectId: contactId };
+function retiredLink(
+  memberId: string,
+  contactId: string,
+  /**
+   * What the live status check last observed about this contact in Xero, if
+   * anything. It is stamped on the retired link's `metadata` because that is
+   * the only durable home available: the erasure deleted the contact's cache
+   * row, and re-creating one would manufacture the NZBN write permission the
+   * deletion exists to remove.
+   */
+  observation?: { contactStatus: string; observedAt: string },
+) {
+  return {
+    localId: memberId,
+    xeroObjectId: contactId,
+    metadata: observation
+      ? { linkedVia: "email_match", erasedContactReview: observation }
+      : null,
+  };
 }
 
 describe("erased-member Xero contact review (#3058)", () => {
@@ -156,9 +173,11 @@ describe("erased-member Xero contact review (#3058)", () => {
         xeroContactId: "contact-1",
         erasure: "ANONYMISED_BY_DELETION_REQUEST",
         erasedAt: "2026-05-01T03:00:00.000Z",
-        // Erasure DELETES the cache row, so an un-resynced contact is honestly
-        // unknown rather than assumed active.
+        // Erasure DELETES the cache row, and the bulk contact sync never
+        // re-fetches an archived contact, so a contact nobody has checked is
+        // honestly unknown rather than assumed active.
         contactStatus: "UNKNOWN",
+        contactStatusCheckedAt: null,
       },
     ]);
   });
@@ -248,25 +267,160 @@ describe("erased-member Xero contact review (#3058)", () => {
     expect((await getErasedMemberXeroContactReview()).rows).toEqual([]);
   });
 
-  it("counts a contact already archived in Xero instead of listing it", async () => {
+  it("counts a contact the live check found archived, instead of listing it", async () => {
+    /*
+      SEEDED THE WAY PRODUCTION REACHES IT. An earlier revision of this test
+      seeded a `XeroContactCache` row saying `ARCHIVED` — and a real erasure
+      DELETES that row, while the bulk contact sync fetches changed contacts
+      with `includeArchived: false` and so can never write it back. It proved
+      the counter on a state this population cannot be in.
+
+      The reachable state is an observation stamped by the live check on the
+      retired link, which is the one thing that ever retires a row.
+    */
     linkLedger({
-      retired: [retiredLink("m7", "contact-7"), retiredLink("m8", "contact-8")],
+      retired: [
+        retiredLink("m7", "contact-7", {
+          contactStatus: "ARCHIVED",
+          observedAt: "2026-06-20T00:00:00.000Z",
+        }),
+        retiredLink("m8", "contact-8", {
+          contactStatus: "ACTIVE",
+          observedAt: "2026-06-20T00:00:00.000Z",
+        }),
+      ],
     });
     reads.deletionRequest.findMany.mockResolvedValue([
       { memberId: "m7", reviewedAt: new Date("2026-05-06T00:00:00.000Z") },
       { memberId: "m8", reviewedAt: new Date("2026-05-07T00:00:00.000Z") },
     ]);
-    reads.xeroContactCache.findMany.mockResolvedValue([
-      { contactId: "contact-7", contactStatus: "ARCHIVED" },
-      { contactId: "contact-8", contactStatus: "ACTIVE" },
+
+    const review = await getErasedMemberXeroContactReview();
+
+    expect(review.alreadyRetiredInXero).toBe(1);
+    expect(review.needsReview).toBe(1);
+    expect(review.rows.map((row) => row.xeroContactId)).toEqual(["contact-8"]);
+    expect(review.rows[0].contactStatus).toBe("ACTIVE");
+    expect(review.rows[0].contactStatusCheckedAt).toBe("2026-06-20T00:00:00.000Z");
+    expect(review.lastContactStatusCheckAt).toBe("2026-06-20T00:00:00.000Z");
+  });
+
+  it("retires a contact Xero has been asked to erase, rather than calling it active", async () => {
+    /*
+      `GDPRREQUEST` is Xero's third contact status and the earlier classifier
+      was a DENYLIST — anything that was not exactly `ARCHIVED` became active.
+      So the one row most certainly needing no further attention was the one
+      the panel asserted most confidently was live.
+    */
+    linkLedger({
+      retired: [
+        retiredLink("m11", "contact-11", {
+          contactStatus: "GDPR_ERASED",
+          observedAt: "2026-06-21T00:00:00.000Z",
+        }),
+      ],
+    });
+    reads.deletionRequest.findMany.mockResolvedValue([
+      { memberId: "m11", reviewedAt: new Date("2026-05-10T00:00:00.000Z") },
     ]);
 
     const review = await getErasedMemberXeroContactReview();
 
-    expect(review.alreadyArchivedInXero).toBe(1);
-    expect(review.needsReview).toBe(1);
-    expect(review.rows.map((row) => row.xeroContactId)).toEqual(["contact-8"]);
-    expect(review.rows[0].contactStatus).toBe("ACTIVE");
+    expect(review.alreadyRetiredInXero).toBe(1);
+    expect(review.needsReview).toBe(0);
+    expect(review.rows).toEqual([]);
+  });
+
+  it("believes the live check over a leftover cache row", async () => {
+    // A cache row for an erased member's contact can only be older news than an
+    // observation about the same id: the erasure deleted the row, so anything
+    // there predates the erasure or was written by a sync that cannot see an
+    // archived contact at all.
+    linkLedger({
+      retired: [
+        retiredLink("m12", "contact-12", {
+          contactStatus: "ARCHIVED",
+          observedAt: "2026-06-22T00:00:00.000Z",
+        }),
+      ],
+    });
+    reads.deletionRequest.findMany.mockResolvedValue([
+      { memberId: "m12", reviewedAt: new Date("2026-05-11T00:00:00.000Z") },
+    ]);
+    reads.xeroContactCache.findMany.mockResolvedValue([
+      { contactId: "contact-12", contactStatus: "ACTIVE" },
+    ]);
+
+    const review = await getErasedMemberXeroContactReview();
+
+    expect(review.alreadyRetiredInXero).toBe(1);
+    expect(review.rows).toEqual([]);
+  });
+
+  it("lists a contact the club's OWN software already archived, until somebody checks", async () => {
+    /*
+      The canonical sequence, not an exotic one. When a membership is cancelled
+      this application archives that member's own Xero contact
+      (`xeroArchiveContactsOnCancellation`) and refreshes the cache row saying
+      so. A later erasure DELETES that cache row and retires the link — so the
+      review finds a retired link, no local home, an approved erasure, and
+      nothing at all about the contact.
+
+      It is listed, because over-reporting is the safe direction — but it is
+      listed at UNKNOWN rather than asserted to be live, and one check retires
+      it. Before the check existed this row was a permanent false accusation
+      about a contact the club's own software had already dealt with.
+    */
+    linkLedger({ retired: [retiredLink("m13", "contact-13")] });
+    reads.deletionRequest.findMany.mockResolvedValue([
+      { memberId: "m13", reviewedAt: new Date("2026-05-12T00:00:00.000Z") },
+    ]);
+
+    const before = await getErasedMemberXeroContactReview();
+    expect(before.needsReview).toBe(1);
+    expect(before.rows[0].contactStatus).toBe("UNKNOWN");
+    expect(before.rows[0].contactStatusCheckedAt).toBeNull();
+    expect(before.lastContactStatusCheckAt).toBeNull();
+
+    // ...and once the check has asked Xero, with archived included:
+    linkLedger({
+      retired: [
+        retiredLink("m13", "contact-13", {
+          contactStatus: "ARCHIVED",
+          observedAt: "2026-06-23T00:00:00.000Z",
+        }),
+      ],
+    });
+
+    const after = await getErasedMemberXeroContactReview();
+    expect(after.needsReview).toBe(0);
+    expect(after.alreadyRetiredInXero).toBe(1);
+  });
+
+  it("keeps the freshest observation when two retired roles name one contact", async () => {
+    // The ledger's unique key includes `role`, so one member can hold several
+    // retired links to one contact. An older stamp on a second role must not
+    // un-retire a row the newer one retired.
+    linkLedger({
+      retired: [
+        retiredLink("m14", "contact-14", {
+          contactStatus: "ACTIVE",
+          observedAt: "2026-06-01T00:00:00.000Z",
+        }),
+        retiredLink("m14", "contact-14", {
+          contactStatus: "ARCHIVED",
+          observedAt: "2026-06-24T00:00:00.000Z",
+        }),
+      ],
+    });
+    reads.deletionRequest.findMany.mockResolvedValue([
+      { memberId: "m14", reviewedAt: new Date("2026-05-13T00:00:00.000Z") },
+    ]);
+
+    const review = await getErasedMemberXeroContactReview();
+
+    expect(review.alreadyRetiredInXero).toBe(1);
+    expect(review.rows).toEqual([]);
   });
 
   it("reads TWO columns of the contact cache, and no more", async () => {
@@ -302,6 +456,7 @@ describe("erased-member Xero contact review (#3058)", () => {
 
     expect(Object.keys(review.rows[0]).sort()).toEqual([
       "contactStatus",
+      "contactStatusCheckedAt",
       "erasedAt",
       "erasure",
       "memberId",

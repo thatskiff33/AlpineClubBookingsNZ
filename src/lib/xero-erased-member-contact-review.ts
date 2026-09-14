@@ -18,13 +18,41 @@
  * same discipline, because the same discipline is what makes either safe: it
  * reads, it hands the decision to a person, and it decides nothing itself.
  *
- * ## NON-DESTRUCTIVE, AND STRUCTURALLY SO
+ * ## NON-DESTRUCTIVE TOWARD XERO, WHICH IS THE CLAIM THAT MATTERS
  *
- * There is no write in this file, no provider call in this file, and no route
- * that acts on what it returns: the API surface is a `GET` and there is no
- * `POST`. That is deliberate, and it is the strongest form of the guarantee
- * available — a rule held by the absence of the code that would break it,
- * rather than by the care of whoever writes the next caller.
+ * There is no write in this file and no provider call in this file. The route
+ * over it has a `POST`, and it asks Xero exactly one thing — `getContacts` on
+ * the ids already listed, archived included — so that a contact the treasurer
+ * archived can stop being reported. That is a READ toward Xero; nothing here,
+ * on any path, asks Xero to change, archive, blank or delete anything.
+ *
+ * An earlier revision claimed the guarantee was structural, held by there being
+ * no `POST` at all. That claim was worth less than it looked: the ERASURE path
+ * itself already reaches provider writes — cancelling the member's paid future
+ * bookings enqueues credit notes — through modules the guard could not see. The
+ * honest guarantee is the narrow one, and it is guarded by name in
+ * `member-erasure-no-xero-mutation-contract.test.ts`.
+ *
+ * ## HOW LONG A ROW STAYS, WHICH IS A RETENTION QUESTION
+ *
+ * A row here is a durable, on-screen record that a particular member id was
+ * erased and when. It is retired when Xero is observed to hold its contact as
+ * archived, or as asked-to-be-erased — and ONLY then, because nothing else can
+ * observe what somebody does in the accounting system. So:
+ *
+ * - archive the contact in Xero and press the check: the row goes, for good;
+ * - leave the contact live in Xero: the row stays, indefinitely, by design —
+ *   there genuinely is an orphaned customer and a treasurer has not decided
+ *   about it;
+ * - delete the retired `CONTACT` link, and the row goes with it. Nothing does
+ *   that, and nothing should: that link is the club's own record of an
+ *   accounting identity.
+ *
+ * The bulk contact sync will NOT retire a row and must not be described as
+ * doing so. It fetches changed contacts with `includeArchived: false` — the
+ * only fetcher it uses for them — so the moment a treasurer archives a contact
+ * it becomes invisible to that sync for ever; and the erasure deleted the cache
+ * row, so there is nothing for it to update either.
  *
  * ## WHY THE ERASURE ITSELF IS PROVED, NOT INFERRED
  *
@@ -90,39 +118,64 @@
  * ## WHAT THIS CANNOT SEE
  *
  * A contact whose link was never written to the ledger. Every writer of a
- * non-null `Member.xeroContactId` also writes the canonical `CONTACT` link —
- * measured across the eight writers on this tree — except
- * `createXeroContactForMember`, which commits the column in one transaction and
- * the link in the next, and says so. Pre-ledger history is repaired by
- * `backfillMemberContactLink`. The gap is therefore narrow and known; it is not
- * nothing, and it is why this screen is a review aid rather than a guarantee.
+ * non-null `Member.xeroContactId` also writes the canonical `CONTACT` link,
+ * except `createXeroContactForMember`, which commits the column in one
+ * transaction and the link in the next, and says so. Pre-ledger history is
+ * repaired by `backfillMemberContactLink`. The gap is therefore narrow and
+ * known; it is not nothing, and it is why this screen is a review aid rather
+ * than a guarantee.
+ *
+ * (An earlier revision published a COUNT of those writers. Nothing pinned it,
+ * so it was a number that could only ever go stale — unlike the four retiring
+ * paths named above, which the review's own test enumerates. The sentence does
+ * not need it.)
  */
 
 import { prisma } from "@/lib/prisma";
 import { readXeroContactCacheFreshness } from "@/lib/xero-contact-cache-freshness";
 import type { XeroContactCacheFreshness } from "@/lib/xero-contact-cache-freshness";
 import { findXeroContactHomes } from "@/lib/xero-contact-home";
+import {
+  classifyXeroContactStatus,
+  type XeroContactLiveness,
+} from "@/lib/xero-contact-status";
+import {
+  readErasedContactStatusObservation,
+  type ErasedContactStatusObservation,
+} from "@/lib/xero-erased-member-contact-status-check";
 import type {
   ErasedMemberXeroContactReview,
   ErasedMemberXeroContactRow,
   ErasureKind,
-  ReviewedContactStatus,
+  ListedContactStatus,
 } from "@/lib/xero-erased-member-contact-review-shape";
 
 /** Rows returned. The counts are always the whole population. */
 export const DEFAULT_ERASED_CONTACT_ROW_LIMIT = 200;
 
-/** Xero's own word for a contact that has been retired in Xero. */
-const XERO_ARCHIVED_STATUS = "ARCHIVED";
+/**
+ * Which provider statuses mean "somebody has dealt with this one".
+ *
+ * `ARCHIVED` is the treasurer retiring the contact in Xero. `GDPR_ERASED` is
+ * Xero's own `GDPRREQUEST` — somebody has asked for that contact to be erased
+ * IN XERO, which is the one row on this screen most certainly needing no
+ * further attention, and which the earlier denylist reported as "Active in
+ * Xero". Both are counted rather than listed. `INV-SSOT`: which spelling means
+ * which lives in `xero-contact-status.ts`, not here.
+ */
+function isRetiredInXero(status: XeroContactLiveness): boolean {
+  return status === "ARCHIVED" || status === "GDPR_ERASED";
+}
 
 function emptyReview(
   freshness: XeroContactCacheFreshness,
 ): ErasedMemberXeroContactReview {
   return {
     needsReview: 0,
-    alreadyArchivedInXero: 0,
+    alreadyRetiredInXero: 0,
     rows: [],
     truncated: false,
+    lastContactStatusCheckAt: null,
     contactCacheLastRefreshedAt: freshness.lastRefreshedAt,
     contactCacheAgeHours: freshness.ageHours,
     contactCacheStale: freshness.stale,
@@ -148,7 +201,12 @@ export async function getErasedMemberXeroContactReview(options?: {
   */
   const retiredLinks = await prisma.xeroObjectLink.findMany({
     where: { localModel: "Member", xeroObjectType: "CONTACT", active: false },
-    select: { localId: true, xeroObjectId: true },
+    // `metadata` carries this review's own status OBSERVATION, stamped by the
+    // live check. It is the only durable home available for it: the erasure
+    // deleted the contact's cache row, and re-creating one would manufacture
+    // the NZBN write permission that deletion exists to remove
+    // (`xero-erased-member-contact-status-check.ts` has the argument in full).
+    select: { localId: true, xeroObjectId: true, metadata: true },
   });
   if (retiredLinks.length === 0) return emptyReview(freshness);
 
@@ -156,12 +214,22 @@ export async function getErasedMemberXeroContactReview(options?: {
   // `role` — the ledger's unique key includes it — and that is one fact, not
   // two rows on a treasurer's screen.
   const candidates = new Map<string, { memberId: string; contactId: string }>();
+  // Keyed by CONTACT, because the observation is about the contact rather than
+  // about a link. Where several retired rows name one contact the freshest
+  // observation wins, so an older stamp on a second role cannot un-retire a row.
+  const observations = new Map<string, ErasedContactStatusObservation>();
   for (const link of retiredLinks) {
     if (!link.localId || !link.xeroObjectId) continue;
     candidates.set(`${link.localId}|${link.xeroObjectId}`, {
       memberId: link.localId,
       contactId: link.xeroObjectId,
     });
+    const observation = readErasedContactStatusObservation(link.metadata);
+    if (!observation) continue;
+    const held = observations.get(link.xeroObjectId);
+    if (!held || held.observedAt < observation.observedAt) {
+      observations.set(link.xeroObjectId, observation);
+    }
   }
   const candidateContactIds = [
     ...new Set([...candidates.values()].map((row) => row.contactId)),
@@ -250,38 +318,61 @@ export async function getErasedMemberXeroContactReview(options?: {
         select: { contactId: true, contactStatus: true },
       })
     : [];
-  const statusByContactId = new Map<string, ReviewedContactStatus>(
+  const cachedStatusByContactId = new Map<string, XeroContactLiveness>(
     cached.map((entry) => [
       entry.contactId,
-      entry.contactStatus?.toUpperCase() === XERO_ARCHIVED_STATUS
-        ? "ARCHIVED"
-        : "ACTIVE",
+      classifyXeroContactStatus(entry.contactStatus),
     ]),
   );
 
-  let alreadyArchivedInXero = 0;
+  let alreadyRetiredInXero = 0;
+  let lastContactStatusCheckAt: string | null = null;
   const needsReviewRows: ErasedMemberXeroContactRow[] = [];
   for (const row of orphaned) {
     const erasure = erasures.get(row.memberId);
     if (!erasure) continue;
-    const contactStatus = statusByContactId.get(row.contactId) ?? "UNKNOWN";
     /*
-      An archived contact is counted, not listed. Archiving is the treasurer's
-      own act in Xero, so that row has been dealt with — and it is the only
-      thing that ever makes this list shrink, because nothing local can observe
-      what somebody does in the accounting system except by seeing it in the
-      cache the next contact sync fills.
+      TWO SOURCES, and the OBSERVATION wins. The live check asked Xero about
+      this exact contact with archived contacts included; the cache is what a
+      bulk sync happened to leave behind, and for an erased member's contact it
+      is usually nothing at all — the erasure deletes the row and the bulk sync
+      never re-fetches an archived contact. So a cache row can only ever be
+      staler news than an observation about the same id.
     */
-    if (contactStatus === "ARCHIVED") {
-      alreadyArchivedInXero += 1;
+    const observation = observations.get(row.contactId);
+    if (
+      observation &&
+      (lastContactStatusCheckAt === null ||
+        lastContactStatusCheckAt < observation.observedAt)
+    ) {
+      lastContactStatusCheckAt = observation.observedAt;
+    }
+    const known: XeroContactLiveness | null =
+      observation?.contactStatus ??
+      cachedStatusByContactId.get(row.contactId) ??
+      null;
+
+    /*
+      A retired contact is counted, not listed: archiving it, or asking Xero to
+      erase it, is somebody's own act in the accounting system, so that row has
+      been dealt with. Nothing local can observe such an act by itself — the
+      bulk contact sync fetches with `includeArchived: false` and the erasure
+      deleted the cache row — which is why the live check on this screen is the
+      one thing that ever makes this list shrink.
+    */
+    if (known !== null && isRetiredInXero(known)) {
+      alreadyRetiredInXero += 1;
       continue;
     }
+    const contactStatus: ListedContactStatus =
+      known === null ? "UNKNOWN" : known === "ACTIVE" ? "ACTIVE" : "UNRECOGNISED";
     needsReviewRows.push({
       memberId: row.memberId,
       xeroContactId: row.contactId,
       erasure: erasure.kind,
       erasedAt: erasure.at?.toISOString() ?? null,
       contactStatus,
+      contactStatusCheckedAt: observation?.observedAt ?? null,
     });
   }
 
@@ -301,9 +392,10 @@ export async function getErasedMemberXeroContactReview(options?: {
 
   return {
     needsReview: needsReviewRows.length,
-    alreadyArchivedInXero,
+    alreadyRetiredInXero,
     rows: needsReviewRows.slice(0, limit),
     truncated: needsReviewRows.length > limit,
+    lastContactStatusCheckAt,
     contactCacheLastRefreshedAt: freshness.lastRefreshedAt,
     contactCacheAgeHours: freshness.ageHours,
     contactCacheStale: freshness.stale,

@@ -468,11 +468,23 @@ left behind.
 - **A contact anything local still points at was never orphaned.** Ownership is
   read through `INV-INT-018`'s one accessor, over both columns, so a school's
   live Xero customer is never reported as abandoned.
-- **Ids only, to `finance:view`.** A notice quoting an erased member defeats the
-  erasure it reports on, so a row carries a member id, a contact id, the erasure
-  kind and its date. The contact cache is read for `contactId` and
-  `contactStatus` alone; its other columns hold the erased person's name, email,
-  phone and address, which a later sync re-caches from Xero. Pinned by
+- **Ids only, to `finance:view`, on both verbs.** A notice quoting an erased
+  member defeats the erasure it reports on, so a row carries a member id, a
+  contact id, the erasure kind and its date. The contact cache is read for
+  `contactId` and `contactStatus` alone; its other columns hold the erased
+  person's name, email, phone and address. The live status check keeps ONE field
+  of Xero's answer — the status — and writes no `XeroContactCache` row: a full
+  refresh would re-import those details, and a status-only stub would
+  manufacture the NZBN write permission the erasure deletes the row to remove.
+- **A row is retired only by observing Xero, and otherwise stays.** Nothing
+  local can see a treasurer archive a contact: the bulk contact sync's only
+  changed-contact fetcher passes `includeArchived: false`, and the erasure
+  deleted the cache row. So the `POST` — `getContacts` over exactly the listed
+  ids, archived included, stamping the status on the retired `CONTACT` link — is
+  the one thing that makes the list shrink, and no document may say Contact Sync
+  does. A contact left live in Xero stays listed indefinitely, which is the
+  intended retention: the orphaned customer really is still there. Pinned by
   `xero-erased-member-contact-review.test.ts`,
+  `xero-erased-member-contact-status-check.test.ts`,
   `member-erasure-no-xero-mutation-contract.test.ts`,
   `erased-member-contacts-panel.test.tsx`.

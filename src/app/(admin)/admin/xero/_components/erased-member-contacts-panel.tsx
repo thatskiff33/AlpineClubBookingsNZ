@@ -3,41 +3,61 @@
 /**
  * The erased-member Xero contact review (#3058). `INV-INT-024`.
  *
- * A NOTICE, not a tool. Every other panel on this page does something; this one
- * tells an officer something and then gets out of the way. There is no action
- * button, no confirmation, no `ViewOnlyActionButton` and therefore no view-only
- * banner — not because the gating was skipped but because there is nothing here
- * to gate. The endpoint behind it is a `GET` with no `POST` sibling.
+ * A NOTICE, not a tool. Every other panel on this page acts on something; this
+ * one tells an officer something and hands every decision to them. There is no
+ * `ViewOnlyActionButton` and therefore no view-only banner — not because the
+ * gating was skipped but because nothing here is an edit: the one control that
+ * reaches Xero ASKS it a question (`getContacts`) and changes nothing in it.
  *
  * THE COPY IS THE FEATURE, and it is written against one failure mode: an
  * officer reading this list as a to-do list of things the club must delete from
  * Xero. It must not read that way. The settled contract on #3058 is that this
- * application performs no Xero mutation as part of erasure and makes no claim
- * about what Xero should hold; whether a contact is archived, merged, edited or
- * left exactly as it is, is the treasurer's decision in their own system, and
- * invoices raised against it stay valid either way.
+ * application makes no claim about what Xero should hold; whether a contact is
+ * archived, merged, edited or left exactly as it is, is the treasurer's
+ * decision in their own system, and invoices raised against it stay valid
+ * either way.
  *
- * The reason map below is keyed on the engine's own `ErasureKind` union rather
- * than on `string`, following the missing-contact panel: a third erasure path
- * would then be a compile error here instead of a blank cell shipped silently
- * to a treasurer.
+ * TWO SENTENCES HAVE BEEN NARROWED FROM AN EARLIER REVISION, because they were
+ * not true. "Erasing a member removes their details from this application and
+ * does nothing else" is wrong — erasure also cancels the member's future
+ * bookings, and cancelling a paid one raises a credit note in Xero. And "this
+ * application never edits, archives or deletes anything in it" is wrong for the
+ * same reason, and a treasurer could disprove it from their own credit notes.
+ * What is true is the narrower claim, which is also the one that matters here:
+ * nothing this application does asks Xero to change the CONTACT.
+ *
+ * The reason and status maps below are keyed on the engine's own unions rather
+ * than on `string`, following the missing-contact panel: a third erasure path,
+ * or a fourth Xero contact status, is a compile error here instead of a blank
+ * cell shipped silently to a treasurer.
  */
 
 import { useCallback, useEffect, useState } from "react"
-import { Loader2, RefreshCw } from "lucide-react"
+import { Loader2, RefreshCw, Search } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { useClubTime } from "@/components/club-time-provider"
+import { requireInstant } from "@/lib/club-time"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
 import type {
   ErasedMemberXeroContactReview,
   ErasedMemberXeroContactRow,
   ErasureKind,
-  ReviewedContactStatus,
+  ListedContactStatus,
 } from "@/lib/xero-erased-member-contact-review-shape"
-import { fetchJson } from "./api"
-import { SectionCard, type ToggleSection } from "./shared"
+import { fetchJson, postJson } from "./api"
+import { describeContactCacheAge, SectionCard, type ToggleSection } from "./shared"
+
+/** What the status check reports back, mirroring the route's `check` field. */
+interface StatusCheckSummary {
+  checkedContacts: number
+  observedContacts: number
+  notFoundInXero: number
+  retiredInXero: number
+  checkedAt: string
+}
 
 /**
  * Operator wording for the machine-readable kinds the engine returns. It lives
@@ -52,22 +72,17 @@ const ERASURE_COPY: Record<ErasureKind, string> = {
     "Erased by an approved member delete. There is no member record left in this application at all.",
 }
 
-const STATUS_COPY: Record<ReviewedContactStatus, string> = {
-  ACTIVE: "Active in Xero as at the last contact sync.",
-  // Never rendered: an archived row is counted rather than listed. Present so
-  // the map stays total over the union, which is what makes a new status a
-  // compile error here.
-  ARCHIVED: "Already archived in Xero.",
+/**
+ * Total over `ListedContactStatus`, which is deliberately NARROWER than what
+ * Xero can say. A contact Xero holds as archived — or as asked-to-be-erased —
+ * is counted and never listed, so this map has no branch that cannot render.
+ */
+const STATUS_COPY: Record<ListedContactStatus, string> = {
+  ACTIVE: "Xero holds this contact as active.",
+  UNRECOGNISED:
+    "Xero reports a status this application does not recognise, so it is listed to be on the safe side.",
   UNKNOWN:
-    "Not in this application's contact cache, so how Xero holds it is unknown here. Run Contact Sync if you want that filled in.",
-}
-
-/** "3 hours ago" / "12 days ago", from whole hours. */
-function describeCacheAge(hours: number): string {
-  if (hours < 1) return "less than an hour ago"
-  if (hours === 1) return "1 hour ago"
-  if (hours < 48) return `${hours} hours ago`
-  return `${Math.floor(hours / 24)} days ago`
+    "Nobody has asked Xero about this contact yet, so how it holds it is unknown here.",
 }
 
 function ReviewRow({
@@ -79,6 +94,7 @@ function ReviewRow({
   returnTo: string
   shortCode: string | null
 }) {
+  const clubTime = useClubTime()
   return (
     <li className="px-3 py-2 text-xs">
       <div className="flex flex-wrap items-center gap-2">
@@ -106,15 +122,25 @@ function ReviewRow({
         >
           Open the contact in Xero
         </a>
-        {row.contactStatus === "UNKNOWN" ? (
+        {row.contactStatusCheckedAt === null ? (
           <Badge variant="secondary" className="py-0 text-[10px]">
-            Not in the cache
+            Not checked in Xero
           </Badge>
         ) : null}
       </div>
       <p className="mt-0.5 text-muted-foreground">
         {ERASURE_COPY[row.erasure]}
-        {row.erasedAt ? ` Erased ${row.erasedAt.slice(0, 10)}.` : ""}
+        {/*
+          Through the club-time kernel, never by slicing an ISO instant. The
+          earlier revision took the first ten characters of the UTC string,
+          which renders the day BEFORE for most of the New Zealand working day
+          — on a list whose whole selling point is working oldest-first by date
+          (INV-CONFIG-002, INV-DATE). The SORT is on the raw instant and was
+          never affected; only what an officer read was wrong.
+        */}
+        {row.erasedAt
+          ? ` Erased ${clubTime.instantDate(requireInstant(row.erasedAt))}.`
+          : ""}
       </p>
       <p className="text-muted-foreground">{STATUS_COPY[row.contactStatus]}</p>
     </li>
@@ -132,8 +158,11 @@ export function ErasedMemberContactsPanel({
   currentXeroPath: string
   shortCode: string | null
 }) {
+  const clubTime = useClubTime()
   const [review, setReview] = useState<ErasedMemberXeroContactReview | null>(null)
+  const [check, setCheck] = useState<StatusCheckSummary | null>(null)
   const [loading, setLoading] = useState(false)
+  const [checking, setChecking] = useState(false)
   const [error, setError] = useState("")
 
   const load = useCallback(async () => {
@@ -153,12 +182,45 @@ export function ErasedMemberContactsPanel({
     }
   }, [])
 
+  /*
+    The one control that reaches Xero, and it reaches it to ASK. Without it this
+    list can never shrink: the bulk contact sync fetches changed contacts with
+    archived ones excluded, and the erasure deleted the contact's cache row, so
+    a contact the treasurer archives is invisible to everything else here. It
+    costs Xero API budget, which is why it is a button and not the page load.
+  */
+  const runCheck = useCallback(async () => {
+    setChecking(true)
+    setError("")
+    try {
+      const data = await postJson<{
+        review: ErasedMemberXeroContactReview
+        check: StatusCheckSummary
+      }>(
+        "/api/admin/xero/erased-member-contacts",
+        undefined,
+        "Could not check these contacts in Xero.",
+      )
+      setReview(data.review)
+      setCheck(data.check)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not check these contacts in Xero.")
+    } finally {
+      setChecking(false)
+    }
+  }, [])
+
   // Loads itself the first time the section is opened. Safe to do without a
   // button, unlike its missing-contact sibling: this read touches the retired
-  // link ledger rather than the whole member table, and it can create nothing.
+  // link ledger rather than the whole member table, it creates nothing, and it
+  // asks Xero nothing.
   useEffect(() => {
     if (open && review === null && !loading && !error) void load()
   }, [open, review, loading, error, load])
+
+  const busy = loading || checking
+  const nothingLeftBehind =
+    review !== null && review.needsReview === 0 && review.alreadyRetiredInXero === 0
 
   return (
     <SectionCard
@@ -168,28 +230,54 @@ export function ErasedMemberContactsPanel({
       open={open}
       onToggle={(nextOpen) => onToggle("erasedMemberContacts", nextOpen)}
       actions={
-        <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-          {loading ? (
-            <Loader2 aria-hidden className="mr-2 size-4 animate-spin" />
-          ) : (
-            <RefreshCw aria-hidden className="mr-2 size-4" />
-          )}
-          Refresh
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={busy}>
+            {loading ? (
+              <Loader2 aria-hidden className="mr-2 size-4 animate-spin" />
+            ) : (
+              <RefreshCw aria-hidden className="mr-2 size-4" />
+            )}
+            Refresh
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void runCheck()}
+            disabled={busy || review === null || review.rows.length === 0}
+          >
+            {checking ? (
+              <Loader2 aria-hidden className="mr-2 size-4 animate-spin" />
+            ) : (
+              <Search aria-hidden className="mr-2 size-4" />
+            )}
+            Check these in Xero
+          </Button>
+        </div>
       }
     >
       <div className="space-y-3">
+        {/*
+          THE LOAD-BEARING SENTENCE, and the only emphasised thing on the panel.
+          An earlier revision emphasised the backlog COUNT instead and left this
+          in grey above it, so a treasurer skimming took away a bolded number —
+          which is precisely the to-do-list reading the whole section exists to
+          prevent.
+        */}
+        <p className="text-sm font-medium">
+          This application is not asking for anything to be removed from Xero.
+        </p>
         <p className="text-sm text-muted-foreground">
-          Erasing a member removes their details from this application and does nothing else. Xero is
-          a separate system that this application never edits, archives or deletes anything in — so
-          where an erased member had a Xero contact, that contact is still in Xero, and nothing here
-          points at it any more.
+          Erasing a member removes their details from this application. It does not ask Xero to
+          change, archive or delete their contact — Xero is a separate system, administered
+          separately, and that decision is not this application&apos;s to make. So where an erased
+          member had a Xero contact, that contact is still in Xero, and nothing here points at it any
+          more.
         </p>
         <p className="text-sm text-muted-foreground">
           Each row below is one of those contacts, for you to look at in Xero if you want to. Whether
           it should be archived, merged, edited or left exactly as it is, is a decision for whoever
-          administers Xero — this application is not asking for anything to be removed, and invoices
-          and accounting history raised against a contact stay valid and usable either way.
+          administers Xero, and invoices and accounting history raised against a contact stay valid
+          and usable either way.
         </p>
 
         {error ? <p className="text-sm text-danger">{error}</p> : null}
@@ -207,30 +295,76 @@ export function ErasedMemberContactsPanel({
               sentence is unassertable — the count belongs to the span and the
               words belong to the paragraph, and neither reads as the sentence
               an officer sees.
+
+              And it is written so the DONE state reads as done. With nothing
+              left to look at but some already dealt with, the earlier revision
+              printed "0 contacts to look at" above "No erasure has left a Xero
+              contact behind" — contradicting itself in the one state the
+              archived count exists to celebrate.
             */}
             <p className="text-sm">
-              <span className="font-medium">
-                {`${review.needsReview} ${
-                  review.needsReview === 1 ? "contact" : "contacts"
-                } to look at.`}
-              </span>
-              {review.alreadyArchivedInXero > 0
-                ? ` ${review.alreadyArchivedInXero} more ${
-                    review.alreadyArchivedInXero === 1 ? "is" : "are"
-                  } already archived in Xero and ${
-                    review.alreadyArchivedInXero === 1 ? "is" : "are"
-                  } not listed.`
-                : ""}
+              {nothingLeftBehind
+                ? "No erasure in this application has left a Xero contact behind."
+                : review.needsReview === 0
+                  ? `Nothing left to look at. All ${review.alreadyRetiredInXero} ${
+                      review.alreadyRetiredInXero === 1 ? "contact" : "contacts"
+                    } an erasure left behind ${
+                      review.alreadyRetiredInXero === 1 ? "has" : "have"
+                    } been archived or erased in Xero.`
+                  : `${review.needsReview} ${
+                      review.needsReview === 1 ? "contact" : "contacts"
+                    } to look at.${
+                      review.alreadyRetiredInXero > 0
+                        ? ` ${review.alreadyRetiredInXero} more ${
+                            review.alreadyRetiredInXero === 1 ? "has" : "have"
+                          } already been archived or erased in Xero and ${
+                            review.alreadyRetiredInXero === 1 ? "is" : "are"
+                          } not listed.`
+                        : ""
+                    }`}
             </p>
+
+            {/*
+              How current the answer is, and — the part the earlier revision got
+              wrong — what it takes to make it more current. Contact Sync will
+              NOT do it: it fetches changed contacts with archived ones
+              excluded, so the moment a treasurer archives a contact it becomes
+              invisible to that sync for good.
+            */}
             <p className="text-xs text-muted-foreground">
-              {review.contactCacheLastRefreshedAt === null
-                ? "Xero contacts have never been synced into this application, so whether each contact is still active in Xero is unknown here. The list itself does not depend on that."
-                : `Contact cache last refreshed ${describeCacheAge(review.contactCacheAgeHours ?? 0)}.${
-                    review.contactCacheStale
-                      ? " That is old enough that a contact somebody has already archived in Xero may still be listed."
-                      : ""
-                  }`}
+              {review.lastContactStatusCheckAt === null
+                ? "Nobody has asked Xero about these contacts yet. Use “Check these in Xero” to find out which of them have already been archived; Contact Sync will not tell you, because it does not fetch archived contacts."
+                : `Last checked in Xero ${clubTime.instantDateTime(
+                    requireInstant(review.lastContactStatusCheckAt),
+                  )}. A contact archived in Xero since then is still listed until you check again.`}
             </p>
+
+            {check ? (
+              <p className="text-xs text-muted-foreground">
+                {`Asked Xero about ${check.checkedContacts} ${
+                  check.checkedContacts === 1 ? "contact" : "contacts"
+                }: ${check.retiredInXero} already archived or erased there${
+                  check.notFoundInXero > 0
+                    ? `, ${check.notFoundInXero} Xero no longer returns at all (merged away, most likely), which ${
+                        check.notFoundInXero === 1 ? "stays" : "stay"
+                      } listed`
+                    : ""
+                }.`}
+              </p>
+            ) : null}
+
+            {review.contactCacheLastRefreshedAt !== null ? (
+              <p className="text-xs text-muted-foreground">
+                {`Where a contact has not been checked, the fallback is the shared Xero contact cache, last refreshed ${describeContactCacheAge(
+                  review.contactCacheAgeHours ?? 0,
+                )}.${
+                  review.contactCacheStale
+                    ? " That is old news, and for an erased member's contact the cache is usually empty anyway."
+                    : ""
+                }`}
+              </p>
+            ) : null}
+
             {review.truncated ? (
               <p className="text-xs text-warning">
                 Only the oldest {review.rows.length} are listed.
@@ -249,11 +383,7 @@ export function ErasedMemberContactsPanel({
                   ))}
                 </ul>
               </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No erasure in this application has left a Xero contact behind.
-              </p>
-            )}
+            ) : null}
           </>
         ) : null}
       </div>

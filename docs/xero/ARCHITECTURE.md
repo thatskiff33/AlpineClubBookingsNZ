@@ -443,9 +443,40 @@ column in one transaction and the link in the next and documents the window;
 
 **Disclosure.** Ids, the erasure kind and its date, to `finance:view`. The
 contact cache is read for `contactId` and `contactStatus` only — its other
-columns hold the erased person's name, email, phone and address, which a later
-contact sync re-caches from Xero — and an archived contact is counted rather
-than listed, which is the only thing that ever makes the list shrink.
+columns hold the erased person's name, email, phone and address — and a contact
+Xero holds as `ARCHIVED` or `GDPRREQUEST` is counted rather than listed.
+
+**How a row is retired, and why it needed a `POST`.** Nothing local can see a
+treasurer archive a contact. The bulk contact sync's changed-contact fetcher,
+`fetchChangedXeroContactsFromXero`, passes `includeArchived: false` and is the
+only fetcher that sync uses for them on either path; the three call sites that
+pass `true` are driven by ids derived from records that still hold a contact id,
+and an erased member holds none. And the erasure deleted the cache row. So an
+archived contact was permanently invisible here: the row stayed listed for ever,
+the archived counter stayed zero, and the archived branch was dead code in
+production — while four places promised the list would shrink when Contact Sync
+ran.
+
+`POST /api/admin/xero/erased-member-contacts` closes that loop. It asks
+`getContacts` about exactly the ids on screen with archived included, keeps ONE
+field of the answer, and stamps it on the retired `CONTACT` link's `metadata`
+(`xero-erased-member-contact-status-check.ts`). It writes no `XeroContactCache`
+row deliberately, for two independent reasons: a full refresh re-imports the
+erased person's name, email, phone, address and the date of birth this
+application writes into the NZBN field; and a status-only stub would give
+`buildXeroContactCompanyNumberPatch` the "we looked and it is empty" reading
+that is its permission to write, re-creating from the privacy screen exactly the
+defect the erasure deletes the row to avoid.
+
+The alternative — making Contact Sync fetch archived contacts — was rejected on
+measurement: that loop has no archived handling at all, so archived contacts
+would flow into member matching and creation unguarded.
+
+**Retention, stated because the screen's whole subject is erasure.** A row is a
+durable on-screen record that a member id was erased and when. It goes when Xero
+is observed to hold its contact as archived or GDPR-erased, and otherwise it
+stays indefinitely — correctly, because there really is an orphaned customer
+nobody has decided about.
 
 ## Entrance-fee invoices
 
@@ -619,7 +650,9 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-missing-contact-seeding-shape` | What both return, and the call-cost constants the chunk size is derived from. Imports nothing, so the admin panel can key its operator copy on these unions. |
 | `xero-erased-member-contact-review` | `INV-INT-024`: which Xero contacts an erasure left behind. Reads only; writes nothing, calls no provider, and has no `POST` surface. |
 | `xero-erased-member-contact-review-shape` | What that review returns. Imports nothing, so the admin panel can key its operator copy on the `ErasureKind` union. |
+| `xero-erased-member-contact-status-check` | `INV-INT-024`'s live check: `getContacts` over the listed ids with archived included, one field of the answer kept, stamped on the retired link. Reads Xero; writes nothing to it. |
 | `xero-contact-cache-freshness` | How old the contact cache is, asked in one place so the seeding census and the erasure review cannot disagree about one table. |
+| `xero-contact-status` | `INV-SSOT`: which `contactStatus` values count as a live contact, including Xero's `GDPRREQUEST`. One classifier for the census, the group import and the erasure review. |
 | `xero-duplicate-contacts`, `xero-contact-link-mismatches`, `xero-contact-sync` | Admin diagnostics: duplicate detection, link-mismatch snapshots, contact update payload builders. |
 | `xero-membership-sync` | Subscription status per season derived from Xero invoices; incremental `refreshAllMembershipStatuses` driver. |
 

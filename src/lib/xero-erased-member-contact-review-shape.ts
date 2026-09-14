@@ -45,15 +45,23 @@
 export type ErasureKind = "ANONYMISED_BY_DELETION_REQUEST" | "HARD_DELETED";
 
 /**
- * What is known about the contact in Xero, from the local contact cache and
- * from nothing else. NO provider call is made to establish it.
+ * What is known about the contact in Xero, for a row that is LISTED.
  *
- * `UNKNOWN` is the honest answer, not a failure: the erasure DELETES the
- * contact's cache row, so a contact stays unknown until a later contact sync
- * observes it again. An unknown row is shown, because over-reporting review
- * work is the safe direction and under-reporting it is not.
+ * Deliberately narrower than the provider's own status set, and narrower than
+ * what the engine reads. A contact Xero holds as `ARCHIVED` or `GDPRREQUEST` is
+ * counted and never listed, so those two cannot appear here — a fact the type
+ * states rather than a comment promising it. The panel's copy map is keyed on
+ * this union, so it has no branch that can never render.
+ *
+ * - `ACTIVE` — Xero holds it as a live contact.
+ * - `UNRECOGNISED` — Xero reports a status this application does not know.
+ *   Listed, because over-reporting review work is the safe direction.
+ * - `UNKNOWN` — nothing has looked. The honest answer, not a failure: the
+ *   erasure DELETES the contact's cache row and the bulk contact sync never
+ *   re-fetches an archived contact, so a contact stays unknown until somebody
+ *   asks Xero from this screen.
  */
-export type ReviewedContactStatus = "ACTIVE" | "ARCHIVED" | "UNKNOWN";
+export type ListedContactStatus = "ACTIVE" | "UNRECOGNISED" | "UNKNOWN";
 
 /**
  * ONE Xero contact that an erasure left behind.
@@ -79,25 +87,37 @@ export interface ErasedMemberXeroContactRow {
    * erased.
    */
   erasedAt: string | null;
-  contactStatus: ReviewedContactStatus;
+  contactStatus: ListedContactStatus;
+  /**
+   * When Xero was last asked about this contact from this screen, ISO, or
+   * `null` if it never has been. A date about a CONTACT, not about a person.
+   */
+  contactStatusCheckedAt: string | null;
 }
 
 export interface ErasedMemberXeroContactReview {
   /**
-   * Rows a treasurer may want to look at: every row whose contact the cache
-   * does not already show as archived in Xero.
+   * Rows a treasurer may want to look at: every row whose contact is not
+   * already known to be retired in Xero.
    */
   needsReview: number;
   /**
-   * Rows whose contact Xero already holds as archived. Counted and not listed:
-   * somebody has already dealt with these, and the point of a count is that the
-   * number stops being a surprise when the cache refreshes.
+   * Rows whose contact Xero holds as archived, or as asked-to-be-erased
+   * (`GDPRREQUEST`). Counted and not listed: somebody has already dealt with
+   * these. The count is what makes the work visible landing, and it can only
+   * move when somebody asks Xero from this screen — see `checkedAt` below.
    */
-  alreadyArchivedInXero: number;
+  alreadyRetiredInXero: number;
   /** The `needsReview` rows, oldest erasure first, capped by the row limit. */
   rows: ErasedMemberXeroContactRow[];
   /** True when `rows` was cut short by that limit. */
   truncated: boolean;
+  /**
+   * The freshest moment any contact on this review was last asked about in
+   * Xero, ISO, or `null` when none ever has been. The one number the screen
+   * needs to say honestly whether it is looking at old news.
+   */
+  lastContactStatusCheckAt: string | null;
   /** When the contact cache was last refreshed, and whether that is old news. */
   contactCacheLastRefreshedAt: string | null;
   contactCacheAgeHours: number | null;

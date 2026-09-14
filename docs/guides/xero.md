@@ -175,16 +175,20 @@ creates a small batch at a time.
 
 ### Check what an erasure left in Xero
 
-Erasing a member here removes their details from this application and **does
-nothing at all in Xero**. That is deliberate and it is not going to change: Xero
-is the club's accounting system, it is administered separately, and this
-application never edits, archives or deletes anything in it. So where an erased
-member had a Xero customer, that customer is still in Xero — and until now
-nothing told you so.
+Erasing a member here removes their details from this application. It **does not
+ask Xero to change, archive or delete their contact**, and that is deliberate:
+Xero is the club's accounting system, it is administered separately, and that
+decision is not this application's to make. So where an erased member had a Xero
+customer, that customer is still in Xero — and until now nothing told you so.
+
+> **What erasure does do in Xero.** It cancels the member's future bookings, and
+> cancelling one they had paid for raises a credit note, exactly as any other
+> cancellation would. That is ordinary accounting, and it is the only thing an
+> erasure causes in Xero. The contact itself is never touched.
 
 **Erased members with a Xero contact** on the Xero Sync page is that telling. It
-is a notice and not a tool: there is nothing on it to press, and nothing it does
-can change Xero or this application.
+is a notice rather than a tool: nothing on it changes anything in Xero, and the
+one button that reaches Xero at all only asks it a question.
 
 1. Open the section. It lists one line per Xero contact that an erasure left
    behind, oldest erasure first, with a link straight to that contact in Xero.
@@ -197,14 +201,22 @@ can change Xero or this application.
    answers, and this application is not asking for any of them. Invoices and
    accounting history raised against a contact stay valid and usable whatever
    you choose.
-4. Once you archive a contact in Xero, the line disappears from the list the
-   next time **Contact Sync** runs — the count of archived ones is shown so you
-   can see the work landing. Until a contact sync has run, the section says
-   plainly that it does not know how Xero holds each contact.
+4. When you have archived some of them, press **Check these in Xero**. That asks
+   Xero about the contacts on the list — archived ones included — and the ones
+   you have dealt with drop off it, counted instead of listed.
 
-> Nothing here names the erased person. The lines carry an id and a link,
-> because the details are exactly what the erasure removed — and they are still
-> in Xero, where they are yours to read.
+> **Contact Sync will not do that for you, and nothing else will either.** It
+> only fetches contacts that are *not* archived, so the moment you archive one
+> it becomes invisible to it; and the erasure deleted this application's cached
+> copy of the contact, so there is nothing here for it to update. The button is
+> the only thing that ever makes this list shrink. A line you never deal with
+> stays on the list indefinitely, which is correct — there really is a customer
+> in Xero that nothing here points at any more.
+
+> Nothing here names the erased person, and the check does not bring their
+> details back: it keeps the contact's status and nothing else. The lines carry
+> an id and a link, because the details are exactly what the erasure removed —
+> and they are still in Xero, where they are yours to read.
 
 ### Set up mappings and import (Xero Setup)
 
