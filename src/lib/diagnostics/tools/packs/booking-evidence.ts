@@ -2153,8 +2153,6 @@ async function readMemberEligibility(
       cancelledAt: member.cancelledAt,
       archivedAt: member.archivedAt,
     },
-    // #3369: the owner may be an Organisation; bookingOwner() reads both.
-    organisation: { select: { name: true, email: true } },
     operationallyPresent: true,
     // The canonical predicate treats an ABSENT settlement fact as settled on
     // purpose. Production supplies the fact only under NON_MEMBER_PRICING,

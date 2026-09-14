@@ -238,7 +238,15 @@ async function handleGet(req: NextRequest, dateStr: string) {
 
   // #3040: after the filter, so linkage is asked of the list the reader sees.
   const capabilities = kioskGroupTripCapabilities(tier);
-  const withGroupTrip = await attachKioskGroupTrip(result, bookings, { db: prisma, lodgeId, capabilities });
+  // #3369: a group trip is a MEMBER's — the organiser hands out a join code and
+  // every joiner books under their own membership. A school's booking is not
+  // part of one and has no member to link through, so it is not offered to the
+  // linkage pass. It still appears on the kiosk list itself, above.
+  const groupTripCandidates = bookings.filter(
+    (booking): booking is typeof booking & { memberId: string } =>
+      booking.memberId !== null,
+  );
+  const withGroupTrip = await attachKioskGroupTrip(result, groupTripCandidates, { db: prisma, lodgeId, capabilities });
 
   return NextResponse.json({
     date: dateStr,

@@ -329,7 +329,8 @@ export async function recordReviewClosurePricing({
 }: {
   /** What the officer recorded, or null where the review offered no boxes. */
   plan: StoredNightPriceRepairPlan | null;
-  task: { id: string; bookingId: string; booking: { memberId: string } };
+  /** The booking OWNER is null when it is owned by an Organisation (#3369). */
+  task: { id: string; bookingId: string; booking: { memberId: string | null } };
   actingMemberId: string;
   resolution: "completed" | "dismissed";
   note: string | null;
