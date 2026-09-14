@@ -826,6 +826,8 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-019` | A Xero link that cannot be made fails loudly and stays replayable |
 | `INV-INT-020` | A school Xero contact transfers once, to its Organisation, on proof |
 | `INV-INT-021` | A new Xero account mapping is type-filtered, falls back, and prompts |
+| `INV-INT-022` | The missing-contact census: read-only, cache-fresh, ambiguity handed back |
+| `INV-INT-023` | The seeding run: funnel-routed, plan-checked, authoritative-or-nothing |
 
 ## Operations
 

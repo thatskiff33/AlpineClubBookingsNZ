@@ -81,9 +81,89 @@ export class XeroContactValidationError extends Error {
   }
 }
 
+export const XERO_CONTACT_PROVIDER_ANSWER_UNAVAILABLE_CODE =
+  "XERO_CONTACT_PROVIDER_ANSWER_UNAVAILABLE";
+
+/**
+ * The provider could not be asked authoritatively, so nothing was done for this
+ * member (#2939, `INV-INT-023`).
+ *
+ * Raised ONLY for a caller that passed
+ * {@link FindOrCreateXeroContactOptions.requireAuthoritativeMatch}. Two phases
+ * raise it, and they are the two places this function otherwise proceeds on an
+ * answer it does not have:
+ *
+ *  - `EMAIL_SEARCH` — the Xero email search failed for a reason that is not the
+ *    daily limit. The default is to log and fall through to a create, which is
+ *    the right trade for a single invoice (a blocked invoice is expensive, a
+ *    rare duplicate contact is not) and the WRONG one for a bulk seeding run,
+ *    where nothing is blocked and a duplicate customer is permanent: Xero has
+ *    no merge API, so every speculative contact is manual archive work.
+ *  - `DUPLICATE_NAME_RECOVERY` — Xero refused the create on its contact-name
+ *    uniqueness rule. The default recovery adopts the existing same-named
+ *    contact, matched on the NORMALISED NAME ALONE with no email comparison.
+ *    For a single invoice raised by a person who just looked the member up that
+ *    is usually right. In a bulk run over years of club history it is the
+ *    sharpest hazard this tool has: a new member called John Smith and a
+ *    fifteen-year-old "John Smith" at a different address link silently, and
+ *    every invoice, statement and reminder for the new member then lands on the
+ *    old one's account.
+ *
+ * Both leave the member exactly where they were, so the next run picks them up
+ * unchanged.
+ */
+export type XeroContactProviderAnswerPhase =
+  | "EMAIL_SEARCH"
+  | "DUPLICATE_NAME_RECOVERY";
+
+export class XeroContactProviderAnswerUnavailableError extends Error {
+  readonly code = XERO_CONTACT_PROVIDER_ANSWER_UNAVAILABLE_CODE;
+  readonly phase: XeroContactProviderAnswerPhase;
+  readonly memberId: string;
+  readonly originalError: unknown;
+
+  constructor(input: {
+    phase: XeroContactProviderAnswerPhase;
+    memberId: string;
+    originalError: unknown;
+  }) {
+    super(
+      input.phase === "EMAIL_SEARCH"
+        ? "Xero could not be searched for an existing contact, so nothing was " +
+          "done for this member rather than risk creating a second Xero " +
+          "customer for somebody who already has one. Try again later."
+        : "Xero already holds an active contact with this member's name, and " +
+          "nothing here may decide whether it is the same person on the name " +
+          "alone. Link this member by hand, or give the Xero contact a name " +
+          "that tells the two apart.",
+    );
+    this.name = "XeroContactProviderAnswerUnavailableError";
+    this.phase = input.phase;
+    this.memberId = input.memberId;
+    this.originalError = input.originalError;
+  }
+}
+
 export interface FindOrCreateXeroContactOptions {
   createdByMemberId?: string;
   repairExistingLink?: boolean;
+  /**
+   * "If the provider cannot be asked authoritatively, do nothing for this
+   * member" (#2939). Default `false`, which is every existing caller's
+   * behaviour unchanged.
+   *
+   * A document writer wants the opposite of this: an invoice that cannot be
+   * raised is the expensive outcome, so a failed search falls through to a
+   * create and a name collision is recovered by adopting the same-named
+   * contact. A BULK SEEDING run inverts both halves — nothing is blocked, and a
+   * wrong contact is permanent — so it passes `true` and takes
+   * {@link XeroContactProviderAnswerUnavailableError} instead, whose docblock
+   * carries the full reasoning for each phase.
+   *
+   * It never makes this function do MORE: it only ever turns a fallback into a
+   * refusal, so it cannot itself create or link anything the default would not.
+   */
+  requireAuthoritativeMatch?: boolean;
   /**
    * An already-authenticated Xero client, for the containment verification on
    * the steady-state path (#3036 review P1-12).
@@ -782,6 +862,23 @@ export async function findOrCreateXeroContact(
     // Rate-limit errors must propagate — swallowing them would cause a new
     // contact to be created and waste the daily quota further.
     if (searchErr instanceof XeroDailyLimitError) throw searchErr;
+    /*
+      #2939: a caller that asked for an AUTHORITATIVE answer gets a refusal
+      here rather than the fall-through. The fall-through below is right for a
+      document writer and wrong for a bulk run, and the two differ only in what
+      the expensive outcome is — see `requireAuthoritativeMatch`.
+    */
+    if (options?.requireAuthoritativeMatch) {
+      logger.warn(
+        { err: searchErr, memberId },
+        "Xero email search failed; refusing to create rather than risk a duplicate",
+      );
+      throw new XeroContactProviderAnswerUnavailableError({
+        phase: "EMAIL_SEARCH",
+        memberId,
+        originalError: searchErr,
+      });
+    }
     // Any other error (network timeout, transient 5xx) is logged and we
     // fall through to contact creation. This is intentional: a failed
     // search is recoverable, whereas failing to create the invoice is not.
@@ -818,6 +915,14 @@ export async function findOrCreateXeroContact(
       }
     } catch (nameSearchErr) {
       if (nameSearchErr instanceof XeroDailyLimitError) throw nameSearchErr;
+      // #2939: as for the email search above, and for the same reason.
+      if (options?.requireAuthoritativeMatch) {
+        throw new XeroContactProviderAnswerUnavailableError({
+          phase: "EMAIL_SEARCH",
+          memberId,
+          originalError: nameSearchErr,
+        });
+      }
       logger.warn(
         { err: nameSearchErr, memberId, previousXeroContactId },
         "Xero name search failed during link repair; falling through to contact creation",
@@ -917,6 +1022,27 @@ export async function findOrCreateXeroContact(
     } catch (error) {
       if (error instanceof XeroContactCreatePartialSuccessError) throw error;
       if (isDuplicateActiveXeroContactNameError(error)) {
+        /*
+          #2939: a caller that asked for an AUTHORITATIVE answer never reaches
+          the name recovery below. The recovery adopts the existing same-named
+          contact on a normalised-name match with NO email comparison, which is
+          the one adoption a bulk run must not make silently — see
+          `XeroContactProviderAnswerUnavailableError`. The refusal is raised
+          instead of the search, so it also costs one provider call less: there
+          is nothing an answer could change.
+        */
+        if (options?.requireAuthoritativeMatch) {
+          const refusal = new XeroContactProviderAnswerUnavailableError({
+            phase: "DUPLICATE_NAME_RECOVERY",
+            memberId,
+            originalError: error,
+          });
+          await failXeroSyncOperation(operation.id, refusal, {
+            duplicateCreateError: sanitizeForJson(error),
+            refusedRecovery: "name_match_requires_operator_decision",
+          });
+          throw refusal;
+        }
         try {
           const matchedContact = await findExistingXeroContactByExactName({
             xero,

@@ -9,6 +9,7 @@ export { InboundEventsPanel } from "./inbound-events-panel"
 // knip 6.29+'s stricter barrel analysis correctly flagged the unused
 // re-export lines (#2502).
 export { MembershipSyncPanel } from "./membership-sync-panel"
+export { MissingContactsPanel } from "./missing-contacts-panel"
 export { OperationsPanel } from "./operations-panel"
 export { SyncResultsPanel } from "./sync-results-panel"
 export { UsagePanel } from "./usage-panel"
