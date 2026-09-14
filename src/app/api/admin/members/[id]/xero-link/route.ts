@@ -30,6 +30,7 @@ import {
   XeroMemberUnavailableError,
 } from "@/lib/xero-contact-create-recovery";
 import { commitManualXeroContactLink } from "@/lib/xero-manual-contact-link";
+import { findXeroContactLinkConflict } from "@/lib/xero-contact-home";
 
 const linkSchema = z.object({
   xeroContactId: z.string().min(1),
@@ -91,6 +92,17 @@ export async function POST(
   }
 
   try {
+    // WHO ALREADY HOLDS IT — asked FIRST, of `INV-INT-018`'s own module. A
+    // `member.findFirst` here, run after the provider call, let a school's
+    // ORGANISATION-held contact through (#3058); the helper says the rest.
+    const conflict = await findXeroContactLinkConflict(prisma, {
+      xeroContactId: parsed.data.xeroContactId,
+      claimingMemberId: id,
+    });
+    if (conflict) {
+      return NextResponse.json({ error: conflict.message }, { status: 409 });
+    }
+
     // Verify the Xero contact exists
     const { xero, tenantId } = await getAuthenticatedXeroClient();
     const contactRes = await callXeroApi(
@@ -105,18 +117,6 @@ export async function POST(
     const contact = contactRes.body.contacts?.[0];
     if (!contact) {
       return NextResponse.json({ error: "Xero contact not found" }, { status: 404 });
-    }
-
-    // Check if contact is already linked to another member
-    const existingLink = await prisma.member.findFirst({
-      where: { xeroContactId: parsed.data.xeroContactId, id: { not: id } },
-      select: { firstName: true, lastName: true },
-    });
-    if (existingLink) {
-      return NextResponse.json(
-        { error: `This Xero contact is already linked to ${existingLink.firstName} ${existingLink.lastName}` },
-        { status: 409 }
-      );
     }
 
     await refreshXeroContactCachesFromContact(contact);

@@ -32,7 +32,14 @@ findUnique: vi.fn(),
   // #3367 (INV-INT-018): a contact may have only ONE local home, so the
   // manual-link transaction refuses one an ORGANISATION already holds. `null`
   // is the ordinary answer; a missing delegate throws before the link runs.
-  organisation: { findFirst: vi.fn().mockResolvedValue(null) },
+  // #3058: the manual-link route asks `findXeroContactHomes` — `INV-INT-018`'s
+  // one accessor for which columns count as a local home — so both tables are
+  // read with `findMany`. "Nobody holds it" is the ordinary answer.
+  organisation: {
+    findFirst: vi.fn().mockResolvedValue(null),
+    findMany: vi.fn().mockResolvedValue([]),
+    findUnique: vi.fn().mockResolvedValue(null),
+  },
 };
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -406,6 +413,12 @@ describe("Admin Xero contact member import API", () => {
 describe("#28: Xero Link API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // `clearAllMocks` clears CALLS, not implementations, so the ownership reads
+    // are re-defaulted here: without it a conflict seeded by one test leaks
+    // into every test after it (#3058).
+    mockPrisma.member.findMany.mockResolvedValue([]);
+    mockPrisma.member.findUnique.mockReset();
+    mockPrisma.organisation.findMany.mockResolvedValue([]);
     mockFlushMemberSubscriptionHistory.mockResolvedValue({
       seasonYears: [],
       deletedCount: 0,
@@ -467,7 +480,16 @@ describe("#28: Xero Link API", () => {
     mockCallXeroApi.mockResolvedValue({
       body: { contacts: [{ contactID: "xc-1", name: "John Smith" }] },
     });
-    mockPrisma.member.findFirst.mockResolvedValue({ firstName: "Jane", lastName: "Doe" });
+    // The ownership read (#3058), then the holder's name for the refusal.
+    mockPrisma.member.findMany.mockResolvedValue([
+      { id: "m2", xeroContactId: "xc-1" },
+    ]);
+    mockPrisma.member.findUnique.mockImplementation(
+      async (args: { where: { id: string } }) =>
+        args.where.id === "m2"
+          ? { firstName: "Jane", lastName: "Doe" }
+          : { id: "m1", firstName: "John", lastName: "Smith", xeroContactId: null },
+    );
 
     const { POST } = await import("@/app/api/admin/members/[id]/xero-link/route");
     const req = makeRequest("/api/admin/members/m1/xero-link", {

@@ -43,7 +43,7 @@ import type {
   SeedingSkipReason,
 } from "@/lib/xero-missing-contact-seeding-shape"
 import { fetchJson, postJson } from "./api"
-import { SectionCard, type ToggleSection } from "./shared"
+import { describeContactCacheAge, SectionCard, type ToggleSection } from "./shared"
 
 type MemberRef = { memberId: string; memberName: string; memberEmail: string }
 type PushableRow = MemberRef & {
@@ -205,14 +205,6 @@ function RowList({
       </ul>
     </div>
   )
-}
-
-/** "3 hours ago" / "12 days ago", from whole hours. */
-function describeCacheAge(hours: number): string {
-  if (hours < 1) return "less than an hour ago"
-  if (hours === 1) return "1 hour ago"
-  if (hours < 48) return `${hours} hours ago`
-  return `${Math.floor(hours / 24)} days ago`
 }
 
 export function MissingContactsPanel({
@@ -433,7 +425,7 @@ export function MissingContactsPanel({
                 refreshed{" "}
                 {snapshot.contactCacheAgeHours === null
                   ? "at an unknown time"
-                  : describeCacheAge(snapshot.contactCacheAgeHours)}
+                  : describeContactCacheAge(snapshot.contactCacheAgeHours)}
                 .
                 {snapshot.contactCacheStale
                   ? " That is old enough to be wrong: a contact added in Xero since then looks like no contact at all here, which is how duplicates get made. Run Contact Sync before creating anything."

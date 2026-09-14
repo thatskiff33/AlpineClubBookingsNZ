@@ -100,6 +100,7 @@ import {
   upsertXeroContactCacheEntry,
 } from "./xero-contact-cache";
 import { parseXeroContactDateOfBirth } from "./xero-contact-date-of-birth";
+import { isActiveXeroContactStatus } from "./xero-contact-status";
 import {
   applyInboundMemberContactPatch,
   type InboundMemberContactPatch,
@@ -611,7 +612,11 @@ export async function importMembersFromXeroGroups(
 
       try {
         const contactName = getXeroContactDisplayName(contact);
-        if (contact.contactStatus.toUpperCase() !== "ACTIVE") {
+        // `INV-SSOT` (#3058): "is this contact still usable" has one home.
+        // Xero's enum carries `GDPRREQUEST` as well as `ARCHIVED`, and a
+        // hand-rolled comparison here is how three readers of this one column
+        // came to answer differently.
+        if (!isActiveXeroContactStatus(contact.contactStatus)) {
           skippedArchived++;
           skippedArchivedDetails.push({
             name: contactName,

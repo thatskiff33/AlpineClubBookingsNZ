@@ -26,6 +26,8 @@ idempotent — retrying the same work never double-charges.
   contact-group membership.
 - You are preparing a club for its first real use and need every member to have
   a Xero customer before invoices start going out.
+- A member has been erased here and you want to know whether they left a Xero
+  customer behind.
 - You are checking the daily Xero API budget or reconciliation health.
 
 ## Step-by-step
@@ -170,6 +172,57 @@ creates a small batch at a time.
 > the same path a booking invoice uses, which searches Xero first and carries a
 > per-member key, so a repeat converges on the one contact rather than making a
 > second.
+
+### Check what an erasure left in Xero
+
+Erasing a member here removes their details from this application. It **does not
+ask Xero to change, archive or delete their contact**, and that is deliberate:
+Xero is the club's accounting system, it is administered separately, and that
+decision is not this application's to make. So where an erased member had a Xero
+customer, that customer is still in Xero — and until now nothing told you so.
+
+> **What erasure does do in Xero.** It cancels the member's future bookings, and
+> cancelling one they had paid for raises a credit note, exactly as any other
+> cancellation would. That is ordinary accounting, and it is the only thing an
+> erasure causes in Xero. The contact itself is never touched.
+
+**Erased members with a Xero contact** on the Xero Sync page is that telling. It
+is a notice rather than a tool: nothing on it changes anything in Xero, and the
+one button that reaches Xero at all only asks it a question.
+
+1. Open the section. It lists one line per Xero contact that an erasure left
+   behind, oldest erasure first, with a link straight to that contact in Xero.
+2. Each line says which kind of erasure it was. An **account deletion request**
+   leaves the member record here with the person's details removed, so the id is
+   a link you can follow. A **member delete** removed the record altogether, so
+   the id is shown but goes nowhere.
+3. Decide in Xero, if you decide anything at all. Archiving the contact, merging
+   it with another, editing it or leaving it exactly as it is are all legitimate
+   answers, and this application is not asking for any of them. Invoices and
+   accounting history raised against a contact stay valid and usable whatever
+   you choose.
+4. When you have archived some of them, press **Check these in Xero**. That asks
+   Xero about the contacts on the list — archived ones included — and the ones
+   you have dealt with drop off it, counted instead of listed.
+
+> **Who can do what here.** Anyone with finance access can read the list.
+> Pressing **Check these in Xero** needs finance *edit* access, because it
+> spends a share of the club's daily Xero allowance — and if that allowance runs
+> out, invoice and payment syncing stop for the rest of the day. If you can see
+> the list but the button is greyed out, that is why.
+
+> **Contact Sync will not do that for you, and nothing else will either.** It
+> only fetches contacts that are *not* archived, so the moment you archive one
+> it becomes invisible to it; and the erasure deleted this application's cached
+> copy of the contact, so there is nothing here for it to update. The button is
+> the only thing that ever makes this list shrink. A line you never deal with
+> stays on the list indefinitely, which is correct — there really is a customer
+> in Xero that nothing here points at any more.
+
+> Nothing here names the erased person, and the check does not bring their
+> details back: it keeps the contact's status and nothing else. The lines carry
+> an id and a link, because the details are exactly what the erasure removed —
+> and they are still in Xero, where they are yours to read.
 
 ### Set up mappings and import (Xero Setup)
 

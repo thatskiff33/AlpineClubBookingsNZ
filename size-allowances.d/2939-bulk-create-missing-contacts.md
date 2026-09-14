@@ -15,8 +15,17 @@ this change's reasoning appended there, rather than duplicated here where the
 gate would refuse the pair.
 
 file: src/lib/xero-member-import.ts
-lines: 1295
-reason: Twenty-five lines across the two member-create transactions, eighteen of
+lines: 1300
+reason: #3058 adds five of these lines, four of them comment: the archived-skip
+  test stopped hand-rolling `contactStatus.toUpperCase() !== "ACTIVE"` and now
+  asks `isActiveXeroContactStatus`, the one home for which Xero statuses count
+  as a live contact. It mattered because three readers of that one column each
+  answered differently and Xero's enum carries `GDPRREQUEST` as well as
+  `ARCHIVED`; the comment is the half that stops the next reader inlining the
+  comparison back. Re-measured here, in the entry this file already has, because
+  one file gets one allowance and the gate always judges against `origin/main`.
+  #2939's own share, unchanged, is below.
+  Twenty-five lines across the two member-create transactions, eighteen of
   them comment. Each create gains the contact-home lock before the insert and
   the refusal inside the same transaction after it, so a contact an
   `Organisation` already holds takes the new member row down with it rather than
