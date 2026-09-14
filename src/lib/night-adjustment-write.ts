@@ -83,15 +83,6 @@ function nightKey(bookingGuestId: string, stayDate: Date): string {
 }
 
 /**
- * The pure half of the guard: do these rows reconcile to these recorded promo
- * totals? Per beneficiary to that member's allocation (an absent allocation row
- * means the member received nothing — `normalizeAllocations` drops a
- * zero-benefit entry at write time, INV-MONEY-005 — so the recorded total for
- * that member IS zero; this is the meaning of an absent row, not a default over
- * a missing amount), and overall to the redemption. A beneficiary with any NOT
- * KNOWN row is excluded from both sums, and only from those.
- */
-/**
  * The allocations a night adjustment can decompose: those that name a member.
  *
  * #3369: an allocation with no member belongs to an organisation-owned
@@ -110,6 +101,15 @@ export function memberBenefitAllocations<T extends { memberId: string | null }>(
   );
 }
 
+/**
+ * The pure half of the guard: do these rows reconcile to these recorded promo
+ * totals? Per beneficiary to that member's allocation (an absent allocation row
+ * means the member received nothing — `normalizeAllocations` drops a
+ * zero-benefit entry at write time, INV-MONEY-005 — so the recorded total for
+ * that member IS zero; this is the meaning of an absent row, not a default over
+ * a missing amount), and overall to the redemption. A beneficiary with any NOT
+ * KNOWN row is excluded from both sums, and only from those.
+ */
 export function reconcilePromoAdjustmentTargets(params: {
   targets: ReadonlyArray<{ beneficiaryMemberId: string; amountCents: number | null }>;
   allocations: ReadonlyArray<{ memberId: string; priceAdjustmentCents: number }>;
@@ -176,7 +176,9 @@ function findReconciliationMismatch(params: {
  *   removal that deleted a guest without re-running the promotion, an
  *   old-colour promotion edit), or a NOT KNOWN amount somewhere in them.
  *
- * Stage 3 calls this and nothing else; it is the one home.
+ * Stage 3's reader calls this — over allocations narrowed by
+ * `memberBenefitAllocations`, as the writer does — and nothing else; it is the
+ * one home.
  */
 export type NightAdjustmentState = "KNOWN" | "NOT_KNOWN" | "NO_PROMOTION";
 
