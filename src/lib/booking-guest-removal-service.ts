@@ -128,6 +128,8 @@ export type RemoveBookingGuestResult = {
   paymentCustomerId: string | null;
   memberEmail: string;
   memberName: string;
+  /** The owner's first name, as `bookingOwner()` projects it (#3369). */
+  memberFirstName: string;
   /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
   memberId: string | null;
   promoRemoved: boolean;
@@ -1210,6 +1212,7 @@ export async function removeBookingGuestInTransaction({
     paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
     memberEmail: bookingOwner(booking).member.email,
     memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+    memberFirstName: bookingOwner(booking).member.firstName,
     memberId: bookingOwner(booking).memberId,
     promoRemoved: promoResult.promoRemoved,
     promoCoverage: promoResult.promoCoverage,

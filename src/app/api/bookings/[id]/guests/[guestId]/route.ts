@@ -328,12 +328,17 @@ export async function DELETE(
     // receives the message it received before this stage, at the same address.
     // The relation was loaded in the same transaction, so this is no staler than
     // the read it replaces.
-    const owner = bookingOwner(result.booking);
-    const member = owner.member;
+    // #3369: the owner as the transaction already resolved them — a school's
+    // booking has no member row to re-read, and these are the person-shaped
+    // projection the invented school member used to supply.
+    const member = {
+      email: result.memberEmail,
+      firstName: result.memberFirstName,
+    };
     if (notifyMember) {
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
-        recipientMemberId: owner.memberId,
+        recipientMemberId: result.memberId,
         email: member.email,
         firstName: member.firstName,
         modificationType: "GUEST_REMOVE",

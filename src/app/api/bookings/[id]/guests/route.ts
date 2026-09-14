@@ -1187,6 +1187,7 @@ export async function POST(
         paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
         memberEmail: bookingOwner(booking).member.email,
         memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+        memberFirstName: bookingOwner(booking).member.firstName,
         memberId: bookingOwner(booking).memberId,
         addedGuestNames: normalizedNewGuests.map((guest) => `${guest.firstName} ${guest.lastName}`),
         bookingModificationId: bookingModification.id,
@@ -1331,8 +1332,13 @@ export async function POST(
     // receives the message it received before this stage, at the same address.
     // The relation was loaded in the same transaction, so this is no staler than
     // the read it replaces.
-    const owner = bookingOwner(result.booking);
-    const member = owner.member;
+    // #3369: the owner as the transaction already resolved them — a school's
+    // booking has no member row to re-read, and these are the person-shaped
+    // projection the invented school member used to supply.
+    const member = {
+      email: result.memberEmail,
+      firstName: result.memberFirstName,
+    };
     if (notifyMember !== false) {
       /*
         #3032 (epic #2797): whether the club is still working out an amount on
@@ -1355,7 +1361,7 @@ export async function POST(
 
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
-        recipientMemberId: owner.memberId,
+        recipientMemberId: result.memberId,
         email: member.email,
         firstName: member.firstName,
         modificationType: "GUEST_ADD",

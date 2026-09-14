@@ -526,7 +526,10 @@ export type XeroLockGuardDateEditDb = {
         memberId: true;
         payment: { select: { status: true; xeroInvoiceId: true } };
       };
-    }): Promise<(XeroLockGuardDateEditBooking & { memberId: string }) | null>;
+      // #3369: the booking OWNER's member id, null when it is owned by an
+      // `Organisation`. The guard reads it only to decide what an actor may be
+      // told, and an organisation is never the actor.
+    }): Promise<(XeroLockGuardDateEditBooking & { memberId: string | null }) | null>;
   };
 };
 

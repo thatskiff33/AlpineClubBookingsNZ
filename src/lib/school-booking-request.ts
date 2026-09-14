@@ -887,7 +887,8 @@ export async function approveSchoolBookingRequest(input: {
       let held: {
         id: string;
         lodgeId: string;
-        memberId: string;
+        /** Null since #3369 when the held booking is owned by an Organisation. */
+        memberId: string | null;
         status: BookingStatus;
       } | null = null;
       if (request.heldBookingId) {

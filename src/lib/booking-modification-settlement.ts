@@ -65,6 +65,8 @@ export type BookingModificationPaymentContext = {
   paymentCustomerId: string | null;
   memberEmail: string;
   memberName: string;
+  /** The owner's first name, as `bookingOwner()` projects it (#3369). */
+  memberFirstName: string;
   /**
    * The booking OWNER's member id, or null when the booking is owned by an
    * `Organisation` (#3369). `memberEmail` and `memberName` beside it are the
