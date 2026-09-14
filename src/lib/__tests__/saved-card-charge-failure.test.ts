@@ -511,6 +511,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
     checkOut: new Date("2026-07-17T00:00:00.000Z"),
     finalPriceCents: 10_000,
     member: { email: "b1@example.com", firstName: "Test", lastName: "User" },
+    organisation: null,
   };
   const failure = {
     outcome: "terminal" as const,

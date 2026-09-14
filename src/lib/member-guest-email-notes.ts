@@ -531,7 +531,13 @@ export const MEMBER_GUEST_REMOVAL_NOTE_BY_BLOCKER: Record<
 
 /** Everything `evaluateGuestSelfRemoval` needs, threaded from the caller. */
 export type MemberGuestRemovalFacts = {
-  actorMemberId: string;
+  /**
+   * The person the note is written for. Nullable so this stays exactly the
+   * shape `evaluateGuestSelfRemoval` takes — the note calls that predicate
+   * itself, and two facts types that differ by one nullable field is how the
+   * note and the server's verdict drift apart (#3369).
+   */
+  actorMemberId: string | null;
   guestMemberId: string | null;
   /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
   bookingOwnerMemberId: string | null;
