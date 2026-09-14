@@ -433,6 +433,7 @@ The bounded run; its census is `INV-INT-022`.
   is recorded and the chunk continues, the funnel having left that operation
   `FAILED` and replayable (`INV-INT-019`); a daily limit halts it. Pinned by
   `xero-missing-contact-seeding.test.ts`, `missing-contacts-panel.test.tsx`.
+
 ## Erased-member Xero contact review (#3058)
 
 ### INV-INT-024
