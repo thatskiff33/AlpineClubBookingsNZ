@@ -183,6 +183,8 @@ async function getPaymentScope(localId: string): Promise<XeroRecordScope | null>
               lastName: true,
             },
           },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
       },
     },
@@ -229,6 +231,8 @@ async function getBookingScope(localId: string): Promise<XeroRecordScope | null>
           lastName: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: {
         select: {
           id: true,
@@ -464,6 +468,8 @@ async function getMemberSubscriptionScope(localId: string, yearEndMonth: number)
           lastName: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   });
 
@@ -514,6 +520,8 @@ async function getMembershipCancellationRequestScope(localId: string): Promise<X
               lastName: true,
             },
           },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
       },
     },
@@ -578,6 +586,8 @@ async function getMembershipCancellationParticipantScope(localId: string): Promi
           lastName: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   });
 

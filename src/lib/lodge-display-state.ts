@@ -443,6 +443,8 @@ export async function buildDisplayState(
         member: {
           select: { firstName: true, lastName: true, ageTier: true },
         },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         guests: {
           // Owner decision D-12 (#2307): the wall describes who is actually at
           // the lodge, so an unconsented member guest is not in this set.
@@ -476,6 +478,8 @@ export async function buildDisplayState(
                 phoneNumber: true,
               },
             },
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
             nights: { select: { stayDate: true } },
             bedAllocations: {
               where: {
@@ -521,6 +525,8 @@ export async function buildDisplayState(
                 member: {
                   select: { firstName: true, lastName: true, ageTier: true },
                 },
+                // #3369: the owner may be an Organisation; bookingOwner() reads both.
+                organisation: { select: { name: true, email: true } },
                 // D-12 (#2307): the chore panel re-derives containsMinors and
                 // the group headcount for its own assignee label, so it has to
                 // read the SAME guest set as the booking rows above or the two
@@ -953,6 +959,8 @@ export async function buildDisplayState(
         },
         select: {
           member: { select: { firstName: true, lastName: true, ageTier: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
         orderBy: [{ startDate: "asc" }, { id: "asc" }],
         take: 8,

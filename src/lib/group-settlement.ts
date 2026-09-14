@@ -1034,6 +1034,8 @@ async function settleConfirmedChildrenAndNotify(
         checkIn: true,
         checkOut: true,
         member: { select: { email: true, firstName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         _count: { select: { guests: true } },
       },
     });

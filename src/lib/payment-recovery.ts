@@ -2343,6 +2343,8 @@ async function processCreateAdditionalPaymentIntentOperation(
         member: {
           select: { id: true, email: true, firstName: true, lastName: true },
         },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         // #3181: `status` joins the select because the deferred supplementary
         // invoice this replay now raises is classified partly from it (the
         // primary invoice's local paid/refunded state). Whether an invoice

@@ -124,6 +124,8 @@ function formatBookingSnapshot(input: {
     lastName: string;
     email: string;
   };
+  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+  organisation: { name: string; email: string | null } | null;
   payment: {
     id: string;
     xeroInvoiceId: string | null;
@@ -171,6 +173,8 @@ export async function getMissingXeroInvoiceBookings(options?: {
           email: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: {
         select: {
           id: true,
@@ -273,6 +277,8 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
           member: {
             select: { firstName: true, lastName: true, email: true },
           },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
       },
     },

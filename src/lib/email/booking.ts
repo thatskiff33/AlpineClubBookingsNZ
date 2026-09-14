@@ -56,7 +56,10 @@ import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { sendEmail } from "./core";
-import { bookingOwnerEmailContext } from "@/lib/booking-email-contract";
+import {
+  bookingOwnerEmailContext,
+  type BookingOwnerEmailSource,
+} from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
 
@@ -77,7 +80,7 @@ export async function sendBookingConfirmedEmail(
   // string arguments. Every message in this file is unambiguously
   // booking-scoped, so `"none"` is not offered here: the per-booking "No
   // emails" switch must be able to withhold all of them.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -504,7 +507,7 @@ export async function sendBookingConfirmedEmail(
 
 export async function sendBookingPendingEmail(
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -555,7 +558,7 @@ export async function sendBookingPendingEmail(
  */
 export async function sendBookingPolicyExceptionApprovedEmail(
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   args: {
     firstName: string;
@@ -705,7 +708,7 @@ export async function sendBookingPolicyExceptionRefusedEmail(params: {
 
 export async function sendBookingBumpedEmail(
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -764,7 +767,7 @@ export async function sendBookingBumpedEmail(
 
 export async function sendBookingGuestsCancelledEmail(
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -789,7 +792,7 @@ export async function sendBookingGuestsCancelledEmail(
 
 export async function sendBookingCancelledEmail(
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -979,7 +982,7 @@ export async function sendBookingReviewRejectedEmail(params: {
 // N-01: Check-in reminder
 export async function sendCheckinReminderEmail(
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,

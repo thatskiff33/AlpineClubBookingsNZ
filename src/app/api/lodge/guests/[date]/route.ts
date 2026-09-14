@@ -154,6 +154,8 @@ async function handleGet(req: NextRequest, dateStr: string) {
               phoneNumber: true,
             },
           },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           // REQUIRED, not optional (#2631). Without the explicit night rows a
           // sparse stay's internal gap day falls back to the stayStart/stayEnd
           // envelope and reads as presence — a phantom guest on the kiosk, on a
@@ -163,6 +165,8 @@ async function handleGet(req: NextRequest, dateStr: string) {
         },
       },
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       // #3040: canonical Group Trip identity; tier split in `kiosk-group-trip.ts`.
       ...GROUP_TRIP_IDENTITY_SELECT,
     },

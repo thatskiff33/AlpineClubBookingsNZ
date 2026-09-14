@@ -119,6 +119,8 @@ export async function loadBookingRecords(
           email: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: {
         where: {
           stayStart: { lt: range.to },
@@ -153,6 +155,8 @@ export async function loadBookingRecords(
               },
             },
           },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
@@ -201,6 +205,8 @@ export async function loadAllocationRecords(
               },
             },
           },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
       },
       room: {

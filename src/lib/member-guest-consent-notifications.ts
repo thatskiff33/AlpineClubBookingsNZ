@@ -444,6 +444,8 @@ async function loadNotificationContext(
       status: true,
       memberId: true,
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       // D-14, and the fact that makes the added notice honest for the whole
       // MG4-D-b population (#2309). `evaluateGuestSelfRemoval` defaults
       // `isQuotePriced` to false — "not known to be quote priced" — and every
@@ -577,6 +579,8 @@ export async function sendMemberGuestWithdrawnNotifications(params: {
       checkIn: true,
       checkOut: true,
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   });
   if (!booking) {

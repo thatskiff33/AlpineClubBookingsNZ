@@ -156,6 +156,8 @@ type PaymentCandidate = {
       lastName: string;
       email: string;
     };
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    organisation: { name: string; email: string | null } | null;
     creditsFromCancellation: Array<{
       amountCents: number;
       description: string | null;
@@ -405,6 +407,8 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                       ],
                     },
                   },
+                  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+                  organisation: { select: { name: true, email: true } },
                 },
               },
             },
@@ -455,6 +459,8 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                 email: true,
               },
             },
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
           },
         },
       },
@@ -587,6 +593,8 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                 member: {
                   select: { id: true, firstName: true, lastName: true, email: true },
                 },
+                // #3369: the owner may be an Organisation; bookingOwner() reads both.
+                organisation: { select: { name: true, email: true } },
               },
             },
           },

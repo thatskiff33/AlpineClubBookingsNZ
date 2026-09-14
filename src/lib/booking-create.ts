@@ -1509,6 +1509,8 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           where: { id: booking.id },
           include: {
             member: true,
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
             guests: true,
             promoRedemption: {
               include: {

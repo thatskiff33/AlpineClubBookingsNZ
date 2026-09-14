@@ -206,6 +206,8 @@ export async function GET(
         member: {
           select: { id: true, firstName: true, lastName: true, email: true },
         },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         booking: {
           select: {
             id: true,
@@ -220,6 +222,8 @@ export async function GET(
             member: {
               select: { id: true, firstName: true, lastName: true },
             },
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
           },
         },
       },
@@ -242,6 +246,8 @@ export async function GET(
       name: memberName(r.member),
       email: r.member.email,
     },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    organisation: { select: { name: true, email: true } },
     booking: {
       id: r.booking.id,
       reference: bookingReference(r.booking.id),

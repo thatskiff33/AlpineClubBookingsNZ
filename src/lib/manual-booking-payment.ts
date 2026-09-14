@@ -244,6 +244,8 @@ export async function applyManualBookingPayment(
           discountCents: true,
           promoAdjustmentCents: true,
           member: { select: { email: true, firstName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           promoRedemption: { select: { promoCode: { select: { code: true } } } },
           _count: { select: { guests: true } },
         },

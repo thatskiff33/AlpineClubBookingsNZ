@@ -185,6 +185,8 @@ async function readBooking({
       notes: true,
       lodge: { select: { name: true } },
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },
   });

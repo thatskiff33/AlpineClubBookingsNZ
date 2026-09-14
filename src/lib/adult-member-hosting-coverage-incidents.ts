@@ -498,6 +498,8 @@ export async function loadHostingCoverageOwnerNotificationDelivery(
           checkIn: true,
           checkOut: true,
           member: { select: { firstName: true, email: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
       },
     },

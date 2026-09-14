@@ -73,6 +73,8 @@ export async function GET(req: NextRequest) {
         active: true,
         accessRoles: { some: { role: "USER" } },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
     select: {
       memberId: true,
@@ -90,6 +92,8 @@ export async function GET(req: NextRequest) {
           hutLeaderEligibleAt: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       booking: {
         select: { checkIn: true, checkOut: true },
       },
@@ -160,6 +164,8 @@ export async function GET(req: NextRequest) {
         ageTier: "ADULT",
         accessRoles: { some: { role: "USER" } },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
     select: {
       checkIn: true,
@@ -184,6 +190,8 @@ export async function GET(req: NextRequest) {
           hutLeaderEligibleAt: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   });
 

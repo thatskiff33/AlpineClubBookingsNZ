@@ -280,6 +280,8 @@ export async function listMemberGuestConsentExceptions(
           checkOut: true,
           lodge: { select: { name: true } },
           member: { select: { firstName: true, lastName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           guests: { select: { id: true } },
           // Only to tell a genuine settled-payment refusal from a row the
           // booking has moved past — see classifyLiveConsentExceptionReason.

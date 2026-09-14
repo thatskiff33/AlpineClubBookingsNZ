@@ -401,6 +401,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             checkIn: true,
             checkOut: true,
             member: { select: { firstName: true, lastName: true } },
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
           },
         },
       },
@@ -498,6 +500,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       booking: {
         include: {
           member: true,
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           guests: { include: { nights: true } },
           promoRedemption: {
             include: {
@@ -532,6 +536,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           booking: {
             include: {
               member: true,
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
               guests: { include: { nights: true } },
               promoRedemption: { include: { promoCode: true } },
             },
@@ -852,6 +858,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           booking: {
             include: {
               member: true,
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
               guests: { include: { nights: true } },
               promoRedemption: { include: { promoCode: true } },
             },

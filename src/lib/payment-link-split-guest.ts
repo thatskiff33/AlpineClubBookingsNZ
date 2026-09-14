@@ -168,6 +168,8 @@ export async function issueSplitGuestPaymentLink(
     where: { id: childBookingId },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: { select: { id: true } },
       payment: true,
       parentBooking: { include: { payment: true } },

@@ -91,6 +91,8 @@ export async function GET(request: NextRequest) {
       where,
       include: {
         member: { select: { id: true, firstName: true, lastName: true, email: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         guests: { select: { id: true, firstName: true, lastName: true, ageTier: true, isMember: true } },
       },
       orderBy: { createdAt: "asc" },

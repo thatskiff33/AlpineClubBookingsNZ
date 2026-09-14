@@ -112,6 +112,8 @@ export async function getWaitlistForDates(
     include: {
       guests: true,
       member: { select: { id: true, email: true, firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -490,6 +492,8 @@ export async function processWaitlistForDates(freedDates: {
         include: {
           guests: { include: { nights: true } }, // per-night sets (issue #713)
           member: { select: { id: true, email: true, firstName: true, lastName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           waitlistAlternateLodges: { select: { lodgeId: true } },
           // Full promo shape for the offer-time reprice (upstream #1035);
           // the cross-lodge quote only needs its existence.
@@ -1302,6 +1306,8 @@ export async function expireStaleOffers(): Promise<{
       },
       include: {
         member: { select: { email: true, firstName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
 

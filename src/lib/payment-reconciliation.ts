@@ -847,6 +847,8 @@ async function settleBookingPaymentInTransaction(
       include: {
         guests: { include: { nights: true } }, // per-night sets (issue #713)
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
 

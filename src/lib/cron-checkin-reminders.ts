@@ -46,6 +46,11 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
     },
     include: {
       member: true,
+      // #3369: who owns the booking may be an Organisation, so the owner
+      // projection needs the school's own name and address alongside the
+      // member link. `bookingOwner()` reads both and hands back one person-
+      // shaped owner either way.
+      organisation: { select: { name: true, email: true } },
       // Owner decision D-12 (#2307): the check-in reminder NAMES each guest, so
       // it must not name a member whose consent to being added is still PENDING
       // — the booker would read it as settled, and the named member has not

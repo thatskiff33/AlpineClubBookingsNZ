@@ -728,6 +728,8 @@ async function loadBookingSortRows(where: Prisma.BookingWhereInput) {
       finalPriceCents: true,
       status: true,
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },
   });
@@ -790,6 +792,8 @@ async function loadBookingCandidates(
           phoneNumber: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: {
         select: {
           id: true,

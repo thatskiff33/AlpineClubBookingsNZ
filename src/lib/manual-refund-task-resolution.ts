@@ -263,6 +263,8 @@ export async function resolveManualRefundTask(
                 lastName: true,
               },
             },
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
             // #3032: the booking's own status and its primary Xero invoice id,
             // for `hasIssuedPrimaryXeroInvoice`. A completion that moves money on
             // a booking whose invoice was issued has to correct that invoice, or

@@ -182,6 +182,8 @@ export function shouldAlertOnSavedCardChargeRefusal(
 
 const pendingBookingInclude = {
   member: true,
+  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+  organisation: { select: { name: true, email: true } },
   // Per-night sets (issue #713) for accurate capacity re-check at the hold window.
   guests: { include: { nights: true } },
   payment: true,

@@ -98,6 +98,8 @@ export async function getAdminOccupancyMonth(input: {
           lastName: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: {
         select: {
           id: true,

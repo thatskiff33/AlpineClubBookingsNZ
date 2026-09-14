@@ -478,6 +478,8 @@ async function handlePaymentIntentSucceeded(
     where: { id: bookingId },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: true,
     },
   });
@@ -854,6 +856,8 @@ async function handleAdditionalModificationPaymentSucceeded(
     where: { id: bookingId },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: true,
     },
   });
@@ -1347,6 +1351,8 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
       firstName: string;
       lastName: string;
     };
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    organisation: { name: string; email: string | null } | null;
     payment: {
       id: string;
       xeroInvoiceId: string | null;
@@ -1616,6 +1622,8 @@ async function handleCancelledBookingPaymentSucceeded(
       firstName: string;
       lastName: string;
     };
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    organisation: { name: string; email: string | null } | null;
     payment: {
       id: string;
       xeroInvoiceId: string | null;

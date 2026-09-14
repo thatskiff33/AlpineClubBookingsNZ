@@ -398,6 +398,8 @@ async function releaseSettlementChildren(
         checkOut: true,
         lodgeId: true,
         member: { select: { id: true, email: true, firstName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     const lockedLodgeIds = new Set(
@@ -419,6 +421,8 @@ async function releaseSettlementChildren(
         checkOut: true,
         lodgeId: true,
         member: { select: { id: true, email: true, firstName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     if (children.some((child) => !lockedLodgeIds.has(child.lodgeId))) {
@@ -555,6 +559,8 @@ async function cancelReapedChildren(
         checkOut: true,
         lodgeId: true,
         member: { select: { id: true, email: true, firstName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
 

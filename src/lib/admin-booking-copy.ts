@@ -65,6 +65,8 @@ export async function copyBookingToDraft({
     include: {
       guests: true,
       member: { select: { id: true, active: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   });
   if (!source) {

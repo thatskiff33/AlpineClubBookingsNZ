@@ -115,6 +115,8 @@ export async function POST(request: NextRequest) {
       where: { id: bookingId },
       include: {
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         guests: true,
         payment: true,
       },
