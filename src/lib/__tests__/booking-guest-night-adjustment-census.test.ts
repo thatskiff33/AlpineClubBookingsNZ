@@ -199,6 +199,8 @@ const MODULE_IMPORTERS = new Set([
   // Type-only: the build-up travels through the application result.
   "src/lib/promo.ts",
   "src/lib/booking-create-promo.ts",
+  // Stage 3's one reader/projection consumes the derived state from this module.
+  "src/lib/booking-money-build-up.ts",
 ]);
 
 const SOURCE = sourceFiles();
@@ -313,7 +315,7 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
     expect(discovered.length).toBeGreaterThanOrEqual(8);
   });
 
-  it("allows the writer module to be imported only by the paired writers and the two type-only carriers", () => {
+  it("allows the module to be imported only by paired writers, type carriers, and named readers", () => {
     const importers: string[] = [];
     for (const file of SOURCE) {
       const relative = relativeSource(file);
