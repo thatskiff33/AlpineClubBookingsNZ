@@ -12,6 +12,7 @@ import {
   KeyRound,
   Lock,
   Monitor,
+  Users,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -560,6 +561,30 @@ export default function LodgeConfigurationHubPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Member roster (#2942). NOT gated on the memberLodgeRoster module,
+          which is why it is not in the `areas` list above: the disclosure level
+          has to be settable BEFORE the roster is switched on. */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Users className="h-4 w-4" />
+            Member roster
+          </CardTitle>
+          <CardDescription>
+            {modules.memberLodgeRoster === true
+              ? "The member roster is on. Choose how much of a name other members see for this lodge."
+              : "The member roster is off. You can still choose how much of a name it would show for this lodge before you turn it on."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center justify-end">
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/admin/lodges/${encodeURIComponent(lodgeId)}/roster`}>
+              Configure
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-2">
         {areas.map((area) => {
