@@ -221,6 +221,20 @@ describeWithDatabase("#3369: the backfill fails closed", () => {
       .then(() => null)
       .catch((caught: unknown) => caught as Record<string, unknown>);
 
+    // END THE TRANSACTION THE MIGRATION OPENED. Because the file carries its own
+    // `BEGIN;` — which the comment above says, correctly, must not be replaced —
+    // the refusal leaves this SESSION inside an aborted transaction rather than
+    // tidily back at idle. PostgreSQL then answers every later statement on this
+    // connection with "current transaction is aborted, commands ignored until
+    // end of transaction block", so the two tests below fail on their very first
+    // query while reporting nothing about the rows they exist to check. An
+    // operator's own psql session recovers the same way and for the same reason.
+    // Before this line those two tests could not pass, and nothing had ever run
+    // them: this file's CI step is the SECOND in the `data-migration-
+    // verification` job, and the first step was failing, so the job never
+    // reached it (#3369).
+    await db().query("ROLLBACK").catch(() => {});
+
     expect(error, "the migration was expected to refuse and did not").not.toBeNull();
     expect(String(error?.message)).toContain(
       "school_member_classification_incomplete",
