@@ -19,7 +19,8 @@ const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 interface MissingXeroInvoiceBooking {
   bookingId: string;
   paymentId: string;
-  memberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   memberName: string;
   memberEmail: string;
   status: "PAID";

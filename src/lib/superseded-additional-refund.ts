@@ -74,7 +74,8 @@ export async function reportSupersededPaymentRefund(params: {
   let context: {
     memberName: string;
     memberEmail: string;
-    memberId: string;
+    /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
     checkIn: Date;
     checkOut: Date;
     lodgeId: string | null;

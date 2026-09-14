@@ -349,9 +349,21 @@ export async function clampAppliedCreditToBookingPrice(
     memberId,
     bookingId,
     newFinalPriceCents,
-  }: { memberId: string; bookingId: string; newFinalPriceCents: number },
+  }: {
+    /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+    memberId: string | null;
+    bookingId: string;
+    newFinalPriceCents: number;
+  },
   tx: Prisma.TransactionClient
 ): Promise<{ appliedCreditCents: number; refundedExcessCents: number }> {
+  // #3369: the clamp trims a MEMBER's applied credit to the booking's new
+  // price. An organisation-owned booking holds no applied credit, so there is
+  // nothing to clamp, no ledger to lock and no excess to refund. Returning
+  // zeroes is the fact rather than a default.
+  if (memberId === null) {
+    return { appliedCreditCents: 0, refundedExcessCents: 0 };
+  }
   await lockMemberCreditLedger(memberId, tx);
 
   const booking = await tx.booking.findUnique({

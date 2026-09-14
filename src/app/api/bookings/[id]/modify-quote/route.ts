@@ -737,7 +737,12 @@ export async function POST(
   // same field the create-flow quote returns (api/bookings/quote/route.ts) —
   // the edit panel's credit card keys off it. The BOOKING OWNER's balance, not
   // the actor's: an admin editing on behalf must see the member's credit.
-  const availableCreditCents = await getMemberCreditBalance(bookingOwner(booking).memberId);
+  // #3369: an account-credit balance belongs to a MEMBER. An organisation has
+  // none, so zero is the balance rather than a fallback for one.
+  const creditBalanceMemberId = bookingOwner(booking).memberId;
+  const availableCreditCents = creditBalanceMemberId
+    ? await getMemberCreditBalance(creditBalanceMemberId)
+    : 0;
 
   let normalizedAddGuests: NormalizedAddGuest[] | undefined = addGuests;
   let guestNameUpdates: ReturnType<typeof resolveGuestNameUpdates> = [];

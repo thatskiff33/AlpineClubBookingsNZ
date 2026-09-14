@@ -745,7 +745,11 @@ type BookingSortRow = Awaited<ReturnType<typeof loadBookingSortRows>>[number];
 function sortRowValue(row: BookingSortRow, sortBy: BookingSortBy) {
   switch (sortBy) {
     case "member":
-      return `${row.member.lastName} ${row.member.firstName}`.toLowerCase();
+      // #3369: `row` here is the LIGHTWEIGHT sort row, whose owner is read
+      // through the accessor below; this branch predates it and is the one
+      // place the raw relation is still in hand. An organisation-owned booking
+      // sorts under its own name, which is what the list shows.
+      return `${bookingOwner(row).member.lastName} ${bookingOwner(row).member.firstName}`.toLowerCase();
     case "checkIn":
       return row.checkIn;
     case "guests":

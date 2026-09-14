@@ -128,7 +128,8 @@ export type RemoveBookingGuestResult = {
   paymentCustomerId: string | null;
   memberEmail: string;
   memberName: string;
-  memberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   promoRemoved: boolean;
   // #2390: set only when a usage cap stopped the promotion reaching somebody
   // this edit added; null means everybody the code applies to is covered.

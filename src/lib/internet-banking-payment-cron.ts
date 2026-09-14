@@ -128,11 +128,11 @@ function releaseOneHold(paymentId: string, now: Date) {
       // replay guard; this transaction's guard set (payment still PENDING,
       // hold not yet released, booking still CONFIRMED) is its exactly-once
       // guarantee — re-runs skip released holds before reaching this line.
-      const creditRestoredCents = await restoreCreditFromBooking(
-        bookingOwner(fresh.booking).memberId,
-        fresh.bookingId,
-        tx,
-      );
+      // #3369: no member, no ledger, so nothing to restore. Zero is the fact.
+      const restoreMemberId = bookingOwner(fresh.booking).memberId;
+      const creditRestoredCents = restoreMemberId
+        ? await restoreCreditFromBooking(restoreMemberId, fresh.bookingId, tx)
+        : 0;
 
       // Size the invoice-clearing credit note like the never-captured cancel
       // path (#1547 / booking-cancel.ts), NOT the credit-reduced payment amount

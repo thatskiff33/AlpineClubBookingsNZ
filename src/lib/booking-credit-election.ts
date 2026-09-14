@@ -214,9 +214,14 @@ export async function consumeStoredCreditElection(
     status: BookingStatus.PAYMENT_PENDING,
   });
 
-  if (creditAppliedCents > 0) {
+  // #3369: applying account credit spends a MEMBER's balance. An organisation
+  // has none, so an election can never have been recorded on its booking and
+  // `creditAppliedCents` is zero — but reading the owner rather than asserting
+  // it is what keeps that true if the election path ever widens.
+  const electionMemberId = bookingOwner(booking).memberId;
+  if (electionMemberId && creditAppliedCents > 0) {
     await applyCreditToBooking(
-      bookingOwner(booking).memberId,
+      electionMemberId,
       creditAppliedCents,
       bookingId,
       tx,
