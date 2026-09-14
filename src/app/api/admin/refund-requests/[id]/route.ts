@@ -58,8 +58,6 @@ export async function PUT(
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       booking: { include: { payment: true, member: true, organisation: { select: { name: true, email: true } } } },
       member: true,
-      // #3369: the owner may be an Organisation; bookingOwner() reads both.
-      organisation: { select: { name: true, email: true } },
     },
   });
 
@@ -468,8 +466,6 @@ export async function PUT(
       member: {
         select: { id: true, firstName: true, lastName: true, email: true },
       },
-      // #3369: the owner may be an Organisation; bookingOwner() reads both.
-      organisation: { select: { name: true, email: true } },
     },
   });
 
