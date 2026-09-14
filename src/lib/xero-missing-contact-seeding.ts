@@ -66,6 +66,7 @@ import {
   getMissingFieldsForXeroContactCreate,
 } from "@/lib/xero-contacts";
 import { readXeroContactCacheFreshness } from "@/lib/xero-contact-cache-freshness";
+import { ACTIVE_XERO_CONTACT_STATUS } from "@/lib/xero-contact-status";
 import { getXeroGroupingMode } from "@/lib/xero-member-grouping";
 import {
   CALLS_PER_MEMBER_WITH_GROUPING,
@@ -278,7 +279,11 @@ async function loadCachedContacts(): Promise<{
   byNormalisedName: Map<string, CachedContact[]>;
 }> {
   const rows = await prisma.xeroContactCache.findMany({
-    where: { contactStatus: "ACTIVE" },
+    // `INV-SSOT`: which statuses count as a live contact is one fact, and its
+    // home is `xero-contact-status.ts`. Spelling "ACTIVE" here again is how
+    // this census and the erased-member review came to disagree about the same
+    // column (#3058).
+    where: { contactStatus: ACTIVE_XERO_CONTACT_STATUS },
     select: {
       contactId: true,
       name: true,
