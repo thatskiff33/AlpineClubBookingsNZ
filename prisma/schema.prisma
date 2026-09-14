@@ -767,6 +767,11 @@ model Member {
   // is unique per (organisation, person).
   organisationContacts                       OrganisationContact[]                      @relation("OrganisationContactMember")
 
+  // What this row actually was, when it was one of the school-shaped rows stage
+  // 4 (#3369) re-parented. At most one, and only ever present on a historical
+  // school or teacher row. Member merge classifies it `resolve`.
+  schoolClassification                       SchoolMemberClassification?                @relation("SchoolMemberClassificationMember")
+
   // Member profile photo (MP1). Outbound scalar FK, so it is part of the
   // additive master-wins field merge (not a re-pointed inbound relation); the
   // reverse side lives on MediaImage.photoOfMembers. onDelete: SetNull so
@@ -5687,12 +5692,23 @@ model BookingModification {
   id               String   @id @default(cuid())
   bookingId        String
 
-  // OPTIONAL SINCE #3369. FK-LESS BY DESIGN and stays so: member merge
-  // classifies it `snapshot` (`INV-LIFE-078`), so it keeps pointing at whoever
-  // it recorded, for ever. NULL means the modified booking was owned by an
-  // `Organisation`, which is a fact about the booking and is read through
+  // STAYS REQUIRED, and #3369 is where that was decided rather than assumed.
+  //
+  // The #2912 reader census named this one of four models a school booking
+  // reaches through a required member link, and it does reach it. But THIS
+  // COLUMN IS THE ACTOR, NOT THE OWNER: every one of the six writers passes a
+  // signed-in person — `actor.id`, `actingMemberId`, `session.user.id` — and
+  // none of them passes the booking's member. A school booking has never been
+  // modifiable by anybody but an officer, because the invented school member
+  // had `canLogin: false`, so there is no path on which this is null. Widening
+  // it would drop a NOT NULL that currently guarantees every modification names
+  // who made it, in exchange for nothing.
+  //
+  // FK-LESS BY DESIGN and stays so: member merge classifies it `snapshot`
+  // (`INV-LIFE-078`), so it keeps pointing at whoever it recorded, for ever.
+  // Who OWNED the modified booking is a different question and is read through
   // `bookingOwner()` on `bookingId`.
-  memberId         String?
+  memberId         String
   modificationType String // DATE_CHANGE | GUEST_ADD | GUEST_REMOVE | EXTEND_STAY
   previousData     Json // snapshot of changed fields before
   newData          Json // snapshot of changed fields after
@@ -6953,12 +6969,17 @@ model RefundRequest {
   id                   String              @id @default(cuid())
   bookingId            String
 
-  // OPTIONAL SINCE #3369: a refund request against an organisation-owned booking
-  // names no member. The money is unchanged — the refund is settled against the
-  // booking's payments either way — and the owner is read through
-  // `bookingOwner()` on `bookingId`. FK stays Restrict, unchanged: a member who
-  // has asked for a refund still cannot be deleted out from under the request.
-  memberId             String?
+  // STAYS REQUIRED, decided in #3369 for the same reason as
+  // `BookingModification.memberId`: this is the person who ASKED, not the party
+  // that owns the booking. Its one writer is the member-facing refund-request
+  // route, which passes `session.user.id`; on a school booking that comparison
+  // sends the caller down the admin branch, so the requester is an officer and
+  // is a person either way. Who owns the booking is read through
+  // `bookingOwner()` on `bookingId`.
+  //
+  // FK stays Restrict: a member who has asked for a refund cannot be deleted
+  // out from under the request.
+  memberId             String
   reason               String
   requestedAmountCents Int?
   status               RefundRequestStatus @default(PENDING)
@@ -6970,7 +6991,7 @@ model RefundRequest {
   updatedAt            DateTime            @updatedAt
 
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
-  member  Member? @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  member  Member  @relation(fields: [memberId], references: [id], onDelete: Restrict)
 
   @@index([bookingId])
   @@index([memberId])
@@ -7878,4 +7899,55 @@ model OrganisationContact {
   @@unique([organisationId, memberId])
   @@index([memberId])
   @@index([organisationId, role])
+}
+
+enum SchoolMemberClassificationKind {
+  ORGANISATION
+  PERSON
+}
+
+// WHAT A HISTORICAL "SCHOOL" MEMBER ROW ACTUALLY IS — the record of a decision,
+// not a guess (#3369, stage 4 of programme #2912; `INV-OPS-014`).
+//
+// Before this programme a school was a person-shaped `Member` row: the school's
+// name in `firstName`, a blank `lastName`, and the booking hung off it. Stage 4
+// moves those bookings onto the school's `Organisation`. Which of those rows is
+// a SCHOOL and which is a real TEACHER is a question about history, and the
+// binding rule on #2912 says it is answered from evidence or by a person —
+// never by a fallback and never by a name that looks school-ish.
+//
+// This table is where that answer lives, and the backfill migration
+// (20260922020000) READS it and refuses to write anything at all while any
+// candidate row is missing from it. That is what "fails closed" means here: the
+// classification is an input to the migration, not something the migration
+// works out while it runs.
+//
+// Two kinds of row, and the difference is `decidedBy`:
+//
+//   - The census tool writes the rows it can PROVE — a member whose
+//     `convertedMemberId` on a `SCHOOL` booking request carries the same school
+//     name it holds in `firstName`, or a member with a teacher's hut-leader
+//     assignment. `evidence` records which proof, verbatim.
+//   - An officer records the rest by hand, one at a time, naming themselves and
+//     saying why. There is no bulk classify and no default.
+//
+// KEPT AFTER THE MIGRATION, deliberately. It is the audit trail for an
+// irreversible re-parenting of money-adjacent rows: months later it is the only
+// thing that can answer "who decided this school was a school, and on what?".
+model SchoolMemberClassification {
+  memberId       String                          @id
+  classification SchoolMemberClassificationKind
+  // Free text, and REQUIRED: a classification with no stated reason is exactly
+  // the guess this programme exists to stop.
+  evidence       String                          @db.VarChar(500)
+  // `census` for a proved row, otherwise the officer who decided it.
+  decidedBy      String                          @db.VarChar(200)
+  decidedAt      DateTime                        @default(now())
+
+  // Cascade: the classification is a fact ABOUT this row, so when the row goes
+  // the classification is not about anything. Member merge classifies this
+  // relation `resolve` — see `MEMBER_MERGE_RELATION_SPECS`.
+  member Member @relation("SchoolMemberClassificationMember", fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([classification])
 }
