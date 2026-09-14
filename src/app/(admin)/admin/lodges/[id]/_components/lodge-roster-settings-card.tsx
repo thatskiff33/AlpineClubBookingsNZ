@@ -25,7 +25,7 @@ import {
 import {
   DISPLAY_NAME_GRANULARITY_LABELS,
   DISPLAY_NAME_GRANULARITY_VALUES,
-} from "@/lib/display-name-granularity-choices";
+} from "@/lib/display-name-granularity";
 
 /**
  * How much of a name the MEMBER LODGE ROSTER shows, for this one lodge (#2942,

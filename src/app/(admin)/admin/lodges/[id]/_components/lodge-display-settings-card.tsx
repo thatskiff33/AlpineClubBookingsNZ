@@ -20,7 +20,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   DISPLAY_NAME_GRANULARITY_LABELS,
   DISPLAY_NAME_GRANULARITY_VALUES,
-} from "@/lib/display-name-granularity-choices";
+} from "@/lib/display-name-granularity";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,

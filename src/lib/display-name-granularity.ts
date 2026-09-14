@@ -142,3 +142,45 @@ export function bookingLabel(
     `Guests · ${guestCount}`
   );
 }
+
+/**
+ * Every level, in the order a settings screen offers them — most detail first,
+ * so reading down the list is reading privacy increasing.
+ *
+ * Two surfaces let an administrator pick a level: the lobby display's per-lodge
+ * dial and the member lodge roster's (#2942). They share this list rather than
+ * each spelling the four values, which is `INV-SSOT` applied to a vocabulary the
+ * schema already fixes.
+ *
+ * `satisfies` rather than an annotation, so the array keeps its literal tuple
+ * type (`z.enum` and exhaustive `Record`s need that) while still failing to
+ * compile if the schema enum ever gains or renames a value.
+ *
+ * DELIBERATELY NOT CENTRALISED HERE: the bundle-validation list in
+ * `config-transfer/categories/lodge-config.ts`. That one checks values arriving
+ * from ANOTHER deployment's export file, so it is pinned to the bundle format
+ * rather than to whatever this product currently offers; coupling it to a UI
+ * constant would make a future UI change silently reject or accept old bundles.
+ */
+export const DISPLAY_NAME_GRANULARITY_VALUES = [
+  "FULL_NAME",
+  "FIRST_NAME_SURNAME_INITIAL",
+  "FIRST_NAME_ONLY",
+  "COUNTS_ONLY",
+] as const satisfies readonly DisplayNameGranularity[];
+
+/**
+ * What each level is called on an admin screen.
+ *
+ * An exhaustive `Record`, so adding a level to the schema enum fails to compile
+ * here rather than rendering a blank option nobody can interpret.
+ */
+export const DISPLAY_NAME_GRANULARITY_LABELS: Record<
+  DisplayNameGranularity,
+  string
+> = {
+  FULL_NAME: "Full names",
+  FIRST_NAME_SURNAME_INITIAL: "First name + surname initial",
+  FIRST_NAME_ONLY: "First names only",
+  COUNTS_ONLY: "Counts only (no names)",
+};

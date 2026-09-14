@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createAuditLog } from "@/lib/audit";
-import { DISPLAY_NAME_GRANULARITY_VALUES } from "@/lib/display-name-granularity-choices";
+import { DISPLAY_NAME_GRANULARITY_VALUES } from "@/lib/display-name-granularity";
 import { DEFAULT_ROSTER_NAME_GRANULARITY } from "@/lib/member-lodge-roster";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";

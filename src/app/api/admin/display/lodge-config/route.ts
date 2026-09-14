@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { createAuditLog } from "@/lib/audit";
 import { DISPLAY_CONFIG_KEY_PATTERN } from "@/lib/lodge-display/display-token-catalogue";
-import { DISPLAY_NAME_GRANULARITY_VALUES } from "@/lib/display-name-granularity-choices";
+import { DISPLAY_NAME_GRANULARITY_VALUES } from "@/lib/display-name-granularity";
 
 // Per-lodge display settings (fork issue #34): the {{config:<key>}} glob and
 // the name-granularity override. Validation mirrors the serialiser's
