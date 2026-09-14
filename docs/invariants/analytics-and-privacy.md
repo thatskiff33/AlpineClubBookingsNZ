@@ -685,3 +685,36 @@ enforced by what the server BUILDS rather than by what a component renders.
   canonical helpers, restates the tier test instead of asking for the
   capabilities, or puts a value in a `title` / `aria-label` / `data-*` attribute.
   Every one of those assertions names this id.
+
+## INV-PRIV-017
+
+What one member may learn about another from the lodge roster (#2942), and how
+that boundary is enforced.
+
+- **Off unless the club turns it on.** `ClubModuleSettings.memberLodgeRoster`
+  defaults false. While it is false the page is Not Found and no roster row is
+  read.
+- **Names and nights only, over a bounded forward window.** Today through
+  `ROSTER_WINDOW_DAYS` lodge nights, resolved through `clubTime()`. There is no
+  history and no parameter that widens it.
+- **Only lodges the viewer could already book.** Resolved from
+  `getEligibleLodgeIdsForMember` BEFORE any booking row is selected, so no path
+  reads a lodge the caller cannot reach. A listing omits what they may not see
+  rather than refusing.
+- **A withheld field is an ABSENT KEY, never a hidden one** — no null, no empty
+  string, no flag saying it was withheld, and nothing in a `title`,
+  `aria-label` or `data-*` attribute. `MEMBER_ROSTER_BOOKING_SELECT` names no
+  private column, so there is nothing to strip and nothing for a later edit to
+  forget. The select's whole key set is pinned, because no denylist can
+  safely forbid a bare `id`.
+- **Whose name may appear.** Individual names only where
+  `namesAllowedForBooking` allows them, reduced by `reduceName` at
+  `Lodge.rosterNameGranularity` (null means `FULL_NAME`, owner decision D2,
+  deliberately not the lobby display's default). A booking containing a minor
+  names NOBODY in it: naming the adults beside a family label identifies the
+  child by association.
+- **There is no per-member opt-out** (owner decision D3). A member who wants to
+  be unlisted has no remedy short of not booking; the module default and the
+  granularity dial are what bound that.
+- Pinned by `src/lib/__tests__/member-lodge-roster-privacy.test.ts`, whose
+  every assertion names this id.
