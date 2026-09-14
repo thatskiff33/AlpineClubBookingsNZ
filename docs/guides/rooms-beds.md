@@ -45,7 +45,15 @@ sees it read-only. The page appears only when the `bedAllocation` module is on.
    setting, edited on the lodge configuration page. See the
    [capacity model](../CAPACITY_MODEL.md#two-distinct-quantities).
 
-   ![Rooms & Beds page showing the room/bed/capacity badges, Quick Add Rooms, the Room Inventory list with Bunk Room A, Bunk Room B, and the Family Room, and the Allocation preferences card at the foot of the page](../images/admin/admin-rooms-beds.png)
+   <!--
+     ALT TEXT DESCRIBES THIS CAPTURE, NOT THE PAGE. The image predates #2937 and
+     does not yet show the Allocation preferences card at the foot of the page;
+     saying it does would make the substitute a screen-reader user relies on
+     wrong rather than merely stale. Re-run `npm run docs:screenshots` and, in
+     the same change, extend the alt text to end "…and the Allocation
+     preferences card at the foot of the page".
+   -->
+   ![Rooms & Beds page showing the room/bed/capacity badges, Quick Add Rooms, and the Room Inventory list with Bunk Room A, Bunk Room B, and the Family Room](../images/admin/admin-rooms-beds.png)
 
 ### Seed several rooms at once
 
@@ -78,9 +86,10 @@ the lodge chosen at the top, so what you edit is always the lodge you are
 looking at.
 
 1. Choose the lodge at the top of the page. If the lodge selector is still
-   loading, could not load, or your role cannot choose a lodge at all, the card
-   says which of those it is and offers nothing to change — it never falls back
-   to "some lodge".
+   loading, could not load, your role cannot choose a lodge at all, or the club
+   has no active lodge, the card says which of those it is and offers nothing to
+   change — it never falls back to "some lodge". (A single-lodge club has no
+   selector to use: that lodge is simply the one you are editing.)
 2. In **Allocation preferences**, click **Edit**. Tick **Auto allocation
    enabled** if the Bed Allocation board and the booking lifecycle should
    propose placements for this lodge.
@@ -155,7 +164,7 @@ The shipped preference order, and what each one means, is in
 | Capacity is **lower than the beds badge**, and the page warns "Sleeping capacity capped below the installed beds" | The lodge's configured capacity ceiling is below the active bed count, so Capacity = the ceiling (`capped_beds`). The surplus beds stay allocatable but cannot be booked into | Intended? Leave it. To lift the cap, raise or clear the lodge's capacity on the **lodge configuration page** ([Lodges](lodges.md)) — see [the capacity model](../CAPACITY_MODEL.md#two-distinct-quantities) |
 | Capacity is **lower than the capacity I set on the lodge**, and no cap warning is shown | The configured capacity is **above** the active bed count, so the beds are what bind. This is allowed and deliberate: capacity is the lower of the two | Activate more beds here to raise the effective capacity, up to the configured number. Do **not** lower the lodge's capacity to match the beds to make the figures agree: the surplus is what the lodge's partner-shared double-bed spots are measured against, so that removes them. What the capacity field says as you type, and why, is in [the capacity model](../CAPACITY_MODEL.md#admin-surface) |
 | The page warns "Capacity fallback active" and uses the lodge's capacity setting | Bed Allocation is on but **no active beds** are configured, so bookable capacity falls back to the lodge's capacity setting until at least one active bed exists | Add at least one active bed here, or set the fallback capacity on the [Lodges](lodges.md) configuration page |
-| **Allocation preferences** says to choose a single lodge | The page has no single lodge settled — the selector is still loading, the lodge list failed, your role cannot choose a lodge, or the club has no active lodge | The card names which one it is. Retry the lodge list with **Try again** if it failed, or ask for lodge access if your role cannot choose |
+| **Allocation preferences** shows a sentence instead of the settings | The page has no single lodge settled, and the card says which of four reasons it is: "Loading lodge…", "The lodge list could not be loaded…", "…your admin role cannot choose one", or "This club has no active lodge…" | Retry the lodge list with **Try again** if it failed; ask for lodge access if your role cannot choose one; add an active lodge on the [Lodges](lodges.md) page if the club has none |
 | My allocation preference edits vanished | You switched lodge before saving | Re-choose the lodge and make the change again. Unsaved edits are discarded on a lodge switch so they cannot be written to the wrong lodge |
 | A bunk shows an "unpaired" hint | Its partner bunk bed has not been added yet | Add the matching Bunk (top)/(bottom) bed in the same room |
 | "Cannot deactivate this bed while current or future allocations exist on … (name)" | A guest is allocated to this bed on the dates listed, and the message names them. "Current" includes **last night**, because that guest is in the lodge until midday today | Move or remove those allocations on the [Bed Allocation](bed-allocation.md) board first, then deactivate |

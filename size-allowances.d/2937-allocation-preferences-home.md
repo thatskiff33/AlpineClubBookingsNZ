@@ -2,11 +2,15 @@
 
 file: src/components/admin/rooms-beds-manager.tsx
 lines: 1511
-reason: nine lines, and only two of them are code — the import of
+reason: seventeen lines, of which exactly two are code — the import of
   `AllocationPreferencesPanel` and the one element that mounts it. The other
-  seven are the comment saying why the mount point sits OUTSIDE this file's
-  `lodgeScopeReady` gate, which is the part a reader would otherwise "tidy"
-  back inside and so delete the panel's per-scope explanation along with it.
+  fifteen are a blank separator and the fourteen-line comment saying why the
+  mount point sits OUTSIDE this file's `lodgeScopeReady` gate, which is the
+  part a reader would otherwise "tidy" back inside and so delete the panel's
+  per-scope explanation along with it. That tidy is now a test failure rather
+  than a comment nobody reads: four cases in `rooms-beds-manager.test.tsx` and
+  two in `rooms-beds-allocation-preferences-integration.test.tsx` assert the
+  card is still there in each unsettled scope.
   The whole point of hosting the editor here is that it reads this manager's
   own `lodgeScope` — one lodge selector on the page, one derivation, one
   committed scope — so the mount cannot move to a sibling component or to the

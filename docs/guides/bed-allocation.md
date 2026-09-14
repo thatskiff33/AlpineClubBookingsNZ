@@ -86,7 +86,23 @@ year in one go).
    **If the club has no active lodge**, the board says that instead of loading,
    with a link to Lodge settings.
 
-   ![Bed Allocation board: the date controls, the "Bookings approved, awaiting allocation" pool with Run Auto Allocation, and the room-by-night Allocation Board](../images/admin/admin-bed-allocation.png)
+   <!--
+     ALT TEXT DESCRIBES THIS CAPTURE, NOT THE PAGE. The image predates #2937 and
+     still shows the Allocation preferences EDITOR on the board, where the link
+     card now is; the alt text says so rather than describing the page as it is
+     today, because a wrong substitute is worse for a screen-reader user than an
+     old one. Re-run `npm run docs:screenshots` and, in the same change, replace
+     "the Allocation preferences editor" below with "the Allocation preferences
+     link card".
+   -->
+   ![Bed Allocation board: the date controls, the Allocation preferences editor, the "Bookings approved, awaiting allocation" pool with Run Auto Allocation, and the room-by-night Allocation Board](../images/admin/admin-bed-allocation.png)
+
+### Choose how dragging behaves
+
+In the **Board drag controls** card, optionally tick **Single-night drag mode**.
+This remains browser-only and is not saved: when on, dragging a guest allocates
+only the night you drop on; when off, dropping allocates the guest's visible
+stay.
 
 ### Where this lodge's allocation preferences are set
 
@@ -97,13 +113,13 @@ Beds** (`/admin/rooms-beds`), at the bottom of the page. The board carries a lin
 to it, already pointed at the lodge you are looking at, and the step-by-step is
 in [Rooms & Beds](rooms-beds.md#set-this-lodges-allocation-preferences).
 
+The link drops the lodge in one case, and lands you on the page's own lodge
+chooser instead: a lodge that has been **deactivated** since the booking you are
+looking at was made. Rooms & Beds only lists active lodges, so a link naming a
+deactivated one would quietly put you on a different lodge's preferences.
+
 Changes made there apply to the next allocation run on this board. They never
 rearrange or re-approve allocations that already exist.
-
-1. In the separate **Board drag controls** card, optionally tick
-   **Single-night drag mode**. This remains browser-only and is not saved: when
-   on, dragging a guest allocates only the night you drop on; when off, dropping
-   allocates the guest's visible stay.
 
 ### How the preferences are compared
 
@@ -378,7 +394,7 @@ that booking, so the booking's own **Audit log** link finds it.
 | Assign range… | Place one guest in one bed across a stay of any length | — | Up to 366 nights; all-or-nothing, then an explicit free-nights option; auto-approves the beds |
 | Single-night drag mode | Drag allocates one night vs the whole stay | off | Client-side only, not saved |
 | Move an existing chip | Review a bed change while preserving original nights | — | Choose this allocation night or every existing night for this person on the booking (including off-screen rows, up to 366); hovered date is ignored; changed approved rows become Manual drafts; all-noop confirmation is audit-free |
-| Allocation preferences link | Opens this lodge's auto-allocation switch and preference order in Bookings Setup → Rooms & Beds | — | Carries the board's lodge when it has one; a plain link when it does not. Editing needs bookings edit ([Rooms & Beds](rooms-beds.md#set-this-lodges-allocation-preferences)) |
+| Allocation preferences link | Opens this lodge's auto-allocation switch and preference order in Bookings Setup → Rooms & Beds | — | Carries the board's lodge when that lodge is active; a plain link otherwise, including when the focused booking's lodge has been deactivated. Editing needs bookings edit ([Rooms & Beds](rooms-beds.md#set-this-lodges-allocation-preferences)) |
 | Run Auto Allocation | Apply suggested placements | — | Needs auto-allocation on, suggestions available, and a single lodge selected |
 | Approve Visible | Approve the visible draft allocations | — | Disabled when nothing is unapproved, or while All lodges is selected (#2701) |
 | Reset allocations… | Review removal of selected categories in this lodge's visible window | — | Requires a preview; never includes off-screen nights and never runs automatic allocation afterwards; needs a single lodge selected |

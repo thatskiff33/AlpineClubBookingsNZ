@@ -46,7 +46,7 @@ const sections: AdminHubSection[] = [
     href: "/admin/rooms-beds",
     title: "Rooms & Beds",
     description:
-      "Configure lodge room and bed inventory used by capacity and allocation workflows.",
+      "Configure lodge room and bed inventory used by capacity and allocation workflows, and that lodge's allocation preferences.",
     icon: BedDouble,
   },
   {

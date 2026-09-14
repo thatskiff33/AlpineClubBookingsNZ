@@ -9,7 +9,16 @@
   place, and needing the same bookings-edit access as before. The board now
   carries a link to the new home, already pointed at the lodge you were looking
   at, so getting there is one click from where you noticed the ordering was
-  wrong.
+  wrong. If that lodge has since been closed, the link takes you to the page's
+  own lodge chooser instead of quietly opening a different lodge's preferences.
+
+  Rooms & Beds sits under Lodge Operations while everything on it is gated on
+  bookings access, so the move would have shut two shipped roles — the finance
+  admin and the membership admin — out of a setting they could change the day
+  before, by redirecting them away with no message. The page now opens for
+  anyone holding either Lodge Operations or Bookings access. Nobody who could
+  reach it loses it, and nobody gains anything the bed-allocation screens did
+  not already give them.
 
   The move was also used to close a risk the old screen carried. Preferences are
   per lodge, and the card now takes its lodge from the page's own lodge chooser

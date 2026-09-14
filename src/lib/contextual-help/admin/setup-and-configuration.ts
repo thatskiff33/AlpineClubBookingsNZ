@@ -122,7 +122,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         {
           name: "Rooms & Beds",
           description:
-            "Capacity and allocation inventory used by lodge stays.",
+            "Capacity and allocation inventory used by lodge stays, plus each lodge's allocation preferences.",
         },
       ],
     ),
@@ -220,7 +220,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
       "Bookings Setup",
       "Bookings Setup groups lower-frequency pages that shape booking inventory and member-facing booking copy.",
       [
-        "Open Rooms & Beds before changing bed-allocation inventory.",
+        "Open Rooms & Beds to change bed-allocation inventory, or to change a lodge's allocation preferences.",
         "Open Booking Messages when booking, payment, cancellation, or group-booking wording needs an operator-approved update.",
         "Check module and permission gates if a setup card is hidden for the current admin.",
       ],
@@ -228,7 +228,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         {
           name: "Rooms & Beds",
           description:
-            "Lodge room and bed inventory used by bed-allocation workflows.",
+            "Lodge room and bed inventory used by bed-allocation workflows, and each lodge's allocation preferences.",
         },
         {
           name: "Booking Messages",

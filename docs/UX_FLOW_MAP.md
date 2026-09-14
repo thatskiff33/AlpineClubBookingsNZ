@@ -26,16 +26,24 @@ lodge's **Allocation preferences** at the foot of it — beside the rooms and be
 the preferences order guests into. The Bed Allocation board no longer hosts the
 editor; it carries a link to this page, pre-pointed at the board's own lodge
 when it has one and plain when it does not, because a board with no settled
-lodge must not invent one for a link any more than for a write.
+lodge must not invent one for a link any more than for a write. "Has one" means
+a lodge Rooms & Beds could itself settle on: a board focused on a booking at a
+**deactivated** lodge holds that lodge on purpose, and the destination would
+silently substitute the first active one, so the link drops it rather than
+naming it.
 
 The card takes the page's whole settled lodge scope rather than a lodge id, so
 only one of its six states is a write target. `lodge` loads, edits and saves
-that lodge alone. `all`, `loading`, `failed`, `forbidden` and a club with no
-active lodge are visible and read-only: each says which it is, requests nothing,
-and offers no edit path — `failed` points at the page's one **Try again** rather
-than growing a second retry. Switching lodge discards an unsaved draft, and the
-draft carries the lodge it was LOADED from, so even a host that dropped the
-per-lodge key could not write one lodge's edits onto another.
+that lodge alone. `loading`, `failed`, `forbidden` and a club with no active
+lodge are visible and read-only: each says which it is, requests nothing, and
+offers no edit path — `failed` points at the page's one **Try again** rather
+than growing a second retry. The sixth state, `all`, is implemented and tested
+but not reachable on this host, which offers no club-wide view of its inventory;
+it exists because the next host may, and because an "all lodges" view silently
+acquiring a write target is the failure this issue exists to make impossible.
+Switching lodge discards an unsaved draft, and the draft carries the lodge it
+was LOADED from, so even a host that dropped the per-lodge key could not write
+one lodge's edits onto another.
 
 A bookings-edit admin clicks **Edit**, stages the auto-allocation switch and the
 ordered priorities (drag or arrow movement, Enable/Disable), then chooses
@@ -53,8 +61,14 @@ and must say that saving affects future suggestions/reconciliation only rather
 than moving existing guests. Lodge changes abort or ignore stale reads and stale
 optimistic callbacks. A view-only role sees the card's own section banner and
 disabled Edit/Save affordances; the API independently enforces `bookings:view`
-on GET and `bookings:edit` on PUT. Neither the permission, the storage, nor the
-route changed when the editor moved.
+on GET and `bookings:edit` on PUT. Neither the permission needed to read or
+change a preference, the storage, nor the API route changed when the editor
+moved. What the move DID change is which admin area opens the page holding it:
+the board is in the `bookings` area and Rooms & Beds is registered under
+`lodge`, so admission to `/admin/rooms-beds` became an OR across the two —
+`isRoomsBedsPath` / `canAccessRoomsBedsPage`, on the consolidated fee console's
+precedent — rather than leaving two seeded bookings-view roles redirected away
+from a setting they could reach the day before.
 
 A refused load or save keeps its states distinct and surfaces no internal detail
 (#2931). They are told apart by what the BODY says, never by the status alone:
