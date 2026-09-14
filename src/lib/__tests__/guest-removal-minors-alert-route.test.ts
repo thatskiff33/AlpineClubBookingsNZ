@@ -179,8 +179,18 @@ function preEditBooking(guests: Guest[]) {
       // at today's rate. Two nights at 2000 summing to the 4000 below, which is
       // also what `toHostingParticipants` reads `.length` from.
       nights: [
-        { stayDate: CHECK_IN, priceCents: 2000 },
-        { stayDate: new Date("2027-07-16"), priceCents: 2000 },
+        {
+          id: `${g.id}-night-1`,
+          stayDate: CHECK_IN,
+          priceCents: 2000,
+          priceSource: "SOLD",
+        },
+        {
+          id: `${g.id}-night-2`,
+          stayDate: new Date("2027-07-16"),
+          priceCents: 2000,
+          priceSource: "SOLD",
+        },
       ],
       priceCents: 4000,
       // No consent was ever asked for on this booking, which is one of the two
@@ -216,6 +226,7 @@ function preEditBooking(guests: Guest[]) {
       lastName: "Owner",
     },
     promoRedemption: null,
+    nightAdjustments: [],
   };
 }
 
