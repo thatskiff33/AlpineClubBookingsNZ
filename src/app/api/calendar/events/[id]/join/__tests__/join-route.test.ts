@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   sessionUser: null as Record<string, unknown> | null,
   canManage: false,
   event: null as Record<string, unknown> | null,
-  buildMeetingJoinUrl: vi.fn((room: string) => `https://meet.example.org/join?room=${room}&token=jwt`),
+  buildMeetingJoinUrl: vi.fn(
+    async (room: string) =>
+      `https://meet.example.org/join?room=${room}&token=jwt`,
+  ),
   logAudit: vi.fn(),
   findUnique: vi.fn(async (..._args: unknown[]) => mocks.event),
 }));
@@ -29,7 +32,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { calendarEvent: { findUnique: (...args: unknown[]) => mocks.findUnique(...args) } },
 }));
 
-vi.mock("@/lib/calendar-events", () => ({
+// The link moved to `mirotalk-config` with #2940, where the club's own meeting
+// configuration is resolved before the environment is consulted.
+vi.mock("@/lib/mirotalk-config", () => ({
   buildMeetingJoinUrl: (room: string) => mocks.buildMeetingJoinUrl(room),
 }));
 
