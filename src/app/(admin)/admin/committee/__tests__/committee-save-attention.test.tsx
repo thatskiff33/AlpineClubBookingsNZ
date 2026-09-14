@@ -55,7 +55,7 @@ import CommitteePage from "@/app/(admin)/admin/committee/page";
 const fetchMock = vi.fn();
 let scrollIntoView: ScrollIntoViewSpy;
 let scrollHost: HTMLElement;
-let scrollTo: ReturnType<typeof vi.fn>;
+let scrollTo: ReturnType<typeof vi.fn<(options?: ScrollToOptions) => void>>;
 
 function json(body: unknown, status = 200) {
   return Promise.resolve({
@@ -82,8 +82,10 @@ beforeEach(() => {
   // would pass for the wrong reason.
   scrollHost = document.createElement("main");
   scrollHost.style.overflowY = "auto";
-  scrollTo = vi.fn();
-  scrollHost.scrollTo = scrollTo;
+  scrollTo = vi.fn<(options?: ScrollToOptions) => void>();
+  // `Element.scrollTo` is overloaded (options, or an x/y pair); the primitive
+  // only ever calls the options form, so the spy states that one.
+  scrollHost.scrollTo = scrollTo as unknown as HTMLElement["scrollTo"];
   document.body.append(scrollHost);
   vi.stubGlobal("fetch", fetchMock);
 });
