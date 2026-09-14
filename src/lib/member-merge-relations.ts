@@ -348,4 +348,19 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("OrganisationContact", "member", "memberId", "resolve", {
     note: "@@unique(organisationId,memberId); keep master's association on collision",
   }),
+
+  // What a historical school-shaped row actually was (#3369, stage 4). The
+  // primary key IS `memberId`, so the row is a fact about THIS member and
+  // cannot be re-pointed at another one: `member.delete(loser)` cascade-drops
+  // it, which is exactly right. A classification that survived onto the master
+  // would be asserting that the master is the row an officer decided about, and
+  // it is not.
+  //
+  // A merge involving a row classified ORGANISATION is REFUSED outright
+  // (`organisation_row` in `evaluateMemberMergeGuards`), so the only rows this
+  // bucket ever drops are PERSON classifications — a spent note about a row that
+  // is going away.
+  spec("SchoolMemberClassification", "member", "memberId", "cascade", {
+    note: "@id memberId; a fact about the loser's own row, dropped with it (#3369)",
+  }),
 ];

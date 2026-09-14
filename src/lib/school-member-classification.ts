@@ -139,6 +139,34 @@ export const SCHOOL_CLASSIFICATION_PERSON_PROOF_SQL = `m."canLogin" = true
     WHERE h."memberId" = m."id" AND h."source" = 'SCHOOL_BOOKING'
   )`;
 
+/**
+ * THE CENSUS QUERY. One statement, built from the three constants above so that
+ * "what the census counted" and "what the rule says" cannot come apart.
+ *
+ * It lives here rather than in the script because a test has to be able to read
+ * it, and importing a script that runs on import would run it.
+ *
+ * Read-only. Every column is either a fact the club recorded or one of the two
+ * proofs evaluated by PostgreSQL; nothing is decided in SQL, so
+ * {@link classifySchoolMember} stays the only place a verdict is reached.
+ */
+export function censusSql(): string {
+  return `SELECT m."id" AS "id",
+       m."firstName" AS "firstName",
+       m."lastName" AS "lastName",
+       m."email" AS "email",
+       m."xeroContactId" AS "xeroContactId",
+       (SELECT count(*) FROM "Booking" b2 WHERE b2."memberId" = m."id")::int AS "bookingCount",
+       (${SCHOOL_CLASSIFICATION_ORGANISATION_PROOF_SQL}) AS "organisationProof",
+       (${SCHOOL_CLASSIFICATION_PERSON_PROOF_SQL}) AS "personProof",
+       c."classification"::text AS "recorded",
+       c."decidedBy" AS "recordedBy"
+  FROM "Member" m
+  LEFT JOIN "SchoolMemberClassification" c ON c."memberId" = m."id"
+ WHERE ${SCHOOL_CLASSIFICATION_CANDIDATE_SQL}
+ ORDER BY m."firstName", m."id"`;
+}
+
 /** What the census can say about one candidate row. */
 export type SchoolMemberClassificationVerdict =
   | SchoolMemberClassificationKind

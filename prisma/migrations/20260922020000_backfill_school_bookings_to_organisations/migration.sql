@@ -49,7 +49,7 @@ BEGIN
           )
     ) THEN
         RAISE EXCEPTION 'school_member_classification_incomplete'
-            USING HINT = 'Run npm run school-classification-census and record a decision for every row it lists as CANNOT TELL, then run the migration again.';
+            USING HINT = 'Run npm run db:school-classification-census and record a decision for every row it lists as CANNOT TELL, then run the migration again.';
     END IF;
 END;
 $fail_closed$;

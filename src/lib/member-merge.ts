@@ -1,5 +1,10 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { AccessRole, type Member, type Prisma } from "@prisma/client";
+import {
+  AccessRole,
+  SchoolMemberClassificationKind,
+  type Member,
+  type Prisma,
+} from "@prisma/client";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
 import {
   actorIsFullAdmin,
@@ -631,6 +636,46 @@ export async function evaluateMemberMergeGuards(params: {
       label:
         "The duplicate has an invoiced/paid membership subscription for a season the master also has a subscription row for. Resolve the duplicate subscription before merging.",
       count: blockedSeasons,
+    });
+  }
+
+  // A SCHOOL IS NOT A PERSON, AND A MERGE SAYS TWO ROWS ARE ONE PERSON
+  // (#3369, stage 4 of programme #2912; `INV-LIFE`).
+  //
+  // Every school the club ever took a booking from used to be a Member row with
+  // the school's name in `firstName` and a blank surname. Stage 4 moved those
+  // bookings onto the school's `Organisation` and left the row behind, holding
+  // nothing but its history. Folding one of those rows into a person — in
+  // either direction — would put a school's past under a person's name and
+  // re-create the school-as-person model this whole programme exists to end.
+  //
+  // The test is the RECORDED classification, not a guess from the shape of the
+  // row: `SchoolMemberClassification` is what an officer or the census decided,
+  // with its evidence, so the refusal can say which decision it is acting on.
+  // A row classified PERSON is a real teacher and merges exactly as anyone else
+  // does; that is the common case and it is deliberately not blocked.
+  //
+  // If a school really has been recorded twice, the two `Organisation` records
+  // are what an officer merges — a decision about the school, taken where the
+  // school lives.
+  const organisationRows = await db.schoolMemberClassification.findMany({
+    where: {
+      memberId: { in: [masterId, loserId] },
+      classification: SchoolMemberClassificationKind.ORGANISATION,
+    },
+    select: { memberId: true },
+  });
+  if (organisationRows.length > 0) {
+    const sides = organisationRows.map((row) =>
+      row.memberId === masterId ? "master" : "duplicate",
+    );
+    blockers.push({
+      code: "organisation_row",
+      label:
+        sides.length === 2
+          ? "Both records are schools, not people. Merge the two organisation records instead."
+          : `The ${sides[0]} record is a school, not a person, and cannot be merged with one. If two records exist for the same school, merge the organisations instead.`,
+      count: organisationRows.length,
     });
   }
 
