@@ -423,15 +423,22 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     );
   });
 
-  it("records no instruction for the fourteen enqueuers with no choice to express, when nothing was recorded before (#2929)", async () => {
-    // Every other caller of this function — confirm-draft, waitlist-confirm,
+  it("records no instruction for the fifteen enqueuers with no choice to express, when nothing was recorded before (#2929)", async () => {
+    // THE ONE PLACE THE LIVE POPULATION IS COUNTED. Seventeen call sites reach
+    // this function; the two in `booking-create` carry the officer's answer and
+    // the other FIFTEEN pass an explicit null — confirm-draft, waitlist-confirm,
     // charge-saved-method, switch-to-internet-banking, confirm-pending-guests,
     // cron-confirm-pending, group settlement, the school-booking-request
-    // conversion, the booking-edit settlement, the admin payment-invoice
-    // service, the invoice queue, and the admin missing-invoices, force-sync
-    // and repair surfaces — passes an explicit null. They must keep behaving
-    // exactly as they did before this issue when no earlier operation for this
-    // same invoice expressed a choice.
+    // conversion (`approveSchoolBookingRequest`), the member whole-lodge request
+    // approval (`approveMemberWholeLodgeRequest`, a SECOND site in that same
+    // file and the one an earlier draft of this list missed), the booking-edit
+    // settlement, the admin payment-invoice service, the invoice queue, and the
+    // admin missing-invoices, force-sync and repair surfaces. They must keep
+    // behaving exactly as they did before this issue when no earlier operation
+    // for this same invoice expressed a choice.
+    //
+    // Recount with, and keep this list in step with:
+    //   grep -rn "invoiceEmailDelivery: null" --include=*.ts src/ | grep -v __tests__
     await enqueueXeroBookingInvoiceOperation("booking_1", {
       createdByMemberId: "admin_1",
       invoiceEmailDelivery: null,
@@ -579,7 +586,7 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
 
   /*
     A TYPE-LEVEL PIN, not a runtime assertion (#2929 fix round). The option is
-    REQUIRED so that a fifteenth booking-invoice enqueuer is a compile error
+    REQUIRED so that a NEW booking-invoice enqueuer is a compile error
     until its author states its instruction — this repository prefers
     unrepresentable over policed, and the module next door already requires a
     typed context on every send for the same reason. `@ts-expect-error` reports

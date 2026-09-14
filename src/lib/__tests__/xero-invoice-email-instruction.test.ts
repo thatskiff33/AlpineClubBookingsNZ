@@ -77,8 +77,10 @@ describe("xeroInvoiceEmailInstructionForNotifyChoice", () => {
       XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION,
     );
     // Recorded rather than left absent, so an operator reading the row can tell
-    // "the officer chose to send" from "nobody was asked", which is what the
-    // fourteen other enqueuers store.
+    // "the officer chose to send" from "nobody was asked", which is what every
+    // other enqueuer stores. (Counted and enumerated once, in the
+    // `xero-operation-outbox` census — not restated here, where a second number
+    // could only drift.)
     expect(xeroInvoiceEmailInstructionForNotifyChoice(true)).toBe(
       XERO_INVOICE_EMAIL_SEND,
     );

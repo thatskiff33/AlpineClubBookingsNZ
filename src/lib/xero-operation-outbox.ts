@@ -403,8 +403,11 @@ export async function enqueueXeroBookingInvoiceOperation(
      * repository's rule is that a required argument beats a lint rule
      * (`INV-SSOT`), and the module next door already settled the identical
      * question the same way: every send carries a required, typed context.
-     * Optional here, the fifteenth enqueuer added next month would omit the
-     * field, compile, and email the member the officer chose not to email.
+     * Optional here, the next enqueuer added would omit the field, compile,
+     * and email the member the officer chose not to email. (No ordinal here on
+     * purpose: the live population is counted and enumerated in ONE place, the
+     * `xero-operation-outbox` census that names every null-passing caller, so a
+     * second count cannot drift out of step with it.)
      *
      * `null` means "this caller has no creation-time choice to express" — which
      * is every enqueuer but the on-behalf booking create. It is not the same as

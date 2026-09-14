@@ -23,8 +23,8 @@ leaves — it refuses a second live allowance for one path — but a lane touchi
 these files should expect to rebase on them.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3276
-reason: ninety-seven lines. Sixty-one are the docblock and body of
+lines: 3279
+reason: one hundred lines. Sixty-one are the docblock and body of
   `inheritedBookingInvoiceEmailInstruction`, which closes the door the durable
   instruction did not: the outbox dedups only on PENDING and RUNNING, so a
   FAILED booking-invoice operation is RE-MINTED by the admin missing-invoices
