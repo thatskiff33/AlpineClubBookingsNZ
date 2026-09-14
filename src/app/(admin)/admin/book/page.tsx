@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgeTier } from "@prisma/client";
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
@@ -35,6 +35,21 @@ import {
   type NonMemberOwner,
 } from "@/components/admin/non-member-contact-form";
 import { useClubTime } from "@/components/club-time-provider";
+import { AdminDependantIdentityResolution } from "./_components/dependant-identity-resolution";
+import {
+  DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
+  DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_CODE,
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
+  declarationMatchesACollision,
+  findOwnDependantNameCollisions,
+  unresolvedOwnDependantCollisions,
+  type BookerDependant,
+} from "@/lib/booking-dependant-identity";
+import {
+  relinkCollidingGuestToMember,
+  useDependantIdentityAnswers,
+} from "@/lib/use-dependant-identity-answers";
 import {
   countClubNights,
   formatClubDate,
@@ -157,6 +172,17 @@ export default function AdminBookPage() {
   const [checkIn, setCheckIn] = useState<string | null>(null);
   const [checkOut, setCheckOut] = useState<string | null>(null);
   const [guests, setGuests] = useState<GuestData[]>([]);
+  /**
+   * The SELECTED MEMBER's own recorded dependants (#2721, `INV-GUEST-019`),
+   * served by the on-behalf family picker from the same loader the create route
+   * re-runs. Never the officer's: the guard protects the bed of the person this
+   * booking is for, and reading the wrong family would both miss every real
+   * collision and put another family's names on this screen.
+   *
+   * Empty until the picker answers, and empty is the safe direction — the
+   * question simply is not drawn yet, and the server still refuses the create.
+   */
+  const [ownDependants, setOwnDependants] = useState<BookerDependant[]>([]);
   const [notes, setNotes] = useState("");
   const [memberReviewJustification, setMemberReviewJustification] = useState("");
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
@@ -244,34 +270,61 @@ export default function AdminBookPage() {
   const isRetroactive =
     allowPastDates && checkIn !== null && checkIn < todayStr;
 
-  // Fetch family members for the selected member
-  useEffect(() => {
-    if (!selectedMember) {
-      return;
+  /**
+   * Fetch the on-behalf family picker and fold it into state, RESOLVING with the
+   * own-dependant list it carried — or `null` when the load failed.
+   *
+   * It returns the answer as well as setting it (#2721) because one caller needs
+   * it rather than the side effect: the server's own-dependant refusal sends the
+   * officer back to the guest step to answer a question that step draws from
+   * THIS list, and if the list is the stale one that caused the refusal the step
+   * draws nothing and the officer is told to answer something that is not on the
+   * screen. Pressing Continue would reproduce it exactly.
+   *
+   * Bookings-scoped picker gated on bookings:edit (not membership:view), so a
+   * Booking Officer without membership:view still gets the selected member's
+   * family and correct member pricing (#1376).
+   */
+  const selectedMemberId = selectedMember?.id ?? null;
+  const loadEligibleFamily = useCallback(async (): Promise<{
+    ownDependants: BookerDependant[];
+  } | null> => {
+    if (!selectedMemberId) return null;
+    try {
+      const res = await fetch(
+        `/api/admin/bookings/eligible-family?forMemberId=${selectedMemberId}`,
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      const dependants: BookerDependant[] = Array.isArray(data.ownDependants)
+        ? data.ownDependants
+        : [];
+      setFamilyMembers(data.familyMembers || []);
+      setOwnDependants(dependants);
+      return { ownDependants: dependants };
+    } catch {
+      return null;
     }
+  }, [selectedMemberId]);
 
+  // Fetch family members for the selected member.
+  useEffect(() => {
+    if (!selectedMemberId) return;
     let cancelled = false;
-
-    // Bookings-scoped on-behalf picker gated on bookings:edit (not
-    // membership:view), so a Booking Officer without membership:view still
-    // gets the selected member's family and correct member pricing (#1376).
-    fetch(`/api/admin/bookings/eligible-family?forMemberId=${selectedMember.id}`)
-      .then((res) => (res.ok ? res.json() : { familyMembers: [] }))
-      .then((data) => {
-        if (!cancelled) {
-          setFamilyMembers(data.familyMembers || []);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setFamilyMembers([]);
-        }
-      });
-
+    void loadEligibleFamily().then((loaded) => {
+      // A failed load leaves BOTH lists empty rather than half-populated: an
+      // empty family list is what this screen has always shown on failure, and
+      // an empty dependant list means the collision question is not drawn — the
+      // server still refuses, which is the direction that fails safe.
+      if (!loaded && !cancelled) {
+        setFamilyMembers([]);
+        setOwnDependants([]);
+      }
+    });
     return () => {
       cancelled = true;
     };
-  }, [selectedMember]);
+  }, [selectedMemberId, loadEligibleFamily]);
 
   function invalidatePendingDateSelection(
     nextLodgeId = activeLodgeIdRef.current,
@@ -295,6 +348,7 @@ export default function AdminBookPage() {
     invalidatePendingQuote();
     setSelectedMember(member);
     setFamilyMembers([]);
+    setOwnDependants([]);
     setStep("dates");
     // Reset wizard state
     setCheckIn(null);
@@ -341,6 +395,7 @@ export default function AdminBookPage() {
     setUseCredit(false);
     setError("");
     setFamilyMembers([]);
+    setOwnDependants([]);
     setAllowPastDates(false);
     setOverCapacityNights(null);
     setAvailableBeds(lodgeCapacity);
@@ -364,6 +419,129 @@ export default function AdminBookPage() {
         memberId: fm.id,
       },
     ]);
+  }
+
+  /* ---- Own-dependant identity (#2721, `INV-GUEST-019`) ------------------
+   *
+   * An officer booking on a member's behalf is asked exactly the question the
+   * member is asked in their own wizard (owner decision on D1, 15 Sep 2026 — the
+   * guard no longer skips this path). Every piece of it comes from
+   * `use-dependant-identity-answers.ts`, which the member wizard uses too, so the
+   * two screens cannot come to ask or answer it differently — and the create
+   * route re-derives all of it from authenticated data regardless.
+   *
+   * The candidate set is the SELECTED MEMBER's dependants. It is `ownDependants`
+   * and never anything derived from the signed-in officer.
+   */
+  const dependantIdentity = useDependantIdentityAnswers({
+    party: guests,
+    ownDependants,
+  });
+
+  /**
+   * "This is the member's dependant" — move the colliding free-text row onto the
+   * member path, keeping every other field the row carried.
+   *
+   * The relink is `relinkCollidingGuestToMember`, which matches by NORMALISED
+   * NAME and never by index: the officer may have deleted a row above this one
+   * since the panel rendered, and converting "the row that was at position 2"
+   * would put this dependant's member link on somebody else's row.
+   *
+   * The invalidation list is `addFamilyMemberAsGuest`'s: the party just changed
+   * in exactly the ways that reprice it.
+   */
+  function bookCollidingGuestAsDependant(
+    normalizedName: string,
+    // Structural rather than `FamilyMember`: the relink reads exactly these
+    // four fields, and the panel that calls it is typed on the same four.
+    familyMember: {
+      id: string;
+      firstName: string;
+      lastName: string;
+      ageTier: AgeTier;
+    },
+  ) {
+    const next = relinkCollidingGuestToMember(
+      guests,
+      normalizedName,
+      familyMember,
+    );
+    if (!next) return;
+    setGuests(next);
+    setPriceQuote(null);
+    setAppliedPromo(null);
+    setUseCredit(false);
+  }
+
+  /**
+   * The create route refused this party over own-dependant identity (#2721).
+   *
+   * This screen asks the question on the guest step and will not leave it
+   * unanswered, so reaching here means the picture went STALE — a tab left open
+   * while the member's dependant was recorded or renamed, or a second officer on
+   * the same member.
+   *
+   * It REFETCHES for the same reason the member wizard's handler does: sending
+   * the officer back to the guest step only helps if that step can now draw the
+   * question, and the step draws it from the picker's list. An invalid
+   * declaration clears every held answer, because the server refuses the whole
+   * party if any one of them fails and does not say which — rebuilding the same
+   * payload is refused identically, so clearing and re-asking is the only answer
+   * that terminates. If the refreshed list still leaves nothing to ask, the copy
+   * changes to name something the officer can actually do rather than leaving
+   * them pressing Continue.
+   */
+  function handleDependantIdentityRefusal(
+    declarationInvalid: boolean,
+    serverMessage: string,
+  ) {
+    setStep("guests");
+    setOverCapacityNights(null);
+    setHostingConfirmMessage(null);
+    setError(serverMessage);
+    const refusedParty = guests;
+    const declarationsAfterRefusal = declarationInvalid
+      ? []
+      : dependantIdentity.heldDeclarations;
+    if (declarationInvalid) dependantIdentity.clearDeclarations();
+    void loadEligibleFamily().then((fresh) => {
+      if (!fresh) {
+        setError(DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE);
+        return;
+      }
+      const collisions = findOwnDependantNameCollisions(
+        refusedParty,
+        fresh.ownDependants,
+      );
+      const live = declarationsAfterRefusal.filter((declaration) =>
+        declarationMatchesACollision(declaration, collisions),
+      );
+      if (unresolvedOwnDependantCollisions(collisions, live).length === 0) {
+        setError(DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE);
+      }
+    });
+  }
+
+  /**
+   * Did this response refuse the create over own-dependant identity? Both submit
+   * doors on this screen ask, so neither can forget to.
+   */
+  function handledDependantIdentityRefusal(
+    data: Record<string, unknown>,
+  ): boolean {
+    if (
+      data.code !== DEPENDANT_IDENTITY_UNRESOLVED_CODE &&
+      data.code !== DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE
+    ) {
+      return false;
+    }
+    handleDependantIdentityRefusal(
+      data.code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
+      typeof data.error === "string" && data.error
+        ? data.error
+        : DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
+    );
+    return true;
   }
 
   function handleLodgeChange(nextLodgeId: string | null) {
@@ -466,6 +644,20 @@ export default function AdminBookPage() {
         setError("All guests must have first and last names");
         return;
       }
+    }
+
+    /*
+      #2721: stop BEFORE the guest split, not after it.
+
+      A name matching one of the member's own recorded dependants is heading for
+      the non-member guest path — provisional, bumpable, invoiced separately at
+      non-member rates — and the whole point of the rule is that they never get
+      there. The panel on this step renders the choice; this refuses to leave the
+      step while any of it is unanswered, in the SAME words the server refuses in.
+    */
+    if (dependantIdentity.unresolvedCollisions.length > 0) {
+      setError(DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE);
+      return;
     }
 
     // Admin creates can exceed live availability — over-capacity becomes a
@@ -599,6 +791,9 @@ export default function AdminBookPage() {
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         lodgeId,
         forMemberId: selectedMember!.id,
+        // #2721: only the answers that still describe a live collision travel;
+        // see `declarationsPayload`.
+        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         paymentMethod:
           showPaymentMethodChoice && paymentMethod === "internet_banking"
             ? "internet_banking"
@@ -624,6 +819,13 @@ export default function AdminBookPage() {
     }
 
     const data = await res.json();
+    // #2721: an own-dependant refusal sends the officer back to the guest step,
+    // where the question is drawn, rather than into the error banner with
+    // nowhere to answer it.
+    if (handledDependantIdentityRefusal(data)) {
+      setSubmitting(false);
+      return;
+    }
     // Over-capacity warn-and-confirm: show the shortfall and let the admin
     // resubmit with confirmOverCapacity, preserving the email choice.
     if (data.code === "OVER_CAPACITY_CONFIRM_REQUIRED") {
@@ -679,6 +881,10 @@ export default function AdminBookPage() {
         lodgeId,
         draft: true,
         forMemberId: selectedMember!.id,
+        // #2721: only the answers that still describe a live collision travel.
+        // A draft is a create door like any other — the guard runs before the
+        // draft/confirmed fork, exactly as the hosting check does.
+        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         memberReviewJustification: requiresAdminReviewLocal
           ? memberReviewJustification.trim() || undefined
           : undefined,
@@ -695,6 +901,11 @@ export default function AdminBookPage() {
     }
 
     const data = await res.json();
+    // #2721, as on the confirm door above.
+    if (handledDependantIdentityRefusal(data)) {
+      setSavingDraft(false);
+      return;
+    }
     // The hosting check runs before the draft/confirmed fork, so a draft trips
     // it on exactly the same parties a confirm does (#2364).
     if (data.code === "ADULT_MEMBER_HOSTING_CONFIRM_REQUIRED") {
@@ -1051,6 +1262,22 @@ export default function AdminBookPage() {
               guests={guests}
               onGuestsChange={setGuests}
               maxGuests={partySizeCeiling}
+            />
+            <AdminDependantIdentityResolution
+              collisions={dependantIdentity.collisions}
+              declaredDependantMemberIds={
+                dependantIdentity.declaredDependantMemberIds
+              }
+              bookingForFirstName={selectedMember.firstName}
+              familyMembers={familyMembers}
+              partyMemberIds={guests
+                .map((guest) => guest.memberId)
+                .filter((memberId): memberId is string => Boolean(memberId))}
+              onBookAsDependant={bookCollidingGuestAsDependant}
+              onDeclareDifferentPerson={
+                dependantIdentity.declareDifferentPerson
+              }
+              onWithdrawDeclaration={dependantIdentity.withdrawDeclaration}
             />
             <div className="flex justify-between pt-4">
               <Button

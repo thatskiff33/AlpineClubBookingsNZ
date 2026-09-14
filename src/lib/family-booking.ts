@@ -71,6 +71,21 @@ export function provisionalHoldConsequence(
   return "";
 }
 
+/**
+ * The same consequence, said to an OFFICER booking on a member's behalf (#2721,
+ * owner decision 15 Sep 2026). Kept here beside the member's wording so the two
+ * statements of what the non-member hold costs cannot drift apart.
+ *
+ * Fixed at the CONDITIONAL strength on purpose. The tri-state above resolves
+ * "applies" from a live quote's `nonMemberHoldDecision`, and the admin booking
+ * screen's quote does not carry that field — so an officer panel claiming the
+ * hold as fact would be asserting a per-period, per-deployment setting it has
+ * not read, which is the overstatement the member panel was already corrected
+ * for. Conditional is what this screen can honestly say.
+ */
+export const PROVISIONAL_HOLD_CONSEQUENCE_ON_BEHALF =
+  " Booked as a non-member guest they may be held provisionally depending on how far out the stay is — if held, no bed is reserved for them until the booking is confirmed and paid, members have priority if the lodge fills up, and their share is invoiced separately at non-member rates.";
+
 // Continuation clause for a message that already ends with "...add them as a
 // non-member guest ...". Reads as one sentence with that lead-in so the phrase
 // is not repeated verbatim (#1942 doubled-phrase fix).
