@@ -338,6 +338,20 @@ const INVALID_DECLARATION_ERROR =
   "The confirmation about a guest sharing a dependant's name no longer matches this booking. Go back to the guest list and answer the question again.";
 
 /**
+ * The same refusal, said to an OFFICER booking on a member's behalf (owner
+ * decision on #2721, 15 Sep 2026 — the guard runs on that path too).
+ *
+ * A separate sentence rather than a reworded one, because the second person is
+ * wrong in both halves for this reader: the dependant is not the officer's, and
+ * the answer is not the officer's to give from memory. What the officer can do
+ * is answer it on the booking screen, which is where the question is drawn — so
+ * that is what this names. The refusal CODE is identical, so one client handler
+ * covers both screens and neither has to infer who it is talking to.
+ */
+export const DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE =
+  "One of the guests typed on this booking has the same name as somebody recorded as this member's own dependant. Say on the guest step whether that is the dependant or a different person with the same name before continuing.";
+
+/**
  * What the member is told when the wizard is sent back to answer the question
  * and, after re-reading the authoritative list, STILL cannot draw it (#2721
  * review).
