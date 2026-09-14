@@ -1365,13 +1365,15 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // summary row, categorised `xero` at the site and named in none of the four
     // per-site maps, so it lands unpinned and `pinned` still does not move. The
     // two branches' rows are disjoint writers, so the merged figure is 351 —
-    // 478 sites RE-MEASURED on the MERGED tree with
+    // 482 sites RE-MEASURED on this tree with
     // `npm run audit:census` minus 127 pinned, never by adding the two deltas.
-    // 351 -> 352 (#2703): `issue_report.screenshot_withheld`, categorised
-    // `privacy` at the site and named in none of the four per-site maps, so it
-    // lands unpinned and `pinned` does not move. 479 sites RE-MEASURED with
-    // `npm run audit:census` minus 127 pinned.
-    ).toEqual({ pinned: 127, unpinned: 352 });
+    // 351 -> 352 (#2703, arriving on the seventh main-to-epic sync):
+    // `issue_report.screenshot_withheld`, categorised `privacy` at the site.
+    // 352 -> 355 (#2940): the three MiroTalk configuration writers. None of the
+    // four is named in a per-site map, so every one lands unpinned and `pinned`
+    // does not move. RE-MEASURED on the composed tree, which is the only place
+    // the figure is true: each branch alone reported a different one.
+    ).toEqual({ pinned: 127, unpinned: 355 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

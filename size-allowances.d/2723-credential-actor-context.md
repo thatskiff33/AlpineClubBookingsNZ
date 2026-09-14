@@ -34,8 +34,17 @@ reason: nine credential writes in one handler each name the actor and the write
   same answer a missing key would give.
 
 file: src/app/api/admin/integrations/credentials/route.ts
-lines: 293
-reason: five lines. The #2723 change itself left this file SHORTER than it found
+lines: 297
+reason: nine lines, five of them #2723's and four #2940's. Re-measured IN PLACE
+  rather than declared again: this allowance was merged into `epic/2725-mad`
+  but the ratchet measures against `origin/main`, so it is still live, and
+  "one file, one allowance" refuses a second entry naming this path — the
+  number here has to describe the file as it now stands. #2940's four are the
+  import of `INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH` and the comment saying
+  the cap is the store's own: this route and the MiroTalk credentials route had
+  each spelled the bound themselves, and two doors disagreeing would mean a
+  value one stores and the other refuses. The rest is #2723's and unchanged.
+  The #2723 change itself left this file SHORTER than it found
   it — its hand-written audit block moved into the store, where the row commits
   in the same transaction as the secret — and no allowance was owed. The fix
   round put back only what the fix needs: the verify-reset helper now takes the

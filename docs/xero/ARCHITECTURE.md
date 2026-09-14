@@ -379,6 +379,118 @@ to touch are separated into those an earlier chunk already did and those that
 stopped being pushable, which are different events and only the second needs
 looking at.
 
+## What an erasure leaves in Xero (#3058)
+
+`INV-INT-024`. Engine `xero-erased-member-contact-review.ts`, shape
+`xero-erased-member-contact-review-shape.ts`, surface
+`GET /api/admin/xero/erased-member-contacts` and the **Erased members with a
+Xero contact** panel. It is the mirror image of the missing-contact census
+above: that one finds members with no contact, this one finds contacts with no
+member.
+
+**Erasure asks Xero for nothing about the CONTACT, by decision.** Both erasure
+paths — the approved `DeletionRequest` anonymisation in
+`deletion-requests/[id]/route.ts`, and the approved lifecycle `DELETE` in
+`member-lifecycle-actions.ts` — null `Member.xeroContactId`, retire the
+canonical `CONTACT` link, delete the `XeroContactCache` row, and stop. Xero
+keeps the contact, its details, its history and every invoice raised against it.
+There is no provider-cleanup queue, no destructive retry state and no `erasure
+pending Xero` state, so no replay can create provider work.
+
+**It is not free of Xero writes altogether, and the earlier wording said it
+was.** Erasure cancels the member's future `PENDING`/`PAYMENT_PENDING`/
+`CONFIRMED` bookings through `cancelBooking`, which enqueues account,
+modification and refund credit notes and kicks the outbox. Those are ordinary
+cancellation writes in the accounting ledger — the same ones any cancellation
+makes — and they touch no contact, but a treasurer who read "nothing at all
+happens in Xero" could disprove it from their own credit notes. Three things
+hold the narrower claim: neither erasure source names a provider call or an
+outbox enqueue; every DIRECTLY imported module that reaches Xero is declared by
+name with its reason in `member-erasure-no-xero-mutation-contract.test.ts`, of
+which there is exactly one (`booking-cancel`, on the anonymising path); and
+`findOrCreateXeroContact` asserts the member is available for a contact change
+before any provider call, so the credit-note path's own contact repair
+(`retryXeroWriteWithContactRepair`) cannot mint a contact for the member the
+erasure just anonymised.
+
+That import check is one level deep on purpose. Measured on this tree, 358
+modules are reachable from the anonymising erasure and **31** of them reach a
+Xero provider call or an outbox enqueue — an allowlist over that is a census of
+the application, not a guard. The older `/(^|\/)xero/` specifier test was worse
+than depth: it read `membership-cancellation-xero` and
+`organisation-xero-contacts` as not-Xero modules, so either could have been
+imported onto an erasure path and passed unseen.
+
+**Two filters turn retired links into a review.** A retired `CONTACT` link is
+not evidence of an erasure: the merge-loser teardown, the admin manual unlink
+route, `cleanupStaleCanonicalXeroObjectLinks` and the `INV-INT-020` school
+transfer all produce one. So the engine first drops every contact that still has
+a local home — asked through `findXeroContactHomes`, which is `INV-INT-018`'s one
+accessor and therefore reads the `Organisation` column as well as the `Member`
+one, so a school's live Xero customer is never reported as abandoned — and then
+requires a POSITIVE erasure record: an approved `DeletionRequest`, or an approved
+`MemberLifecycleActionRequest` with action `DELETE`. Both outlive the row they
+describe. The anonymisation markers are deliberately not consulted;
+`INV-LIFE-015` calls them a strong signal rather than a schema invariant, and a
+hard delete leaves no row to carry them.
+
+**What it cannot see**, stated because a review aid that reads as a guarantee is
+worse than one that does not: a contact whose canonical link was never written.
+Measured across the eight writers of a non-null `Member.xeroContactId`, every
+one writes that link except `createXeroContactForMember`, which commits the
+column in one transaction and the link in the next and documents the window;
+`backfillMemberContactLink` repairs pre-ledger history.
+
+**Disclosure.** Ids, the erasure kind and its date, to `finance:view`. The
+contact cache is read for `contactId` and `contactStatus` only — its other
+columns hold the erased person's name, email, phone and address — and a contact
+Xero holds as `ARCHIVED` or `GDPRREQUEST` is counted rather than listed.
+
+**How a row is retired, and why it needed a `POST`.** Nothing local can see a
+treasurer archive a contact. The bulk contact sync's changed-contact fetcher,
+`fetchChangedXeroContactsFromXero`, passes `includeArchived: false` and is the
+only fetcher that sync uses for them on either path; the three call sites that
+pass `true` are driven by ids derived from records that still hold a contact id,
+and an erased member holds none. And the erasure deleted the cache row. So an
+archived contact was permanently invisible here: the row stayed listed for ever,
+the archived counter stayed zero, and the archived branch was dead code in
+production — while four places promised the list would shrink when Contact Sync
+ran.
+
+`POST /api/admin/xero/erased-member-contacts` closes that loop. It asks
+`getContacts` about exactly the ids on screen with archived included, keeps ONE
+field of the answer, and stamps it on the retired `CONTACT` link's `metadata`
+(`xero-erased-member-contact-status-check.ts`).
+
+**The two verbs are gated differently, and the split is the point.** The `GET`
+is `finance:view`: it computes from local state, calls no provider and writes
+nothing, so any officer admitted to the treasurer audience may read what an
+erasure left behind. The `POST` is `finance:edit`. It spends the club's metered
+Xero allowance — fifty ids a call, with an explicit `XeroDailyLimitError`
+branch — and once that allowance is gone, invoice sync, payment sync and the
+outbox stop for everybody until it resets; and it writes the observation onto
+the retired link. That is the same level `missing-contacts` takes on its run,
+and the same one the two mismatch-resync panels take from the route map's
+default for a `POST` under `/api/admin/xero`. The panel matches it with an
+`AdminViewOnlySectionBanner` and a `ViewOnlyActionButton` on the check, so a
+view-only officer reads the list and is not offered a button that would 403. It writes no `XeroContactCache`
+row deliberately, for two independent reasons: a full refresh re-imports the
+erased person's name, email, phone, address and the date of birth this
+application writes into the NZBN field; and a status-only stub would give
+`buildXeroContactCompanyNumberPatch` the "we looked and it is empty" reading
+that is its permission to write, re-creating from the privacy screen exactly the
+defect the erasure deletes the row to avoid.
+
+The alternative — making Contact Sync fetch archived contacts — was rejected on
+measurement: that loop has no archived handling at all, so archived contacts
+would flow into member matching and creation unguarded.
+
+**Retention, stated because the screen's whole subject is erasure.** A row is a
+durable on-screen record that a member id was erased and when. It goes when Xero
+is observed to hold its contact as archived or GDPR-erased, and otherwise it
+stays indefinitely — correctly, because there really is an orphaned customer
+nobody has decided about.
+
 ## Entrance-fee invoices
 
 `ENTRANCE_FEE_INVOICE` is a one-off per-member charge (#1886, F21). Before
@@ -549,6 +661,11 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-missing-contact-seeding` | `INV-INT-022`: the read-only census of unlinked person members, on both the email and the name axis. |
 | `xero-missing-contact-seeding-run` | `INV-INT-023`: the bounded run, resolving each member through `findOrCreateXeroContact` with `requireAuthoritativeMatch`. Resolves nothing itself. |
 | `xero-missing-contact-seeding-shape` | What both return, and the call-cost constants the chunk size is derived from. Imports nothing, so the admin panel can key its operator copy on these unions. |
+| `xero-erased-member-contact-review` | `INV-INT-024`: which Xero contacts an erasure left behind. Reads only; writes nothing, calls no provider, and has no `POST` surface. |
+| `xero-erased-member-contact-review-shape` | What that review returns. Imports nothing, so the admin panel can key its operator copy on the `ErasureKind` union. |
+| `xero-erased-member-contact-status-check` | `INV-INT-024`'s live check: `getContacts` over the listed ids with archived included, one field of the answer kept, stamped on the retired link. Reads Xero; writes nothing to it. |
+| `xero-contact-cache-freshness` | How old the contact cache is, asked in one place so the seeding census and the erasure review cannot disagree about one table. |
+| `xero-contact-status` | `INV-SSOT`: which `contactStatus` values count as a live contact, including Xero's `GDPRREQUEST`. One classifier for the census, the group import and the erasure review. |
 | `xero-duplicate-contacts`, `xero-contact-link-mismatches`, `xero-contact-sync` | Admin diagnostics: duplicate detection, link-mismatch snapshots, contact update payload builders. |
 | `xero-membership-sync` | Subscription status per season derived from Xero invoices; incremental `refreshAllMembershipStatuses` driver. |
 

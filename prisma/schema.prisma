@@ -5047,6 +5047,50 @@ model ServerNzSettings {
   @@index([updatedByMemberId])
 }
 
+// ---------------------------------------------------------------------------
+// MiroTalk video meetings — the NON-SECRET half of the club's configuration
+// (#2940). The secrets (the JWT key and the host username/password that pair
+// with it) are NOT here: they live in the encrypted IntegrationCredential
+// store under provider "mirotalk", the same place every other provider's
+// credentials live.
+//
+// EVERY COLUMN IS NULLABLE AND THAT IS THE CONTRACT, not an oversight. Null
+// means "the club has not set this in the database", which is what makes the
+// documented environment fallback possible: `src/lib/mirotalk-config.ts`
+// resolves each value as database -> environment -> derived default, and an
+// install that has only ever set MIROTALK_URL / MIRO_* environment variables
+// keeps working with no row here at all. A boolean therefore has to be
+// `Boolean?` rather than `Boolean @default(...)`: "the admin chose false" and
+// "the admin has not chosen" are different states and a default would spell
+// them the same way, silently overriding the environment.
+//
+// Nothing imports the environment into this table. A value arrives here only
+// when an administrator types it and presses Save.
+// ---------------------------------------------------------------------------
+model MirotalkSettings {
+  id String @id @default("default")
+
+  // Base URL of the club's MiroTalk instance, e.g. https://meet.example.org.
+  // Validated on write (https, no credentials in the URL, no private/loopback
+  // host) because a signed join token travels to whatever this names.
+  baseUrl String? @db.VarChar(500)
+
+  // Whether the join link marks the clicker as MiroTalk's presenter/host.
+  presenterEnabled Boolean?
+
+  // MiroTalk-style access-token lifetime: "1h", "30m", "45s", "1d" or a bare
+  // number of seconds. Stored as the operator typed it and parsed by the one
+  // resolver, so the stored value keeps matching what MiroTalk's own JWT_EXP
+  // documentation asks for.
+  tokenLifetime String? @db.VarChar(16)
+
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
 model LodgeSettings {
   id                     String   @id @default("default")
   capacity               Int?

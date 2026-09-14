@@ -24,9 +24,19 @@ vi.mock("@/lib/prisma", () => ({
     },
     // #3367 (INV-INT-018): a contact may have only ONE local home, so every
     // path that links one refuses a contact an ORGANISATION already holds.
-    // `null` is the ordinary answer; a missing delegate is an
+    // `null`/`[]` is the ordinary answer; a missing delegate is an
     // undefined-property throw before anything below is reached.
-    organisation: { findFirst: vi.fn().mockResolvedValue(null) },
+    //
+    // #3058 added `findMany` on both tables, because the manual-link route now
+    // asks `findXeroContactHomes` — the ONE accessor for which columns count as
+    // a local home — instead of reading the member table on its own. That is
+    // what makes it refuse a school's organisation-held contact in plain words
+    // rather than letting it through to the raw two-homes error downstream.
+    organisation: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+    },
     $executeRaw: vi.fn(),
     familyGroup: { findMany: vi.fn() },
     $transaction: vi.fn(),
@@ -144,6 +154,10 @@ function mockSessionAndMemberListCounts(total: number) {
 describe("Xero Member Management", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Nobody holds the contact, which is the ordinary case. A test that wants a
+    // conflict seeds the relevant table's `findMany` itself.
+    vi.mocked(prisma.member.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.organisation.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
     vi.mocked(prisma.xeroSyncOperation.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.xeroSyncOperation.findMany).mockResolvedValue([]);
@@ -779,9 +793,22 @@ describe("Xero Member Management", () => {
         body: { contacts: [{ contactID: "xero-taken", name: "Taken Contact" }] },
       });
 
-      vi.mocked(prisma.member.findFirst).mockResolvedValue({
-        firstName: "Other", lastName: "Person",
-      } as any);
+      // The OWNERSHIP read (#3058): `findXeroContactHomes` asks both tables,
+      // and the holder's name is then looked up to name them in the refusal.
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        { id: "m2", xeroContactId: "xero-taken" },
+      ] as never);
+      vi.mocked(prisma.member.findUnique).mockImplementation((async (args: {
+        where: { id: string };
+      }) =>
+        args.where.id === "m2"
+          ? { firstName: "Other", lastName: "Person" }
+          : {
+              id: "m1",
+              firstName: "John",
+              lastName: "Doe",
+              xeroContactId: null,
+            }) as never);
 
       const req = new NextRequest("http://localhost/api/admin/members/m1/xero-link", {
         method: "POST",
@@ -791,6 +818,9 @@ describe("Xero Member Management", () => {
       expect(res.status).toBe(409);
       const data = await res.json();
       expect(data.error).toContain("already linked");
+      expect(data.error).toContain("Other Person");
+      // Refused before the provider round trip is spent on it.
+      expect(mockCallXeroApi).not.toHaveBeenCalled();
     });
 
     it("returns a privacy-safe 409 when an ambiguous contact create owns the member fence", async () => {
