@@ -63,8 +63,16 @@ reason: Six lines, and five of them are the comment. One call site changes from
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1472
-reason: Thirty-six lines, admitting the ORGANISATION case on the retry screen.
+lines: 1482
+reason: RE-MEASURED by #3001, which added ten lines here: the money fence
+  `partialInvoiceOperationHasPaymentFault` now reads the completion payload
+  through `readXeroInvoiceOperationOutcome` rather than spelling all six keys
+  inline, because #3001's warning on the booking is a second reader of the same
+  six. The checks and their order are unchanged and the suite passes unchanged;
+  the added lines are the note saying so. The number is re-measured in this
+  fragment rather than declared in a second one, which is what the gate asks.
+  The original reason stands: thirty-six lines, admitting the ORGANISATION case
+  on the retry screen.
   The screen gated contact create and update on `localModel === "Member"`, so an
   officer replaying a school's failed contact operation was told it "requires a
   member-local record" — for exactly the operations this stage's module docblock

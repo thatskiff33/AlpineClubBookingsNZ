@@ -23,8 +23,14 @@ leaves — it refuses a second live allowance for one path — but a lane touchi
 these files should expect to rebase on them.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3279
-reason: one hundred lines. Sixty-one are the docblock and body of
+lines: 3275
+reason: RE-MEASURED by #3001, which made this file four lines SHORTER: the
+  booking-invoice correlation key it composed inline from four literals is now
+  one call to `buildXeroBookingInvoiceCorrelationKey`, minted once in
+  `xero-booking-invoice-key.ts` because #3001's warning on the booking became a
+  third place needing that exact string. The number is re-measured here rather
+  than declared in a second fragment, exactly as the note above asks — one
+  hundred lines. Sixty-one are the docblock and body of
   `inheritedBookingInvoiceEmailInstruction`, which closes the door the durable
   instruction did not: the outbox dedups only on PENDING and RUNNING, so a
   FAILED booking-invoice operation is RE-MINTED by the admin missing-invoices
