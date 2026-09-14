@@ -2673,7 +2673,9 @@ async function processCreateAdditionalPaymentIntentOperation(
     const customer = await findOrCreateCustomer({
       email: member.email,
       name: `${member.firstName} ${member.lastName}`,
-      memberId: member.id,
+      // #3369: the OWNER — a member id, or the organisation beside it.
+      memberId: member.id ?? null,
+      organisationId: payment.booking.organisationId,
     });
     customerId = customer.id;
   }

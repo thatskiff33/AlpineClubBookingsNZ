@@ -633,6 +633,22 @@ export async function expireMemberGuestConsent(params: {
         return { outcome: "ALREADY_RESOLVED" } as const;
       }
 
+      // #3369: the removal records WHO acted on the booking modification, and
+      // this path stands the booking's owner in for the cron. An organisation
+      // is not a person who can act and `BookingModification.memberId` stays
+      // required precisely because every modification names a person — so a
+      // school's booking cannot be repriced here. The consent row is left as it
+      // is and an officer is told, rather than the guest being removed under
+      // nobody's name or the row being silently dropped.
+      const expiryActorMemberId = bookingOwner(guest.booking).memberId;
+      if (!expiryActorMemberId) {
+        logger.warn(
+          { bookingId: guest.bookingId, guestId },
+          "A member guest's consent expired on an organisation-owned booking. The removal records who acted and an organisation cannot, so an officer must remove the guest and reprice the booking (#3369).",
+        );
+        return { outcome: "ALREADY_RESOLVED" } as const;
+      }
+
       const claimed = await claimConsentTransition(tx, guestId, "EXPIRED", null, now);
       if (!claimed) return { outcome: "ALREADY_RESOLVED" } as const;
 
@@ -648,11 +664,7 @@ export async function expireMemberGuestConsent(params: {
         // receives the credit; the true actor is recorded separately in the audit
         // log as `cron:member-guest-consent-expiry`. The target's id is NOT used —
         // writing it here would attribute to them an act they did not take.
-        // #3369: the owner stands in for the actor here, and an organisation
-        // is not a person who can act. The removal is still made — the target's
-        // consent expired either way — with no actor named rather than an
-        // organisation id in a column that means "a person did this".
-        actorMemberId: bookingOwner(guest.booking).memberId,
+        actorMemberId: expiryActorMemberId,
         kind: "CONSENT_EXPIRY",
         settlementMethod: "credit",
         today: clubTodayDateOnly,

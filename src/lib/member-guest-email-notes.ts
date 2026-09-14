@@ -533,7 +533,8 @@ export const MEMBER_GUEST_REMOVAL_NOTE_BY_BLOCKER: Record<
 export type MemberGuestRemovalFacts = {
   actorMemberId: string;
   guestMemberId: string | null;
-  bookingOwnerMemberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  bookingOwnerMemberId: string | null;
   bookingStatus: string;
   bookingCheckIn: Date;
   bookingGuestCount: number;

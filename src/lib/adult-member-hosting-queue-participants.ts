@@ -286,11 +286,15 @@ export async function acquireHostingCoverageQueueParticipantProof(
     orderBy: { id: "asc" },
     select: { id: true, memberId: true, lodgeId: true },
   });
-  const refreshed = bookings.map((booking) => ({
-    bookingId: booking.id,
-    ownerMemberId: bookingOwner(booking).memberId,
-    lodgeId: booking.lodgeId,
-  }));
+  // #3369: a hosting-coverage participant is a MEMBER holding nights that a
+  // qualifying adult must cover. An organisation holds none, so its booking is
+  // not a participant and is not part of the fingerprint the proof is taken
+  // over — which keeps that fingerprint comparable across a re-read.
+  const refreshed = bookings.flatMap((booking) => {
+    const ownerMemberId = bookingOwner(booking).memberId;
+    if (!ownerMemberId) return [];
+    return [{ bookingId: booking.id, ownerMemberId, lodgeId: booking.lodgeId }];
+  });
   if (sourceFingerprint(refreshed) !== sourceFingerprint(params.sources)) {
     throw new HostingCoverageParticipantRetryError();
   }

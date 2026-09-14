@@ -1635,10 +1635,14 @@ export async function approveSchoolBookingRequest(input: {
       // than by whatever the invented member row happens to be called. This is
       // the manual half of the same change the Xero path makes by resolving the
       // organisation's contact; a booking with no organisation is unchanged.
-      const invoiceOwner = await prisma.member.findUnique({
-        where: { id: conversion.schoolMemberId },
-        select: { firstName: true, lastName: true, email: true },
-      });
+      const invoiceOwner = conversion.schoolMemberId
+        ? await prisma.member.findUnique({
+            where: { id: conversion.schoolMemberId },
+            select: { firstName: true, lastName: true, email: true },
+          })
+        : // #3369: an organisation-owned booking has no member row to read; the
+          // organisation's own name is what the invoice carries, resolved below.
+          null;
       const ownerName =
         [invoiceOwner?.firstName, invoiceOwner?.lastName]
           .filter(Boolean)
