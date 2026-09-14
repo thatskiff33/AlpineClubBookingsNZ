@@ -54,6 +54,8 @@ export const EDIT_FINANCIAL_REVIEW_CAUSES = [
   "PARTIAL_STORED_NIGHT_PRICES",
   /** Stored night prices exist but do not reconcile to the stored guest total. */
   "STORED_TOTAL_MISMATCH",
+  /** The rows reconcile only as a whole-guest allocation, not as sold nights. */
+  "INEXACT_STORED_NIGHT_PRICES",
   /**
    * #3032: THIS strand's own rows read perfectly. Another strand on the same
    * booking does not, so the edit's money was parked as a whole and this
@@ -368,6 +370,8 @@ export const EDIT_FINANCIAL_REVIEW_CAUSE_LABEL: Record<
     "Only some of the nights given back carry a stored price, so the total cannot be worked out from what is stored.",
   STORED_TOTAL_MISMATCH:
     "The stored night prices do not add up to the stored total for this guest, so neither figure can be trusted on its own.",
+  INEXACT_STORED_NIGHT_PRICES:
+    "The stored amounts reconcile for the whole guest but were not recorded as sold night prices, so an individual night cannot be valued from them.",
   COUNTERPART_STRAND_UNREADABLE:
     "This guest's own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read — so the booking's total could not be reworked automatically. The figures shown here are what was stored for this guest.",
 };

@@ -6093,6 +6093,14 @@ model EmailSuppression {
   @@index([lastEventAt])
 }
 
+/// Where an issue-report screenshot was captured FROM, as a privilege context
+/// rather than a page address (#2703). Derived server-side at creation from the
+/// reporter's own access roles; a client cannot influence it.
+enum IssueReportOrigin {
+  ADMIN
+  MEMBER
+}
+
 model IssueReport {
   id                     String    @id @default(cuid())
   memberId               String
@@ -6108,6 +6116,15 @@ model IssueReport {
   browserInfo            String?   @db.Text
   browserInfoExpiresAt   DateTime?
   browserInfoDeletedAt   DateTime?
+  // The privilege context the capture was taken in, decided by the SERVER from
+  // the reporter's own admin standing at creation and never from the posted
+  // `pageUrl` (INV-PRIV-020, #2703). ADMIN means the reporter could reach admin screens, so
+  // the pixels may hold another member's record and are Full-Admin-only; MEMBER
+  // means they could not, and the screenshot keeps the ordinary `support:view`
+  // model. NULL is a row written before this release: it is read as ADMIN, so
+  // the unknown case fails closed. There is deliberately no backfill - the
+  // 30-day retention sweep drains the null population on its own.
+  screenshotOrigin       IssueReportOrigin?
   resolvedAt             DateTime?
   resolvedById           String?
   resolutionNote         String?   @db.VarChar(1000)

@@ -584,10 +584,10 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  481
+row-producing sites:  482
 uncategorised:        0
 category values: admin 106, booking 104, xero 37, family 35, payment 45,
-                 lodge 66, account 19, security 24, privacy 19,
+                 lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
 

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { normalizeInternalAppUrl } from "@/lib/app-url";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { deriveIssueReportScreenshotOrigin } from "@/lib/issue-report-screenshot-access";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { logAudit } from "@/lib/audit";
@@ -153,6 +155,10 @@ export async function POST(request: NextRequest) {
         firstName: true,
         lastName: true,
         email: true,
+        // Joined role definitions, so the origin classification below resolves
+        // definition-backed (custom or club-edited) access roles rather than
+        // only the seeded enum ones (#2703).
+        accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
       },
     });
 
@@ -161,6 +167,15 @@ export async function POST(request: NextRequest) {
     }
 
     const screenshot = parseScreenshot(parsed.data.screenshotDataUrl);
+    // #2703. Decided HERE, from the reporter's own server-side admin standing,
+    // and written to the row — never from `parsed.data.pageUrl`, which the
+    // widget posts and any reporter can forge. Set on every report, with or
+    // without a screenshot, so a stored NULL means exactly one thing: a row
+    // written before this release, which every reader treats as ADMIN.
+    const screenshotOrigin = deriveIssueReportScreenshotOrigin({
+      member,
+      sessionUser: session.user,
+    });
     const pageUrlContext = normalizeIssueReportPageUrl(
       parsed.data.pageUrl,
       request
@@ -185,6 +200,7 @@ export async function POST(request: NextRequest) {
         pageUrl,
         pageTitle,
         description,
+        screenshotOrigin,
         screenshotDataUrl: screenshot?.dataUrl ?? null,
         screenshotCapturedAt: screenshot ? now : null,
         screenshotExpiresAt: screenshot ? sensitiveDataExpiresAt : null,

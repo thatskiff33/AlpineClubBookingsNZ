@@ -43,14 +43,16 @@
  * sites when #2581 opened — 69 `logAudit`, 11 `createAuditLog`, 2 hand-built Prisma
  * writes, none through `createStructuredAuditLog` — and `main` still measured those
  * same 82 immediately before this change, out of 426 write sites in total. #2581's
- * second child classified all 82 at the source, so the census now reads 481 write
+ * second child classified all 82 at the source, so the census now reads 482 write
  * sites and ZERO uncategorised: no NEW row is born invisible to these five entries.
  *
- * THE GAP HAS NOT CLOSED, IT HAS STOPPED GROWING, and the distinction is the whole
- * reason the declarations below stay. Every row written BEFORE that runtime deployed
- * still carries `category = NULL`, and `WHERE "category" = ANY ($1)` is NULL for such
- * a row, so it is returned by NONE of the five entries. The historical backfill is
- * #2581's third child and has not run. The containment argument is unharmed (a row
+ * THE GAP STOPPED GROWING WITH CHILD 2 AND CHILD 3 CLOSED THE MEASURED PART, and the
+ * declarations below stay for what is left. `WHERE "category" = ANY ($1)` is NULL for
+ * a `category = NULL` row, so such a row is returned by NONE of the five entries. The
+ * historical backfill (`20260923010000_backfill_historical_audit_categories`, #2581's
+ * third child) gave the pre-runtime rows the category their exact action records, from
+ * a reviewed list; a row whose action was on no list (a fork whose history differs
+ * from the measured one) is still null. The containment argument is unharmed (a row
  * nobody can reach is not a way around a denial); what is harmed is any reading of an
  * empty result as an absence, which is why every `evidenceScope` and every description
  * still names this gap in as many words. See `DIAGNOSTICS_CORRELATION_CATEGORY_SETS`
@@ -391,9 +393,10 @@ function defineCorrelationTool(input: {
     //    `DIAGNOSTICS_CORRELATION_CATEGORY_SETS`), so a membership question can
     //    legitimately return nothing here while the events sit in another entry's set.
     //  - ABSENT. A row written with no category at all is matched by no entry's filter.
-    //    No production writer does that any more (#2581 child 2 closed all 82), but
-    //    every row written before that runtime deployed still does, and the historical
-    //    backfill is #2581's third child. Naming it is the fail-closed remedy:
+    //    No production writer does that any more (#2581 child 2 closed all 82), and the
+    //    historical backfill (#2581 child 3) categorised the pre-runtime rows whose
+    //    exact action is on its reviewed list — but an unlisted action on a fork's
+    //    history is still null. Naming it is the fail-closed remedy:
     //    without the sentence, a Finance Officer asking about a subscription reconcile
     //    gets zero rows, the state `not_found` ("there is no evidence of this to
     //    report"), and prose steering them to the other four entries — none of which can
@@ -477,9 +480,13 @@ export const DIAGNOSTICS_LODGE_CORRELATION_TOOL_ID =
  *    (membership-gated and support-only respectively).
  *
  * THE ABSENT CATEGORY IS THE SAME FAIL-CLOSED DEFAULT, ONE STEP FURTHER OUT, and it is
- * not hypothetical: no production writer omits a category any more (#2581 child 2), but
- * every row written before that runtime deployed does, and the historical backfill is
- * #2581's third child. The admin
+ * not hypothetical: no production writer omits a category any more (#2581 child 2), and
+ * the rows written before that runtime deployed were given one by #2581's third child
+ * (`20260923010000_backfill_historical_audit_categories`, exact-action list only;
+ * the pre-#2755 bulk deactivate/reactivate rows went to `account`, so the
+ * membership entry reads them while this system entry reads the post-#2755
+ * `admin` ones — the date split #2763 accepted) — but a row whose action was on
+ * no list is still null and still unreachable here. The admin
  * audit-log screen already treats the null case as ordinary — `audit-query.ts` infers a
  * category from the action for display (`inferAuditCategoryFromAction`) and its category
  * filter matches `{ category: null }` against a table of legacy action patterns
@@ -498,7 +505,7 @@ export const DIAGNOSTICS_LODGE_CORRELATION_TOOL_ID =
  * it needs a fresh look at the `(category, createdAt)` index against a 5-second statement
  * timeout. The owner refused that route on #2581: the rows get a category at the SOURCE
  * instead (#2581 child 2, done), and the historical rows get one only through a reviewed
- * exact-action mapping (#2581 child 3, outstanding).
+ * exact-action mapping (#2581 child 3, `HISTORICAL_NULL_CATEGORY_MAP_2581`).
  *
  * WHAT THESE SETS ARE NOT, stated plainly because an earlier revision of this comment
  * claimed otherwise and AID-6B/6C are told to extend the taxonomy on this reasoning.

@@ -39,6 +39,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
+  literalActionNamesAt,
   scanAuditWriterCensus,
   type AuditWriteSite,
 } from "../../../scripts/audit/audit-writer-census";
@@ -103,20 +104,10 @@ function actionsTheMigrationRewrites(): string[] {
  * would let a whole writer fall out of the comparison.
  */
 function actionNamesWrittenAt(site: AuditWriteSite): string[] {
-  if (!site.action.startsWith("(dynamic)")) {
-    return [site.action];
-  }
-  const literals = [...site.action.matchAll(/"([A-Za-z0-9_.\-]+)"/g)].map(
-    (match) => match[1],
-  );
-  if (literals.length === 0) {
-    throw new Error(
-      `${site.id}: its action is computed and names no string literal, so this ` +
-        "gate cannot tell whether the #2751 backfill covers it. Name the " +
-        "actions at the site, or extend this helper deliberately.",
-    );
-  }
-  return literals;
+  // One home for the rendering's inverse (`INV-SSOT`): the census renders a
+  // dynamic action, and `literalActionNamesAt` beside it reads the names back
+  // out, throwing on a site that names none — the behaviour this test decided.
+  return literalActionNamesAt(site);
 }
 
 describe("the #2751 bed-allocation category backfill (INV-OPS-012)", () => {

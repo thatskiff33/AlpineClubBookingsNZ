@@ -3,6 +3,7 @@ import {
   MODIFICATION_LABELS,
   describeModification,
   memberFacingNoteOf,
+  moneyBuildUpNoteOf,
   type BookingHistoryModification,
 } from "@/lib/booking-history-modification-narrative";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
@@ -391,6 +392,10 @@ export function buildBookingHistoryItems({
 
   for (const modification of modifications) {
     const detailParts = [describeModification(modification)];
+    const moneyBuildUpNote = moneyBuildUpNoteOf(modification);
+    if (moneyBuildUpNote) {
+      detailParts.push(moneyBuildUpNote);
+    }
     if (modification.changeFeeCents > 0) {
       detailParts.push(`Change fee applied: ${formatCents(modification.changeFeeCents)}.`);
     }
