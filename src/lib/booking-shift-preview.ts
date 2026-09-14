@@ -41,7 +41,8 @@ export async function buildShiftPreviewResponse({
   todayAtClub,
 }: {
   booking: {
-    memberId: string;
+    /** The booking OWNER, null when it is owned by an Organisation (#3369). */
+    memberId: string | null;
     status: string;
     checkIn: Date;
     checkOut: Date;

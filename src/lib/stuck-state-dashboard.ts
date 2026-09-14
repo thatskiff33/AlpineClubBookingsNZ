@@ -615,6 +615,8 @@ const WAITLIST_OFFER_BOOKING_SELECT = {
   // offer is still live, which the expiry decides.
   noEmails: true,
   member: { select: { email: true } },
+  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+  organisation: { select: { name: true, email: true } },
 } as const;
 
 async function addWaitlistItems(
@@ -1053,6 +1055,8 @@ export async function getStuckStateDashboard(input?: {
               checkIn: true,
               checkOut: true,
               member: { select: { firstName: true, lastName: true } },
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
               lodge: { select: { name: true } },
             },
           },

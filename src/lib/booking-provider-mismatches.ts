@@ -70,7 +70,9 @@ type MismatchBooking = {
   // #2258: a deliberately-silenced booking is not a delivery failure — unless
   // it is sitting on a live offer, which needs the expiry to detect.
   noEmails: boolean;
-  member: { email: string };
+  member: { email: string } | null;
+  /** #3369: the owner may be an Organisation; `bookingOwner()` reads both. */
+  organisation: { name: string; email: string | null } | null;
   payment: {
     id: string;
     source: PaymentSource;
@@ -117,6 +119,8 @@ export async function getBookingProviderMismatches(
       waitlistOfferExpiresAt: true,
       noEmails: true,
       member: { select: { email: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: {
         select: {
           id: true,
@@ -187,6 +191,7 @@ export async function getBookingProviderMismatches(
         // unless its offer is still live, which the expiry decides.
         noEmails: booking.noEmails,
         member: { email: bookingOwner(booking).member.email },
+        organisation: booking.organisation,
       },
     ]);
 

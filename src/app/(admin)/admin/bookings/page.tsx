@@ -310,6 +310,8 @@ export default async function AdminBookingsPage({
               checkIn: true,
               checkOut: true,
               member: { select: { firstName: true, lastName: true } },
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
               lodge: { select: { name: true } },
             },
           },
@@ -655,9 +657,26 @@ export default async function AdminBookingsPage({
                         </span>
                         <span className="block text-xs text-muted-foreground">{bookingOwner(booking).member.email}</span>
                       </Link>
-                      {formatMemberPhone(bookingOwner(booking).member) ? (
+                      {/* #3369: a phone number is a MEMBER's contact detail. A
+                          school's own number lives on the organisation record and
+                          is not shown in this column, which is what a school row
+                          showed before too — the invented member never had one. */}
+                      {formatMemberPhone({
+                        phoneCountryCode:
+                          bookingOwner(booking).member.phoneCountryCode ?? null,
+                        phoneAreaCode:
+                          bookingOwner(booking).member.phoneAreaCode ?? null,
+                        phoneNumber: bookingOwner(booking).member.phoneNumber ?? null,
+                      }) ? (
                         <span className="block text-xs text-muted-foreground">
-                          {formatMemberPhone(bookingOwner(booking).member)}
+                          {formatMemberPhone({
+                            phoneCountryCode:
+                              bookingOwner(booking).member.phoneCountryCode ?? null,
+                            phoneAreaCode:
+                              bookingOwner(booking).member.phoneAreaCode ?? null,
+                            phoneNumber:
+                              bookingOwner(booking).member.phoneNumber ?? null,
+                          })}
                         </span>
                       ) : null}
                     </TableCell>

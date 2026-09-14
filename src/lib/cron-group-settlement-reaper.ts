@@ -628,7 +628,10 @@ async function finishExpiry({
 
     try {
       await sendGroupJoinCancelledEmail({
-        bookingContext: { bookingId: child.id, recipientMemberId: bookingOwner(child).memberId },
+        bookingContext: {
+          bookingId: child.id,
+          recipientMemberId: bookingOwner(child).memberId ?? null,
+        },
         email: child.memberEmail,
         firstName: child.memberFirstName,
         organiserName,
@@ -737,7 +740,10 @@ async function finishReap({
   for (const child of released) {
     try {
       await sendGroupJoinReleasedEmail({
-        bookingContext: { bookingId: child.id, recipientMemberId: bookingOwner(child).memberId },
+        bookingContext: {
+          bookingId: child.id,
+          recipientMemberId: bookingOwner(child).memberId ?? null,
+        },
         email: child.memberEmail,
         firstName: child.memberFirstName,
         organiserName,
