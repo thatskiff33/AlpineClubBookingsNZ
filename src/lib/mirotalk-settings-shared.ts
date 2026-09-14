@@ -20,7 +20,10 @@
  * `mirotalk-exposure-contract.test.ts` is the behavioural half.
  */
 
-import { isBlockedDestinationHost } from "@/lib/private-destination-hosts";
+import {
+  isBlockedDestinationHost,
+  normaliseDestinationHost,
+} from "@/lib/private-destination-hosts";
 
 /** The provider namespace MiroTalk's secrets occupy in the credential store. */
 export const MIROTALK_PROVIDER = "mirotalk";
@@ -234,10 +237,14 @@ export function validateMirotalkBaseUrl(value: string): MirotalkValidation {
         "Remove the query string or the # fragment — the join link appends its own.",
     };
   }
-  if (!parsed.hostname.includes(".")) {
+  if (!normaliseDestinationHost(parsed.hostname).includes(".")) {
     // A single-label host is not publicly resolvable, and members open this
     // link from their own phones and home networks. It is also what a typed
     // fragment ("meet", "https") parses into once a scheme is assumed.
+    //
+    // Asked of the ROOT-LABEL-STRIPPED host, because `meet.` is the same single
+    // label as `meet` and a raw `includes(".")` reads its trailing dot as a
+    // domain separator.
     return {
       ok: false,
       reason:

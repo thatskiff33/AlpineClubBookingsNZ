@@ -24,13 +24,40 @@
  */
 
 /**
+ * A `URL.hostname` reduced to the form every rule below may be written against:
+ * lower-cased, unbracketed, and with the DNS ROOT LABEL removed.
+ *
+ * THE TRAILING ROOT LABEL IS WHY THIS EXISTS. `localhost.` and
+ * `metadata.google.internal.` are the SAME hosts as `localhost` and
+ * `metadata.google.internal` — a trailing dot is the DNS root label, which
+ * resolvers accept and which the URL parser preserves verbatim. The IP rules
+ * never needed this (the parser normalises `127.0.0.1.` down to `127.0.0.1`
+ * before it reaches us) and that is exactly what made the gap easy to miss: the
+ * literal forms looked covered, so the NAME forms looked covered too. They were
+ * not, and one keystroke defeated every one of them. More than one trailing dot
+ * parses as well (`localhost..`), so this strips ALL of them rather than one.
+ *
+ * Exported because a caller that asks a SECOND question about a hostname — "is
+ * this a single label?" — has to ask it of the same string this one judges, or
+ * `meet.` sails through a "needs a domain" test on the strength of a dot that
+ * is not part of the name.
+ */
+export function normaliseDestinationHost(hostname: string): string {
+  return hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.+$/, "");
+}
+
+/**
  * True when `hostname` is a loopback, private, link-local, CGNAT, multicast or
  * otherwise non-public literal — or is empty, which fails CLOSED.
  *
- * Takes a `URL.hostname`, so an IPv6 literal may still arrive bracketed.
+ * Takes a `URL.hostname`, so an IPv6 literal may still arrive bracketed. A host
+ * of nothing but dots normalises to empty and fails CLOSED on the first line.
  */
 export function isBlockedDestinationHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const host = normaliseDestinationHost(hostname);
   if (!host) return true;
   if (host === "localhost" || host.endsWith(".localhost")) return true;
   // `.local` (mDNS) and `.internal` (common private zone, incl. GCP metadata).

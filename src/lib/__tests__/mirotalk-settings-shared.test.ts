@@ -104,6 +104,45 @@ describe("validateMirotalkBaseUrl", () => {
     expect(validateMirotalkBaseUrl("https://meet.internal").ok).toBe(false);
   });
 
+  it.each([
+    ["cloud metadata with the root label", "https://metadata.google.internal."],
+    ["mDNS with the root label", "https://nas.local."],
+    ["a private-zone name with the root label", "https://vault.internal."],
+  ])("refuses %s as a private host", (_label, url) => {
+    // A TRAILING DOT IS THE DNS ROOT LABEL, and the URL parser preserves it
+    // verbatim on a NAME (it strips one from an IP literal, which is why the
+    // literal rules looked fine and the name rules did not). These resolve
+    // exactly where the dotless spellings do, and before the root label was
+    // stripped they passed every name-based rule here.
+    const result = validateMirotalkBaseUrl(url);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toMatch(/private, loopback or link-local/i);
+  });
+
+  it.each([
+    ["loopback with the DNS root label", "https://localhost."],
+    ["loopback with two root labels", "https://localhost.."],
+  ])("refuses %s", (_label, url) => {
+    // Refused, but by the DOMAIN rule rather than the private-host one, because
+    // `localhost.` strips to the single label `localhost`. Both rules now read
+    // the stripped host, so the order between them decides only which sentence
+    // the administrator is shown; what matters is that neither can be turned
+    // off with a dot. Before the fix this stored cleanly: the trailing dot
+    // satisfied "needs a domain" and the private-host rule never saw a match.
+    expect(validateMirotalkBaseUrl(url).ok).toBe(false);
+  });
+
+  it("still refuses a single label that is only wearing a root label", () => {
+    // `meet.` is the same single label as `meet`, so the domain rule has to be
+    // asked of the stripped host too — otherwise the trailing dot reads as a
+    // domain separator and a typed fragment stores cleanly.
+    const result = validateMirotalkBaseUrl("https://meet.");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toMatch(/needs a domain/i);
+  });
+
   it("refuses a query string or fragment, which the join link appends itself", () => {
     expect(validateMirotalkBaseUrl("https://meet.example.org?a=1").ok).toBe(false);
     expect(validateMirotalkBaseUrl("https://meet.example.org#x").ok).toBe(false);
