@@ -461,7 +461,7 @@ and the data download rather than every page that happens to quote an entry.
 
 `Category` is optional in the database, and **82 of the platform's places that
 record an audit entry used not to set one**. As of this release **none do**: all
-478 now record a category, measured on every build rather than estimated.
+479 now record a category, measured on every build rather than estimated.
 
 **And a new one can no longer forget.** Recording an entry without a category is
 now refused three separate ways. Giving the 82 places a category and stopping the
@@ -483,7 +483,7 @@ that order and both landing in this release; this is the second:
    maintenance script outside the normal path.
 
 The practical effect for you: an entry recorded the ordinary way — through the
-platform's own recording step, which is how every one of the 478 places does it —
+platform's own recording step, which is how every one of the 479 places does it —
 cannot be born without a category any more. **It is not a mathematical
 guarantee**, and it is worth saying so rather than overclaiming: someone writing
 directly to the database table in a migration, or building a query by hand, is
@@ -739,6 +739,28 @@ person to look at and never acted on automatically: a member trying five
 different weekends to find one that suits a friend produces exactly the same
 pattern as somebody probing, and only a human who knows both people can tell
 them apart. Treat it as a conversation to have if it keeps happening.
+
+### Issue-report screenshot entries (#2703)
+
+A screenshot taken by somebody who had admin access is shown only to a Full
+Admin (`INV-PRIV-020`; see [Issue Reports](issue-reports.md) ->
+"Screenshots taken by an officer"). Two `privacy`-category actions record how
+that went, and **neither records anything about what the picture showed**.
+
+| Action | Written when | What it contains |
+| --- | --- | --- |
+| `issue_report.admin_viewed` | Every time an officer opens a report, as before | Now also a `screenshotDisposition` saying which of five things happened to the picture: `viewed` (shown to this officer), `withheld` (exists, but they are not a Full Admin), `expired` (cleared by the 30-day sweep), `deleted` (an administrator deleted it) or `none` (there never was one) |
+| `issue_report.screenshot_withheld` | Each time an officer OPENS a report and is refused an admin-taken screenshot. Resolving or reopening a report is not a view and is not recorded as one, exactly as before this change | Who was refused, which report, and a fixed reason. Severity **important**, so a run of them is easy to spot |
+
+Both are `privacy`, matching every other issue-report event. **Be clear about
+what that does and does not do.** Anyone who can open Admin > Audit Log reads
+these rows in full — that screen is a support-area surface with no
+per-category filter, so `privacy` withholds nothing from a support-only
+officer there. What the category decides is which AI Diagnostics correlation
+entry can return the row, and there `privacy` needs **Support + Membership**.
+It is the right category under `INV-PRIV-012` either way, because that is where
+a member-data row belongs; it is simply not a second access control on top of
+the screen.
 
 ## Troubleshooting
 

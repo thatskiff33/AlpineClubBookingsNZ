@@ -691,6 +691,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-017` | Member-visible audit text: declared at the write site, denied by default |
 | `INV-PRIV-018` | An audit row's subject is a person; an organisation-owned booking records none |
 | `INV-PRIV-019` | Credential writes name a person or a named system actor, audited atomically |
+| `INV-PRIV-020` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
 
 ## Membership Lifecycle
 
