@@ -8,7 +8,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // wanted it, so a weaker copy cannot drift in beside this one.
 import { jobBlock } from "./helpers/ci-workflow";
 import { DATA_MIGRATION_VERIFICATIONS } from "../../../prisma/migration-verification";
-import { splitSqlStatements } from "../../../prisma/migration-verification/split-statements";
+import {
+  splitSqlStatements,
+  stripSqlComments,
+} from "../../../prisma/migration-verification/split-statements";
 import type {
   DataMigrationCase,
   DataMigrationReverseRun,
@@ -91,14 +94,62 @@ function rollbackSql(name: string): string {
 }
 
 /**
+ * Statements that would END the transaction a verification case owns, or start
+ * a second one. `ROLLBACK TO <savepoint>` is deliberately not one of them: it
+ * unwinds to a savepoint and leaves the transaction open.
+ */
+const TRANSACTION_CONTROL =
+  /^\s*(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|ROLLBACK(?!\s+TO\b)|PREPARE\s+TRANSACTION)\b/i;
+
+/**
  * A verification case already owns a rollback transaction. Remove only a
  * migration's complete outer transaction envelope before running it there;
  * replaying the committed migration chain still executes the real envelope.
+ *
+ * COMMENT-AWARE, AND THAT IS THE WHOLE POINT (#3369). This used to anchor
+ * `BEGIN;` at the first byte of the file. Every `migration.sql` in this
+ * repository opens with `BEGIN;`, so every one of them was stripped correctly —
+ * and every `rollback.sql` opens with its operator header, which is a block of
+ * `--` comments, so not one of them matched. Each therefore ran its OWN
+ * `BEGIN;`/`COMMIT;` INSIDE the case's transaction, and PostgreSQL answers the
+ * nested `BEGIN` with a warning and then honours the `COMMIT`: it commits the
+ * CASE, seed rows and all. The harness's later `ROLLBACK` then warns that there
+ * is no transaction in progress and does nothing.
+ *
+ * Measured on a real PostgreSQL before the fix: after #3369's two reverse
+ * scripts ran, the chain database — which every case is supposed to leave
+ * untouched — still held the case's 4 bookings and 3 members, `Booking`'s
+ * `memberId` was back to NOT NULL because `20260923030000/rollback.sql`'s
+ * `SET NOT NULL` had committed, and replaying `20260923040000` then died on its
+ * own section 4 with "null value in column memberId violates not-null
+ * constraint". Nothing in the failure pointed at a rollback script.
+ *
+ * `stripSqlComments` blanks comments to spaces and keeps every newline, so its
+ * result is the same LENGTH as the source and offsets found in it index
+ * straight back into the verbatim bytes — which is what lets this locate the
+ * envelope without ever executing a re-rendered copy of the SQL. One home for
+ * comment-stripping (`INV-SSOT`): the audit-writer census and the backfill
+ * contracts read migrations through that same function.
  */
 function sqlInsideVerificationTransaction(sql: string): string {
-  const match = sql.match(/^\s*BEGIN\s*;([\s\S]*)COMMIT\s*;\s*$/i);
-  if (!match) return sql;
-  return match[1];
+  const bare = stripSqlComments(sql);
+  const open = bare.match(/^\s*BEGIN\s*;/i);
+  const close = bare.match(/\bCOMMIT\s*;\s*$/i);
+  const inner =
+    open && close
+      ? sql.slice(open[0].length, bare.length - close[0].length)
+      : sql;
+  const leaked = splitSqlStatements(inner)
+    .map((statement) => stripSqlComments(statement).trim())
+    .filter((statement) => TRANSACTION_CONTROL.test(statement));
+  if (leaked.length > 0) {
+    throw new Error(
+      `refusing to run SQL that steers the transaction a verification case owns: ${leaked
+        .map((statement) => JSON.stringify(statement.slice(0, 60)))
+        .join(", ")}. A case wraps its work in BEGIN/ROLLBACK, so a COMMIT reaching PostgreSQL here makes that work permanent in the chain database every later fixture replays into (#3369).`,
+    );
+  }
+  return inner;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +224,35 @@ describe("data-migration verification wiring (#2418)", () => {
 
   it("registers at least one fixture", () => {
     expect(DATA_MIGRATION_VERIFICATIONS.length).toBeGreaterThan(0);
+  });
+
+  it("can take the transaction envelope off every migration and every rollback script", () => {
+    // #3369. A case wraps its work in BEGIN/ROLLBACK so the chain database it
+    // replays into is left exactly as it was. A `COMMIT;` that survives into
+    // that transaction commits it instead: the case's seed rows and schema
+    // changes become PERMANENT, the harness's own ROLLBACK then warns that
+    // there is no transaction and does nothing, and the failure surfaces
+    // migrations later as a replay that cannot fail failing. That is what
+    // happened here — the envelope matcher was anchored at the first byte of
+    // the file, so it stripped every `migration.sql` and not one `rollback.sql`,
+    // because a rollback script opens with its operator header.
+    //
+    // This needs no database, so it fails in `verify` in seconds rather than in
+    // the slow job that stands PostgreSQL up — and it grades every committed
+    // script, not only the ones a fixture happens to run today.
+    const offenders: string[] = [];
+    for (const name of migrationNames()) {
+      for (const file of ["migration.sql", "rollback.sql"]) {
+        const full = path.join(MIGRATIONS_DIR, name, file);
+        if (!existsSync(full)) continue;
+        try {
+          sqlInsideVerificationTransaction(readFileSync(full, "utf8"));
+        } catch (error) {
+          offenders.push(`${name}/${file}: ${(error as Error).message}`);
+        }
+      }
+    }
+    expect(offenders, offenders.join("\n\n")).toEqual([]);
   });
 
   it("runs every fixture file in the directory — imported is not registered", () => {
@@ -406,6 +486,64 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
   }
 
   /**
+   * Open the transaction a case owns, and remember WHICH transaction it is.
+   * `pg_current_xact_id()` assigns a real id rather than reporting one only if
+   * something already wrote, so the identity below is always comparable.
+   */
+  async function beginCase(): Promise<string> {
+    await db().query("BEGIN");
+    const result = await db().query<{ xid: string }>(
+      "SELECT pg_current_xact_id()::text AS xid",
+    );
+    const xid = result.rows[0]?.xid;
+    if (!xid) throw new Error("BEGIN returned no transaction id");
+    return xid;
+  }
+
+  /**
+   * Roll the case back — then PROVE the transaction just rolled back is the one
+   * the case opened (#3369).
+   *
+   * `sqlInsideVerificationTransaction` refuses SQL that steers the transaction,
+   * which is the fix; this is the guard that does not depend on RECOGNISING the
+   * SQL that would break it. A case that escaped its transaction has already
+   * written its seed rows and its schema changes permanently into the chain
+   * database, and every later fixture replays into that — so the symptom
+   * surfaces migrations away from the cause, as a replay that cannot fail
+   * failing.
+   *
+   * It raises from the `finally`, deliberately, where no `catch` above can
+   * demote it: `runCases` treats a raised error as DETECTION, so a leak
+   * recorded as an ordinary case error would read as a mutant caught and pass.
+   */
+  async function endCase(xid: string, label: string): Promise<void> {
+    let current: string | null;
+    try {
+      const result = await db().query<{ xid: string | null }>(
+        "SELECT pg_current_xact_id_if_assigned()::text AS xid",
+      );
+      current = result.rows[0]?.xid ?? null;
+    } catch (error) {
+      // `25P02 in_failed_sql_transaction` — "current transaction is aborted,
+      // commands ignored until end of transaction block". Most cases here are
+      // SUPPOSED to raise: every mutant run, every `raises` reverse run, and the
+      // run where the migration is not applied at all. A raise inside the
+      // transaction aborts it, and PostgreSQL then refuses this probe too. That
+      // refusal is not a problem to work around — it is proof of the very thing
+      // being checked, because only a transaction that is still open can be in
+      // a failed state. Anything else rethrows.
+      if ((error as { code?: string }).code !== "25P02") throw error;
+      current = xid;
+    }
+    await db().query("ROLLBACK");
+    if (current !== xid) {
+      throw new Error(
+        `${label} escaped its verification transaction: it opened ${xid} and ended in ${current ?? "no transaction at all"}. Something it ran issued COMMIT, so the ROLLBACK above changed nothing and this case's rows are now permanent in the chain database (#3369).`,
+      );
+    }
+  }
+
+  /**
    * Run every case of a fixture against one version of its migration, each case
    * inside its own transaction so nothing survives into the next case or the
    * ongoing replay. `versions` is the list of SQL bodies to apply after the
@@ -440,7 +578,7 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     overrides: Map<string, string>,
   ): Promise<CaseOutcome> {
     const readings: CaseOutcome["readings"] = [];
-    await db().query("BEGIN");
+    const xid = await beginCase();
     try {
       if (testCase.seed.trim()) {
         await runScript(testCase.seed, `seeding "${testCase.name}"`);
@@ -469,7 +607,7 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     } catch (error) {
       return { error: (error as Error).message, readings };
     } finally {
-      await db().query("ROLLBACK");
+      await endCase(xid, `reverse "${run.name}" of "${testCase.name}"`);
     }
   }
 
@@ -478,7 +616,7 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     versions: string[],
   ): Promise<CaseOutcome> {
     const readings: CaseOutcome["readings"] = [];
-    await db().query("BEGIN");
+    const xid = await beginCase();
     try {
       if (testCase.seed.trim()) {
         await runScript(testCase.seed, `seeding "${testCase.name}"`);
@@ -512,7 +650,7 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     } catch (error) {
       return { error: (error as Error).message, readings };
     } finally {
-      await db().query("ROLLBACK");
+      await endCase(xid, `case "${testCase.name}"`);
     }
   }
 
@@ -582,9 +720,14 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
             reverseKey(fixture.migration, run.name),
             await runReverse(testCase, sql, run, new Map()),
           );
-          // Mutants are only meaningful against a run that must SUCCEED: a run
-          // that must raise is already "detected" whatever the mutant did.
-          if (!run.expectations?.length) continue;
+          // EVERY run, including one that must RAISE (#3369). The rule used to
+          // be that a mutant is only meaningful against a run that must
+          // succeed, because a raising run is "detected" whatever the mutant
+          // did. That is true only of detection-by-error; a raising run has a
+          // second, sharper signal — whether it still refuses for the reason it
+          // claims to. Scoring it that way is what gives the wrong-order guard
+          // any coverage at all, and that guard is the one thing standing
+          // between an operator and a half rollback reported as a success.
           for (const mutant of reverse.mutants) {
             const mutated = rollbackSql(mutant.script).replace(
               mutant.find,
@@ -678,18 +821,33 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
             }
           });
 
-          if (!run.expectations?.length) continue;
-          for (const mutant of reverse.mutants) {
-            it(`reverse: catches a broken ${mutant.script} rollback — ${mutant.name}`, () => {
+        }
+
+        for (const mutant of reverse.mutants) {
+          it(`reverse: catches a broken ${mutant.script} rollback — ${mutant.name}`, () => {
+            // AT LEAST ONE run, which is what this fixture type has always
+            // promised ("Each one must make at least one run fail") and not
+            // what the runner used to require. Demanding that EVERY run catch
+            // EVERY mutant is a different and wrong rule: the wrong-order guard
+            // is deliberately silent when the scripts run in the right order,
+            // so the run that proves the data comes back correctly can never
+            // notice the guard being removed. Only the run that exercises the
+            // wrong order can, and that run is scored on its refusal (#3369).
+            const detectedBy = reverse.runs.filter((run) => {
               const outcome = reverseRuns.get(
                 reverseMutantKey(fixture.migration, run.name, mutant.name),
               );
-              expect(
-                outcome && outcomeDetected(outcome),
-                `${fixture.migration}: reverse mutant "${mutant.name}" went UNDETECTED by "${run.name}". ${mutant.harm} Sharpen an expectation until this fails.`,
-              ).toBe(true);
+              if (!outcome) return false;
+              // A run that must refuse is detected by no longer refusing for
+              // the declared reason — a different error, or none at all.
+              if (run.raises) return !(outcome.error ?? "").includes(run.raises);
+              return outcomeDetected(outcome);
             });
-          }
+            expect(
+              detectedBy.length > 0,
+              `${fixture.migration}: reverse mutant "${mutant.name}" went UNDETECTED by every run (${reverse.runs.map((run) => `"${run.name}"`).join(", ")}). ${mutant.harm} Sharpen an expectation, or add a run that exercises it, until this fails.`,
+            ).toBe(true);
+          });
         }
       }
 
