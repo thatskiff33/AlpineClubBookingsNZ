@@ -967,13 +967,11 @@ deliberately; so, incidentally, does `deletion-requests-client.test.tsx`.
 
 Where the admin's attention goes after an action — a failure, an editor they
 opened, a save that changed the screen — is decided once, in
-`src/hooks/use-scroll-to-feedback.ts` (#2934). Three primitives (`scrollToError`,
-`revealEditor`, `scrollToTop`) and two hooks (`useActionAttention`: failure wins,
-success positions at the top, nothing for a passive re-render;
-`useRevealAttention`: keyed on an explicit-action nonce such as
-`useSectionEditState`'s `editRequestKey`) are the whole surface. Every scroll
-honours `prefers-reduced-motion`, and no call site uses a timer or an animation
-frame to wait for its target.
+`src/hooks/use-scroll-to-feedback.ts` (#2934). **The rule itself is written out
+in that module's docblock and nowhere else**: which primitive each outcome uses,
+why the reveal key is a required argument, what reduced motion does, and what
+the census does and does not hold. This section is about TESTING a call site,
+and deliberately does not restate it.
 
 Testing a call site is the same three assertions each time, and each is
 discriminated by a named test in the tree already:
@@ -981,22 +979,33 @@ discriminated by a named test in the tree already:
 - **Failure**: `expectRecoveryAlertToHoldFocus(alert)` above — the element the
   surface anchors, which is the populated box rather than a permanently mounted
   wrapper when the two differ (`refusal-reload-order.test.tsx`).
-- **Reveal**: after the explicit click, `document.activeElement` is the editor
-  region and a `scrollIntoView` spy was called on it; then re-render the open
-  editor (toggle a control) and assert the spy count did not move
-  (`allocation-preferences-section.test.tsx`).
+- **Reveal**: `expectRevealed(spy, region)` from the same helper file, with the
+  spy from `installScrollIntoViewSpy()` — the region holds focus, it is what was
+  scrolled, and the total count is what the assertion pins. Then re-render the
+  open editor (toggle a control) and assert the count did not move
+  (`allocation-preferences-section.test.tsx`). Find the region by its ROLE and
+  NAME, not by reading `document.activeElement`: a reveal target that announces
+  only "group" is the defect, and `getByRole("region", { name })` is what fails
+  when the name goes missing. Do not hand-roll the spy — jsdom implements no
+  layout, so `Element.prototype.scrollIntoView` does not exist, and three files
+  had written the same fixture out verbatim before it moved to the helper.
 - **Success**: `document.activeElement` is the page or card whose top was
   positioned at, and it contains the confirmation
-  (`lodge-capacity-card.test.tsx`). A surface whose success closes a Radix dialog
-  cannot make this assertion — the dialog's focus release wins, by design, and
-  the scroll still happens — so assert the scroll, not the focus, there.
+  (`lodge-capacity-card.test.tsx`). A card below the top of its scroll container
+  is REVEALED rather than reached by scrolling that container to zero, so assert
+  `scrollIntoView` on the card there and `scrollTo` on the container only for a
+  page wrapper (`use-scroll-to-feedback.test.ts`). A surface whose success closes
+  a Radix dialog cannot assert focus at all — the dialog's focus release wins, by
+  design, and the scroll still happens — so assert the scroll there.
 
 `admin-attention-primitive-contract.test.ts` is the census that keeps the admin
 tree routed through the module: a direct `scrollIntoView` / `scrollTo`, or a
 focus deferred to `requestAnimationFrame`, fails it, and its one exclusion is
-listed beside the primitive in `DIRECT_SCROLL_EXCLUSIONS`. It scans the tree from
-disk, so `npm run test:related` cannot reach it; run it by name when an admin
-file gains a scroll or a focus.
+listed beside the primitive in `DIRECT_SCROLL_EXCLUSIONS`. A bare effect-driven
+`.focus()` passes it, which is a stated limit rather than an oversight — the
+module says why, and names the four surfaces that still hand-roll their
+attention. It scans the tree from disk, so `npm run test:related` cannot reach
+it; run it by name when an admin file gains a scroll or a focus.
 
 ## A mutation probe is a change you have to undo
 
