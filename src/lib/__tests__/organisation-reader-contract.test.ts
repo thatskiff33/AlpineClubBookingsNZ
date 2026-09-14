@@ -424,6 +424,8 @@ const DECLARED_FILES: Record<string, string> = {
     "a school's booking is found by the SCHOOL's name, which is what an officer was already typing when the invented member carried it",
   "src/lib/admin-bookings-service.ts":
     "the same question on the LIST page's own search box, which the typeahead's fix had missed: written as a member-relation filter it dropped every school booking out of the page, the pagination window and the total count together",
+  "src/lib/admin-payments-service.ts":
+    "the third copy of that question, on the payments search: it carried `organisation: { select: … }` beside the member filter, which is not a filter operator at all, and spelled correctly as `{ is: … }` it would have been ANDed with the member arm and matched no booking at all",
 
   // ---- carried forward from stage 1, unchanged -------------------------
   "src/lib/member-merge-relations.ts":
