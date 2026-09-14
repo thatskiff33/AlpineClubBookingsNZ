@@ -167,11 +167,21 @@ x-app-environment: &app-environment
   # page — the join link carries a short-lived signed token so committee members
   # skip MiroTalk's host login. All server-side secrets — never exposed to the
   # browser.
+  #
+  # NO COMPOSE-LEVEL DEFAULT for the lifetime or the presenter flag (#2940
+  # review, T3). These carried `:-1h` and `:-true`, so on the deployment shape
+  # this repository ships the variable was ALWAYS set even when the operator
+  # left it blank — and the new setup page then told every install "In force: 1h
+  # — from MIRO_JWT_EXP … changing it means editing the environment and
+  # restarting" for a value nobody chose, with the `derived` branch unreachable.
+  # The application holds the same two defaults once, in
+  # `mirotalk-settings-shared.ts`; a second copy here can only be the one that
+  # goes stale, and it lies about where the value came from while it agrees.
   MIRO_JWT_KEY: ${MIRO_JWT_KEY:-}
-  MIRO_JWT_EXP: ${MIRO_JWT_EXP:-1h}
+  MIRO_JWT_EXP: ${MIRO_JWT_EXP:-}
   MIRO_MEETING_USERNAME: ${MIRO_MEETING_USERNAME:-}
   MIRO_MEETING_PASSWORD: ${MIRO_MEETING_PASSWORD:-}
-  MIRO_MEETING_PRESENTER: ${MIRO_MEETING_PRESENTER:-true}
+  MIRO_MEETING_PRESENTER: ${MIRO_MEETING_PRESENTER:-}
   # TEST-ONLY mock-Xero E2E harness (#2080). Empty in every real deployment, so
   # the mock endpoints 404 and the OAuth/org code path is unchanged. The E2E
   # staging stack sets API_ORIGIN to the BROWSER-reachable origin (the consent

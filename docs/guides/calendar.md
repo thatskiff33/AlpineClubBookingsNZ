@@ -281,7 +281,18 @@ the signing key never reaches the browser.
 | Signing key | `MIRO_JWT_KEY` | Must equal MiroTalk's own `JWT_KEY`, and must be a generated secret of at least 32 characters — see "Choosing the signing key" below. |
 | Host username / Host password | `MIRO_MEETING_USERNAME` / `MIRO_MEETING_PASSWORD` | Must match one entry in MiroTalk's `HOST_USERS` (MiroTalk re-checks these). |
 | Whoever opens a link is the host | `MIRO_MEETING_PRESENTER` | On (default) = the clicker joins as host so the meeting starts immediately; off leaves joiners on MiroTalk's "waiting for host" screen. |
-| How long a join link lasts | `MIRO_JWT_EXP` | `1h` (default), `30m`, `900` (seconds). Between 30 seconds and one day when set on the page. Minted fresh on each click, so this only bounds a link left unopened or forwarded. |
+| How long a join link lasts | `MIRO_JWT_EXP` | `1h` (default), `30m`, `900` (seconds). Minted fresh on each click, so this only bounds a link left unopened or forwarded. **The 30-second-to-one-day range is enforced on the page only** — see below. |
+
+**`MIRO_JWT_EXP` is not range-checked.** The page refuses anything outside 30
+seconds to one day, because a join link is a bearer token: anyone it is
+forwarded to can open the meeting as host until it expires. A value set in the
+environment is **used whatever it says**, because refusing one would break an
+installation that works today. The page still shows it, with a note saying it
+would not be accepted there — that note is the whole warning, so if you set this
+in the environment, set it to something you would have been allowed to type.
+(The one exception, and the only environment behaviour this page changed:
+`MIRO_JWT_EXP=0` used to mint a link that had already expired, and now falls
+back to `1h` with the reason shown.)
 
 The three sign-in values are stored **encrypted**, in the same place as the
 Xero, Stripe and Google credentials, and are never shown again once saved — the
