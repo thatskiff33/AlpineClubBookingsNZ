@@ -57,7 +57,8 @@ type BackfillStore = typeof prisma;
 
 export interface OrphanedAppliedCreditFinding {
   bookingId: string;
-  memberId: string;
+  /** The booking OWNER, null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   appliedCreditCents: number; // positive SIGNED net of BOOKING_APPLIED rows (post-clamp, #1887 F2)
   appliedRowCount: number;
   paymentId: string | null;

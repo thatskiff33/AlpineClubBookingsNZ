@@ -119,7 +119,13 @@ async function loadBookingBlockersByMemberId(
   ]);
 
   for (const booking of ownedBookings) {
-    blockersByMemberId.get(bookingOwner(booking).memberId)?.push({
+    // #3369: the map is keyed on the MEMBER whose cancellation is being
+    // checked, and the query already asks for bookings those members own — so
+    // a booking with no member cannot be in this set. Reading it as a key
+    // rather than asserting it is what keeps that true if the query widens.
+    const ownerMemberId = bookingOwner(booking).memberId;
+    if (!ownerMemberId) continue;
+    blockersByMemberId.get(ownerMemberId)?.push({
       type: "owned_booking",
       bookingId: booking.id,
       bookingStatus: booking.status,

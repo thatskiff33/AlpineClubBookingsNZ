@@ -269,7 +269,8 @@ export type StrandNightPriceReconcilePlan = {
   guestName: string;
   cause: EditFinancialReviewCause;
   /** The booking's own member, for the audit entry's subject. */
-  subjectMemberId: string;
+  /** The audit SUBJECT, null for an organisation-owned booking (#3369, `INV-PRIV-018`). */
+  subjectMemberId: string | null;
   summary: UnpricedNightsSummary;
   writes: readonly FencedNightWrite[];
 };

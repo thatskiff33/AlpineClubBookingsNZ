@@ -123,11 +123,24 @@ export async function copyBookingToDraft({
     adminMemberId: adminMemberId,
   };
 
+  // #3369: a COPY re-books the same party for a new stay under the same owner,
+  // and this path's create service takes a member. An organisation-owned
+  // booking has none, so copying one would have to mint a school booking — a
+  // different operation with its own Xero and organisation-resolution
+  // obligations, and not one an officer should reach by pressing "copy".
+  // Refused in words, before anything is written.
+  const sourceOwnerMemberId = bookingOwner(source).memberId;
+  if (!sourceOwnerMemberId) {
+    throw new Error(
+      "This booking belongs to a school rather than to a member, so it cannot be copied. Approve a new school booking request instead (#3369).",
+    );
+  }
+
   let resolved: ResolvedLinkedBookingMembers;
   try {
     resolved = await resolveLinkedBookingMembersWithBoundary(
       prisma,
-      bookingOwner(source).memberId,
+      sourceOwnerMemberId,
       memberGuestIds,
       {
         skipAuthorization: true,
@@ -215,7 +228,7 @@ export async function copyBookingToDraft({
   const guests = consentPlan.guests;
 
   const booking = await createDraftBooking({
-    effectiveMemberId: bookingOwner(source).memberId,
+    effectiveMemberId: sourceOwnerMemberId,
     isOnBehalf: true,
     sessionUserId: adminMemberId,
     // A copy stays at the source booking's authoritative lodge. Omitting this

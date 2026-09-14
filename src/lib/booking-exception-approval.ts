@@ -1018,7 +1018,8 @@ async function executeApprovedNewBooking(args: {
  */
 async function dispatchNewBookingMemberGuestNotifications(args: {
   booking: { id: string; guests: Array<{ id: string; memberId: string | null }> };
-  bookerMemberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  bookerMemberId: string | null;
   actorMemberId: string;
   memberGuestEntries: Map<string, MemberGuestConsentWritePlanEntry>;
 }): Promise<void> {

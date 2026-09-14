@@ -58,7 +58,8 @@ function fullName(member: {
 export async function sendFamilyMemberBookingAddNotifications(params: {
   bookingId: string;
   /** The member whose family groups define "family scope" — the booking owner. */
-  bookerMemberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  bookerMemberId: string | null;
   /** Who performed the add (session user); never told about their own action. */
   actorMemberId: string;
   /** Every member id this operation added as a guest (self and beyond-family ok). */

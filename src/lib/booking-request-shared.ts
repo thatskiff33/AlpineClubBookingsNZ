@@ -409,7 +409,8 @@ export async function planBookingRequestGuestConsent<
 >(
   tx: Prisma.TransactionClient,
   params: {
-    bookingOwnerMemberId: string;
+    /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+    bookingOwnerMemberId: string | null;
     guests: readonly Guest[];
     actor: MemberGuestAddActor;
     policy: MemberGuestAddPolicy;

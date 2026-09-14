@@ -1666,7 +1666,8 @@ export function resolveRequestBookingHoldUntil(
  */
 export interface ReassignMemberGuestContext {
   /** The converted booking's owner — the family boundary is computed against them. */
-  bookingOwnerMemberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  bookingOwnerMemberId: string | null;
   /** Always `{ kind: "BOOKING_REQUEST" }` today; typed so it cannot silently become an admin add. */
   actor: MemberGuestAddActor;
   policy: MemberGuestAddPolicy;

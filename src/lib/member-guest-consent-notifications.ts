@@ -405,7 +405,8 @@ type NotificationContext = {
   checkIn: Date;
   checkOut: Date;
   bookingStatus: string;
-  bookingOwnerMemberId: string;
+  /** The booking OWNER, null when it is owned by an Organisation (#3369). */
+  bookingOwnerMemberId: string | null;
   /**
    * Whether this booking carries an officer-negotiated booking-request price —
    * the same question `isQuotePricedBooking` answers, read from the booking's
