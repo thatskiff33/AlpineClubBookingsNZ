@@ -49,6 +49,7 @@ vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.createAuditLog }));
 import {
   buildMeetingJoinUrl,
   clearMirotalkSecret,
+  clearMirotalkSecretsForAddressMove,
   getMirotalkConfigurationStatus,
   resetMirotalkWarningsForTests,
   setMirotalkSecret,
@@ -389,8 +390,9 @@ describe("the #2723 write contract, exercised from a club-editable path", () => 
 
     const call = mocks.deleteIntegrationCredential.mock.calls[0][0];
     expect(call.expect).toEqual({ expect: "version", version: "ver-xyz" });
-    // `any` would delete whatever replaced it and report success. No MiroTalk
-    // path passes it.
+    // `any` would delete whatever replaced it and report success. The ONE
+    // MiroTalk path that passes it is the address move below, where the intended
+    // end state is "gone" however many times somebody else replaced it.
     expect(call.expect.expect).not.toBe("any");
   });
 
@@ -411,5 +413,85 @@ describe("the #2723 write contract, exercised from a club-editable path", () => 
     expect(row.memberId).toBe("mem-7");
     expect(row.entityType).toBe("MirotalkSettings");
     expect(row.details).toContain("meeting server address");
+  });
+
+  it("records which address the meetings moved from and to", async () => {
+    // WITHOUT THIS THERE IS NO FORENSIC TRACE AT ALL. Redirect the address,
+    // wait for a click, restore it, and "changed: meeting server address" is
+    // the whole record — while the REFUSED attempt is audited with more
+    // specificity than the accepted one. The address is not a secret: the
+    // status hands it to any finance-view admin and the page renders it.
+    mocks.settingsUpsert.mockResolvedValue(undefined);
+    await writeMirotalkSettings({
+      draft: {
+        baseUrl: "https://meet.attacker.example",
+        presenterEnabled: null,
+        tokenLifetime: "",
+      },
+      memberId: "mem-7",
+      changedFields: ["meeting server address"],
+      addressChange: {
+        from: "https://meet.club.example",
+        to: "https://meet.attacker.example",
+      },
+      secretsCleared: [MIROTALK_CREDENTIAL_KEYS.jwtKey],
+    });
+
+    const row = mocks.createAuditLog.mock.calls[0][0];
+    expect(row.details).toContain("https://meet.club.example");
+    expect(row.details).toContain("https://meet.attacker.example");
+    expect(row.details).toContain("stored secrets cleared");
+    expect(row.metadata).toEqual({
+      baseUrlBefore: "https://meet.club.example",
+      baseUrlAfter: "https://meet.attacker.example",
+    });
+  });
+});
+
+describe("clearing the secrets when the address moves", () => {
+  beforeEach(() => {
+    noStoredSettings();
+  });
+
+  it("clears exactly the secrets that were really stored", async () => {
+    // The three are meaningful only to the MiroTalk instance they were paired
+    // with — the key must equal its JWT_KEY and the username/password must match
+    // one of its HOST_USERS entries — so an address move invalidates them
+    // exactly as it invalidates the central server's API key.
+    mocks.credFindMany.mockResolvedValue([
+      { key: MIROTALK_CREDENTIAL_KEYS.jwtKey },
+      { key: MIROTALK_CREDENTIAL_KEYS.meetingPassword },
+    ]);
+
+    const cleared = await clearMirotalkSecretsForAddressMove({
+      actor: { kind: "admin", memberId: "mem-7" },
+      request: { id: "req-9" },
+    });
+
+    expect(cleared).toEqual([
+      MIROTALK_CREDENTIAL_KEYS.jwtKey,
+      MIROTALK_CREDENTIAL_KEYS.meetingPassword,
+    ]);
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledTimes(2);
+    for (const [call] of mocks.deleteIntegrationCredential.mock.calls) {
+      expect(call.provider).toBe("mirotalk");
+      expect(call.actor).toEqual({ kind: "admin", memberId: "mem-7" });
+      expect(call.request).toEqual({ id: "req-9" });
+      // Unconditional HERE, and only here: this is a consequence of a different
+      // write rather than a read-modify-write against a displayed value, and the
+      // intended end state is "gone" whoever replaced it in between.
+      expect(call.expect).toEqual({ expect: "any" });
+    }
+  });
+
+  it("does nothing when nothing was stored here", async () => {
+    // An environment-only install has no rows, so a club that moves its address
+    // is not handed a delete for something it never set.
+    mocks.credFindMany.mockResolvedValue([]);
+    const cleared = await clearMirotalkSecretsForAddressMove({
+      actor: { kind: "admin", memberId: "mem-7" },
+    });
+    expect(cleared).toEqual([]);
+    expect(mocks.deleteIntegrationCredential).not.toHaveBeenCalled();
   });
 });

@@ -38,6 +38,22 @@ export async function POST(
     );
   }
 
+  // Awaited since #2940: the link is built from the club's own meeting
+  // configuration (Admin -> Integrations) before falling back to the
+  // environment, so resolving it is a read rather than a lookup in memory.
+  const joinUrl = await buildMeetingJoinUrl(event.meetingRoom);
+
+  // Audited AFTER the link exists, and recording WHERE it went. The row used to
+  // name only the event, so redirecting the meeting-server address, waiting for
+  // a click and restoring it left nothing anywhere saying which host received
+  // the token. The ORIGIN only — never the URL, which carries the token itself —
+  // and an address that will not parse is recorded as such rather than dropped.
+  let meetingHost: string;
+  try {
+    meetingHost = new URL(joinUrl).origin;
+  } catch {
+    meetingHost = "(unparseable)";
+  }
   logAudit({
     action: "calendar.event.join",
     memberId: guard.session.user.id,
@@ -46,13 +62,9 @@ export async function POST(
     category: "admin",
     outcome: "success",
     summary: "Calendar meeting join link minted",
-    details: `Minted MiroTalk join link for: ${event.title}`,
-    metadata: { title: event.title },
+    details: `Minted MiroTalk join link for: ${event.title} (meeting server ${meetingHost})`,
+    metadata: { title: event.title, meetingHost },
   });
 
-  // Awaited since #2940: the link is built from the club's own meeting
-  // configuration (Admin -> Integrations) before falling back to the
-  // environment, so resolving it is a read rather than a lookup in memory.
-  const joinUrl = await buildMeetingJoinUrl(event.meetingRoom);
   return NextResponse.json({ joinUrl });
 }

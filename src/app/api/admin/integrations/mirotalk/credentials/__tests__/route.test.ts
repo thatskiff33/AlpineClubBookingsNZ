@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   isFullAdmin: vi.fn(),
   setMirotalkSecret: vi.fn(),
   clearMirotalkSecret: vi.fn(),
+  createAuditLog: vi.fn(),
   loggerError: vi.fn(),
 }));
 
@@ -29,6 +30,7 @@ vi.mock("@/lib/mirotalk-config", () => ({
   clearMirotalkSecret: mocks.clearMirotalkSecret,
 }));
 vi.mock("@/lib/audit", () => ({
+  createAuditLog: mocks.createAuditLog,
   getAuditRequestContext: () => ({
     id: "req-1",
     ipAddress: "1.2.3.4",
@@ -76,13 +78,25 @@ beforeEach(() => {
 });
 
 describe("POST", () => {
-  it("needs Full Admin", async () => {
+  it("needs Full Admin, and records the refusal", async () => {
     asAdmin(false);
     const res = await POST(
       postRequest({ key: "jwt_key", value: SECRET, version: null }),
     );
     expect(res.status).toBe(403);
     expect(mocks.setMirotalkSecret).not.toHaveBeenCalled();
+    // `finance: edit` admits a Treasurer-shaped custom role, so reaching this
+    // gate is an admin trying to write a capability secret they may not write.
+    // The sibling settings route — the LOWER-risk write — has always recorded
+    // its refusal; this one did not, which left the higher-risk door quieter.
+    const row = mocks.createAuditLog.mock.calls[0][0];
+    expect(row.action).toBe("mirotalk.credentials.denied");
+    expect(row.category).toBe("security");
+    expect(row.outcome).toBe("failure");
+    expect(row.memberId).toBe("admin-1");
+    expect(row.summary).toMatch(/store/);
+    // Nothing about the refusal may name what was being stored.
+    expect(JSON.stringify(row)).not.toContain(SECRET);
   });
 
   it("refuses a key outside the closed set", async () => {
@@ -189,11 +203,14 @@ describe("POST", () => {
 });
 
 describe("DELETE", () => {
-  it("needs Full Admin", async () => {
+  it("needs Full Admin, and records the refusal", async () => {
     asAdmin(false);
     const res = await DELETE(deleteRequest("key=jwt_key&version=ver-1"));
     expect(res.status).toBe(403);
     expect(mocks.clearMirotalkSecret).not.toHaveBeenCalled();
+    const row = mocks.createAuditLog.mock.calls[0][0];
+    expect(row.action).toBe("mirotalk.credentials.denied");
+    expect(row.summary).toMatch(/clear/);
   });
 
   it("refuses a clear with nothing to compare against", async () => {

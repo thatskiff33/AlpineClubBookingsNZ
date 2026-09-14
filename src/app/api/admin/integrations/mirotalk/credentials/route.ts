@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { getAuditRequestContext } from "@/lib/audit";
+import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { isFullAdmin } from "@/lib/access-roles";
 import { requireAdmin } from "@/lib/session-guards";
 import { StaleCredentialWriteError } from "@/lib/integration-credential-actor";
@@ -13,6 +13,7 @@ import { clearMirotalkSecret, setMirotalkSecret } from "@/lib/mirotalk-config";
 import {
   MIROTALK_CREDENTIAL_KEYS,
   MIROTALK_CREDENTIAL_LABELS,
+  MIROTALK_PROVIDER,
   isMirotalkCredentialKey,
   type MirotalkCredentialKey,
 } from "@/lib/mirotalk-settings-shared";
@@ -64,12 +65,32 @@ const setBodySchema = z
   })
   .strict();
 
-async function requireFullAdmin() {
+/**
+ * THE REFUSAL IS AUDITED, for the same reason the sibling settings route audits
+ * its own: `finance: edit` admits a Treasurer-shaped custom role, so somebody
+ * reaching this gate is an admin trying to write a capability secret they may
+ * not write, and that is the event worth having a row for. It was missing while
+ * the LOWER-risk settings write recorded one, which left the higher-risk door
+ * the quieter of the two.
+ */
+async function requireFullAdmin(action: "store" | "clear") {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "edit" },
   });
   if (!guard.ok) return { ok: false as const, response: guard.response };
+  const memberId = guard.session.user.id;
   if (!isFullAdmin({ accessRoles: guard.session.user.accessRoles })) {
+    await createAuditLog({
+      action: "mirotalk.credentials.denied",
+      category: "security",
+      severity: "important",
+      outcome: "failure",
+      memberId,
+      actorMemberId: memberId,
+      entityType: "IntegrationCredential",
+      entityId: MIROTALK_PROVIDER,
+      summary: `Refused a non-Full-Admin attempt to ${action} a video-meeting host sign-in value`,
+    });
     return {
       ok: false as const,
       response: NextResponse.json(
@@ -78,7 +99,7 @@ async function requireFullAdmin() {
       ),
     };
   }
-  return { ok: true as const, memberId: guard.session.user.id };
+  return { ok: true as const, memberId };
 }
 
 function staleResponse(key: MirotalkCredentialKey) {
@@ -91,7 +112,7 @@ function staleResponse(key: MirotalkCredentialKey) {
 }
 
 export async function POST(request: Request) {
-  const guard = await requireFullAdmin();
+  const guard = await requireFullAdmin("store");
   if (!guard.ok) return guard.response;
 
   const json = await parseJsonRequestBody(request);
@@ -158,7 +179,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const guard = await requireFullAdmin();
+  const guard = await requireFullAdmin("clear");
   if (!guard.ok) return guard.response;
 
   const url = new URL(request.url);

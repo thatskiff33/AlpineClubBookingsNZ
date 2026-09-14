@@ -88,6 +88,32 @@ describe("POST /api/calendar/events/[id]/join", () => {
     );
   });
 
+  it("records WHICH meeting server the token was minted for, and not the token", async () => {
+    // Without this the row names only the event, so redirecting the address,
+    // waiting for a click and restoring it leaves no trace anywhere of where
+    // the token went. The ORIGIN, never the URL — the URL carries the token.
+    mocks.sessionUser = manager();
+    mocks.canManage = true;
+    mocks.event = {
+      id: "evt-1",
+      title: "Committee meeting",
+      isMeeting: true,
+      meetingRoom: "room-xyz",
+    };
+    mocks.buildMeetingJoinUrl.mockResolvedValueOnce(
+      "https://meet.elsewhere.example/join?room=room-xyz&token=super-secret-jwt",
+    );
+
+    await POST(req() as never, { params });
+
+    const row = mocks.logAudit.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(row.metadata).toMatchObject({
+      meetingHost: "https://meet.elsewhere.example",
+    });
+    expect(row.details).toContain("https://meet.elsewhere.example");
+    expect(JSON.stringify(row)).not.toContain("super-secret-jwt");
+  });
+
   it("returns 400 for a manager on a non-meeting event", async () => {
     mocks.sessionUser = manager();
     mocks.canManage = true;

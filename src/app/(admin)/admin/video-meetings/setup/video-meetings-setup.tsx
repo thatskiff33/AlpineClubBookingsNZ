@@ -92,6 +92,8 @@ export interface VideoMeetingsSetupProps {
 interface SettingsPayload {
   status: MirotalkConfigurationStatus;
   settings: MirotalkSettingsDraft;
+  /** Present when moving the address cleared the stored host sign-in. */
+  secretsCleared?: string | null;
 }
 
 /** Plain English for where a value came from, at the point it is shown. */
@@ -185,6 +187,14 @@ export function VideoMeetingsSetup({
       }
       const payload = data as SettingsPayload;
       setStatus(payload.status);
+      // Moving the address drops the stored host sign-in, because those values
+      // only mean anything to the server they were set for. Say so where the
+      // secrets are, not in the settings banner the person has already read.
+      setSecretMessage(
+        payload.secretsCleared
+          ? { kind: "warn", text: payload.secretsCleared }
+          : null,
+      );
       return payload.settings;
     },
     successMessage: "Video meeting settings saved.",

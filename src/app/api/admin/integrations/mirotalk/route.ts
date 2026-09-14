@@ -4,16 +4,18 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { createAuditLog } from "@/lib/audit";
+import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { isFullAdmin } from "@/lib/access-roles";
 import { requireAdmin } from "@/lib/session-guards";
 import {
+  clearMirotalkSecretsForAddressMove,
   getMirotalkConfigurationStatus,
   readMirotalkStoredSettings,
   writeMirotalkSettings,
 } from "@/lib/mirotalk-config";
 import {
   MIROTALK_BASE_URL_MAX_LENGTH,
+  MIROTALK_CREDENTIAL_LABELS,
   MIROTALK_TOKEN_LIFETIME_MAX_LENGTH,
   validateMirotalkBaseUrl,
   validateMirotalkTokenLifetime,
@@ -29,7 +31,15 @@ import {
  *        into.
  * PUT  — save the staged settings. FULL ADMIN.
  *
- * The three secrets are written on `./credentials`, not here.
+ * The three secrets are written on `./credentials`, not here — except that
+ * MOVING THE ADDRESS CLEARS THEM, which this route does own. They are meaningful
+ * only to the MiroTalk instance they were paired with, so an address move
+ * invalidates them the way it invalidates the Alpine Central Server's API key,
+ * and a redirected join link is then left with no stored credential to carry.
+ * The limit is stated where the helper lives (`clearMirotalkSecretsForAddressMove`):
+ * an install that still sets the environment variables falls back to them, so
+ * there this is cosmetic; on the install shape `.env.example` recommends it is
+ * the whole fix.
  *
  * WHY THE WHOLE WRITE IS FULL ADMIN, where the Alpine Central Server route
  * gates only its base URL that way. There, the other field is an ordinary
@@ -132,17 +142,34 @@ export async function PUT(request: Request) {
   // not secret, but the field names are what an operator reading the log needs
   // and the row stays readable without them.
   const before = await readMirotalkStoredSettings();
+  const addressMoved = (before.baseUrl ?? "") !== draft.baseUrl;
   const changed: string[] = [];
-  if ((before.baseUrl ?? "") !== draft.baseUrl) changed.push("meeting server address");
+  if (addressMoved) changed.push("meeting server address");
   if (before.presenterEnabled !== draft.presenterEnabled) changed.push("presenter");
   if ((before.tokenLifetime ?? "") !== draft.tokenLifetime) {
     changed.push("join-link lifetime");
   }
 
+  // BEFORE the settings write, not after. The state to avoid is the new address
+  // paired with the old server's credentials; clearing first can only produce
+  // the old address with no stored credentials, which costs a club unsigned
+  // links for the length of one statement. The reverse ordering leaves the
+  // dangerous pair live if the clear throws.
+  const secretsCleared = addressMoved
+    ? await clearMirotalkSecretsForAddressMove({
+        actor: { kind: "admin", memberId },
+        request: getAuditRequestContext(request),
+      })
+    : [];
+
   const settings = await writeMirotalkSettings({
     draft,
     memberId,
     changedFields: changed,
+    ...(addressMoved
+      ? { addressChange: { from: before.baseUrl, to: draft.baseUrl || null } }
+      : {}),
+    secretsCleared,
   });
 
   return NextResponse.json({
@@ -152,5 +179,12 @@ export async function PUT(request: Request) {
       presenterEnabled: settings.presenterEnabled,
       tokenLifetime: settings.tokenLifetime ?? "",
     },
+    // Plain English for the person who just moved the address, because they are
+    // the only one who can put the new server's credentials in.
+    secretsCleared: secretsCleared.length
+      ? `The meeting server address changed, so the stored ${secretsCleared
+          .map((key) => MIROTALK_CREDENTIAL_LABELS[key].toLowerCase())
+          .join(", ")} ${secretsCleared.length === 1 ? "was" : "were"} cleared — they only mean anything to the server they were set for. Enter the new server's values below.`
+      : null,
   });
 }

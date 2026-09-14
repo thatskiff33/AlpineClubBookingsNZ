@@ -541,6 +541,18 @@ export async function writeMirotalkSettings(params: {
   draft: MirotalkSettingsDraft;
   memberId: string;
   changedFields: string[];
+  /**
+   * The address before and after, when it moved. RECORDED IN FULL, and this is
+   * the one field on this screen where that is the right answer: the address is
+   * not a secret — the status hands it to any finance-view admin and the page
+   * renders it — so writing it down costs no confidentiality, and without it the
+   * REFUSAL below is audited with more specificity than the acceptance. Redirect
+   * the address, wait for somebody to click Join, restore it, and the only trace
+   * left anywhere would be "changed: meeting server address".
+   */
+  addressChange?: { from: string | null; to: string | null };
+  /** Secrets dropped because the address moved (see the clear helper below). */
+  secretsCleared?: readonly MirotalkCredentialKey[];
 }): Promise<MirotalkStoredSettings> {
   const data = {
     baseUrl: params.draft.baseUrl.trim() || null,
@@ -555,6 +567,8 @@ export async function writeMirotalkSettings(params: {
     update: data,
   });
 
+  const move = params.addressChange;
+  const cleared = params.secretsCleared ?? [];
   await createAuditLog({
     action: "mirotalk.settings.update",
     category: "admin",
@@ -565,10 +579,81 @@ export async function writeMirotalkSettings(params: {
     entityType: "MirotalkSettings",
     entityId: MIROTALK_SETTINGS_ID,
     summary: "Updated the video-meeting settings",
-    details: `changed: ${params.changedFields.join(", ") || "none"}`,
+    details:
+      `changed: ${params.changedFields.join(", ") || "none"}` +
+      (move
+        ? `; meeting server address ${move.from ?? "(not set)"} -> ${move.to ?? "(not set)"}`
+        : "") +
+      (cleared.length
+        ? `; stored secrets cleared because the address moved: ${cleared.join(", ")}`
+        : ""),
+    metadata: move
+      ? { baseUrlBefore: move.from, baseUrlAfter: move.to }
+      : undefined,
   });
 
   return readMirotalkStoredSettings();
+}
+
+/**
+ * Drop every STORED MiroTalk secret, because the meeting server address moved.
+ *
+ * WHY THIS IS RIGHT, and it is the Alpine Central Server remedy copied on its
+ * own terms: these three are meaningful only to the MiroTalk instance they were
+ * paired with. The signing key has to equal that instance's `JWT_KEY` and the
+ * username/password have to match one of its `HOST_USERS` entries, so a genuine
+ * address move invalidates them exactly as it invalidates the central server's
+ * API key. It also makes the Full-Admin gate robust rather than merely correct:
+ * a redirected join link has no stored credential left to carry.
+ *
+ * WHAT IT DOES NOT FIX, stated here because the honest version of this remedy
+ * has to carry its own limit. Clearing the stored secrets falls back to
+ * `MIRO_JWT_KEY` / `MIRO_MEETING_USERNAME` / `MIRO_MEETING_PASSWORD`, which were
+ * set for the OLD server, so on an install that still has them this is
+ * cosmetic — the redirected host receives a token minted with the environment
+ * credentials. On the install shape `.env.example` now recommends, where those
+ * variables are left empty and everything is set on the page, there is nothing
+ * to fall back to: the resolver returns unset, the join builder takes the
+ * no-token branch and the redirected host receives nothing at all. So this is
+ * strictly better in every install and worse in none, and it is the ONLY lever
+ * the club has, because a Full Admin cannot read a stored secret back out to
+ * re-supply it. Suppressing the environment fallback whenever the address is
+ * database-sourced would close the remaining half, and is deliberately NOT done
+ * here: it breaks the mixed migration path this change exists to support, so it
+ * is an owner's trade rather than an implementor's.
+ *
+ * `{ expect: "any" }` rather than a version, unlike everything else this screen
+ * writes. The fence exists for a read-modify-write an administrator performed
+ * against a value the screen showed them; this is a consequence of a different
+ * write, and the intended end state is "gone" however many times somebody else
+ * replaced it in between. A key that is absent already is a silent no-op that
+ * audits nothing, which is why the caller is told WHICH keys were really there.
+ */
+export async function clearMirotalkSecretsForAddressMove(params: {
+  actor: CredentialActor;
+  request?: CredentialRequestContext;
+}): Promise<MirotalkCredentialKey[]> {
+  const rows = await prisma.integrationCredential.findMany({
+    where: {
+      provider: MIROTALK_PROVIDER,
+      key: { in: [...MIROTALK_WRITABLE_CREDENTIAL_KEYS] },
+    },
+    select: { key: true },
+  });
+  const stored = new Set(rows.map((row) => row.key));
+  const cleared: MirotalkCredentialKey[] = [];
+  for (const key of MIROTALK_WRITABLE_CREDENTIAL_KEYS) {
+    if (!stored.has(key)) continue;
+    await deleteIntegrationCredential({
+      provider: MIROTALK_PROVIDER,
+      key,
+      actor: params.actor,
+      expect: { expect: "any" },
+      request: params.request,
+    });
+    cleared.push(key);
+  }
+  return cleared;
 }
 
 /**
