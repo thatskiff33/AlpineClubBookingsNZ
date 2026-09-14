@@ -8,8 +8,8 @@ import { isFullAdmin } from "@/lib/access-roles";
 import { ISSUE_REPORT_RETENTION_DELETE_REASON } from "@/lib/issue-report-retention";
 
 /**
- * THE ONE HOME for the #2703 rule: **admin-origin issue-report screenshot
- * pixels are Full-Admin-only**. Ordinary issue-report text and diagnostics keep
+ * THE ONE HOME for `INV-PRIV-020` (#2703): **admin-origin issue-report
+ * screenshot pixels are Full-Admin-only**. Ordinary issue-report text and diagnostics keep
  * the normal `support:view` access model.
  *
  * ## Why the rule exists
