@@ -1081,19 +1081,29 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
       deliberately left OUT of `MEMBER_VISIBLE_AUDIT_CATEGORIES`. `membership` is the
       obvious name for it and is the one name it must not be, because it is not a
       free string: three pre-#2581 nomination writers wrote `category = 'membership'`
-      into real rows, and NO migration ever rewrote them. The only migration that has
-      ever rewritten a stored `AuditLog.category` is #2751's bed-allocation backfill,
-      which this asserts from the migrations themselves.
+      into real rows, and when #2777 was decided NO migration had rewritten them.
+      The only migration that had ever rewritten a stored `AuditLog.category` was
+      #2751's bed-allocation backfill.
 
-      SO THOSE LEGACY ROWS ARE CORRELATED BY NOBODY TODAY — `category = ANY ($1)`
-      never matches a value outside the taxonomy — and re-introducing the string
-      would make them readable by any support+membership operator, retroactively, on
-      an append-only table. That is a stored-row audience change nobody has decided,
-      and it is the reason the successor issue asked for a NEW name rather than the
-      old one. #2777 was decided with the lockers staying `admin`, so no such
-      category exists; if this test fails because another migration rewrites the
-      column, the measured cost that decision rested on has changed — re-measure it
-      before citing #2777.
+      RE-MEASURED, 13 September 2026 (#2581 third child). The read-only preflight
+      found exactly TWO stored `membership` rows on the reference deployment (and
+      two `EMAIL`), on two of the three pre-#2581 nomination actions, and the owner
+      decided they are corrected to their writers' canonical value (`account`) as a
+      listed exception to decision 6. The UPDATE covers exactly those two actions
+      (`membership_application.nominator_replaced`,
+      `membership_application.nomination_workflow_refreshed`); the third writer,
+      `MEMBER_APPLICATION_MAPPED_TO_EXISTING` (`src/lib/nomination.ts`), had ZERO
+      `membership` rows there and is NOT covered, so a fork that holds one keeps
+      it. On the measured deployment, then, no stored row carries `membership`
+      after `20260923010000_backfill_historical_audit_categories` runs, and
+      re-introducing the string as a category would widen nothing retroactively
+      THERE. The stored-row half of #2777's cost is therefore gone on that deployment;
+      what remains is that `membership` is the name of a permission AREA and a
+      correlation DOMAIN here, so reusing it as a category would read as the
+      partition it is not (INV-PRIV-013). #2777 stands as decided (the lockers stay
+      `admin`); this comment records that its costing has changed, as the previous
+      revision asked. The list below is now the TWO migrations that have rewritten
+      the column; a third must re-measure and record here the same way.
     */
     const migrationsRoot = join(process.cwd(), "prisma", "migrations");
     const rewriters = readdirSync(migrationsRoot, { withFileTypes: true })
@@ -1112,14 +1122,17 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
 
     expect(
       rewriters,
-      "A migration rewrites stored `AuditLog.category` values that #2765 did not " +
-        "know about. #2765 refused the locker move partly on the measured fact that " +
-        "legacy `category = 'membership'` rows from three pre-#2581 nomination " +
-        "writers were never backfilled and are therefore correlated by nobody — so " +
-        "re-introducing that string would widen who can read rows already written " +
-        "(INV-PRIV-013, INV-OPS-012). #2777 was decided on that measured cost — " +
-        "re-measure it and record the change before altering this list.",
-    ).toEqual(["20260810020000_backfill_bed_allocation_audit_category"]);
+      "A migration rewrites stored `AuditLog.category` values that this test did " +
+        "not know about. Two are recorded: #2751's bed-allocation backfill and " +
+        "#2581's historical null-category backfill, the second of which also " +
+        "corrected the legacy `membership` rows #2765/#2777 were costed on. A " +
+        "stored-row rewrite changes who can read rows already written (INV-PRIV-013, " +
+        "INV-OPS-012) — re-measure that cost and record the change in the comment " +
+        "above before altering this list.",
+    ).toEqual([
+      "20260810020000_backfill_bed_allocation_audit_category",
+      "20260923010000_backfill_historical_audit_categories",
+    ]);
 
     // And the name itself is still outside the taxonomy, which is what makes those
     // legacy rows unreadable today rather than merely mis-filed.
