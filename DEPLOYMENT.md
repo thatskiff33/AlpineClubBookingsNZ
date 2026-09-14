@@ -724,6 +724,12 @@ sequence below is run once, not once per migration.
   merge, Xero member import and nomination. The owner authorised this one as a
   windowed drop on 3 Aug 2026, superseding an earlier plan that would have carried
   the obsolete column through another release.
+- `20260806010000_fence_hosting_coverage_delivery_claims` (#2596). Its nullable
+  columns are harmless to the previous Prisma client, but its worker protocol is
+  not: an old hosting worker ignores the token/expiry fields and can take, email and
+  complete work that a new worker already owns. The old web colour and **every** old
+  worker must therefore be stopped before migrate, and only new workers may start.
+
 - `20260922010000_booking_owner_optional_member` and
   `20260922020000_backfill_school_bookings_to_organisations` (#3369, stage 4 of
   programme #2912). **These two are ONE window and are never applied apart.**
@@ -745,11 +751,6 @@ sequence below is run once, not once per migration.
   `school_member_classification_incomplete` and writes nothing at all. The
   operator guide is
   [`guides/school-organisation-cutover.md`](docs/guides/school-organisation-cutover.md).
-- `20260806010000_fence_hosting_coverage_delivery_claims` (#2596). Its nullable
-  columns are harmless to the previous Prisma client, but its worker protocol is
-  not: an old hosting worker ignores the token/expiry fields and can take, email and
-  complete work that a new worker already owns. The old web colour and **every** old
-  worker must therefore be stopped before migrate, and only new workers may start.
 
 There is no ordering that keeps both runtime protocols working, which is why the
 window exists.

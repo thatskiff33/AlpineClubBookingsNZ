@@ -486,8 +486,17 @@ const verification: DataMigrationVerification = {
     {
       name: "cap the school's name at twenty characters instead of two hundred",
       harm: "Every school with a longer name gets a record under a truncated name. The next booking for that school does not match it, so the club ends up with two records and two Xero customers for one school.",
-      find: `btrim(left(btrim(regexp_replace(m."firstName", '\\s+', ' ', 'g')), 200)) AS school_name`,
-      replace: `btrim(left(btrim(regexp_replace(m."firstName", '\\s+', ' ', 'g')), 20)) AS school_name`,
+      // BOTH expressions, deliberately. Capping only `school_name` left
+      // `folded_name` at two hundred, so the minted record did not resolve back
+      // and the migration ABORTED — detection for free, and detection that says
+      // nothing about the value written, which is exactly what this fixture's
+      // own type documentation warns about. Capping both lets the migration
+      // COMPLETE and the truncated name arrive in the rows a case compares,
+      // which is the harm above.
+      find: `    btrim(left(btrim(regexp_replace(m."firstName", '\\s+', ' ', 'g')), 200)) AS school_name,
+    lower(btrim(left(btrim(regexp_replace(m."firstName", '\\s+', ' ', 'g')), 200))) AS folded_name,`,
+      replace: `    btrim(left(btrim(regexp_replace(m."firstName", '\\s+', ' ', 'g')), 20)) AS school_name,
+    lower(btrim(left(btrim(regexp_replace(m."firstName", '\\s+', ' ', 'g')), 20))) AS folded_name,`,
     },
     {
       name: "let the later of two spellings win the school's details",

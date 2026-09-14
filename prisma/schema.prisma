@@ -7960,7 +7960,12 @@ model SchoolMemberClassification {
 
   // Cascade: the classification is a fact ABOUT this row, so when the row goes
   // the classification is not about anything. Member merge classifies this
-  // relation `resolve` — see `MEMBER_MERGE_RELATION_SPECS`.
+  // relation `cascade` for the same reason — see `MEMBER_MERGE_RELATION_SPECS`,
+  // which carries the full reasoning. NOT `resolve`: `memberId` is this model's
+  // `@id`, so the row cannot be re-pointed at the master, and one that survived
+  // onto the master would assert the master is the row an officer decided
+  // about. (This comment said `resolve` while the code said `cascade`; the code
+  // was right.)
   member Member @relation("SchoolMemberClassificationMember", fields: [memberId], references: [id], onDelete: Cascade)
 
   @@index([classification])

@@ -816,8 +816,10 @@ Both directions were rehearsed against a production-shaped database before merge
 #### 2.4.2 #3369: a school booking has an organisation, not an invented person
 
 `20260922010000_booking_owner_optional_member` and
-`20260922020000_backfill_school_bookings_to_organisations` are the third and
-fourth `windowed` migrations, and **they are one window**. `prisma migrate
+`20260922020000_backfill_school_bookings_to_organisations` are the FOURTH and
+FIFTH `windowed` migrations — the ledger held three before them, which
+[§4](#4-rollback-plan) and `DEPLOYMENT.md` both count — and **they are one
+window**. `prisma migrate
 deploy` applies both in the same command; nothing below is run twice, and the two
 are never applied apart.
 
