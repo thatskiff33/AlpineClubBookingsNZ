@@ -455,6 +455,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/contact-link-mismatches": "finance",
   "/api/admin/xero/disconnect": "finance",
   "/api/admin/xero/duplicate-contacts": "finance",
+  // #3058: the erased-member Xero contact review. A GET and nothing else —
+  // the erasure performs no Xero mutation, so there is no write to gate.
+  "/api/admin/xero/erased-member-contacts": "finance",
   "/api/admin/xero/force-sync": "finance",
   "/api/admin/xero/health": "finance",
   "/api/admin/xero/import-member-contact": "finance",

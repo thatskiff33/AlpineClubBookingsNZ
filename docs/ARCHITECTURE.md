@@ -1081,6 +1081,32 @@ Stripe refund with no Xero credit note, waitlist offer whose email needs
 operator action) and feeds the amber "Provider state out of step" block on the
 booking detail Admin tools card — read-only detection mirroring the
 stuck-state queries.
+Since #3001 it also carries the booking's CURRENT `BOOKING_INVOICE` **create**
+operation state, read through `src/lib/booking-invoice-sync-status.ts` (a failed
+invoice UPDATE stays on the Xero operations screen). That module is the bounded
+server-side projection the React tree consumes instead of interpreting operation
+rows itself: it finds the row by the booking's own correlation key
+(`xero-booking-invoice-key.ts`) rather than through the payment the row is stored
+against, takes the newest create row so an old failure cannot outvote a later
+success, honours `manuallyResolvedAt`, treats a RUNNING row past the shared
+staleness threshold as an intervention state rather than as progress, and asks
+`getXeroOperationRetryMeta` whether a retry is even possible rather than
+re-deriving it — so the booking page and the Xero operations screen cannot
+describe one row differently. A deliberately withheld invoice email (#2258,
+#2929, #3035) is not a fault and raises nothing; only `invoiceEmailError` does,
+and the payload now records WHICH of its three causes it was. When it fires, the
+vaguer paid-with-no-invoice row is suppressed rather than stacked beneath it.
+
+Two shapes in that module exist because the obvious spelling was wrong. Whether
+the invoice reached Xero comes from `xero-booking-invoice-evidence.ts` — the
+payment's stored invoice id or the active `PRIMARY_INVOICE` link, the same pair
+the enqueue fence refuses a second mint on — and never from the operation's
+`xeroObjectId`, which `failXeroSyncOperation` does not write, so reading it there
+answers "no invoice exists" for every failure including the ones that happened
+after Xero accepted the invoice. And the offered affordance is ONE field
+(`BookingInvoiceSyncAction`), so a surface cannot print "do not repeat the
+action" beside a Retry: the sentence and the link label are read off the same
+decision.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; `AGENTS.md` → Change Discipline and its routing
@@ -1119,12 +1145,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **95 components render a banner, and
-305 of the 358 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **96 components render a banner, and
+306 of the 359 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 305 split by WHICH rule
-covers them: **271** pass the literal
+test currently pins, which is the only authority.) Those 306 split by WHICH rule
+covers them: **272** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **34**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the

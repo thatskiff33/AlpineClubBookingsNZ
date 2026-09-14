@@ -1006,7 +1006,7 @@ export async function POST(
       //     treats it as one. `buildXeroContactCompanyNumberPatch` reads a row
       //     that exists and holds `null` as "we looked, and Xero's NZBN field
       //     is empty" — which is its permission to write. Nulling here would
-      //     MANUFACTURE that permission about a field that, per #2873, still
+      //     MANUFACTURE that permission about a field that, per #3058, still
       //     holds the value in Xero, and nothing re-observes it: the contact
       //     was not modified so an `ifModifiedSince` sync skips it, no member
       //     links to it any more, and the group repair only fills in MISSING
@@ -1019,13 +1019,13 @@ export async function POST(
       //     address. Clearing one field would leave all of those in place,
       //     which contradicts the privacy argument above.
       //
-      // Removing the value from XERO is a separate question — it conflicts with
-      // the standing rule that this app never blanks that field, because it
-      // cannot tell a birthday it wrote from a business number somebody typed —
-      // and is tracked as #2873. Until that is answered the value survives in
-      // Xero, so a later full resync that observes this contact can cache it
-      // again: this clears what the server holds now, it does not make the
-      // provider forget. Precedent for the shape: `xero-mismatch-resync.ts`.
+      // Removing the value from XERO is SETTLED the other way (#3058,
+      // `INV-INT-024`; #2873 closed `not planned`): erasure makes no Xero
+      // mutation, because this app cannot tell a birthday it wrote from a
+      // business number somebody typed, and the accounting system is the
+      // treasurer's. So the value survives in Xero by decision, and a later
+      // resync can cache it again: this clears what the server holds now, it
+      // does not make the provider forget. Cf. `xero-mismatch-resync.ts`.
       if (fencedMember.xeroContactId) {
         await tx.xeroContactCache.deleteMany({
           where: { contactId: fencedMember.xeroContactId },

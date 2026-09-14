@@ -293,6 +293,24 @@ export function formatJson(value: unknown) {
   return formatRedactedJson(value)
 }
 
+/**
+ * "3 hours ago" / "12 days ago", from whole hours (#3058, `INV-SSOT`).
+ *
+ * An ELAPSED-TIME phrase, deliberately not a club-time stamp: it describes how
+ * old the shared Xero contact cache is, which is a duration and carries no
+ * civil date. The two panels that report that cache's age — the missing-contact
+ * census and the erased-member review — sit on the same scrollable page and
+ * render the same number, so a second copy of this function meant two panels
+ * could word one fact differently. That is the duplication the review lifted
+ * the number itself out to prevent, in the sentence rather than the value.
+ */
+export function describeContactCacheAge(hours: number) {
+  if (hours < 1) return "less than an hour ago"
+  if (hours === 1) return "1 hour ago"
+  if (hours < 48) return `${hours} hours ago`
+  return `${Math.floor(hours / 24)} days ago`
+}
+
 // #2256: bare toLocaleString() rendered the cache stamps in the admin's own
 // browser locale and zone ("4/16/2026, 11:30 AM"). Xero cache freshness is
 // judged against the club's clock — which since CT-4 (#2870) means the

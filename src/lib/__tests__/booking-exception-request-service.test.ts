@@ -54,6 +54,16 @@ const mocks = vi.hoisted(() => ({
   // #2526: request-time member-guest authorisation.
   resolveLinkedMembers: vi.fn(),
   assertMembersBookable: vi.fn(),
+  /**
+   * #2721: the requester's OWN recorded dependants, read by `loadBookerDependants`
+   * before the proposal is frozen. Defaults to NONE, which is the neutral answer
+   * — no collision is possible, so every case written before the guard existed is
+   * judged exactly as it was.
+   */
+  memberFindMany: vi.fn(
+    async (): Promise<Array<{ id: string; firstName: string; lastName: string }>> =>
+      [],
+  ),
   loadMemberGuestPolicy: vi.fn(),
 }));
 
@@ -96,6 +106,10 @@ vi.mock("@/lib/prisma", () => {
     bookingGuest: {
       findMany: () => mocks.bookingGuestFindMany(),
     },
+    // #2721: the own-dependant candidate set.
+    member: {
+      findMany: () => mocks.memberFindMany(),
+    },
   };
   return {
     prisma: {
@@ -110,6 +124,9 @@ vi.mock("@/lib/prisma", () => {
         updateMany: (...a: unknown[]) => mocks.bcrUpdateMany(...a),
         findMany: (...a: unknown[]) => mocks.bcrFindMany(...a),
         findUnique: (...a: unknown[]) => mocks.bcrFindUnique(...a),
+      },
+      member: {
+        findMany: () => mocks.memberFindMany(),
       },
       $transaction: (fn: (t: typeof tx) => unknown) => fn(tx),
     },
@@ -170,6 +187,7 @@ import {
   NoEligiblePolicyExceptionError,
   OpenExceptionRequestConflictError,
   PolicyExceptionCapacityUnavailableError,
+  PolicyExceptionDependantIdentityError,
   readMemberExceptionRequests,
   readUnifiedExceptionQueue,
   type ExceptionRequestGuestInput,
@@ -272,6 +290,170 @@ describe("createNewBookingExceptionRequest", () => {
     expect(data.memberMessage).toBe("please allow this one-night weekend stay");
     expect(data.status).toBe("REQUESTED");
     expect(data.aggregateCapacityMode).toBe("HOLD");
+  });
+
+  /*
+    #2721 — THE SECOND CREATE DOOR (`INV-GUEST-019`).
+
+    Approving a policy-exception request builds a confirmed booking, so it is a
+    create door by any reading. It used to accept a full guest party from any
+    authenticated member with no proof the ordinary create route had already
+    refused it: a member typed their own recorded dependant as a free-text
+    guest, an officer approved it, and the child landed on the provisional,
+    bumpable, separately-invoiced non-member split.
+
+    "Before anything is frozen" is what these assert mechanically — the refusal
+    happens with no request row written at all.
+  */
+  describe("own-dependant identity (#2721)", () => {
+    const FREE_TEXT_SAM: ExceptionRequestGuestInput[] = [
+      { firstName: "Ada", lastName: "Lovelace", ageTier: "ADULT", isMember: true, memberId: "m1" },
+      { firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false },
+    ];
+    const OWN_DEPENDANTS = [
+      { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+    ];
+    const DECLARATION = {
+      kind: "different_person_same_name" as const,
+      dependantMemberId: "dep-sam",
+      normalizedName: "sam smith",
+    };
+
+    it("REFUSES an own recorded dependant typed as a free-text guest, freezing nothing", async () => {
+      mocks.memberFindMany.mockResolvedValue(OWN_DEPENDANTS);
+
+      await expect(
+        createNewBookingExceptionRequest(
+          newBookingInput({ guests: FREE_TEXT_SAM }),
+        ),
+      ).rejects.toBeInstanceOf(PolicyExceptionDependantIdentityError);
+
+      expect(mocks.nbCreate).not.toHaveBeenCalled();
+      expect(mocks.peUpsert).not.toHaveBeenCalled();
+    });
+
+    it("refuses in the create route's own code, so one client handler covers both doors", async () => {
+      mocks.memberFindMany.mockResolvedValue(OWN_DEPENDANTS);
+      await createNewBookingExceptionRequest(
+        newBookingInput({ guests: FREE_TEXT_SAM }),
+      ).then(
+        () => {
+          throw new Error("expected a refusal");
+        },
+        (error: unknown) => {
+          expect(error).toBeInstanceOf(PolicyExceptionDependantIdentityError);
+          expect(
+            (error as PolicyExceptionDependantIdentityError).refusal.code,
+          ).toBe("DEPENDANT_IDENTITY_UNRESOLVED");
+          expect(
+            (error as PolicyExceptionDependantIdentityError).refusal.status,
+          ).toBe(409);
+        },
+      );
+    });
+
+    it("lets the request through once the booker says it is a different person, and FREEZES the answer", async () => {
+      mocks.memberFindMany.mockResolvedValue(OWN_DEPENDANTS);
+
+      const result = await createNewBookingExceptionRequest(
+        newBookingInput({
+          guests: FREE_TEXT_SAM,
+          dependantIdentityDeclarations: [DECLARATION],
+        }),
+      );
+
+      expect(result.status).toBe("REQUESTED");
+      const snapshot = mocks.nbCreate.mock.calls[0][0].data.proposalSnapshot;
+      // Frozen BESIDE the proposal, so the approval can verify it again.
+      expect(snapshot.dependantIdentityDeclarations).toEqual([DECLARATION]);
+    });
+
+    it("the frozen answers do NOT move the proposal hash", async () => {
+      // The declarations sit outside the canonicalised, hashed part of the
+      // snapshot on purpose: every `proposalHash` stored before they existed
+      // still validates at approval, and the tamper gate is unchanged.
+      mocks.memberFindMany.mockResolvedValue([]);
+      const without = await createNewBookingExceptionRequest(
+        newBookingInput({ guests: FREE_TEXT_SAM }),
+      );
+      mocks.memberFindMany.mockResolvedValue(OWN_DEPENDANTS);
+      const withAnswer = await createNewBookingExceptionRequest(
+        newBookingInput({
+          guests: FREE_TEXT_SAM,
+          dependantIdentityDeclarations: [DECLARATION],
+        }),
+      );
+
+      expect(withAnswer.proposalHash).toBe(without.proposalHash);
+      // The row the declarations were stored on carries the SAME hash it would
+      // have carried without them, so the approval-time tamper gate is unmoved.
+      const stored = mocks.nbCreate.mock.calls[1][0].data;
+      expect(stored.dependantIdentityDeclarations).toBeUndefined();
+      expect(stored.proposalSnapshot.dependantIdentityDeclarations).toEqual([
+        DECLARATION,
+      ]);
+      expect(stored.proposalHash).toBe(without.proposalHash);
+    });
+
+    it("refuses a FORGED declaration naming somebody who is not this booker's dependant", async () => {
+      mocks.memberFindMany.mockResolvedValue(OWN_DEPENDANTS);
+      await expect(
+        createNewBookingExceptionRequest(
+          newBookingInput({
+            guests: FREE_TEXT_SAM,
+            dependantIdentityDeclarations: [
+              { ...DECLARATION, dependantMemberId: "another-familys-child" },
+            ],
+          }),
+        ),
+      ).rejects.toBeInstanceOf(PolicyExceptionDependantIdentityError);
+      expect(mocks.nbCreate).not.toHaveBeenCalled();
+    });
+
+    it("is not fooled by a member id that resolved to nobody", async () => {
+      // The row claims to be member-linked; the linked-member map says otherwise,
+      // so it is heading for the guest split and the question still applies.
+      mocks.memberFindMany.mockResolvedValue(OWN_DEPENDANTS);
+      await expect(
+        createNewBookingExceptionRequest(
+          newBookingInput({
+            guests: [
+              {
+                firstName: "Sam",
+                lastName: "Smith",
+                ageTier: "CHILD",
+                isMember: true,
+                memberId: "member-that-does-not-exist",
+              },
+            ],
+          }),
+        ),
+      ).rejects.toBeInstanceOf(PolicyExceptionDependantIdentityError);
+    });
+
+    it("asks nothing of a party that names nobody's dependant", async () => {
+      mocks.memberFindMany.mockResolvedValue(OWN_DEPENDANTS);
+      const result = await createNewBookingExceptionRequest(
+        newBookingInput({
+          guests: [
+            { firstName: "Kiri", lastName: "Ngata", ageTier: "ADULT", isMember: false },
+          ],
+        }),
+      );
+      expect(result.status).toBe("REQUESTED");
+    });
+
+    it("reads no dependants at all for an all-member party with no answers", async () => {
+      // The common family request pays nothing for this guard. `m1` really
+      // resolves here, which is what makes the row member-linked rather than a
+      // free-text row wearing an id.
+      mocks.resolveLinkedMembers.mockResolvedValue({
+        members: new Map([["m1", { id: "m1" }]]),
+        boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+      });
+      await createNewBookingExceptionRequest(newBookingInput());
+      expect(mocks.memberFindMany).not.toHaveBeenCalled();
+    });
   });
 
   it("live-booking-untouched: never writes a Booking row while creating a request", async () => {

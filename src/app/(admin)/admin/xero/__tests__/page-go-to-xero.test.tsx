@@ -31,6 +31,7 @@ vi.mock("../_components/panels", async () => {
     xeroLinkState: actual.xeroLinkState,
     ConnectionStatusPanel: stub,
     ContactSyncPanel: stub,
+    ErasedMemberContactsPanel: stub,
     HealthAndDiagnosticsPanels: stub,
     InboundEventsPanel: stub,
     MembershipSyncPanel: stub,

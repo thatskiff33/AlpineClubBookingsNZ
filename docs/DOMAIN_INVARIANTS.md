@@ -332,6 +332,7 @@ Prefix `INV-GUEST`.
 | `INV-GUEST-016` | MG4: edit path, admin parity, request pipeline; no address in URLs |
 | `INV-GUEST-017` | Exactly eight column shapes are legal, and the table lists them |
 | `INV-GUEST-018` | That table is generated from the code table by a test |
+| `INV-GUEST-019` | Own dependants leave the guest split at create doors; exact own-family matching |
 
 ## Booking Modifications
 
@@ -832,6 +833,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-021` | A new Xero account mapping is type-filtered, falls back, and prompts |
 | `INV-INT-022` | The missing-contact census: read-only, cache-fresh, ambiguity handed back |
 | `INV-INT-023` | The seeding run: funnel-routed, plan-checked, authoritative-or-nothing |
+| `INV-INT-024` | Erasure leaves Xero alone; a read-only notice names what it left |
 
 ## Operations
 

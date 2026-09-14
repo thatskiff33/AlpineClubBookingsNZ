@@ -1,5 +1,6 @@
 export { ConnectionStatusPanel } from "./connection-status-panel"
 export { ContactSyncPanel } from "./contact-sync-panel"
+export { ErasedMemberContactsPanel } from "./erased-member-contacts-panel"
 export { GoToXeroButton, xeroLinkState } from "./go-to-xero-button"
 export { HealthAndDiagnosticsPanels } from "./health-diagnostics-panel"
 export { InboundEventsPanel } from "./inbound-events-panel"

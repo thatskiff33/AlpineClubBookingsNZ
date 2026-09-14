@@ -13,6 +13,7 @@ import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysi
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
+import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { shouldRepairXeroContactNameOrder } from "@/lib/xero-contact-sync";
 import { parseXeroContactDateOfBirth } from "@/lib/xero-contact-date-of-birth";
@@ -408,16 +409,25 @@ function readStoredInvoiceTotalCents(
  * shape we do not recognise, keeps the pre-existing behaviour; the repair is
  * refused only when the payload positively says the payment was skipped or that
  * the fault was the invoice email.
+ *
+ * #3001: the six payload keys below are read through
+ * `readXeroInvoiceOperationOutcome`, which is now their one home, because the
+ * officer-facing warning on the booking became a second reader of the same six
+ * (`INV-SSOT`). The checks and THEIR ORDER are unchanged — the order is what
+ * decides the live cases, as the note inside spells out — and the shared reader
+ * deliberately does NOT collapse the three withhold reasons into one, so nothing
+ * new is refused here. A key renamed at the writer is now a compile error in one
+ * file instead of this fence silently starting to allow what it exists to refuse.
  */
 function partialInvoiceOperationHasPaymentFault(
   operation: Pick<RetryableOperation, "responsePayload">
 ): boolean {
-  const payload = asRecord(operation.responsePayload);
-  if (!payload) return true;
-  if (payload.paymentError != null) return true;
-  if (payload.paymentSkipped === true) return false;
-  if (payload.invoiceEmailError != null) return false;
-  if (payload.invoiceEmailWithheldByNoEmails === true) return false;
+  const outcome = readXeroInvoiceOperationOutcome(operation.responsePayload);
+  if (!outcome) return true;
+  if (outcome.paymentFailed) return true;
+  if (outcome.paymentSkipped) return false;
+  if (outcome.invoiceEmailFailed) return false;
+  if (outcome.invoiceEmailWithheldByNoEmails) return false;
   // #2929: the creation-time "do not email the member" withhold is the SAME
   // hazard as the switch above and is checked beside it. `paymentSkipped`
   // normally catches an Internet Banking operation first -- but the
@@ -439,7 +449,7 @@ function partialInvoiceOperationHasPaymentFault(
   // is pure defence, exactly like the no-emails line beside it: it is here so
   // that a future payload shape which DOES reach it cannot be repaired into a
   // false settlement.
-  if (payload.invoiceEmailWithheldByCreationChoice === true) return false;
+  if (outcome.invoiceEmailWithheldByCreationChoice) return false;
   return true;
 }
 
