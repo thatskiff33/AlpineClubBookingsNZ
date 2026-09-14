@@ -16,18 +16,22 @@ import {
   useActionAttention,
   useRevealAttention,
 } from "@/hooks/use-scroll-to-feedback";
+import {
+  expectRevealed,
+  installScrollIntoViewSpy,
+  removeScrollIntoViewSpy,
+  type ScrollIntoViewSpy,
+} from "@/lib/__tests__/helpers/focus";
 
-type ScrollIntoViewSpy = ReturnType<typeof vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>>;
 let scrollIntoView: ScrollIntoViewSpy;
 
 beforeEach(() => {
-  scrollIntoView = vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>();
-  Element.prototype.scrollIntoView = scrollIntoView;
+  scrollIntoView = installScrollIntoViewSpy();
 });
 
 afterEach(() => {
   cleanup();
-  delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  removeScrollIntoViewSpy();
 });
 
 function ActionSurface({
@@ -193,8 +197,7 @@ describe("useRevealAttention", () => {
     const editor = view.getByTestId("editor");
 
     view.rerender(<Editor revealKey={1} />);
-    expect(document.activeElement).toBe(editor);
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expectRevealed(scrollIntoView, editor);
 
     // The admin tabs into the field; the editor re-renders (a keystroke, a
     // background refresh) with the same key, and must not pull them back out.

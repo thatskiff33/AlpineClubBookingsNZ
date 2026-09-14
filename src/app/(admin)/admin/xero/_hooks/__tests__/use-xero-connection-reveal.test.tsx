@@ -10,13 +10,17 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useXeroConnection } from "@/app/(admin)/admin/xero/_hooks/use-xero-connection";
+import {
+  expectRevealed,
+  installScrollIntoViewSpy,
+  removeScrollIntoViewSpy,
+  type ScrollIntoViewSpy,
+} from "@/lib/__tests__/helpers/focus";
 
-type ScrollIntoViewSpy = ReturnType<typeof vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>>;
 let scrollIntoView: ScrollIntoViewSpy;
 
 beforeEach(() => {
-  scrollIntoView = vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>();
-  Element.prototype.scrollIntoView = scrollIntoView;
+  scrollIntoView = installScrollIntoViewSpy();
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
@@ -37,7 +41,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   window.localStorage.clear();
-  delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  removeScrollIntoViewSpy();
 });
 
 function Harness() {
@@ -68,14 +72,7 @@ describe("useXeroConnection.scrollToSection", () => {
       screen.getByRole("button", { name: "Go to usage" }).click();
     });
 
-    const usage = screen.getByTestId("usage");
-    expect(document.activeElement).toBe(usage);
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(scrollIntoView.mock.instances[0]).toBe(usage);
-    expect(scrollIntoView).toHaveBeenCalledWith({
-      behavior: "smooth",
-      block: "start",
-    });
+    expectRevealed(scrollIntoView, screen.getByTestId("usage"));
   });
 
   it("reveals the same section again on a second request", async () => {
@@ -86,6 +83,6 @@ describe("useXeroConnection.scrollToSection", () => {
     await act(async () => {
       screen.getByRole("button", { name: "Go to usage" }).click();
     });
-    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expectRevealed(scrollIntoView, screen.getByTestId("usage"), { times: 2 });
   });
 });
