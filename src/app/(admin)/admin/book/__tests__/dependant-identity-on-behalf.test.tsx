@@ -51,6 +51,16 @@ const MEMBER = {
 }
 const OWN_DEPENDANT = { id: "dep-sam", firstName: "Sam", lastName: "Member" }
 
+/** A SECOND member the officer might switch to, with a dependant of their own. */
+const OTHER_MEMBER = {
+  id: "member-2",
+  firstName: "Blair",
+  lastName: "Other",
+  email: "blair@example.test",
+  ageTier: "ADULT",
+}
+const OTHER_DEPENDANT = { id: "dep-kim", firstName: "Kim", lastName: "Other" }
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }))
@@ -70,6 +80,11 @@ vi.mock("@/components/club-identity-provider", () => ({
   useClubIdentity: () => ({ lodgeCapacity: 30 }),
 }))
 
+/*
+  Both members stay pickable after a selection, so a test can switch owners while
+  the first owner's family request is still in flight — the race in which one
+  family's dependant NAMES can land on another family's booking.
+*/
 vi.mock("@/components/admin/member-picker", () => ({
   MemberPicker: ({
     selected,
@@ -77,12 +92,13 @@ vi.mock("@/components/admin/member-picker", () => ({
   }: {
     selected?: { firstName: string } | null
     onSelect: (member: typeof MEMBER) => void
-  }) =>
-    selected ? (
-      <div>Booking for {selected.firstName}</div>
-    ) : (
+  }) => (
+    <div>
+      {selected ? <span>Booking for {selected.firstName}</span> : null}
       <button onClick={() => onSelect(MEMBER)}>Pick member</button>
-    ),
+      <button onClick={() => onSelect(OTHER_MEMBER)}>Pick other member</button>
+    </div>
+  ),
 }))
 
 vi.mock("@/components/admin/non-member-contact-form", () => ({
@@ -199,6 +215,21 @@ vi.mock("@/components/guest-form", () => ({
         }
       >
         Type an unrelated guest
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onGuestsChange([
+            {
+              firstName: "Kim",
+              lastName: "Other",
+              ageTier: "CHILD",
+              isMember: false,
+            },
+          ])
+        }
+      >
+        Type Kim Other
       </button>
     </div>
   ),
@@ -451,6 +482,68 @@ describe("admin booking on behalf — own-dependant identity (#2721)", () => {
     // that derived the candidate set from the signed-in officer would both miss
     // every real collision here and disclose another family's names.
     expect(callsTo("eligible-family")).toHaveLength(1)
+  })
+
+  it("never lets a slow response for the PREVIOUS member put their dependants on this booking", async () => {
+    /*
+      The disclosure hazard under a race. An officer who changes their mind about
+      who the booking is for leaves the first member's family request in flight;
+      if it lands last it writes that family's dependant NAMES onto the second
+      member's booking — and every one of them then draws a question about a
+      person who has nothing to do with this stay.
+    */
+    let releaseFirst: (() => void) | null = null
+    const firstLanded = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input)
+      if (url.includes("eligible-family")) {
+        if (url.includes(MEMBER.id)) {
+          await firstLanded
+          return response({ familyMembers: [], ownDependants: [OWN_DEPENDANT] })
+        }
+        return response({ familyMembers: [], ownDependants: [OTHER_DEPENDANT] })
+      }
+      if (url.includes("/api/availability/check")) {
+        return response({
+          minAvailable: 20,
+          lodgeCapacity: 30,
+          nightDetails: [{ occupiedBeds: 10, availableBeds: 20 }],
+        })
+      }
+      return response({})
+    })
+    vi.stubGlobal("fetch", fetchMock)
+
+    render(<AdminBookPage />)
+    fireEvent.click(screen.getByRole("button", { name: "Pick member" }))
+    fireEvent.click(screen.getByRole("button", { name: "Pick other member" }))
+    await waitFor(() => expect(callsTo("eligible-family")).toHaveLength(2))
+    await act(async () => {
+      releaseFirst?.()
+      await firstLanded
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose dates" }))
+    await screen.findByTestId("guest-form")
+
+    // The second member's own dependant still raises the question...
+    fireEvent.click(screen.getByRole("button", { name: "Type Kim Other" }))
+    expect(
+      await screen.findByText("Is this Blair's own family member?"),
+    ).toBeInTheDocument()
+
+    // ...and the first member's does not, because their late response wrote
+    // nothing. Both halves are asserted: a screen that simply never draws the
+    // question would satisfy the second on its own.
+    fireEvent.click(screen.getByRole("button", { name: "Type Sam Member" }))
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Is this Blair's own family member?"),
+      ).not.toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/Sam Member is recorded as/)).not.toBeInTheDocument()
   })
 
   it("sends the officer back to the guest step when the server refuses a stale party", async () => {

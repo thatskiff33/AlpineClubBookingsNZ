@@ -277,10 +277,20 @@ export default function AdminBookPage() {
    * family and correct member pricing (#1376).
    */
   const selectedMemberId = selectedMember?.id ?? null;
+  /**
+   * MONOTONIC, because a superseded response must never write state. The effect
+   * below re-runs whenever the officer changes who the booking is for, and an
+   * earlier request landing last would put one member's family — and, since
+   * #2721, one family's DEPENDANT NAMES — on another member's booking. A
+   * `cancelled` flag scoped to the effect cannot cover it, because the refusal
+   * handler calls this outside any effect.
+   */
+  const familyLoadSeqRef = useRef(0);
   const loadEligibleFamily = useCallback(async (): Promise<{
     ownDependants: BookerDependant[];
   } | null> => {
     if (!selectedMemberId) return null;
+    const seq = (familyLoadSeqRef.current += 1);
     try {
       const res = await fetch(
         `/api/admin/bookings/eligible-family?forMemberId=${selectedMemberId}`,
@@ -290,8 +300,13 @@ export default function AdminBookPage() {
       const dependants: BookerDependant[] = Array.isArray(data.ownDependants)
         ? data.ownDependants
         : [];
-      setFamilyMembers(data.familyMembers || []);
-      setOwnDependants(dependants);
+      // A superseded response still REPORTS what it read — the caller uses that
+      // only to decide what to say about the request it just made — but it
+      // writes nothing.
+      if (seq === familyLoadSeqRef.current) {
+        setFamilyMembers(data.familyMembers || []);
+        setOwnDependants(dependants);
+      }
       return { ownDependants: dependants };
     } catch {
       return null;
@@ -301,20 +316,19 @@ export default function AdminBookPage() {
   // Fetch family members for the selected member.
   useEffect(() => {
     if (!selectedMemberId) return;
-    let cancelled = false;
+    const seqAtStart = familyLoadSeqRef.current;
     void loadEligibleFamily().then((loaded) => {
       // A failed load leaves BOTH lists empty rather than half-populated: an
       // empty family list is what this screen has always shown on failure, and
       // an empty dependant list means the collision question is not drawn — the
-      // server still refuses, which is the direction that fails safe.
-      if (!loaded && !cancelled) {
+      // server still refuses, which is the direction that fails safe. Guarded by
+      // the same sequence, so a slow failure for a member the officer has since
+      // moved off does not blank the list they are looking at now.
+      if (!loaded && familyLoadSeqRef.current === seqAtStart + 1) {
         setFamilyMembers([]);
         setOwnDependants([]);
       }
     });
-    return () => {
-      cancelled = true;
-    };
   }, [selectedMemberId, loadEligibleFamily]);
 
   function invalidatePendingDateSelection(
