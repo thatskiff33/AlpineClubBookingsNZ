@@ -150,15 +150,23 @@ x-app-environment: &app-environment
   SENTRY_ORG: ${SENTRY_ORG:-}
   SENTRY_PROJECT: ${SENTRY_PROJECT:-}
   SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
-  # MiroTalk video-meeting base URL (calendar events). Runtime, server-side only
-  # — join links are built as <MIROTALK_URL>/join/<room>. Empty is DERIVED in code
+  # MiroTalk video meetings (calendar events). EVERY VARIABLE HERE IS A FALLBACK:
+  # a club sets these on Admin -> Integrations -> Video meetings, and each one is
+  # used only while nothing is set there, per field. They stay so an installation
+  # configured before that page existed keeps working with no restart and no
+  # migration of its values. The Caddy MEET_HOST / MIROTALK_UPSTREAM block below
+  # is the opposite — deployment topology, which stays here.
+  #
+  # MIROTALK_URL: runtime, server-side only — join links are built as
+  # <base>/join/<room>. Empty, with nothing set on the page, is DERIVED in code
   # from the app domain (NEXTAUTH_URL) as https://meet.<domain>, falling back to
   # http://localhost:3010 only for a loopback app host.
   MIROTALK_URL: ${MIROTALK_URL:-}
-  # MiroTalk JWT access (optional). When MIRO_JWT_KEY (matching MiroTalk's
-  # JWT_KEY) plus a HOST_USERS credential are set, the join link carries a
-  # short-lived signed token so committee members skip MiroTalk's host login.
-  # All server-side secrets — never exposed to the browser.
+  # MiroTalk JWT access (optional). When the signing key (matching MiroTalk's
+  # JWT_KEY) plus a HOST_USERS credential are set — here, or encrypted on the
+  # page — the join link carries a short-lived signed token so committee members
+  # skip MiroTalk's host login. All server-side secrets — never exposed to the
+  # browser.
   MIRO_JWT_KEY: ${MIRO_JWT_KEY:-}
   MIRO_JWT_EXP: ${MIRO_JWT_EXP:-1h}
   MIRO_MEETING_USERNAME: ${MIRO_MEETING_USERNAME:-}

@@ -3751,6 +3751,54 @@ one running a guessable key, and nothing in-process can repair a deployment's
 configuration. The key itself is never logged. Token issue is already gated to
 calendar managers and audited per mint, which is why this stays low severity.
 
+**What #2940 changed, and what it deliberately did not.** The key, the host
+username and the host password are now club-editable: a Full Admin sets them on
+**Admin → Integrations → Video meetings**, where they are stored in the encrypted
+`IntegrationCredential` store under provider `mirotalk`, and the environment
+variables become a per-field fallback. Four properties are worth stating because
+they are what makes that safe rather than merely convenient.
+
+- **The warning now reaches a person.** A key typed on that page is described
+  back to whoever typed it, in the response to their own Save, instead of only
+  reaching a server log nobody greps. It is still advisory, for the reason
+  above, and it still never echoes the value — `describeMirotalkJwtKeyWeakness`
+  returns a description, and the length it may quote is of a value that
+  administrator has in front of them.
+- **The status surface cannot carry a secret**, by shape rather than by
+  filtering. `MirotalkSecretStatus` has fields for whether a secret is set,
+  where it came from, when it changed and its concurrency token — and none a
+  value fits into. `mirotalk-exposure-contract.test.ts` drives the real resolver
+  with sentinel secrets, one from the environment and one from the store, and
+  proves neither reaches the status or the join URL; it is mutation-verified
+  against the one-line spread that would leak both.
+- **The concurrency token handed to the browser is a hash**, SHA-256 over
+  `(iv, authTag, ciphertext)`, which #2723 chose for exactly this use. It
+  changes on every write and reveals none of the three, and the store's
+  no-ciphertext-leaves-the-server contract is intact.
+- **A stored meeting-server address is held to rules the environment variable is
+  not**: public `https` only, no embedded credentials, and no private, loopback
+  or link-local host, through the shared `isBlockedDestinationHost` rule the
+  Alpine Central Server base URL already used. A join token travels to whatever
+  that address names, and it is a second admin-typed field deciding where
+  something of ours is sent — which is why that rule now lives in
+  `src/lib/private-destination-hosts.ts` with two callers rather than one.
+  `MIROTALK_URL` is deliberately exempt: refusing it would break an installation
+  that works today, so it is reported and used.
+
+**One residual exposure, stated rather than fixed.** Whoever can change the
+meeting-server address can point join links at a host they control, and that
+host receives the signed token. It cannot read the host credentials inside
+without the signing key — the key never travels — but it gets a blob to attack
+offline, which is the same exposure a weak key carries. Three things bound it:
+changing any of these settings requires **Full Admin** (not merely
+`finance: edit`, which a Treasurer-shaped custom role can hold) and a refused
+attempt is audited; the address must be a public https host; and the token is
+minted per click and short-lived. The Alpine Central Server route additionally
+CLEARS its stored key when its address moves, and that remedy is deliberately
+not copied here: clearing the stored key would fall back to the environment key,
+which was set for the old server too, so it would look like a fix without being
+one.
+
 ### The Semgrep pair, which outranks the Critical
 
 This is the only finding that **degrades an ongoing control**, and the mechanism
