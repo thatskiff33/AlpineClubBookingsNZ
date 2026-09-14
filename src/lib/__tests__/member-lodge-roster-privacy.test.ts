@@ -408,6 +408,99 @@ describe("member lodge roster — the built payload", () => {
   });
 });
 
+describe("member lodge roster — sole occupancy", () => {
+  // REGRESSION. The first build of this decided sole occupancy by counting the
+  // bookings in the window, which is not the question `namesAllowedForBooking`
+  // asks. Two large groups whose stays never overlap each had the lodge to
+  // themselves, and the count-of-bookings reading named all of them.
+  function schoolGroup(nights: string[], surname: string, size: number) {
+    return bookingRow({
+      lodgeId: "lodge-a",
+      organiser: { firstName: "Group", lastName: surname, ageTier: "ADULT" },
+      guests: Array.from({ length: size }, (_, i) =>
+        guest(`Person${i}`, surname, "ADULT", nights)
+      ),
+      checkIn: nights[0],
+      checkOut: "2026-07-31",
+    });
+  }
+
+  it("suppresses two large groups that never overlap, because each was alone", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([
+      schoolGroup([TODAY, "2026-07-02"], "Alpha", 14),
+      schoolGroup(["2026-07-20", "2026-07-21"], "Beta", 12),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    const payload = JSON.stringify(roster);
+
+    expect(
+      roster.lodges[0]?.people,
+      "INV-PRIV-017: a group alone in the building must not be named, however many other bookings sit elsewhere in the window."
+    ).toEqual([]);
+    expect(payload).not.toContain("Person0");
+    expect(roster.lodges[0]?.groups.map((g) => g.label).sort()).toEqual([
+      "Group Alpha",
+      "Group Beta",
+    ]);
+  });
+
+  it("still names a large group that shared the lodge on even one of its nights", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([
+      schoolGroup([TODAY, "2026-07-02"], "Alpha", 14),
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Ari", lastName: "Nikau", ageTier: "ADULT" },
+        guests: [guest("Ari", "Nikau", "ADULT", ["2026-07-02"])],
+      }),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(roster.lodges[0]?.people.map((p) => p.name)).toContain("Person0 Alpha");
+    expect(roster.lodges[0]?.people.map((p) => p.name)).toContain("Ari Nikau");
+  });
+
+  it("names a small party that is the only booking, because it is not a group", async () => {
+    // Below WHOLE_LODGE_MIN_GUESTS the sole-occupancy gate does not apply: a
+    // couple alone mid-week is a small party, not a take-over, and reducing
+    // them to a group label would withhold names nobody asked to withhold.
+    mockPrisma.booking.findMany.mockResolvedValue([
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Jane", lastName: "Smith", ageTier: "ADULT" },
+        guests: [
+          guest("Jane", "Smith", "ADULT", [TODAY]),
+          guest("Ari", "Nikau", "ADULT", [TODAY]),
+        ],
+      }),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(roster.lodges[0]?.people.map((p) => p.name)).toEqual([
+      "Ari Nikau",
+      "Jane Smith",
+    ]);
+  });
+
+  it("suppresses an organisation alone at any size", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: {
+          firstName: "Harakeke",
+          lastName: "College",
+          ageTier: "NOT_APPLICABLE",
+        },
+        guests: [guest("Teacher", "One", "ADULT", [TODAY])],
+      }),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(roster.lodges[0]?.people).toEqual([]);
+    expect(JSON.stringify(roster)).not.toContain("Teacher");
+  });
+});
+
 describe("member lodge roster — the window", () => {
   it("runs from the club's today for exactly the configured nights", async () => {
     const roster = await buildMemberLodgeRoster("viewer-1");

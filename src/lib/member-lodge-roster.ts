@@ -13,6 +13,7 @@ import {
   isMinorAgeTier,
   namesAllowedForBooking,
   reduceName,
+  WHOLE_LODGE_MIN_GUESTS,
 } from "./display-name-granularity";
 import { getEligibleLodgeIdsForMember } from "./lodge-access";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "./member-guest-consent";
@@ -237,33 +238,64 @@ function buildOneLodgeRoster(
   const groups: RosterGroup[] = [];
   const countsByNight: Record<string, number> = {};
 
-  // Sole occupancy is resolved per lodge across the whole window, not per
-  // night, and it asks the same question `namesAllowedForBooking` documents:
-  // did this group have the building to itself on a night that put it on the
-  // surface? With one booking in the window the answer is yes for that
-  // booking, and the display's rule then suppresses individual names.
-  const soleBooking = bookings.length === 1;
+  // PASS ONE: who is present, on which nights, and how many people the lodge
+  // holds each night. Sole occupancy cannot be decided until every booking has
+  // been counted, so nothing is reduced or labelled in this pass.
+  const attending = bookings.map((booking) => {
+    const present = booking.guests
+      .map((guest) => ({
+        guest,
+        nights: nightsForGuest(guest, booking, windowNights),
+      }))
+      .filter((entry) => entry.nights.length > 0);
 
-  for (const booking of bookings) {
-    const guestNights = booking.guests.map((guest) => ({
-      guest,
-      nights: nightsForGuest(guest, booking, windowNights),
-    }));
-    const present = guestNights.filter((entry) => entry.nights.length > 0);
-    if (present.length === 0) continue;
-
+    const nightCounts = new Map<string, number>();
     for (const entry of present) {
       for (const night of entry.nights) {
+        nightCounts.set(night, (nightCounts.get(night) ?? 0) + 1);
         countsByNight[night] = (countsByNight[night] ?? 0) + 1;
       }
     }
+    return { booking, present, nightCounts };
+  });
+
+  for (const { booking, present, nightCounts } of attending) {
+    if (present.length === 0) continue;
+
+    // SOLE OCCUPANCY, the same question the lobby display asks and answered the
+    // same way — deliberately, because `namesAllowedForBooking` is shared and a
+    // second reading of its argument would be a second rule wearing one name.
+    //
+    // Two conditions, both required. The booking must be a GROUP — an
+    // organisation, or at least WHOLE_LODGE_MIN_GUESTS people — because a
+    // couple alone mid-week is a small party, not a take-over, and reducing
+    // them to a group label would withhold names nobody asked to withhold. And
+    // it must have been alone on EVERY night it holds here: naming the fourteen
+    // people who had the building to themselves is exactly the disclosure
+    // design.md §10 refuses.
+    //
+    // "How many bookings are in the window" is NOT this question, and an
+    // earlier draft of this file used it. It fails in both directions: it
+    // suppressed a lone couple who should be named, and — the defect that
+    // matters — it NAMED two fourteen-person school groups that never
+    // overlapped, because the window held two bookings, even though each had
+    // the lodge entirely to itself for its whole stay.
+    const isGroup =
+      booking.member.ageTier === "NOT_APPLICABLE" ||
+      booking.guests.length >= WHOLE_LODGE_MIN_GUESTS;
+    const soleOccupancy =
+      isGroup &&
+      nightCounts.size > 0 &&
+      [...nightCounts.entries()].every(
+        ([night, count]) => countsByNight[night] === count
+      );
 
     const containsMinors = present.some((entry) =>
       isMinorAgeTier(entry.guest.ageTier)
     );
 
     const namesAllowed = namesAllowedForBooking({
-      soleOccupancy: soleBooking,
+      soleOccupancy,
       containsMinors,
       organiserAgeTier: booking.member.ageTier,
       granularity,

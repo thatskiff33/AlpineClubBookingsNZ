@@ -42,6 +42,18 @@ export function isMinorAgeTier(ageTier: AgeTier): boolean {
   return MINOR_AGE_TIERS.includes(ageTier);
 }
 
+/**
+ * How many guests make a booking a GROUP for the sole-occupancy privacy gate.
+ *
+ * Below this, a booking alone in the lodge is just a small party and its people
+ * are named normally; at or above it, a booking that had the building to itself
+ * is reduced to its group label. An organisation booking is a group at any size.
+ * Documented in the lobby display's design.md §10 and review-flagged on epic #25.
+ *
+ * Shared with the member lodge roster (#2942), which applies the same gate.
+ */
+export const WHOLE_LODGE_MIN_GUESTS = 8;
+
 /** Reduce an adult's name to the configured granularity. */
 export function reduceName(
   firstName: string,

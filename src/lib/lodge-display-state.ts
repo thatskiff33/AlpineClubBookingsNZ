@@ -15,6 +15,7 @@ import {
   isMinorAgeTier as isMinor,
   namesAllowedForBooking,
   reduceName,
+  WHOLE_LODGE_MIN_GUESTS,
 } from "./display-name-granularity";
 import {
   addDaysDateOnly,
@@ -54,12 +55,6 @@ import { prisma } from "./prisma";
 
 export const DISPLAY_WINDOW_DEFAULT_DAYS = 3;
 export const DISPLAY_WINDOW_MAX_DAYS = 7;
-
-// A sole-occupancy booking only collapses to the whole-lodge blockout
-// treatment when it is a genuine group take-over: an organisation booking, or
-// at least this many guests. Keeps a lone mid-week guest off the blockout
-// board. Documented in design.md §10; review-flagged on epic #25.
-export const WHOLE_LODGE_MIN_GUESTS = 8;
 
 export interface DisplayStateGuest {
   label: string;
