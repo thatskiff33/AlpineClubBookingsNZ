@@ -1,6 +1,6 @@
 /**
  * WHICH OF THESE SCHOOL-SHAPED ROWS IS A SCHOOL? The operator's census (#3369,
- * stage 4 of programme #2912). `INV-OPS-014`, `INV-SSOT`.
+ * stage 4 of programme #2912). `INV-OPS-002`/`INV-OPS-010`, `INV-SSOT`.
  *
  * Before this programme a school was a `Member` row with the school's name in
  * `firstName` and a blank surname, and the real teacher was a second row that
@@ -44,8 +44,11 @@
 import "dotenv/config";
 import process from "node:process";
 
-import { SchoolMemberClassificationKind } from "@prisma/client";
+import { Prisma, SchoolMemberClassificationKind } from "@prisma/client";
 
+import { z } from "zod";
+
+import { decodeRawRows, rawIntColumn } from "../src/lib/raw-sql-rows";
 import {
   CENSUS_DECIDED_BY,
   censusEvidenceFor,
@@ -78,6 +81,29 @@ function parseArgs(argv: string[]): Args {
     because: value("--because"),
   };
 }
+
+/**
+ * The census row, validated rather than asserted. Every column is named exactly
+ * as `censusSql()` aliases it, so a rename on one side becomes a loud failure on
+ * the first run instead of a silently empty proof.
+ */
+const SCHOOL_MEMBER_CANDIDATE_ROW = z.object({
+  id: z.string(),
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  xeroContactId: z.string().nullable(),
+  bookingCount: rawIntColumn,
+  organisationProof: z.boolean(),
+  personProof: z.boolean(),
+  recorded: z
+    .enum([
+      SchoolMemberClassificationKind.ORGANISATION,
+      SchoolMemberClassificationKind.PERSON,
+    ])
+    .nullable(),
+  recordedBy: z.string().nullable(),
+});
 
 function pad(value: string, width: number): string {
   return value.length >= width ? value : value + " ".repeat(width - value.length);
@@ -142,8 +168,21 @@ async function main(): Promise<void> {
     return;
   }
 
-  const rows =
-    await prisma.$queryRawUnsafe<SchoolMemberCandidate[]>(censusSql());
+  // `Prisma.raw` over this module's own constants, never `$queryRawUnsafe`:
+  // `INV-OPS-014` asks that a raw statement be visibly static at the call site,
+  // and `censusSql()` is built entirely from exported constants with nothing
+  // from an argument, an environment or a row in it.
+  //
+  // DECODED, never cast (`INV-OPS-001`, #2289). A hand-written type over a raw
+  // result is a promise nothing checks, and a mistyped column arrives as
+  // `undefined` — which here would read as "this row has no proof" and hand an
+  // officer a question that was already answered. The whole point of this tool
+  // is that its numbers are right.
+  const rows = decodeRawRows(
+    await prisma.$queryRaw(Prisma.raw(censusSql())),
+    SCHOOL_MEMBER_CANDIDATE_ROW,
+    "school member classification census",
+  );
 
   const verdicts = rows.map((row) => ({
     row,

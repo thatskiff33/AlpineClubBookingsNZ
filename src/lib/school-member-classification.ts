@@ -1,6 +1,6 @@
 /**
  * WHAT A HISTORICAL SCHOOL-SHAPED MEMBER ROW ACTUALLY IS (#3369, stage 4 of
- * programme #2912). `INV-SSOT`, `INV-OPS-014`.
+ * programme #2912). `INV-SSOT`, `INV-OPS-002`/`INV-OPS-010`.
  *
  * ## The question, and why it cannot be answered by looking at the name
  *

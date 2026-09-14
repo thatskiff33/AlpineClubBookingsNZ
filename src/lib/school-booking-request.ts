@@ -1000,7 +1000,11 @@ export async function approveSchoolBookingRequest(input: {
       });
 
       let booking: { id: string };
-      let schoolMember: { id: string };
+      // #3369: THE SCHOOL IS NO LONGER A PERSON. This holds the member an
+      // officer deliberately MAPPED the request to, when they did — that person
+      // becomes one of the organisation's contacts below — and null otherwise.
+      // Either way the booking's owner is the `Organisation`, never this.
+      let schoolMember: { id: string | null };
       // MG4-D-b (#2309): collected in whichever branch runs, dispatched after
       // the commit.
       let memberGuestNotificationRows: MemberGuestAddNotificationRow[] = [];
@@ -1115,12 +1119,12 @@ export async function approveSchoolBookingRequest(input: {
             hasNonMembers: true,
             notes: request.message,
             createdById: input.adminMemberId,
-            // Point the held booking at the (possibly substituted) owner. On the
-            // no-substitution path this rewrites the same id (a no-op); bed
-            // allocations live on guest rows and are unaffected by ownership.
-            memberId: ownerId,
-            // #3367: the school this booking is for. The member link above is
-            // untouched — stage 4 (#3369) is where it becomes optional.
+            // #3369: the held booking changes hands to the SCHOOL. Whoever
+            // held it before — an officer's placeholder contact, or a
+            // substitute minted above when that contact failed re-validation —
+            // stops owning it; bed allocations live on guest rows and are
+            // unaffected by ownership.
+            memberId: null,
             organisationId: organisation.id,
             // Exclusive whole-lodge hold when the request asked for it (#121).
             ...exclusiveHoldData,
@@ -1147,39 +1151,25 @@ export async function approveSchoolBookingRequest(input: {
         }
 
         if (input.ownerContactMemberId) {
-          // Admin mapped this school request to an existing non-login SCHOOL/
-          // Organisation contact (issue #1255): the confirmed booking — and the
-          // Xero invoice raised after commit — reuse that contact instead of
-          // spawning a duplicate school member (and Xero contact). Teachers are
-          // still created fresh below. The guard rejects any login-capable
-          // target.
+          // An officer MAPPED this request to an existing non-login contact
+          // (#1255). That is a statement about who the club corresponds with at
+          // this school, and #3369 keeps it — as an `OrganisationContact` on the
+          // school below, which is where a person who speaks for a school now
+          // lives. It is no longer the booking's owner; the organisation is.
+          // The guard still rejects any login-capable target.
           const mappedId = await assertMappableOwnerContact(
             tx,
             input.ownerContactMemberId
           );
           schoolMember = { id: mappedId };
         } else {
-          // The school is the invoiced party and Xero contact: name = school,
-          // email = contact email. Owned by a non-login Member (canLogin: false).
-          schoolMember = await tx.member.create({
-            data: {
-              email: request.contactEmail,
-              passwordHash: placeholderPasswordHash,
-              emailVerified: true,
-              // #3367: through the SHARED helper, so the name this member's
-              // Xero contact is created under is byte-identical to the one the
-              // school's own record sends. Two truncations for one name is how
-              // a returning school ends up with two Xero customers.
-              firstName: schoolXeroContactName(schoolName),
-              lastName: "",
-              role: "SCHOOL",
-              ageTier: AgeTier.ADULT,
-              active: true,
-              canLogin: false,
-              phoneNumber: request.contactPhone,
-            },
-            select: { id: true },
-          });
+          // #3369: NOTHING IS INVENTED HERE ANY MORE. Until this stage an
+          // approval minted a surnameless `Member` carrying the school's name,
+          // and that row owned the booking, held the Xero contact and was the
+          // subject of every audit line. The school's own `Organisation` does
+          // all three now, so there is no person to create — which is the whole
+          // point of programme #2912.
+          schoolMember = { id: null };
         }
 
         // CONFIRMED holds capacity (issue #709 locked decision); pay-on-account
@@ -1193,9 +1183,10 @@ export async function approveSchoolBookingRequest(input: {
         });
         const createdBooking = await tx.booking.create({
           data: {
-            memberId: schoolMember.id,
-            // #3367: the school this booking is for. The member link above is
-            // untouched — stage 4 (#3369) is where it becomes optional.
+            // #3369: the SCHOOL owns its booking. `Booking_owner_exactly_one`
+            // is what makes "a member or an organisation, never both and never
+            // neither" unrepresentable rather than policed.
+            memberId: null,
             organisationId: organisation.id,
             lodgeId: bookingLodgeId,
             checkIn: request.checkIn,
@@ -1331,6 +1322,29 @@ export async function approveSchoolBookingRequest(input: {
           reference: buildInternetBankingPaymentReference(booking.id),
         },
       });
+
+      // #3369: an officer who MAPPED this request to an existing contact was
+      // saying "this person is who we deal with at that school". Until this
+      // stage that statement was expressed by making them the booking's owner,
+      // which is the school-as-person model. It is kept as what it actually is:
+      // a contact OF the organisation. Upserted, not inserted, because the same
+      // person may already be on the school's list from an earlier approval.
+      if (schoolMember.id) {
+        await tx.organisationContact.upsert({
+          where: {
+            organisationId_memberId: {
+              organisationId: organisation.id,
+              memberId: schoolMember.id,
+            },
+          },
+          create: {
+            organisationId: organisation.id,
+            memberId: schoolMember.id,
+            role: OrganisationContactRole.CONTACT,
+          },
+          update: {},
+        });
+      }
 
       const teacherAssignments: Array<{
         memberId: string;

@@ -7907,7 +7907,7 @@ enum SchoolMemberClassificationKind {
 }
 
 // WHAT A HISTORICAL "SCHOOL" MEMBER ROW ACTUALLY IS — the record of a decision,
-// not a guess (#3369, stage 4 of programme #2912; `INV-OPS-014`).
+// not a guess (#3369, stage 4 of programme #2912; `INV-OPS-002`/`INV-OPS-010`).
 //
 // Before this programme a school was a person-shaped `Member` row: the school's
 // name in `firstName`, a blank `lastName`, and the booking hung off it. Stage 4
