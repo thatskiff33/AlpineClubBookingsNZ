@@ -15,7 +15,7 @@ BEGIN;
 -- non-empty BLUE_GREEN_MIGRATION_OVERRIDE_REASON naming #3369's maintenance
 -- window, and BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1. Take and verify a fresh
 -- backup immediately before running. docs/PRODUCTION_UPGRADE_RUNBOOK.md section
--- 2.4.3 is the sequence; DEPLOYMENT.md carries the short form.
+-- 2.4.2 is the sequence; DEPLOYMENT.md carries the short form.
 
 -- ---------------------------------------------------------------------------
 -- 1. The owner column, and the two dependent columns that follow it.

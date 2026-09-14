@@ -705,7 +705,7 @@ Check for these before every deploy:
 awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv
 ```
 
-**Current windowed migrations — there are three, and pending rows share ONE
+**Current windowed migrations — there are five, and pending rows share ONE
 window.** `prisma migrate deploy` applies them in the same command, so the
 sequence below is run once, not once per migration.
 
@@ -724,6 +724,27 @@ sequence below is run once, not once per migration.
   merge, Xero member import and nomination. The owner authorised this one as a
   windowed drop on 3 Aug 2026, superseding an earlier plan that would have carried
   the obsolete column through another release.
+- `20260922010000_booking_owner_optional_member` and
+  `20260922020000_backfill_school_bookings_to_organisations` (#3369, stage 4 of
+  programme #2912). **These two are ONE window and are never applied apart.**
+  The first only changes the shape — it makes the booking's member link
+  optional, adds two partial unique indexes and creates the empty table the
+  classification is recorded in — and on its own the previous release survives
+  it. The second is what the previous release cannot survive: it moves every
+  school's booking onto the school's `Organisation` and leaves `memberId` NULL
+  on it, and the previous client reads that column as required, so the old
+  colour errors on the first school booking it touches. Between the two the
+  database would also accept a booking nobody owns, because the CHECK constraint
+  that makes "exactly one owner" true is added by the second.
+
+  **The backfill REFUSES unless the classification is complete**, and that is a
+  precondition of the window rather than a step inside it. Run
+  `npm run db:school-classification-census` against the club's database before
+  the window opens; every row it lists as CANNOT TELL must be decided by a person
+  and recorded, or the migration raises
+  `school_member_classification_incomplete` and writes nothing at all. The
+  operator guide is
+  [`guides/school-organisation-cutover.md`](docs/guides/school-organisation-cutover.md).
 - `20260806010000_fence_hosting_coverage_delivery_claims` (#2596). Its nullable
   columns are harmless to the previous Prisma client, but its worker protocol is
   not: an old hosting worker ignores the token/expiry fields and can take, email and
@@ -759,7 +780,13 @@ says which governs when:
    instead: the exact commands, and why `pg_restore --list` is not one of them, are in
    `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 7.
 5. **Record the pre-migration checks** the runbook lists for the migration in hand
-   — for `20260803030000` that is the row count, the distinct `role` values with
+   — for `20260922020000` that is the census's own output, saved: the counts by
+   classification, the CANNOT TELL list (which must be empty) and how many school
+   bookings the backfill is about to re-parent. §2.4.2 has the commands. The
+   census is read-only and can be run as often as you like; run it once more
+   after step 3, because a school approval landing between the last run and the
+   window would add an unclassified row and the migration would refuse. For
+   `20260803030000` that is the row count, the distinct `role` values with
    counts, the column-exists confirmation, the proof that the replacement runtime
    cannot name the column, and the **required** per-row dump. Both of the
    `role`-related checks run inside the replacement image rather than at the host
@@ -781,10 +808,12 @@ says which governs when:
    dedicated compose service the deploy script uses,
    `docker compose --profile migrate run --rm migrate` — not `npx`, which this host
    is not documented as having and which is deliberately removed from the runtime
-   image. Pass all six pending migration files, in order — `20260803010000`,
-   `20260803020000`, `20260803030000`, `20260803070000`, `20260806000000` and
-   `20260806010000` — including the additive rows; exact commands are in
-   `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 9.
+   image. Pass all pending migration files, in order — `20260803010000`,
+   `20260803020000`, `20260803030000`, `20260803070000`, `20260806000000`,
+   `20260806010000`, and for programme #2912 `20260920010000`, `20260922010000`
+   and `20260922020000` — including the additive rows; exact commands are in
+   `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 9 and, for the school pair,
+   §2.4.2.
 7. **Verify the migrate step**: the dropped column is gone and
    `_prisma_migrations` records each migration once.
 8. **Start the replacement release and replacement workers only**, confirm
@@ -796,7 +825,13 @@ says which governs when:
 intact, so finishing the deploy is usually the fastest recovery. If the new release
 will not start, run the reverse script beside the migration —
 `prisma/migrations/<migration>/rollback.sql` — as the migration role, then redeploy
-the previous release's images. **Never restart the previous release before running
+the previous release's images. **When a window carried more than one windowed
+migration, run their reverse scripts in the OPPOSITE order to the one they were
+applied in** — newest first. The #3369 pair is the worked example, and it enforces
+that rule rather than relying on it: `20260922020000/rollback.sql` gives every
+organisation-owned booking its member back, and only then can
+`20260922010000/rollback.sql` re-impose the NOT NULL constraints, which refuse
+loudly if it has not run. That refusal is the guard, not the failure. **Never restart the previous release before running
 the reverse script or restoring the backup**: after the drop commits, its client
 names a column that no longer exists, so re-pointing traffic at it does not restore
 service. Restore from backup only if the **data** is wrong rather than the schema.
