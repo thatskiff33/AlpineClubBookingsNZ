@@ -36,6 +36,15 @@
   whether some name belongs to a member. Adding genuine non-member guests, and
   adding members from your family group, are unchanged.
 
-  Booking officers recording a booking on a member's behalf are not asked the
-  question, as they already are not asked the wizard's other member-facing
-  questions.
+  **A booking officer recording a stay on a member's behalf is asked the same
+  question**, on the admin booking page's guest step, about that member's
+  dependants. The protection is for somebody who is not in the room — the child
+  whose bed it is, whose parent is not at the screen — so it does not lapse
+  because a different person is doing the typing. The officer gets the same two
+  answers: book the dependant as a member, or say it is a different person with
+  the same name. Where a dependant is recorded but is not in the member's family
+  group, the page says to add them to it under Membership first, which is
+  something an officer can do.
+
+  Adding a guest to a booking that already exists, and changing one, are not
+  covered yet — that is #3451.

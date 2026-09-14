@@ -28,7 +28,7 @@ page, which the second fix round reached: it was the one caller still opting out
 of the shared guest form's absent-ceiling shape.
 
 file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2449
+lines: 2342
 reason: the hook is the wizard's single state machine, and this change alters
   what that machine decides rather than adding a feature beside it — the
   advisory replaces a hard stop, `waitlistOnly` becomes an input to
@@ -53,17 +53,18 @@ reason: the hook is the wizard's single state machine, and this change alters
   waitlist" at an unconfigured lodge when it refuses the party size outright,
   before the waitlist fallback, and offers nothing.
   #2721 then added the own-dependant identity question to the same state
-  machine, so the length recorded here is the length after it; the reasoning
-  above is unchanged and applies to it word for word. The collision set, the
-  declaration shape and the refusal all live in
-  `src/lib/booking-dependant-identity.ts`, which the create route re-runs; what
-  is here is the part that cannot leave — the derivation from the live party,
-  the gate on Continue, the two answers, and the note on why each is keyed by
-  normalised name rather than by a position in an array the member is editing.
-  #2721's review round then added its own-dependant identity state, the two
-  answers, and the refusal handler that re-reads the family list before
-  deciding what to tell the member — so the length recorded here is the length
-  after that; the reasoning above is unchanged.
+  machine — the derivation from the live party, the gate on Continue, the two
+  answers and the refusal handler that re-reads the family list before deciding
+  what to tell the member. The rule itself never lived here:
+  `src/lib/booking-dependant-identity.ts` holds it and the create route re-runs
+  it. **The figure above is SHORTER than the one this entry carried, and the
+  reason is a seam #2721 took rather than a shrink it engineered for.** The
+  owner's decision of 15 Sep 2026 put the same question on the admin booking
+  screen, so the answer state — the held declarations, which of them are still
+  live, what therefore travels on submit, and the never-positional relink —
+  moved to `src/lib/use-dependant-identity-answers.ts` where both screens share
+  one copy. What is left here is what cannot leave: the wizard's own bookability
+  precondition, its invalidation list, and the stale-refusal recovery.
 
 file: src/app/(authenticated)/book/_components/review-step.tsx
 lines: 1065
@@ -133,7 +134,7 @@ reason: one line of code and eight of comment. The refusal's night list now
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/app/(admin)/admin/book/page.tsx
-lines: 1542
+lines: 1669
 reason: twenty-three lines, and eighteen of them are one docblock. The code is
   three lines — the lodge's resolved capacity read as a ceiling only when it is
   positive, and the derived "is the party already there", replacing the same
@@ -150,3 +151,16 @@ reason: twenty-three lines, and eighteen of them are one docblock. The code is
   `POST /api/bookings` still refuses the party size before any waitlist
   fallback, so the honest gain is a usable form and a refusal that names its
   cause. Without that sentence the next reader concludes the dead end is gone.
+  #2721 then added the own-dependant question to this screen, which is why the
+  figure above is 127 lines higher than #2930 left it. **The seams that did
+  exist were taken first, and they are why it is 127 and not 230**: the panel is
+  `_components/dependant-identity-resolution.tsx`, the wiring is
+  `_hooks/use-admin-dependant-identity.ts`, and the answer state under that is
+  shared with the member wizard in `src/lib/use-dependant-identity-answers.ts`.
+  What is left in the page is what a route shell is for — one `ownDependants`
+  state, the picker fetch that already lived here reshaped to return its answer
+  rather than only set it, the hook call with the two consequences only this
+  page knows (what a relink reprices, and which panels a refusal must clear),
+  the Continue gate, the declaration field on both submit doors, and the panel's
+  props. None of that can move without passing the page's own setters back into
+  a module, which trades a shorter file for a longer indirection.

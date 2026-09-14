@@ -19,7 +19,7 @@ Both new modules are far inside their own budgets, and
 the import and the one payload field.
 
 file: src/app/api/bookings/route.ts
-lines: 1466
+lines: 1487
 reason: eighty-odd lines, roughly half of them comment. The code is a single
   guarded call — load the booker's dependants, check the party against them,
   answer the refusal — and it cannot move out of this handler, because
@@ -41,3 +41,14 @@ reason: eighty-odd lines, roughly half of them comment. The code is a single
   explain. This route is already a long sequence of such guards; splitting one
   out because it is the newest would make the order they run in — which is the
   whole contract — impossible to read in one place.
+
+  The owner's decision of 15 Sep 2026 then added twenty-one lines and changed
+  what half of them say. The exemption is gone, so the paragraph justifying it is
+  replaced by the one recording WHY it is gone — that this check protects a third
+  party's bed rather than the acting officer's authority, so a reader who finds
+  the member-guest boundary check skipping beside it does not "fix" the
+  inconsistency back. The other half is the sentence naming whose dependants are
+  read: `effectiveMemberId`, the member the booking is for, never
+  `session.user.id`, which on this path is the officer. That one is the
+  difference between the guard working and the guard disclosing another family's
+  names, and it is a one-token edit away in either direction.

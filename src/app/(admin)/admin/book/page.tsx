@@ -36,20 +36,11 @@ import {
 } from "@/components/admin/non-member-contact-form";
 import { useClubTime } from "@/components/club-time-provider";
 import { AdminDependantIdentityResolution } from "./_components/dependant-identity-resolution";
+import { useAdminDependantIdentity } from "./_hooks/use-admin-dependant-identity";
 import {
-  DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
-  DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE,
-  DEPENDANT_IDENTITY_UNRESOLVED_CODE,
   DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
-  declarationMatchesACollision,
-  findOwnDependantNameCollisions,
-  unresolvedOwnDependantCollisions,
   type BookerDependant,
 } from "@/lib/booking-dependant-identity";
-import {
-  relinkCollidingGuestToMember,
-  useDependantIdentityAnswers,
-} from "@/lib/use-dependant-identity-answers";
 import {
   countClubNights,
   formatClubDate,
@@ -421,128 +412,37 @@ export default function AdminBookPage() {
     ]);
   }
 
-  /* ---- Own-dependant identity (#2721, `INV-GUEST-019`) ------------------
+  /**
+   * OWN-DEPENDANT IDENTITY (#2721, `INV-GUEST-019`). An officer booking on a
+   * member's behalf is asked the same question the member is asked in their own
+   * wizard (owner decision on D1, 15 Sep 2026). Everything but the two
+   * page-level consequences — what a relink reprices, and where a refusal sends
+   * the officer — is in the hook and, below it, in the module the create route
+   * re-runs against authenticated data.
    *
-   * An officer booking on a member's behalf is asked exactly the question the
-   * member is asked in their own wizard (owner decision on D1, 15 Sep 2026 — the
-   * guard no longer skips this path). Every piece of it comes from
-   * `use-dependant-identity-answers.ts`, which the member wizard uses too, so the
-   * two screens cannot come to ask or answer it differently — and the create
-   * route re-derives all of it from authenticated data regardless.
-   *
-   * The candidate set is the SELECTED MEMBER's dependants. It is `ownDependants`
-   * and never anything derived from the signed-in officer.
+   * The candidate set is the SELECTED MEMBER's dependants, never the officer's.
    */
-  const dependantIdentity = useDependantIdentityAnswers({
-    party: guests,
+  const dependantIdentity = useAdminDependantIdentity({
+    guests,
     ownDependants,
-  });
-
-  /**
-   * "This is the member's dependant" — move the colliding free-text row onto the
-   * member path, keeping every other field the row carried.
-   *
-   * The relink is `relinkCollidingGuestToMember`, which matches by NORMALISED
-   * NAME and never by index: the officer may have deleted a row above this one
-   * since the panel rendered, and converting "the row that was at position 2"
-   * would put this dependant's member link on somebody else's row.
-   *
-   * The invalidation list is `addFamilyMemberAsGuest`'s: the party just changed
-   * in exactly the ways that reprice it.
-   */
-  function bookCollidingGuestAsDependant(
-    normalizedName: string,
-    // Structural rather than `FamilyMember`: the relink reads exactly these
-    // four fields, and the panel that calls it is typed on the same four.
-    familyMember: {
-      id: string;
-      firstName: string;
-      lastName: string;
-      ageTier: AgeTier;
+    setGuests,
+    // The relink changed the party in exactly the ways `addFamilyMemberAsGuest`
+    // invalidates for.
+    onPartyRepriced: () => {
+      setPriceQuote(null);
+      setAppliedPromo(null);
+      setUseCredit(false);
     },
-  ) {
-    const next = relinkCollidingGuestToMember(
-      guests,
-      normalizedName,
-      familyMember,
-    );
-    if (!next) return;
-    setGuests(next);
-    setPriceQuote(null);
-    setAppliedPromo(null);
-    setUseCredit(false);
-  }
-
-  /**
-   * The create route refused this party over own-dependant identity (#2721).
-   *
-   * This screen asks the question on the guest step and will not leave it
-   * unanswered, so reaching here means the picture went STALE — a tab left open
-   * while the member's dependant was recorded or renamed, or a second officer on
-   * the same member.
-   *
-   * It REFETCHES for the same reason the member wizard's handler does: sending
-   * the officer back to the guest step only helps if that step can now draw the
-   * question, and the step draws it from the picker's list. An invalid
-   * declaration clears every held answer, because the server refuses the whole
-   * party if any one of them fails and does not say which — rebuilding the same
-   * payload is refused identically, so clearing and re-asking is the only answer
-   * that terminates. If the refreshed list still leaves nothing to ask, the copy
-   * changes to name something the officer can actually do rather than leaving
-   * them pressing Continue.
-   */
-  function handleDependantIdentityRefusal(
-    declarationInvalid: boolean,
-    serverMessage: string,
-  ) {
-    setStep("guests");
-    setOverCapacityNights(null);
-    setHostingConfirmMessage(null);
-    setError(serverMessage);
-    const refusedParty = guests;
-    const declarationsAfterRefusal = declarationInvalid
-      ? []
-      : dependantIdentity.heldDeclarations;
-    if (declarationInvalid) dependantIdentity.clearDeclarations();
-    void loadEligibleFamily().then((fresh) => {
-      if (!fresh) {
-        setError(DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE);
-        return;
-      }
-      const collisions = findOwnDependantNameCollisions(
-        refusedParty,
-        fresh.ownDependants,
-      );
-      const live = declarationsAfterRefusal.filter((declaration) =>
-        declarationMatchesACollision(declaration, collisions),
-      );
-      if (unresolvedOwnDependantCollisions(collisions, live).length === 0) {
-        setError(DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE);
-      }
-    });
-  }
-
-  /**
-   * Did this response refuse the create over own-dependant identity? Both submit
-   * doors on this screen ask, so neither can forget to.
-   */
-  function handledDependantIdentityRefusal(
-    data: Record<string, unknown>,
-  ): boolean {
-    if (
-      data.code !== DEPENDANT_IDENTITY_UNRESOLVED_CODE &&
-      data.code !== DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE
-    ) {
-      return false;
-    }
-    handleDependantIdentityRefusal(
-      data.code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
-      typeof data.error === "string" && data.error
-        ? data.error
-        : DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
-    );
-    return true;
-  }
+    reloadFamily: loadEligibleFamily,
+    sendBackToGuestStep: () => {
+      setStep("guests");
+      // Panels raised by the previous submit belong to a party that is now back
+      // in the officer's hands.
+      setOverCapacityNights(null);
+      setHostingConfirmMessage(null);
+    },
+    setError,
+  });
 
   function handleLodgeChange(nextLodgeId: string | null) {
     if (nextLodgeId === lodgeId) return;
@@ -822,7 +722,7 @@ export default function AdminBookPage() {
     // #2721: an own-dependant refusal sends the officer back to the guest step,
     // where the question is drawn, rather than into the error banner with
     // nowhere to answer it.
-    if (handledDependantIdentityRefusal(data)) {
+    if (dependantIdentity.handledRefusal(data)) {
       setSubmitting(false);
       return;
     }
@@ -902,7 +802,7 @@ export default function AdminBookPage() {
 
     const data = await res.json();
     // #2721, as on the confirm door above.
-    if (handledDependantIdentityRefusal(data)) {
+    if (dependantIdentity.handledRefusal(data)) {
       setSavingDraft(false);
       return;
     }
@@ -1273,7 +1173,7 @@ export default function AdminBookPage() {
               partyMemberIds={guests
                 .map((guest) => guest.memberId)
                 .filter((memberId): memberId is string => Boolean(memberId))}
-              onBookAsDependant={bookCollidingGuestAsDependant}
+              onBookAsDependant={dependantIdentity.relinkToMember}
               onDeclareDifferentPerson={
                 dependantIdentity.declareDifferentPerson
               }
