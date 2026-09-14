@@ -62,17 +62,10 @@ export type EmailSendOutcome =
       reason: string;
     }
   // NO RECIPIENT AT ALL (#3369). An organisation with no recorded address
-  // presents itself with an empty `email`, because "no address" is the truth and
-  // an invented one is not — see `bookingOwner()` — and fifty-two booking send
-  // sites read that field straight through without asking whether there is
-  // anything there. One gate here beats fifty-two guards: nothing is queued,
-  // nothing is handed to the provider, and the skip is recorded rather than
-  // arriving as a provider rejection nobody attributes.
-  | {
-      status: "skipped_no_recipient";
-      emailLogId: null;
-      reason: string;
-    }
+  // presents an empty `email` — see `bookingOwner()` — and fifty-two booking
+  // send sites read it straight through. One gate in `sendEmail` beats fifty-two
+  // guards, and records the skip instead of taking a provider rejection for it.
+  | { status: "skipped_no_recipient"; emailLogId: null; reason: string }
   // #2258 (owner decision D10): the booking this message belongs to carries the
   // per-booking "No emails" switch, so nothing was transmitted. `reason`
   // separates the deliberate case from the fail-closed one:
@@ -306,42 +299,21 @@ export async function sendEmail({
   const plainTextBody = text || htmlToPlainText(prepared.html);
   const normalizedRecipient = normalizeEmailAddress(to);
 
-  // NOTHING TO SEND TO (#3369). Checked before the placeholder gate because it
-  // is the cheaper and more fundamental question, and because an empty string
-  // is not a placeholder address — it is the absence of one. An organisation
-  // with no recorded address answers `""` for its email by design, and the
-  // booking send sites read that field directly; without this they would create
-  // an EmailLog row and hand an empty recipient to the provider, which rejects
-  // it as a delivery failure and hides the real cause. Skipped rather than
-  // thrown: almost every booking send is an un-awaited `.catch(log)`, so a throw
-  // here would be swallowed exactly where the outcome needs to be visible.
+  // NOT A DESTINATION — two ways, both short-circuiting every send path without
+  // queueing anything or writing an EmailLog row. EMPTY is an organisation with
+  // no recorded address (#3369), which answers `""` by design while the booking
+  // sends read it straight through; without this the provider gets an empty
+  // recipient and the club a delivery failure that hides the cause. SKIPPED not
+  // thrown, because nearly every booking send is an un-awaited `.catch(log)`.
+  // `.invalid` is a walk-in placeholder owner (#1935), stored so `Member.email`
+  // stays non-nullable; that skip ignores any per-booking notify choice.
   if (normalizedRecipient === "") {
-    logger.warn(
-      { templateName, bookingContext },
-      "Skipped email with no recipient address: the party this message is for has none recorded (#3369)",
-    );
-    return {
-      status: "skipped_no_recipient",
-      emailLogId: null,
-      reason: "no_recipient",
-    };
+    logger.warn({ templateName, bookingContext }, "Skipped email with no recipient address (#3369)");
+    return { status: "skipped_no_recipient", emailLogId: null, reason: "no_recipient" };
   }
-
-  // Walk-in placeholder owners (#1935) have a club-internal, undeliverable
-  // `.invalid` address stored so `Member.email` stays non-nullable. No message
-  // is ever sent to them — this short-circuits every send path (booking
-  // confirmation/hold, waitlist, cron, webhooks) regardless of any per-booking
-  // notify choice, and it does not create an EmailLog row (nothing was queued).
   if (isPlaceholderContactEmail(normalizedRecipient)) {
-    logger.info(
-      { templateName },
-      "Skipped email to walk-in placeholder recipient",
-    );
-    return {
-      status: "skipped_placeholder_recipient",
-      emailLogId: null,
-      reason: "placeholder_recipient",
-    };
+    logger.info({ templateName }, "Skipped email to walk-in placeholder recipient");
+    return { status: "skipped_placeholder_recipient", emailLogId: null, reason: "placeholder_recipient" };
   }
 
   const emailLogRecipient = logRecipient?.trim() || to;

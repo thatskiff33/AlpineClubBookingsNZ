@@ -47,11 +47,11 @@ lines: 277
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/admin/hut-leaders/eligible-members/route.ts
-lines: 351
+lines: 345
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/admin/refund-requests/[id]/route.ts
-lines: 477
+lines: 473
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/admin/xero/force-sync/route.ts
@@ -67,7 +67,7 @@ lines: 584
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/bookings/[id]/confirm-draft/route.ts
-lines: 402
+lines: 403
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/bookings/[id]/confirm-payment/route.ts
@@ -91,11 +91,11 @@ lines: 259
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/bookings/[id]/waitlist-confirm/route.ts
-lines: 569
+lines: 571
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/payments/charge-saved-method/route.ts
-lines: 640
+lines: 641
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/payments/create-payment-intent/route.ts
@@ -103,7 +103,7 @@ lines: 815
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/api/payments/switch-to-internet-banking/route.ts
-lines: 458
+lines: 459
 reason: one line: the `bookingOwner` import this route handler needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/components/edit-booking-panel.tsx
@@ -111,7 +111,7 @@ lines: 2136
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/admin-bookings-service.ts
-lines: 1382
+lines: 1415
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/adult-member-hosting-review.ts
@@ -131,7 +131,7 @@ lines: 2487
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-create.ts
-lines: 2060
+lines: 2062
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-date-modification-service.ts
@@ -143,7 +143,7 @@ lines: 728
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-exception-approval.ts
-lines: 1120
+lines: 1125
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-exception-request-service.ts
@@ -159,7 +159,7 @@ lines: 3016
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/cron-confirm-pending.ts
-lines: 1985
+lines: 1987
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/cron-group-settlement-reaper.ts
@@ -179,11 +179,11 @@ lines: 924
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/lodge-display-state.ts
-lines: 1050
+lines: 1038
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/member-guest-consent-service.ts
-lines: 1204
+lines: 1207
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/payment-reconciliation.ts
@@ -199,7 +199,7 @@ lines: 1737
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/stripe-webhook-service.ts
-lines: 1762
+lines: 1765
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/stuck-state-dashboard.ts
@@ -227,11 +227,11 @@ lines: 1002
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1604
+lines: 1691
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/xero-record-activity.ts
-lines: 849
+lines: 843
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/(admin)/admin/waitlist/page.tsx

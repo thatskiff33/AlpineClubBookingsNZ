@@ -17,11 +17,7 @@ import {
   type EditReviewSettlementRoute,
 } from "@/lib/edit-financial-review-settlement";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
-import {
-  createBookingModificationCredit,
-  requireMemberCreditRecipient,
-  SchoolHasNoCreditAccountError,
-} from "@/lib/member-credit";
+import { createBookingModificationCredit, requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import {
@@ -551,10 +547,7 @@ export async function resolveManualRefundTask(
           error instanceof Error &&
           error.message === "Refund amount exceeds captured payments"
         ) {
-          throw new ManualBookingPaymentError(
-            "That is more than was ever captured on this payment — check the amount against the booking's payment history.",
-            400
-          );
+          throw new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
         }
         // #3032: this completion holds no advisory lock, so a concurrent writer
         // on the same payment can move the ledger under it. The compare-and-set
@@ -562,17 +555,11 @@ export async function resolveManualRefundTask(
         // instead of a lost update; the transaction rolls back, so the task is
         // still OPEN and its money is still owed when the operator retries.
         if (error instanceof RefundAllocationRacedError) {
-          throw new ManualBookingPaymentError(
-            "This booking's payment changed while you were closing the task — refresh and try again.",
-            409
-          );
+          throw new ManualBookingPaymentError("This booking's payment changed while you were closing the task — refresh and try again.", 409);
         }
-        // #3369: the same class of masking, for the same reason. This route's
-        // catch tests `ManualBookingPaymentError` and nothing else, so a school
-        // booking whose reduction an officer chose to settle as account credit
-        // reported "Could not close the refund task" and a 500 — for a correct
-        // refusal, on a screen that had just offered the choice. The message
-        // says what to do instead, so it has to reach the officer.
+        // #3369: the same masking again. A school's reduction settled as account
+        // credit is a CORRECT refusal that reported a 500, on the screen that
+        // had just offered the choice; its message has to arrive.
         if (error instanceof SchoolHasNoCreditAccountError) {
           throw new ManualBookingPaymentError(error.message, error.status);
         }

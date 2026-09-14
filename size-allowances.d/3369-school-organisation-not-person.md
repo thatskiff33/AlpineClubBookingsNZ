@@ -37,7 +37,7 @@ reason: fifteen lines. The redemption table linked every row to a member page; a
 
 
 file: src/app/api/admin/promo-codes/[id]/redemptions/route.ts
-lines: 401
+lines: 399
 reason: twenty-three lines. The row's party is the booking's OWNER now, so the route selects it, names a school through the projection, links only where there is a member page to link to, and skips a redemption that names nobody when counting a member's uses. Each of those is a different question and the comments say which; the route is one handler over one query and splitting it would separate the select from the mapping that reads it.
 
 
@@ -63,3 +63,7 @@ reason: seven lines: one widened field and its six-line reason. The note's facts
 file: src/lib/promo.ts
 lines: 2004
 reason: forty-one lines across three places. An unassigned promotion attributes its whole benefit to the booker, and a school has none — so the officer is told so in words before pricing runs, pricing throws if anything reaches it anyway, and the booker fallback writes no allocation naming nobody. The throw's comment is the longest of the three because it records the FIFTH member-linked model a school booking can reach (`BookingGuestNightAdjustment.beneficiaryMemberId`), which the #2912 census did not name and which this path is why nobody has to widen.
+
+file: src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts
+lines: 912
+reason: two lines — the organisation beside the member on the booking this route loads, without which `bookingOwner()` cannot build the projection and the officer confirming a school's pending guests sees no owner at all. There is nothing here to split: it is one key in one existing `include`, on a route that was already 910 lines before this change touched it, and lifting that query out to pay for two lines would be a larger and riskier change than the one under review.

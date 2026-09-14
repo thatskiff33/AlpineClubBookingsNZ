@@ -8,7 +8,7 @@ genuinely the worse answer. Three of them, and the growth in the other two,
 come from the adversarial review round rather than from the first build.
 
 file: src/lib/school-booking-request.ts
-lines: 2768
+lines: 2772
 reason: The school approval transaction gains the resolve-or-create of the
   school's own `Organisation`, the link from the booking and the request, and
   the teacher association. Every one of those writes has to happen INSIDE the
@@ -25,7 +25,7 @@ reason: The school approval transaction gains the resolve-or-create of the
   reads anyway.
 
 file: src/lib/xero-contacts.ts
-lines: 2046
+lines: 2066
 reason: Three lines net. The member payload builder's object literal MOVED OUT
   to `xero-contact-shape.ts`, which the organisation builder shares, so the
   single-source-of-truth direction of this change is a reduction. What is added
@@ -52,7 +52,7 @@ reason: Three lines net. The member payload builder's object literal MOVED OUT
   has merged.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1550
+lines: 1552
 reason: Six lines, and five of them are the comment. One call site changes from
   `findOrCreateXeroContact(booking.memberId, …)` to
   `findOrCreateXeroContactForInvoicedParty(booking, …)`. The comment is there

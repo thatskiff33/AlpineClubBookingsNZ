@@ -20,7 +20,7 @@ because that is the whole point of the change — a declaration lifted into a
 helper is a declaration a reviewer cannot see beside the text it governs.
 
 file: src/lib/member-credit.ts
-lines: 982
+lines: 1007
 reason: the owner's decided site. Three lines of declaration plus the comment
   saying why the member's sentence is written out rather than reusing `details`
   — which names the adjustment request, the credit row and the requesting
