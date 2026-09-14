@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { IssueReportOrigin } from "@prisma/client";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  classifyIssueReportScreenshot,
+  viewerIsFullAdmin,
+} from "@/lib/issue-report-screenshot-access";
 
 const querySchema = z.object({
   status: z.enum(["OPEN", "RESOLVED", "ALL"]).optional().default("OPEN"),
@@ -11,6 +16,15 @@ const querySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
 });
 
+/**
+ * `viewerFullAdmin` is REQUIRED. The list is a read path like any other, so it
+ * takes #2703's gate too: it must never announce pixels the caller cannot open,
+ * and it must announce a withheld screenshot the same way the detail route
+ * does, or the two disagree about what the officer is looking at.
+ *
+ * This route selects no blob and never has, so there are no pixels here to
+ * leak. What it decides is the FLAG.
+ */
 function summarizeReport(report: {
   id: string;
   pageUrl: string;
@@ -24,6 +38,7 @@ function summarizeReport(report: {
   resolvedAt: Date | null;
   resolvedById: string | null;
   resolutionNote: string | null;
+  screenshotOrigin: IssueReportOrigin | null;
   createdAt: Date;
   updatedAt: Date;
   member: {
@@ -32,7 +47,18 @@ function summarizeReport(report: {
     lastName: string;
     email: string;
   };
-}) {
+}, viewerFullAdmin: boolean) {
+  const access = classifyIssueReportScreenshot({
+    // The list's own long-standing reading of "retained": it never selects the
+    // blob, so it works from the capture and deletion stamps.
+    retained: Boolean(report.screenshotCapturedAt && !report.screenshotDeletedAt),
+    screenshotOrigin: report.screenshotOrigin,
+    screenshotCapturedAt: report.screenshotCapturedAt,
+    screenshotDeletedAt: report.screenshotDeletedAt,
+    screenshotDeleteReason: null,
+    viewerIsFullAdmin: viewerFullAdmin,
+  });
+
   return {
     id: report.id,
     pageUrl: report.pageUrl,
@@ -42,7 +68,8 @@ function summarizeReport(report: {
       capturedAt: report.screenshotCapturedAt,
       expiresAt: report.screenshotExpiresAt,
       deletedAt: report.screenshotDeletedAt,
-      retained: Boolean(report.screenshotCapturedAt && !report.screenshotDeletedAt),
+      retained: access.retained,
+      withheld: access.withheld,
     },
     browserInfo: {
       expiresAt: report.browserInfoExpiresAt,
@@ -94,6 +121,7 @@ export async function GET(request: NextRequest) {
           pageUrl: true,
           pageTitle: true,
           description: true,
+          screenshotOrigin: true,
           screenshotCapturedAt: true,
           screenshotExpiresAt: true,
           screenshotDeletedAt: true,
@@ -128,7 +156,9 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.json({
-      reports: reports.map(summarizeReport),
+      reports: reports.map((report) =>
+        summarizeReport(report, viewerIsFullAdmin(admin.session.user))
+      ),
       total,
       page,
       pageSize,
