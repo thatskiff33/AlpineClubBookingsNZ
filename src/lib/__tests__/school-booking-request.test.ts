@@ -698,16 +698,24 @@ describe("approveSchoolBookingRequest", () => {
     mockedGroupDiscount.mockResolvedValue(null as never);
     vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "lodge-1" } as never);
 
-    let memberCalls = 0;
-    vi.mocked(prisma.member.create).mockImplementation((async () => {
-      memberCalls += 1;
-      return memberCalls === 1
-        ? ({ id: "school-member" } as never)
-        : ({
-            id: `teacher-member-${memberCalls}`,
-            firstName: "Tana",
-            email: "tana@school.test",
-          } as never);
+    // #3369: keyed on the DATA rather than on the call index. Approval no
+    // longer invents a school member, so a mock that numbered by call order
+    // silently renamed every teacher the moment that create went away. The only
+    // surnameless row this can still be asked for is the held-conversion
+    // SUBSTITUTE contact, which is what the empty `lastName` identifies.
+    let teacherCalls = 1;
+    vi.mocked(prisma.member.create).mockImplementation((async (args: {
+      data?: { lastName?: unknown };
+    }) => {
+      if (args?.data?.lastName === "") {
+        return { id: "school-member" } as never;
+      }
+      teacherCalls += 1;
+      return {
+        id: `teacher-member-${teacherCalls}`,
+        firstName: "Tana",
+        email: "tana@school.test",
+      } as never;
     }) as never);
     vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
     vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
@@ -997,21 +1005,29 @@ describe("approveSchoolBookingRequest", () => {
     expect(result).toMatchObject({
       type: "approved",
       bookingId: "booking-1",
-      schoolMemberId: "school-member",
+      // #3369: no invented person, so nothing to name here. The school's own
+      // record is what owns the booking.
+      schoolMemberId: null,
       invoiceMode: "xero",
       teacherCount: 1,
     });
     // 1 adult @ 5000 x2 nights + 2 children @ 2500 x2 nights = 20000.
     expect(result).toMatchObject({ priceCents: 20000 });
 
-    // School is the non-login Xero contact: name = school, email = contact.
-    const schoolMemberArgs = vi.mocked(prisma.member.create).mock.calls[0][0]
-      .data as Record<string, unknown>;
-    expect(schoolMemberArgs.firstName).toBe("New Plymouth Primary School");
-    expect(schoolMemberArgs.email).toBe("office@school.test");
-    expect(schoolMemberArgs.canLogin).toBe(false);
-    // Non-member category so the school contact is not counted as a paying member.
-    expect(schoolMemberArgs.role).toBe("SCHOOL");
+    // #3369: NOTHING SURNAMELESS IS CREATED. This used to assert the shape of
+    // the invented school member — school name in `firstName`, blank surname,
+    // the request's contact address, `canLogin: false`. The assertion is
+    // inverted rather than deleted, because "no person is invented" is the
+    // whole point of the stage and is exactly what a future edit could undo by
+    // accident. The only member created here is the teacher, below.
+    const createdMembers = vi
+      .mocked(prisma.member.create)
+      .mock.calls.map(({ 0: call }) => call.data as Record<string, unknown>);
+    expect(createdMembers).toHaveLength(1);
+    expect(
+      createdMembers.some((data) => data.lastName === ""),
+      "approval must invent no surnameless person",
+    ).toBe(false);
 
     // Booking is CONFIRMED (capacity held) and pays on account via Xero invoice.
     const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<
@@ -1029,7 +1045,7 @@ describe("approveSchoolBookingRequest", () => {
     expect(paymentArgs.status).toBe(PaymentStatus.PENDING);
 
     // Teacher becomes a non-login member with a hut leader assignment + PIN email.
-    const teacherMemberArgs = vi.mocked(prisma.member.create).mock.calls[1][0].data as Record<
+    const teacherMemberArgs = vi.mocked(prisma.member.create).mock.calls[0][0].data as Record<
       string,
       unknown
     >;
@@ -1077,10 +1093,10 @@ describe("approveSchoolBookingRequest", () => {
     const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
       .data as Record<string, unknown>;
     expect(bookingArgs.organisationId).toBe("org-1");
-    // The member link is UNTOUCHED. Making it optional is stage 4 (#3369), and
-    // a stage-2 change that quietly dropped it would break every money, email
-    // and audit path that reads it.
-    expect(bookingArgs.memberId).toBe("school-member");
+    // #3369: the SCHOOL owns its booking, and there is no member on it at all.
+    // `Booking_owner_exactly_one` is what makes the pair unrepresentable rather
+    // than policed.
+    expect(bookingArgs.memberId).toBeNull();
 
     const requestUpdate = vi.mocked(prisma.bookingRequest.update).mock.calls[0][0]
       .data as Record<string, unknown>;
@@ -1676,14 +1692,35 @@ describe("approveSchoolBookingRequest", () => {
 
     expect(result).toMatchObject({
       type: "approved",
+      // Still reported, because the officer's mapping is still recorded — as a
+      // CONTACT of the school rather than as the booking's owner (#3369).
       schoolMemberId: "existing-school",
       invoiceMode: "xero",
       teacherCount: 1,
     });
-    // The booking is owned by the mapped contact, reusing its Xero contact.
+    // #3369: the SCHOOL owns the booking. The officer's mapping said "this
+    // person is who we deal with at that school", and that is kept as exactly
+    // that — an `OrganisationContact` — rather than by putting a person back in
+    // the owner column, which is the model this programme ends.
+    expect(prisma.organisationContact.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organisationId_memberId: {
+            organisationId: "org-1",
+            memberId: "existing-school",
+          },
+        },
+        create: expect.objectContaining({
+          organisationId: "org-1",
+          memberId: "existing-school",
+          role: "CONTACT",
+        }),
+      }),
+    );
     const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
       .data as Record<string, unknown>;
-    expect(bookingArgs.memberId).toBe("existing-school");
+    expect(bookingArgs.memberId).toBeNull();
+    expect(bookingArgs.organisationId).toBe("org-1");
     // member.create ran ONLY for the teacher, never for the school owner.
     expect(prisma.member.create).toHaveBeenCalledTimes(1);
     const onlyMemberArgs = vi.mocked(prisma.member.create).mock.calls[0][0]
@@ -1721,7 +1758,8 @@ describe("approveSchoolBookingRequest", () => {
     expect(first).toMatchObject({
       type: "approved",
       bookingId: "booking-1",
-      schoolMemberId: "school-member",
+      // #3369: no invented person to name.
+      schoolMemberId: null,
       invoiceMode: "xero",
     });
     expect(prisma.booking.create).toHaveBeenCalledTimes(1);
@@ -1918,16 +1956,21 @@ describe("approveSchoolBookingRequest", () => {
     // (first member.create → "school-member" per the beforeEach impl).
     expect(result).toMatchObject({
       type: "approved",
+      // The substitute contact is still minted and still recorded — an officer
+      // has to be able to see who the accept fell back to — but #3369 makes it
+      // a contact OF the school rather than the booking's owner.
       schoolMemberId: "school-member",
     });
     const substituteArgs = vi.mocked(prisma.member.create).mock.calls[0][0]
       .data as Record<string, unknown>;
     expect(substituteArgs.role).toBe("SCHOOL");
     expect(substituteArgs.canLogin).toBe(false);
-    // The held booking is repointed at the substitute owner.
+    // #3369: the held booking changes hands to the SCHOOL, not to the
+    // substitute. Whoever held it before stops owning it.
     const updateArgs = vi.mocked(prisma.booking.update).mock.calls[0][0]
       .data as Record<string, unknown>;
-    expect(updateArgs.memberId).toBe("school-member");
+    expect(updateArgs.memberId).toBeNull();
+    expect(updateArgs.organisationId).toBe("org-1");
     // The #1352 capacity re-check runs on the held-reuse path even WITHOUT a
     // guestOverride (submitted snapshot), excluding the hold's own beds —
     // guards against a future regression gating the check behind the
