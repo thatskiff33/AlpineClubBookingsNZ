@@ -2,6 +2,14 @@ import { prisma } from "@/lib/prisma";
 
 const ISSUE_REPORT_SENSITIVE_DATA_RETENTION_DAYS = 30;
 
+/**
+ * The `screenshotDeleteReason` the sweep below stamps on a screenshot it
+ * redacts. Exported because a reader has to tell an EXPIRY apart from an
+ * administrator's manual deletion, and comparing against a second copy of the
+ * literal is how the two drift (#2703, INV-SSOT).
+ */
+export const ISSUE_REPORT_RETENTION_DELETE_REASON = "retention_expired";
+
 type IssueReportRetentionClient = Pick<typeof prisma, "issueReport">;
 
 export function getIssueReportSensitiveDataExpiresAt(
@@ -27,7 +35,7 @@ export async function redactExpiredIssueReportSensitiveData(
         screenshotDataUrl: null,
         screenshotDeletedAt: now,
         screenshotDeletedById: null,
-        screenshotDeleteReason: "retention_expired",
+        screenshotDeleteReason: ISSUE_REPORT_RETENTION_DELETE_REASON,
       },
     }),
     db.issueReport.updateMany({

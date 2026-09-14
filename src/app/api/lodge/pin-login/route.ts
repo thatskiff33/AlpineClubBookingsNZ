@@ -22,9 +22,10 @@ import { getStaffLodgeBinding } from "@/lib/lodge-access";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
+import { HUT_LEADER_PIN_PATTERN } from "@/lib/hut-leader-pin";
 
 const bodySchema = z.object({
-  pin: z.string().regex(/^\d{6}$/),
+  pin: z.string().regex(HUT_LEADER_PIN_PATTERN),
 });
 
 function rateLimitResponse(message: string, retryAfter: number) {

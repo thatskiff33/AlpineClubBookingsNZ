@@ -7,6 +7,12 @@ import {
   LODGE_PIN_LOGIN_ENDPOINT,
   useLodgePinSession,
 } from "./lodge-pin-session";
+import {
+  HUT_LEADER_PIN_HTML_PATTERN,
+  HUT_LEADER_PIN_LENGTH,
+  isCompleteHutLeaderPin,
+  sanitiseHutLeaderPin,
+} from "@/lib/hut-leader-pin";
 
 /**
  * "This screen locked itself — enter the PIN to carry on." (#3228)
@@ -98,17 +104,17 @@ export function LodgePinRelockPanel({
           type="password"
           inputMode="numeric"
           autoComplete="off"
-          pattern="\d{6}"
-          maxLength={6}
+          pattern={HUT_LEADER_PIN_HTML_PATTERN}
+          maxLength={HUT_LEADER_PIN_LENGTH}
           value={pin}
           onChange={(event) =>
-            setPin(event.target.value.replace(/\D/g, "").slice(0, 6))
+            setPin(sanitiseHutLeaderPin(event.target.value))
           }
           className="min-h-[56px] w-40 rounded-xl border border-kiosk-border bg-kiosk-inset px-4 text-center text-2xl tracking-[0.4em] text-kiosk-fg"
         />
         <button
           type="submit"
-          disabled={submitting || pin.length !== 6}
+          disabled={submitting || !isCompleteHutLeaderPin(pin)}
           className="inline-flex min-h-[56px] items-center justify-center rounded-xl bg-kiosk-accent px-4 py-3 text-sm font-semibold text-kiosk-accent-fg transition-colors hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active disabled:cursor-not-allowed disabled:bg-kiosk-chip disabled:text-kiosk-faint-fg"
         >
           {submitting

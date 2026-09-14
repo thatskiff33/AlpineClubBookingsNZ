@@ -411,11 +411,15 @@ function dateOnlyKey(value: Date): CalendarDate {
  */
 function heldNightPrices(
   heldNightKeys: readonly string[],
-  storedNightPriceByKey: ReadonlyMap<string, number | null>
+  storedNightDetailsByKey: ReadonlyMap<
+    string,
+    { priceCents: number | null; priceSource: BookingGuestNightPriceSource }
+  >
 ): HeldNightPrice[] {
   return heldNightKeys.map((key) => ({
     date: requireCalendarDate(key),
-    priceCents: storedNightPriceByKey.get(key) ?? null,
+    priceCents: storedNightDetailsByKey.get(key)?.priceCents ?? null,
+    priceSource: storedNightDetailsByKey.get(key)?.priceSource,
   }));
 }
 
@@ -1424,9 +1428,14 @@ export function buildInProgressGuestRangePlan(
     soldNightPriceByKey: ReadonlyMap<string, number>;
   }> = [];
   for (const entry of existingNightPlans) {
+    const surrendered = surrenderedNightDatesOf(entry);
+    const added = addedNightDatesOf(entry);
     const verdict = classifyStoredSoldPriceEvidence(
-      heldNightPrices(entry.heldNightKeys, entry.storedNightPriceByKey),
-      entry.guest.priceCents
+      heldNightPrices(entry.heldNightKeys, entry.storedNightDetailsByKey),
+      entry.guest.priceCents,
+      surrendered.length === entry.heldNightKeys.length && added.length === 0
+        ? "WHOLE_GUEST"
+        : "INDIVIDUAL_NIGHT",
     );
     const soldNightPriceByKey: ReadonlyMap<string, number> = new Map(
       verdict.kind === "exact"
@@ -1450,8 +1459,6 @@ export function buildInProgressGuestRangePlan(
        * that it ever existed. A strand whose night set does not move keeps every
        * row byte for byte and raises nothing.
        */
-      const surrendered = surrenderedNightDatesOf(entry);
-      const added = addedNightDatesOf(entry);
       if (surrendered.length > 0 || added.length > 0) {
         destroyedButReadable.push(
           counterpartStrandReviewOccurrence({
@@ -1886,7 +1893,7 @@ export function buildInProgressGuestRangePlan(
             bookingGuestId: entry.guest.id,
             evidence: unusableStoredSoldPriceEvidence(
               "STORED_TOTAL_MISMATCH",
-              heldNightPrices(entry.heldNightKeys, entry.storedNightPriceByKey)
+              heldNightPrices(entry.heldNightKeys, entry.storedNightDetailsByKey)
             ),
             guestTotalCents: entry.guest.priceCents,
             surrenderedNightDates: surrenderedNightDatesOf(entry),

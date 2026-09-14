@@ -162,7 +162,7 @@ reason: 2 lines: the `bookingOwner` import this domain module needs to ask who o
   door would keep the hole. The length recorded here is the length after that.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1390
+lines: 1430
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-modify-plan.ts
