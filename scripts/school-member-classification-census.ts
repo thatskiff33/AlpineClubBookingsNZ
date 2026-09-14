@@ -55,6 +55,7 @@ import {
   classifySchoolMember,
   provesOrganisation,
   provesPerson,
+  summariseSchoolCensus,
   type SchoolMemberCandidate,
 } from "../src/lib/school-member-classification";
 import { prisma } from "../src/lib/prisma";
@@ -217,22 +218,10 @@ async function main(): Promise<void> {
 
   const rows = await readCandidates();
 
-  const verdicts = rows.map((row) => ({
-    row,
-    verdict: classifySchoolMember(row),
-  }));
-  const organisations = verdicts.filter((v) => v.verdict === "ORGANISATION");
-  const people = verdicts.filter((v) => v.verdict === "PERSON");
-  const cannotTell = verdicts.filter((v) => v.verdict === "CANNOT_TELL");
-  const unrecorded = verdicts.filter(({ row }) => row.recorded === null);
-  const contradicted = verdicts.filter(
-    ({ row, verdict }) =>
-      row.recorded !== null && verdict !== "CANNOT_TELL" && row.recorded !== verdict,
-  );
-
   if (args.recordProved) {
     let written = 0;
-    for (const { row, verdict } of verdicts) {
+    for (const row of rows) {
+      const verdict = classifySchoolMember(row);
       if (verdict === "CANNOT_TELL") continue;
       if (row.recorded !== null) continue;
       await prisma.schoolMemberClassification.create({
@@ -243,6 +232,12 @@ async function main(): Promise<void> {
           decidedBy: CENSUS_DECIDED_BY,
         },
       });
+      // The row has just BEEN recorded, so say so. Every figure below comes
+      // from `summariseSchoolCensus(rows)`, which reads exactly this field —
+      // so marking it here is what stops the report contradicting the writes
+      // it has just made.
+      row.recorded = verdict;
+      row.recordedBy = CENSUS_DECIDED_BY;
       written += 1;
     }
     process.stdout.write(
@@ -250,22 +245,28 @@ async function main(): Promise<void> {
     );
   }
 
+  // ONE home for every figure, read AFTER the writes above. The census used to
+  // compute these first and print them after, so `--record-proved` reported
+  // "Recorded 21 proved row(s)" immediately above "still blocking the cutover:
+  // 23" and then exited non-zero on the pre-write count.
+  const summary = summariseSchoolCensus(rows);
+
   process.stdout.write(
     [
       "SCHOOL MEMBER CLASSIFICATION CENSUS (#3369)",
       "",
-      `Candidates (a Role.SCHOOL member that owns at least one booking): ${rows.length}`,
-      `  proved to be a SCHOOL      : ${organisations.length}`,
-      `  proved to be a PERSON      : ${people.length}`,
-      `  CANNOT TELL                : ${cannotTell.length}`,
+      `Candidates (a Role.SCHOOL member that owns at least one booking): ${summary.candidates}`,
+      `  proved to be a SCHOOL      : ${summary.organisations}`,
+      `  proved to be a PERSON      : ${summary.people}`,
+      `  CANNOT TELL                : ${summary.cannotTell}`,
       "",
-      `Already recorded in SchoolMemberClassification: ${rows.length - unrecorded.length}`,
-      `Still unrecorded, so still blocking the cutover: ${unrecorded.length}`,
+      `Already recorded in SchoolMemberClassification: ${summary.recorded}`,
+      `Still unrecorded, so still blocking the cutover: ${summary.blocking}`,
       "",
     ].join("\n"),
   );
 
-  if (contradicted.length > 0) {
+  if (summary.contradicted.length > 0) {
     process.stdout.write(
       [
         "RECORDED DECISIONS THAT CONTRADICT THE PROOFS",
@@ -273,7 +274,7 @@ async function main(): Promise<void> {
         "records and this program cannot. It is listed so the disagreement is seen",
         "before the window rather than discovered after it.",
         "",
-        ...contradicted.map(
+        ...summary.contradicted.map(
           ({ row, verdict }) =>
             `  ${pad(row.id, 27)} recorded ${row.recorded} by ${row.recordedBy}; proof says ${verdict}`,
         ),
@@ -282,7 +283,49 @@ async function main(): Promise<void> {
     );
   }
 
-  if (cannotTell.length > 0) {
+  // WHICH ROWS ARE ABOUT TO BECOME ONE RECORD.
+  //
+  // The backfill folds the school's name and collapses every member row that
+  // folds the same way onto ONE Organisation — one record, one email, one Xero
+  // customer. That is what makes a school recorded twice come out right, and it
+  // is also what would silently merge two genuinely different schools that
+  // happen to share a name. Nothing warned an operator which groups were about
+  // to collapse, and it is the same collapse that makes the reverse lossy.
+  //
+  // This PRINTS the groups and changes nothing about the merge itself: whether
+  // that merge is wanted is a decision for the club, put to the owner
+  // separately. Confirming each group is a step in
+  // docs/guides/school-organisation-cutover.md.
+  if (summary.mergeGroups.length > 0) {
+    process.stdout.write(
+      [
+        "ROWS THAT WILL BECOME ONE RECORD",
+        "Each group below folds to the same school name, so the backfill will give",
+        "them ONE Organisation, one email address and one Xero customer. Read every",
+        "group and confirm it really is one school. Two genuinely different schools",
+        "sharing a name would be merged here with nothing to say it happened, and",
+        "the reverse scripts cannot separate them again.",
+        "",
+        ...summary.mergeGroups.flatMap(({ folded, members }) => [
+          `  "${folded}" — ${members.length} rows, becoming one record:`,
+          ...members.map(
+            (row) =>
+              `      ${pad(row.id, 27)} ${pad(JSON.stringify(row.firstName), 40)} ${row.email}` +
+              `${row.xeroContactId ? "  [holds a Xero customer]" : ""}`,
+          ),
+          "",
+        ]),
+        "The record keeps the name, address and Xero customer of the FIRST row by id;",
+        "a second Xero customer stays on its own row for an officer to merge in Xero.",
+        "",
+      ].join("\n"),
+    );
+  }
+
+  const cannotTellRows = rows.filter(
+    (row) => classifySchoolMember(row) === "CANNOT_TELL",
+  );
+  if (cannotTellRows.length > 0) {
     process.stdout.write(
       [
         "ROWS A PERSON HAS TO DECIDE",
@@ -290,7 +333,7 @@ async function main(): Promise<void> {
         "Both proofs holding at once counts as CANNOT TELL too: contradictory",
         "evidence is a question, not a tie-break.",
         "",
-        ...cannotTell.map(({ row }) => `  ${describeForAPerson(row)}`),
+        ...cannotTellRows.map((row) => `  ${describeForAPerson(row)}`),
         "",
         "Record each one with, for example:",
         "  npm run db:school-classification-census -- \\",
@@ -301,7 +344,7 @@ async function main(): Promise<void> {
     );
   }
 
-  const blocking = unrecorded.length;
+  const blocking = summary.blocking;
   process.stdout.write(
     blocking === 0
       ? "READY: every candidate is recorded, so the backfill will run.\n"

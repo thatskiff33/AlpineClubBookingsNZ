@@ -262,3 +262,84 @@ export function censusEvidenceFor(
 
 /** Who the census records as the decider for a row it settled itself. */
 export const CENSUS_DECIDED_BY = "census";
+
+/** One school name that more than one candidate row claims. */
+export type SchoolCensusMergeGroup = {
+  /** The folded, lower-cased name the backfill will collapse them onto. */
+  folded: string;
+  /** The rows that will become one record, in the order the backfill takes them. */
+  members: SchoolMemberCandidate[];
+};
+
+/**
+ * Everything the census REPORTS, computed once from the candidate rows.
+ *
+ * IT IS A FUNCTION OF THE ROWS, and that is the fix as much as the numbers are.
+ * The census used to read the candidates, compute the unrecorded count,
+ * perform the `--record-proved` writes, and then print the PRE-WRITE figures —
+ * so an operator saw "Recorded 21 proved rows" immediately above "still
+ * blocking the cutover: 23" and a non-zero exit. One home for the figures, with
+ * the rows marked as the writes land, is what makes that arrangement
+ * impossible rather than merely fixed.
+ */
+export type SchoolCensusSummary = {
+  candidates: number;
+  organisations: number;
+  people: number;
+  cannotTell: number;
+  recorded: number;
+  /** Unrecorded candidates. Non-zero means the backfill will refuse. */
+  blocking: number;
+  /** Recorded decisions the proofs disagree with. A person may still be right. */
+  contradicted: {
+    row: SchoolMemberCandidate;
+    verdict: SchoolMemberClassificationKind;
+  }[];
+  /**
+   * Folded names more than one ORGANISATION-bound row claims: the groups the
+   * backfill will turn into ONE record, one email and one Xero customer.
+   * Printing them is the visibility half of that merge; whether the merge is
+   * wanted at all is a decision for the club, not for this function.
+   */
+  mergeGroups: SchoolCensusMergeGroup[];
+};
+
+export function summariseSchoolCensus(
+  rows: readonly SchoolMemberCandidate[],
+): SchoolCensusSummary {
+  const verdicts = rows.map((row) => ({
+    row,
+    verdict: classifySchoolMember(row),
+  }));
+
+  const mergeGroups = new Map<string, SchoolMemberCandidate[]>();
+  for (const { row, verdict } of verdicts) {
+    // What the BACKFILL will read: the recorded decision, or — before
+    // `--record-proved` has run — the one the census is about to record.
+    const effective =
+      row.recorded ?? (verdict === "CANNOT_TELL" ? null : verdict);
+    if (effective !== SchoolMemberClassificationKind.ORGANISATION) continue;
+    const folded = foldOrganisationName(row.firstName).toLowerCase();
+    if (!folded) continue;
+    mergeGroups.set(folded, [...(mergeGroups.get(folded) ?? []), row]);
+  }
+
+  const blocking = verdicts.filter(({ row }) => row.recorded === null).length;
+  return {
+    candidates: rows.length,
+    organisations: verdicts.filter((v) => v.verdict === "ORGANISATION").length,
+    people: verdicts.filter((v) => v.verdict === "PERSON").length,
+    cannotTell: verdicts.filter((v) => v.verdict === "CANNOT_TELL").length,
+    recorded: rows.length - blocking,
+    blocking,
+    contradicted: verdicts.filter(
+      (v): v is { row: SchoolMemberCandidate; verdict: SchoolMemberClassificationKind } =>
+        v.row.recorded !== null &&
+        v.verdict !== "CANNOT_TELL" &&
+        v.row.recorded !== v.verdict,
+    ),
+    mergeGroups: [...mergeGroups.entries()]
+      .filter(([, members]) => members.length > 1)
+      .map(([folded, members]) => ({ folded, members })),
+  };
+}

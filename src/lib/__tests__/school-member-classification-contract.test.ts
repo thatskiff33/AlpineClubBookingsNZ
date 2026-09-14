@@ -23,12 +23,17 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { SchoolMemberClassificationKind } from "@prisma/client";
+
 import {
+  CENSUS_DECIDED_BY,
   SCHOOL_CLASSIFICATION_CANDIDATE_SQL,
   classifySchoolMember,
   isSameSchoolNameClaim,
   provesOrganisation,
   provesPerson,
+  summariseSchoolCensus,
+  type SchoolMemberCandidate,
 } from "@/lib/school-member-classification";
 import {
   foldOrganisationName,
@@ -268,6 +273,114 @@ describe("#3369: the two proofs, and the one folding they share", () => {
     expect(isSameSchoolNameClaim("Tokoroa Primary", "Tokoroa Primary School")).toBe(false);
     expect(isSameSchoolNameClaim("St. Peter's College", "St Peters College")).toBe(false);
     expect(isSameSchoolNameClaim("", "Anything")).toBe(false);
+  });
+});
+
+describe("#3369: the census reports one set of figures, computed from the rows", () => {
+  const candidate = (
+    over: Partial<SchoolMemberCandidate> & { id: string },
+  ): SchoolMemberCandidate => ({
+    firstName: "Tokoroa Primary School",
+    lastName: "",
+    email: "office@tps.test",
+    bookingCount: 1,
+    xeroContactId: null,
+    organisationProof: true,
+    personProof: false,
+    recorded: null,
+    recordedBy: null,
+    ...over,
+  });
+
+  it("counts a row as recorded the moment its decision is marked", () => {
+    // The self-contradiction. `--record-proved` read the candidates, computed
+    // the unrecorded count, wrote, and then printed the PRE-WRITE figures — so
+    // an operator saw "Recorded 21 proved row(s)" immediately above "still
+    // blocking the cutover: 23" and a non-zero exit. Every figure now comes
+    // from this function, which reads `recorded`, and the write loop marks it.
+    const rows = [candidate({ id: "a" }), candidate({ id: "b" })];
+    expect(summariseSchoolCensus(rows).blocking).toBe(2);
+    expect(summariseSchoolCensus(rows).recorded).toBe(0);
+
+    for (const row of rows) {
+      row.recorded = SchoolMemberClassificationKind.ORGANISATION;
+      row.recordedBy = CENSUS_DECIDED_BY;
+    }
+    const after = summariseSchoolCensus(rows);
+    expect(after.blocking).toBe(0);
+    expect(after.recorded).toBe(2);
+    // And the two halves of the report cannot disagree: they are one number.
+    expect(after.recorded + after.blocking).toBe(after.candidates);
+  });
+
+  it("names every group of rows that is about to become ONE record", () => {
+    // The visibility the owner decision is separate from. Two rows folding to
+    // one school name are silently merged into one record, one email and one
+    // Xero customer; nothing said which groups were about to collapse.
+    const summary = summariseSchoolCensus([
+      candidate({ id: "a", firstName: "Tokoroa Primary School" }),
+      candidate({ id: "b", firstName: "\t tokoroa   PRIMARY school " }),
+      candidate({ id: "c", firstName: "Otorohanga Area School" }),
+    ]);
+    expect(summary.mergeGroups).toHaveLength(1);
+    expect(summary.mergeGroups[0]?.folded).toBe("tokoroa primary school");
+    expect(summary.mergeGroups[0]?.members.map((row) => row.id)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("says nothing about a school only one row claims", () => {
+    const summary = summariseSchoolCensus([
+      candidate({ id: "a" }),
+      candidate({ id: "c", firstName: "Otorohanga Area School" }),
+    ]);
+    expect(summary.mergeGroups).toEqual([]);
+  });
+
+  it("groups on what the BACKFILL will read, so a PERSON row is never in one", () => {
+    // A teacher whose row happens to carry the school's name is not re-parented,
+    // so it is not part of any collapse and listing it would be a false alarm.
+    const summary = summariseSchoolCensus([
+      candidate({ id: "a" }),
+      candidate({
+        id: "b",
+        organisationProof: false,
+        personProof: true,
+        recorded: SchoolMemberClassificationKind.PERSON,
+        recordedBy: "census",
+      }),
+    ]);
+    expect(summary.mergeGroups).toEqual([]);
+  });
+
+  it("lists a recorded decision the proofs disagree with", () => {
+    const summary = summariseSchoolCensus([
+      candidate({
+        id: "a",
+        recorded: SchoolMemberClassificationKind.PERSON,
+        recordedBy: "Jordan (treasurer)",
+      }),
+    ]);
+    expect(summary.contradicted.map(({ row }) => row.id)).toEqual(["a"]);
+  });
+
+  it("the census tool writes BEFORE it summarises", () => {
+    // The ordering is the whole defect, and it lives in the script rather than
+    // in the function. Read it from disk: the `--record-proved` block must come
+    // first, because the summary reads the field that block sets.
+    const script = readFileSync(
+      path.join(process.cwd(), "scripts", "school-member-classification-census.ts"),
+      "utf8",
+    );
+    const write = script.indexOf("if (args.recordProved)");
+    const summarise = script.indexOf("summariseSchoolCensus(rows)");
+    expect(write, "the census no longer has a --record-proved block").toBeGreaterThan(-1);
+    expect(summarise, "the census no longer summarises through the one home").toBeGreaterThan(-1);
+    expect(
+      write,
+      "the census must record the proved rows BEFORE it computes the figures it prints, or it reports the pre-write count and exits non-zero on it",
+    ).toBeLessThan(summarise);
   });
 });
 

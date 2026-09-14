@@ -136,8 +136,15 @@ ORDER BY map.member_id, o."archivedAt" ASC NULLS FIRST, o."createdAt" ASC, o."id
 -- Fail closed a second time. A classified row that resolves to no organisation
 -- would otherwise be silently skipped by every statement below, leaving a
 -- school booking owned by an invented person after a migration that reported
--- success. There is no path that produces this; the check is here because the
--- cost of being wrong about that is a half-migrated club.
+-- success.
+--
+-- THERE WAS A PATH THAT PRODUCED IT, and the comment here used to say there was
+-- not. A school whose stored name began with a tab folded to a name beginning
+-- with a SPACE, minted a record under it, and then failed to match that record
+-- back; see section 2 on the order of the fold. That is fixed, and this refusal
+-- now carries a HINT, because it is the one refusal in this migration an
+-- operator has no tool to decode: the census reports classification, not name
+-- resolution, and the message deliberately names no school.
 DO $unresolved$
 BEGIN
     IF EXISTS (
@@ -146,7 +153,8 @@ BEGIN
             SELECT 1 FROM "school_backfill_org" o WHERE o.member_id = map.member_id
         )
     ) THEN
-        RAISE EXCEPTION 'school_backfill_organisation_unresolved';
+        RAISE EXCEPTION 'school_backfill_organisation_unresolved'
+            USING HINT = 'A classified school row resolved to no Organisation record, which means its folded name does not match the record minted from it. Nothing has been written. See docs/guides/school-organisation-cutover.md, "Troubleshooting", which carries the query that lists the rows involved; do not re-run until it is understood.';
     END IF;
 END;
 $unresolved$;
