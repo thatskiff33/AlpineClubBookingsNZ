@@ -1091,6 +1091,15 @@ jobs:
           echo "GIT_COMMIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "KNOWLEDGE_BUNDLE_OBSERVED_AT=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
 
+      # Six image builds across three workflows had no reclaim step, and a
+      # hosted runner's ~14 GB no longer fits this image comfortably (#3424).
+      # The script explains what it removes and why nothing it does may fail
+      # the build; it prints `df -h /` either side so the margin is readable
+      # in the log. Immediately before the build, so it also clears whatever
+      # earlier steps in this job left behind.
+      - name: Reclaim runner disk before building
+        run: bash scripts/ci/reclaim-runner-disk.sh
+
       - name: Build Docker image
         run: |
           docker build \
@@ -1200,6 +1209,15 @@ jobs:
       # export could not cover for it either — prepare_application_images()
       # returns early when using prebuilt images, which is the ordinary GHCR path.
       # Slice-1 review finding.
+      # Six image builds across three workflows had no reclaim step, and a
+      # hosted runner's ~14 GB no longer fits this image comfortably (#3424).
+      # The script explains what it removes and why nothing it does may fail
+      # the build; it prints `df -h /` either side so the margin is readable
+      # in the log. Immediately before the build, so it also clears whatever
+      # earlier steps in this job left behind.
+      - name: Reclaim runner disk before building
+        run: bash scripts/ci/reclaim-runner-disk.sh
+
       - name: Build and push app image
         uses: docker/build-push-action@v7
         with:
@@ -1228,6 +1246,15 @@ jobs:
             exit 1
           fi
           echo "RELEASE_ID is readable in the published app image and matches the built commit."
+
+      # Six image builds across three workflows had no reclaim step, and a
+      # hosted runner's ~14 GB no longer fits this image comfortably (#3424).
+      # The script explains what it removes and why nothing it does may fail
+      # the build; it prints `df -h /` either side so the margin is readable
+      # in the log. Immediately before the build, so it also clears whatever
+      # earlier steps in this job left behind.
+      - name: Reclaim runner disk before building
+        run: bash scripts/ci/reclaim-runner-disk.sh
 
       - name: Build and push migrate image
         uses: docker/build-push-action@v7
