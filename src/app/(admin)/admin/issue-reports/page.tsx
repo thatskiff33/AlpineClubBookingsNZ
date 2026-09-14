@@ -55,6 +55,11 @@ type IssueReportSummary = {
     expiresAt: string | null;
     deletedAt: string | null;
     retained: boolean;
+    // #2703: the screenshot is stored, but the reporter had admin access when
+    // they captured it and this viewer is not a Full Admin. The API sends no
+    // pixels at all; the page says so plainly rather than showing an empty
+    // frame.
+    withheld: boolean;
   };
   browserInfo: {
     expiresAt: string | null;
@@ -110,6 +115,13 @@ function statusBadge(report: IssueReportSummary) {
 }
 
 function screenshotBadge(report: IssueReportSummary) {
+  if (report.screenshot.withheld) {
+    return (
+      <Badge className="border-warning-6 bg-warning-3 text-warning-11">
+        Screenshot withheld
+      </Badge>
+    );
+  }
   if (report.screenshot.retained) {
     return <Badge className="border-info-6 bg-info-3 text-info-11">Screenshot retained</Badge>;
   }
@@ -417,7 +429,18 @@ export default function AdminIssueReportsPage() {
                       </ViewOnlyActionButton>
                     ) : null}
                   </div>
-                  {selectedReport.screenshot.dataUrl ? (
+                  {selectedReport.screenshot.withheld ? (
+                    <div className="rounded-md border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11">
+                      <p className="font-medium">Screenshot withheld</p>
+                      <p className="mt-1">
+                        The person who reported this had admin access when they
+                        captured it, so the picture may show another
+                        member&apos;s personal details. Full Admin access is
+                        needed to view it. The rest of the report is unaffected,
+                        and you can still delete the screenshot.
+                      </p>
+                    </div>
+                  ) : selectedReport.screenshot.dataUrl ? (
                     <div className="overflow-hidden rounded-md border border-border bg-muted">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
