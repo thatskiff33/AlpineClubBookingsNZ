@@ -11,10 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useXeroConnection } from "@/app/(admin)/admin/xero/_hooks/use-xero-connection";
 
-let scrollIntoView: ReturnType<typeof vi.fn>;
+type ScrollIntoViewSpy = ReturnType<typeof vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>>;
+let scrollIntoView: ScrollIntoViewSpy;
 
 beforeEach(() => {
-  scrollIntoView = vi.fn();
+  scrollIntoView = vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>();
   Element.prototype.scrollIntoView = scrollIntoView;
   vi.stubGlobal(
     "fetch",
