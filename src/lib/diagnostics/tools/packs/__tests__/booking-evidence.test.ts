@@ -257,6 +257,8 @@ interface Store {
   policyExceptionReservationNight: Row[];
   bedAllocation: Row[];
   member: Row[];
+  // #3369: the other half of a booking's owner.
+  organisation: Row[];
   memberSubscription: Row[];
   memberInduction: Row[];
 }
@@ -321,7 +323,7 @@ const MODELS: Record<ModelName, ModelSpec> = {
       // organisation, never both, and `bookingOwner()` reads whichever is
       // there — so the pack's select names both and this double resolves both.
       organisation: (row, state) =>
-        state.organisation?.find(
+        state.organisation.find(
           (candidate) => candidate.id === row.organisationId,
         ) ?? null,
     },
@@ -429,6 +431,7 @@ function emptyStore(): Store {
     policyExceptionReservationNight: [],
     bedAllocation: [],
     member: [],
+    organisation: [],
     memberSubscription: [],
     memberInduction: [],
   };
