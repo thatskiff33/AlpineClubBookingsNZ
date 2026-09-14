@@ -200,9 +200,20 @@ export function ErasedMemberContactsPanel({
 
         {review ? (
           <>
+            {/*
+              One text node, not a bold count beside loose words. Testing
+              Library's `getByText` reads an element's OWN text children rather
+              than its descendants', so a `<span>{count}</span>` beside the
+              sentence is unassertable — the count belongs to the span and the
+              words belong to the paragraph, and neither reads as the sentence
+              an officer sees.
+            */}
             <p className="text-sm">
-              <span className="font-medium">{review.needsReview}</span>{" "}
-              {review.needsReview === 1 ? "contact" : "contacts"} to look at.
+              <span className="font-medium">
+                {`${review.needsReview} ${
+                  review.needsReview === 1 ? "contact" : "contacts"
+                } to look at.`}
+              </span>
               {review.alreadyArchivedInXero > 0
                 ? ` ${review.alreadyArchivedInXero} more ${
                     review.alreadyArchivedInXero === 1 ? "is" : "are"
