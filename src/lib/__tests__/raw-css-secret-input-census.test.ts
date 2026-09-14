@@ -8,50 +8,108 @@ import { describe, expect, it } from "vitest";
 import { stripComments } from "./support/strip-comments";
 
 /**
- * The bounded census behind #2981: every credential-bearing input on a page group
- * that injects administrator Raw CSS must be a `SecretInput`.
+ * The bounded census behind #2981: every credential-bearing input rendered on a
+ * surface that injects administrator Raw CSS must be a `SecretInput`.
  *
- * ## Why a census and not a code review
+ * Rule, mechanism, browser evidence and scope: `docs/SECURITY.md` → "Secret
+ * entry on pages that carry Raw CSS". Not restated here.
  *
- * `SecretInput` exists because React's controlled `value={state}` pattern mirrors
- * the live value into the DOM `value` ATTRIBUTE, which a stylesheet can read one
- * character at a time. Measured in Chromium 153, Firefox 155 and WebKit 26.6 —
- * the evidence is on issue #2981 and the runtime pin is
- * `e2e/raw-css-secret-reflection.spec.ts`. The rule lives in `docs/SECURITY.md` →
- * "Secret entry on pages that carry Raw CSS".
+ * ## What this proves that the browser spec cannot
  *
- * A browser test proves the ONE field it drives. This proves the SET: that no
- * second credential field has appeared on a Raw-CSS page wired the old way, and
- * that no new Raw-CSS page group has appeared outside the census at all. Both are
- * ways this regresses without anybody editing the fixed field.
+ * `e2e/raw-css-secret-reflection.spec.ts` proves the ONE field it drives, in a
+ * real engine. This proves the SET — that no second credential field has appeared
+ * on a Raw-CSS surface wired the old way, and that no new Raw-CSS SINK has
+ * appeared outside the census at all. Both regress without anybody editing the
+ * fixed field, which is why the sink list is derived and pinned rather than
+ * assumed.
  *
- * ## Why it is bounded
+ * ## Exactly what it checks, and exactly what it does not
  *
- * Deliberately NOT a tree-wide scan. Ordinary text fields are not in scope (a
- * name or an email is not a secret the styling administrator is outside the trust
- * boundary for), and page groups that do not inject Raw CSS are not in scope —
- * `(public)`, `(authenticated)`, `(admin)`, `(finance)` and `(lodge)` all inject
- * `theme.appCss`, which `buildClubThemeAppCss` builds WITHOUT `rawCss`.
+ * It is a source scanner over the surfaces `RAW_CSS_SINKS` names, plus
+ * `src/components/website/**` and one level of `@/components/...` imports from
+ * those surfaces' files. Within those it matches element text LITERALLY. Four
+ * evasion shapes are therefore invisible to it, named rather than left to be
+ * discovered:
  *
- * This file reads source from disk, so `vitest related` cannot reach it from a
- * changed component. Run it by name when a Raw-CSS page or a credential field
- * moves.
+ *  1. a computed attribute — `type={kind}`, `id={FIELD_ID}`, `autoComplete={ac}`;
+ *  2. a custom wrapper tag — `<PinInput>`, `<Textarea>`, `<CodeField>`: only
+ *     `input` / `Input` / `SecretInput` are recognised as fields at all;
+ *  3. a credential field two or more component hops away, since import-following
+ *     stops after one level and does not leave `@/components`;
+ *  4. a secret in a field whose attributes read as ordinary — a token typed into
+ *     something labelled only "Reference", which no word list can catch.
+ *
+ * That is the honest boundary of a static check, and it is why the runtime pin
+ * exists alongside it. What the census IS reliable for is the regression this
+ * lane closed: a plainly-labelled credential field, written the ordinary way, on
+ * a surface that carries Raw CSS.
+ *
+ * It reads source from disk, so `vitest related` cannot reach it from a changed
+ * component. Run it by name when a Raw-CSS surface or a credential field moves.
  */
 
 const repoRoot = path.resolve(__dirname, "..", "..", "..");
 const appDir = path.join(repoRoot, "src", "app");
 
 /**
- * The route groups whose chrome injects Raw CSS, pinned. `WebsiteChrome` renders
- * `theme.css` (`buildClubThemeCss`, which appends `rawCss`); every other shell
- * renders `theme.appCss`, which excludes it by design.
+ * Every place `buildClubThemeCss()` output — the build that APPENDS the club's
+ * `rawCss` — reaches a page document. Three, and the tree's own record of them is
+ * `docs/SECURITY-ATTACK-SURFACE.md` → "Admin Raw CSS on the public site".
+ *
+ * The first cut of this census derived surfaces from route groups named
+ * `(…)`, which is structurally blind to `src/app/display` (no parenthesised
+ * group) and to the setup screen (not a route at all). Deriving from the SINK is
+ * what makes the coverage follow the injection rather than the directory naming.
  */
-const RAW_CSS_ROUTE_GROUPS = ["(website)", "(website-dynamic)"] as const;
+const RAW_CSS_SINKS = [
+  {
+    file: "src/components/website/website-chrome.tsx",
+    what: "the public website chrome",
+    // Resolved from the tree rather than listed: every route group whose layout
+    // renders WebsiteChrome.
+    surfaces: "website-chrome" as const,
+  },
+  {
+    file: "src/app/display/display-screen.tsx",
+    what: "the lodge display screen",
+    surfaces: ["src/app/display"],
+  },
+  {
+    file: "src/lib/setup-in-progress-screen.ts",
+    what: "the pre-setup holding screen",
+    surfaces: ["src/lib/setup-in-progress-screen.ts"],
+  },
+];
 
 /**
- * Every credential-bearing input that may exist on those pages, pinned by id. A
- * new one has to be added here deliberately, which is the point: the addition is
- * where somebody decides whether it is a secret and reaches for `SecretInput`.
+ * Every non-test source file that so much as NAMES the club-theme CSS, with why.
+ * The sinks above are the subset that writes it into a document; the rest carry
+ * or produce it. Pinned as a set so a NEW consumer — which might be a fourth
+ * sink — fails here and has to be classified rather than appearing silently.
+ */
+const CLUB_THEME_CSS_REFERENCES: Record<string, string> = {
+  "src/components/website/website-chrome.tsx": "SINK: injects theme.css",
+  "src/app/display/display-screen.tsx": "SINK: injects layoutRender.themeCss",
+  "src/lib/setup-in-progress-screen.ts": "SINK: injects themeCss into the holding screen",
+  "src/app/api/display/state/route.ts": "produces themeCss for the display sink",
+  "src/app/api/admin/display/preview-grant/route.ts": "produces themeCss for the display preview",
+  "src/lib/setup-gate.ts": "produces themeCss for the holding-screen sink",
+  "src/lib/lodge-display/layout-render.ts": "carries themeCss through to the display sink",
+  "src/lib/lodge-display/layout-registry.ts": "type only: themeCss on the render input",
+  "src/lib/lodge-display/css-tokens.ts": "prose only: explains what themeCss covers",
+  "src/lib/club-theme-schema.ts": "defines buildClubThemeCss — the build that appends rawCss",
+  "src/lib/club-theme.ts": "calls it: `css: buildClubThemeCss(values)`",
+  "src/app/(admin)/admin/site-style/site-style-wizard.tsx":
+    "NOT a sink: the admin editor builds the output to SHOW as text in a <pre>, never injects it — and its only reader is the Raw CSS author",
+  "src/components/website-footer-shell.tsx": "prose only: which build the shell injects",
+  "src/lib/family-invite-return-address.ts": "prose only: why (public) is not a Raw-CSS surface",
+  "src/lib/theme/app-tokens.ts": "prose only: which build injects the .website-theme block",
+};
+
+/**
+ * Every credential-bearing input that may exist on those surfaces, pinned by id.
+ * A new one has to be added here deliberately, which is the point: the addition
+ * is where somebody decides whether it is a secret and reaches for `SecretInput`.
  */
 const EXPECTED_CREDENTIAL_FIELDS = [
   {
@@ -67,11 +125,91 @@ function walk(dir: string, out: string[] = []): string[] {
     if (entry.isDirectory()) {
       if (entry.name === "__tests__" || entry.name === "node_modules") continue;
       walk(full, out);
-    } else if (entry.name.endsWith(".tsx")) {
+    } else if (entry.name.endsWith(".tsx") || entry.name.endsWith(".ts")) {
       out.push(full);
     }
   }
   return out;
+}
+
+function relative(file: string): string {
+  return path.relative(repoRoot, file).split(path.sep).join("/");
+}
+
+function isTestPath(file: string): boolean {
+  return (
+    file.includes("__tests__") ||
+    file.endsWith(".test.ts") ||
+    file.endsWith(".test.tsx")
+  );
+}
+
+/** Route groups whose layout renders `WebsiteChrome`, resolved from the tree. */
+function websiteChromeGroups(): string[] {
+  return fs
+    .readdirSync(appDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .filter((entry) => {
+      const layout = path.join(appDir, entry.name, "layout.tsx");
+      return (
+        fs.existsSync(layout) &&
+        fs.readFileSync(layout, "utf8").includes("WebsiteChrome")
+      );
+    })
+    .map((entry) => path.join("src", "app", entry.name).split(path.sep).join("/"))
+    .sort();
+}
+
+/** Every source path a sink's surfaces resolve to. */
+function censusedSurfaces(): string[] {
+  return RAW_CSS_SINKS.flatMap((sink) =>
+    sink.surfaces === "website-chrome" ? websiteChromeGroups() : sink.surfaces,
+  );
+}
+
+/**
+ * The files the census actually reads: everything under the censused surfaces,
+ * every `src/components/website` module (rendered INTO the chrome), and one level
+ * of `@/components/...` imports from any of those.
+ */
+function censusedFiles(): string[] {
+  const seed = new Set<string>();
+
+  for (const surface of censusedSurfaces()) {
+    const full = path.join(repoRoot, surface);
+    if (!fs.existsSync(full)) continue;
+    if (fs.statSync(full).isDirectory()) {
+      for (const file of walk(full)) seed.add(file);
+    } else {
+      seed.add(full);
+    }
+  }
+  for (const file of walk(path.join(repoRoot, "src", "components", "website"))) {
+    seed.add(file);
+  }
+
+  // One hop into @/components. A shared field component rendered onto a Raw-CSS
+  // page is invisible to a directory walk, and that is the gap this closes.
+  const imported = new Set<string>();
+  for (const file of seed) {
+    const source = stripComments(fs.readFileSync(file, "utf8"));
+    for (const hit of source.matchAll(/from\s+"(@\/components\/[^"]+)"/g)) {
+      const base = path.join(repoRoot, "src", hit[1].slice("@/".length));
+      for (const candidate of [
+        `${base}.tsx`,
+        `${base}.ts`,
+        path.join(base, "index.tsx"),
+        path.join(base, "index.ts"),
+      ]) {
+        if (fs.existsSync(candidate)) {
+          imported.add(candidate);
+          break;
+        }
+      }
+    }
+  }
+
+  return [...new Set([...seed, ...imported])].filter((file) => !isTestPath(file));
 }
 
 type JsxElement = { tag: string; text: string };
@@ -179,50 +317,65 @@ function isCredentialBearing(element: JsxElement): boolean {
   return false;
 }
 
-describe("Raw-CSS pages: credential inputs must not reflect the secret (#2981)", () => {
-  it("pins which route groups inject administrator Raw CSS", () => {
-    const groups = fs
-      .readdirSync(appDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith("("))
-      .filter((entry) => {
-        const layout = path.join(appDir, entry.name, "layout.tsx");
+describe("Raw-CSS surfaces: credential inputs must not reflect the secret (#2981)", () => {
+  it("pins every file that names the club-theme CSS, so a new sink cannot appear unclassified", () => {
+    const referencing = walk(path.join(repoRoot, "src"))
+      .filter((file) => !isTestPath(file))
+      .filter((file) => {
+        const source = fs.readFileSync(file, "utf8");
         return (
-          fs.existsSync(layout) &&
-          fs.readFileSync(layout, "utf8").includes("WebsiteChrome")
+          source.includes("theme.css") ||
+          source.includes("themeCss") ||
+          source.includes("buildClubThemeCss")
         );
       })
-      .map((entry) => entry.name)
+      .map(relative)
       .sort();
 
-    // A new Raw-CSS group must be added to RAW_CSS_ROUTE_GROUPS deliberately,
-    // because the census below only looks where this list points.
-    expect(groups).toEqual([...RAW_CSS_ROUTE_GROUPS].sort());
+    // Set equality both ways. A new consumer fails here until somebody decides
+    // whether it is a fourth SINK — in which case RAW_CSS_SINKS and the surfaces
+    // the census walks both have to grow.
+    expect(referencing).toEqual(Object.keys(CLUB_THEME_CSS_REFERENCES).sort());
   });
 
-  it("keeps the Raw CSS in the website chrome, which is the surface censused", () => {
-    const chrome = fs.readFileSync(
-      path.join(repoRoot, "src/components/website/website-chrome.tsx"),
-      "utf8",
-    );
-    // `theme.css` is buildClubThemeCss output, which appends rawCss; `appCss` is
-    // the shell build that excludes it. If this flips, the census is looking at
-    // the wrong surface.
-    expect(stripComments(chrome)).toContain("theme.css");
+  it("resolves the website chrome's surfaces from the tree", () => {
+    // A new Raw-CSS route group is censused automatically, but it still has to
+    // be a group whose layout renders WebsiteChrome; this pins what that is now.
+    expect(websiteChromeGroups()).toEqual([
+      "src/app/(website)",
+      "src/app/(website-dynamic)",
+    ]);
   });
 
-  it("censuses every credential-bearing input on those pages", () => {
-    const found = RAW_CSS_ROUTE_GROUPS.flatMap((group) =>
-      walk(path.join(appDir, group)).flatMap((file) => {
-        const source = stripComments(fs.readFileSync(file, "utf8"));
-        return inputElements(source)
-          .filter(isCredentialBearing)
-          .map((element) => ({
-            file: path.relative(repoRoot, file).split(path.sep).join("/"),
-            id: attributeValue(element, "id"),
-            tag: element.tag,
-          }));
-      }),
+  it("reaches all three sinks' surfaces, not just the parenthesised groups", () => {
+    const surfaces = censusedSurfaces();
+    expect(surfaces).toContain("src/app/(website)");
+    expect(surfaces).toContain("src/app/(website-dynamic)");
+    expect(surfaces).toContain("src/app/display");
+    expect(surfaces).toContain("src/lib/setup-in-progress-screen.ts");
+
+    // And the file list really was built from them, including the shared-component
+    // hop — not vacuously empty.
+    const files = censusedFiles().map(relative);
+    expect(files).toContain(
+      "src/app/(website-dynamic)/hut-leader-instructions/hut-leader-instructions-client.tsx",
     );
+    expect(files).toContain("src/app/display/display-screen.tsx");
+    expect(files).toContain("src/lib/setup-in-progress-screen.ts");
+    expect(files).toContain("src/components/ui/secret-input.tsx");
+  });
+
+  it("censuses every credential-bearing input on those surfaces", () => {
+    const found = censusedFiles().flatMap((file) => {
+      const source = stripComments(fs.readFileSync(file, "utf8"));
+      return inputElements(source)
+        .filter(isCredentialBearing)
+        .map((element) => ({
+          file: relative(file),
+          id: attributeValue(element, "id"),
+          tag: element.tag,
+        }));
+    });
 
     // Exact equality, both ways: a NEW credential field fails here until somebody
     // decides about it, and the known one failing to be found (a rename, a move)
