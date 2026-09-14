@@ -35,8 +35,10 @@ vi.mock("@/lib/custodian-occupancy", async (importOriginal) => {
   // PARTIAL mock: `holdCoversNight` is the real predicate, because a double
   // for it would make the night arithmetic below a fact about the double.
   // Only the database read is replaced.
-  const actual =
-    await importOriginal<typeof import("@/lib/custodian-occupancy")>();
+  // The cast goes OUTSIDE the call, not into a type argument: Semgrep cannot
+  // parse a call whose type argument contains an `import()` type and silently
+  // stops scanning the rest of the file (#3318 / #2842).
+  const actual = (await importOriginal()) as typeof import("@/lib/custodian-occupancy");
   return { ...actual, findCustodianBedHolds: vi.fn(async () => []) };
 });
 
