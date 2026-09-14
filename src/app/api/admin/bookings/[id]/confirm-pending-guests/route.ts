@@ -179,7 +179,9 @@ export async function POST(
 
   const queueXeroInvoice = async () => {
     try {
-      const queued = await enqueueXeroBookingInvoiceOperation(bookingId);
+      const queued = await enqueueXeroBookingInvoiceOperation(bookingId, {
+        invoiceEmailDelivery: null,
+      });
       if (queued.queueOperationId) {
         await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
       }

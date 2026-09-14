@@ -1032,6 +1032,8 @@ describe("POST /api/payments/charge-saved-method", () => {
     expect(response.status).toBe(200);
     expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("booking-1", {
       createdByMemberId: "admin-1",
+      // #2929: no creation-time email choice on this path.
+      invoiceEmailDelivery: null,
     });
   });
 });

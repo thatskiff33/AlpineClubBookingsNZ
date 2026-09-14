@@ -3004,7 +3004,14 @@ withholds every member-facing message for a booking, records each withhold as an
 `EmailLog` row with status `SKIPPED_NO_EMAILS`, never touches admin-audience or
 account/security mail, and fails closed if the switch cannot be read. The retry
 cron and the two Xero-sent invoice emails re-check the same switch because they
-bypass `sendEmail`. See `docs/DOMAIN_INVARIANTS.md` for the full contract.
+bypass `sendEmail`. The booking invoice email carries a SECOND, narrower
+withhold that is not the switch (#2929): an on-behalf create's "do not email
+the member" choice, persisted on the outbox operation
+(`XeroSyncOperation.invoiceEmailDelivery`) so a later retry still knows the
+email was withheld deliberately. It writes its own `SKIPPED_NO_EMAILS` row
+naming that reason, sets nothing persistent, and is reported on the sync
+operation under its own key so neither it, the switch, the environment-safety
+suppression nor a provider failure can be mistaken for another. See `docs/DOMAIN_INVARIANTS.md` for the full contract.
 For every live registered template in the booking-scoped suppression inventory,
 that same choke point may add the canonical encoded
 `/bookings/<booking-id>` detail URL (#2362). `booking-email-authority.ts`

@@ -8,7 +8,7 @@ genuinely the worse answer. Three of them, and the growth in the other two,
 come from the adversarial review round rather than from the first build.
 
 file: src/lib/school-booking-request.ts
-lines: 2736
+lines: 2740
 reason: The school approval transaction gains the resolve-or-create of the
   school's own `Organisation`, the link from the booking and the request, and
   the teacher association. Every one of those writes has to happen INSIDE the
@@ -52,7 +52,7 @@ reason: Three lines net. The member payload builder's object literal MOVED OUT
   has merged.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1429
+lines: 1550
 reason: Six lines, and five of them are the comment. One call site changes from
   `findOrCreateXeroContact(booking.memberId, …)` to
   `findOrCreateXeroContactForInvoicedParty(booking, …)`. The comment is there
@@ -63,7 +63,7 @@ reason: Six lines, and five of them are the comment. One call site changes from
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1450
+lines: 1472
 reason: Thirty-six lines, admitting the ORGANISATION case on the retry screen.
   The screen gated contact create and update on `localModel === "Member"`, so an
   officer replaying a school's failed contact operation was told it "requires a
@@ -116,7 +116,7 @@ reason: Fourteen comment lines across two docblocks, no code. The manual-link
   `size-allowances.d/2939-bulk-create-missing-contacts.md` beside it.
 
 file: src/lib/xero-sync.ts
-lines: 883
+lines: 901
 reason: Eleven comment lines on `XeroObjectLinkInput.mergeMetadata`, no code. The
   flag's docblock said only inbound writers set it while one outbound writer
   now does, for a sound reason; two comments contradicting each other is how a

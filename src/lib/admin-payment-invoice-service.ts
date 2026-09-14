@@ -50,6 +50,7 @@ export async function generateAdminPaymentInvoice(params: {
   try {
     const queuedInvoice = await enqueueXeroBookingInvoiceOperation(payment.bookingId, {
       createdByMemberId: adminMemberId,
+      invoiceEmailDelivery: null,
     });
 
     let immediateKickFailed = false;

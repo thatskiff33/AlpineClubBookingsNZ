@@ -256,6 +256,7 @@ export async function POST(request: NextRequest) {
 
     const queueResult = await enqueueXeroBookingInvoiceOperation(booking.id, {
       createdByMemberId: session.user.id,
+      invoiceEmailDelivery: null,
     });
 
     if (queueResult.queueOperationId) {
