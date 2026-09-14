@@ -441,6 +441,34 @@ describe("bed-allocation board — the allocation preferences signpost (#2937)",
 
     expect(preferencesLink().getAttribute("href")).toBe("/admin/rooms-beds");
   });
+
+  it("drops a DEACTIVATED lodge from the link rather than sending the officer to a different one", async () => {
+    // The board is focused on a booking whose lodge has since been deactivated.
+    // It holds that lodge on purpose (`focusedBookingOwnsLodge`), and the board
+    // itself is correct to: the server scopes from `Booking.lodgeId`. But the
+    // lodge is gone from `/api/admin/lodges`, so Rooms & Beds cannot settle on
+    // it — `LodgeSelect` would normalise it to the one surviving active lodge,
+    // and below two lodges it renders nothing, so the swap would be invisible.
+    // A live Edit and Save on somebody ELSE's preferences is the outcome.
+    search.current = "from=2026-07-01&to=2026-07-08&bookingId=booking-b";
+    const server = installFakeServer({
+      lodges: [{ id: "lodge-1", name: "Alpine Lodge", active: true }],
+    });
+
+    render(<AdminBedAllocationPage />);
+    await screen.findByTestId("room-table");
+
+    // The board really is scoped to the deactivated lodge — otherwise this
+    // asserts the link against a state that never arose.
+    await waitFor(() =>
+      expect(server.boardRequests.at(-1)?.get("lodgeId")).toBe("lodge-2"),
+    );
+    expect(screen.getByText("Focused booking")).toBeInTheDocument();
+
+    // MUTATION PROBE: replace `preferencesLodgeId` with `lodgeId` in the
+    // signpost and this reads `/admin/rooms-beds?lodgeId=lodge-2`.
+    expect(preferencesLink().getAttribute("href")).toBe("/admin/rooms-beds");
+  });
 });
 
 describe("bed-allocation board — a failed lodge list is not a club-wide view (#2701)", () => {

@@ -97,7 +97,7 @@ import {
 } from "./_components/allocation-drag-feedback";
 import { useSyncedScroll } from "./_components/use-synced-scroll";
 import { useScopedDashboard } from "./_components/use-scoped-dashboard";
-import { ALLOCATION_PREFERENCES_HREF } from "@/components/admin/allocation-preferences-section";
+import { ROOMS_BEDS_PATH } from "@/lib/admin-permissions";
 import {
   bedAllocationRemovalCategoryForAnchor,
   useBedAllocationRemovalDialog,
@@ -457,6 +457,16 @@ export default function AdminBedAllocationPage() {
   // on this, so the ALL_LODGES sentinel can never leak into a query string or
   // a removal anchor.
   const lodgeId = lodgeScope.kind === "lodge" ? lodgeScope.lodgeId : null;
+  /**
+   * The lodge the Allocation preferences signpost may NAME (#2937): this
+   * board's lodge, but only while it is one Rooms & Beds could itself settle
+   * on. See the signpost's own comment for why a deactivated lodge — which this
+   * board holds on purpose while a booking is focused — must not be carried.
+   */
+  const preferencesLodgeId =
+    lodgeId !== null && lodges.some((lodge) => lodge.id === lodgeId)
+      ? lodgeId
+      : null;
   /**
    * `INV-CAP-033`, owner decisions 4 and 6: every allocation control that needs
    * a concrete lodge is disabled without one, with the reason on screen. This
@@ -1603,6 +1613,32 @@ export default function AdminBedAllocationPage() {
         state there is no lodge to carry and the plain link is the honest one:
         this page must never invent a lodge id for a link any more than for a
         write.
+
+        `preferencesLodgeId` is narrower than `lodgeId` on purpose, and the gap
+        is a real one. While a booking is focused this board DELIBERATELY holds
+        that booking's lodge even after it has been deactivated — see
+        `focusedBookingOwnsLodge` above, where suppressing the selector's
+        first-lodge default is the fix for three HIGH findings. A deactivated
+        lodge is filtered out of `/api/admin/lodges`, so Rooms & Beds cannot
+        honour it: `LodgeSelect`'s ADR-002 normaliser would silently replace it
+        with the first active lodge — and below two lodges the selector renders
+        nothing, so the substitution would never appear on screen. The officer
+        would be editing a DIFFERENT lodge's preferences with a live Save and no
+        indication the lodge had changed. Before the move, the same click-through
+        was an explicit refusal, because the settings endpoint answers "lodge not
+        found or not active" and the card printed that verbatim.
+
+        So the link names a lodge only when the board can see it in the active
+        list it already holds. Inventing nothing is the rule the paragraph above
+        claims to follow; this is the clause that makes it true.
+
+        No visibility guard is needed on the link itself. Every viewer of this
+        board holds `bookings: view` (the page's own area), and since #2937
+        `/admin/rooms-beds` admits on lodge OR bookings —
+        `canAccessRoomsBedsPage` in `admin-permissions.ts` — so the destination
+        is reachable for everyone who can read this card. The board has no
+        permission matrix client-side to ask with, and a guard that can only
+        ever answer yes would be a second, weaker spelling of that rule.
       */}
       <Card>
         <CardHeader>
@@ -1615,9 +1651,9 @@ export default function AdminBedAllocationPage() {
             <Link
               className="underline"
               href={
-                lodgeId
-                  ? `${ALLOCATION_PREFERENCES_HREF}?lodgeId=${encodeURIComponent(lodgeId)}`
-                  : ALLOCATION_PREFERENCES_HREF
+                preferencesLodgeId
+                  ? `${ROOMS_BEDS_PATH}?lodgeId=${encodeURIComponent(preferencesLodgeId)}`
+                  : ROOMS_BEDS_PATH
               }
             >
               Bookings Setup &rarr; Rooms &amp; Beds
