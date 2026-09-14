@@ -71,7 +71,8 @@ export async function POST(
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { guests: { include: { nights: true } }, member: true, promoRedemption: { include: { promoCode: true } } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        include: { guests: { include: { nights: true } }, member: true, organisation: { select: { name: true, email: true } }, promoRedemption: { include: { promoCode: true } } },
       });
 
       if (!booking) {

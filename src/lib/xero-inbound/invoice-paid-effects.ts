@@ -258,7 +258,8 @@ async function recordManualSettlementConflict({
   invoiceNumber,
 }: {
   payment: Prisma.PaymentGetPayload<{
-    include: { booking: { include: { member: true } } };
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } };
   }>;
   bookingStatus: BookingStatus;
   invoiceId: string;

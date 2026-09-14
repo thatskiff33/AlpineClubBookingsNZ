@@ -253,7 +253,8 @@ export async function settleGroupBookingOnOrganiserCancel(
       deletedAt: null,
       status: { in: [...ACTIVE_CHILD_STATUSES] },
     },
-    include: { member: true, payment: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { member: true, organisation: { select: { name: true, email: true } }, payment: true },
   });
 
   let settlement = cancellationFence.settlement;

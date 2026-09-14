@@ -80,7 +80,8 @@ export async function POST(
 
   const booking = await prisma.booking.findUnique({
     where: { id },
-    include: { guests: true, member: true, promoRedemption: { include: { promoCode: true } } },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { guests: true, member: true, organisation: { select: { name: true, email: true } }, promoRedemption: { include: { promoCode: true } } },
   });
 
   if (!booking) {

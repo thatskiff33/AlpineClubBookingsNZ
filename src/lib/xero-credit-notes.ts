@@ -90,7 +90,8 @@ export async function createXeroCreditNote(
     where: { id: paymentId },
     include: {
       booking: {
-        include: { member: true, guests: true },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        include: { member: true, organisation: { select: { name: true, email: true } }, guests: true },
       },
     },
   });
@@ -598,7 +599,8 @@ export async function createUnappliedXeroCreditNote(
     where: { id: paymentId },
     include: {
       booking: {
-        include: { member: true },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        include: { member: true, organisation: { select: { name: true, email: true } } },
       },
     },
   });

@@ -299,7 +299,11 @@ async function cancelLinkedProvisionalChildBookings(
 
       const fresh = await tx.booking.findUnique({
         where: { id: candidate.id },
-        include: { member: true },
+        include: {
+          member: true,
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
+        },
       });
       if (
         !fresh ||
@@ -453,7 +457,11 @@ async function performBookingCancellation(
   const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { payment: true, member: true },
+    include: {
+      payment: true, member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
+    },
   });
 
   if (!booking) {
@@ -579,7 +587,11 @@ async function performBookingCancellation(
       // that invariant and matches the paid path (#1311 follow-up to #1334).
       const fresh = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { payment: true, member: true },
+        include: {
+      payment: true, member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
+    },
       });
       // Race loser / retry: under the lock the booking has left the no-payment
       // set (a concurrent quote-accept converted it, or another cancel already
@@ -638,11 +650,13 @@ async function performBookingCancellation(
       // applied credit" is an auditable invariant (#1547). Runs inside the
       // existing claim tx, so the claim's atomic status flip remains the
       // exactly-once guarantee for the (guardless) restore.
-      const creditRestoredCents = await restoreCreditFromBooking(
-        bookingOwner(fresh).memberId,
-        bookingId,
-        tx
-      );
+      // #3369: an organisation-owned booking has no member ledger, so there
+      // is nothing to restore. Zero is the fact, not a fallback -- credit can
+      // only have been applied from a member's own account in the first place.
+      const restoreMemberId = bookingOwner(fresh).memberId;
+      const creditRestoredCents = restoreMemberId
+        ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
+        : 0;
 
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
@@ -783,7 +797,11 @@ async function performBookingCancellation(
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       const fresh = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { payment: true, member: true },
+        include: {
+      payment: true, member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
+    },
       });
       // A capture (markBookingPaymentSucceeded pays PENDING bookings) or a
       // concurrent cancel can transition the row before the lock is taken; the
@@ -819,11 +837,13 @@ async function performBookingCancellation(
       // so "every cancel branch restores applied credit" is an auditable
       // invariant (#1547). restoreCreditFromBooking has no internal replay
       // guard; this claim's atomic status flip is its exactly-once guarantee.
-      const creditRestoredCents = await restoreCreditFromBooking(
-        bookingOwner(fresh).memberId,
-        bookingId,
-        tx
-      );
+      // #3369: an organisation-owned booking has no member ledger, so there
+      // is nothing to restore. Zero is the fact, not a fallback -- credit can
+      // only have been applied from a member's own account in the first place.
+      const restoreMemberId = bookingOwner(fresh).memberId;
+      const creditRestoredCents = restoreMemberId
+        ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
+        : 0;
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
       // qualifying adult member is staying on can leave ANOTHER booking on the same
@@ -964,7 +984,11 @@ async function performBookingCancellation(
 
       const fresh = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { payment: true, member: true },
+        include: {
+      payment: true, member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
+    },
       });
       // Loser gates. Statuses: this branch is only dispatched for
       // PAYMENT_PENDING/CONFIRMED/PAID; anything else under the lock means a
@@ -1055,11 +1079,13 @@ async function performBookingCancellation(
 
       // 100% restore — ledger truth, NO override argument (owner decision:
       // nothing was captured, so no cancellation-policy tiering).
-      const creditRestoredCents = await restoreCreditFromBooking(
-        bookingOwner(fresh).memberId,
-        bookingId,
-        tx
-      );
+      // #3369: an organisation-owned booking has no member ledger, so there
+      // is nothing to restore. Zero is the fact, not a fallback -- credit can
+      // only have been applied from a member's own account in the first place.
+      const restoreMemberId = bookingOwner(fresh).memberId;
+      const creditRestoredCents = restoreMemberId
+        ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
+        : 0;
 
       // Applied-credit rows the inbound reconcile linked to a real Xero
       // credit-note allocation against this booking's invoice: the invoice's
@@ -1338,7 +1364,11 @@ async function performBookingCancellation(
 
     const fresh = await tx.booking.findUnique({
       where: { id: bookingId },
-      include: { payment: true, member: true },
+      include: {
+      payment: true, member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
+    },
     });
 
     // Single-flight gate: the race loser / a retry lands here.
@@ -1465,12 +1495,16 @@ async function performBookingCancellation(
         days,
         policy,
       );
-      creditRestoredCents = await restoreCreditFromBooking(
-        bookingOwner(fresh).memberId,
-        bookingId,
-        tx,
-        creditToRestore,
-      );
+      // #3369: see above -- no member, no ledger, nothing to restore.
+      const restoreMemberId = bookingOwner(fresh).memberId;
+      creditRestoredCents = restoreMemberId
+        ? await restoreCreditFromBooking(
+            restoreMemberId,
+            bookingId,
+            tx,
+            creditToRestore,
+          )
+        : 0;
     }
 
     const { refundAmountCents, refundPercentage } = calculateRefundAmount(
@@ -1590,8 +1624,18 @@ async function performBookingCancellation(
         amountCents: refundAmountCents,
         store: tx,
       });
+      // #3369: a refund AS CREDIT credits a member's account, and an
+      // organisation has none. The officer refunds a school by the money path
+      // instead; this branch is unreachable for one, and saying so beats
+      // minting a credit note against nobody.
+      const creditRecipientMemberId = bookingOwner(fresh).memberId;
+      if (!creditRecipientMemberId) {
+        throw new Error(
+          "A booking owned by an organisation cannot be refunded as member credit (#3369).",
+        );
+      }
       await createCancellationCredit(
-        bookingOwner(fresh).memberId,
+        creditRecipientMemberId,
         refundAmountCents,
         bookingId,
         undefined,
@@ -2156,7 +2200,11 @@ async function performBookingCancellation(
 }
 
 type CancellationAuditBooking = {
-  memberId: string;
+  // #3369: NULL for an organisation-owned booking, and that flows straight
+  // through to the audit row's `subjectMemberId`. `INV-PRIV-018`: an audit
+  // subject stays a PERSON, so a school booking writes no subject member and
+  // the booking itself carries the identity through entityType/entityId.
+  memberId: string | null;
   status: string;
   checkIn: Date;
   checkOut: Date;

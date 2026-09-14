@@ -55,7 +55,8 @@ export async function PUT(
   const refundRequest = await prisma.refundRequest.findUnique({
     where: { id },
     include: {
-      booking: { include: { payment: true, member: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      booking: { include: { payment: true, member: true, organisation: { select: { name: true, email: true } } } },
       member: true,
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },

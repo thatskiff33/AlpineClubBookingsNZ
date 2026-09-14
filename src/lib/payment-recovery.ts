@@ -1111,7 +1111,8 @@ async function alertPaymentRecoveryFailure(
 ) {
   const booking = await prisma.booking.findUnique({
     where: { id: operation.bookingId },
-    include: { member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { member: true, organisation: { select: { name: true, email: true } } },
   });
 
   if (!booking) {
@@ -2594,7 +2595,8 @@ async function processCreateAdditionalPaymentIntentOperation(
     where: { id: operation.paymentId },
     include: {
       transactions: true,
-      booking: { include: { member: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      booking: { include: { member: true, organisation: { select: { name: true, email: true } } } },
     },
   });
 
@@ -2912,7 +2914,8 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
       createdAt: { lt: staleThreshold },
     },
     orderBy: { createdAt: "asc" },
-    include: { booking: { include: { member: true } } },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } },
   });
   if (!oldest) return;
 

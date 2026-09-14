@@ -586,7 +586,8 @@ async function handlePaymentIntentSucceeded(
     try {
       const booking = await prisma.booking.findUnique({
         where: { id: bookingId },
-        include: { member: true, guests: true, promoRedemption: { include: { promoCode: true } } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        include: { member: true, organisation: { select: { name: true, email: true } }, guests: true, promoRedemption: { include: { promoCode: true } } },
       });
       if (booking) {
         // Split-booking parent (#738): describe the provisional non-member
@@ -690,7 +691,8 @@ async function handlePaymentIntentFailed(
   try {
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { member: true },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      include: { member: true, organisation: { select: { name: true, email: true } } },
     });
     if (booking) {
       sendAdminPaymentFailureAlert({
@@ -1152,7 +1154,8 @@ async function alertPaymentAmountMismatch(
   try {
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { member: true },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      include: { member: true, organisation: { select: { name: true, email: true } } },
     });
 
     if (!booking) {
