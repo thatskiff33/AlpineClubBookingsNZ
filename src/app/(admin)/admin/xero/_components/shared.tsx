@@ -51,8 +51,24 @@ export function SectionCard({
   actions?: ReactNode
   children: ReactNode
 }) {
+  // A NAMED region, because this card is a reveal target: "go to section" on
+  // /admin/xero focuses it through the shared attention primitive (#2934), and
+  // focus landing on an unnamed card announces only "group". The name is
+  // `aria-labelledby` on the visible title rather than an `aria-label` repeating
+  // it, and `tabIndex={-1}` is declarative so React owns the attribute instead
+  // of the primitive writing it behind React's back. `scroll-mt-24` (6rem, not
+  // the primitive's default 5rem) is this card's own clearance: its header is a
+  // two-line collapsible button, and the primitive now leaves a declared
+  // clearance alone.
+  const titleId = `${id}-title`
   return (
-    <Card id={id} className="mb-6 scroll-mt-24">
+    <Card
+      id={id}
+      role="region"
+      aria-labelledby={titleId}
+      tabIndex={-1}
+      className="mb-6 scroll-mt-24 focus:outline-none"
+    >
       <CardHeader className="gap-4 md:flex-row md:items-start md:justify-between">
         <button
           type="button"
@@ -61,7 +77,7 @@ export function SectionCard({
           className="flex w-full items-start justify-between gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex-1"
         >
           <div className="space-y-1">
-            <CardTitle>{title}</CardTitle>
+            <CardTitle id={titleId}>{title}</CardTitle>
             <CardDescription>{description}</CardDescription>
           </div>
           {open ? (

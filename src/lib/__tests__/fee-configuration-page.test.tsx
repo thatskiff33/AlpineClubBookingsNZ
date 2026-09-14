@@ -256,7 +256,16 @@ describe("fee configuration page", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
     expect(mocks.revealEditor).toHaveBeenCalledTimes(1);
     const panel = (mocks.revealEditor.mock.calls[0][0] as { current: HTMLElement | null }).current;
-    expect(panel?.textContent).toContain("Annual membership fees");
+    // A NAMED region, not a bare card: the reveal focuses this element, and an
+    // unnamed container announces only "group" to whoever lands on it. The name
+    // comes from the panel's own visible title, so the two cannot drift.
+    expect(panel).toBe(
+      screen.getByRole("region", { name: "Annual membership fees" }),
+    );
+    expect(panel?.getAttribute("tabindex")).toBe("-1");
+    expect(
+      screen.getByRole("region", { name: "Joining fees" }),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
     expect(mocks.revealEditor).toHaveBeenCalledTimes(2);
     expect((mocks.revealEditor.mock.calls[1][0] as { current: HTMLElement | null }).current).toBe(panel);
