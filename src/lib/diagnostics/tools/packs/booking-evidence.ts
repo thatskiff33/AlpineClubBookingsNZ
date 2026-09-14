@@ -1422,8 +1422,14 @@ async function readBookingBlockState(
     !subscriptionHardBlockGatesThisBooking(booking) ||
     requireResolvedLockoutMode(subscriptionLockoutMode) !== "HARD_BLOCK"
       ? Promise.resolve(false)
-      : readOwnerSubscriptionHardBlock(tx, {
-          memberId: bookingOwner(booking).memberId,
+      : // #3369: the block asks whether the OWNER has paid their own
+        // subscription. An organisation holds none and is never blocked by
+        // one, which is what the invented school member produced too — it had
+        // no subscription and no season rate, so the gate never bit.
+        bookingOwner(booking).memberId === null
+        ? Promise.resolve(false)
+        : readOwnerSubscriptionHardBlock(tx, {
+          memberId: bookingOwner(booking).memberId as string,
           seasonYear: requireResolvedSeasonYear(seasonYear),
           ageTier: bookingOwner(booking).member?.ageTier ?? null,
           readAgeTierSettings,

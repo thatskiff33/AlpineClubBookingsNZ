@@ -206,7 +206,12 @@ export async function GET(req: NextRequest) {
       nights: ownerGuest?.nights,
     };
     const ownerNightKey = getGuestBedNightKeys(ownerStay, ownerStay).join(",");
-    const existing = memberBookings.get(bookingOwner(b).member.id);
+    // #3369: hut-leader eligibility is a MEMBER's, so a booking owned by an
+    // organisation contributes no candidate. Its teacher is a member in their
+    // own right and reaches this list through their own booking or assignment.
+    const ownerMemberId = bookingOwner(b).member.id;
+    if (!ownerMemberId) continue;
+    const existing = memberBookings.get(ownerMemberId);
     if (existing) {
       if (
         !existing.bookings.some(
@@ -217,7 +222,7 @@ export async function GET(req: NextRequest) {
         existing.bookings.push(ownerStay);
       }
     } else {
-      memberBookings.set(bookingOwner(b).member.id, {
+      memberBookings.set(ownerMemberId, {
         id: bookingOwner(b).member.id,
         firstName: bookingOwner(b).member.firstName,
         lastName: bookingOwner(b).member.lastName,

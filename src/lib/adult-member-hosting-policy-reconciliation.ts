@@ -170,8 +170,13 @@ export async function enqueueActiveHostingIncidentPolicyReconciliation(
       formatDateOnly,
     );
     if (nights.length === 0) continue;
+    // #3369: hosting coverage is about the nights a MEMBER holds and whether a
+    // qualifying adult covers them. An organisation holds no member-nights, so
+    // there is nothing to re-evaluate for its booking.
+    const coverageMemberId = bookingOwner(booking).memberId;
+    if (!coverageMemberId) continue;
     queueRows.push({
-      memberId: bookingOwner(booking).memberId,
+      memberId: coverageMemberId,
       lodgeId: booking.lodgeId,
       nights,
       cause: "SYSTEM_CHANGE",

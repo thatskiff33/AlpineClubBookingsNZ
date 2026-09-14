@@ -661,7 +661,7 @@ export async function processWaitlistForDates(freedDates: {
           guestCount: candidate.guests.length,
           expiresAt,
           bookingId: candidate.id,
-          memberId: bookingOwner(candidate).memberId,
+          memberId: bookingOwner(candidate).memberId ?? "",
           memberName: `${bookingOwner(candidate).member.firstName} ${bookingOwner(candidate).member.lastName}`,
           position: position + 1,
           lodgeId: candidate.lodgeId,

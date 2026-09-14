@@ -648,6 +648,10 @@ export async function expireMemberGuestConsent(params: {
         // receives the credit; the true actor is recorded separately in the audit
         // log as `cron:member-guest-consent-expiry`. The target's id is NOT used —
         // writing it here would attribute to them an act they did not take.
+        // #3369: the owner stands in for the actor here, and an organisation
+        // is not a person who can act. The removal is still made — the target's
+        // consent expired either way — with no actor named rather than an
+        // organisation id in a column that means "a person did this".
         actorMemberId: bookingOwner(guest.booking).memberId,
         kind: "CONSENT_EXPIRY",
         settlementMethod: "credit",

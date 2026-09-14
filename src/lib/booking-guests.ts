@@ -588,7 +588,8 @@ function getMemberDisplayName(member: LinkedBookingMember) {
 function getBlockedGuestAction(params: {
   member: LinkedBookingMember;
   status: MemberProfileCompletenessResult;
-  currentUserId: string;
+  /** The judging person, or null on an organisation-owned booking (#3369). */
+  currentUserId: string | null;
   canCurrentUserResolve: boolean;
 }): BookingGuestProfileAction {
   const { member, status, currentUserId, canCurrentUserResolve } = params;
@@ -615,7 +616,14 @@ function getBlockedGuestAction(params: {
 export async function assertLinkedBookingMembersCanBeBooked(
   db: BookingGuestLookupDb,
   linkedMembers: Map<string, LinkedBookingMember>,
-  currentUserId: string,
+  /**
+   * The person judged as vouching for the guests. Null since #3369, when the
+   * caller asked for member semantics on an organisation-owned booking: there
+   * is no booker, which the family checks below read as "shares a family group
+   * with nobody" — the fail-closed side, and the same answer the invented
+   * school member gave since it belonged to no group.
+   */
+  currentUserId: string | null,
   context?: LinkedBookingMemberProfileGateContext
 ) {
   if (skipsMemberProfileGateForAdminOnBehalf(context)) {
@@ -681,7 +689,12 @@ export async function assertLinkedBookingMembersCanBeBooked(
       continue;
     }
 
+    // #3369: with no booker there is nobody to confirm a delegated profile and
+    // nobody to share a family group with, so both halves are false — which is
+    // exactly what they were for the invented school member, which could not
+    // log in and belonged to no group.
     const canCurrentUserConfirmDelegatedDetails =
+      currentUserId !== null &&
       member.canLogin === false &&
       isActiveLoginAdult(currentUserId) &&
       sharesFamilyGroup(member.id, currentUserId);

@@ -163,14 +163,23 @@ export async function POST(
   if (
     subscriptionLockoutMode === "HARD_BLOCK" &&
     !isAdmin &&
-    await requiresPaidSubscriptionForMemberForBooking(prisma, {
-      memberId: bookingOwner(booking).memberId,
+    // #3369: the lockout gate asks whether the OWNER has paid their own
+    // subscription. An organisation holds none — and the invented school member
+    // held none either, so the gate never bit on a school booking. `false`
+    // keeps that exactly true.
+    bookingOwner(booking).memberId !== null &&
+    (await requiresPaidSubscriptionForMemberForBooking(prisma, {
+      memberId: bookingOwner(booking).memberId as string,
       seasonYear,
-      ageTier: bookingOwner(booking).member.ageTier,
-    })
+      ageTier: bookingOwner(booking).member.ageTier ?? "NOT_APPLICABLE",
+    }))
   ) {
     const paidSub = await prisma.memberSubscription.findFirst({
-      where: { memberId: bookingOwner(booking).memberId, seasonYear, status: "PAID" },
+      where: {
+        memberId: bookingOwner(booking).memberId as string,
+        seasonYear,
+        status: "PAID",
+      },
     });
     if (!paidSub) {
       const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
