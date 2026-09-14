@@ -299,8 +299,12 @@ describe("#3366: the organisation records exist and are reachable", () => {
     }
   });
 
-  it("leaves Booking.memberId REQUIRED — making it optional is stage 4 (#3369)", () => {
-    expect(declaredType("Booking", "memberId")).toBe("String");
+  it("makes Booking.memberId OPTIONAL — stage 4 (#3369) is where that happened", () => {
+    // Stage 1 asserted the opposite, and said in as many words which stage
+    // would change it. This is that stage, so the assertion is inverted rather
+    // than deleted: what it guards is that the column's optionality is a
+    // decision somebody took, not something that drifted.
+    expect(declaredType("Booking", "memberId")).toBe("String?");
   });
 });
 
@@ -351,6 +355,34 @@ describe("#3366: no existing query changes its result", () => {
 
 
 /**
+ * THE READERS, AND WHAT STAGE 4 (#3369) DID TO THIS CENSUS.
+ *
+ * Read the stage-2 note below first; it explains why an exact allowlist existed
+ * at all. Stage 4 is the arrival it anticipated — "an unplanned reader arriving
+ * in stage 3's sweep, or in an unrelated lane, still fails here and still has to
+ * be argued for". This is the argument.
+ *
+ * **A booking's owner cannot be read without the organisation.** `bookingOwner()`
+ * projects a school into person shape, and it can only do that from a school it
+ * was given — so every query that renders an owner selects
+ * `organisation: { select: { name, email } }` beside its `member`. That is not a
+ * reader of the organisation in the sense this census was built to police; it is
+ * the accessor's INPUT, and it arrives in a hundred files by design.
+ *
+ * So the rule is narrowed rather than abandoned, and it keeps its teeth exactly
+ * where they were sharp:
+ *
+ * - **The plain owner SELECTION is exempt** — `organisation: { select: { name:
+ *   true, email: true } }` and the type-position spelling of the same thing.
+ *   It decides nothing; `INV-SSOT-005`'s own census is what keeps those reads
+ *   going through the accessor.
+ * - **Everything else still has to be declared**: a delegate reach for an
+ *   organisation record, the `OrganisationContact` model, the `OrganisationKind`
+ *   enum, a write of `organisationId`, and any select of the organisation that
+ *   asks for more than the owner projection needs. Those are the files that
+ *   DECIDE something about a school, and that set is still small and still
+ *   argued for.
+ *
  * THE READERS, and why this replaced an inertness test rather than deleting it.
  *
  * Stage 1 (#3366) shipped `organisation-record-inert-contract.test.ts`, whose
@@ -373,6 +405,22 @@ describe("#3366: no existing query changes its result", () => {
  * directory it is CI-caught by design.
  */
 const DECLARED_FILES: Record<string, string> = {
+  // ---- added in stage 4 (#3369): the provider identity of a school ------
+  // These DECIDE something about a school rather than merely selecting the
+  // owner projection, which is why they are declared rather than exempt.
+  "src/lib/stripe.ts":
+    "the Stripe customer is keyed on the OWNER, so a school's is keyed on its organisation and is not re-minted per payment",
+  "src/lib/payment-link-intent.ts":
+    "a public payment link names the booking's owner on the customer and the intent",
+  "src/app/api/payments/create-payment-intent/route.ts":
+    "the same, on the signed-in payment path",
+  "src/app/api/payments/create-setup-intent/route.ts":
+    "the same, when a card is saved for later",
+  "src/lib/payment-recovery.ts":
+    "a recovery replay re-resolves the owner's Stripe customer",
+  "src/lib/xero-inbound/invoice-paid-effects.ts":
+    "an Internet Banking over-payment on a school's booking has no member ledger to credit, and names the organisation in the warning that tells an officer to refund it directly",
+
   // ---- carried forward from stage 1, unchanged -------------------------
   "src/lib/member-merge-relations.ts":
     "the required merge classification of OrganisationContact.member (resolve)",
@@ -435,6 +483,37 @@ const DECLARED_FILES: Record<string, string> = {
  * already-fetched row. The last of those is only reachable AFTER one of the
  * caught forms fetched the data.
  */
+/**
+ * The owner projection's own selection, in both the value and the type
+ * spelling, plus the two lines of comment the sweep wrote above it. Stripped
+ * before the census reads a file (#3369) — see the note above for why.
+ */
+const OWNER_PROJECTION = [
+  // The Prisma selection, in the two spellings the sweep wrote: on its own line
+  // and inline beside a `member: true`.
+  /organisation: \{ select: \{ name: true,? email: true,? \} \},?/g,
+  // The same thing declared in a `GetPayload` type argument.
+  /organisation: \{ select: \{ name: true; email: true;? \} \};?/g,
+  // And declared as a plain TypeScript field by a caller that wrote its own
+  // row shape rather than deriving one.
+  /organisation: \{ name: string; email: string \| null \}(?: \| null)?;?/g,
+  // The sweep's own marker comment above any of them, in both the one-line and
+  // two-line spellings it was written in.
+  new RegExp(
+    "//\s#3369: the owner may be an Organisation[^\n]*\n\s*//[^\n]*\n",
+    "g",
+  ),
+  new RegExp("//\s#3369: the owner may be an Organisation[^\n]*\n", "g"),
+];
+
+/** What the census actually reads: the file with the owner projection removed. */
+function withoutOwnerProjection(code: string): string {
+  return OWNER_PROJECTION.reduce(
+    (text, pattern) => text.replace(pattern, ""),
+    code,
+  );
+}
+
 const NEW_IDENTIFIERS: readonly { label: string; pattern: RegExp }[] = [
   { label: "the organisationId column", pattern: /organisationId/ },
   {
@@ -456,7 +535,9 @@ const NEW_IDENTIFIERS: readonly { label: string; pattern: RegExp }[] = [
 describe("#3367: the organisation link is read by EXACTLY the declared files", () => {
   const scanned = sourceFiles().map((file) => ({
     path: relativeSource(file),
-    code: readFileSync(file, "utf8"),
+    // #3369: with the owner projection stripped. Selecting it is the accessor's
+    // input, not a decision about a school — see the note above `DECLARED_FILES`.
+    code: withoutOwnerProjection(readFileSync(file, "utf8")),
   }));
 
   it("scans a meaningful number of source files", () => {
@@ -474,12 +555,13 @@ describe("#3367: the organisation link is read by EXACTLY the declared files", (
 
       expect(
         hits,
-        "A file outside the declared set reads or writes the organisation " +
-          "link. Stage 2 (#3367) deliberately keeps the reader set small and " +
-          "argued-for: the one-home accessor that replaces the 510 direct " +
-          "member reads is stage 3 (#3368), and making the member link " +
-          "optional is stage 4 (#3369). If this file really must name it, add " +
-          "it to DECLARED_FILES with the role it plays.",
+        "A file outside the declared set DECIDES something about a school. " +
+          "Selecting the owner projection beside a member is exempt (#3369) " +
+          "because `bookingOwner()` cannot work without it; anything else — a " +
+          "delegate reach, the contact model, the kind enum, a write of the " +
+          "link, or a wider select — is a reader somebody has to argue for. " +
+          "If this file really must name it, add it to DECLARED_FILES with " +
+          "the role it plays.",
       ).toEqual([]);
     });
   }
@@ -555,20 +637,23 @@ describe("#3367: each declared reader still plays its declared part", () => {
   it("approval resolves the school and links it from the booking and the request", () => {
     const source = read("src/lib/school-booking-request.ts");
     expect(source).toContain("resolveOrCreateSchoolOrganisation(tx, {");
-    // SEVEN sites, and the count is the point: a school approval that took the
+    // NINE sites, and the count is the point: a school approval that took the
     // held-conversion branch and silently lost its organisation would be
     // invisible without it. Measured on the tree — the fresh-create booking,
     // the held-conversion booking update, the teacher association's `where` and
-    // its `create`, the converted booking request, and — added in #3367's fix
-    // round — the teacher RECONCILE and the audit row that records a removal.
-    // A number that moves means a site was added or lost, and either way
-    // somebody has to look.
+    // its `create`, the converted booking request, the teacher RECONCILE and
+    // the audit row that records a removal, and — added by #3369 — both halves
+    // of the MAPPED CONTACT's own association, which is where an officer's
+    // "this person is who we deal with at that school" now lives instead of on
+    // the booking's owner. A number that moves means a site was added or lost,
+    // and either way somebody has to look.
     expect(
       [...source.matchAll(/organisationId: organisation\.id/g)].length,
       "the fresh booking, the held conversion, both halves of the teacher " +
-        "association, the booking request, the teacher reconcile and its " +
-        "audit row must all carry the school",
-    ).toBe(7);
+        "association, the booking request, the teacher reconcile, its audit " +
+        "row and both halves of the mapped contact's association must all " +
+        "carry the school",
+    ).toBe(9);
     // The reconcile is not optional: appending teacher rows without removing
     // the ones no longer named is what froze a school's Xero contact on people
     // who had left.
@@ -617,13 +702,15 @@ describe("#3367: each declared reader still plays its declared part", () => {
     expect(body.length, "its body must be bounded, not empty").toBeGreaterThan(150);
     expect(body).toContain("booking.organisationId");
     expect(body).toContain("findOrCreateXeroContactForOrganisation(");
-    // The fallback is today's behaviour to the letter, so a booking with no
-    // organisation is unchanged. Since stage 3 (#3368) the member id it passes
-    // is read through the one-home accessor, which is the identity on this
-    // column while it is still required — the same id, resolved the same way.
-    expect(body).toContain(
-      "findOrCreateXeroContact(bookingOwner(booking).memberId",
-    );
+    // The member arm is today's behaviour to the letter, so a booking with no
+    // organisation is unchanged. Since #3369 the member id is read through the
+    // one-home accessor into a local, because past the organisation branch a
+    // member is GUARANTEED — `Booking_owner_exactly_one` makes a booking with
+    // neither unrepresentable — and the resolver says so out loud rather than
+    // falling back to whoever a contact search happens to return.
+    expect(body).toContain("const memberId = bookingOwner(booking).memberId;");
+    expect(body).toContain("throw new BookingOwnerMissingError()");
+    expect(body).toContain("findOrCreateXeroContact(memberId, options)");
   });
 
   it("repairs a stale contact reference against the INVOICED party", () => {
