@@ -11,8 +11,20 @@ are untouched and still accurate) and its reasoning is restated at the end of
 this one. Nothing is withdrawn.
 
 file: src/app/(admin)/admin/fees/_components/hut-fees-section.tsx
-lines: 1249
-reason: 106 lines against the branch this work started from, and the gate reads
+lines: 1266
+reason: RE-MEASURED by #2934, which added seventeen lines here and is why the
+  figure is 1266 rather than the 1249 this entry recorded. Those seventeen are
+  the accessibility half of the same #2938 work: the section card is the element
+  Edit and "New season from this" move focus to, so it is now a named region
+  (`role="region"`, `aria-labelledby` on its own visible title, a declarative
+  `tabIndex`) instead of an unnamed card that announces "group" to whoever lands
+  on it, and the two handlers call the shared REVEAL primitive rather than the
+  success one they had been mis-routed through. None of it can move: the region
+  is this card, and the name has to come from this card's title. The number is
+  re-measured in this entry rather than declared in a second fragment, because
+  two live entries for one path is refused by the gate and is an unusable input
+  rather than a redundant one. The original reasoning stands:
+  106 lines against the branch this work started from, and the gate reads
   a bigger figure than that because it measures against `origin/main` while this
   pull request opens into `epic/2725-mad`. Of the 276 lines between 973 and
   1249, 170 are #2933's growth, already declared and already merged into the

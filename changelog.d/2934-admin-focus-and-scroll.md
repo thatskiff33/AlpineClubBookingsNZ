@@ -10,9 +10,22 @@
   focus, and admins who have asked their device for reduced motion get an
   instant jump instead of a smooth scroll.
 
+  Where the result is a CARD rather than a whole page — the lodge-capacity
+  card, for one, which sits well below its heading — you are taken to the card
+  itself instead of to the top of the page, so the confirmation and the focus
+  ring are in the same place.
+
   Keyboard and screen-reader users get a real focus target in each case rather
-  than a mouse-only scroll. Covered: the fees console's Edit buttons and
-  per-fee pencils, the family-groups editor, the allocation-preferences card,
-  the membership-cancellations, roster, booking-exception, member-fields,
-  modules, membership-types, lodge-capacity and Xero mappings screens, and the
-  Xero setup's "go to section" links.
+  than a mouse-only scroll, and each of those targets now announces what it is
+  ("Hut fees", "Joining fees", "Allocation preferences", the Xero section you
+  asked for) instead of an unnamed box. Covered: the fees console's Edit
+  buttons, per-fee pencils and season Edit/Copy, the family-groups editor, the
+  allocation-preferences card, the committee screen, and the
+  membership-cancellations, roster, booking-exception, member-fields, modules,
+  membership-types, lodge-capacity and Xero mappings screens, plus the Xero
+  setup's "go to section" links.
+
+  One smaller correction rides along: an error message that centres itself was
+  landing a little below the centre, because it was being given the clearance
+  meant for messages that tuck under the sticky header. That affected every
+  screen with a centred error box, members' as well as admins'.

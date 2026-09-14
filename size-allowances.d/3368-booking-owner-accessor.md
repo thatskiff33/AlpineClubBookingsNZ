@@ -31,8 +31,8 @@ lines: 907
 reason: one line: the `bookingOwner` import this route page shell needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/(admin)/admin/xero/_components/health-diagnostics-panel.tsx
-lines: 727
-reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
+lines: 728
+reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out. RE-MEASURED by #2934, which added a second one-line import for the same reason in the same file: `xeroSectionId`, so the id this panel writes onto its section cards and the id `use-xero-connection.ts` reads back to reveal them are one string rather than two (`INV-SSOT-001`). The number is re-measured here rather than declared in a second fragment, because two live entries for one path is refused by the gate and is an unusable input rather than a redundant one.
 
 file: src/app/api/admin/bookings/[id]/exclusive-hold/route.ts
 lines: 423
