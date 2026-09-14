@@ -780,7 +780,7 @@ export async function approveSchoolBookingRequest(input: {
     memberGuestNotificationRows: MemberGuestAddNotificationRow[];
     displacedMemberGuestIds: string[];
     ownerSubstitution:
-      | { invalidMemberId: string; substituteMemberId: string; reason: string }
+      | { invalidMemberId: string | null; substituteMemberId: string; reason: string }
       | null;
     alreadyConverted: boolean;
   };

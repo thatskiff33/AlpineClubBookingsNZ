@@ -334,12 +334,16 @@ export function describeTerminalSavedCardChargeFailure(
 /** The booking fields the terminal escalation reads — ids and dates, no more. */
 export interface TerminalSavedCardChargeBooking {
   id: string;
-  memberId: string;
+  /** The booking OWNER, null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   lodgeId: string | null;
   checkIn: Date;
   checkOut: Date;
   finalPriceCents: number;
-  member: { email: string; firstName: string; lastName: string };
+  /** Null for an organisation-owned booking; read through `bookingOwner()`. */
+  member: { email: string; firstName: string; lastName: string } | null;
+  /** #3369: the owner may be an Organisation; `bookingOwner()` reads both. */
+  organisation: { name: string; email: string | null } | null;
 }
 
 /**

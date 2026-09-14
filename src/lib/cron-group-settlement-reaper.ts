@@ -355,7 +355,13 @@ type ReleasedChild = {
   // The child's own lodge: the freed beds are at this lodge, so its waitlist
   // queue (not the default lodge's) is the one to re-process (multi-lodge).
   lodgeId: string;
-  memberId: string;
+  /**
+   * The released child's OWNER. A group settlement is a member's, and a joiner
+   * books under their own membership, so this is never null in practice —
+   * `bookingOwner().member.id` is `undefined` only for an organisation, which
+   * cannot join a group booking (#3369).
+   */
+  memberId: string | undefined;
   memberEmail: string;
   memberFirstName: string;
 };
