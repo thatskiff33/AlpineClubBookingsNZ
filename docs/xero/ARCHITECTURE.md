@@ -1005,6 +1005,25 @@ callers — per-booking invoices and `xero-group-settlement-invoices` — are no
 scanned. The entrance-fee and supplementary builders emit single `quantity: 1`
 exact-cent lines and cannot drift, so they are out of scope by construction.
 
+### Stored promotion build-up on a booking invoice (#3277)
+
+The per-booking invoice keeps its established line shape: gross stored
+guest/night lines from `buildInvoiceLineItems`, followed by one booking-level
+signed promotion line. Before a non-zero promotion line is sent, the create path
+loads the canonical recorded build-up and verifies its aggregate against
+`Booking.promoAdjustmentCents`. A byte-identical recorded aggregate is sourced
+as `STORED`; missing history or a disagreement uses the existing headline under
+an explicit compatibility fallback, so the invoice amount does not change. The
+source, reason, stored cents and current cents are recorded in the existing
+`XeroSyncOperation.requestPayload`; no provider call is moved into a database
+transaction.
+
+This verification is deliberately booking-wide. Inexact provenance on one
+night does not prevent a reconciling aggregate promotion line from being
+verified. It also does not change group-settlement invoice totals or introduce
+the child promotion line that path already omits; those are separate accounting
+shape decisions, not compatibility fallbacks.
+
 ## OAuth and token lifecycle (supporting flow)
 
 1. Admin hits `/api/admin/xero/connect` → consent URL with a signed state
