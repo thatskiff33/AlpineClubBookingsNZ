@@ -811,7 +811,7 @@ says which governs when:
    is not documented as having and which is deliberately removed from the runtime
    image. Pass all pending migration files, in order — `20260803010000`,
    `20260803020000`, `20260803030000`, `20260803070000`, `20260806000000`,
-   `20260806010000`, and for programme #2912 `20260920010000`, `20260923030000`
+   `20260806010000`, and for programme #2912 `20260923020000`, `20260923030000`
    and `20260923040000` — including the additive rows; exact commands are in
    `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 9 and, for the school pair,
    §2.4.2.
