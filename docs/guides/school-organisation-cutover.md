@@ -126,10 +126,11 @@ bookings are not touched.
 A row telling two stories about itself is a question, not a tie-break.
 
 **A candidate row must own a booking**, so a school-shaped row that has never
-booked is never classified — and the merge refusal that stops a school being
-merged into a person keys on the classification table. A school-shaped row with
-no bookings is therefore outside everything on this page, including that
-refusal. It is also outside the migration, which has no ownership to move for it.
+booked is never classified and is outside this page and outside the migration —
+there is no ownership to move for it. It is NOT outside the rule that stops a
+school being merged into a person: that rule reads the classification where
+there is one and falls back to the row's shape where there is not, so it still
+refuses. See "What this does not change" at the foot of this page.
 
 If you would rather see the numbers yourself, `-- --sql` prints the exact query so
 you can run it against a read-only replica:
@@ -390,10 +391,15 @@ SQL
 - **A school-shaped row that never booked is untouched, and stays unclassified.**
   The census only asks about rows that own a booking, so the classification table
   covers exactly those. The rule that stops a school being merged into a person
-  reads that table, so it holds over the classified rows and not over a
-  school-shaped row with no bookings. Nothing about that is new — such a row was
-  mergeable before this release too — but it is worth knowing that this release
-  does not close it.
+  reads that table **and** falls back to the row's shape — the school's name, a
+  blank surname, marked as a school contact, no login — so it still refuses a
+  row nobody has decided about, including one the school approval mints after
+  the cutover. If such a row really is a person, record that decision and the
+  merge then proceeds:
+
+  ```bash
+  docker compose --profile migrate run --rm migrate     npm run db:school-classification-census --     --classify <memberId> --as PERSON     --by "<your name>" --because "<what you checked>"
+  ```
 
 ## Related
 

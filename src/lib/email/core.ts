@@ -61,6 +61,18 @@ export type EmailSendOutcome =
       emailLogId: null;
       reason: string;
     }
+  // NO RECIPIENT AT ALL (#3369). An organisation with no recorded address
+  // presents itself with an empty `email`, because "no address" is the truth and
+  // an invented one is not — see `bookingOwner()` — and fifty-two booking send
+  // sites read that field straight through without asking whether there is
+  // anything there. One gate here beats fifty-two guards: nothing is queued,
+  // nothing is handed to the provider, and the skip is recorded rather than
+  // arriving as a provider rejection nobody attributes.
+  | {
+      status: "skipped_no_recipient";
+      emailLogId: null;
+      reason: string;
+    }
   // #2258 (owner decision D10): the booking this message belongs to carries the
   // per-booking "No emails" switch, so nothing was transmitted. `reason`
   // separates the deliberate case from the fail-closed one:
@@ -293,6 +305,27 @@ export async function sendEmail({
   );
   const plainTextBody = text || htmlToPlainText(prepared.html);
   const normalizedRecipient = normalizeEmailAddress(to);
+
+  // NOTHING TO SEND TO (#3369). Checked before the placeholder gate because it
+  // is the cheaper and more fundamental question, and because an empty string
+  // is not a placeholder address — it is the absence of one. An organisation
+  // with no recorded address answers `""` for its email by design, and the
+  // booking send sites read that field directly; without this they would create
+  // an EmailLog row and hand an empty recipient to the provider, which rejects
+  // it as a delivery failure and hides the real cause. Skipped rather than
+  // thrown: almost every booking send is an un-awaited `.catch(log)`, so a throw
+  // here would be swallowed exactly where the outcome needs to be visible.
+  if (normalizedRecipient === "") {
+    logger.warn(
+      { templateName, bookingContext },
+      "Skipped email with no recipient address: the party this message is for has none recorded (#3369)",
+    );
+    return {
+      status: "skipped_no_recipient",
+      emailLogId: null,
+      reason: "no_recipient",
+    };
+  }
 
   // Walk-in placeholder owners (#1935) have a club-internal, undeliverable
   // `.invalid` address stored so `Member.email` stays non-nullable. No message

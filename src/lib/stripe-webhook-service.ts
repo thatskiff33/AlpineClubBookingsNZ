@@ -1,4 +1,4 @@
-import { bookingOwner } from "@/lib/booking-owner";
+import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { listRefundsForCharge, processRefund } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
@@ -1024,11 +1024,14 @@ async function handleSetupIntentFailed(
     },
   });
 
-  if (booking && bookingOwner(booking).member?.email) {
+  // #3369: ONE home for "is there an address to send to?" — see
+  // `bookingOwnerEmail()`.
+  const ownerEmail = booking ? bookingOwnerEmail(booking) : null;
+  if (booking && ownerEmail) {
     sendSetupIntentFailedEmail({
       bookingId: booking.id,
       recipientMemberId: bookingOwner(booking).memberId,
-      email: bookingOwner(booking).member.email,
+      email: ownerEmail,
       firstName: bookingOwner(booking).member.firstName,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,

@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import {
   AccessRole,
+  Role,
   SchoolMemberClassificationKind,
   type Member,
   type Prisma,
@@ -649,33 +650,76 @@ export async function evaluateMemberMergeGuards(params: {
   // either direction — would put a school's past under a person's name and
   // re-create the school-as-person model this whole programme exists to end.
   //
-  // The test is the RECORDED classification, not a guess from the shape of the
-  // row: `SchoolMemberClassification` is what an officer or the census decided,
-  // with its evidence, so the refusal can say which decision it is acting on.
-  // A row classified PERSON is a real teacher and merges exactly as anyone else
-  // does; that is the common case and it is deliberately not blocked.
+  // TWO TESTS, AND THE SECOND IS WHY THIS COVERS THE CLASS RATHER THAN A
+  // POPULATION.
+  //
+  // The first is the RECORDED classification: `SchoolMemberClassification` is
+  // what an officer or the census decided, with its evidence, so the refusal can
+  // say which decision it is acting on. A row classified PERSON is a real
+  // teacher and merges exactly as anyone else does — the common case, and
+  // deliberately not blocked.
+  //
+  // On its own that would have covered only the rows the cutover census reached.
+  // The census asks about members that OWN A BOOKING, and the school approval's
+  // hold-recovery path still mints a school-shaped contact — the school's name,
+  // a blank surname, `role: SCHOOL`, no login — AFTER the census has run. Such a
+  // row is never classified, so a guard reading the table alone would let a
+  // school minted last week merge into a person with no blocker at all.
+  //
+  // So the second test is the SHAPE, and using a shape here is sound where using
+  // one to CLASSIFY would not be. The classification module refuses to call a
+  // blank surname plus no login a proof — quite right, because it is deciding
+  // what a row IS. This is deciding whether to REFUSE, and the shape is exactly
+  // the "cannot tell" the census hands to a person: an unclassified row that
+  // looks like a school is a question, and a merge is not the place to answer
+  // one. An officer who knows it is a teacher records that with
+  // `npm run db:school-classification-census -- --classify <id> --as PERSON`,
+  // which takes any member id, and the merge then proceeds.
   //
   // If a school really has been recorded twice, the two `Organisation` records
   // are what an officer merges — a decision about the school, taken where the
   // school lives.
-  const organisationRows = await db.schoolMemberClassification.findMany({
-    where: {
-      memberId: { in: [masterId, loserId] },
-      classification: SchoolMemberClassificationKind.ORGANISATION,
-    },
-    select: { memberId: true },
+  const classified = await db.schoolMemberClassification.findMany({
+    where: { memberId: { in: [masterId, loserId] } },
+    select: { memberId: true, classification: true },
   });
-  if (organisationRows.length > 0) {
-    const sides = organisationRows.map((row) =>
-      row.memberId === masterId ? "master" : "duplicate",
+  const classifiedById = new Map(
+    classified.map((row) => [row.memberId, row.classification]),
+  );
+  const schoolShaped = await db.member.findMany({
+    where: {
+      id: { in: [masterId, loserId] },
+      role: Role.SCHOOL,
+      lastName: "",
+      canLogin: false,
+    },
+    select: { id: true },
+  });
+  const schoolShapedIds = new Set(schoolShaped.map((row) => row.id));
+
+  const organisationSides = [masterId, loserId].filter((id) => {
+    const recorded = classifiedById.get(id);
+    if (recorded === SchoolMemberClassificationKind.ORGANISATION) return true;
+    // A recorded PERSON outranks the shape: that is somebody's decision, made
+    // with evidence this function cannot see.
+    if (recorded === SchoolMemberClassificationKind.PERSON) return false;
+    return schoolShapedIds.has(id);
+  });
+  if (organisationSides.length > 0) {
+    const sides = organisationSides.map((id) =>
+      id === masterId ? "master" : "duplicate",
     );
+    const undecided = organisationSides.some((id) => !classifiedById.has(id));
+    const howToProceed = undecided
+      ? " If it is really a person, record that decision first: npm run db:school-classification-census -- --classify <memberId> --as PERSON --by \"<you>\" --because \"<what you checked>\"."
+      : "";
     blockers.push({
       code: "organisation_row",
       label:
         sides.length === 2
-          ? "Both records are schools, not people. Merge the two organisation records instead."
-          : `The ${sides[0]} record is a school, not a person, and cannot be merged with one. If two records exist for the same school, merge the organisations instead.`,
-      count: organisationRows.length,
+          ? `Both records are schools, not people. Merge the two organisation records instead.${howToProceed}`
+          : `The ${sides[0]} record is a school, not a person, and cannot be merged with one. If two records exist for the same school, merge the organisations instead.${howToProceed}`,
+      count: organisationSides.length,
     });
   }
 

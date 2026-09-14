@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { bookingOwner } from "@/lib/booking-owner";
+import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { bookingOwnerEmailContext } from "@/lib/booking-email-contract";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
@@ -1077,7 +1077,10 @@ async function notifyMemberGuestConsentOutcome(params: {
                   ),
                 };
 
-    if (bookingOwner(booking).member?.email) {
+    // #3369: ONE home for "is there an address to send to?" — see
+    // `bookingOwnerEmail()`.
+    const ownerEmail = bookingOwnerEmail(booking);
+    if (ownerEmail) {
       try {
         await sendMemberGuestConsentOutcomeEmail({
           // #3369: a school has no member to name, and the recipient kind that
@@ -1086,7 +1089,7 @@ async function notifyMemberGuestConsentOutcome(params: {
             bookingId,
             bookingOwner(booking).member.id ?? null,
           ),
-          email: bookingOwner(booking).member.email,
+          email: ownerEmail,
           firstName: bookingOwner(booking).member.firstName ?? "",
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,

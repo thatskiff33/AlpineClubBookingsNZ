@@ -476,18 +476,18 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
-  // Every one traced to its query. All nine load the organisation, so each
-  // chain guards the named-but-unreadable member rather than a missing
-  // projection. The tenth — `roster-eligibility.ts:93` — did not, and is fixed
-  // rather than listed.
-  "src/lib/booking-exception-approval.ts:625",
+  // Ten were traced. One — `roster-eligibility.ts` — really had the missing
+  // projection and is fixed. Four were the same question spelled by hand,
+  // "is there an address to send to?", and now ask `bookingOwnerEmail()`,
+  // which is where that chain belongs. These five remain, each loading the
+  // organisation and each guarding the named-but-unreadable member: the owner's
+  // age tier as a predicate input, the booker's display NAME, two durable
+  // records that store the owner's member id (null for a school), and one
+  // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1434",
-  "src/lib/manual-booking-payment.ts:261",
-  "src/lib/member-guest-consent-service.ts:1080",
-  "src/lib/member-guest-consent-service.ts:1153",
+  "src/lib/member-guest-consent-service.ts:1156",
   "src/lib/payment-recovery.ts:2497",
   "src/lib/payment-recovery.ts:2548",
-  "src/lib/stripe-webhook-service.ts:1027",
   "src/lib/xero-admin-health.ts:309",
 ];
 

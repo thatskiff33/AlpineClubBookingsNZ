@@ -1,5 +1,5 @@
 import type { AgeTier, BookingStatus } from "@prisma/client";
-import { bookingOwner } from "@/lib/booking-owner";
+import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import type { CalendarDate } from "@/lib/club-time";
 
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
@@ -622,7 +622,12 @@ export function buildPolicyExceptionApprovalHooks(
           payment: { select: { status: true } },
         },
       });
-      if (!booking || !bookingOwner(booking).member?.email) return;
+      // #3369: ONE home for "is there an address to send to?".
+      // `bookingOwnerEmail()` turns the organisation projection's honest `""`
+      // into an explicit null, and carries the named-but-unreadable-member case
+      // the hand-written chain here used to spell for itself.
+      const ownerEmail = booking ? bookingOwnerEmail(booking) : null;
+      if (!booking || !ownerEmail) return;
       // What is still owed: the whole price unless the create already settled it
       // ($0 / fully credit-covered bookings reach PAID or CONFIRMED and send
       // their own confirmation).
@@ -637,7 +642,7 @@ export function buildPolicyExceptionApprovalHooks(
           // the id only when there is a member to have one.
           recipientMemberId: bookingOwner(booking).member.id ?? null,
         },
-        bookingOwner(booking).member.email,
+        ownerEmail,
         {
           firstName: bookingOwner(booking).member.firstName,
           checkIn: booking.checkIn,
