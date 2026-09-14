@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { ArrowDown, ArrowUp, GripVertical } from "lucide-react";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { PolicyFeedback } from "@/components/admin/booking-policies/policy-feedback";
+import { LODGE_OPTIONS_RETRY_LABEL } from "@/components/admin/lodge-options-status";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +29,10 @@ import {
   type BedAllocationSettingsWriteBody,
   type EffectiveBedAllocationSettings,
 } from "@/lib/bed-allocation-settings";
-import type { SettledLodgeOptionScope } from "@/lib/lodge-option-scope";
+import type {
+  LodgeOptionScopeOnLodge,
+  SettledLodgeOptionScope,
+} from "@/lib/lodge-option-scope";
 
 /**
  * The editable half of the settings payload, DERIVED from the server's own type
@@ -79,15 +83,6 @@ type AllocationPreferencesDraft = Pick<
  * own 404, set only past the permission guard — and this screen reads the name.
  * A 404 without it is the other cause, and is worded as such.
  */
-/**
- * Where the allocation preferences editor lives (#2937).
- *
- * Named beside the editor rather than spelled out at each signpost, so a later
- * move re-points every link that sends an officer here. The Bed Allocation
- * board is the first such signpost; it is unlikely to be the last.
- */
-export const ALLOCATION_PREFERENCES_HREF = "/admin/rooms-beds";
-
 export const ALLOCATION_PREFERENCES_MODULE_OFF_REASON =
   "Bed allocation is switched off for this club, so allocation preferences cannot be loaded or saved. Someone who can manage Feature modules can turn it on.";
 
@@ -215,26 +210,24 @@ const LABELS: Record<BedAllocationPriority, string> = {
 };
 
 interface AllocationPreferencesSectionProps {
-  lodgeId: string;
+  /**
+   * A scope that has SETTLED on one lodge — the only state this editor accepts.
+   *
+   * The narrowed variant of the shared type rather than a bare `lodgeId`, so
+   * "only a settled lodge is a write target" is a fact about the props and not
+   * a rule a host has to remember. {@link AllocationPreferencesPanel} is what
+   * produces one, by discriminating the scope it was handed.
+   */
+  scope: LodgeOptionScopeOnLodge;
   canEdit: boolean | undefined;
-  onSaved?: (settings: AllocationPreferencesDraft) => Promise<void> | void;
 }
 
 export function AllocationPreferencesSection({
-  lodgeId,
+  scope,
   canEdit,
-  onSaved,
 }: AllocationPreferencesSectionProps) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    // React StrictMode rehearses setup -> cleanup -> setup. Re-arm the guard in
-    // setup so the real mounted instance still refreshes its parent after Save.
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const lodgeId = scope.lodgeId;
   const endpoint = `/api/admin/bed-allocation/settings?lodgeId=${encodeURIComponent(lodgeId)}`;
   const section = useSectionEditState<AllocationPreferencesDraft>({
     load: async (signal) => {
@@ -274,11 +267,7 @@ export function AllocationPreferencesSection({
       }
       const settings = settingsOf(await response.json().catch(() => null));
       if (!settings) throw new Error(UNREADABLE_SAVE_REPLY);
-      const saved = toDraft(draft.lodgeId, settings);
-      // The section is keyed by lodge. A save may finish after a scope change;
-      // never let that stale completion refresh its former parent's board.
-      if (mountedRef.current) await onSaved?.(saved);
-      return saved;
+      return toDraft(draft.lodgeId, settings);
     },
     successMessage: "Allocation preferences saved",
     loadErrorFallback: LOAD_FALLBACK,
@@ -525,7 +514,7 @@ function scopeReason(
     case "forbidden":
       return "Preferences are set per lodge, and your admin role cannot choose one. Ask for lodge access if you need to change them.";
     case "failed":
-      return "The lodge list could not be loaded, so preferences cannot be shown or changed. Use Try again above.";
+      return `The lodge list could not be loaded, so preferences cannot be shown or changed. Use ${LODGE_OPTIONS_RETRY_LABEL} above.`;
     case "empty":
       return "This club has no active lodge, so there are no preferences to show.";
     case "loading":
@@ -552,9 +541,17 @@ function scopeReason(
  * (`empty` is the sixth state of the shared type — a club with no active lodge
  * — and is handled beside them rather than left to fall through.)
  *
- * A host cannot mis-mount this: the editor is unreachable except out of a
- * `lodge` scope, so no caller can hand it a lodge that a scope state did not
- * settle on, and the per-lodge `key` lives here rather than at each call site.
+ * The editor cannot be handed a lodge that no scope settled on: it takes the
+ * narrowed {@link LodgeOptionScopeOnLodge} — the `lodge` variant of the shared
+ * type —
+ * rather than a bare lodge id, so the only way to reach it is to discriminate a
+ * real scope, which is what this function does. The per-lodge `key` lives here
+ * too, rather than at each call site.
+ *
+ * That is a guarantee about the SHAPE, not about the mounting. The editor is
+ * still exported, because its own suites drive it directly; mounting it through
+ * this panel is a convention, and the reason to keep it is that this is where
+ * the five non-`lodge` states are answered.
  *
  * Rooms & Beds, its only host today, does not offer a club-wide view of its
  * inventory, so `all` is defensive there rather than reachable. It is still
@@ -566,19 +563,16 @@ function scopeReason(
 export function AllocationPreferencesPanel({
   scope,
   canEdit,
-  onSaved,
 }: {
   scope: SettledLodgeOptionScope;
   canEdit: boolean | undefined;
-  onSaved?: (settings: AllocationPreferencesDraft) => Promise<void> | void;
 }) {
   if (scope.kind === "lodge") {
     return (
       <AllocationPreferencesSection
         key={scope.lodgeId}
-        lodgeId={scope.lodgeId}
+        scope={scope}
         canEdit={canEdit}
-        onSaved={onSaved}
       />
     );
   }

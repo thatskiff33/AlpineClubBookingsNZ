@@ -12,7 +12,10 @@ import {
   AllocationPreferencesPanel,
   AllocationPreferencesSection,
 } from "../allocation-preferences-section";
-import type { SettledLodgeOptionScope } from "@/lib/lodge-option-scope";
+import type {
+  LodgeOptionScopeOnLodge,
+  SettledLodgeOptionScope,
+} from "@/lib/lodge-option-scope";
 
 /*
   #2937 — the binding contract's lodge-scope states, proved against the ONE
@@ -25,12 +28,12 @@ import type { SettledLodgeOptionScope } from "@/lib/lodge-option-scope";
   cross into a lodge the officer merely switched to.
 */
 
-const LODGE_ONE: SettledLodgeOptionScope = {
+const LODGE_ONE: LodgeOptionScopeOnLodge = {
   kind: "lodge",
   lodgeId: "lodge-1",
   lodgeName: "Alpine Lodge",
 };
-const LODGE_TWO: SettledLodgeOptionScope = {
+const LODGE_TWO: LodgeOptionScopeOnLodge = {
   kind: "lodge",
   lodgeId: "lodge-2",
   lodgeName: "River Lodge",
@@ -220,7 +223,7 @@ describe("AllocationPreferencesPanel lodge scope", () => {
   it("writes a stale draft to the lodge it was loaded from, never to a newly named one", async () => {
     /*
       The second, independent defence — the one that survives a caller dropping
-      the `key`. This renders the EDITOR directly and changes its `lodgeId` prop
+      the `key`. This renders the EDITOR directly and swaps the settled scope
       underneath it, which is exactly what a host that forgot to key by lodge
       would do. The draft carries its own lodge, so the save cannot reach
       lodge-2; against a render-time write target it would.
@@ -228,7 +231,7 @@ describe("AllocationPreferencesPanel lodge scope", () => {
     const fetchMock = scopedFetch();
     vi.stubGlobal("fetch", fetchMock);
     const view = render(
-      <AllocationPreferencesSection lodgeId="lodge-1" canEdit />,
+      <AllocationPreferencesSection scope={LODGE_ONE} canEdit />,
     );
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy(),
@@ -240,7 +243,7 @@ describe("AllocationPreferencesPanel lodge scope", () => {
       }),
     );
 
-    view.rerender(<AllocationPreferencesSection lodgeId="lodge-2" canEdit />);
+    view.rerender(<AllocationPreferencesSection scope={LODGE_TWO} canEdit />);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(putCalls(fetchMock)).toHaveLength(1));

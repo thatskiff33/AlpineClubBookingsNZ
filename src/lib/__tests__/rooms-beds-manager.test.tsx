@@ -22,14 +22,26 @@ vi.mock("sonner", () => ({
 vi.mock("@/components/confirm-dialog", () => ({
   useConfirm: () => ({ confirm: mockConfirm, confirmDialog: null }),
 }));
-vi.mock("@/components/lodge-select", () => ({
-  useLodgeOptions: () => ({
+/*
+  The lodge-list state this manager derives its scope from. Mutable and reset
+  after every test, so a case can put the page into a scope that never settles
+  (#2937) without a second mock of the same module.
+*/
+const { lodgeOptions, DEFAULT_LODGE_OPTIONS } = vi.hoisted(() => {
+  const DEFAULT_LODGE_OPTIONS = {
     lodges: [{ id: "lodge-1", name: "Lodge One" }],
     loading: false,
     failed: false,
     forbidden: false,
-    reload: vi.fn(),
-  }),
+  };
+  return {
+    DEFAULT_LODGE_OPTIONS,
+    lodgeOptions: { current: { ...DEFAULT_LODGE_OPTIONS } },
+  };
+});
+
+vi.mock("@/components/lodge-select", () => ({
+  useLodgeOptions: () => ({ ...lodgeOptions.current, reload: vi.fn() }),
   LodgeSelect: () => null,
   initialLodgeIdFromLocation: () => "lodge-1",
 }));
@@ -39,9 +51,18 @@ vi.mock("@/components/lodge-select", () => ({
   has its own two suites, and left real it would add a second endpoint to fake
   here and a second permanently-mounted `role="alert"` region to every query in
   this file. The seam records what the manager HANDS it, which is the only part
-  of it that is this file's business.
+  of it that is this file's business. The pair meeting for real — this manager
+  hosting that editor over one fake server — is
+  `rooms-beds-allocation-preferences-integration.test.tsx`.
+
+  PARTIAL mock (`importOriginal`), not a replacement. That module exports the
+  panel plus five copy constants, and a replacement leaves them undefined: the
+  day this manager reads one of them at import time, the whole FILE dies before
+  a single test runs — the `No "X" export is defined on the mock` failure that
+  #2836 exists about, and a local gate cannot see it coming.
 */
-vi.mock("@/components/admin/allocation-preferences-section", () => ({
+vi.mock("@/components/admin/allocation-preferences-section", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/components/admin/allocation-preferences-section")),
   AllocationPreferencesPanel: ({
     scope,
     canEdit,
@@ -94,6 +115,7 @@ function stubFetch(status = 200, body: unknown = ROOMS_PAYLOAD) {
 }
 
 afterEach(() => {
+  lodgeOptions.current = { ...DEFAULT_LODGE_OPTIONS };
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -1068,4 +1090,38 @@ describe("RoomsBedsManager — allocation preferences live here (#2937)", () => 
     const panel = await screen.findByTestId("allocation-preferences-panel");
     expect(panel.getAttribute("data-can-edit")).toBe("false");
   });
+
+  it.each([
+    ["a failed lodge list", { failed: true }, "failed"],
+    ["a club with no active lodge", {}, "empty"],
+    ["a lodge list still loading", { loading: true }, "loading"],
+    ["a role that cannot choose a lodge", { forbidden: true }, "forbidden"],
+  ])(
+    "still mounts the panel for %s, so it can say which state it is in",
+    async (_case, options, expectedScope) => {
+      lodgeOptions.current = {
+        lodges: [],
+        loading: false,
+        failed: false,
+        forbidden: false,
+        ...options,
+      };
+      stubFetch();
+      render(
+        <RoomsBedsManager
+          permissionMatrix={matrix({ lodge: "edit", bookings: "edit" })}
+        />,
+      );
+
+      // The mount point is OUTSIDE this manager's `lodgeScopeReady` gate on
+      // purpose, and until now nothing said so. MUTATION PROBE: wrap
+      // `<AllocationPreferencesPanel>` in `{lodgeScopeReady ? … : null}` — the
+      // tidy the size-allowance fragment predicts a reader will attempt — and
+      // every case here fails, because the card vanishes instead of explaining
+      // itself.
+      const panel = await screen.findByTestId("allocation-preferences-panel");
+      expect(panel.getAttribute("data-scope")).toBe(expectedScope);
+      expect(panel.getAttribute("data-lodge")).toBe("");
+    },
+  );
 });
