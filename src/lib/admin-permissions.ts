@@ -132,16 +132,11 @@ const ADMIN_ROLE_BUNDLES: Partial<
 
 /**
  * Rooms & Beds — the room/bed inventory page, and since #2937 the home of each
- * lodge's allocation preferences.
- *
- * Named here, beside the area registration and the OR rule below, because those
- * two and the Bed Allocation board's signpost link are the places that MUST
- * agree about this path; the board imports it for exactly that reason. The
- * route literal still appears in `src/config/feature-routes.ts` and in the hub
- * cards and contextual-help entries that describe the page, each of which is
- * asserted from disk by its own census (`admin-bed-allocation.test.ts`) and so
- * deliberately stays a literal there. This constant is not a rename button for
- * the whole tree — `git grep "/admin/rooms-beds"` still is.
+ * lodge's allocation preferences. Named here because the area registration, the
+ * OR rule below and the Bed Allocation board's signpost link are the three
+ * places that MUST agree about this path. It is not a rename button for the
+ * tree: the feature-gate list and the hub/help descriptions keep the literal,
+ * each asserted from disk by its own census. `git grep` is still the rename.
  */
 export const ROOMS_BEDS_PATH = "/admin/rooms-beds";
 
@@ -878,26 +873,21 @@ export function canAccessConsolidatedFeesPage(
  * same reason as the fee console: it serves two areas at once.
  *
  * The route is registered under `lodge` because the inventory is lodge-scoped
- * (ADR-005) and that is how a lodge admin reaches it. But EVERYTHING the page
- * renders is bookings-gated: `RoomsBedsManager` shows nothing at all below
- * `bookings: view`, its data comes entirely from `/api/admin/bed-allocation/*`,
- * and those routes enforce the bookings area. So the area the route resolves to
- * and the area its content enforces have never been the same, which the page's
- * own header comment has flagged as a quirk since #1548.
+ * (ADR-005). But EVERYTHING the page renders is bookings-gated:
+ * `RoomsBedsManager` shows nothing at all below `bookings: view`, and its data
+ * comes entirely from `/api/admin/bed-allocation/*`, which enforce the bookings
+ * area. The page's own header comment has flagged that mismatch since #1548.
  *
- * #2937 made that quirk load-bearing by moving the allocation preferences
- * editor here from the Bed Allocation board. On the board the editor needed
- * `bookings: view`; without this rule it would have needed `bookings: view` AND
- * `lodge: view`, and two SEEDED roles — `FINANCE_ADMIN` and `ADMIN_MEMBERSHIP`,
- * both `bookings: view` with `lodge: none` — would have followed the board's
- * new signpost into a silent redirect, with the setting unreachable for them at
- * any level. The issue's contract says the relocation changes no permission;
- * this is what keeps that true.
+ * #2937 made it load-bearing by moving the allocation preferences editor here
+ * from the Bed Allocation board, where it needed `bookings: view` alone.
+ * Without this rule it would need `bookings: view` AND `lodge: view`, and two
+ * SEEDED roles — `FINANCE_ADMIN` and `ADMIN_MEMBERSHIP`, both `bookings: view`
+ * with `lodge: none` — would follow the board's new signpost into a silent
+ * redirect, the setting unreachable for them at any level.
  *
- * It only ever WIDENS: nobody who can open the page today loses it. A
- * bookings-area admin arriving here gets exactly what `/api/admin/bed-allocation`
- * already grants them, and a lodge-only admin keeps the (blank) page the manager
- * has always rendered for them.
+ * It only ever WIDENS. A bookings-area admin gets exactly what
+ * `/api/admin/bed-allocation` already grants them; a lodge-only admin keeps the
+ * (blank) page the manager has always rendered for them.
  */
 export function isRoomsBedsPath(pathname: string): boolean {
   const normalized = normalizePathname(pathname);

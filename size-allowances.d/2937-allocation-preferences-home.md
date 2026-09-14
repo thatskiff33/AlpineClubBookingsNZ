@@ -22,3 +22,24 @@ reason: seventeen lines, of which exactly two are code — the import of
   seam is between the room list, the bed rows and the bulk-create card, which
   is a piece of work in its own right rather than something to attempt while
   adding a card to the foot of the page.
+
+file: src/lib/admin-permissions.ts
+lines: 955
+reason: fifty-five lines registering the third adjudicated admission rule, on
+  the exact shape of the second (`isConsolidatedFeesPath` /
+  `canAccessConsolidatedFeesPage`, #1933). Eight are code — a path constant, a
+  prefix test and a two-term predicate — and the rest is why, which is the part
+  that has to be here. This is an authorization WIDENING: it lets a
+  bookings-area admin open a page the route map registers under `lodge`, and a
+  reviewer reading the diff cannot tell a deliberate OR from a mis-registered
+  prefix without being told which. The comment names the two seeded roles it
+  admits, the reason the page's content has always been bookings-gated while its
+  route is not, and the direction it moves access in.
+  Splitting is the wrong answer for the same reason it was in #1933: this module
+  IS the single home of the admin route -> area map and of every exception to
+  it, and `admin-route-authorization-proof.test.ts` drives the real guard over
+  the real map from here. An exception living in a second module is how the fee
+  console's OR rule came to have two spellings that drifted apart, which #2975
+  fixed by bringing them back to one. The file's own size debt predates this
+  change and its real seam — the bundles and the level algebra, apart from the
+  route map — is a piece of work in its own right.
