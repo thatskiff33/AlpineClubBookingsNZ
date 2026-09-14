@@ -451,7 +451,11 @@ export async function buildDisplayState(
           select: { firstName: true, lastName: true, ageTier: true },
         },
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        organisation: { select: { name: true, email: true } },
+        // #3369: the NAME only. The wall renders who a booking belongs to and
+      // nothing else, and AC7 forbids an email anywhere in this query — the
+      // owner projection's address defaults to empty, which is exactly right
+      // for a surface that must never carry one.
+      organisation: { select: { name: true } },
         guests: {
           // Owner decision D-12 (#2307): the wall describes who is actually at
           // the lodge, so an unconsented member guest is not in this set.
@@ -486,7 +490,11 @@ export async function buildDisplayState(
               },
             },
             // #3369: the owner may be an Organisation; bookingOwner() reads both.
-            organisation: { select: { name: true, email: true } },
+            // #3369: the NAME only. The wall renders who a booking belongs to and
+      // nothing else, and AC7 forbids an email anywhere in this query — the
+      // owner projection's address defaults to empty, which is exactly right
+      // for a surface that must never carry one.
+      organisation: { select: { name: true } },
             nights: { select: { stayDate: true } },
             bedAllocations: {
               where: {
@@ -533,7 +541,11 @@ export async function buildDisplayState(
                   select: { firstName: true, lastName: true, ageTier: true },
                 },
                 // #3369: the owner may be an Organisation; bookingOwner() reads both.
-                organisation: { select: { name: true, email: true } },
+                // #3369: the NAME only. The wall renders who a booking belongs to and
+      // nothing else, and AC7 forbids an email anywhere in this query — the
+      // owner projection's address defaults to empty, which is exactly right
+      // for a surface that must never carry one.
+      organisation: { select: { name: true } },
                 // D-12 (#2307): the chore panel re-derives containsMinors and
                 // the group headcount for its own assignee label, so it has to
                 // read the SAME guest set as the booking rows above or the two
@@ -975,7 +987,11 @@ export async function buildDisplayState(
         select: {
           member: { select: { firstName: true, lastName: true, ageTier: true } },
           // #3369: the owner may be an Organisation; bookingOwner() reads both.
-          organisation: { select: { name: true, email: true } },
+          // #3369: the NAME only. The wall renders who a booking belongs to and
+      // nothing else, and AC7 forbids an email anywhere in this query — the
+      // owner projection's address defaults to empty, which is exactly right
+      // for a surface that must never carry one.
+      organisation: { select: { name: true } },
         },
         orderBy: [{ startDate: "asc" }, { id: "asc" }],
         take: 8,
