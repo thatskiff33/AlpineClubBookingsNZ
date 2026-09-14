@@ -30,10 +30,7 @@ import {
   LODGE_PIN_LOGIN_ENDPOINT,
   LODGE_PIN_SESSION_ENDPOINT,
 } from "@/components/lodge-pin-session";
-import {
-  HUT_LEADER_PIN_LENGTH,
-  sanitiseHutLeaderPin,
-} from "@/lib/hut-leader-pin";
+import { HUT_LEADER_PIN_LENGTH, sanitiseHutLeaderPin } from "@/lib/hut-leader-pin";
 import {
   addDaysToDateKey,
   getWeekStartDateKey,
@@ -1035,9 +1032,7 @@ export default function KioskPage() {
                   pattern="[0-9]*"
                   maxLength={HUT_LEADER_PIN_LENGTH}
                   value={pin}
-                  onChange={(event) =>
-                    setPin(sanitiseHutLeaderPin(event.target.value))
-                  }
+                  onChange={(e) => setPin(sanitiseHutLeaderPin(e.target.value))}
                   className="w-full rounded-xl border border-kiosk-border bg-kiosk-page px-4 py-3 text-lg tracking-[0.35em] text-kiosk-fg outline-none transition-colors focus:border-kiosk-accent"
                   placeholder="123456"
                   autoComplete="one-time-code"
