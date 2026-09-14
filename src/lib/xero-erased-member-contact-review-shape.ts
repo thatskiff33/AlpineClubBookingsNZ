@@ -15,13 +15,17 @@
  * exactly the shape `INV-OPS-013` exists to catch. A leaf cannot put anything
  * on the browser graph whatever a later reader adds to the engine.
  *
- * It imports NOTHING, not even the staleness threshold it is measured against.
+ * It imports ONE type-only leaf — the shared shape of how contact-cache
+ * freshness is reported (#3058, `INV-SSOT`), which two screens restated
+ * independently before — and not the staleness threshold it is measured against.
  * That threshold belongs to the missing-contact census's shape module and the
  * engine reads it from there directly, because this review and that census read
  * the SAME contact cache and must agree on when it is old enough to mislead
  * (`INV-SSOT`). Re-exporting it through here would add a barrel hop that only
  * the dead-code gate would ever notice.
  */
+
+import type { ReportedContactCacheFreshness } from "./xero-contact-cache-freshness-shape";
 
 /**
  * HOW the member was erased. Both are durable, structural records that outlive
@@ -95,7 +99,8 @@ export interface ErasedMemberXeroContactRow {
   contactStatusCheckedAt: string | null;
 }
 
-export interface ErasedMemberXeroContactReview {
+export interface ErasedMemberXeroContactReview
+  extends ReportedContactCacheFreshness {
   /**
    * Rows a treasurer may want to look at: every row whose contact is not
    * already known to be retired in Xero.
@@ -118,8 +123,4 @@ export interface ErasedMemberXeroContactReview {
    * needs to say honestly whether it is looking at old news.
    */
   lastContactStatusCheckAt: string | null;
-  /** When the contact cache was last refreshed, and whether that is old news. */
-  contactCacheLastRefreshedAt: string | null;
-  contactCacheAgeHours: number | null;
-  contactCacheStale: boolean;
 }

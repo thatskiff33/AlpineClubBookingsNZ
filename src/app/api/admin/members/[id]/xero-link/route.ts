@@ -30,6 +30,7 @@ import {
   XeroMemberUnavailableError,
 } from "@/lib/xero-contact-create-recovery";
 import { commitManualXeroContactLink } from "@/lib/xero-manual-contact-link";
+import { findXeroContactHomes } from "@/lib/xero-contact-home";
 
 const linkSchema = z.object({
   xeroContactId: z.string().min(1),
@@ -91,6 +92,54 @@ export async function POST(
   }
 
   try {
+    /*
+      WHO ALREADY HOLDS THIS CONTACT — asked through `INV-INT-018`'s one
+      accessor, and asked FIRST.
+
+      This used to be a `member.findFirst` over the member table alone, run
+      after the provider round trip below. Two things were wrong with that.
+      Since #3366 a Xero contact can be held by an ORGANISATION as well — a
+      school's own customer — so an officer linking a member to a school's
+      contact sailed past this friendly refusal and hit the raw
+      `XeroContactTwoHomesError` from the commit downstream, which is the
+      enforcement rather than the explanation. And it did so only AFTER a Xero
+      call had been spent on a link that could never be made.
+
+      The invariant never broke, because enforcement is downstream. What broke
+      was the officer's experience of it, and a second reader of "which columns
+      count as a local home" is exactly the drift `findXeroContactHomes` exists
+      to stop.
+    */
+    const homes = await findXeroContactHomes(prisma, [parsed.data.xeroContactId]);
+    const heldBy = homes.get(parsed.data.xeroContactId);
+    if (heldBy && !(heldBy.kind === "MEMBER" && heldBy.id === id)) {
+      if (heldBy.kind === "ORGANISATION") {
+        const organisation = await prisma.organisation.findUnique({
+          where: { id: heldBy.id },
+          select: { name: true },
+        });
+        return NextResponse.json(
+          {
+            error:
+              `This Xero contact is the Xero customer for ${organisation?.name ?? "an organisation"}` +
+              ", so it cannot also be a member's. One Xero customer belongs to one" +
+              " record (INV-INT-018).",
+          },
+          { status: 409 },
+        );
+      }
+      const holder = await prisma.member.findUnique({
+        where: { id: heldBy.id },
+        select: { firstName: true, lastName: true },
+      });
+      return NextResponse.json(
+        {
+          error: `This Xero contact is already linked to ${holder ? `${holder.firstName} ${holder.lastName}` : "another member"}`,
+        },
+        { status: 409 },
+      );
+    }
+
     // Verify the Xero contact exists
     const { xero, tenantId } = await getAuthenticatedXeroClient();
     const contactRes = await callXeroApi(
@@ -105,18 +154,6 @@ export async function POST(
     const contact = contactRes.body.contacts?.[0];
     if (!contact) {
       return NextResponse.json({ error: "Xero contact not found" }, { status: 404 });
-    }
-
-    // Check if contact is already linked to another member
-    const existingLink = await prisma.member.findFirst({
-      where: { xeroContactId: parsed.data.xeroContactId, id: { not: id } },
-      select: { firstName: true, lastName: true },
-    });
-    if (existingLink) {
-      return NextResponse.json(
-        { error: `This Xero contact is already linked to ${existingLink.firstName} ${existingLink.lastName}` },
-        { status: 409 }
-      );
     }
 
     await refreshXeroContactCachesFromContact(contact);

@@ -135,6 +135,7 @@ import { prisma } from "@/lib/prisma";
 import { readXeroContactCacheFreshness } from "@/lib/xero-contact-cache-freshness";
 import type { XeroContactCacheFreshness } from "@/lib/xero-contact-cache-freshness";
 import { findXeroContactHomes } from "@/lib/xero-contact-home";
+import { reportContactCacheFreshness } from "@/lib/xero-contact-cache-freshness-shape";
 import {
   classifyXeroContactStatus,
   type XeroContactLiveness,
@@ -176,9 +177,7 @@ function emptyReview(
     rows: [],
     truncated: false,
     lastContactStatusCheckAt: null,
-    contactCacheLastRefreshedAt: freshness.lastRefreshedAt,
-    contactCacheAgeHours: freshness.ageHours,
-    contactCacheStale: freshness.stale,
+    ...reportContactCacheFreshness(freshness),
   };
 }
 
@@ -396,8 +395,6 @@ export async function getErasedMemberXeroContactReview(options?: {
     rows: needsReviewRows.slice(0, limit),
     truncated: needsReviewRows.length > limit,
     lastContactStatusCheckAt,
-    contactCacheLastRefreshedAt: freshness.lastRefreshedAt,
-    contactCacheAgeHours: freshness.ageHours,
-    contactCacheStale: freshness.stale,
+    ...reportContactCacheFreshness(freshness),
   };
 }

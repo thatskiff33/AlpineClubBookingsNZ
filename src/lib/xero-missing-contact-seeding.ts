@@ -66,6 +66,7 @@ import {
   getMissingFieldsForXeroContactCreate,
 } from "@/lib/xero-contacts";
 import { readXeroContactCacheFreshness } from "@/lib/xero-contact-cache-freshness";
+import { reportContactCacheFreshness } from "@/lib/xero-contact-cache-freshness-shape";
 import { ACTIVE_XERO_CONTACT_STATUS } from "@/lib/xero-contact-status";
 import { getXeroGroupingMode } from "@/lib/xero-member-grouping";
 import {
@@ -153,9 +154,15 @@ function emptySnapshot(
 ): MissingContactSnapshot {
   return {
     cacheReady: false,
-    contactCacheLastRefreshedAt: lastRefreshedAt,
-    contactCacheAgeHours: null,
-    contactCacheStale: false,
+    // `INV-SSOT` (#3058): spelled by the one mapper, never field by field. Two
+    // screens report this cache's freshness and each used to transcribe three
+    // fields out of the reader's own names, so a fourth fact about the cache
+    // would have reached neither.
+    ...reportContactCacheFreshness({
+      lastRefreshedAt,
+      ageHours: null,
+      stale: false,
+    }),
     plannedDigest: computePlannedDigest([]),
     chunkSize,
     estimatedXeroCallsPerChunk: 0,
@@ -535,9 +542,11 @@ export async function getXeroMissingContactSnapshot(options?: {
 
   return {
     cacheReady: true,
-    contactCacheLastRefreshedAt: lastRefreshedAt,
-    contactCacheAgeHours,
-    contactCacheStale,
+    ...reportContactCacheFreshness({
+      lastRefreshedAt,
+      ageHours: contactCacheAgeHours,
+      stale: contactCacheStale,
+    }),
     plannedDigest: computePlannedDigest(pushableRows),
     chunkSize,
     estimatedXeroCallsPerChunk:
