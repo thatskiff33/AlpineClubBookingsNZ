@@ -21,6 +21,7 @@
 import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 const mockFetchJson = vi.fn();
 vi.mock("../api", () => ({
@@ -113,6 +114,31 @@ function mappingRows(overrides: Record<string, { code: string | null; itemCode?:
   }
   return base;
 }
+
+describe("a mappings load failure (#2934)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("takes focus, so the officer lands on what to act on", async () => {
+    mockFetchJson.mockImplementation(async (url: string) => {
+      if (url.startsWith("/api/admin/xero/account-mappings")) {
+        throw new Error("Failed to load account mappings");
+      }
+      if (url.startsWith("/api/admin/xero/chart-of-accounts")) return { accounts: CHART, cache: null };
+      if (url.startsWith("/api/admin/xero/items")) return { items: [], cache: null };
+      if (url.startsWith("/api/admin/xero/item-code-mappings")) return { hutFees: {}, entranceFees: {} };
+      if (url.startsWith("/api/admin/membership-types")) return { membershipTypes: [] };
+      if (url.startsWith("/api/admin/age-tier-settings")) return { settings: [] };
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    render(<MappingsPanel connected open onToggle={() => {}} clubName="Test Club" />);
+
+    const failure = await screen.findByRole("alert");
+    expect(failure.textContent).toBe("Failed to load account mappings");
+    await expectRecoveryAlertToHoldFocus(failure);
+  });
+});
 
 describe("the goodwill fallback notice (#2717)", () => {
   beforeEach(() => {
