@@ -40,6 +40,12 @@
  * The first three are complete, intended outcomes. Only the fourth is a
  * failure, and only the fourth may be reported to an operator as one.
  *
+ * A COMBINED "was it deliberately withheld?" predicate was drafted here and
+ * deliberately removed: both readers below want the three reasons APART, not
+ * together, and the money fence in particular must keep refusing on exactly the
+ * two it refuses on today rather than on a set that quietly grew. A predicate
+ * with no caller is a predicate whose behaviour nothing pins.
+ *
  * ## THE WRITER
  *
  * `createXeroInvoiceForBooking` in `xero-booking-invoices.ts`, which composes
@@ -122,22 +128,4 @@ export function readXeroInvoiceOperationOutcome(
     invoiceEmailWithheldForEnvironment:
       payload.invoiceEmailWithheldForEnvironment === true,
   };
-}
-
-/**
- * Whether any of the three deliberate, non-fault reasons withheld the invoice
- * email.
- *
- * One predicate rather than three comparisons at each reader, because "nothing
- * failed here" is the question both readers actually ask — and because a fourth
- * deliberate reason added later must reach both of them at once.
- */
-export function xeroInvoiceEmailWasDeliberatelyWithheld(
-  outcome: XeroInvoiceOperationOutcome,
-): boolean {
-  return (
-    outcome.invoiceEmailWithheldByNoEmails ||
-    outcome.invoiceEmailWithheldByCreationChoice ||
-    outcome.invoiceEmailWithheldForEnvironment
-  );
 }
