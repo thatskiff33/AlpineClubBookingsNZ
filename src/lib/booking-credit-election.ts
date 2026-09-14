@@ -128,7 +128,14 @@ export async function consumeStoredCreditElection(
 
   if (!lockTarget || lockTarget.creditElectionCents == null) return null;
 
-  await lockMemberCreditLedger(bookingOwner(lockTarget).memberId, tx);
+  const creditLedgerMemberId = bookingOwner(lockTarget).memberId;
+  // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+  // booking has none, so there is no key to take. Passing a null key would
+  // either throw inside the helper or degenerate to a shared advisory key,
+  // which is an `INV-LOCK` hazard that shows up only under concurrency.
+  if (creditLedgerMemberId) {
+    await lockMemberCreditLedger(creditLedgerMemberId, tx);
+  }
 
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
@@ -164,7 +171,12 @@ export async function consumeStoredCreditElection(
 
   if (claimed.count === 0) return null;
 
-  const availableBalanceCents = await getMemberCreditBalance(bookingOwner(booking).memberId, tx);
+  // #3369: no member, no ledger, so no balance. Zero is the truth here, not
+  // a fallback: an organisation holds no account credit to elect against.
+  const balanceMemberId = bookingOwner(booking).memberId;
+  const availableBalanceCents = balanceMemberId
+    ? await getMemberCreditBalance(balanceMemberId, tx)
+    : 0;
   // Credit may already have been applied to this booking by another path (an
   // admin, or a legacy flow). The election can only claim the REMAINING price,
   // never re-cover a slice that is already covered.

@@ -467,7 +467,14 @@ export async function allocateAppliedCreditForBooking(
   // 1) LOCAL: plan the allocation and persist the note-allocation join rows under
   // the ledger lock. Mint-slice join rows are written after the note is minted.
   const plan = await prisma.$transaction(async (tx) => {
-    await lockMemberCreditLedger(bookingOwner(booking).memberId, tx);
+    const creditLedgerMemberId = bookingOwner(booking).memberId;
+    // #3369: applied credit is a MEMBER ledger entry, so an organisation-owned
+    // booking has no ledger to lock and cannot reach this worker with credit
+    // applied. A null key would degenerate to a shared advisory key, which is
+    // an `INV-LOCK` hazard visible only under concurrency.
+    if (creditLedgerMemberId) {
+      await lockMemberCreditLedger(creditLedgerMemberId, tx);
+    }
     await assertNoAppliedCreditDeallocationFence(payment.id, tx, {
       // An older allocation must be allowed to complete before a fresh clamp's
       // deallocation. Once that deallocation has a snapshot/checkpoint it is a
@@ -563,7 +570,14 @@ export async function allocateAppliedCreditForBooking(
     const mintedNoteId = remainderNoteId;
 
     await prisma.$transaction(async (tx) => {
-      await lockMemberCreditLedger(bookingOwner(booking).memberId, tx);
+      const creditLedgerMemberId = bookingOwner(booking).memberId;
+      // #3369: applied credit is a MEMBER ledger entry, so an organisation-owned
+      // booking has no ledger to lock and cannot reach this worker with credit
+      // applied. A null key would degenerate to a shared advisory key, which is
+      // an `INV-LOCK` hazard visible only under concurrency.
+      if (creditLedgerMemberId) {
+        await lockMemberCreditLedger(creditLedgerMemberId, tx);
+      }
       for (const ms of plan.mintSlices) {
         await tx.memberCreditNoteAllocation.upsert({
           where: {
@@ -623,7 +637,14 @@ export async function allocateAppliedCreditForBooking(
     plan.noteAllocations[0]?.xeroCreditNoteId ?? remainderNoteId;
   if (representativeNoteId) {
     await prisma.$transaction(async (tx) => {
-      await lockMemberCreditLedger(bookingOwner(booking).memberId, tx);
+      const creditLedgerMemberId = bookingOwner(booking).memberId;
+      // #3369: applied credit is a MEMBER ledger entry, so an organisation-owned
+      // booking has no ledger to lock and cannot reach this worker with credit
+      // applied. A null key would degenerate to a shared advisory key, which is
+      // an `INV-LOCK` hazard visible only under concurrency.
+      if (creditLedgerMemberId) {
+        await lockMemberCreditLedger(creditLedgerMemberId, tx);
+      }
       await tx.memberCredit.updateMany({
         where: {
           appliedToBookingId: bookingId,

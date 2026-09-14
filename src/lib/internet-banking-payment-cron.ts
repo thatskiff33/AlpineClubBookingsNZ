@@ -79,7 +79,14 @@ function releaseOneHold(paymentId: string, now: Date) {
       // allocation/deallocation reconciliation from changing precise slices
       // between this guard, the local restore, and the clearing aggregate.
       await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId);
-      await lockMemberCreditLedger(bookingOwner(fresh.booking).memberId, tx);
+      const creditLedgerMemberId = bookingOwner(fresh.booking).memberId;
+      // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+      // booking has none, so there is no key to take. Passing a null key would
+      // either throw inside the helper or degenerate to a shared advisory key,
+      // which is an `INV-LOCK` hazard that shows up only under concurrency.
+      if (creditLedgerMemberId) {
+        await lockMemberCreditLedger(creditLedgerMemberId, tx);
+      }
 
       if (await findUnconvergedAppliedCreditDeallocation(fresh.id, tx)) {
         return {

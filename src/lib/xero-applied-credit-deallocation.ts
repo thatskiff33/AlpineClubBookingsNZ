@@ -707,7 +707,14 @@ export async function deallocateExcessAppliedCreditForBooking(
   }
 
   const snapshot = await prisma.$transaction(async (tx) => {
-    await lockMemberCreditLedger(bookingOwner(booking).memberId, tx);
+    const creditLedgerMemberId = bookingOwner(booking).memberId;
+    // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+    // booking has none, so there is no key to take. Passing a null key would
+    // either throw inside the helper or degenerate to a shared advisory key,
+    // which is an `INV-LOCK` hazard that shows up only under concurrency.
+    if (creditLedgerMemberId) {
+      await lockMemberCreditLedger(creditLedgerMemberId, tx);
+    }
     await assertNoAppliedCreditDeallocationFence(booking.payment!.id, tx, {
       excludeOperationId: options.syncOperationId,
       allowUncheckpointedPending: true,

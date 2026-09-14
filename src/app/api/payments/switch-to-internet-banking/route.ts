@@ -232,7 +232,14 @@ export async function POST(request: NextRequest) {
     // Credit writers serialize on a per-member key, not lock(1). Compose all
     // three tiers in the global -> lodge -> member order before aggregating so
     // this read cannot race an applied-credit writer.
-    await lockMemberCreditLedger(bookingOwner(locked).memberId, tx);
+    const creditLedgerMemberId = bookingOwner(locked).memberId;
+    // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+    // booking has none, so there is no key to take. Passing a null key would
+    // either throw inside the helper or degenerate to a shared advisory key,
+    // which is an `INV-LOCK` hazard that shows up only under concurrency.
+    if (creditLedgerMemberId) {
+      await lockMemberCreditLedger(creditLedgerMemberId, tx);
+    }
 
     if (holdBedSlots) {
       const capacity = await checkCapacityForGuestRanges(

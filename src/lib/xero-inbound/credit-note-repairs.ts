@@ -764,7 +764,14 @@ export async function repairAccountCreditAllocationBusinessState(
     // keeps the applied total within the payment amount (invariant (b),(d),
     // #1234). DB-only work: no external Xero call runs inside this transaction.
     await prisma.$transaction(async (tx) => {
-      await lockMemberCreditLedger(bookingOwner(payment.booking).memberId, tx);
+      const creditLedgerMemberId = bookingOwner(payment.booking).memberId;
+      // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+      // booking has none, so there is no key to take. Passing a null key would
+      // either throw inside the helper or degenerate to a shared advisory key,
+      // which is an `INV-LOCK` hazard that shows up only under concurrency.
+      if (creditLedgerMemberId) {
+        await lockMemberCreditLedger(creditLedgerMemberId, tx);
+      }
       await assertNoAppliedCreditDeallocationFence(payment.id, tx);
 
       const existingAppliedCredits = await tx.memberCredit.findMany({

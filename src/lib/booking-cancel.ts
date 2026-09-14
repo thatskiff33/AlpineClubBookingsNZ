@@ -333,7 +333,14 @@ async function cancelLinkedProvisionalChildBookings(
       // so this is the same auditable-invariant no-op (#1547). The guarded
       // PENDING -> CANCELLED claim makes every in-transaction side effect
       // single-flight even if another writer somehow misses the lock protocol.
-      await restoreCreditFromBooking(bookingOwner(fresh).memberId, fresh.id, tx);
+      const childOwnerMemberId = bookingOwner(fresh).memberId;
+      // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+      // booking has none, so there is no key to take. Passing a null key would
+      // either throw inside the helper or degenerate to a shared advisory key,
+      // which is an `INV-LOCK` hazard that shows up only under concurrency.
+      if (childOwnerMemberId) {
+        await restoreCreditFromBooking(childOwnerMemberId, fresh.id, tx);
+      }
       return fresh;
     });
 
@@ -980,7 +987,14 @@ async function performBookingCancellation(
       // member-ledger lock second before inspecting deallocation state or
       // repairing/reading precise allocation slices. Inbound Xero repair and
       // allocation/deallocation workers use this same member key.
-      await lockMemberCreditLedger(bookingOwner(fresh).memberId, tx);
+      const creditLedgerMemberId = bookingOwner(fresh).memberId;
+      // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+      // booking has none, so there is no key to take. Passing a null key would
+      // either throw inside the helper or degenerate to a shared advisory key,
+      // which is an `INV-LOCK` hazard that shows up only under concurrency.
+      if (creditLedgerMemberId) {
+        await lockMemberCreditLedger(creditLedgerMemberId, tx);
+      }
 
       if (
         fresh.payment &&
