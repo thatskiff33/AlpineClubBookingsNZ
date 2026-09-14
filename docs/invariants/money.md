@@ -329,12 +329,12 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   — the one home — and runs the same sum:** a booking with no redemption had
   nothing taken off (`NO_PROMOTION`); rows that reconcile are `KNOWN`; anything
   else — rows missing, rows that do not sum, a NULL amount — is `NOT_KNOWN`.
-  No column stores that answer: a flag can be left asserting what a rollback
-  has since made false; a sum cannot. An officer-priced night, an even split
+  No column stores that answer: a flag can be left asserting what a draining
+  colour or a rollback has since made false; a sum cannot. An officer-priced night, an even split
   and a parked edit need no special state: their rows are absent or no longer
   sum, so they derive as not known until the settle re-base re-runs the
   promotion over the stored prices and records the engine's figure. Stated
-  limit, accepted by the owner: an old-colour officer price repair that
+  limit (owner-accepted): an old-colour officer price repair that
   changes a night's rate without touching the promotion is not detected. A
   mechanical rewrite that moves no money (a name-only correction, an
   in-progress extension, an admin date shift) carries the recorded rows across
@@ -343,7 +343,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   duplicate's colliding allocation deletes that duplicate's rows on the same
   redemption in the same step, so each surviving allocation still matches its
   rows per beneficiary — but the redemption total still carries the dropped
-  share, so that booking derives as not known until the next engine run
+  share, so it derives as not known until the next engine run
   rewrites it. An allocation may name no member — a school's booker slot
   (#3369), which decomposes no member's benefit; `memberBenefitAllocations`,
   the one helper, excludes it from the per-member identity for writer and
