@@ -108,6 +108,7 @@ import {
   toPosix,
   type ResolvedObject,
 } from "./ts-call-site-scan";
+import { stripSqlComments } from "../../prisma/migration-verification/split-statements";
 
 /** The module that owns the audit boundary; its own writes are not call sites. */
 export const AUDIT_BOUNDARY_MODULE = "src/lib/audit.ts";
@@ -589,6 +590,38 @@ function resolveOneAction(event: ResolvedObject): string {
   return direct ?? `(dynamic) ${collapse(property.value.getText())}`;
 }
 
+/**
+ * Every action NAME a site can write, read back out of `resolveOneAction`'s
+ * rendering: a literal site names one; a `(dynamic)` site names every
+ * double-quoted literal inside its expression (`isBulk ? "A" : "B"` names A
+ * and B). The inverse of the rendering above lives beside it so the two cannot
+ * drift (`INV-SSOT`), and it is what the backfill contract tests compare a
+ * migration's literal list against.
+ *
+ * A DYNAMIC SITE THAT NAMES NO LITERAL (`(dynamic) auditAction`, a template
+ * over an enum) THROWS by default, the behaviour #2751's test decided: silently
+ * contributing nothing would let a whole writer fall out of a comparison. A
+ * caller that is merely SCANNING for corroboration — where such a site simply
+ * cannot corroborate anything — passes `{ onNone: "empty" }` and says so.
+ */
+export function literalActionNamesAt(
+  site: Pick<AuditWriteSite, "id" | "action">,
+  options: { onNone: "throw" | "empty" } = { onNone: "throw" },
+): string[] {
+  if (!site.action.startsWith("(dynamic)")) return [site.action];
+  const literals = [...site.action.matchAll(/"([A-Za-z0-9_.\-]+)"/g)].map(
+    (match) => must(match[1], "literalActionNamesAt: regex group missing"),
+  );
+  if (literals.length === 0 && options.onNone === "throw") {
+    throw new Error(
+      `${site.id}: its action is computed and names no string literal, so a ` +
+        "backfill gate cannot tell whether it covers this writer. Name the " +
+        "actions at the site, or pass { onNone: \"empty\" } deliberately.",
+    );
+  }
+  return literals;
+}
+
 function resolveAction(events: readonly ResolvedObject[] | null): string {
   if (!events || events.length === 0) return "(forwarded)";
   const actions = [...new Set(events.map(resolveOneAction))].sort();
@@ -867,77 +900,6 @@ export type AuditSqlStatement = {
   namesCategory: boolean;
 };
 
-/**
- * SQL with `--` line comments and `/* … *​/` blocks blanked out, newlines kept so
- * line numbers survive. Blanking rather than deleting is what keeps the offsets
- * usable; the door-code migration discusses `UPDATE "AuditLog"` in its header
- * comment as well as performing it, so a census that did not strip comments would
- * over-count exactly the way the TypeScript docblock false positive did.
- */
-function stripSqlComments(sql: string): string {
-  let out = "";
-  let index = 0;
-  let inLine = false;
-  let inBlock = false;
-  let inString = false;
-
-  while (index < sql.length) {
-    const char = sql[index];
-    const next = sql[index + 1];
-
-    if (inLine) {
-      if (char === "\n") {
-        inLine = false;
-        out += char;
-      } else {
-        out += " ";
-      }
-      index += 1;
-      continue;
-    }
-    if (inBlock) {
-      if (char === "*" && next === "/") {
-        inBlock = false;
-        out += "  ";
-        index += 2;
-        continue;
-      }
-      out += char === "\n" ? "\n" : " ";
-      index += 1;
-      continue;
-    }
-    if (inString) {
-      // Postgres doubles a quote to escape it; either way the state machine only
-      // has to know it is still inside the literal.
-      if (char === "'") inString = false;
-      out += char;
-      index += 1;
-      continue;
-    }
-    if (char === "'") {
-      inString = true;
-      out += char;
-      index += 1;
-      continue;
-    }
-    if (char === "-" && next === "-") {
-      inLine = true;
-      out += "  ";
-      index += 2;
-      continue;
-    }
-    if (char === "/" && next === "*") {
-      inBlock = true;
-      out += "  ";
-      index += 2;
-      continue;
-    }
-    out += char;
-    index += 1;
-  }
-
-  return out;
-}
 
 /**
  * DML against the audit table, with an OPTIONAL schema qualifier.

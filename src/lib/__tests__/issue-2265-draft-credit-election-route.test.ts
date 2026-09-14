@@ -180,6 +180,7 @@ function makeDraft(creditElectionCents: number | null) {
     status: "DRAFT",
     hasNonMembers: false,
     organiserSettled: false,
+    totalPriceCents: PRICE_CENTS,
     finalPriceCents: PRICE_CENTS,
     discountCents: 0,
     promoAdjustmentCents: 0,
@@ -192,7 +193,30 @@ function makeDraft(creditElectionCents: number | null) {
       firstName: "Aroha",
       lastName: "Ngata",
     },
-    guests: [{ id: "g1" }],
+    guests: [
+      {
+        id: "g1",
+        priceCents: PRICE_CENTS,
+        stayStart: null,
+        stayEnd: null,
+        nights: [
+          {
+            id: "g1-night-1",
+            stayDate: new Date("2026-08-14"),
+            priceCents: PRICE_CENTS / 2,
+            priceSource: "SOLD",
+          },
+          {
+            id: "g1-night-2",
+            stayDate: new Date("2026-08-15"),
+            priceCents: PRICE_CENTS / 2,
+            priceSource: "SOLD",
+          },
+        ],
+      },
+    ],
+    promoRedemption: null,
+    nightAdjustments: [],
     payment: null,
   };
 }

@@ -251,17 +251,28 @@ sites that passed no category** when #2581 opened: 69 through `logAudit`, 11 thr
 `createStructuredAuditLog`. Those same 82 were still uncategorised on `main`
 immediately before this change, out of **426** write sites in total.
 
-**All 82 have now been classified at the source.** The census reads **478 write sites and
+**All 82 have now been classified at the source.** The census reads **479 write sites and
 zero uncategorised**, so no *new* audit row is born invisible to these five entries. What
 each site was given is recorded site by site in `APPLIED_AUDIT_CATEGORIES`
 (`scripts/audit/audit-writer-census-manifest.ts`), and the contract test compares that
 table against the measured tree on every run, so a later reclassification is a named
 failure rather than a silent change of readership.
 
-**The gap has stopped growing; it has not closed.** Every row written before that runtime
-deployed still carries no category, and those rows are still invisible to every
-correlation entry. Giving them one is a separate, independently reviewable data change
-(#2581's third child) that has not run, so the disclosure below stays exactly as it is.
+**The gap stopped growing with child 2, and child 3 closes the measured part of it.**
+Every row written before that runtime deployed carried no category and was invisible to
+every correlation entry. `20260923010000_backfill_historical_audit_categories` (#2581's
+third child) gives those rows the category their exact action records today, from the
+reviewed list in `HISTORICAL_NULL_CATEGORY_MAP_2581` — 83 actions, 1,885 rows on the
+measured deployment — so they are now returned by the entry for that category, behind that
+entry's areas, exactly as new rows of the same action are — with one owner-decided
+exception (13 Sep 2026): the 632 pre-#2755 `member.bulk-deactivate`/`-reactivate` rows go
+to `account`, the category that exact action carried at the time, not the `admin` the bulk
+screen files now, so a member keeps sight of their own deactivation (#2763). Those older
+rows are therefore read by the **membership** entry while the newer ones are read by the
+**system** entry — the operator-side date split #2763 accepted. What stays null, and
+therefore stays outside every entry: a row whose action is on no list (a fork whose history
+differs from the measured one). Nothing was withheld. The disclosure below therefore
+stays, scoped to that residual rather than to the whole pre-#2581 history.
 
 Those figures used to be quoted here as "81 of about 350", which was a hand count and was
 stale. They are measured on every CI run now, and a **new** uncategorised audit writer
@@ -283,7 +294,7 @@ What the census still uniquely catches is the writer the compiler cannot see —
 reverted.
 
 **Scope the two compile-time and runtime layers honestly**: they cover writes that go
-through `src/lib/audit.ts`, which is every one of the 478 sites in the tree. A write that
+through `src/lib/audit.ts`, which is every one of the 479 sites in the tree. A write that
 never reaches the helper — hand-built Prisma, raw SQL, a migration — is outside them by
 construction, which is what the census is for, and the census is a heuristic AST walk
 rather than a proof.
@@ -322,9 +333,12 @@ and no `retentionClass`, and the writer derives a retention class only when one 
 three is present. So every one of those rows was stored with **no expiry at all** — never
 archived, never pruned. Giving them a category was therefore also a retention change, not
 a metadata tidy-up: all 82 write paths now classify `critical`, which is a **seven-year**
-expiry measured from the event. Rows already written keep their `NULL` retention class
-until #2581's third child decides what to do about them, so nothing that exists today
-becomes deletable because of this change.
+expiry measured from the event. Rows already written keep whatever retention they were
+written with — `NULL`, for every one of those writers: #2581's third child gave them a
+category and deliberately derived **no** expiry from it, so nothing that existed before
+either change becomes deletable because of it (the operator notes carry a postflight
+query that reads the stored figures rather than inferring them). Stamping a retention
+class onto those historical rows is a separate decision, if the club ever takes it.
 
 The shared statement filters on `"category" = ANY (…)`, which is NULL — not true — for a
 row with no category, so **such a row is returned by none of the five entries.** It is not
