@@ -129,7 +129,14 @@ export type MirotalkValueSource = "database" | "environment" | "derived";
 
 /** One non-secret value: what is in force, where it came from, what was ignored. */
 export interface MirotalkFieldStatus {
-  /** The value actually in force, in the form an administrator typed it. */
+  /**
+   * The value actually IN FORCE, rendered as text — the page prints it under
+   * the words "In force:", so it has to be the thing the join builder will use
+   * rather than the raw text a source happened to hold. Text because not every
+   * value is one: the presenter flag is a boolean, shown as "on"/"off". An
+   * address is normalised here, so `MIROTALK_URL=meet.example.org` reads
+   * `https://meet.example.org`, which is where the links go (#2940 review, C3).
+   */
   effective: string;
   source: MirotalkValueSource;
   /**
@@ -201,6 +208,21 @@ export interface MirotalkSettingsDraft {
   tokenLifetime: string;
 }
 
+/**
+ * The `MirotalkSettings` singleton's row id.
+ *
+ * ONE HOME, and it is here rather than in the resolver because three files name
+ * this row and the resolver is only one of them: it reads the row, the writer
+ * upserts it, and the settings route names it as the audited entity of a
+ * refusal. That third site was the literal `"default"` until #2940's review
+ * (T4), which made this constant's own "every file that names a row in this
+ * table reads this" claim false — and a claim a reader trusts and the code does
+ * not keep is worse than no claim. Being a plain fact rather than a resolver
+ * concern, it also belongs where every namer can reach it without dragging
+ * `server-only` and Prisma in.
+ */
+export const MIROTALK_SETTINGS_ID = "default";
+
 /** The stored column widths, which the form and the API both enforce. */
 export const MIROTALK_BASE_URL_MAX_LENGTH = 500;
 export const MIROTALK_TOKEN_LIFETIME_MAX_LENGTH = 16;
@@ -215,6 +237,75 @@ export const MIROTALK_DEFAULT_TOKEN_LIFETIME = "1h";
 export type MirotalkValidation =
   | { ok: true; value: string }
   | { ok: false; reason: string };
+
+/**
+ * Drop every trailing slash from an address (#2940 review, T7).
+ *
+ * THREE places wanted this rule: the resolver's environment branch, the
+ * validator's normalised output, and the join builder's defensive strip before
+ * it appends a path. Three copies of a one-line regex is still three copies —
+ * and the join builder's is genuinely defensive, because everything that can
+ * reach it has already been stripped, so it is kept rather than deleted: the
+ * next source added to the resolver would otherwise be the one that discovers
+ * why it was there.
+ */
+export function stripTrailingSlashes(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+/**
+ * A bare host assumed to be `https://`, and the ONE test for whether it already
+ * carries a scheme (#2940 review, T5).
+ *
+ * Both the resolver's environment branch and {@link validateMirotalkBaseUrl}
+ * make this same assumption, so an administrator typing `meet.example.org` is
+ * not told off for matching what the documentation shows them. They used to make
+ * it with two hand-agreed regular expressions, and the pair had already drifted:
+ * `/^https?:\/\//i` accepts only http and https, so the resolver bolted
+ * `https://` onto `ftp://meet.example.org` and produced
+ * `https://ftp://meet.example.org`, which then failed the page's rules with
+ * "it needs a domain" rather than with the real reason. The RFC 3986 scheme
+ * shape is the correct test and is now the only one.
+ */
+export function withAssumedHttpsScheme(value: string): string {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `https://${value}`;
+}
+
+/**
+ * One address reduced to the meeting SERVER it names, for comparison only.
+ *
+ * The two sides of such a comparison arrive by different routes: a stored
+ * address has been through {@link validateMirotalkBaseUrl} and so through the
+ * URL parser, and an environment one deliberately never is, because an
+ * environment value is never refused. So `https://meet.example.org:443`,
+ * `https://meet.example.org/` and `meet.example.org` can all be the same server
+ * written four ways, and a raw string comparison reads three of them as a move.
+ * The parser drops a default port and lower-cases the host; a value it cannot
+ * parse falls back to a trimmed, lower-cased, slash-stripped compare, which is
+ * no worse than the string comparison it replaces.
+ */
+function meetingServerIdentity(value: string): string {
+  const withScheme = withAssumedHttpsScheme(value.trim());
+  try {
+    const url = new URL(withScheme);
+    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return withScheme.replace(/\/+$/, "").toLowerCase();
+  }
+}
+
+/**
+ * Whether two addresses name the same MiroTalk instance.
+ *
+ * THE ONE HOME for that question (#2940 review, C1/T5). The server asks it to
+ * decide whether a Save moves the meeting server — which is the only thing
+ * allowed to delete the three stored secrets — and the admin screen asks it to
+ * warn the person BEFORE they save rather than after. Two copies of a rule that
+ * decides whether three unreadable values are destroyed is not a rule.
+ */
+export function isSameMeetingServer(a: string, b: string): boolean {
+  return meetingServerIdentity(a) === meetingServerIdentity(b);
+}
 
 /**
  * Validate a meeting-server address an administrator typed.
@@ -247,10 +338,9 @@ export function validateMirotalkBaseUrl(value: string): MirotalkValidation {
 
   // A bare host is assumed https, the same assumption the environment path
   // makes, so an administrator typing "meet.example.org" is not told off for
-  // matching what the documentation shows them.
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`;
+  // matching what the documentation shows them. One helper, one test: see
+  // `withAssumedHttpsScheme`.
+  const withScheme = withAssumedHttpsScheme(trimmed);
 
   let parsed: URL;
   try {
@@ -300,7 +390,7 @@ export function validateMirotalkBaseUrl(value: string): MirotalkValidation {
         "That is a private, loopback or link-local address. Members' browsers open the meeting link, so it has to be a public address — a localhost address resolves on whoever clicked it.",
     };
   }
-  const normalised = parsed.toString().replace(/\/+$/, "");
+  const normalised = stripTrailingSlashes(parsed.toString());
   if (normalised.length > MIROTALK_BASE_URL_MAX_LENGTH) {
     return {
       ok: false,

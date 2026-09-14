@@ -55,6 +55,18 @@ import logger from "@/lib/logger";
  * with no field a value fits into.
  */
 
+/**
+ * The longest concurrency token this route will read.
+ *
+ * #2723 defines it as a hex SHA-256, so 64 characters; the bound is generous
+ * enough to outlive a change of digest and short enough that nothing unbounded
+ * reaches the store. ONE constant because the POST and the DELETE must agree:
+ * the POST capped it and the DELETE read it off the query string unbounded, so
+ * the two doors to the same store disagreed about what a token can be (#2940
+ * review, S3).
+ */
+const MIROTALK_VERSION_MAX_LENGTH = 128;
+
 const setBodySchema = z
   .object({
     key: z.string().min(1).max(64),
@@ -62,7 +74,7 @@ const setBodySchema = z
     // too — the same fact, from the same place. Never logged, never returned.
     value: z.string().min(1).max(INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH),
     // The token the status GET handed out, or null when it said "not set".
-    version: z.string().min(1).max(128).nullable(),
+    version: z.string().min(1).max(MIROTALK_VERSION_MAX_LENGTH).nullable(),
   })
   .strict();
 
@@ -189,10 +201,12 @@ export async function DELETE(request: Request) {
   if (!isMirotalkCredentialKey(key)) {
     return NextResponse.json({ error: "Unknown credential key." }, { status: 400 });
   }
-  if (!version) {
+  if (!version || version.length > MIROTALK_VERSION_MAX_LENGTH) {
     // A clear with nothing to compare against is the unconditional delete this
     // route exists to refuse, so it is a bad request rather than a silent
-    // `{ expect: "any" }`.
+    // `{ expect: "any" }`. The same length bound the POST applies: a token is
+    // a token whichever door it arrives at, and an unbounded query parameter
+    // reaching the store was the asymmetry (#2940 review, S3).
     return NextResponse.json(
       { error: "Reload the page and try again." },
       { status: 400 },

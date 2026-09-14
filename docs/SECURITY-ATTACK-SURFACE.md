@@ -3847,7 +3847,11 @@ Five things bound it.
 - **Moving the address CLEARS the three stored secrets**, which is the Alpine
   Central Server remedy copied on its own terms: they are meaningful only to the
   MiroTalk instance they were paired with, so a genuine move invalidates them
-  exactly as it invalidates the central server's API key. On the installation
+  exactly as it invalidates the central server's API key. **A genuine move is a
+  change to the address IN FORCE**, decided by `mirotalkMeetingServerMoved`
+  through the one resolver — not a change to the stored column, which is `null`
+  on every environment-only install and would read "write down the address you
+  are already using" as a move and delete all three. On the installation
   shape `.env.example` now recommends — the environment variables left empty,
   everything set on the page — this is the whole fix: the resolver finds nothing
   to fall back to, the join builder takes its no-token branch, and the redirected

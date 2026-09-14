@@ -51,6 +51,7 @@ vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.createAuditLog }));
 import {
   buildMeetingJoinUrl,
   getMirotalkConfigurationStatus,
+  mirotalkMeetingServerMoved,
   resetMirotalkWarningsForTests,
 } from "@/lib/mirotalk-config";
 import {
@@ -59,15 +60,28 @@ import {
   setMirotalkSecret,
   writeMirotalkSettings,
 } from "@/lib/mirotalk-config-write";
-import { MIROTALK_CREDENTIAL_KEYS } from "@/lib/mirotalk-settings-shared";
+import {
+  MIROTALK_CREDENTIAL_KEYS,
+  MIROTALK_ENV_NAMES,
+} from "@/lib/mirotalk-settings-shared";
 
+/**
+ * Every environment name this suite has to isolate between cases.
+ *
+ * DERIVED from `MIROTALK_ENV_NAMES` rather than retyped (#2940 review, T8). The
+ * hand-written copy was already the same six names in a second place, and the
+ * failure mode it invites is the quiet one: a seventh env-backed field added to
+ * the record is not saved and restored here, so whatever the host machine
+ * happens to hold leaks into every case in this file and the suite passes or
+ * fails for a reason that is not in the test.
+ *
+ * `NEXTAUTH_URL` and `NEXT_PUBLIC_MIROTALK_URL` are not MiroTalk settings — the
+ * first is what the address is DERIVED from when nothing names one, the second
+ * is the legacy client-side spelling the resolver still honours — so they stay
+ * listed by hand.
+ */
 const MIRO_ENV_KEYS = [
-  "MIROTALK_URL",
-  "MIRO_JWT_KEY",
-  "MIRO_JWT_EXP",
-  "MIRO_MEETING_USERNAME",
-  "MIRO_MEETING_PASSWORD",
-  "MIRO_MEETING_PRESENTER",
+  ...Object.values(MIROTALK_ENV_NAMES),
   "NEXTAUTH_URL",
   "NEXT_PUBLIC_MIROTALK_URL",
 ] as const;
@@ -484,6 +498,160 @@ describe("the #2723 write contract, exercised from a club-editable path", () => 
       baseUrlBefore: "https://meet.club.example",
       baseUrlAfter: "https://meet.attacker.example",
     });
+  });
+});
+
+describe("the status says what is IN FORCE (#2940 review, C3)", () => {
+  it("normalises a bare MIROTALK_URL before reporting it", async () => {
+    // The page prints `effective` under the words "In force:". With
+    // MIROTALK_URL=meet.example.org it used to say `meet.example.org` while
+    // every join link went to `https://meet.example.org` — and stating what is
+    // in force is the screen's whole job.
+    process.env.MIROTALK_URL = "meet.example.org/";
+    const status = await getMirotalkConfigurationStatus();
+    expect(status.baseUrl.source).toBe("environment");
+    expect(status.baseUrl.effective).toBe("https://meet.example.org");
+    await expect(buildMeetingJoinUrl("xyz")).resolves.toBe(
+      "https://meet.example.org/join/xyz",
+    );
+  });
+
+  it("still says why an environment value would not be accepted here", async () => {
+    // Normalising the display must not swallow the caveat: an environment
+    // value is never refused, and the reason it would be is on `problem`.
+    process.env.MIROTALK_URL = "http://192.168.1.10:3010";
+    const status = await getMirotalkConfigurationStatus();
+    expect(status.baseUrl.source).toBe("environment");
+    expect(status.baseUrl.problem).toMatch(/MIROTALK_URL is in force/);
+  });
+});
+
+describe("the derived address reads the ONE loopback rule (#2940 review, T2)", () => {
+  it.each([
+    ["the DNS root label", "http://localhost.:3000"],
+    ["a loopback address other than .1", "http://127.0.0.2:3000"],
+    ["the unspecified address", "http://0.0.0.0:3000"],
+  ])("takes the dev fallback for an app origin with %s", async (_label, origin) => {
+    // The private copy in this module missed all three, so `localhost.` derived
+    // the meeting address `https://meet.localhost.` — a host that resolves on
+    // whoever clicked the link, which is the failure the fallback exists to
+    // avoid.
+    process.env.NEXTAUTH_URL = origin;
+    await expect(buildMeetingJoinUrl("xyz")).resolves.toBe(
+      "http://localhost:3010/join/xyz",
+    );
+  });
+
+  it("still derives from a real public origin", async () => {
+    process.env.NEXTAUTH_URL = "https://www.club.org";
+    await expect(buildMeetingJoinUrl("xyz")).resolves.toBe(
+      "https://meet.club.org/join/xyz",
+    );
+  });
+});
+
+describe("what counts as MOVING the meeting server (#2940 review, C1)", () => {
+  // The predicate the secret clear is allowed to ask. It compares the address
+  // IN FORCE on each side, not the stored column, because the column is null on
+  // every install that has only ever set MIROTALK_URL — and the cost of reading
+  // that null as a move is three secrets nobody can read back.
+  const NOTHING_STORED = {
+    baseUrl: null,
+    presenterEnabled: null,
+    tokenLifetime: null,
+    updatedAt: null,
+  };
+
+  it("does NOT move when the box is filled in with the address already in force", () => {
+    // The loss this exists to prevent, end to end: a club runs on
+    // MIROTALK_URL, a Full Admin stores the three secrets, then writes the
+    // address they are already using into the box — which is what .env.example
+    // now tells them to do — and presses Save.
+    process.env.MIROTALK_URL = "https://meet.club.org";
+    expect(
+      mirotalkMeetingServerMoved(NOTHING_STORED, {
+        ...NOTHING_STORED,
+        baseUrl: "https://meet.club.org",
+      }),
+    ).toBe(false);
+  });
+
+  it("does NOT move when the environment spelled the same server differently", () => {
+    // The two sides arrive by different routes: the stored one has been through
+    // the URL parser and the environment one deliberately never is. A default
+    // port, a trailing slash or a bare host is the same server written twice.
+    process.env.MIROTALK_URL = "meet.club.org/";
+    expect(
+      mirotalkMeetingServerMoved(NOTHING_STORED, {
+        ...NOTHING_STORED,
+        baseUrl: "https://meet.club.org",
+      }),
+    ).toBe(false);
+    process.env.MIROTALK_URL = "https://meet.club.org:443";
+    expect(
+      mirotalkMeetingServerMoved(NOTHING_STORED, {
+        ...NOTHING_STORED,
+        baseUrl: "https://meet.club.org",
+      }),
+    ).toBe(false);
+  });
+
+  it("DOES move when the box names a genuinely different server", () => {
+    process.env.MIROTALK_URL = "https://meet.club.org";
+    expect(
+      mirotalkMeetingServerMoved(NOTHING_STORED, {
+        ...NOTHING_STORED,
+        baseUrl: "https://meet.elsewhere.org",
+      }),
+    ).toBe(true);
+  });
+
+  it("does NOT move when the box is CLEARED back onto the same environment value", () => {
+    // The mirror case. Emptying the box returns the field to MIROTALK_URL; when
+    // that names the same server, nothing moved and nothing may be deleted.
+    process.env.MIROTALK_URL = "https://meet.club.org";
+    expect(
+      mirotalkMeetingServerMoved(
+        { ...NOTHING_STORED, baseUrl: "https://meet.club.org" },
+        NOTHING_STORED,
+      ),
+    ).toBe(false);
+  });
+
+  it("DOES move when the box is cleared onto a DIFFERENT environment value", () => {
+    process.env.MIROTALK_URL = "https://meet.club.org";
+    expect(
+      mirotalkMeetingServerMoved(
+        { ...NOTHING_STORED, baseUrl: "https://meet.elsewhere.org" },
+        NOTHING_STORED,
+      ),
+    ).toBe(true);
+  });
+
+  it("DOES move between two stored addresses", () => {
+    expect(
+      mirotalkMeetingServerMoved(
+        { ...NOTHING_STORED, baseUrl: "https://old.example.org" },
+        { ...NOTHING_STORED, baseUrl: "https://new.example.org" },
+      ),
+    ).toBe(true);
+  });
+
+  it("does NOT move when only a non-address setting changed", () => {
+    process.env.MIROTALK_URL = "https://meet.club.org";
+    expect(
+      mirotalkMeetingServerMoved(
+        { ...NOTHING_STORED, presenterEnabled: true, tokenLifetime: "1h" },
+        { ...NOTHING_STORED, presenterEnabled: false, tokenLifetime: "30m" },
+      ),
+    ).toBe(false);
+  });
+
+  it("does NOT move when neither side names one and the derived address governs", () => {
+    // Nothing set anywhere: both sides derive from the app's own origin, so a
+    // Save that touches only the presenter flag cannot be read as a move.
+    process.env.NEXTAUTH_URL = "https://bookings.club.org";
+    expect(mirotalkMeetingServerMoved(NOTHING_STORED, NOTHING_STORED)).toBe(false);
   });
 });
 

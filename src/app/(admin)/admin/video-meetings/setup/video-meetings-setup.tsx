@@ -45,6 +45,7 @@ import {
 import {
   MIROTALK_CREDENTIAL_LABELS,
   MIROTALK_ENV_NAMES,
+  isSameMeetingServer,
   validateMirotalkBaseUrl,
   validateMirotalkTokenLifetime,
   type MirotalkConfigurationStatus,
@@ -92,11 +93,15 @@ const CREDENTIALS_ENDPOINT = "/api/admin/integrations/mirotalk/credentials";
 export interface VideoMeetingsSetupProps {
   initialStatus: MirotalkConfigurationStatus;
   initialSettings: MirotalkSettingsDraft;
+  /** When this section was last saved, or null if it never has been. */
+  initialSettingsUpdatedAt: string | null;
 }
 
 interface SettingsPayload {
   status: MirotalkConfigurationStatus;
   settings: MirotalkSettingsDraft;
+  /** When this section was last saved, or null if it never has been. */
+  settingsUpdatedAt: string | null;
   /** Present when moving the address cleared the stored host sign-in. */
   secretsCleared?: string | null;
 }
@@ -163,6 +168,7 @@ function secretBadge(secret: MirotalkSecretStatus) {
 export function VideoMeetingsSetup({
   initialStatus,
   initialSettings,
+  initialSettingsUpdatedAt,
 }: VideoMeetingsSetupProps) {
   const clubTime = useClubTime();
   const canEditFinance = useAdminAreaEditAccess("finance");
@@ -176,6 +182,9 @@ export function VideoMeetingsSetup({
         );
 
   const [status, setStatus] = useState(initialStatus);
+  const [settingsUpdatedAt, setSettingsUpdatedAt] = useState(
+    initialSettingsUpdatedAt,
+  );
   const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
   const [busySecret, setBusySecret] = useState<string | null>(null);
   const [secretMessage, setSecretMessage] = useState<{
@@ -188,6 +197,7 @@ export function VideoMeetingsSetup({
     if (!res.ok) return;
     const data = (await res.json()) as SettingsPayload;
     setStatus(data.status);
+    setSettingsUpdatedAt(data.settingsUpdatedAt);
   }, []);
 
   const section = useSectionEditState<MirotalkSettingsDraft>({
@@ -205,6 +215,7 @@ export function VideoMeetingsSetup({
       }
       const payload = data as SettingsPayload;
       setStatus(payload.status);
+      setSettingsUpdatedAt(payload.settingsUpdatedAt);
       // Moving the address drops the stored host sign-in, because those values
       // only mean anything to the server they were set for. Say so where the
       // secrets are, not in the settings banner the person has already read.
@@ -229,6 +240,44 @@ export function VideoMeetingsSetup({
   // the validator inline in the JSX needed a cast to reach `reason`, which is
   // the type telling you the shape was being read wrong.
   const baseUrlCheck = draft.baseUrl ? validateMirotalkBaseUrl(draft.baseUrl) : null;
+
+  /**
+   * The secrets this Save would delete, worked out BEFORE it is pressed
+   * (#2940 review, S7 and C1).
+   *
+   * The page used to say so afterwards, which for a value nobody can read back
+   * is a report of a loss rather than a chance to avoid one. It asks the same
+   * question the server does, through the same helper, so the warning and the
+   * behaviour cannot drift: has the address IN FORCE changed? Merely writing
+   * down the address you are already using is not a move and clears nothing, and
+   * the page must not claim otherwise.
+   *
+   * A blank box means "go back to the environment", so the comparison is against
+   * whatever is in force now for as long as the box stays blank — which is what
+   * `status.baseUrl.effective` holds once the draft is cleared. While editing,
+   * the draft is what is being proposed.
+   */
+  const secretsAtRisk = section.editing
+    ? status.secrets.filter((secret) => secret.source === "database")
+    : [];
+  const proposedAddress = draft.baseUrl
+    ? (baseUrlCheck?.ok ? baseUrlCheck.value : draft.baseUrl)
+    : // Emptying the box hands the field back to the environment (or the
+      // derived default). The page cannot compute that value itself — it is the
+      // resolver's — but it is exactly what the status reports when nothing is
+      // stored, so a blank box is only a move when something IS stored today.
+      status.baseUrl.source === "database"
+      ? null
+      : status.baseUrl.effective;
+  const addressWouldMove =
+    proposedAddress === null ||
+    !isSameMeetingServer(proposedAddress, status.baseUrl.effective);
+  const clearWarning =
+    secretsAtRisk.length > 0 && addressWouldMove
+      ? `Saving this will also delete the stored ${secretsAtRisk
+          .map((secret) => MIROTALK_CREDENTIAL_LABELS[secret.key].toLowerCase())
+          .join(", ")}, because ${secretsAtRisk.length === 1 ? "it only means" : "they only mean"} anything to the meeting server ${secretsAtRisk.length === 1 ? "it was" : "they were"} set for. Nobody can read ${secretsAtRisk.length === 1 ? "it" : "them"} back, so have the new server's values to hand before you save.`
+      : null;
   const lifetimeCheck = draft.tokenLifetime
     ? validateMirotalkTokenLifetime(draft.tokenLifetime)
     : null;
@@ -316,6 +365,18 @@ export function VideoMeetingsSetup({
             signed join link is sent and what it lets the person holding it do.
           </AdminViewOnlySectionBanner>
 
+          {/*
+            The counterpart of each secret's "Last changed" line (#2940 review,
+            C2). The timestamp was read from the row and shown nowhere, so the
+            page said when a signing key last moved and not when the address did
+            — from data it had already fetched on the same request.
+          */}
+          <p className="text-xs text-muted-foreground">
+            {settingsUpdatedAt
+              ? `Last saved on this page ${clubTime.instantDateTime(requireInstant(settingsUpdatedAt))}.`
+              : "Nothing has been saved on this page yet, so every setting below is coming from the server environment or from its default."}
+          </p>
+
           {section.error ? (
             <p className="text-sm text-destructive" role="alert">
               {section.error}
@@ -354,6 +415,11 @@ export function VideoMeetingsSetup({
             </p>
             {section.editing && baseUrlCheck && !baseUrlCheck.ok ? (
               <p className="text-xs text-destructive">{baseUrlCheck.reason}</p>
+            ) : null}
+            {clearWarning ? (
+              <p className="text-xs text-warning-11" role="status">
+                {clearWarning}
+              </p>
             ) : null}
           </div>
 

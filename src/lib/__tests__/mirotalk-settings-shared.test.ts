@@ -5,10 +5,17 @@ import {
   MIROTALK_PROVIDER,
   MIROTALK_WRITABLE_CREDENTIAL_KEYS,
   isMirotalkCredentialKey,
+  isSameMeetingServer,
   parseMirotalkLifetimeSeconds,
+  stripTrailingSlashes,
   validateMirotalkBaseUrl,
   validateMirotalkTokenLifetime,
+  withAssumedHttpsScheme,
 } from "@/lib/mirotalk-settings-shared";
+import {
+  isBlockedDestinationHost,
+  isLoopbackDestinationHost,
+} from "@/lib/private-destination-hosts";
 
 /**
  * The rules the setup screen and the API both read (#2940). They live in one
@@ -177,5 +184,146 @@ describe("the credential key set is closed", () => {
     expect(isMirotalkCredentialKey("")).toBe(false);
     expect(isMirotalkCredentialKey(null)).toBe(false);
     expect(isMirotalkCredentialKey({ toString: () => "jwt_key" })).toBe(false);
+  });
+});
+
+describe("the one scheme test (#2940 review, T5)", () => {
+  it("assumes https for a bare host", () => {
+    expect(withAssumedHttpsScheme("meet.example.org")).toBe(
+      "https://meet.example.org",
+    );
+    expect(withAssumedHttpsScheme("meet.example.org/a")).toBe(
+      "https://meet.example.org/a",
+    );
+  });
+
+  it("leaves an address that already carries ANY scheme alone", () => {
+    // The drift this replaced: `/^https?:\/\//` accepted only two schemes, so
+    // the resolver bolted https onto `ftp://…` and produced
+    // `https://ftp://meet.example.org`, which the validator then refused with
+    // "it needs a domain" rather than with the real reason.
+    for (const value of [
+      "https://meet.example.org",
+      "http://meet.example.org",
+      "ftp://meet.example.org",
+      "ws+unix://meet.example.org",
+    ]) {
+      expect(withAssumedHttpsScheme(value)).toBe(value);
+    }
+  });
+
+  it("gives an ftp address the reason it was actually refused for", () => {
+    const result = validateMirotalkBaseUrl("ftp://meet.example.org");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toMatch(/https:\/\//);
+    expect(result.reason).not.toMatch(/needs a domain/i);
+  });
+});
+
+describe("the one trailing-slash rule (#2940 review, T7)", () => {
+  it("drops every trailing slash and nothing else", () => {
+    expect(stripTrailingSlashes("https://meet.example.org///")).toBe(
+      "https://meet.example.org",
+    );
+    expect(stripTrailingSlashes("https://meet.example.org/a")).toBe(
+      "https://meet.example.org/a",
+    );
+    expect(stripTrailingSlashes("https://meet.example.org")).toBe(
+      "https://meet.example.org",
+    );
+  });
+});
+
+describe("is it the same meeting server? (#2940 review, C1)", () => {
+  // The question that decides whether three unreadable secrets are destroyed.
+  // The two sides arrive by different routes — one parsed, one deliberately not
+  // — so it has to see past a spelling difference.
+  it.each([
+    ["a bare host against the https form", "meet.club.org", "https://meet.club.org"],
+    ["a trailing slash", "https://meet.club.org/", "https://meet.club.org"],
+    ["the default port written out", "https://meet.club.org:443", "https://meet.club.org"],
+    ["a capitalised host", "https://MEET.club.org", "https://meet.club.org"],
+  ])("treats %s as the same server", (_label, a, b) => {
+    expect(isSameMeetingServer(a, b)).toBe(true);
+  });
+
+  it.each([
+    ["a different host", "https://meet.club.org", "https://meet.elsewhere.org"],
+    ["a different path", "https://meet.club.org/a", "https://meet.club.org/b"],
+    ["a non-default port", "https://meet.club.org:8443", "https://meet.club.org"],
+  ])("treats %s as a move", (_label, a, b) => {
+    expect(isSameMeetingServer(a, b)).toBe(false);
+  });
+});
+
+describe("the one loopback rule (#2940 review, T2)", () => {
+  it.each([
+    ["localhost", "localhost"],
+    ["localhost with the DNS root label", "localhost."],
+    ["a localhost subdomain", "app.localhost"],
+    ["loopback 127.0.0.1", "127.0.0.1"],
+    ["anywhere else in loopback/8", "127.0.0.2"],
+    ["the unspecified IPv4 address", "0.0.0.0"],
+    ["IPv6 loopback", "::1"],
+    ["IPv6 loopback, bracketed", "[::1]"],
+    ["the unspecified IPv6 address", "::"],
+    ["an IPv4-mapped loopback", "::ffff:127.0.0.1"],
+    ["a host of nothing but dots", "."],
+  ])("reads %s as this machine", (_label, host) => {
+    // The four the private copy in mirotalk-config.ts missed — `localhost.`,
+    // `127.0.0.2`, `0.0.0.0` and `::` — are why there is one rule now. The
+    // visible symptom was NEXTAUTH_URL=http://localhost.:3000 deriving the
+    // meeting address `https://meet.localhost.` instead of the dev fallback.
+    expect(isLoopbackDestinationHost(host)).toBe(true);
+  });
+
+  it.each([
+    ["a public host", "meet.example.org"],
+    ["a private RFC1918 address", "192.168.1.10"],
+    ["a CGNAT address", "100.64.0.1"],
+    ["cloud metadata", "169.254.169.254"],
+    ["an IPv4-mapped private address", "::ffff:10.0.0.1"],
+  ])("does NOT read %s as this machine", (_label, host) => {
+    // Private-but-elsewhere is not this machine. `isBlockedDestinationHost` is
+    // the rule for "may an administrator send us here"; this one answers "is the
+    // app's own origin local", and conflating them would be the behaviour change
+    // the review explicitly ruled out.
+    expect(isLoopbackDestinationHost(host)).toBe(false);
+  });
+
+  it("is a strict SUBSET of the blocked-destination rule", () => {
+    // Asserted rather than claimed: anything local must also be refused as a
+    // destination an administrator may type.
+    const hosts = [
+      "localhost",
+      "localhost.",
+      "app.localhost",
+      "127.0.0.1",
+      "127.0.0.2",
+      "0.0.0.0",
+      "::1",
+      "[::1]",
+      "::",
+      "::ffff:127.0.0.1",
+      ".",
+      "",
+      "meet.example.org",
+      "192.168.1.10",
+      "10.0.0.1",
+      "172.16.0.1",
+      "100.64.0.1",
+      "169.254.169.254",
+      "224.0.0.1",
+      "vault.internal",
+      "printer.local",
+      "fd00::1",
+      "fe80::1",
+    ];
+    for (const host of hosts) {
+      if (isLoopbackDestinationHost(host)) {
+        expect([host, isBlockedDestinationHost(host)]).toEqual([host, true]);
+      }
+    }
   });
 });

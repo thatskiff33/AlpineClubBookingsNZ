@@ -246,6 +246,24 @@ describe("DELETE", () => {
     expect(row.summary).toMatch(/clear/);
   });
 
+  it("refuses a version longer than the POST would accept", async () => {
+    // #2940 review, S3. The POST capped the token at 128 characters and the
+    // DELETE read it off the query string unbounded, so the two doors to the
+    // same store disagreed about what a token can be.
+    const res = await DELETE(
+      deleteRequest(`key=jwt_key&version=${"v".repeat(129)}`),
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.clearMirotalkSecret).not.toHaveBeenCalled();
+  });
+
+  it("still accepts a token at the bound", async () => {
+    const res = await DELETE(
+      deleteRequest(`key=jwt_key&version=${"v".repeat(128)}`),
+    );
+    expect(res.status).toBe(200);
+  });
+
   it("refuses a clear with nothing to compare against", async () => {
     // Without a version there is no fence, and an unconditional delete is
     // exactly the lost-race-reported-as-a-win this route exists to prevent.

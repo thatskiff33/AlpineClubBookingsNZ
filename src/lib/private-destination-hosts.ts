@@ -50,6 +50,54 @@ export function normaliseDestinationHost(hostname: string): string {
 }
 
 /**
+ * True when `hostname` names THIS MACHINE — a loopback literal, the unspecified
+ * address, or a `localhost` name.
+ *
+ * WHY IT LIVES HERE (#2940 review, T2). `mirotalk-config.ts` had its own
+ * `isLoopbackHost`, written for a different question — "is the app's own origin
+ * local, so meeting links should point at the dev instance?" rather than "may an
+ * administrator send us here?" — and the two had already diverged in four ways,
+ * every one of them a host {@link isBlockedDestinationHost} treats as loopback
+ * and the copy did not: `localhost.` with the DNS root label, `127.0.0.2`
+ * anywhere in loopback/8, `0.0.0.0`, and the IPv6 unspecified `::`. The visible
+ * symptom was `NEXTAUTH_URL=http://localhost.:3000` deriving the meeting address
+ * `https://meet.localhost.` instead of taking the dev fallback. So the rule has
+ * one home and both callers read it through {@link normaliseDestinationHost}.
+ *
+ * IT IS A STRICT SUBSET of {@link isBlockedDestinationHost} — every host this
+ * returns true for is also blocked — and that is asserted by a test rather than
+ * left as a claim. It is NOT a substitute for it: the blocked rule additionally
+ * covers RFC1918, CGNAT, link-local and mDNS space, which is a private
+ * destination but is not this machine.
+ *
+ * AN UNUSABLE HOST reads as local, which is the same direction its sibling
+ * fails in: neither function ever answers "this is a public host" about a string
+ * it could not make sense of. For the caller that asks this, the local answer is
+ * the diagnosable one — a named dev instance rather than `https://meet.`.
+ */
+export function isLoopbackDestinationHost(hostname: string): boolean {
+  const host = normaliseDestinationHost(hostname);
+  if (!host) return true;
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  // IPv6 loopback and unspecified.
+  if (host === "::1" || host === "::") return true;
+
+  // An IPv4-mapped literal is judged by its IPv4 half, so `::ffff:127.0.0.1` is
+  // local and `::ffff:10.0.0.1` is private-but-elsewhere. The sibling blocks
+  // every `::ffff:` form, which keeps the subset property either way.
+  const mapped = host.startsWith("::ffff:") ? host.slice("::ffff:".length) : host;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(mapped);
+  if (v4) {
+    const [a] = v4.slice(1).map(Number);
+    // Same fail direction as the sibling: an unreachable gap reads as local.
+    if (a === undefined || Number.isNaN(a) || a > 255) return true;
+    // 127/8 is loopback; 0/8 is "this host, this network" (RFC 1122).
+    if (a === 127 || a === 0) return true;
+  }
+  return false;
+}
+
+/**
  * True when `hostname` is a loopback, private, link-local, CGNAT, multicast or
  * otherwise non-public literal — or is empty, which fails CLOSED.
  *

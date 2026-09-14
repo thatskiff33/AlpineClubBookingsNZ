@@ -9,6 +9,7 @@ import { isFullAdmin } from "@/lib/access-roles";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   getMirotalkConfigurationStatus,
+  mirotalkMeetingServerMoved,
   readMirotalkStoredSettings,
 } from "@/lib/mirotalk-config";
 import {
@@ -18,6 +19,7 @@ import {
 import {
   MIROTALK_BASE_URL_MAX_LENGTH,
   MIROTALK_CREDENTIAL_LABELS,
+  MIROTALK_SETTINGS_ID,
   MIROTALK_TOKEN_LIFETIME_MAX_LENGTH,
   validateMirotalkBaseUrl,
   validateMirotalkTokenLifetime,
@@ -34,10 +36,15 @@ import {
  * PUT  — save the staged settings. FULL ADMIN.
  *
  * The three secrets are written on `./credentials`, not here — except that
- * MOVING THE ADDRESS CLEARS THEM, which this route does own. They are meaningful
- * only to the MiroTalk instance they were paired with, so an address move
+ * MOVING THE MEETING SERVER CLEARS THEM, which this route does own. They are
+ * meaningful only to the MiroTalk instance they were paired with, so a move
  * invalidates them the way it invalidates the Alpine Central Server's API key,
  * and a redirected join link is then left with no stored credential to carry.
+ * "Moving" is decided by `mirotalkMeetingServerMoved`, which compares the
+ * address IN FORCE on each side rather than the stored column: writing the
+ * environment's own address into a box that was empty changes the column and
+ * moves nothing, and reading that as a move deleted three secrets nobody can
+ * read back (#2940 review, C1).
  * The limit is stated where the helper lives (`clearMirotalkSecretsForAddressMove`):
  * an install that still sets the environment variables falls back to them, so
  * there this is cosmetic; on the install shape `.env.example` recommends it is
@@ -89,6 +96,12 @@ export async function GET() {
       presenterEnabled: settings.presenterEnabled,
       tokenLifetime: settings.tokenLifetime ?? "",
     },
+    // OUTSIDE `settings`, because that object is the form's draft and a
+    // timestamp is not editable. `MirotalkStoredSettings.updatedAt` was read
+    // from the row and then consumed by nothing (#2940 review, C2), while each
+    // secret showed "Last changed" from data fetched on this same request — so
+    // the page said when a signing key last moved and not when the address did.
+    settingsUpdatedAt: settings.updatedAt,
   });
 }
 
@@ -108,7 +121,10 @@ export async function PUT(request: Request) {
       memberId,
       actorMemberId: memberId,
       entityType: "MirotalkSettings",
-      entityId: "default",
+      // The constant, not the literal (#2940 review, T4): this is the third
+      // file that names this row, and a bare "default" here made the constant's
+      // own "one home" claim false.
+      entityId: MIROTALK_SETTINGS_ID,
       summary:
         "Refused a non-Full-Admin attempt to change the video-meeting settings",
     });
@@ -144,9 +160,17 @@ export async function PUT(request: Request) {
   // not secret, but the field names are what an operator reading the log needs
   // and the row stays readable without them.
   const before = await readMirotalkStoredSettings();
-  const addressMoved = (before.baseUrl ?? "") !== draft.baseUrl;
+  const after = { ...before, baseUrl: draft.baseUrl || null };
+  // TWO DIFFERENT QUESTIONS, and conflating them cost three secrets (#2940
+  // review, C1). What the ADMIN did is "the box changed", which is what the
+  // audit row reports; whether the SERVER moved is what the secret clear is
+  // allowed to ask, and on an environment-only install those are not the same
+  // event. Writing `MIROTALK_URL`'s own address into the box changes the column
+  // from null and moves nothing at all.
+  const storedAddressChanged = (before.baseUrl ?? "") !== draft.baseUrl;
+  const serverMoved = mirotalkMeetingServerMoved(before, after);
   const changed: string[] = [];
-  if (addressMoved) changed.push("meeting server address");
+  if (storedAddressChanged) changed.push("meeting server address");
   if (before.presenterEnabled !== draft.presenterEnabled) changed.push("presenter");
   if ((before.tokenLifetime ?? "") !== draft.tokenLifetime) {
     changed.push("join-link lifetime");
@@ -157,7 +181,7 @@ export async function PUT(request: Request) {
   // the old address with no stored credentials, which costs a club unsigned
   // links for the length of one statement. The reverse ordering leaves the
   // dangerous pair live if the clear throws.
-  const secretsCleared = addressMoved
+  const secretsCleared = serverMoved
     ? await clearMirotalkSecretsForAddressMove({
         actor: { kind: "admin", memberId },
         request: getAuditRequestContext(request),
@@ -168,7 +192,7 @@ export async function PUT(request: Request) {
     draft,
     memberId,
     changedFields: changed,
-    ...(addressMoved
+    ...(storedAddressChanged
       ? { addressChange: { from: before.baseUrl, to: draft.baseUrl || null } }
       : {}),
     secretsCleared,
@@ -181,6 +205,7 @@ export async function PUT(request: Request) {
       presenterEnabled: settings.presenterEnabled,
       tokenLifetime: settings.tokenLifetime ?? "",
     },
+    settingsUpdatedAt: settings.updatedAt,
     // Plain English for the person who just moved the address, because they are
     // the only one who can put the new server's credentials in.
     secretsCleared: secretsCleared.length

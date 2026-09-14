@@ -41,6 +41,7 @@ export default async function VideoMeetingsSetupPage() {
           presenterEnabled: settings.presenterEnabled,
           tokenLifetime: settings.tokenLifetime ?? "",
         }}
+        initialSettingsUpdatedAt={settings.updatedAt}
       />
     </div>
   );

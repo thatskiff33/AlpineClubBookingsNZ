@@ -26,9 +26,13 @@
   just told the meeting server about.
 
   **Changing the meeting server address clears those three stored values**, and
-  the page says so. They only mean anything to the server they were set for: the
-  signing key has to match that instance's own key, and the username and password
-  have to match one of its host sign-ins. It also means a link redirected to
+  the page warns you before you save rather than telling you afterwards. They
+  only mean anything to the server they were set for: the signing key has to
+  match that instance's own key, and the username and password have to match one
+  of its host sign-ins. What counts is the address **actually in force**, so
+  writing the address you are already using into an empty box — which is exactly
+  what moving off the environment file looks like — changes nothing and clears
+  nothing. It also means a link redirected to
   somewhere else carries nothing, which is the point. If your installation still
   sets the three in the server environment, clearing the stored ones falls back
   to those — which were set for the old server too — so move them onto this page

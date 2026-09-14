@@ -8,15 +8,20 @@ import {
 } from "@/lib/integration-credentials";
 import type { CredentialVersion } from "@/lib/integration-credential-actor";
 import { mintMirotalkAccessToken } from "@/lib/mirotalk-token";
+import { isLoopbackDestinationHost } from "@/lib/private-destination-hosts";
 import {
   MIROTALK_CREDENTIAL_KEYS,
   MIROTALK_DEFAULT_TOKEN_LIFETIME,
   MIROTALK_ENV_NAMES,
   MIROTALK_PROVIDER,
+  MIROTALK_SETTINGS_ID,
   MIROTALK_WRITABLE_CREDENTIAL_KEYS,
+  isSameMeetingServer,
   parseMirotalkLifetimeSeconds,
+  stripTrailingSlashes,
   validateMirotalkBaseUrl,
   validateMirotalkTokenLifetime,
+  withAssumedHttpsScheme,
   type MirotalkConfigurationStatus,
   type MirotalkCredentialKey,
   type MirotalkFieldStatus,
@@ -81,25 +86,8 @@ import {
  * is looking at, so the restart advice matches what is actually being consumed.
  */
 
-/**
- * The `MirotalkSettings` singleton's row id. Exported for `mirotalk-config-write.ts`,
- * which is the only other file that names a row in this table — one home, so the
- * reader and the writer cannot come to disagree about which row is the settings.
- */
-export const MIROTALK_SETTINGS_ID = "default";
-
 /** MiroTalk dev instance used when the app itself is on a loopback host. */
 const LOCAL_MIROTALK_FALLBACK = "http://localhost:3010";
-
-function isLoopbackHost(host: string): boolean {
-  return (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "::1" ||
-    host === "[::1]" ||
-    host.endsWith(".localhost")
-  );
-}
 
 // Emit the "loopback fallback in production" warning at most once per process so
 // a misconfigured prod deploy is diagnosable without spamming every click.
@@ -144,7 +132,7 @@ function loopbackFallback(): string {
 function derivedBaseUrl(): string {
   try {
     const { hostname } = new URL(getAppBaseUrl());
-    if (isLoopbackHost(hostname)) return loopbackFallback();
+    if (isLoopbackDestinationHost(hostname)) return loopbackFallback();
     return `https://meet.${hostname.replace(/^www\./i, "")}`;
   } catch {
     return loopbackFallback();
@@ -232,11 +220,22 @@ function resolveBaseUrlWithoutDatabase(): ResolvedField<string> {
     // is used whatever it is. An environment value is never refused, because
     // refusing one would break an install that works today. Where it would not
     // pass the screen's rules the status says so and keeps using it.
-    const value = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-    const check = validateMirotalkBaseUrl(value);
+    //
+    // ONE scheme test, shared with the page's validator (#2940 review, T5): the
+    // two hand-agreed copies had already drifted, and this one accepted only
+    // http/https, so `ftp://meet.example.org` had `https://` bolted on.
+    const inForce = stripTrailingSlashes(withAssumedHttpsScheme(raw));
+    const check = validateMirotalkBaseUrl(inForce);
     return {
-      value: value.replace(/\/+$/, ""),
-      display: raw,
+      value: inForce,
+      // THE VALUE IN FORCE, not the raw text (#2940 review, C3). `effective` is
+      // read by the page under the words "In force:", and with
+      // `MIROTALK_URL=meet.example.org` the raw text said `meet.example.org`
+      // while every join link went to `https://meet.example.org`. Saying what is
+      // in force is the screen's whole job; `problem` below is where a value
+      // that would not be accepted is called out, and the source note names the
+      // variable, so nothing is lost by normalising here.
+      display: inForce,
       source: "environment",
       problem: check.ok
         ? null
@@ -245,6 +244,41 @@ function resolveBaseUrlWithoutDatabase(): ResolvedField<string> {
   }
   const derived = derivedBaseUrl();
   return { value: derived, display: derived, source: "derived", problem: null };
+}
+
+/**
+ * Whether a Save MOVES the meeting server — the question the secret clear is
+ * allowed to ask, and the only one it may ask (#2940 review, C1).
+ *
+ * IT COMPARES WHAT IS IN FORCE, NOT WHAT IS STORED. The stored column is `null`
+ * on every install that has only ever set `MIROTALK_URL`, so a column-level
+ * comparison reads `null -> "https://meet.club.org"` as a move even when that is
+ * the address already in force and the environment variable says so. The cost of
+ * getting that wrong is not cosmetic: the clear deletes three secrets nobody can
+ * read back. A Full Admin who stores the signing key and the host credentials
+ * and then types the address they are already using into the box — which is what
+ * `.env.example` now tells them to do — would lose all three, told only
+ * afterwards.
+ *
+ * The secrets are paired with a MiroTalk INSTANCE: the signing key must equal
+ * that instance's `JWT_KEY` and the credentials must match one of its
+ * `HOST_USERS`. So the move that invalidates them is a move of the address
+ * actually in force, which is what this asks, and writing the same address down
+ * explicitly is not one.
+ *
+ * Both sides go through the same resolver, so every precedence rule — a stored
+ * value that no longer validates falling back, an empty column returning to the
+ * environment, the derived address when neither names one — applies to both
+ * automatically rather than being restated here.
+ */
+export function mirotalkMeetingServerMoved(
+  before: MirotalkStoredSettings,
+  after: MirotalkStoredSettings,
+): boolean {
+  return !isSameMeetingServer(
+    resolveBaseUrl(before).value,
+    resolveBaseUrl(after).value,
+  );
 }
 
 function resolvePresenter(stored: MirotalkStoredSettings): ResolvedField<boolean> {
@@ -478,7 +512,10 @@ async function resolveMirotalk(): Promise<ResolvedMirotalk> {
  */
 export async function buildMeetingJoinUrl(room: string): Promise<string> {
   const resolved = await resolveMirotalk();
-  const base = resolved.baseUrl.value.replace(/\/+$/, "");
+  // Defensive: everything that can reach here has already been stripped. Kept,
+  // through the one helper, so the next source added to the resolver is not the
+  // one that discovers why it was there (#2940 review, T7).
+  const base = stripTrailingSlashes(resolved.baseUrl.value);
   const [jwtKey, username, password] = resolved.secrets;
 
   if (!jwtKey?.value || !username?.value || !password?.value) {

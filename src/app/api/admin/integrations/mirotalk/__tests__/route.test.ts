@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   getAuditRequestContext: vi.fn(),
   getMirotalkConfigurationStatus: vi.fn(),
   readMirotalkStoredSettings: vi.fn(),
+  mirotalkMeetingServerMoved: vi.fn(),
   writeMirotalkSettings: vi.fn(),
   clearMirotalkSecretsForAddressMove: vi.fn(),
 }));
@@ -36,12 +37,14 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/mirotalk-config", () => ({
   getMirotalkConfigurationStatus: mocks.getMirotalkConfigurationStatus,
   readMirotalkStoredSettings: mocks.readMirotalkStoredSettings,
+  mirotalkMeetingServerMoved: mocks.mirotalkMeetingServerMoved,
 }));
 vi.mock("@/lib/mirotalk-config-write", () => ({
   clearMirotalkSecretsForAddressMove: mocks.clearMirotalkSecretsForAddressMove,
   writeMirotalkSettings: mocks.writeMirotalkSettings,
 }));
 
+import { MIROTALK_SETTINGS_ID } from "@/lib/mirotalk-settings-shared";
 import { GET, PUT } from "../route";
 
 function putRequest(body: unknown) {
@@ -87,6 +90,7 @@ beforeEach(() => {
   mocks.readMirotalkStoredSettings.mockResolvedValue({ ...STORED });
   mocks.writeMirotalkSettings.mockResolvedValue({ ...STORED });
   mocks.clearMirotalkSecretsForAddressMove.mockResolvedValue([]);
+  mocks.mirotalkMeetingServerMoved.mockReturnValue(false);
   mocks.getAuditRequestContext.mockReturnValue({ id: "req-1" });
   mocks.getMirotalkConfigurationStatus.mockResolvedValue({
     baseUrl: { effective: "https://meet.lwtc.org.nz", source: "environment", problem: null },
@@ -113,6 +117,20 @@ describe("GET", () => {
     expect(body.settings.presenterEnabled).toBe(false);
   });
 
+  it("says when the section was last saved", async () => {
+    // #2940 review, C2. The row's `updatedAt` was read and consumed by nothing
+    // while each secret rendered "Last changed" from the same request — so the
+    // page said when a signing key moved and not when the address did. Outside
+    // `settings`, because that object is the form's draft.
+    mocks.readMirotalkStoredSettings.mockResolvedValue({
+      ...STORED,
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    });
+    const body = await (await GET()).json();
+    expect(body.settingsUpdatedAt).toBe("2026-07-01T00:00:00.000Z");
+    expect(body.settings.settingsUpdatedAt).toBeUndefined();
+  });
+
   it("is readable by an admin who may not change it", async () => {
     asAdmin(false);
     const res = await GET();
@@ -132,6 +150,8 @@ describe("PUT", () => {
     expect(row.action).toBe("mirotalk.settings.denied");
     expect(row.category).toBe("security");
     expect(row.outcome).toBe("failure");
+    // The constant, not a second spelling of "default" (#2940 review, T4).
+    expect(row.entityId).toBe(MIROTALK_SETTINGS_ID);
   });
 
   it("refuses a custom role matrix that carries finance: edit", async () => {
@@ -221,6 +241,59 @@ describe("PUT", () => {
     expect(call.memberId).toBe("admin-1");
   });
 
+  it("does NOT clear the secrets when the box only writes down the address already in force", async () => {
+    // #2940 review, C1. `before.baseUrl` is null on every install that has only
+    // ever set MIROTALK_URL, so a column-level comparison read this as a move
+    // and deleted three secrets nobody can read back — a Full Admin who stored
+    // the signing key and the host credentials and then typed the address they
+    // were already using would simply lose all three, and be told afterwards.
+    // The clear is driven by the resolver's answer instead.
+    mocks.mirotalkMeetingServerMoved.mockReturnValue(false);
+    const res = await PUT(
+      putRequest({
+        baseUrl: "https://meet.lwtc.org.nz",
+        presenterEnabled: null,
+        tokenLifetime: "",
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mocks.clearMirotalkSecretsForAddressMove).not.toHaveBeenCalled();
+    expect((await res.json()).secretsCleared).toBeNull();
+
+    // The audit row still says the admin edited the box, because that is what
+    // they did — the two questions are separate, and only the second one is
+    // allowed to delete anything.
+    const call = mocks.writeMirotalkSettings.mock.calls[0][0];
+    expect(call.changedFields).toEqual(["meeting server address"]);
+    expect(call.addressChange).toEqual({
+      from: null,
+      to: "https://meet.lwtc.org.nz",
+    });
+    expect(call.secretsCleared).toEqual([]);
+  });
+
+  it("asks the resolver about the EFFECTIVE address, not the stored column", async () => {
+    // The predicate is handed the row as stored and the row as it will be, so
+    // every precedence rule is applied by the one resolver rather than restated
+    // in the route.
+    mocks.readMirotalkStoredSettings.mockResolvedValue({
+      ...STORED,
+      presenterEnabled: true,
+    });
+    await PUT(
+      putRequest({
+        baseUrl: "https://meet.lwtc.org.nz",
+        presenterEnabled: true,
+        tokenLifetime: "",
+      }),
+    );
+    expect(mocks.mirotalkMeetingServerMoved).toHaveBeenCalledWith(
+      { ...STORED, presenterEnabled: true },
+      { ...STORED, presenterEnabled: true, baseUrl: "https://meet.lwtc.org.nz" },
+    );
+  });
+
   it("clears the stored host sign-in when the address moves", async () => {
     // The three secrets only mean anything to the MiroTalk instance they were
     // paired with, so a genuine move invalidates them — and a redirected join
@@ -230,6 +303,7 @@ describe("PUT", () => {
       ...STORED,
       baseUrl: "https://old.example.org",
     });
+    mocks.mirotalkMeetingServerMoved.mockReturnValue(true);
     mocks.clearMirotalkSecretsForAddressMove.mockResolvedValue([
       "jwt_key",
       "meeting_password",

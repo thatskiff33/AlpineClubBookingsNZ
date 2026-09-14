@@ -189,7 +189,10 @@ Three rules are worth knowing before you touch either side.
   box hands that setting back to the environment.
 - **Moving the address clears the stored host sign-in.** Those three values only
   mean anything to the server they were set for, so they go with it — see
-  "Secure, login-free join" below for what that does and does not protect.
+  "Secure, login-free join" below for what that does and does not protect. What
+  counts is the address actually **in force**, so typing the address you are
+  already using into an empty box, or clearing the box back onto the same
+  `MIROTALK_URL`, changes nothing and clears nothing.
 - **A value set on the page needs no restart**; it applies the next time
   somebody opens a meeting. A value set in the environment still needs one,
   because that is what changing an environment variable means.

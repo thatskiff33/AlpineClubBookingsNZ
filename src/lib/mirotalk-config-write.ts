@@ -13,12 +13,12 @@ import type {
   CredentialWriteExpectation,
 } from "@/lib/integration-credential-actor";
 import {
-  MIROTALK_SETTINGS_ID,
   readMirotalkStoredSettings,
   type MirotalkStoredSettings,
 } from "@/lib/mirotalk-config";
 import {
   MIROTALK_PROVIDER,
+  MIROTALK_SETTINGS_ID,
   MIROTALK_WRITABLE_CREDENTIAL_KEYS,
   type MirotalkCredentialKey,
   type MirotalkSettingsDraft,
@@ -128,6 +128,15 @@ export async function writeMirotalkSettings(params: {
  * address move invalidates them exactly as it invalidates the central server's
  * API key. It also makes the Full-Admin gate robust rather than merely correct:
  * a redirected join link has no stored credential left to carry.
+ *
+ * WHAT COUNTS AS A GENUINE MOVE is not decided here, and must not be decided by
+ * comparing the stored column (#2940 review, C1). The column is `null` on every
+ * install that has only ever set `MIROTALK_URL`, so `null -> "https://meet.club.org"`
+ * looks like a move and is not one: it is an administrator writing down the
+ * address already in force, which is exactly what `.env.example` now asks them
+ * to do. This deletes three values nobody can read back, so the caller asks
+ * `mirotalkMeetingServerMoved`, which compares the address IN FORCE on each
+ * side through the one resolver.
  *
  * WHAT IT DOES NOT FIX, stated here because the honest version of this remedy
  * has to carry its own limit. Clearing the stored secrets falls back to
