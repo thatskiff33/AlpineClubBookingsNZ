@@ -204,11 +204,14 @@ export interface FindOrCreateOrganisationXeroContactOptions {
  * situation a repair exists for.
  */
 export function invoicedPartyContactRepair(booking: {
-  memberId: string;
+  // #3369: nullable, like the resolver's own parameter. The repair closure is
+  // handed a member id by its caller anyway, so the field is only read for the
+  // organisation half.
+  memberId: string | null;
   organisationId: string | null;
 }) {
   return async (
-    memberId: string,
+    memberId: string | null,
     options?: FindOrCreateOrganisationXeroContactOptions & {
       repairExistingLink?: boolean;
     },
