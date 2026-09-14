@@ -124,7 +124,7 @@ function formatBookingSnapshot(input: {
     firstName: string;
     lastName: string;
     email: string;
-  };
+  } | null;
   // #3369: the owner may be an Organisation; bookingOwner() reads both.
   organisation: { name: string; email: string | null } | null;
   payment: {

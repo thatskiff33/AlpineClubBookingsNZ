@@ -1017,7 +1017,11 @@ async function handleSetupIntentFailed(
   // Notify member that card setup failed
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { member: { select: { email: true, firstName: true } } },
+    include: {
+      member: { select: { email: true, firstName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
+    },
   });
 
   if (booking && bookingOwner(booking).member?.email) {
@@ -1353,7 +1357,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     member: {
       firstName: string;
       lastName: string;
-    };
+    } | null;
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
     organisation: { name: string; email: string | null } | null;
     payment: {
@@ -1624,7 +1628,7 @@ async function handleCancelledBookingPaymentSucceeded(
     member: {
       firstName: string;
       lastName: string;
-    };
+    } | null;
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
     organisation: { name: string; email: string | null } | null;
     payment: {

@@ -223,7 +223,7 @@ export async function GET(req: NextRequest) {
       }
     } else {
       memberBookings.set(ownerMemberId, {
-        id: bookingOwner(b).member.id,
+        id: ownerMemberId,
         firstName: bookingOwner(b).member.firstName,
         lastName: bookingOwner(b).member.lastName,
         email: bookingOwner(b).member.email,

@@ -2379,9 +2379,12 @@ async function processCreateAdditionalPaymentIntentOperation(
       bookingId: operation.bookingId,
       bookingModificationId,
       paymentId: operation.paymentId,
-      member: bookingOwner(booking).member
+      // #3369: the edit-review charge request is raised against a PERSON's
+      // Stripe customer, so a booking with no member carries none. The sync
+      // already models an absent member, which is the branch a school takes.
+      member: bookingOwner(booking).member.id
         ? {
-            id: bookingOwner(booking).member.id,
+            id: bookingOwner(booking).member.id as string,
             email: bookingOwner(booking).member.email,
             name: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
             stripeCustomerId: booking.payment?.stripeCustomerId ?? null,
