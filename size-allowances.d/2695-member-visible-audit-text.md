@@ -20,14 +20,14 @@ because that is the whole point of the change — a declaration lifted into a
 helper is a declaration a reviewer cannot see beside the text it governs.
 
 file: src/lib/member-credit.ts
-lines: 947
+lines: 959
 reason: the owner's decided site. Three lines of declaration plus the comment
   saying why the member's sentence is written out rather than reusing `details`
   — which names the adjustment request, the credit row and the requesting
   member. Without that note the next reader deletes the "duplication".
 
 file: src/app/api/admin/bookings/[id]/review/route.ts
-lines: 351
+lines: 353
 reason: two declarations, approve and reject, three lines each with the
   compressed note above. There is no seam: both sit inside branch-specific
   `logAudit` calls that already differ in action, summary and metadata.
