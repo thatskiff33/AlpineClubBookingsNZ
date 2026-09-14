@@ -14,7 +14,6 @@ vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
-  isFullAdmin: vi.fn(),
   createAuditLog: vi.fn(),
   getAuditRequestContext: vi.fn(),
   getMirotalkConfigurationStatus: vi.fn(),
@@ -24,7 +23,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
-vi.mock("@/lib/access-roles", () => ({ isFullAdmin: mocks.isFullAdmin }));
+// `@/lib/access-roles` is DELIBERATELY NOT MOCKED. A stubbed `isFullAdmin`
+// returns what the test told it to regardless of the argument it was handed, so
+// the route could read the roles off anything at all — a literal `["ADMIN"]`
+// included — and every case here still passed. The gate is the whole point of
+// this route, so the real predicate runs on a real role token and the session
+// below carries the role that makes the answer come out differently.
 vi.mock("@/lib/audit", () => ({
   createAuditLog: mocks.createAuditLog,
   getAuditRequestContext: mocks.getAuditRequestContext,
@@ -48,12 +52,26 @@ function putRequest(body: unknown) {
   });
 }
 
+/**
+ * A session that has already passed `finance: edit`, holding a REAL role token.
+ *
+ * The non-Full-Admin case is a Treasurer (`FINANCE_ADMIN`), which is exactly the
+ * role the route's own docblock names: `finance: edit` admits it, and it is the
+ * role that must NOT be able to change a capability setting. Passing the real
+ * token means `isFullAdmin` computes the answer from the session rather than
+ * from a mock's instruction, so a route that read the roles from anywhere else
+ * fails here instead of passing.
+ */
 function asAdmin(fullAdmin: boolean) {
   mocks.requireAdmin.mockResolvedValue({
     ok: true,
-    session: { user: { id: "admin-1", accessRoles: ["ADMIN"] } },
+    session: {
+      user: {
+        id: "admin-1",
+        accessRoles: fullAdmin ? ["ADMIN"] : ["FINANCE_ADMIN"],
+      },
+    },
   });
-  mocks.isFullAdmin.mockReturnValue(fullAdmin);
 }
 
 const STORED = {
@@ -114,6 +132,24 @@ describe("PUT", () => {
     expect(row.action).toBe("mirotalk.settings.denied");
     expect(row.category).toBe("security");
     expect(row.outcome).toBe("failure");
+  });
+
+  it("refuses a custom role matrix that carries finance: edit", async () => {
+    // The docblock's claim, made testable: `finance: edit` admits any custom
+    // role, whose token is an AccessRoleDefinition id rather than an enum
+    // value. Such a token is privileged but is not `ADMIN`, so it reaches this
+    // gate and must be turned away by it.
+    mocks.requireAdmin.mockResolvedValue({
+      ok: true,
+      session: {
+        user: { id: "admin-2", accessRoles: ["cmcustomroledefinitionid0001"] },
+      },
+    });
+    const res = await PUT(
+      putRequest({ baseUrl: "", presenterEnabled: null, tokenLifetime: "" }),
+    );
+    expect(res.status).toBe(403);
+    expect(mocks.writeMirotalkSettings).not.toHaveBeenCalled();
   });
 
   it("accepts an empty address as 'clear it and use the environment again'", async () => {

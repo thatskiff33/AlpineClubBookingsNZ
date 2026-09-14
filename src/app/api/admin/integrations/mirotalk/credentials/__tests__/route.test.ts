@@ -16,7 +16,6 @@ vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
-  isFullAdmin: vi.fn(),
   setMirotalkSecret: vi.fn(),
   clearMirotalkSecret: vi.fn(),
   createAuditLog: vi.fn(),
@@ -24,7 +23,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
-vi.mock("@/lib/access-roles", () => ({ isFullAdmin: mocks.isFullAdmin }));
+// `@/lib/access-roles` is DELIBERATELY NOT MOCKED. A stubbed `isFullAdmin`
+// answers whatever the test told it to, whatever argument it was handed, so
+// the route could read the roles off a literal `["ADMIN"]` and every case here
+// still passed — with the write-only secret gate and its audited refusal both
+// unconditionally open in production. The real predicate runs instead, on the
+// real role token the session below carries.
 vi.mock("@/lib/mirotalk-config-write", () => ({
   setMirotalkSecret: mocks.setMirotalkSecret,
   clearMirotalkSecret: mocks.clearMirotalkSecret,
@@ -62,12 +66,24 @@ function deleteRequest(query: string) {
   );
 }
 
+/**
+ * A session that has already passed `finance: edit`, holding a REAL role token.
+ *
+ * The non-Full-Admin case is a Treasurer (`FINANCE_ADMIN`) — the role this
+ * route's docblock names as the reason the refusal is audited at all: it holds
+ * `finance: edit`, so it reaches this gate, and it must not be able to write a
+ * capability secret.
+ */
 function asAdmin(fullAdmin: boolean) {
   mocks.requireAdmin.mockResolvedValue({
     ok: true,
-    session: { user: { id: "admin-1", accessRoles: ["ADMIN"] } },
+    session: {
+      user: {
+        id: "admin-1",
+        accessRoles: fullAdmin ? ["ADMIN"] : ["FINANCE_ADMIN"],
+      },
+    },
   });
-  mocks.isFullAdmin.mockReturnValue(fullAdmin);
 }
 
 beforeEach(() => {
@@ -97,6 +113,23 @@ describe("POST", () => {
     expect(row.summary).toMatch(/store/);
     // Nothing about the refusal may name what was being stored.
     expect(JSON.stringify(row)).not.toContain(SECRET);
+  });
+
+  it("refuses a custom role matrix that carries finance: edit", async () => {
+    // A custom role's token is an AccessRoleDefinition id, not an enum value:
+    // privileged, admitted by `finance: edit`, and not `ADMIN`. It reaches this
+    // gate and must be turned away by it.
+    mocks.requireAdmin.mockResolvedValue({
+      ok: true,
+      session: {
+        user: { id: "admin-2", accessRoles: ["cmcustomroledefinitionid0001"] },
+      },
+    });
+    const res = await POST(
+      postRequest({ key: "jwt_key", value: SECRET, version: null }),
+    );
+    expect(res.status).toBe(403);
+    expect(mocks.setMirotalkSecret).not.toHaveBeenCalled();
   });
 
   it("refuses a key outside the closed set", async () => {
