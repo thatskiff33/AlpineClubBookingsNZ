@@ -5,6 +5,11 @@ import type { DisplayNameGranularity, Prisma } from "@prisma/client";
 import { isGuestActiveOnNight } from "./booking-guest-stay-ranges";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "./booking-status";
 import {
+  findCustodianBedHolds,
+  holdCoversNight,
+  type CustodianBedHold,
+} from "./custodian-occupancy";
+import {
   addCalendarDays,
   eachCalendarDate,
 } from "./club-time/calendar-date";
@@ -133,12 +138,34 @@ export interface RosterGroup {
   nights: string[];
 }
 
+/**
+ * A custodian in residence, and the nights they are here.
+ *
+ * SHOWN, NOT INFERRED (owner decision, 15 Sep 2026). A custodian's bed is an
+ * ordinary occupied bed on the booking calendar, which was chosen so nothing
+ * about who is in the building leaked from the bed count. Once the roster
+ * gives a member a head count, that concealment stopped working — the
+ * custodian became the unexplained residual between the two surfaces. The
+ * owner's answer was that a custodian should not be inferable but plainly
+ * shown, which closes the gap by disclosure instead of by arithmetic nobody
+ * can audit.
+ */
+export interface RosterCustodian {
+  /**
+   * The custodian's name at the lodge's granularity, or null when a name may
+   * not be shown — the presence is still stated.
+   */
+  name: string | null;
+  nights: string[];
+}
+
 export interface LodgeRoster {
   lodgeId: string;
   lodgeName: string;
   granularity: DisplayNameGranularity;
   people: RosterPerson[];
   groups: RosterGroup[];
+  custodians: RosterCustodian[];
 }
 
 export interface MemberLodgeRoster {
@@ -240,6 +267,23 @@ export async function buildMemberLodgeRoster(
     select: MEMBER_ROSTER_BOOKING_SELECT,
   });
 
+  // Custodian bed holds for the same window, per lodge. Read per lodge rather
+  // than once unfiltered, so no row for a lodge this member cannot reach is
+  // ever loaded — the same discipline the booking read follows.
+  const custodianHoldsByLodge = new Map<string, CustodianBedHold[]>();
+  await Promise.all(
+    lodgeIds.map(async (lodgeId) => {
+      custodianHoldsByLodge.set(
+        lodgeId,
+        await findCustodianBedHolds({
+          lodgeId,
+          from: dateOnlyInstantOf(from),
+          toExclusive: dateOnlyInstantOf(to),
+        })
+      );
+    })
+  );
+
   const byLodge = new Map<string, RosterBookingRow[]>();
   for (const booking of bookings) {
     const list = byLodge.get(booking.lodgeId);
@@ -254,6 +298,7 @@ export async function buildMemberLodgeRoster(
       buildOneLodgeRoster(
         lodge,
         byLodge.get(lodge.id) ?? [],
+        custodianHoldsByLodge.get(lodge.id) ?? [],
         windowNights
       )
     ),
@@ -263,6 +308,7 @@ export async function buildMemberLodgeRoster(
 function buildOneLodgeRoster(
   lodge: { id: string; name: string; rosterNameGranularity: DisplayNameGranularity | null },
   bookings: readonly RosterBookingRow[],
+  custodianHolds: readonly CustodianBedHold[],
   windowNights: readonly CalendarDate[]
 ): LodgeRoster {
   const granularity = lodge.rosterNameGranularity ?? DEFAULT_ROSTER_NAME_GRANULARITY;
@@ -388,11 +434,32 @@ function buildOneLodgeRoster(
   people.sort((a, b) => a.name.localeCompare(b.name));
   groups.sort((a, b) => a.label.localeCompare(b.label));
 
+  // A minor is never individually named at ANY granularity, and the naming is
+  // ALL-OR-NOTHING across the window: naming one custodian and withholding
+  // another identifies the withheld person by elimination, and over thirty
+  // nights that elimination works across nights as well as within one. So one
+  // un-nameable custodian withholds every custodian name and the roster falls
+  // back to stating the presence alone. This is the lobby display's rule, one
+  // window wider.
+  const custodianNames = custodianHolds.map((hold) =>
+    hold.memberIsMinor
+      ? null
+      : reduceName(hold.memberFirstName, hold.memberLastName, granularity)
+  );
+  const mayNameCustodians = custodianNames.every((name) => Boolean(name));
+  const custodians: RosterCustodian[] = custodianHolds
+    .map((hold, index) => ({
+      name: mayNameCustodians ? custodianNames[index]! : null,
+      nights: windowNights.filter((night) => holdCoversNight(hold, night)),
+    }))
+    .filter((entry) => entry.nights.length > 0);
+
   return {
     lodgeId: lodge.id,
     lodgeName: lodge.name,
     granularity,
     people,
     groups,
+    custodians,
   };
 }

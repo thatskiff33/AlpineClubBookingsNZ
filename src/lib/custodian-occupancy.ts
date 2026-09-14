@@ -73,6 +73,14 @@ export interface CustodianBedHold {
   assignmentId: string;
   memberId: string;
   memberName: string;
+  /**
+   * The name PARTS, so a caller that must reduce the name to a configured
+   * granularity can do so (`reduceName`). `memberName` above is the composed
+   * convenience form and cannot be reduced without re-splitting it, which is
+   * guesswork on any name with more than two words (#2942).
+   */
+  memberFirstName: string;
+  memberLastName: string;
   /** Minor-age custodians are never individually named on a public surface. */
   memberIsMinor: boolean;
   lodgeId: string;
@@ -199,6 +207,8 @@ export async function findCustodianBedHolds(input: {
       memberId: row.memberId,
       memberName:
         `${row.member.firstName ?? ""} ${row.member.lastName ?? ""}`.trim(),
+      memberFirstName: row.member.firstName ?? "",
+      memberLastName: row.member.lastName ?? "",
       memberIsMinor: isMinorAgeTier(row.member.ageTier),
       lodgeId: row.lodgeId,
       bedId: row.bedId,

@@ -45,6 +45,11 @@ a child shows a family or group label instead — "Smith family", or "Family of
 4" — and names nobody in it, including the adults. That is deliberate: naming
 the adults beside a family label would identify the child by association.
 
+**A custodian on duty is listed too.** If someone is staying as the lodge
+custodian, they appear with the nights they are there, marked as the custodian.
+That is deliberate: you should be able to see at a glance whether someone is
+looking after the place, rather than having to work it out.
+
 **School and club groups show as the organisation.** A school booking reads as
 the school's name, never as the teachers or the pupils.
 

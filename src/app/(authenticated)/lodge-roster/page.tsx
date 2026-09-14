@@ -52,7 +52,10 @@ export default async function LodgeRosterPage() {
   const roster = await buildMemberLodgeRoster(session.user.id);
 
   const hasAnyone = roster.lodges.some(
-    (lodge) => lodge.people.length > 0 || lodge.groups.length > 0
+    (lodge) =>
+      lodge.people.length > 0 ||
+      lodge.groups.length > 0 ||
+      lodge.custodians.length > 0
   );
 
   // ADR-002 presentation rule: with exactly one active lodge, its name is
@@ -114,7 +117,10 @@ function LodgeSection({
   lodge: LodgeRoster;
   showLodgeName: boolean;
 }) {
-  const empty = lodge.people.length === 0 && lodge.groups.length === 0;
+  const empty =
+    lodge.people.length === 0 &&
+    lodge.groups.length === 0 &&
+    lodge.custodians.length === 0;
 
   return (
     <Card>
@@ -136,6 +142,28 @@ function LodgeSection({
           </p>
         ) : (
           <ul className="divide-y">
+            {/*
+              Custodians first, and stated outright. A custodian's bed is an
+              ordinary occupied bed on the booking calendar so that the bed
+              count gives nothing away; once this page supplies a head count,
+              concealment there only made the custodian the unexplained
+              difference between two screens. Owner decision, 15 Sep 2026: it
+              should be shown and clear to everyone rather than inferable.
+            */}
+            {lodge.custodians.map((custodian, index) => (
+              <li
+                key={`custodian-${index}`}
+                className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2"
+              >
+                <span className="font-medium">
+                  {custodian.name ?? "Custodian"}
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                    {custodian.name ? "custodian" : "in residence"}
+                  </span>
+                </span>
+                <Nights nights={custodian.nights} />
+              </li>
+            ))}
             {lodge.groups.map((group, index) => (
               <li
                 // Index-keyed on purpose. A reduced name is not unique — at

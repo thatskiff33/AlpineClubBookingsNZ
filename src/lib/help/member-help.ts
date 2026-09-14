@@ -461,6 +461,10 @@ const lodgeRosterHelp: HelpPageContent = {
       a: "Because the booking includes someone under 18. Those bookings name nobody at all, the adults included, and show something like 'Smith family' or 'Family of 4'. Naming the adults beside a family label would identify the child by association, so the whole booking is shown as a group. School and club bookings show the organisation's name for the same kind of reason.",
     },
     {
+      q: "Does it show the custodian?",
+      a: "Yes. If someone is staying as the lodge custodian they are listed with the nights they are there, marked as the custodian, so you can see at a glance whether the place is being looked after. A custodian under 18 is never named, and in that case the listing says only that a custodian is in residence.",
+    },
+    {
       q: "Why is somebody I know is going not on the list?",
       a: "The list shows stays that are paid or finished. A booking somebody has made but not yet paid for does not appear, so the lodge can end up busier than the list suggests.",
     },

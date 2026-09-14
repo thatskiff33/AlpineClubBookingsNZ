@@ -31,10 +31,20 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/custodian-occupancy", async (importOriginal) => {
+  // PARTIAL mock: `holdCoversNight` is the real predicate, because a double
+  // for it would make the night arithmetic below a fact about the double.
+  // Only the database read is replaced.
+  const actual =
+    await importOriginal<typeof import("@/lib/custodian-occupancy")>();
+  return { ...actual, findCustodianBedHolds: vi.fn(async () => []) };
+});
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { findCustodianBedHolds } from "@/lib/custodian-occupancy";
 import { prisma } from "@/lib/prisma";
 import {
   buildMemberLodgeRoster,
@@ -42,6 +52,34 @@ import {
   MEMBER_ROSTER_BOOKING_SELECT,
   ROSTER_WINDOW_DAYS,
 } from "@/lib/member-lodge-roster";
+
+const mockFindCustodianBedHolds = findCustodianBedHolds as unknown as ReturnType<
+  typeof vi.fn
+>;
+
+function custodianHold(
+  firstName: string,
+  lastName: string,
+  startDate: string,
+  endDate: string,
+  isMinor = false
+) {
+  return {
+    assignmentId: `hold-${firstName}`,
+    memberId: `member-${firstName}`,
+    memberName: `${firstName} ${lastName}`,
+    memberFirstName: firstName,
+    memberLastName: lastName,
+    memberIsMinor: isMinor,
+    lodgeId: "lodge-a",
+    bedId: "bed-1",
+    bedName: "Bed 1",
+    roomId: "room-1",
+    roomName: "Room 1",
+    startDate,
+    endDate,
+  };
+}
 
 const mockPrisma = prisma as unknown as {
   lodge: { findMany: ReturnType<typeof vi.fn> };
@@ -218,6 +256,7 @@ function bookingRow(options: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFindCustodianBedHolds.mockResolvedValue([]);
   mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
   mockPrisma.lodge.findMany.mockResolvedValue([lodgeRow("lodge-a", "Alpha")]);
   mockPrisma.booking.findMany.mockResolvedValue([]);
@@ -750,6 +789,86 @@ describe("member lodge roster — the presence rule's other shapes", () => {
       split?.nights,
       "a gap is a real absence; the roster must not say somebody was here on a night they were not."
     ).toEqual([TODAY, "2026-07-05"]);
+  });
+});
+
+describe("member lodge roster — the custodian is shown, not inferred", () => {
+  it("lists the custodian by name, with the nights they are here", async () => {
+    mockFindCustodianBedHolds.mockResolvedValue([
+      custodianHold("Hemi", "Walker", TODAY, "2026-07-03"),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(roster.lodges[0]?.custodians).toEqual([
+      {
+        name: "Hemi Walker",
+        nights: [TODAY, "2026-07-02", "2026-07-03"],
+      },
+    ]);
+  });
+
+  it("never names a custodian under 18, but still says one is here", async () => {
+    mockFindCustodianBedHolds.mockResolvedValue([
+      custodianHold("Tama", "Rangi", TODAY, TODAY, true),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    const payload = JSON.stringify(roster);
+    expect(
+      payload,
+      "INV-PRIV-017: a minor custodian is never individually named, at any granularity."
+    ).not.toContain("Tama");
+    expect(roster.lodges[0]?.custodians).toEqual([
+      { name: null, nights: [TODAY] },
+    ]);
+  });
+
+  it("withholds EVERY custodian name when one of them may not be named", async () => {
+    // Naming one and withholding the other identifies the withheld person by
+    // elimination, so the rule is all-or-nothing.
+    mockFindCustodianBedHolds.mockResolvedValue([
+      custodianHold("Hemi", "Walker", TODAY, TODAY),
+      custodianHold("Tama", "Rangi", TODAY, TODAY, true),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    const payload = JSON.stringify(roster);
+    expect(payload).not.toContain("Hemi");
+    expect(payload).not.toContain("Tama");
+    expect(roster.lodges[0]?.custodians.map((c) => c.name)).toEqual([
+      null,
+      null,
+    ]);
+  });
+
+  it("reduces the custodian's name to the lodge's granularity", async () => {
+    mockPrisma.lodge.findMany.mockResolvedValue([
+      lodgeRow("lodge-a", "Alpha", "FIRST_NAME_SURNAME_INITIAL"),
+    ]);
+    mockFindCustodianBedHolds.mockResolvedValue([
+      custodianHold("Hemi", "Walker", TODAY, TODAY),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(roster.lodges[0]?.custodians[0]?.name).toBe("Hemi W");
+  });
+
+  it("drops a hold that does not reach into the window", async () => {
+    mockFindCustodianBedHolds.mockResolvedValue([
+      custodianHold("Hemi", "Walker", "2026-08-10", "2026-08-12"),
+    ]);
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(roster.lodges[0]?.custodians).toEqual([]);
+  });
+
+  it("reads custodian holds only for lodges the member may reach", async () => {
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([
+      { lodgeId: "lodge-a" },
+    ]);
+    await buildMemberLodgeRoster("viewer-1");
+    for (const call of mockFindCustodianBedHolds.mock.calls) {
+      expect(call[0].lodgeId).toBe("lodge-a");
+    }
   });
 });
 
