@@ -88,11 +88,14 @@ describe("useActionAttention", () => {
     main.scrollTo = vi.fn();
     expect(document.activeElement).toBe(alert);
 
-    // A success arriving alongside a live failure does not displace it.
+    // A success arriving alongside a live failure does not displace it — and
+    // does not re-run the failure position either: the same failure is one
+    // arrival, however many other things change around it.
     view.rerender(<ActionSurface error="Refused." success="Saved." />);
 
     expect(document.activeElement).toBe(alert);
     expect(main.scrollTo).not.toHaveBeenCalled();
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
   it("positions at the top of the resulting screen when a save succeeds", () => {
