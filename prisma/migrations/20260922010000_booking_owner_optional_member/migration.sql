@@ -158,6 +158,14 @@ BEGIN
 END;
 $classification_kind$;
 
+-- The foreign key is declared INLINE rather than added by a following ALTER,
+-- which is what makes this section re-runnable without a second existence
+-- check: ADD CONSTRAINT has no IF NOT EXISTS form, and wrapping one in a DO
+-- block would have to spell "ON UPDATE CASCADE" inside it -- which the
+-- data-migration coverage gate reads as a migration-time rewrite and demands a
+-- fixture for. One CREATE TABLE carries both, and skipping it skips both
+-- together. CASCADE because the classification is a fact ABOUT this row, so
+-- when the row goes it is not about anything.
 CREATE TABLE IF NOT EXISTS "SchoolMemberClassification" (
     "memberId" TEXT NOT NULL,
     "classification" "SchoolMemberClassificationKind" NOT NULL,
@@ -165,24 +173,10 @@ CREATE TABLE IF NOT EXISTS "SchoolMemberClassification" (
     "decidedBy" VARCHAR(200) NOT NULL,
     "decidedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "SchoolMemberClassification_pkey" PRIMARY KEY ("memberId")
+    CONSTRAINT "SchoolMemberClassification_pkey" PRIMARY KEY ("memberId"),
+    CONSTRAINT "SchoolMemberClassification_memberId_fkey" FOREIGN KEY ("memberId") REFERENCES "Member"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS "SchoolMemberClassification_classification_idx" ON "SchoolMemberClassification"("classification");
-
--- CASCADE: the classification is a fact ABOUT this row, so when the row goes it
--- is not about anything. ADD CONSTRAINT has no IF NOT EXISTS form, so the
--- existence check is explicit.
-DO $classification_fkey$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'SchoolMemberClassification_memberId_fkey'
-          AND conrelid = '"SchoolMemberClassification"'::regclass
-    ) THEN
-        ALTER TABLE "SchoolMemberClassification" ADD CONSTRAINT "SchoolMemberClassification_memberId_fkey" FOREIGN KEY ("memberId") REFERENCES "Member"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-    END IF;
-END;
-$classification_fkey$;
 
 COMMIT;

@@ -246,6 +246,228 @@ const verification: DataMigrationVerification = {
           ],
         },
       ],
+      // ---------------------------------------------------------------------
+      // AND BACK AGAIN. The reverse scripts, executed against exactly this
+      // post-state (#3369).
+      //
+      // Nothing ran these before. `validate-blue-green-migrations.sh` proves
+      // the file EXISTS beside a windowed migration and stops there — so the
+      // first cut of this reverse built its owner map with one member per
+      // ORGANISATION, and against this very pre-state it handed both schools'
+      // bookings back to `sc-school-a`, left `sc-req-b` still pointing at the
+      // organisation, and then failed its own delete guard on the record it
+      // claims to remove. It read correctly. Only running it says otherwise.
+      // ---------------------------------------------------------------------
+      reverse: {
+        runs: [
+          {
+            name: "in the operator's order, every booking goes back to the member that actually owned it",
+            scripts: [
+              "20260922020000_backfill_school_bookings_to_organisations",
+              "20260922010000_booking_owner_optional_member",
+            ],
+            expectations: [
+              {
+                claim:
+                  "each school's booking returns to ITS OWN member — the one the converted SCHOOL request names beside it — not both to the lower-id row",
+                sql: OWNERSHIP,
+                rows: [
+                  { booking: "sc-b-ordinary", member: "sc-ordinary", organisation: null },
+                  { booking: "sc-b-school-a", member: "sc-school-a", organisation: null },
+                  { booking: "sc-b-school-b", member: "sc-school-b", organisation: null },
+                  { booking: "sc-b-teacher", member: "sc-teacher", organisation: null },
+                ],
+              },
+              {
+                claim:
+                  "the Xero customer goes back to the member it came from, and the second school row keeps the one that never moved",
+                sql: MEMBERS,
+                rows: [
+                  {
+                    member: "sc-ordinary",
+                    firstName: "Ada",
+                    lastName: "Ordinary",
+                    xero: "xero-ada",
+                  },
+                  {
+                    member: "sc-school-a",
+                    firstName: "Tokoroa Primary School",
+                    lastName: "",
+                    xero: "xero-tps-first",
+                  },
+                  {
+                    member: "sc-school-b",
+                    firstName: "\t Tokoroa   Primary School ",
+                    lastName: "",
+                    xero: "xero-tps-second",
+                  },
+                  {
+                    member: "sc-teacher",
+                    firstName: "Rangi",
+                    lastName: "Teacher",
+                    xero: "xero-rangi",
+                  },
+                ],
+              },
+              {
+                claim:
+                  "the minted school record is gone — which it can only be once BOTH of its requests have been unlinked",
+                sql: ORGANISATIONS,
+                rows: [],
+              },
+              {
+                claim:
+                  "every converted request lets go of the school again, so re-running the forward migration re-derives the links rather than finding them half-present",
+                sql: REQUESTS,
+                rows: [
+                  { request: "sc-req-a", organisation: null },
+                  { request: "sc-req-b", organisation: null },
+                  { request: "sc-req-general", organisation: null },
+                ],
+              },
+              {
+                claim:
+                  "the promo rows name the booking's own member again and not one cent moved in either direction",
+                sql: PROMO,
+                rows: [
+                  {
+                    booking: "sc-b-school-a",
+                    redemptionMember: "sc-school-a",
+                    redemptionDiscount: 6000,
+                    allocationMember: "sc-school-a",
+                    allocationDiscount: 6000,
+                    allocationRows: "1",
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            name: "run in the WRONG order, it refuses structurally",
+            // The refusal used to be three SET NOT NULL statements, which fail
+            // only when a NULL member happens to exist. Measured on a freshly
+            // migrated database it exited 0 and did half a rollback. This run
+            // is what keeps the four sentences calling it unconditional true.
+            scripts: [
+              "20260922010000_booking_owner_optional_member",
+              "20260922020000_backfill_school_bookings_to_organisations",
+            ],
+            raises: "school_reverse_wrong_order",
+          },
+        ],
+        mutants: [
+          {
+            // Literally the shipped defect, restored. Two adversarial lenses
+            // found it by reading; only this run finds it by running.
+            name: "resolve the owner per ORGANISATION instead of per booking",
+            script: "20260922020000_backfill_school_bookings_to_organisations",
+            harm: "Every booking of a twice-recorded school comes back owned by whichever of its rows has the lowest id. The other school's row ends up owning nothing, its converted request keeps a link to a record the script then cannot delete, and no screen in the application shows any of it.",
+            find: `    COALESCE(
+        (
+            SELECT r."convertedMemberId"
+              FROM "BookingRequest" r
+              JOIN "school_rollback_member" sm
+                ON sm.member_id = r."convertedMemberId"
+               AND sm.organisation_id = b."organisationId"
+             WHERE r."type" = 'SCHOOL'
+               AND r."convertedBookingId" = b."id"
+             ORDER BY r."convertedMemberId"
+             LIMIT 1
+        ),
+        (
+            SELECT s.member_id
+              FROM "school_rollback_sole_member" s
+             WHERE s.organisation_id = b."organisationId"
+        )
+    ) AS member_id`,
+            replace: `    (
+        SELECT min(sm.member_id)
+          FROM "school_rollback_member" sm
+         WHERE sm.organisation_id = b."organisationId"
+    ) AS member_id`,
+          },
+          {
+            name: "unlink only one converted request per organisation",
+            script: "20260922020000_backfill_school_bookings_to_organisations",
+            harm: "A second request spelling the same school keeps pointing at a record the club has rolled back, and the delete guard that exists to stop an organisation disappearing out from under a reference then refuses — so a record the script reports as removed survives the rollback.",
+            find: `  AND req."convertedMemberId" = sm.member_id;`,
+            replace: `  AND req."convertedMemberId" = (SELECT min(member_id) FROM "school_rollback_member" srm WHERE srm.organisation_id = sm.organisation_id);`,
+          },
+          {
+            name: "clear the organisation's Xero customer instead of returning it",
+            script: "20260922020000_backfill_school_bookings_to_organisations",
+            harm: "The school's Xero customer is dropped on the way back rather than returned to the member it came from. That provider link is the only thing tying years of invoices to the school, the member row that owns the booking again holds none, and the next invoice creates a duplicate customer.",
+            find: `SET "xeroContactId" = x.organisation_xero_contact_id`,
+            replace: `SET "xeroContactId" = NULL`,
+          },
+          {
+            name: "drop the structural wrong-order guard",
+            script: "20260922010000_booking_owner_optional_member",
+            harm: "The two reverses can then be run in the wrong order on a club with no school bookings, which exits 0 having restored the shape without restoring the data — a half rollback reported as a success.",
+            find: `        WHERE conname = 'Booking_owner_exactly_one'`,
+            replace: `        WHERE conname = 'Booking_owner_exactly_one_never_added'`,
+          },
+        ],
+      },
+    },
+    {
+      name: "one school recorded twice with no converted requests left to say which owned what",
+      // The other half of the reverse's promise. A club that deleted its old
+      // booking requests — or an installation whose school bookings an officer
+      // entered by hand — leaves the forward migration's collapse with no
+      // evidence to undo it. The reverse must REFUSE and name the backup
+      // rather than pick the lower-id row, which is what the first cut did.
+      seed: `
+        INSERT INTO "Member"
+          ("id", "email", "passwordHash", "firstName", "lastName", "role",
+           "canLogin", "updatedAt")
+        VALUES
+          ('nr-school-a', 'a@oas.test', 'x', 'Otorohanga Area School', '',
+           'SCHOOL', false, TIMESTAMP '2026-01-01 00:00:00'),
+          ('nr-school-b', 'b@oas.test', 'x', 'otorohanga area school', '',
+           'SCHOOL', false, TIMESTAMP '2026-01-02 00:00:00');
+
+        INSERT INTO "Booking"
+          ("id", "memberId", "checkIn", "checkOut", "status",
+           "totalPriceCents", "finalPriceCents", "updatedAt")
+        VALUES
+          ('nr-b-a', 'nr-school-a', DATE '2026-08-01', DATE '2026-08-03',
+           'CONFIRMED', 50000, 50000, TIMESTAMP '2026-01-01 00:00:00'),
+          ('nr-b-b', 'nr-school-b', DATE '2026-09-01', DATE '2026-09-03',
+           'CONFIRMED', 40000, 40000, TIMESTAMP '2026-01-02 00:00:00');
+
+        INSERT INTO "SchoolMemberClassification"
+          ("memberId", "classification", "evidence", "decidedBy", "decidedAt")
+        VALUES
+          ('nr-school-a', 'ORGANISATION', 'officer: the school itself',
+           'Jordan (treasurer)', TIMESTAMP '2026-02-01 00:00:00'),
+          ('nr-school-b', 'ORGANISATION', 'officer: the same school again',
+           'Jordan (treasurer)', TIMESTAMP '2026-02-01 00:00:00');
+      `,
+      expectations: [
+        {
+          claim:
+            "both spellings collapse onto one record and neither booking keeps a member — the forward direction is unchanged by the reverse being stricter",
+          sql: OWNERSHIP,
+          rows: [
+            { booking: "nr-b-a", member: null, organisation: "Otorohanga Area School" },
+            { booking: "nr-b-b", member: null, organisation: "Otorohanga Area School" },
+          ],
+        },
+      ],
+      reverse: {
+        runs: [
+          {
+            name: "refuses rather than guessing which of two rows owned which booking",
+            scripts: [
+              "20260922020000_backfill_school_bookings_to_organisations",
+              "20260922010000_booking_owner_optional_member",
+            ],
+            raises: "school_backfill_rollback_unreconstructable",
+          },
+        ],
+        mutants: [],
+      },
     },
   ],
   mutants: [
