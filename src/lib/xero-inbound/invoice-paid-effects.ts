@@ -1,5 +1,5 @@
 import { type Invoice } from "xero-node";
-import { BookingEventType, BookingStatus, CreditType, PaymentSource, PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
+import { BookingEventType, BookingStatus, CreditType, ManualRefundTaskKind, PaymentSource, PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -33,6 +33,7 @@ import { createAuditLog } from "@/lib/audit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
+import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { formatCents } from "@/lib/utils";
 
 function isPaidXeroInvoice(invoice: Invoice): boolean {
@@ -692,39 +693,27 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         const bookingLabel = settlementPayment.bookingId.slice(0, 8);
 
         // #3369: this arm mints MEMBER CREDIT, and an organisation-owned
-        // booking has no member account to mint into. It never had a usable
-        // one either — the invented school member could not sign in, so credit
-        // minted against it was unspendable — which is why skipping loses the
-        // school nothing and gains the club a visible, actionable line instead
-        // of a balance nobody can reach. The money is real and is the
-        // treasurer's to return directly.
+        // booking has no member account to mint into. It never had a usable one
+        // either — the invented school member could not sign in, so credit
+        // minted against it was unspendable. But the CASH IS REAL: a school has
+        // paid for a booking the club has cancelled, and the club now holds
+        // money it owes back.
+        //
+        // The first cut of this stage answered that with a `logger.warn` whose
+        // comment claimed it gave the club "a visible, actionable line". It did
+        // not. No task was raised, nothing reached the stuck-state dashboard,
+        // and the caller treats this outcome as an ordinary silent one — so a
+        // school's money became a log line and a clean webhook.
+        //
+        // It now raises a `ManualRefundTask`, which is this repository's
+        // durable record of exactly this thing: money the system cannot move
+        // itself. It appears on the payments board, it carries the amount, and
+        // it stays open until somebody closes it. The admin alert beside the
+        // other three anomalies in this arm's caller says the same thing by
+        // email. The branch sits BELOW the cash quantification so the task is
+        // raised for the cents that actually arrived rather than the payment's
+        // face amount — the same figure the member arm would have credited.
         const creditMemberId = bookingOwner(settlementPayment.booking).memberId;
-        if (!creditMemberId) {
-          logger.warn(
-            {
-              invoiceId,
-              paymentId: settlementPayment.id,
-              bookingId: settlementPayment.bookingId,
-              organisationId: settlementPayment.booking.organisationId,
-            },
-            "Internet Banking payment on a cancelled organisation-owned booking: no member account to credit, so no credit was minted. Refund the organisation directly (#3369)."
-          );
-          return {
-            type: "alreadyCancelled" as const,
-            payment: settlementPayment,
-            paymentWasPending: paymentNeverSettled,
-            credited: false,
-            creditedCents: 0,
-            creditedPartial: false,
-            cashUnverified: false,
-            aggregateCapped: false,
-            laterCashCents: 0,
-            zeroCashAnomaly: false,
-            clearingNoteAlreadyIssued: Boolean(
-              settlementPayment.xeroRefundCreditNoteId,
-            ),
-          };
-        }
 
         // #1459: size the mint by the invoice's quantified CASH, never by the
         // payment's face amount alone. On a mixed invoice — the member
@@ -748,6 +737,80 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             invoiceCash,
             otherMintedCents,
           );
+
+        if (!creditMemberId) {
+          // The same three conditions the member arm mints under: cash really
+          // arrived, the payment never settled, and there are cents to hand
+          // back. Idempotent on the (booking, payment, kind) triple rather than
+          // on status, so a replay after an officer has CLOSED the task does
+          // not raise a second one — a webhook may be delivered any number of
+          // times, and this is money.
+          const handBackCents = mintableCents;
+          const shouldHandBack =
+            invoiceHasCashPayment && paymentNeverSettled && handBackCents > 0;
+          const alreadyRaised = shouldHandBack
+            ? await tx.manualRefundTask.findFirst({
+                where: {
+                  bookingId: settlementPayment.bookingId,
+                  paymentId: settlementPayment.id,
+                  kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+                },
+                select: { id: true },
+              })
+            : null;
+          if (shouldHandBack && !alreadyRaised) {
+            await tx.manualRefundTask.create({
+              data: {
+                bookingId: settlementPayment.bookingId,
+                paymentId: settlementPayment.id,
+                amountCents: handBackCents,
+                kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+                // Fixed at creation, like every other hand-back: the figure
+                // comes from the invoice's quantified cash, not from an
+                // officer's judgement, so it is not amendable at completion.
+                raisedAmountCents: handBackCents,
+                reason: `Booking ${bookingLabel} was cancelled and an Internet Banking payment arrived for it. The booking belongs to an organisation, which has no member account for the money to be held as credit, so it must be returned to the organisation by hand (#3369).`.slice(
+                  0,
+                  MANUAL_REFUND_TASK_REASON_MAX,
+                ),
+              },
+            });
+          }
+          logger.warn(
+            {
+              invoiceId,
+              paymentId: settlementPayment.id,
+              bookingId: settlementPayment.bookingId,
+              organisationId: settlementPayment.booking.organisationId,
+              handBackCents,
+              taskRaised: shouldHandBack && !alreadyRaised,
+            },
+            "Internet Banking payment on a cancelled organisation-owned booking: no member account to credit, so a manual hand-back task carries the money instead (#3369)."
+          );
+          return {
+            type: "alreadyCancelled" as const,
+            payment: settlementPayment,
+            // The enclosing value, exactly as the member arm's return below
+            // uses it. The first cut passed `paymentNeverSettled` here, which
+            // is derived from the argument rather than from the outer read and
+            // therefore diverged from the member arm on the post-lock re-entry.
+            paymentWasPending,
+            credited: false,
+            creditedCents: 0,
+            creditedPartial: false,
+            cashUnverified,
+            aggregateCapped,
+            laterCashCents: 0,
+            zeroCashAnomaly: false,
+            // What the caller alerts on. Zero means there was nothing to hand
+            // back — a replay, an allocation-cleared invoice — and stays silent
+            // exactly as the member arm does in the same states.
+            organisationHandBackCents: shouldHandBack ? handBackCents : 0,
+            clearingNoteAlreadyIssued: Boolean(
+              settlementPayment.xeroRefundCreditNoteId,
+            ),
+          };
+        }
 
         // Looked up unconditionally (amount included): the dedup gate needs
         // its existence, and the later-cash detection below needs its size.
@@ -874,6 +937,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           aggregateCapped,
           laterCashCents,
           zeroCashAnomaly,
+          // #3369: the member arm never hands back to an organisation, by
+          // construction — it only runs when there IS a member. Stated rather
+          // than left to the union, so both arms return the same shape.
+          organisationHandBackCents: 0,
           clearingNoteAlreadyIssued: Boolean(
             settlementPayment.xeroRefundCreditNoteId,
           ),
@@ -1265,6 +1332,26 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           logger.error(
             { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
             "Failed to alert admins about later cash on an already-credited cancelled booking"
+          )
+        );
+      } else if (outcome.organisationHandBackCents > 0) {
+        // #3369: a school paid for a booking the club had already cancelled.
+        // There is no member account to hold the money as credit, so the arm
+        // above raised a manual hand-back task and this says so out loud — the
+        // fourth anomaly in a list of three, and for the same reason as the
+        // other three: money that moved without a member-facing outcome must
+        // never be silent.
+        sendAdminPaymentFailureAlert({
+          memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`.trim(),
+          checkIn: outcome.payment.booking.checkIn,
+          checkOut: outcome.payment.booking.checkOut,
+          amountCents: outcome.organisationHandBackCents,
+          errorMessage: `Internet Banking cash of ${formatCents(outcome.organisationHandBackCents)} arrived for an already-cancelled booking that belongs to an ORGANISATION. An organisation has no member account, so the money is NOT held as account credit — a manual refund task has been raised on the payments board for the full amount and stays open until somebody returns the money and closes it. Verify the invoice in Xero, then refund the organisation directly.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
+          paymentIntentId: invoiceId,
+        }).catch((err) =>
+          logger.error(
+            { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
+            "Failed to alert admins about an Internet Banking payment on a cancelled organisation-owned booking"
           )
         );
       } else if (outcome.zeroCashAnomaly) {
