@@ -420,6 +420,8 @@ const DECLARED_FILES: Record<string, string> = {
     "a recovery replay re-resolves the owner's Stripe customer",
   "src/lib/xero-inbound/invoice-paid-effects.ts":
     "an Internet Banking over-payment on a school's booking has no member ledger to credit, and names the organisation in the warning that tells an officer to refund it directly",
+  "src/app/api/admin/bookings/search/route.ts":
+    "a school's booking is found by the SCHOOL's name, which is what an officer was already typing when the invented member carried it",
 
   // ---- carried forward from stage 1, unchanged -------------------------
   "src/lib/member-merge-relations.ts":
@@ -489,9 +491,11 @@ const DECLARED_FILES: Record<string, string> = {
  * before the census reads a file (#3369) — see the note above for why.
  */
 const OWNER_PROJECTION = [
-  // The Prisma selection, in the two spellings the sweep wrote: on its own line
-  // and inline beside a `member: true`.
+  // The Prisma selection, in the spellings the sweep wrote: on its own line,
+  // inline beside a `member: true`, and — on the wall display, where an email
+  // is forbidden outright — the name alone.
   /organisation: \{ select: \{ name: true,? email: true,? \} \},?/g,
+  /organisation: \{ select: \{ name: true,? \} \},?/g,
   // The same thing declared in a `GetPayload` type argument.
   /organisation: \{ select: \{ name: true; email: true;? \} \};?/g,
   // And declared as a plain TypeScript field by a caller that wrote its own
