@@ -146,6 +146,16 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
     "deleteIntegrationCredential (forwarded) actor / any",
   "src/lib/google-config.ts::recordGoogleVerified#0":
     "setIntegrationCredential system / any",
+  // #2940 — the first CLUB-EDITABLE consumer of the store, and the first pair
+  // of sites that declare a real expectation rather than `any`. The screen read
+  // the status and says what it was shown; a second administrator who saved in
+  // between makes the write lose. The clear is the one that needs it most: it
+  // is a genuine read-modify-write, and an unconditional delete would remove
+  // whatever replaced the secret and report success.
+  "src/lib/mirotalk-config.ts::clearMirotalkSecret#0":
+    "deleteIntegrationCredential (forwarded) params.actor / (forwarded) params.expect",
+  "src/lib/mirotalk-config.ts::setMirotalkSecret#0":
+    "setIntegrationCredential (forwarded) params.actor / (forwarded) params.expect",
   "src/lib/servernz-config.ts::clearServerNzApiKey#0":
     "deleteIntegrationCredential (forwarded) actor / any",
   "src/lib/servernz-config.ts::setServerNzApiKey#0":
@@ -181,6 +191,10 @@ const ACTOR_FORWARDED_SITES: Record<string, string> = {
   "src/app/api/admin/backups/config/route.ts::POST#8": "same hoisted admin actor",
   "src/lib/google-config.ts::clearGoogleVerified#0":
     "the actor is this helper's own required parameter: a verify-reset belongs to the administrator whose credential write caused it, not to a background job",
+  "src/lib/mirotalk-config.ts::clearMirotalkSecret#0":
+    "the actor and the expectation are both this helper's own required parameters, supplied by the admin route that holds the acting member and the version the screen was shown",
+  "src/lib/mirotalk-config.ts::setMirotalkSecret#0":
+    "the actor and the expectation are both this helper's own required parameters, supplied by the admin route that holds the acting member and the version the screen was shown",
   "src/lib/servernz-config.ts::clearServerNzApiKey#0":
     "the actor is this helper's own required parameter, supplied by its caller",
   "src/lib/servernz-config.ts::setServerNzApiKey#0":

@@ -404,10 +404,13 @@ export async function deleteIntegrationCredential(params: {
           // report success — a lost race reported as a win, which is the exact
           // failure this contract exists to remove. The iv and authTag are fresh
           // on every encrypt whatever the plaintext, so the three together are a
-          // real fence for every value. No production delete takes this path
-          // today (they all pass `any`) and the admin route requires a non-empty
-          // value — but the store is a library, and #2940 is its first
-          // club-editable consumer.
+          // real fence for every value. When this was written no production
+          // delete took this path — they all passed `any` — and the claim was
+          // that #2940 would be the store's first club-editable consumer. It
+          // is: `clearMirotalkSecret` passes the version the setup screen was
+          // shown, because Clear is a genuine read-modify-write and deleting
+          // whatever replaced the secret while reporting success is the failure
+          // this whole contract exists to remove.
           ...(claim.kind === "unconditional"
             ? {}
             : {
