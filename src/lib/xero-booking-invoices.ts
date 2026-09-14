@@ -72,6 +72,7 @@ import {
   getBookingInvoiceIssueDate,
 } from "./xero-invoice-helpers";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
 
 // #1765 — the aggregate Payment statuses that prove cash was captured at some
 // point. Settlement gating must pair one of these with a positive NET capture
@@ -652,12 +653,11 @@ export async function createXeroInvoiceForBooking(
     lineAmountTypes: LineAmountTypes.Inclusive,
   });
 
-  const invoiceIdempotencyKey = buildXeroIdempotencyKey(
-    "booking",
-    bookingId,
-    "invoice",
-    "v1"
-  );
+  // The booking's stable handle, minted in one place so the outbox row this
+  // operation continues, the key Xero is given, and #3001's warning on the
+  // booking itself can never be looking for three different strings.
+  const invoiceIdempotencyKey =
+    buildXeroBookingInvoiceCorrelationKey(bookingId);
   let operationId = options?.syncOperationId ?? null;
   const requestPayload = { invoices: [buildInvoice(contactId)] };
 

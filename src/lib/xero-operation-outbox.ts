@@ -9,6 +9,7 @@ import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-eviden
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
 import {
   buildXeroSupplementaryInvoiceKey,
   type XeroSupplementaryInvoiceAnchorModel,
@@ -509,12 +510,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     };
   }
 
-  const correlationKey = buildXeroIdempotencyKey(
-    "booking",
-    bookingId,
-    "invoice",
-    "v1"
-  );
+  const correlationKey = buildXeroBookingInvoiceCorrelationKey(bookingId);
 
   const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
     where: {
