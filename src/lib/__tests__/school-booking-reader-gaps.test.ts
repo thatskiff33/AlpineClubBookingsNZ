@@ -35,6 +35,7 @@ import {
   findOverlappingCapacityHoldingBookings,
   findOverlappingOverriddenNonHoldingBookings,
 } from "@/lib/capacity";
+import { getOperationalRosterGuestsForDate } from "@/lib/roster-eligibility";
 
 const clubDay = adminBookingsClubDay(
   bindClubTime(requireClubTimeZone("Pacific/Auckland")),
@@ -168,5 +169,79 @@ describe("#3369: a hold conflict names the school rather than 'Unknown member'",
       input,
     );
     expect(rows[0]?.memberName).toBe("Ada Ordinary");
+  });
+});
+
+describe("#3369: the chore roster names the school rather than 'Booking group N'", () => {
+  const day = new Date("2026-08-01T00:00:00.000Z");
+
+  /** One present guest, minimal but real: the roster re-tests every night row. */
+  const GUEST = {
+    id: "g-1",
+    firstName: "Sam",
+    lastName: "Tui",
+    ageTier: "ADULT" as const,
+    isMember: false,
+    memberId: null,
+    member: null,
+    consentStatus: null,
+    stayStart: new Date("2026-08-01T00:00:00.000Z"),
+    stayEnd: new Date("2026-08-03T00:00:00.000Z"),
+    nights: [
+      { stayDate: new Date("2026-08-01T00:00:00.000Z") },
+      { stayDate: new Date("2026-08-02T00:00:00.000Z") },
+    ],
+  };
+
+  const BOOKING = {
+    id: "b-1",
+    checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    checkOut: new Date("2026-08-03T00:00:00.000Z"),
+    guests: [GUEST],
+  };
+
+  const rosterFor = async (owner: Record<string, unknown>) => {
+    const findMany = vi.fn().mockResolvedValue([{ ...BOOKING, ...owner }]);
+    const rows = await getOperationalRosterGuestsForDate(day, "lodge-1", {
+      booking: { findMany },
+    } as never);
+    return { rows, include: findMany.mock.calls[0]?.[0]?.include as Record<string, unknown> };
+  };
+
+  it("loads the organisation beside the member", async () => {
+    // The defect: `include: { member: … }` with no `organisation`, so the
+    // accessor had no projection to build and handed the null member back. The
+    // label then fell through to its positional fallback and a school's chore
+    // group lost its name on a printed sheet.
+    const { include } = await rosterFor({
+      memberId: "m-1",
+      member: { firstName: "Ada", lastName: "Ordinary" },
+      organisation: null,
+    });
+    expect(
+      include.organisation,
+      "The roster query must load the organisation; without it a school's " +
+        "chore group degrades to `Booking group N` (#3369).",
+    ).toBeDefined();
+  });
+
+  it("labels a school's group with the school's name", async () => {
+    const { rows } = await rosterFor({
+      memberId: null,
+      member: null,
+      organisationId: "org-tps",
+      organisation: { name: "Tokoroa Primary School", email: "office@tps.test" },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.bookingGroupLabel).toBe("Booking for Tokoroa Primary School");
+  });
+
+  it("still labels a member's group the way it always did", async () => {
+    const { rows } = await rosterFor({
+      memberId: "m-1",
+      member: { firstName: "Ada", lastName: "Ordinary" },
+      organisation: null,
+    });
+    expect(rows[0]?.bookingGroupLabel).toBe("Booking for Ada Ordinary");
   });
 });
