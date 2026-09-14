@@ -323,7 +323,7 @@ export function HealthAndDiagnosticsPanels({
         ) : health ? (
           <div className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              <HealthStatCard label="Unlinked members" value={health.unlinkedMembers.count} subtitle="Active members without a Xero contact link." href={health.unlinkedMembers.href} />
+              <HealthStatCard label="Unlinked members" value={health.unlinkedMembers.count} subtitle="Every active member with no Xero contact link — including ones the bulk create tool below sets aside (schools, anonymised accounts, no usable address)." href={health.unlinkedMembers.href} />
               <HealthStatCard
                 label="Active failed issues"
                 value={health.failedOperations.count}

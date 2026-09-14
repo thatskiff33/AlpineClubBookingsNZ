@@ -32,6 +32,18 @@ import type { SettledLodgeOptionScope } from "@/lib/lodge-option-scope";
  * `bookings: "view"` with `overview: "none"` is still refused, which is why this
  * state and its copy remain.
  */
+/**
+ * The label on the one retry button this notice offers.
+ *
+ * Exported because a lodge-scoped card that DEFERS to this retry rather than
+ * growing a second button has to name it in its own copy — "Use Try again
+ * above" — and a sentence quoting a button's words is a cross-component
+ * reference whether or not it is written as one. Renaming the button here now
+ * moves those sentences with it, instead of leaving them quietly describing a
+ * control that no longer exists (#2937).
+ */
+export const LODGE_OPTIONS_RETRY_LABEL = "Try again";
+
 export function LodgeOptionsUnavailableNotice({
   failed,
   forbidden,
@@ -78,7 +90,7 @@ export function LodgeOptionsUnavailableNotice({
         save until the list returns.
       </p>
       <Button variant="outline" onClick={onRetry}>
-        Try again
+        {LODGE_OPTIONS_RETRY_LABEL}
       </Button>
     </Alert>
   );

@@ -108,7 +108,19 @@ what that member receives.
    over-capacity button and cannot be saved as drafts.
 5. In the **Email the member about this booking?** dialog, choose **Create and
    email member** or **Create without emailing**. Your choice is recorded in the
-   audit log. (An Internet Banking Xero invoice email still sends regardless.)
+   audit log.
+
+   Choosing **Create without emailing** also stops Xero emailing the invoice
+   for this booking on the Internet Banking path. The invoice is still raised
+   in Xero and the member still owes it — only the email is held back, and the
+   booking page lists it among the messages that were withheld. If you decide
+   the member should have it after all, send that one invoice from Xero;
+   nothing here re-sends it.
+
+   This is a one-off for this booking creation and nothing more. It does not
+   turn on the booking's **No emails** switch, does not change the member's
+   address in Xero, and does not stop any later reminder, change or
+   cancellation email.
 
 ### Leave it for the member to pay: Save as Draft
 

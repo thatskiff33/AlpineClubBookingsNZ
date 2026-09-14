@@ -355,6 +355,21 @@ red: the messages are still ones the member never received.
 Both turning it on and turning it off are written to the
 [Audit Log](audit-log.md), with who did it and when.
 
+### The banner can appear without the switch
+
+The withheld-emails banner lists messages the club **deliberately** held back,
+and the switch is not the only thing that holds one back. When an officer books
+on a member's behalf and chooses **Create without emailing**, that choice also
+withholds the Xero invoice email for that one booking (see
+[Book on Behalf](book.md)). So a booking whose **No emails** switch has never
+been on can still show an amber banner with a single Xero invoice email on it.
+
+Read the banner as what it says it is — these messages were not sent — rather
+than as evidence the switch was used. The remedy is on the line itself, and for
+an invoice email it is always the same: the invoice exists in Xero and is still
+owed, nothing here re-sends it, and there is nothing to relay in its place.
+Send that one invoice from Xero if the member should have it.
+
 ## Settings reference
 
 The bookings list is a working queue, not a settings page. The controls below
@@ -394,9 +409,10 @@ lives in [`STATE_MACHINES.md`](../STATE_MACHINES.md#booking-lifecycle).
 | **Resend payment request email** is refused for a silenced booking | The booking has the **No emails** switch on | Turn the switch off, or contact the member yourself |
 | The Beds filter is missing | The bed-allocation module is off | Enable it under **Admin → Setup → Modules** (`bedAllocation`) — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | **+ Create Booking** is greyed out | Your admin role can view bookings but not edit them | Ask a full admin to grant bookings edit access |
-| A member says they never got a confirmation, reminder, or cancellation notice | The booking may have the **No emails** switch on | Open the booking; if the withheld-emails banner is there — **red** while emails are off, **amber** once they are back on — it lists exactly what was held back. Relay it, and check **Admin → Email deliverability** too for messages that failed for other reasons |
+| A member says they never got a confirmation, reminder, or cancellation notice | The booking may have the **No emails** switch on — or, if it was booked on their behalf, the officer may have chosen **Create without emailing** | Open the booking; if the withheld-emails banner is there — **red** while emails are off, **amber** otherwise — it lists exactly what was held back and what to do about each one. Relay it, and check **Admin → Email deliverability** too for messages that failed for other reasons |
 | **Turn off all emails** is greyed out | Your admin role can view bookings but not edit them | Ask a full admin to grant bookings edit access |
 | A booking still shows the withheld-emails warning after emails were turned back on | Correct — turning the switch back on never re-sends anything | The banner is the record of what the member was never told; work through it with them |
+| The withheld-emails banner lists a **Xero invoice email** on a booking whose **No emails** switch was never on | The officer who created it chose **Create without emailing**, which also withholds that one invoice email (#2929) | The invoice exists in Xero and is still owed. Nothing here re-sends it and there is nothing to relay — send that one invoice from Xero if the member should have it |
 
 ## Related links
 

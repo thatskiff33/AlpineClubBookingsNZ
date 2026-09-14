@@ -250,6 +250,135 @@ contact that already holds one, a copy is forbidden from writing a real address,
 and the live site holds no record of what a copy changed. No email address of any
 kind reaches that payload.
 
+## Seeding the missing person contacts (#2939)
+
+`INV-INT-022` (the census) and `INV-INT-023` (the run). A club arriving here has
+years of Xero history and a membership
+list that only partly matches it. `findOrCreateXeroContact` gives a member a
+Xero customer the first time a document is raised for them, which is fine month
+to month and useless before a first real use: nobody knows how many members have
+no customer, which of them Xero already holds one for, or which would become a
+duplicate. `xero-missing-contact-seeding.ts` answers all three and then does the
+work in bounded chunks, behind **Members with no Xero contact** on
+`/admin/xero`. Three modules: `xero-missing-contact-seeding-shape.ts` (the types
+and the call-cost constants, importing nothing so the admin panel can key its
+copy on the engine's own unions), `xero-missing-contact-seeding.ts` (the census)
+and `xero-missing-contact-seeding-run.ts` (the run).
+
+**It resolves nothing itself, and that is the design.** Every contact is
+obtained by calling `findOrCreateXeroContact` once per member. Five properties
+therefore come with the funnel rather than being written a second time here, and
+each is one a bulk tool could plausibly have got wrong:
+
+| Property | Where it comes from |
+| --- | --- |
+| Link before create, against the PROVIDER | the funnel's Xero email search, which runs before any create. A missing local link is not proof Xero has no contact, so the cache is never treated as the answer |
+| Retry and replay converge | the member-scoped reservation under the member row fence, plus a member-scoped Xero idempotency key. A re-run, a concurrent invoice and an interrupted chunk all land on one contact |
+| The two-homes refusal | phase 2's `lockXeroContactHome` + `assertXeroContactHasNoOtherHome` (`INV-INT-018`) |
+| Undeclared installations write nothing | `resolveXeroContactEmailPolicy` and the `callXeroApi` write gate (`INV-CONFIG-005`, epic #2986). The run additionally asks the gate once up front, so an operator gets one refusal rather than one per member |
+| Contact-email containment on a copy | `ensureXeroContactContained` |
+
+**The one thing it asks the funnel to do DIFFERENTLY: `requireAuthoritativeMatch`.**
+The funnel's defaults are tuned for a document writer, where the expensive
+outcome is a blocked invoice. Two of them proceed on an answer the provider did
+not give: a Xero search that fails for anything but the daily limit falls
+through to a CREATE, and a create Xero refuses on its contact-name uniqueness
+rule is recovered by adopting the existing same-named contact — on the
+NORMALISED NAME ALONE, with no email comparison.
+
+Both trades invert for a bulk run. Nothing is blocked by refusing; what is
+expensive is a duplicate customer in a ledger with no merge API, or worse, a new
+member silently linked to a fifteen-year-old contact that happens to share their
+name, after which every invoice, statement and reminder for them lands on
+somebody else's account — and the panel would report it as "linked to a contact
+Xero already had", indistinguishable from the safe email match the operator
+approved.
+
+So the run passes the option, which only ever turns a fallback into a refusal
+and can therefore create or link nothing the default would not. A member the
+provider could not be asked about authoritatively becomes a recorded failure the
+next run retries. The run then compares the contact id the funnel RETURNED
+against the one the reviewed plan promised, because a plan digest cannot see a
+divergence that happens inside the funnel after the plan already matched.
+
+**Why this is not the bulk path `INV-INT-019` used to exempt.** That exemption
+was written before this tool existed, and its parenthetical named #2939 — which
+reads as though whatever #2939 built would inherit it. It does not. The refusal
+is unaffordable to a path that holds one transaction open across many contacts,
+because the contact-home key would be held for the length of the run. This path
+holds no such transaction: it is a loop of independent per-member calls, each
+opening and closing the funnel's own short phase-2 transaction. The lock is
+taken and released once per member, exactly as for a single invoice. #2939 also
+closed the inbound exemption rather than leaving it standing —
+`applyInboundMemberContactPatch` and the bulk member import both take the key
+and the refusal now.
+
+**The census, and why the dry run refuses before a contact sync.** The dry run
+writes nothing at all and classifies from `XeroContactCache`. If that cache has
+never been refreshed it returns `cacheReady: false` rather than counts, because
+an empty cache makes every member look like "no contact in Xero" — the one
+answer that would send an operator confidently towards duplicates. It also
+reports the cache's AGE and marks it stale past a week: existence was always
+checked and age was not, yet age is exactly what turns a "no cached match" row
+into a duplicate, since a six-month-old cache reads identically to a
+five-minute-old one.
+
+**It classifies on BOTH axes the funnel can match on.** The email index answers
+"does Xero already hold a customer at this address"; the NAME index answers
+"will Xero refuse a create for this member because it already holds a customer
+with this name", which is a different question and the only one of the two the
+provider enforces. Both come from one pass over the cached contacts already in
+memory, and the name is normalised with `normalizeXeroContactMatchValue` — the
+same normaliser `findExistingXeroContactByExactName` compares with — so a name
+this index finds is exactly a name the funnel's recovery would have adopted on.
+
+**The run's bound is three guards, and each closes a door the others cannot.**
+It processes the intersection of the member ids the operator reviewed with a
+pushable set recomputed server-side at execution time. The reviewed half keeps
+out anybody who became eligible only since the review; the recomputed half is
+the revalidation of every row, so a stale or forged id is simply absent.
+
+Membership is blind to a member whose PLAN changed while they stayed pushable —
+the operator approves "link Jane to the contact Xero already has", the contact
+sync archives it underneath them, and Jane is still pushable, now as a create.
+So the reviewed plan's digest is posted with the ids and compared, refusing with
+`SeedingPlanChangedError` exactly as the sibling member-grouping re-sync refuses
+with `plan_changed`. There is still no persisted dry-run row and no single-use
+claim, unlike that re-sync (#1961) — its plan is a set of Xero group ADDs a
+double-run would repeat, whereas every write here is idempotent by member, so
+the digest is carried in the request rather than stored.
+
+The third guard is `requireAuthoritativeMatch` plus the returned-id comparison
+above, which catch what happens INSIDE the funnel after the plan has matched.
+
+**Bounded by real cost, and by the clock.** The chunk size is derived from what
+a member actually costs: two Xero calls with contact grouping off (an email
+search and a create), and up to four with it on, because the funnel's tail then
+runs a managed-group sync that short-circuits before any provider call only in
+`NONE` mode. A flat 25 was at least 75 calls against a 60-per-minute budget. A
+wall-clock budget also stops the loop and returns its partial result, because a
+route killed by its host's timeout loses the whole result — the summary audit
+row is written after the run returns — while the contacts it created stay in
+Xero.
+
+**Ambiguity is returned, never guessed.** Six classes: a school already holds
+the only contact on the address; another member holds it; two unlinked members
+share the address (the family case, where a dependant carries the parent's
+address); several contacts carry it; the one that does carries a different name;
+or — on the name axis rather than the email one — Xero already holds an active
+contact under this member's exact name at a different address. The name
+comparison for the fifth is `namesAppearToMatchMemberAndContact`, shared with
+the link-mismatch report rather than copied (`INV-SSOT`).
+
+**What the operator is told afterwards.** Every member the chunk touched is
+named, with what happened to them and WHICH Xero contact they ended up on —
+counts alone cannot show a wrong adoption. A failure carries its kind, because
+each has a different remedy and one of them, `PARTIAL_SUCCESS`, has standing
+guidance that is *do not repeat the action*. Reviewed members the run declined
+to touch are separated into those an earlier chunk already did and those that
+stopped being pushable, which are different events and only the second needs
+looking at.
+
 ## Entrance-fee invoices
 
 `ENTRANCE_FEE_INVOICE` is a one-off per-member charge (#1886, F21). Before
@@ -417,6 +546,9 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-contact-groups` | Contact-group cache refresh, cache-backed reads, managed age-tier group sync. |
 | `xero-bulk-contact-sync` | Cursor-driven incremental contact refresh from Xero (`syncContactsFromXero`). |
 | `xero-member-import` | Creates local members from cached contacts in mapped groups. |
+| `xero-missing-contact-seeding` | `INV-INT-022`: the read-only census of unlinked person members, on both the email and the name axis. |
+| `xero-missing-contact-seeding-run` | `INV-INT-023`: the bounded run, resolving each member through `findOrCreateXeroContact` with `requireAuthoritativeMatch`. Resolves nothing itself. |
+| `xero-missing-contact-seeding-shape` | What both return, and the call-cost constants the chunk size is derived from. Imports nothing, so the admin panel can key its operator copy on these unions. |
 | `xero-duplicate-contacts`, `xero-contact-link-mismatches`, `xero-contact-sync` | Admin diagnostics: duplicate detection, link-mismatch snapshots, contact update payload builders. |
 | `xero-membership-sync` | Subscription status per season derived from Xero invoices; incremental `refreshAllMembershipStatuses` driver. |
 

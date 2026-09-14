@@ -122,7 +122,7 @@ reason: two eight-line night-list projections became one derivation used by
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/lib/group-settlement.ts
-lines: 1263
+lines: 1265
 reason: one line of code and eight of comment. The refusal's night list now
   comes from `getCapacityFullNights` instead of an inline filter, and the comment
   is the only record of the two defects that line had: it dropped every
@@ -133,7 +133,7 @@ reason: one line of code and eight of comment. The refusal's night list now
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/app/(admin)/admin/book/page.tsx
-lines: 1506
+lines: 1542
 reason: twenty-three lines, and eighteen of them are one docblock. The code is
   three lines — the lodge's resolved capacity read as a ceiling only when it is
   positive, and the derived "is the party already there", replacing the same

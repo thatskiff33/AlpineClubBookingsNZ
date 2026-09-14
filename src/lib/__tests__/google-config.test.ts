@@ -121,12 +121,22 @@ describe("verified marker writes", () => {
     await expect(recordGoogleVerified()).resolves.toBeUndefined();
   });
 
-  it("clearGoogleVerified deletes the marker row", async () => {
+  it("clearGoogleVerified attributes the delete to ITS CALLER, not to a job", async () => {
+    // #2723 review: this used to hard-code a `google-verify-reset` system
+    // actor, so one administrator pressing Save produced two audit rows — one
+    // naming them, one naming a job with a null member and no request context.
+    // The reset is part of that person's action and must say so.
     mockDeleteIntegrationCredential.mockResolvedValue(undefined);
-    await clearGoogleVerified();
-    expect(mockDeleteIntegrationCredential).toHaveBeenCalledWith(
-      "google",
-      "verified_at",
+    await clearGoogleVerified(
+      { kind: "admin", memberId: "member-7" },
+      { id: "req-1", ipAddress: "203.0.113.9", userAgent: "agent" },
     );
+    expect(mockDeleteIntegrationCredential).toHaveBeenCalledWith({
+      provider: "google",
+      key: "verified_at",
+      actor: { kind: "admin", memberId: "member-7" },
+      expect: { expect: "any" },
+      request: { id: "req-1", ipAddress: "203.0.113.9", userAgent: "agent" },
+    });
   });
 });

@@ -12,6 +12,7 @@ import {
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import type { XeroInvoiceEmailInstruction } from "@/lib/xero-invoice-email-instruction";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -24,6 +25,18 @@ export interface XeroSyncOperationInput {
   correlationKey?: string | null;
   replayable?: boolean;
   requestPayload?: unknown;
+  /**
+   * The creation-time Xero-invoice-email delivery instruction for this
+   * operation (#2929), or absent where the enqueuer has no such choice to
+   * express — which is every enqueuer but the on-behalf booking create.
+   *
+   * Written once here and NEVER updated afterwards, for the same reason
+   * `queueType` is: the handlers that rewrite `requestPayload` wholesale would
+   * otherwise destroy it on the first provider round-trip. Typed rather than a
+   * bare string so an enqueuer cannot invent a third value, and read back only
+   * through `readXeroInvoiceEmailInstruction`.
+   */
+  invoiceEmailDelivery?: XeroInvoiceEmailInstruction | null;
   createdByMemberId?: string | null;
 }
 
@@ -429,6 +442,11 @@ export async function startXeroSyncOperation(
         replayable: input.replayable ?? true,
         requestPayload,
         queueType,
+        // #2929: immutable after enqueue, exactly like `queueType` above and
+        // for the same reason — the booking-invoice handler rewrites
+        // `requestPayload` wholesale before its first provider call, so the
+        // instruction cannot live there and survive a retry.
+        invoiceEmailDelivery: input.invoiceEmailDelivery ?? null,
         createdByMemberId: input.createdByMemberId ?? null,
         startedAt: input.status === "PENDING" ? null : new Date(),
       },

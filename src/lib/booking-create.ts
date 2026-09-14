@@ -73,6 +73,7 @@ import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
+import { xeroInvoiceEmailInstructionForNotifyChoice } from "@/lib/xero-invoice-email-instruction";
 import { applyCreditToBooking, getMemberCreditBalance } from "@/lib/member-credit";
 import {
   buildInternetBankingPaymentReference,
@@ -668,6 +669,22 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   // The member email is a per-create choice only for on-behalf bookings; a
   // member booking for themselves is always emailed.
   const notifyMember = !isOnBehalf || input.notifyMember !== false;
+  /*
+    #2929 — the same choice, carried to the invoice this create raises.
+
+    Recorded on the outbox operation rather than passed to the invoice code,
+    because the invoice is not raised by this request: the create enqueues an
+    operation and returns, a worker raises the invoice afterwards, and an
+    operator retry may raise it days later. Only the operation row is still
+    there by then.
+
+    Written for a member's own booking too, where it is always SEND: the value
+    then says "nothing was withheld here", which is the truth, and it keeps "the
+    officer chose to send" distinguishable from "nobody was asked" on a path
+    that never offers the choice at all.
+  */
+  const creationInvoiceEmailDelivery =
+    xeroInvoiceEmailInstructionForNotifyChoice(notifyMember);
 
   // Defence in depth: the route already gates a past-dated on-behalf create,
   // but the service re-checks the RESOLVED envelope (guest nights can expand
@@ -1561,7 +1578,10 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
 
           const effectiveModules = await loadEffectiveModuleFlags();
           if (effectiveModules.xeroIntegration) {
-            void enqueueXeroBookingInvoiceOperation(booking.id, { createdByMemberId: sessionUserId })
+            void enqueueXeroBookingInvoiceOperation(booking.id, {
+              createdByMemberId: sessionUserId,
+              invoiceEmailDelivery: creationInvoiceEmailDelivery,
+            })
               .then(async (queuedInvoice) => {
                 if (!queuedInvoice.queueOperationId) return;
                 await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
@@ -1584,6 +1604,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       try {
         const queuedInvoice = await enqueueXeroBookingInvoiceOperation(booking.id, {
           createdByMemberId: sessionUserId,
+          invoiceEmailDelivery: creationInvoiceEmailDelivery,
         });
         // #1620 — allocate the member's existing floating credit notes against this
         // invoice so they pay the effective (credit-reduced) amount. Enqueued after

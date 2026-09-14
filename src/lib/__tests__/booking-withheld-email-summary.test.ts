@@ -190,6 +190,32 @@ describe("getWithheldBookingEmailSummary (#2259)", () => {
     mocks.count.mockResolvedValue(1);
     mocks.groupBy.mockResolvedValue([
       {
+        templateName: "booking-cancelled",
+        _count: { _all: 1 },
+        _max: { createdAt: AT_1 },
+      },
+    ]);
+    mocks.findMany.mockResolvedValue([
+      { templateName: "booking-cancelled", subject: "Your booking was cancelled" },
+    ]);
+
+    const summary = await getWithheldBookingEmailSummary("bk-1");
+    // Nothing was minted and nothing expires: the officer can simply say it.
+    expect(summary.groups[0].remedy).toBe("relay");
+  });
+
+  it("sends an officer to XERO for a withheld invoice email, never to relay it (#2929)", async () => {
+    /*
+      This case used to be the "relayable" example above, and it was wrong in a
+      way that only became visible once a withhold could happen on a booking
+      whose "No emails" switch was never on. There is nothing to relay: no body
+      is retained, the officer cannot reproduce an invoice, clearing the switch
+      re-sends nothing, and a re-drive short-circuits on the stored invoice id.
+      The invoice exists and is owed; Xero is the only place it goes out from.
+    */
+    mocks.count.mockResolvedValue(1);
+    mocks.groupBy.mockResolvedValue([
+      {
         templateName: "xero-booking-invoice-email",
         _count: { _all: 1 },
         _max: { createdAt: AT_1 },
@@ -200,8 +226,7 @@ describe("getWithheldBookingEmailSummary (#2259)", () => {
     ]);
 
     const summary = await getWithheldBookingEmailSummary("bk-1");
-    // The invoice still exists in Xero and can be sent by hand from there.
-    expect(summary.groups[0].remedy).toBe("relay");
+    expect(summary.groups[0].remedy).toBe("resend-from-xero");
     expect(summary.groups[0].label).toBe("Xero invoice email");
   });
 

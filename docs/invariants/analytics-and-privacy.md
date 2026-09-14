@@ -740,3 +740,34 @@ does.
 - **The alternative was recording the school's invented member.** That member is
   exactly what stage 4 removes, so the subject would have pointed at a record
   nobody can sign in as and nobody is keeping.
+
+## INV-PRIV-019
+
+Every mutation of the encrypted integration-credential store names its writer,
+and the writer is a person or a NAMED background actor, never an absence.
+Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2723),
+which carries the before-measurement.
+
+- **`actor` is a required argument on every mutator**, so a write with no
+  attribution does not compile. Omission used to be the default, and most call
+  sites took it, storing the `null` a background write stores.
+- **A system write NAMES itself** from the closed `CREDENTIAL_SYSTEM_ACTORS`
+  list, so the row says WHICH background writer touched the secret, not merely
+  that no person did. `assertCredentialActor` is the runtime half, and an
+  `admin` actor carries a non-empty member id.
+- **The secret and its audit row are ONE local transaction**, on the same
+  client, so a failed audit rolls the secret back.
+- **A stale write LOSES.** Every set and delete declares what it expected to
+  find, and a compare-and-set claims the exact `(ciphertext, iv, authTag)` tuple
+  it read. A loser changes nothing and records nothing.
+- **A read records nothing**, and neither does a delete matching no row nor a
+  freshness marker whose answer would not change.
+- **No plaintext reaches audit, log or error output.** The payload is built from
+  a type with no field a value fits into, and the store calls no logger — a
+  property of its own doors, not of a redactor, since `INV-PRIV-011` is blind to
+  any door that never calls one.
+- **The proof is mechanical, over every DIRECT CALL of a mutator** rather than
+  every function that ends up changing a credential.
+  `credential-actor-census.test.ts` walks the tree; its scanner test proves a
+  seeded actorless writer and a seeded bypass are reported. A wrapper hides its
+  callers, soundly: it requires an actor, so the type covers them.
