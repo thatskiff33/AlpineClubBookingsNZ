@@ -1450,9 +1450,10 @@ describe("tracked citation source extensions", () => {
     // whole range, so re-read this number after one.
     // Moved up by the fourth `main`-into-epic sync: `main`'s #3219/#3257
     // settle-time re-price rule arrived stacked inside INV-MOD-038 and was given
-    // its own id, INV-MOD-055, so the planted id had been taken. One above the
+    // its own id, INV-MOD-055, so the planted id had been taken. Stage 3 then
+    // allocated INV-MOD-056 for stored build-up selection. One above the
     // maximum, and no further, exactly as the note above requires.
-    const planted = "INV-MOD-056";
+    const planted = "INV-MOD-057";
     // The precondition the fixture rests on. When this fails, `planted` has been
     // taken by a real invariant: move it up one, and no further.
     expect(files.get("docs/DOMAIN_INVARIANTS.md")).not.toContain(planted);
