@@ -241,9 +241,6 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "MembershipCancellationSetting.updatedByMemberId",
   "MembershipLockoutSettings.updatedByMemberId",
   "MembershipNominationSettings.updatedByMemberId",
-  "NotificationDeliveryPolicy.updatedByMemberId",
-  "PageContent.updatedByMemberId",
-  "PublicContentSettings.updatedByMemberId",
   // Video meetings (MiroTalk) settings singleton (#2940): records WHO last set
   // the club's meeting server address, presenter choice and join-link lifetime.
   // The ordinary settings-audit column, identical in kind to
@@ -256,6 +253,9 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // (Detectable: `updatedByMemberId` is a Member FK column name elsewhere in
   // the schema.)
   "MirotalkSettings.updatedByMemberId",
+  "NotificationDeliveryPolicy.updatedByMemberId",
+  "PageContent.updatedByMemberId",
+  "PublicContentSettings.updatedByMemberId",
   // Alpine Central Server connection singleton: records WHO last set this
   // install's central-server connection, a bare FK-less String exactly like
   // every other `*.updatedByMemberId` audit column here. Keeps the loser's id as

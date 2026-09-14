@@ -25,6 +25,16 @@
   the Clear button, where the alternative is deleting a key the other person had
   just told the meeting server about.
 
+  **Changing the meeting server address clears those three stored values**, and
+  the page says so. They only mean anything to the server they were set for: the
+  signing key has to match that instance's own key, and the username and password
+  have to match one of its host sign-ins. It also means a link redirected to
+  somewhere else carries nothing, which is the point. If your installation still
+  sets the three in the server environment, clearing the stored ones falls back
+  to those — which were set for the old server too — so move them onto this page
+  (or clear the environment) if you want the address and the sign-in to travel
+  together.
+
   **What stays with whoever runs the server**, and is deliberately not on this
   page: the reverse-proxy settings that decide which address the meeting server
   answers on and how the app reaches it. Those are part of how the machine is
@@ -37,3 +47,15 @@
   working is worse for a club than a guessable one. And a meeting server address
   saved on this page has to be a real public https address with no sign-in
   embedded in it, because that is where a freshly signed join link gets sent.
+
+  **Two changes an operator reading their own audit log will notice.** Saving
+  these settings now records the meeting server address it moved from and to,
+  not just that "the address" changed, and opening a meeting records which
+  server the link was built for. Neither records anything secret — the address
+  is on the page for any admin to read — and without them, pointing the meetings
+  somewhere else and putting them back afterwards left no trace at all.
+
+  **One environment behaviour genuinely changed.** `MIRO_JWT_EXP=0` used to
+  produce a join link that had expired before anybody could click it; it now
+  falls back to the documented one hour, and the page says it has. Everything
+  else the environment does is exactly what it did before.

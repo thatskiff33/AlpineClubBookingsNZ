@@ -37,16 +37,21 @@ import {
 // `mirotalk-settings-shared`, never `mirotalk-config`: the latter is
 // `server-only`, and importing a VALUE from it here fails `npm run build` with
 // "'server-only' cannot be imported from a Client Component module". See that
-// module's header — lint, typecheck, knip and vitest all miss it.
+// module's header. It is NOT unguarded until then, as this comment used to
+// say: `client-server-boundary-census.test.ts` walks the real import graph from
+// every `"use client"` module and fails this exact path, naming it
+// `this file -> mirotalk-config -> server-only`, inside the REQUIRED
+// `verify` check.
 import {
-  MIROTALK_CREDENTIAL_ENV_NAMES,
   MIROTALK_CREDENTIAL_LABELS,
+  MIROTALK_ENV_NAMES,
   validateMirotalkBaseUrl,
   validateMirotalkTokenLifetime,
   type MirotalkConfigurationStatus,
   type MirotalkCredentialKey,
   type MirotalkFieldStatus,
   type MirotalkSecretStatus,
+  type MirotalkSettingField,
   type MirotalkSettingsDraft,
 } from "@/lib/mirotalk-settings-shared";
 
@@ -108,13 +113,19 @@ function describeSource(field: MirotalkFieldStatus, envName: string): string {
   }
 }
 
+/**
+ * Takes the SETTING, not the variable name, and looks the name up itself — so a
+ * caller cannot label a field with the wrong variable, and renaming one is one
+ * edit in `mirotalk-settings-shared` rather than five sites.
+ */
 function SourceNote({
   field,
-  envName,
+  setting,
 }: {
   field: MirotalkFieldStatus;
-  envName: string;
+  setting: MirotalkSettingField;
 }) {
+  const envName = MIROTALK_ENV_NAMES[setting];
   return (
     <>
       <p className="text-xs text-muted-foreground">
@@ -127,19 +138,26 @@ function SourceNote({
   );
 }
 
+/**
+ * EXHAUSTIVE over the secret source, which is why that union had to lose
+ * "derived". While it carried a state the resolver cannot produce, this
+ * function's final `return` was doing two jobs — rendering "unset", and
+ * silently absorbing the impossible case as "not set" as well.
+ */
 function secretBadge(secret: MirotalkSecretStatus) {
   if (secret.needsReentry) {
     return <Badge variant="destructive">needs re-entering</Badge>;
   }
-  if (secret.source === "database") return <Badge variant="secondary">stored</Badge>;
-  if (secret.source === "environment") {
-    return (
-      <Badge variant="outline">
-        from {MIROTALK_CREDENTIAL_ENV_NAMES[secret.key]}
-      </Badge>
-    );
+  switch (secret.source) {
+    case "database":
+      return <Badge variant="secondary">stored</Badge>;
+    case "environment":
+      return (
+        <Badge variant="outline">from {MIROTALK_ENV_NAMES[secret.key]}</Badge>
+      );
+    case "unset":
+      return <Badge variant="outline">not set</Badge>;
   }
-  return <Badge variant="outline">not set</Badge>;
 }
 
 export function VideoMeetingsSetup({
@@ -318,7 +336,7 @@ export function VideoMeetingsSetup({
               disabled={!section.editing}
               onChange={(event) => section.setDraft({ baseUrl: event.target.value })}
             />
-            <SourceNote field={status.baseUrl} envName="MIROTALK_URL" />
+            <SourceNote field={status.baseUrl} setting="baseUrl" />
             {/*
               WHAT THIS PAGE CANNOT CHANGE, said where the mistake would be
               made. The address has a counterpart in the deployment — which
@@ -369,10 +387,7 @@ export function VideoMeetingsSetup({
                 </SelectItem>
               </SelectContent>
             </Select>
-            <SourceNote
-              field={status.presenter}
-              envName="MIRO_MEETING_PRESENTER"
-            />
+            <SourceNote field={status.presenter} setting="presenter" />
           </div>
 
           <div className="space-y-2">
@@ -392,7 +407,7 @@ export function VideoMeetingsSetup({
               Join, so a short life costs nobody anything and limits how long a
               forwarded link keeps working.
             </p>
-            <SourceNote field={status.tokenLifetime} envName="MIRO_JWT_EXP" />
+            <SourceNote field={status.tokenLifetime} setting="tokenLifetime" />
             {section.editing && lifetimeCheck && !lifetimeCheck.ok ? (
               <p className="text-xs text-destructive">{lifetimeCheck.reason}</p>
             ) : null}
@@ -523,10 +538,10 @@ export function VideoMeetingsSetup({
                 {secret.needsReentry
                   ? "This was stored here but can no longer be read, because the app's encryption key changed. Type it again to repair it — until you do, join links are unsigned."
                   : secret.source === "database"
-                    ? `Stored encrypted and never shown again.${secret.updatedAt ? ` Last changed ${clubTime.instantDateTime(requireInstant(secret.updatedAt))}.` : ""} Clearing it falls back to ${MIROTALK_CREDENTIAL_ENV_NAMES[secret.key]}.`
+                    ? `Stored encrypted and never shown again.${secret.updatedAt ? ` Last changed ${clubTime.instantDateTime(requireInstant(secret.updatedAt))}.` : ""} Clearing it falls back to ${MIROTALK_ENV_NAMES[secret.key]}.`
                     : secret.source === "environment"
-                      ? `Using ${MIROTALK_CREDENTIAL_ENV_NAMES[secret.key]} from the server environment. Storing a value here takes over from it; nothing is copied across on its own.`
-                      : `Not set here or in ${MIROTALK_CREDENTIAL_ENV_NAMES[secret.key]}.`}
+                      ? `Using ${MIROTALK_ENV_NAMES[secret.key]} from the server environment. Storing a value here takes over from it; nothing is copied across on its own.`
+                      : `Not set here or in ${MIROTALK_ENV_NAMES[secret.key]}.`}
               </p>
             </div>
           ))}

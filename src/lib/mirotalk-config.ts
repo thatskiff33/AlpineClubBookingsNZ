@@ -20,6 +20,7 @@ import { mintMirotalkAccessToken } from "@/lib/mirotalk-token";
 import {
   MIROTALK_CREDENTIAL_KEYS,
   MIROTALK_DEFAULT_TOKEN_LIFETIME,
+  MIROTALK_ENV_NAMES,
   MIROTALK_PROVIDER,
   MIROTALK_WRITABLE_CREDENTIAL_KEYS,
   parseMirotalkLifetimeSeconds,
@@ -28,6 +29,7 @@ import {
   type MirotalkConfigurationStatus,
   type MirotalkCredentialKey,
   type MirotalkFieldStatus,
+  type MirotalkSecretSource,
   type MirotalkSecretStatus,
   type MirotalkSettingsDraft,
   type MirotalkValueSource,
@@ -228,7 +230,8 @@ function resolveBaseUrl(stored: MirotalkStoredSettings): ResolvedField<string> {
 }
 
 function resolveBaseUrlWithoutDatabase(): ResolvedField<string> {
-  const raw = process.env.MIROTALK_URL?.trim();
+  const envName = MIROTALK_ENV_NAMES.baseUrl;
+  const raw = process.env[envName]?.trim();
   if (raw) {
     // Behaviour preserved exactly: a bare host is assumed https, and the value
     // is used whatever it is. An environment value is never refused, because
@@ -242,7 +245,7 @@ function resolveBaseUrlWithoutDatabase(): ResolvedField<string> {
       source: "environment",
       problem: check.ok
         ? null
-        : `MIROTALK_URL is in force, but it would not be accepted on this page: ${check.reason}`,
+        : `${envName} is in force, but it would not be accepted on this page: ${check.reason}`,
     };
   }
   const derived = derivedBaseUrl();
@@ -258,7 +261,7 @@ function resolvePresenter(stored: MirotalkStoredSettings): ResolvedField<boolean
       problem: null,
     };
   }
-  const raw = process.env.MIRO_MEETING_PRESENTER?.trim();
+  const raw = process.env[MIROTALK_ENV_NAMES.presenter]?.trim();
   if (raw) {
     // Preserved exactly: anything other than the literal "false" is on.
     const value = raw.toLowerCase() !== "false";
@@ -308,17 +311,18 @@ function resolveTokenLifetime(
 function resolveTokenLifetimeWithoutDatabase(
   derived: ResolvedField<number>,
 ): ResolvedField<number> {
-  const raw = process.env.MIRO_JWT_EXP?.trim();
+  const envName = MIROTALK_ENV_NAMES.tokenLifetime;
+  const raw = process.env[envName]?.trim();
   if (!raw) return derived;
   const seconds = parseMirotalkLifetimeSeconds(raw);
   if (seconds === null) {
-    // Includes `MIRO_JWT_EXP=0`, which the OLD parser read as a zero-second
+    // Includes a zero (`MIRO_JWT_EXP=0`), which the OLD parser read as a zero-second
     // token — a link that had expired before it was clicked. It now falls to the
     // documented default with this note, which is the one place the environment
     // behaviour genuinely changed rather than merely moving.
     return {
       ...derived,
-      problem: `MIRO_JWT_EXP is not a length of time this understands, so the default ${MIROTALK_DEFAULT_TOKEN_LIFETIME} is in force.`,
+      problem: `${envName} is not a length of time this understands, so the default ${MIROTALK_DEFAULT_TOKEN_LIFETIME} is in force.`,
     };
   }
   // CHECKED AGAINST THE PAGE'S OWN RULES, exactly as the address branch above
@@ -333,36 +337,60 @@ function resolveTokenLifetimeWithoutDatabase(
     source: "environment",
     problem: check.ok
       ? null
-      : `MIRO_JWT_EXP is in force, but it would not be accepted on this page: ${check.reason}`,
+      : `${envName} is in force, but it would not be accepted on this page: ${check.reason}`,
   };
 }
 
 /**
- * One resolved secret. `value` is present ONLY on this internal shape — the
- * projection that leaves this module ({@link MirotalkSecretStatus}) has no
- * field it fits into, which is the structural half of "the plaintext never
- * reaches a surface that could log it".
+ * EVERYTHING ABOUT A SECRET THAT A SURFACE MAY SEE, and it has no field a
+ * plaintext fits into.
+ *
+ * This is the #2723 argument applied one layer further out. There, a secret
+ * stays out of an audit row because the PAYLOAD TYPE has nowhere to put one —
+ * structure rather than a redaction filter, because a filter is blind to every
+ * door that does not call it. Here the projection used to be built from an
+ * object that DID carry the plaintext, so what kept it out of the status was a
+ * comment saying "written field by field, and never as a spread" plus a test.
+ * Both are real and the test is mutation-verified, but they police a mistake
+ * rather than making it unrepresentable: nothing stopped a later edit reaching
+ * for `resolved.value` from inside the projection. Now nothing in scope there
+ * HAS a value, so the leak cannot be written.
  */
-interface ResolvedSecret {
+interface ResolvedSecretMeta {
   key: MirotalkCredentialKey;
-  value: string | null;
-  source: MirotalkValueSource | "unset";
+  /**
+   * "derived" is deliberately absent, where the non-secret fields have it. A
+   * secret is set or it is not; there is no computed default for a signing key,
+   * and the resolver below never produced one. The wider union admitted a state
+   * that cannot happen, and the screen's badge fell through to "not set" for
+   * it — a type describing the code loosely, and a UI quietly covering for it.
+   */
+  source: MirotalkSecretSource;
   version: CredentialVersion | null;
   needsReentry: boolean;
 }
 
+/** One resolved secret: what may be shown, and separately the plaintext. */
+interface ResolvedSecret {
+  meta: ResolvedSecretMeta;
+  /** Read by the join-token mint and by nothing else in this module. */
+  value: string | null;
+}
+
 async function resolveSecret(
   key: MirotalkCredentialKey,
-  envName: string,
 ): Promise<ResolvedSecret> {
+  const envName = MIROTALK_ENV_NAMES[key];
   const stored = await resolveIntegrationCredential(MIROTALK_PROVIDER, key);
   if (stored.status === "configured") {
     return {
-      key,
+      meta: {
+        key,
+        source: "database",
+        version: stored.version,
+        needsReentry: false,
+      },
       value: stored.value,
-      source: "database",
-      version: stored.version,
-      needsReentry: false,
     };
   }
   if (stored.status === "needs_reentry") {
@@ -374,11 +402,13 @@ async function resolveSecret(
     // MiroTalk shows its own host login — and the screen says which secret to
     // re-enter.
     return {
-      key,
+      meta: {
+        key,
+        source: "database",
+        version: stored.version,
+        needsReentry: true,
+      },
       value: null,
-      source: "database",
-      version: stored.version,
-      needsReentry: true,
     };
   }
   const fromEnv = process.env[envName];
@@ -390,9 +420,15 @@ async function resolveSecret(
       ? (fromEnv ?? "")
       : (fromEnv?.trim() ?? "");
   if (!value) {
-    return { key, value: null, source: "unset", version: null, needsReentry: false };
+    return {
+      meta: { key, source: "unset", version: null, needsReentry: false },
+      value: null,
+    };
   }
-  return { key, value, source: "environment", version: null, needsReentry: false };
+  return {
+    meta: { key, source: "environment", version: null, needsReentry: false },
+    value,
+  };
 }
 
 interface ResolvedMirotalk {
@@ -410,15 +446,9 @@ interface ResolvedMirotalk {
 async function resolveMirotalk(): Promise<ResolvedMirotalk> {
   const stored = await readMirotalkStoredSettings();
   const [jwtKey, username, password] = await Promise.all([
-    resolveSecret(MIROTALK_CREDENTIAL_KEYS.jwtKey, "MIRO_JWT_KEY"),
-    resolveSecret(
-      MIROTALK_CREDENTIAL_KEYS.meetingUsername,
-      "MIRO_MEETING_USERNAME",
-    ),
-    resolveSecret(
-      MIROTALK_CREDENTIAL_KEYS.meetingPassword,
-      "MIRO_MEETING_PASSWORD",
-    ),
+    resolveSecret(MIROTALK_CREDENTIAL_KEYS.jwtKey),
+    resolveSecret(MIROTALK_CREDENTIAL_KEYS.meetingUsername),
+    resolveSecret(MIROTALK_CREDENTIAL_KEYS.meetingPassword),
   ]);
   return {
     baseUrl: resolveBaseUrl(stored),
@@ -488,24 +518,26 @@ function fieldStatus<T>(resolved: ResolvedField<T>): MirotalkFieldStatus {
 /**
  * Project the resolution onto what the screen and the admin API may see.
  *
- * WRITTEN FIELD BY FIELD, AND NEVER AS A SPREAD. A spread of
- * {@link ResolvedSecret} would carry `value` — the decrypted plaintext — into
- * a JSON response, and it would do it silently, because the extra key type-
- * checks against a wider object. Naming each field is what makes the omission
- * deliberate and visible; `mirotalk-exposure-contract.test.ts` drives the real
- * resolver with a sentinel secret and proves the rendered status never contains
- * it.
+ * IT TAKES THE META, NOT THE SECRET. {@link ResolvedSecretMeta} has no field a
+ * plaintext fits into, so the leak this function used to guard against by
+ * convention — "written field by field, and never as a spread", because a
+ * spread of the wider shape would have carried `value` into a JSON response
+ * silently — is unrepresentable here now: there is no value in scope to reach
+ * for. The fields are still named one by one, so ADDING one to the meta stays a
+ * visible decision rather than an automatic disclosure.
+ * `mirotalk-exposure-contract.test.ts` remains the behavioural half, driving
+ * the real resolver with a sentinel secret.
  */
 function secretStatus(
-  resolved: ResolvedSecret,
+  meta: ResolvedSecretMeta,
   updatedAt: string | null,
 ): MirotalkSecretStatus {
   return {
-    key: resolved.key,
-    source: resolved.source,
-    version: resolved.version,
+    key: meta.key,
+    source: meta.source,
+    version: meta.version,
     updatedAt,
-    needsReentry: resolved.needsReentry,
+    needsReentry: meta.needsReentry,
   };
 }
 
@@ -546,7 +578,7 @@ export async function getMirotalkConfigurationStatus(): Promise<MirotalkConfigur
     presenter: fieldStatus(resolved.presenter),
     tokenLifetime: fieldStatus(resolved.tokenLifetime),
     secrets: resolved.secrets.map((secret) =>
-      secretStatus(secret, updatedAtByKey.get(secret.key) ?? null),
+      secretStatus(secret.meta, updatedAtByKey.get(secret.meta.key) ?? null),
     ),
     tokenMintable: resolved.secrets.every((secret) => Boolean(secret.value)),
   };

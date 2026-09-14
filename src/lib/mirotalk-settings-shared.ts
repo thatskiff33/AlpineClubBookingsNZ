@@ -5,10 +5,23 @@
  * WHY IT IS SPLIT OUT, and it is the same reason `analytics-settings-shared`
  * exists beside `analytics-settings`: `mirotalk-config.ts` is `server-only`,
  * and importing a VALUE from it in a client component fails `npm run build`
- * with "'server-only' cannot be imported from a Client Component module" —
- * which lint, typecheck, knip and vitest all miss. The setup screen needs the
- * key names, the status shapes and the validation rules; it must never need the
- * resolver, the Prisma client or the credential store.
+ * with "'server-only' cannot be imported from a Client Component module". The
+ * setup screen needs the key names, the status shapes and the validation rules;
+ * it must never need the resolver, the Prisma client or the credential store.
+ *
+ * WHAT CATCHES IT IF SOMEBODY TRIES ANYWAY, corrected. This paragraph used to
+ * end "which lint, typecheck, knip and vitest all miss", which is false in the
+ * direction that matters: it tells the next reader no automated guard exists,
+ * so the split looks like a convention held up by care. It is not.
+ * `client-server-boundary-census.test.ts` walks the real import graph from every
+ * `"use client"` module and fails this exact path — measured, it reports
+ * `video-meetings-setup.tsx -> mirotalk-config.ts -> server-only` — and it runs
+ * inside the REQUIRED `verify` check, which is also where the build itself
+ * runs. (Semgrep's `acb-client-server-boundary` rule catches the DIRECT shape
+ * only for the modules named in its fixed alternation, which does not include
+ * this one, so here it is the census that holds.) The split is still right; the
+ * reason given for it was wrong, and it is repeated in two client components,
+ * which is itself the point.
  *
  * THE STATUS SHAPES ARE THE EXPOSURE CONTRACT, not a convenience. #2723
  * established that a secret is kept out of an audit row by the SHAPE of the
@@ -75,14 +88,30 @@ export const MIROTALK_CREDENTIAL_LABELS: Record<MirotalkCredentialKey, string> =
     [MIROTALK_CREDENTIAL_KEYS.meetingPassword]: "Host password",
   };
 
-/** The environment variable each secret falls back to, named for the screen. */
-export const MIROTALK_CREDENTIAL_ENV_NAMES: Record<
-  MirotalkCredentialKey,
-  string
-> = {
+/** The three non-secret settings, named as the status and the screen key them. */
+export type MirotalkSettingField = "baseUrl" | "presenter" | "tokenLifetime";
+
+/** Anything on this screen that has an environment variable behind it. */
+export type MirotalkEnvBackedSetting = MirotalkCredentialKey | MirotalkSettingField;
+
+/**
+ * THE environment variable behind each of the six, and the only place any of
+ * their names is written.
+ *
+ * All six, not three. The secrets had this record from the start; the three
+ * non-secret names were literals in three places each — the resolver's
+ * `process.env` read, the sentence the resolver puts on the status when a value
+ * would be refused, and the screen's own note — so renaming one meant finding
+ * five sites and renaming a secret meant finding one. Two spellings of the same
+ * fact is the defect; which spelling won is not the interesting part.
+ */
+export const MIROTALK_ENV_NAMES: Record<MirotalkEnvBackedSetting, string> = {
   [MIROTALK_CREDENTIAL_KEYS.jwtKey]: "MIRO_JWT_KEY",
   [MIROTALK_CREDENTIAL_KEYS.meetingUsername]: "MIRO_MEETING_USERNAME",
   [MIROTALK_CREDENTIAL_KEYS.meetingPassword]: "MIRO_MEETING_PASSWORD",
+  baseUrl: "MIROTALK_URL",
+  presenter: "MIRO_MEETING_PRESENTER",
+  tokenLifetime: "MIRO_JWT_EXP",
 };
 
 /**
@@ -112,6 +141,19 @@ export interface MirotalkFieldStatus {
 }
 
 /**
+ * Where a SECRET came from — the value source minus the one a secret cannot
+ * have.
+ *
+ * There is no computed default for a signing key or a host password: either
+ * somebody set it or nobody did. The status used to reuse the non-secret union,
+ * which admitted "derived" — a state the resolver has never produced — and the
+ * screen's badge, having no case for it, fell through to "not set". A type that
+ * describes the code loosely and a UI quietly covering for it: two small wrongs
+ * that cancelled out, until one of them moved.
+ */
+export type MirotalkSecretSource = Exclude<MirotalkValueSource, "derived"> | "unset";
+
+/**
  * One secret: whether it is set and from where — and NEVER what it is.
  *
  * `version` is the optimistic-concurrency token of the stored row, which #2723
@@ -124,7 +166,7 @@ export interface MirotalkFieldStatus {
 export interface MirotalkSecretStatus {
   key: MirotalkCredentialKey;
   /** "unset" means neither the database nor the environment has this one. */
-  source: MirotalkValueSource | "unset";
+  source: MirotalkSecretSource;
   version: string | null;
   /** ISO instant the stored secret was last written, when stored. */
   updatedAt: string | null;

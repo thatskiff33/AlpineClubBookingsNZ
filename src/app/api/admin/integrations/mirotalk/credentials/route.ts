@@ -8,6 +8,7 @@ import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { isFullAdmin } from "@/lib/access-roles";
 import { requireAdmin } from "@/lib/session-guards";
 import { StaleCredentialWriteError } from "@/lib/integration-credential-actor";
+import { INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH } from "@/lib/integration-credentials";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
 import { clearMirotalkSecret, setMirotalkSecret } from "@/lib/mirotalk-config";
 import {
@@ -57,9 +58,9 @@ import logger from "@/lib/logger";
 const setBodySchema = z
   .object({
     key: z.string().min(1).max(64),
-    // Capped to a sane length, as the shared credentials route caps every
-    // other provider's. Never logged, never returned.
-    value: z.string().min(1).max(4096),
+    // Capped by the store's own bound, which the shared credentials route reads
+    // too — the same fact, from the same place. Never logged, never returned.
+    value: z.string().min(1).max(INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH),
     // The token the status GET handed out, or null when it said "not set".
     version: z.string().min(1).max(128).nullable(),
   })

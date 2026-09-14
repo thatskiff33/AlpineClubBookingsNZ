@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   resolveIntegrationCredential: vi.fn(),
   setIntegrationCredential: vi.fn(),
   deleteIntegrationCredential: vi.fn(),
+  invalidateProviderCredentialCache: vi.fn(),
   createAuditLog: vi.fn(),
 }));
 
@@ -48,6 +49,7 @@ vi.mock("@/lib/integration-credentials", () => ({
   resolveIntegrationCredential: mocks.resolveIntegrationCredential,
   setIntegrationCredential: mocks.setIntegrationCredential,
   deleteIntegrationCredential: mocks.deleteIntegrationCredential,
+  invalidateProviderCredentialCache: mocks.invalidateProviderCredentialCache,
 }));
 
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.createAuditLog }));
