@@ -317,7 +317,17 @@ const MODELS: Record<ModelName, ModelSpec> = {
       // is what makes a select of any OTHER column throw here.
       member: (row, state) =>
         state.member.find((candidate) => candidate.id === row.memberId) ?? null,
+      // #3369: the OTHER half of the owner. A booking has a member or an
+      // organisation, never both, and `bookingOwner()` reads whichever is
+      // there — so the pack's select names both and this double resolves both.
+      organisation: (row, state) =>
+        state.organisation?.find(
+          (candidate) => candidate.id === row.organisationId,
+        ) ?? null,
     },
+  },
+  organisation: {
+    columns: ["id", "name", "email"],
   },
   bookingRequest: {
     columns: ["id"],
@@ -666,6 +676,9 @@ function relationModel(model: ModelName, relation: string): ModelName {
     return "bookingGuest";
   }
   if (model === "booking" && relation === "member") return "member";
+  if (model === "booking" && relation === "organisation") {
+    return "organisation";
+  }
   throw new Error(
     `booking-evidence test double: no model registered for ${model}.${relation}`,
   );

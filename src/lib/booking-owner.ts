@@ -260,12 +260,37 @@ export function bookingOwner<B extends BookingOwnerSource>(
       // organisation and keeps its own nullability.
       view.member = booking.member;
     } else {
-      if (booking.organisation == null) throw new BookingOwnerMissingError();
-      view.member = {
-        firstName: booking.organisation.name,
-        lastName: "",
-        email: booking.organisation.email ?? "",
-      };
+      // LAZY, and that is load-bearing rather than an optimisation. A caller
+      // that only wants `memberId` must never be made to fail on a projection
+      // it did not ask for — the diagnostics evidence pack reads exactly that
+      // on a booking whose member row is deliberately unreadable, and an eager
+      // throw there turned an honest "cannot evidence this" into a crash.
+      Object.defineProperty(view, "member", {
+        enumerable: true,
+        configurable: true,
+        get: () => {
+          if (booking.organisation != null) {
+            return {
+              firstName: booking.organisation.name,
+              lastName: "",
+              email: booking.organisation.email ?? "",
+            };
+          }
+          // NAMED BUT UNREADABLE IS NOT OWNED BY NOBODY, and the two get
+          // different answers. A booking that names a member whose row could
+          // not be read hands back what the caller has — nothing — which is
+          // exactly what it got before this stage: the relation was typed
+          // non-null then too, and a broken row still arrived as `null`. Any
+          // caller that survived that survives this. Only a booking naming
+          // NEITHER party is the state `Booking_owner_exactly_one` forbids, and
+          // that one throws, because rendering a blank owner would hide it from
+          // the person who could still fix it.
+          if (booking.memberId != null || booking.organisationId != null) {
+            return booking.member;
+          }
+          throw new BookingOwnerMissingError();
+        },
+      });
     }
   }
   // The conditional return type cannot be proved from a runtime `in` test, so

@@ -104,13 +104,45 @@ describe("#3369: the view carries only what the caller selected", () => {
 });
 
 describe("#3369: a booking owned by nobody fails closed", () => {
-  it("throws rather than rendering a blank owner", () => {
+  it("throws when the owner is READ, rather than rendering a blank one", () => {
     // `Booking_owner_exactly_one` makes this unreachable. It throws anyway,
     // because a booking nobody owns cannot be invoiced, emailed or refunded and
     // a blank name would hide that from the person who could still fix it.
-    expect(() =>
-      bookingOwner({ memberId: null, member: null, organisation: null }),
-    ).toThrow(BookingOwnerMissingError);
+    const owner = bookingOwner({
+      memberId: null,
+      member: null,
+      organisationId: null,
+      organisation: null,
+    });
+    expect(() => owner.member).toThrow(BookingOwnerMissingError);
+  });
+
+  it("does NOT throw for a caller that only wanted the member id", () => {
+    // The projection is lazy on purpose. An eager throw made a caller fail on
+    // work it never asked for — it cost the diagnostics evidence pack its
+    // honest "cannot evidence this" and gave it a crash instead.
+    const owner = bookingOwner({
+      memberId: null,
+      member: null,
+      organisationId: null,
+      organisation: null,
+    });
+    expect(owner.memberId).toBeNull();
+  });
+
+  it("hands back nothing, not an exception, when the owner is NAMED but unreadable", () => {
+    // A dangling reference is a different failure from an ownerless booking,
+    // and it gets the answer it got before this stage: the relation was typed
+    // non-null then too, and a broken row still arrived as `null`. Any caller
+    // that survived that survives this.
+    const owner = bookingOwner({
+      memberId: "member-1",
+      member: null as typeof MEMBER | null,
+      organisationId: null,
+      organisation: null,
+    });
+    expect(owner.member).toBeNull();
+    expect(owner.memberId).toBe("member-1");
   });
 });
 
