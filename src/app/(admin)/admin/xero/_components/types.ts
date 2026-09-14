@@ -46,6 +46,18 @@ export type SectionKey =
   | "mappings"
   | "setup"
 
+/**
+ * The DOM id of a section card on /admin/xero, minted here because two sides
+ * depend on it agreeing: every panel writes it onto its `SectionCard`, and
+ * `use-xero-connection.ts` reads it back with `getElementById` to reveal the
+ * section a "go to section" link asked for. Retyped at each end, a renamed
+ * section makes the reveal silently do nothing — there is no error, the page
+ * simply does not move (`INV-SSOT-001`).
+ */
+export function xeroSectionId(section: SectionKey): string {
+  return `xero-section-${section}`
+}
+
 export const SECTION_STORAGE_KEY = "admin-xero-section-state-v1"
 
 export const SECTION_DEFAULTS: Record<SectionKey, boolean> = {

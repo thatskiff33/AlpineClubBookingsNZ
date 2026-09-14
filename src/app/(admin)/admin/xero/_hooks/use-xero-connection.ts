@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { revealEditor } from "@/hooks/use-scroll-to-feedback"
 import { toSafeXeroOAuthCallbackMessage } from "@/lib/xero-oauth-callback-messages"
-import { SECTION_DEFAULTS, SECTION_STORAGE_KEY, type SectionKey, type XeroStatus } from "../_components/types"
+import { SECTION_DEFAULTS, SECTION_STORAGE_KEY, xeroSectionId, type SectionKey, type XeroStatus } from "../_components/types"
 
 export function useXeroConnection() {
   const [status, setStatus] = useState<XeroStatus | null>(null)
@@ -42,7 +42,7 @@ export function useXeroConnection() {
 
   useEffect(() => {
     if (!revealRequest) return
-    revealEditor(document.getElementById(`xero-section-${revealRequest.section}`))
+    revealEditor(document.getElementById(xeroSectionId(revealRequest.section)))
   }, [revealRequest])
 
   const handleConnect = useCallback(() => {

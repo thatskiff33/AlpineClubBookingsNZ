@@ -181,6 +181,17 @@ export function isRosterData(value: unknown): value is RosterData {
     isRecord(value.guestHistory)
 }
 
+/**
+ * The DOM id of a row's guest picker, minted once because two sides depend on
+ * it agreeing: the row renders it, and the focus effect reads it back with
+ * `getElementById` to move focus to the row an admin just added. Retyped at
+ * each end, a changed shape makes the focus silently do nothing — there is no
+ * error, focus simply stays where it was (`INV-SSOT-001`).
+ */
+function rosterGuestFieldId(rowKey: string) {
+  return `roster-guest-${rowKey}`
+}
+
 function groupedGuests(guests: RosterGuest[]) {
   const groups = new Map<string, RosterGuest[]>()
   for (const guest of guests) {
@@ -330,7 +341,7 @@ export function RosterEditor({
   // the request, so no animation frame is needed to wait for the row to exist.
   useEffect(() => {
     if (!focusRowRequest) return
-    document.getElementById(`roster-guest-${focusRowRequest.rowKey}`)?.focus()
+    document.getElementById(rosterGuestFieldId(focusRowRequest.rowKey))?.focus()
   }, [focusRowRequest])
 
   const draftAssignments = section.draft?.assignments ?? []
@@ -509,7 +520,7 @@ export function RosterEditor({
                             {section.editing ? (
                               <div>
                                 <select
-                                  id={`roster-guest-${assignment.rowKey}`}
+                                  id={rosterGuestFieldId(assignment.rowKey)}
                                   value={assignment.bookingGuestId}
                                   onChange={(event) => updateGuest(assignment.rowKey, event.target.value)}
                                   aria-invalid={Boolean(rowErrors[assignment.rowKey])}

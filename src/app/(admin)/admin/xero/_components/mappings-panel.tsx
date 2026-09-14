@@ -41,6 +41,7 @@ import {
   SectionCard,
   type ToggleSection,
 } from "./shared"
+import { xeroSectionId } from "./types"
 import type {
   AccountMappings,
   CreditItemMappingKey,
@@ -254,7 +255,7 @@ export function MappingsPanel({
     <div>
       {viewOnlyBanner}
     <SectionCard
-      id="xero-section-mappings"
+      id={xeroSectionId("mappings")}
       title="Account Mappings"
       description={`Map ${clubName} booking transactions to Xero accounts and items.`}
       open={open}
