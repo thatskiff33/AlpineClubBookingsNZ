@@ -189,6 +189,28 @@ export async function getMissingXeroInvoiceBookings(options?: {
     return { count: 0, bookings: [] };
   }
 
+  /*
+    #3001 — WHY THIS KEEPS THE PAYMENT JOIN, AND WHY IT IS NOT THE BOOKING
+    PAGE'S RULE.
+
+    `booking-invoice-sync-status.ts` finds ONE booking's invoice operation by the
+    booking's own correlation key, and deliberately not through the payment: a
+    booking whose payment row does not exist yet would match nothing and the page
+    would report all-clear over a failed invoice. That argument does not carry
+    here, and the two are not two homes for one rule — they answer different
+    questions:
+
+     - there, "what is the state of THIS booking's invoice-create operation?";
+     - here, "which PAID bookings have no invoice in the club's accounts?", asked
+       in bulk, of a candidate set that is already selected BY having a payment.
+       A booking with no payment row is not a candidate at all.
+
+    The operation TYPE is left unfiltered for the same reason. A succeeded
+    invoice UPDATE is genuine evidence that an invoice exists — it can only run
+    against one — and narrowing this to CREATE would list a booking whose create
+    failed after Xero accepted the invoice, which is precisely the booking an
+    officer must not be invited to mint a second invoice for.
+  */
   const succeededInvoiceOperations = await prisma.xeroSyncOperation.findMany({
     where: {
       entityType: "INVOICE",

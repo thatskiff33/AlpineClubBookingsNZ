@@ -143,12 +143,23 @@ lines: 728
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/booking-exception-approval.ts
-lines: 1112
+lines: 1175
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
+  #2721 then added sixty-three lines: the own-dependant guard re-run at
+  execution, its officer-facing error, and the comment saying why it fails
+  closed there rather than asking a question the officer cannot answer. It
+  cannot move out of this function — it reads the normalised party, the
+  linked-member map and the frozen snapshot, all of which exist only here. The
+  length recorded here is the length after that.
 
 file: src/lib/booking-exception-request-service.ts
-lines: 2281
+lines: 2393
 reason: 2 lines: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
+  #2721 then added a hundred and twelve lines: the own-dependant guard at
+  submit time, its typed domain error, and the note on why the frozen answers
+  sit beside the proposal rather than inside the hashed part of it. This is the
+  service both request routes go through, so the guard has to be here or one
+  door would keep the hole. The length recorded here is the length after that.
 
 file: src/lib/booking-guest-removal-service.ts
 lines: 1430

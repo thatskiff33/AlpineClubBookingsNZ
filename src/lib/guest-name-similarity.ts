@@ -46,10 +46,11 @@
 // (Ng->Wu, Ho->Lo, Bob->Amy); the single-edit case is the remaining exposure.
 
 import { must } from "@/lib/indexed-access";
-
-function normalizeNamePart(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
+// The trim/lowercase/collapse rule this file used to spell out for itself. It
+// moved to its own module when #2721 needed the identical comparison for
+// own-dependant name collisions; see that module's note on why two copies of a
+// name comparison is one copy too many.
+import { normalizePersonNamePart as normalizeNamePart } from "@/lib/person-name-normalization";
 
 function tokenCount(normalized: string): number {
   return normalized ? normalized.split(" ").length : 0;

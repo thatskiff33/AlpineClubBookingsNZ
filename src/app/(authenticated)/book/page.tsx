@@ -77,6 +77,11 @@ export default function BookPage() {
     internetBankingUnavailableReason,
     internetBankingHoldSummary,
     familyMembers,
+    dependantIdentityCollisions,
+    declaredDependantMemberIds,
+    bookCollidingGuestAsDependant,
+    declareDependantDifferentPerson,
+    withdrawDependantDeclaration,
     subscriptionStatus,
     subscriptionLoading,
     availablePromoCodes,
@@ -597,6 +602,11 @@ export default function BookPage() {
           memberGuestAddError={memberGuestAddError}
           capacityShortNights={capacityShortNights}
           capacityShortMessage={capacityShortMessage}
+          dependantIdentityCollisions={dependantIdentityCollisions}
+          declaredDependantMemberIds={declaredDependantMemberIds}
+          bookCollidingGuestAsDependant={bookCollidingGuestAsDependant}
+          declareDependantDifferentPerson={declareDependantDifferentPerson}
+          withdrawDependantDeclaration={withdrawDependantDeclaration}
         />
       )}
 
