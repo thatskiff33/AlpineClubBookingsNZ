@@ -311,6 +311,12 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/integrations/credentials": "finance",
   "/api/admin/integrations/google/status": "finance",
   "/api/admin/integrations/google/verify/start": "finance",
+  // #2940: the club-editable MiroTalk settings and the three encrypted
+  // secrets. Finance, like every other Integrations-hub endpoint — reading
+  // the status is finance-area, and every WRITE additionally requires Full
+  // Admin, which this matrix does not model and each route enforces itself.
+  "/api/admin/integrations/mirotalk": "finance",
+  "/api/admin/integrations/mirotalk/credentials": "finance",
   "/api/admin/integrations/stripe/status": "finance",
   "/api/admin/integrations/wizard-progress": "finance",
   "/api/admin/internet-banking-settings": "finance",

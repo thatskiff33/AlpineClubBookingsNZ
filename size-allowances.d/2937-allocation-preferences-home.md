@@ -24,8 +24,16 @@ reason: seventeen lines, of which exactly two are code — the import of
   adding a card to the foot of the page.
 
 file: src/lib/admin-permissions.ts
-lines: 955
-reason: fifty-five lines registering the third adjudicated admission rule, on
+lines: 961
+reason: RE-MEASURED at 961 for #2940, which adds six lines to the same file
+  while this allowance is still live in the diff against `origin/main` — one
+  route prefix (`/admin/video-meetings`) in the finance area's list, and five
+  comment lines saying why it is finance, why its API needs no prefix of its
+  own, and why it is not feature-gated. A second allowance file naming the same
+  path would be refused ("one file, one allowance"), so the number moves here.
+  What follows is #2937's own reason, unchanged, which is still what accounts
+  for the bulk of the debt: fifty-five lines registering the third adjudicated
+  admission rule, on
   the exact shape of the second (`isConsolidatedFeesPath` /
   `canAccessConsolidatedFeesPage`, #1933). Eight are code — a path constant, a
   prefix test and a two-term predicate — and the rest is why, which is the part

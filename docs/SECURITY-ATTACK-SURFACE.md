@@ -3642,7 +3642,7 @@ visibly new, and someone reads it.
 | --- | --- | --- | --- |
 | `js/request-forgery` | `src/lib/whakapapa-report.server.ts` | false positive | Allowlist barrier, below |
 | `js/path-injection` | `image-manager/images/route.ts` (×2) | false positive | "Image Manager path containment", below |
-| `js/insufficient-password-hash` | `src/lib/mirotalk-token.ts` | false positive | "MiroTalk meeting tokens", below |
+| `js/insufficient-password-hash`, `js/weak-cryptographic-algorithm` | `src/lib/mirotalk-token.ts` | false positive | "MiroTalk meeting tokens", below |
 | `js/insufficient-password-hash`, `js/weak-cryptographic-algorithm` | `mirotalk-token.test.ts` (×2) | used in tests | Same protocol reason, in the round-trip test |
 | `js/incomplete-multi-character-sanitization` | `booking-requests-noindex.test.ts`, `website-page-header-fallback-render.test.tsx` | used in tests | `vi.mock` doubles, "Test-file and harness alerts" below |
 | `js/bad-code-sanitization` | `measurement/**/self-test.mjs` (×3) | used in tests | Harness, never in the runtime image. **Historical** — the `measurement/` tree was removed whole by #3382; these three findings can no longer exist because the file they were raised against does not exist |
@@ -3763,6 +3763,15 @@ and every token minted here stops decrypting; the known-answer vectors in
 are the same construction in the test's independent decrypt, written to prove the
 round trip against the genuine libraries.
 
+**The same construction is also reported as `js/weak-cryptographic-algorithm`,
+against the source file rather than only the test** — observed on the #2940 head,
+which is the change that last touched `mirotalk-token.ts`. It is the identical MD5
+inside `evpBytesToKey` seen under a second rule id, so the triage above answers it
+unchanged, and the register row now names both ids rather than leaving the second
+looking untriaged. Neither rule blocks a merge: CodeQL is advisory here by
+[the required-check table in `AGENTS.md`](../AGENTS.md). Dismissing either alert in
+the Security tab is an owner action; nothing in this repository can close it.
+
 **What was real: `MIRO_JWT_KEY` had no documented entropy requirement at all.**
 That key does two jobs — it is the AES passphrase for the host username and
 password embedded in each join token, and the HS256 signing key for the token
@@ -3779,6 +3788,89 @@ purpose — a club whose meeting links silently stopped working is worse off tha
 one running a guessable key, and nothing in-process can repair a deployment's
 configuration. The key itself is never logged. Token issue is already gated to
 calendar managers and audited per mint, which is why this stays low severity.
+
+**What #2940 changed, and what it deliberately did not.** The key, the host
+username and the host password are now club-editable: a Full Admin sets them on
+**Admin → Integrations → Video meetings**, where they are stored in the encrypted
+`IntegrationCredential` store under provider `mirotalk`, and the environment
+variables become a per-field fallback. Four properties are worth stating because
+they are what makes that safe rather than merely convenient.
+
+- **The warning now reaches a person.** A key typed on that page is described
+  back to whoever typed it, in the response to their own Save, instead of only
+  reaching a server log nobody greps. It is still advisory, for the reason
+  above, and it still never echoes the value — `describeMirotalkJwtKeyWeakness`
+  returns a description, and the length it may quote is of a value that
+  administrator has in front of them.
+- **The status surface cannot carry a secret**, by shape rather than by
+  filtering. `MirotalkSecretStatus` has fields for whether a secret is set,
+  where it came from, when it changed and its concurrency token — and none a
+  value fits into. `mirotalk-exposure-contract.test.ts` drives the real resolver
+  with sentinel secrets, one from the environment and one from the store, and
+  proves neither reaches the status or the join URL; it is mutation-verified
+  against the one-line spread that would leak both.
+- **The concurrency token handed to the browser is a hash**, SHA-256 over
+  `(iv, authTag, ciphertext)`, which #2723 chose for exactly this use. It
+  changes on every write and reveals none of the three, and the store's
+  no-ciphertext-leaves-the-server contract is intact.
+- **A stored meeting-server address is held to rules the environment variable is
+  not**: public `https` only, no embedded credentials, and no private, loopback
+  or link-local host, through the shared `isBlockedDestinationHost` rule the
+  Alpine Central Server base URL already used. A join token travels to whatever
+  that address names, and it is a second admin-typed field deciding where
+  something of ours is sent — which is why that rule now lives in
+  `src/lib/private-destination-hosts.ts` with two callers rather than one.
+  `MIROTALK_URL` is deliberately exempt: refusing it would break an installation
+  that works today, so it is reported and used.
+
+**The redirect exposure, and what bounds it.** Whoever can change the
+meeting-server address can point join links at a host they control, and that
+host receives the signed token. It cannot read the host credentials inside
+without the signing key — the key never travels — but it gets a blob to attack
+offline. That is NOT equivalent to the weak-key exposure above, and the earlier
+wording here said it was: a weak key on its own still requires an attacker to
+already hold a token, and **the redirect is what supplies one**. Since the
+weakness advisory is deliberately never blocking, redirect-plus-weak-key
+compounds into practical recovery of the signing key and the host credentials,
+rather than a blob nobody has.
+
+Five things bound it.
+
+- Changing any of these settings requires **Full Admin** — not merely
+  `finance: edit`, which a Treasurer-shaped custom role can hold — on both
+  routes, and **both routes audit the refusal**: `mirotalk.settings.denied` for
+  the non-secret write and `mirotalk.credentials.denied` for a secret. (The
+  credentials route audited nothing until #2940's review round, which left the
+  higher-risk door the quieter of the two.)
+- The address must be a public `https` host, through the shared rule above.
+- The token is minted per click and short-lived.
+- **Moving the address CLEARS the three stored secrets**, which is the Alpine
+  Central Server remedy copied on its own terms: they are meaningful only to the
+  MiroTalk instance they were paired with, so a genuine move invalidates them
+  exactly as it invalidates the central server's API key. **A genuine move is a
+  change to the address IN FORCE**, decided by `mirotalkMeetingServerMoved`
+  through the one resolver — not a change to the stored column, which is `null`
+  on every environment-only install and would read "write down the address you
+  are already using" as a move and delete all three. On the installation
+  shape `.env.example` now recommends — the environment variables left empty,
+  everything set on the page — this is the whole fix: the resolver finds nothing
+  to fall back to, the join builder takes its no-token branch, and the redirected
+  host receives nothing at all. It is also the only lever the club has, because
+  a Full Admin cannot read a stored secret back out to re-supply it. **Where the
+  environment still holds those three it is ineffective**, because clearing the
+  stored value falls back to a variable that was set for the old server; it is
+  strictly better in every installation and worse in none.
+- **Every mint records which host it was built for** (`calendar.event.join`
+  carries the meeting-server origin, never the URL, which carries the token),
+  and a settings change records the address it moved from and to. Before that,
+  redirecting the address, waiting for a click and restoring it left no trace
+  anywhere of where the token had gone.
+
+**What is deliberately NOT done**, and is an owner's call rather than an
+implementor's: suppressing the environment fallback whenever the address is
+database-sourced would close the remaining half of the clearing remedy, and
+would break the mixed migration path this change exists to support — an
+installation part-way through moving its configuration onto the page.
 
 ### The Semgrep pair, which outranks the Critical
 

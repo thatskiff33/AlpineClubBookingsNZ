@@ -57,6 +57,25 @@ import {
 /** Cross-process cache TTL. Kept inside the binding 30-60s window. */
 export const CACHE_TTL_MS = 45_000;
 
+/**
+ * Longest credential VALUE any admin route may hand this store.
+ *
+ * It is a fact about what a credential is, not about one route, so it lives
+ * beside the store rather than being re-typed at each door. It was `4096` in the
+ * shared credentials route; #2940 opened a second door and copied the literal
+ * with a comment saying it was copying it, which is the moment a fact stops
+ * having one home. Nothing enforces it at the column — `ciphertext` is an
+ * unbounded Postgres text — so this is the only bound there is, and two doors
+ * disagreeing about it would mean a value one route stores and the other
+ * refuses.
+ *
+ * The figure itself is a sanity cap rather than a protocol limit: it clears an
+ * RSA-4096 PEM private key and every provider secret this application holds,
+ * while refusing a megabyte of request body that would be encrypted, stored and
+ * then read back on every cache miss.
+ */
+export const INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH = 4096;
+
 interface CachedProvider {
   fetchedAt: number;
   rows: Map<string, IntegrationCredential>;
@@ -404,10 +423,13 @@ export async function deleteIntegrationCredential(params: {
           // report success — a lost race reported as a win, which is the exact
           // failure this contract exists to remove. The iv and authTag are fresh
           // on every encrypt whatever the plaintext, so the three together are a
-          // real fence for every value. No production delete takes this path
-          // today (they all pass `any`) and the admin route requires a non-empty
-          // value — but the store is a library, and #2940 is its first
-          // club-editable consumer.
+          // real fence for every value. When this was written no production
+          // delete took this path — they all passed `any` — and the claim was
+          // that #2940 would be the store's first club-editable consumer. It
+          // is: `clearMirotalkSecret` passes the version the setup screen was
+          // shown, because Clear is a genuine read-modify-write and deleting
+          // whatever replaced the secret while reporting success is the failure
+          // this whole contract exists to remove.
           ...(claim.kind === "unconditional"
             ? {}
             : {

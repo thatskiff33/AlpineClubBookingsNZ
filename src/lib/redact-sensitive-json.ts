@@ -335,6 +335,52 @@ function isSensitiveJsonKey(key: string) {
 }
 
 /**
+ * THE NAME/VALUE PAIR (#2940). `value` beside `key` is redacted; `value`
+ * anywhere else is left alone.
+ *
+ * The credential routes post `{ key, value, version }`, so a signing key's
+ * plaintext arrives under `value` — which neither list above reached, because
+ * the fragments match key NAMES. Sentry sends `event.request.data` through this
+ * module, and on the MiroTalk credential route two gates sit outside the
+ * handler's own try/catch, so an unhandled throw can capture that body.
+ *
+ * NOT an exact `"value"` denylist entry, which is the shorter and stronger fix.
+ * `value` is not a credential name, it is the second half of a name/value pair,
+ * and this tree writes that pair with a `label` far more often than with a
+ * `key`: `booking-money-lines.ts` builds dozens of `{ label, value }` rows
+ * carrying money and date ranges, `audit-query.ts` builds `{ label, value }`
+ * option lists. A denylist entry blanks every one in every log line and in the
+ * admin Xero panels, to catch a shape that can be identified precisely — and a
+ * redactor that blinds the diagnostics has a security cost of its own.
+ *
+ * The pair is the right test because in `{ key, value }` the meaning of the
+ * value is decided by DATA rather than by schema, so this module cannot judge it
+ * and must assume the worst; everywhere else `value` means what the surrounding
+ * code chose. The `key` survives, so a settings echo still says WHICH setting.
+ *
+ * STATED LIMIT: it needs both keys in one object, so it reads a parsed body
+ * (including one parsed out of a string) but not the flat `"key":"…"` text
+ * fallback, which fires only when a body is too mangled to parse and has no
+ * sibling context. `password` and `secret` remain fragments there.
+ */
+const PAIR_NAME_KEY = "key";
+const PAIR_VALUE_KEY = "value";
+
+/** The `value` half of a `{ key, value }` pair, both halves normalised. */
+function isNameValuePairSecret(
+  normalizedKey: string,
+  normalizedSiblingKeys: ReadonlySet<string>
+) {
+  return (
+    normalizedKey === PAIR_VALUE_KEY && normalizedSiblingKeys.has(PAIR_NAME_KEY)
+  );
+}
+
+function normalizedKeySet(keys: readonly string[]): ReadonlySet<string> {
+  return new Set(keys.map(normalizeJsonKey));
+}
+
+/**
  * Query-string keys are the JSON denylist PLUS the generic OAuth/callback names.
  *
  * The union matters in both directions. `code` and `state` are meaningless as
@@ -553,6 +599,10 @@ function redactError(
       result.ownProperties = UNREADABLE_VALUE;
     }
 
+    // The pair rule applies to an error's own properties too: a thrower that
+    // attaches the request body it choked on attaches `{ key, value }` with it.
+    const normalizedOwnKeys = normalizedKeySet(ownKeys);
+
     for (const key of ownKeys) {
       if (
         key === "name" ||
@@ -562,7 +612,10 @@ function redactError(
       ) {
         continue;
       }
-      if (isSensitiveJsonKey(key)) {
+      if (
+        isSensitiveJsonKey(key) ||
+        isNameValuePairSecret(normalizeJsonKey(key), normalizedOwnKeys)
+      ) {
         result[key] = REDACTED_SECRET;
         continue;
       }
@@ -635,9 +688,13 @@ function redactPlainObject(
   }
 
   ctx.entries += keys.length;
+  const normalizedKeys = normalizedKeySet(keys);
   const result: Record<string, unknown> = {};
   for (const key of keys) {
-    if (isSensitiveJsonKey(key)) {
+    if (
+      isSensitiveJsonKey(key) ||
+      isNameValuePairSecret(normalizeJsonKey(key), normalizedKeys)
+    ) {
       result[key] = REDACTED_SECRET;
       continue;
     }

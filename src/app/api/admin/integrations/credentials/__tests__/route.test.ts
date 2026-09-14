@@ -18,7 +18,16 @@ vi.mock("@/lib/access-roles", () => ({ isFullAdmin: mocks.isFullAdmin }));
 vi.mock("@/lib/prisma", () => ({
   prisma: { integrationCredential: { findMany: mocks.findMany } },
 }));
-vi.mock("@/lib/integration-credentials", () => ({
+// PARTIAL, deliberately. This route reads `INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH`
+// from this module at IMPORT time — it bounds the zod schema — so a factory that
+// returns only the writer kills the whole file before a test runs. Spelling the
+// number here instead would put a second copy of the cap in the tree, which is the
+// duplication #2940 removed; `importOriginal` keeps the one home and mocks only the
+// call that must not reach the database.
+// The cast sits OUTSIDE the call on purpose (#3318): an `import()` type inside a
+// type argument makes Semgrep skip the rest of this file while still exiting 0.
+vi.mock("@/lib/integration-credentials", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/integration-credentials")),
   setIntegrationCredential: mocks.setIntegrationCredential,
 }));
 vi.mock("@/lib/stripe-config", () => ({
