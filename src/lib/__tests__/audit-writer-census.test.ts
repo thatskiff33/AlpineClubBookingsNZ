@@ -1352,9 +1352,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // summary row, categorised `xero` at the site and named in none of the four
     // per-site maps, so it lands unpinned and `pinned` still does not move. The
     // two branches' rows are disjoint writers, so the merged figure is 351 —
-    // 478 sites RE-MEASURED on the MERGED tree with
+    // 481 sites RE-MEASURED on this tree with
     // `npm run audit:census` minus 127 pinned, never by adding the two deltas.
-    ).toEqual({ pinned: 127, unpinned: 351 });
+    ).toEqual({ pinned: 127, unpinned: 354 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

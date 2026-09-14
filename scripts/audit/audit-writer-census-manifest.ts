@@ -480,7 +480,21 @@ export const AUDIT_CENSUS_TOTALS = {
   // so it lands unpinned. #2936's row and this one are disjoint writers, so the
   // merged total is 478 — RE-MEASURED on the MERGED tree with
   // `npm run audit:census`, never by adding the two branches' deltas together.
-  writeSites: 478,
+  //
+  // 478 -> 481 (#2940): the club-editable MiroTalk configuration adds three
+  // `createAuditLog` sites, all in `src/app/api/admin/integrations/mirotalk`.
+  // `mirotalk.settings.update` records a settings save, categorised `admin`;
+  // `mirotalk.settings.denied` and `mirotalk.credentials.denied` record a
+  // non-Full-Admin attempt at the two write routes, categorised `security`,
+  // because `finance: edit` admits a Treasurer-shaped custom role and somebody
+  // reaching either gate is an admin trying to change a capability setting or
+  // write a capability secret they may not. None is named in any of the four
+  // per-site maps, so all three land unpinned. RE-MEASURED by running
+  // `npm run audit:census`: this suite is the documented blind spot of
+  // `vitest related` (it reads the source tree from disk and has no import edge
+  // to anything the change touched), so nothing selects it for you and adding
+  // the deltas up by hand is how a figure ships one short.
+  writeSites: 481,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -627,7 +641,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // 123/126 -> 127 (sync of `main` into `epic/2725-mad`): both branches'
     // additions land on this helper and are disjoint. Re-MEASURED on the
     // MERGED tree by running the census, never by adding the deltas together.
-    createAuditLog: { total: 127, uncategorised: 0 },
+    // 127 -> 130 (#2940): the three MiroTalk admin writers above — one settings
+    // save and the two refusals — all awaited `createAuditLog`, which is the
+    // form every other admin-settings writer beside them uses.
+    createAuditLog: { total: 130, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -906,7 +923,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // and it is `admin` for the same reason the two sibling AI settings writers
     // are: installation configuration that changes what the caps are compared
     // against, not who may sign in or what they may reach.
-    admin: 105,
+    // 105 -> 106 (#2940): `mirotalk.settings.update`. An ordinary admin-settings
+    // save, read with `support:view` like every other settings row beside it, so
+    // it widens nobody's access.
+    admin: 106,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -936,7 +956,15 @@ export const AUDIT_CENSUS_TOTALS = {
     // is a WIDENING of three, and deliberate: a support operator investigating a
     // sudden data loss should be able to see that a restore happened without
     // needing Full Admin to find out.
-    security: 22,
+    // 22 -> 24 (#2940): `mirotalk.settings.denied` and
+    // `mirotalk.credentials.denied`. Both are refusals rather than actions — an
+    // admin holding `finance: edit` but not Full Admin, turned away from the
+    // meeting-server settings and from the host sign-in — which is the same
+    // shape as the credential and role-change refusals already in this figure.
+    // `security` is readable with `support:view` alone, and a refused attempt to
+    // change where a signed join token is sent is exactly what a support
+    // operator correlating an incident needs to see.
+    security: 24,
     // 16 -> 18 (#2595): the two reviewed-move writes. `lodge` is the category
     // every other bed-allocation write already uses, and it is not one of the
     // three (`admin`, `security`, `system`) readable with support:view alone —

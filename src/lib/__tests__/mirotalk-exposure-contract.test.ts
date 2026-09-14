@@ -17,10 +17,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * asks whether a secret can get out, which is the thing that matters and the
  * thing a refactor can break without changing any spelling.
  *
- * MUTATION-VERIFIED: spreading the internal resolved secret into the status
- * projection (the one-character change the projection's comment warns against)
- * fails "the status carries no field a secret value fits into" and both
- * sentinel assertions.
+ * MUTATION-VERIFIED: carrying the resolved plaintext into the status projection
+ * fails "the status carries no field a secret value fits into" and the
+ * sentinel assertion. Since the review round that added the meta/value split,
+ * that mutation no longer TYPE-checks either — the projection is handed an
+ * object with no plaintext field — so this suite is now the second line rather
+ * than the only one. It stays because it is behavioural: it asks whether a
+ * secret can get out, which a refactor can change without changing any
+ * spelling, where a source scan asks only how today's code is written.
  */
 
 const ENV_SENTINEL = "SENTINEL-FROM-THE-ENVIRONMENT-8f2a";
