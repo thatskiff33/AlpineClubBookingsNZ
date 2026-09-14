@@ -283,3 +283,33 @@ This table is the same data as `MEMBER_GUEST_CONSENT_SUB_STATES` in
 the code table (one mapping of set / null / any / the responder words) and fails
 unless this file contains it verbatim, so a shape that changes in code cannot
 leave a stale row here.
+
+## INV-GUEST-019
+
+- **The booking member's own recorded dependant belongs on the member path, and
+  the app never guesses which person a typed name is** (#2721). A row with no
+  `memberId` is a non-member guest: provisional under the hold policy, bumpable
+  when the lodge fills, invoiced as the deferred guest portion. A dependant put
+  there stands behind their own club's members.
+- **The candidate set is the booking member's own parent links, nothing wider** —
+  the privacy half of the rule: free-text guest entry must never become a way to
+  ask the club whether a name is a member. Not the family group, lodge or
+  membership database. Matching is **exact on the normalised name** (`person-name-normalization.ts`:
+  trim, lowercase, collapse whitespace, NFC), nothing fuzzy, phonetic or partial.
+- **A collision is resolved explicitly, per dependant.** Either the row moves to
+  the member path, or the guest path continues behind a declaration naming the
+  exact dependant it is not; a generic override is not a shape the field can
+  hold. Two dependants whose names normalise alike need two answers; one answer
+  covers **every row carrying that name**: the question is about the name, not
+  the row.
+- **Which doors this holds on.** The create route, **on-behalf creates
+  included** (owner decision 15 Sep 2026: it protects a third party's bed, not
+  the officer's authority, so `/admin/book` asks the officer about the booking
+  member's dependants); and the policy-exception request, at submit and again at
+  approval, where that door creates the booking. **Not** the edit doors (add-guest,
+  modify-quote): #3451.
+- **The server re-resolves both from authenticated data**, taking the member ids
+  that really resolved rather than trusting a row, so a forged member link, a
+  fabricated or unrelated dependant id and a stale declaration are refused.
+  **Identity is keyed by the normalised name, never a party position.** Home:
+  `src/lib/booking-dependant-identity.ts`.

@@ -23,8 +23,18 @@ leaves — it refuses a second live allowance for one path — but a lane touchi
 these files should expect to rebase on them.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3279
-reason: one hundred lines. Sixty-one are the docblock and body of
+lines: 3272
+reason: RE-MEASURED by #3001, which made this file seven lines SHORTER. Two
+  strings it spelled out for itself now have one home each, because #3001's
+  warning on the booking needed both: the booking-invoice correlation key, built
+  inline from four literals and now one call to
+  `buildXeroBookingInvoiceCorrelationKey`; and the active primary-invoice link
+  lookup, which is the enqueue fence's "does an invoice already exist?" and is
+  now the same `findActivePrimaryInvoiceLink` the warning asks, so the fence
+  refusing a second mint and the surface refusing to say no invoice exists
+  cannot drift apart. The number is re-measured here rather than declared in a
+  second fragment, exactly as the note above asks — one
+  hundred lines. Sixty-one are the docblock and body of
   `inheritedBookingInvoiceEmailInstruction`, which closes the door the durable
   instruction did not: the outbox dedups only on PENDING and RUNNING, so a
   FAILED booking-invoice operation is RE-MINTED by the admin missing-invoices

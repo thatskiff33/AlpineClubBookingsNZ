@@ -52,7 +52,7 @@ reason: Three lines net. The member payload builder's object literal MOVED OUT
   has merged.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1582
+lines: 1599
 reason: Six lines, and five of them are the comment. One call site changes from
   `findOrCreateXeroContact(booking.memberId, …)` to
   `findOrCreateXeroContactForInvoicedParty(booking, …)`. The comment is there
@@ -61,10 +61,28 @@ reason: Six lines, and five of them are the comment. One call site changes from
   who does not know that will go looking for a change in the eleven invoice
   builders that is not there.
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
+  RE-MEASURED AGAIN by #3001, which added seventeen lines, twelve of them
+  comment. Three of the code lines record WHICH of the three faults stopped the
+  invoice email — the provider call, an unreadable "No emails" switch, or an
+  unconfirmed installation role — as its own payload key, because the error
+  VALUE is not redacted and is never read back, so without the key the booking's
+  warning can only say "sending it failed" and hands an officer a remedy that
+  fits two of the three. The others are the key on the completion payload and
+  the shared correlation-key import. The number is re-measured in this fragment
+  rather than declared in a second one, which is what the gate asks — one file,
+  one allowance.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1472
-reason: Thirty-six lines, admitting the ORGANISATION case on the retry screen.
+lines: 1482
+reason: RE-MEASURED by #3001, which added ten lines here: the money fence
+  `partialInvoiceOperationHasPaymentFault` now reads the completion payload
+  through `readXeroInvoiceOperationOutcome` rather than spelling all six keys
+  inline, because #3001's warning on the booking is a second reader of the same
+  six. The checks and their order are unchanged and the suite passes unchanged;
+  the added lines are the note saying so. The number is re-measured in this
+  fragment rather than declared in a second one, which is what the gate asks.
+  The original reason stands: thirty-six lines, admitting the ORGANISATION case
+  on the retry screen.
   The screen gated contact create and update on `localModel === "Member"`, so an
   officer replaying a school's failed contact operation was told it "requires a
   member-local record" — for exactly the operations this stage's module docblock
@@ -100,7 +118,7 @@ the invariant and the lock-guard test and left these two sentences teaching the
 order that produced the deadlock, which is exactly how the rule stops holding.
 
 file: src/lib/xero-contact-create-recovery.ts
-lines: 879
+lines: 883
 reason: Fourteen comment lines across two docblocks, no code. The manual-link
   fence called the target `Member` row the transaction's FIRST lock; the
   contact-home key is taken before it, and the sentence as written described the
@@ -114,6 +132,12 @@ reason: Fourteen comment lines across two docblocks, no code. The manual-link
   file's real length rather than two entries the gate cannot choose between —
   one file, one allowance — and the #2939 reasoning is in
   `size-allowances.d/2939-bulk-create-missing-contacts.md` beside it.
+  RE-MEASURED AGAIN by #3001, which added four lines: three of comment and one
+  import, because the `ORPHANED_STALE_RUNNING` error code this module read as a
+  literal is now minted once in `xero-stale-operations.ts`. The reset route
+  writes that string and #3001's booking warning reads it — to tell an operation
+  that FAILED from one nobody saw through — so three places depended on one
+  spelling. The export keeps this module's name so its callers are unchanged.
 
 file: src/lib/xero-sync.ts
 lines: 901

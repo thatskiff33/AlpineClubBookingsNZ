@@ -17,7 +17,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { findUnique: vi.fn() },
+    member: {
+      findUnique: vi.fn(),
+      // #2721: the family payload now also returns the VIEWER'S OWN recorded
+      // dependants, read through `loadBookerDependants`. Empty here — these
+      // cases are about a PARENT's address, and an own-dependant list does not
+      // change what is disclosed about one.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     familyGroupMember: { findMany: vi.fn() },
     familyGroupJoinRequest: { findMany: vi.fn(), findFirst: vi.fn() },
   },
@@ -38,7 +45,10 @@ import { buildParentLinks } from "@/lib/member-parent-links";
 import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zone";
 
 const mockPrisma = prisma as unknown as {
-  member: { findUnique: ReturnType<typeof vi.fn> };
+  member: {
+    findUnique: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+  };
   familyGroupMember: { findMany: ReturnType<typeof vi.fn> };
   familyGroupJoinRequest: {
     findMany: ReturnType<typeof vi.fn>;

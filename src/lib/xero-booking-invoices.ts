@@ -72,6 +72,8 @@ import {
   getBookingInvoiceIssueDate,
 } from "./xero-invoice-helpers";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
+import type { XeroInvoiceEmailFailureCause } from "@/lib/xero-booking-invoice-outcome";
 import {
   bookingMoneyBuildUpFromProjection,
   d3CompatibleBookingMoneyBuildUpCents,
@@ -677,12 +679,11 @@ export async function createXeroInvoiceForBooking(
     lineAmountTypes: LineAmountTypes.Inclusive,
   });
 
-  const invoiceIdempotencyKey = buildXeroIdempotencyKey(
-    "booking",
-    bookingId,
-    "invoice",
-    "v1"
-  );
+  // The booking's stable handle, minted in one place so the outbox row this
+  // operation continues, the key Xero is given, and #3001's warning on the
+  // booking itself can never be looking for three different strings.
+  const invoiceIdempotencyKey =
+    buildXeroBookingInvoiceCorrelationKey(bookingId);
   let operationId = options?.syncOperationId ?? null;
   const requestPayload = {
     invoices: [buildInvoice(contactId)],
@@ -925,6 +926,16 @@ export async function createXeroInvoiceForBooking(
 
     let invoiceEmailResponseBody: unknown = null;
     let invoiceEmailError: unknown = null;
+    /*
+      #3001 — WHICH of the three faults stopped the email, recorded beside the
+      error rather than inferred from it. The error VALUE is not redacted and is
+      never read back out of this payload, so a surface that wants to tell an
+      officer what to do about an unsent invoice has nothing to go on unless the
+      cause is its own key. The three want three different actions, and one of
+      them — an unreadable "No emails" switch — must NOT be answered with "send
+      it from Xero yourself", because the switch may be on.
+    */
+    let invoiceEmailFailureCause: XeroInvoiceEmailFailureCause | null = null;
     const shouldEmailInvoice =
       booking.payment.source === PaymentSource.INTERNET_BANKING;
 
@@ -1035,6 +1046,7 @@ export async function createXeroInvoiceForBooking(
       invoiceEmailError = new Error(
         `Could not read the "No emails" switch for booking ${bookingId}; the Xero invoice email was not sent`,
       );
+      invoiceEmailFailureCause = "NO_EMAILS_UNREADABLE";
       logger.error(
         { bookingId, invoiceId: createdInvoice.invoiceID },
         "Did not email the Xero invoice because the booking's \"No emails\" switch could not be read; the sync operation is marked PARTIAL so the unsent invoice email stays visible",
@@ -1076,6 +1088,7 @@ export async function createXeroInvoiceForBooking(
       const context = { bookingId, invoiceId: createdInvoice.invoiceID };
       if (invoiceEmailPolicy.error) {
         invoiceEmailError = invoiceEmailPolicy.error;
+        invoiceEmailFailureCause = "ROLE_UNCONFIRMED";
         logger.error(context, invoiceEmailPolicy.logMessage);
       } else {
         logger.info(context, invoiceEmailPolicy.logMessage);
@@ -1104,6 +1117,7 @@ export async function createXeroInvoiceForBooking(
         invoiceEmailResponseBody = emailResponse.body;
       } catch (error) {
         invoiceEmailError = error;
+        invoiceEmailFailureCause = "PROVIDER";
         logger.warn(
           { err: error, bookingId, invoiceId: createdInvoice.invoiceID },
           "Created Xero invoice but failed to email it to the contact"
@@ -1152,6 +1166,9 @@ export async function createXeroInvoiceForBooking(
         paymentSkipReason: paymentSkipped ? paymentSkipReason : null,
         invoiceEmail: invoiceEmailResponseBody,
         invoiceEmailError,
+        // #3001: which of the three faults it was. Read back through
+        // `readXeroInvoiceOperationOutcome`, the one home for this payload.
+        invoiceEmailFailureCause,
         invoiceEmailSkipped:
           !shouldEmailInvoice ||
           invoiceEmailWithheld ||

@@ -20,6 +20,11 @@ import {
   resolveLinkedBookingMembersWithBoundary,
 } from "@/lib/booking-guests";
 import {
+  checkOwnDependantIdentity,
+  loadBookerDependants,
+  parseStoredDependantIdentityDeclarations,
+} from "@/lib/booking-dependant-identity";
+import {
   loadMemberGuestAddPolicy,
   matchMemberGuestNotificationRows,
   planMemberGuestConsentWrites,
@@ -135,6 +140,26 @@ export class PolicyExceptionUnverifiedExecutionError extends Error {
   constructor(detail: string) {
     super(`A policy-exception approval reached execution unverified: ${detail}`);
     this.name = "PolicyExceptionUnverifiedExecutionError";
+  }
+}
+
+/**
+ * The frozen party names one of the REQUESTER's own recorded dependants as a
+ * free-text guest, and nothing on the request says which person they mean
+ * (#2721, `INV-GUEST-019`).
+ *
+ * Officer-facing wording, deliberately not the member's sentence: the officer is
+ * not the person who can answer this, so the message names what they can
+ * actually do. It is reached only through the stale window the submit-time guard
+ * cannot cover — a dependant recorded or renamed after the request was made, or
+ * a request raised before the guard existed.
+ */
+export class PolicyExceptionDependantIdentityUnresolvedError extends Error {
+  constructor(readonly memberFacingReason: string) {
+    super(
+      "One of the guests on this request has the same name as somebody recorded as the member's own dependant, and the request does not say which person they mean. Decline it and ask them to submit it again from the booking page, where they are asked that question.",
+    );
+    this.name = "PolicyExceptionDependantIdentityUnresolvedError";
   }
 }
 
@@ -897,6 +922,44 @@ async function executeApprovedNewBooking(args: {
   // membership — the frozen party carries what the REQUESTER declared, and
   // pricing reads these fields.
   const normalizedGuests = normalizeBookingGuestInputs(frozenGuests, linkedMembers);
+
+  /**
+   * OWN-DEPENDANT IDENTITY, RE-RUN AT EXECUTION (#2721, `INV-GUEST-019`).
+   *
+   * This is the moment the booking is actually created, and it is not the moment
+   * the question can be ANSWERED — the requester is not here, and the officer
+   * cannot answer it for them because the whole rule exists on the premise that
+   * a name is not identity. The request route asks it at submit time for exactly
+   * that reason. What this covers is the window that one cannot: a dependant
+   * recorded or renamed between the submit and the decision, and every request
+   * already sitting in the queue from before the guard existed.
+   *
+   * So it fails CLOSED, by throwing: the approval transaction rolls back whole,
+   * nothing is written, and the officer is told to send the request back rather
+   * than put a member's child on the provisional, bumpable, separately-invoiced
+   * non-member split on their behalf. The consequence lands on somebody who is
+   * not in the room, which is precisely when a silent path is worst.
+   *
+   * The declarations come from BESIDE the frozen proposal, not from inside the
+   * hashed part of it — and they are re-verified here rather than trusted, so a
+   * declaration that no longer describes a real collision for this requester is
+   * refused exactly as a forged one is.
+   */
+  const dependantIdentityRefusal = checkOwnDependantIdentity({
+    party: normalizedGuests,
+    memberPathMemberIds: new Set(linkedMembers.keys()),
+    dependants: await loadBookerDependants(tx, request.requestedByMemberId),
+    declarations: parseStoredDependantIdentityDeclarations(
+      (snapshot as { dependantIdentityDeclarations?: unknown })
+        .dependantIdentityDeclarations,
+    ),
+  });
+  if (dependantIdentityRefusal) {
+    throw new PolicyExceptionDependantIdentityUnresolvedError(
+      dependantIdentityRefusal.error,
+    );
+  }
+
   const consentPlan = planMemberGuestConsentWrites({
     guests: normalizedGuests,
     boundary,

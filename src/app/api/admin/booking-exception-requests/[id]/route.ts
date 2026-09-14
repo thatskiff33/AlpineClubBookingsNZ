@@ -20,6 +20,7 @@ import {
 import {
   buildPolicyExceptionApprovalHooks,
   resolveNewBookingExecutionParams,
+  PolicyExceptionDependantIdentityUnresolvedError,
   PolicyExceptionExecutionCapacityError,
 } from "@/lib/booking-exception-approval";
 import { parseFrozenEvidence } from "@/lib/booking-exception-requests";
@@ -630,6 +631,23 @@ export async function PATCH(
             "This change reduces the price, so choose whether the refund goes back to the card or to account credit, then approve again.",
         },
         { status: 400 },
+      );
+    }
+    if (error instanceof PolicyExceptionDependantIdentityUnresolvedError) {
+      // #2721: the frozen party names one of the requester's OWN recorded
+      // dependants as a free-text guest and nothing says which person is meant.
+      // The transaction rolled back, so the request is untouched — and this is
+      // not a capacity wait, so it is not reported as kept pending. The officer
+      // cannot answer this question on the member's behalf, which is why the
+      // message tells them to send it back instead of offering an override.
+      return NextResponse.json(
+        {
+          id,
+          status: "REQUESTED",
+          error: error.message,
+          code: "DEPENDANT_IDENTITY_UNRESOLVED",
+        },
+        { status: 409 },
       );
     }
     if (error instanceof BookingGuestValidationError) {
