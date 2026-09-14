@@ -30,13 +30,15 @@ import {
   adminBookingsQuerySchema,
   buildAdminBookingsWhere,
 } from "@/lib/admin-bookings-service";
-import { bindClubTime } from "@/lib/club-time";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import {
   findOverlappingCapacityHoldingBookings,
   findOverlappingOverriddenNonHoldingBookings,
 } from "@/lib/capacity";
 
-const clubDay = adminBookingsClubDay(bindClubTime("Pacific/Auckland"));
+const clubDay = adminBookingsClubDay(
+  bindClubTime(requireClubTimeZone("Pacific/Auckland")),
+);
 
 /** Does `where` accept a row whose member is absent and whose owner is a school? */
 function matchesSchoolOwnedRow(where: Prisma.BookingWhereInput): boolean {
