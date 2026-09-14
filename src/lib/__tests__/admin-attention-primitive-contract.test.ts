@@ -20,6 +20,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { DIRECT_SCROLL_EXCLUSIONS } from "@/hooks/use-scroll-to-feedback";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const PRIMITIVE_MODULE = "src/hooks/use-scroll-to-feedback.ts";
 
@@ -50,20 +51,13 @@ function trackedAdminSources(): string[] {
     .sort();
 }
 
-/** Strip line comments and block comments so prose naming a method is not a call. */
-const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
-// A `//` not preceded by `:` (a URL) or a quote (a string literal). The backtick
-// is spelled by code point because oxc misreads it inside a regex character class.
-const LINE_COMMENT = new RegExp("(^|[^:\"'\\x60])//[^\\n]*", "g");
-function withoutComments(source: string) {
-  return source.replace(BLOCK_COMMENT, "").replace(LINE_COMMENT, "$1");
-}
-
+// The canonical stripper (`INV-SSOT-004`): a local copy that misreads a regex
+// literal as a line comment deletes the rest of the line and under-reports.
 const DIRECT_SCROLL = /\b(?:scrollIntoView|scrollTo)\s*\(/g;
 const DEFERRED_FOCUS = /requestAnimationFrame\s*\([\s\S]{0,200}?\.focus\s*\(/g;
 
 function findings(file: string) {
-  const source = withoutComments(
+  const source = stripComments(
     fs.readFileSync(path.join(process.cwd(), file), "utf8"),
   );
   const direct = source.match(DIRECT_SCROLL) ?? [];
