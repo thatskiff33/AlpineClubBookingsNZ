@@ -28,7 +28,9 @@ describe("buildXeroBookingInvoiceCorrelationKey", () => {
   it("is scoped to the booking, so it is the same key across that booking's life", () => {
     // The operation row is stored against the PAYMENT, but keyed on the
     // BOOKING. That is what lets #3001 find a booking's invoice operation
-    // without joining through a payment row that may be missing or replaced.
+    // without joining through a payment row that may not have been created
+    // yet. (That is the real case, and the only one: the payment is one-to-one
+    // with the booking and nothing deletes it.)
     expect(buildXeroBookingInvoiceCorrelationKey("bkg_abc")).toBe(
       buildXeroBookingInvoiceCorrelationKey("bkg_abc"),
     );
