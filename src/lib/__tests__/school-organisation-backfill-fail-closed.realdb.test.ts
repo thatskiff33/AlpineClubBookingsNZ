@@ -1,6 +1,6 @@
 /**
  * THE BACKFILL REFUSES, AND WRITES NOTHING, WHILE ANY ROW IS UNCLASSIFIED
- * (#3369, stage 4 of programme #2912). `INV-OPS-014`.
+ * (#3369, stage 4 of programme #2912). `INV-OPS-002`, `INV-OPS-010`.
  *
  * ## Why this is a separate suite from the verification fixture
  *
