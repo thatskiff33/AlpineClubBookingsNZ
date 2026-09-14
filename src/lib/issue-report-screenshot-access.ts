@@ -4,7 +4,6 @@ import {
   hasAdminPortalAccess,
   type AdminPermissionInput,
 } from "@/lib/admin-permissions";
-import { isFullAdmin } from "@/lib/access-roles";
 import { ISSUE_REPORT_RETENTION_DELETE_REASON } from "@/lib/issue-report-retention";
 
 /**
@@ -38,6 +37,16 @@ import { ISSUE_REPORT_RETENTION_DELETE_REASON } from "@/lib/issue-report-retenti
  * `deriveIssueReportScreenshotOrigin` decides the stored value; the classifier
  * below decides what a caller may see. Splitting them across two modules is how
  * a later change makes one of them disagree with the other.
+ *
+ * ## What is NOT here, and why
+ *
+ * `viewerIsFullAdmin` is the repository's existing `isFullAdmin`, called
+ * directly by the read routes exactly as five other admin surfaces call it.
+ * There was briefly a wrapper here; it named nothing `isFullAdmin` does not
+ * already name. The one thing worth knowing is not a function but a fact about
+ * its ARGUMENT: the routes pass the session `requireAdmin` returned, and that
+ * guard has already replaced `accessRoles` with the roles it read from the
+ * database (#1012), so this gate never rests on a stale token.
  */
 
 /** Every terminal state a screenshot can be in, from the caller's point of view. */
@@ -83,25 +92,58 @@ export function isAdminOriginScreenshot(
   return screenshotOrigin !== "MEMBER";
 }
 
+/** The stored screenshot stamps every read path holds, whatever it selects. */
+export type IssueReportScreenshotStamps = {
+  screenshotCapturedAt: Date | null;
+  screenshotExpiresAt: Date | null;
+  screenshotDeletedAt: Date | null;
+};
+
+/**
+ * Whether a report's pixels are still stored and still servable — ONE
+ * definition, for every read path.
+ *
+ * It used to be two. The detail route held the blob and honoured
+ * `screenshotExpiresAt`; the list route selected no blob and answered from the
+ * capture and deletion stamps alone, even though it selected the expiry as
+ * well. So for the hours between an expiry and the nightly sweep reaching it,
+ * the queue said "retained" about a screenshot the report itself already
+ * refused — and after #2703 the two would have disagreed about `withheld` too.
+ *
+ * The three stamps are all it reads, deliberately. A caller that ALSO holds
+ * `screenshotDataUrl` needs no extra check, because both writers that clear the
+ * blob — the retention sweep and the administrator delete — stamp
+ * `screenshotDeletedAt` in the same update, so a null blob always carries a
+ * deletion stamp. The one consumer of the pixels guards that anyway: the detail
+ * payload emits `screenshotDataUrl` only when it is non-null.
+ */
+export function isIssueReportScreenshotRetained(
+  stamps: IssueReportScreenshotStamps,
+  now: Date,
+): boolean {
+  return Boolean(
+    stamps.screenshotCapturedAt &&
+      !stamps.screenshotDeletedAt &&
+      (!stamps.screenshotExpiresAt || stamps.screenshotExpiresAt > now),
+  );
+}
+
 /**
  * Classify one report's screenshot for one caller.
  *
- * `retained` is passed in rather than recomputed, because the two read paths
- * answer it slightly differently and always have: the list route never selects
- * the blob and works from `screenshotCapturedAt`, while the detail route holds
- * the blob and also honours `screenshotExpiresAt` in case the retention sweep
- * has not yet run. Recomputing it here would have to pick one of those and
- * would silently change the other.
+ * `retained` is COMPUTED here rather than accepted from the caller, so the list
+ * and the detail read cannot answer it differently — see
+ * `isIssueReportScreenshotRetained` for the divergence that used to exist.
  */
-export function classifyIssueReportScreenshot(params: {
-  retained: boolean;
-  screenshotOrigin: IssueReportOrigin | null | undefined;
-  screenshotCapturedAt: Date | null;
-  screenshotDeletedAt: Date | null;
-  screenshotDeleteReason: string | null;
-  viewerIsFullAdmin: boolean;
-}): IssueReportScreenshotAccess {
-  if (params.retained) {
+export function classifyIssueReportScreenshot(
+  params: IssueReportScreenshotStamps & {
+    screenshotOrigin: IssueReportOrigin | null | undefined;
+    screenshotDeleteReason: string | null;
+    viewerIsFullAdmin: boolean;
+    now?: Date;
+  },
+): IssueReportScreenshotAccess {
+  if (isIssueReportScreenshotRetained(params, params.now ?? new Date())) {
     const gated =
       isAdminOriginScreenshot(params.screenshotOrigin) &&
       !params.viewerIsFullAdmin;
@@ -125,27 +167,11 @@ export function classifyIssueReportScreenshot(params: {
   }
 
   // Nothing deleted it, so either nothing was ever captured or the expiry has
-  // passed without the sweep having run yet. `screenshotCapturedAt` separates
-  // the two, and it is the one field the list route always has.
+  // passed without the sweep having reached the row yet.
   return {
     ...notRetained,
     disposition: params.screenshotCapturedAt ? "expired" : "none",
   };
-}
-
-/**
- * Whether this caller may be handed admin-origin pixels.
- *
- * Read off the session `requireAdmin` returns, which is not the JWT's own
- * claim: that guard overwrites `accessRoles` with the roles it has just read
- * from the database, precisely so a downstream separation-of-duties check never
- * trusts a stale token (#1012). `isFullAdmin` is the literal `ADMIN` role, so a
- * custom access role cannot reach this even if a club has given it every area.
- */
-export function viewerIsFullAdmin(user: {
-  accessRoles?: readonly string[] | null;
-}): boolean {
-  return isFullAdmin({ accessRoles: user.accessRoles ?? [] });
 }
 
 /**

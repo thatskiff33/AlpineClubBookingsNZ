@@ -8,7 +8,7 @@ first time, so the screenshot badge and panel were lifted into
 under its ceiling.
 
 file: src/app/api/admin/issue-reports/[id]/route.ts
-lines: 352
+lines: 350
 reason: the growth is the gate itself and the comments that hold it. Three
   things had to land in this file and none of them has a seam that splits
   cleanly. The decision is already extracted — it lives in
@@ -18,8 +18,10 @@ reason: the growth is the gate itself and the comments that hold it. Three
   the refusal. Splitting the detail read from the action handler would put the
   two payload builders that must agree about the boundary in different files,
   which is precisely the drift that let the PATCH reply serve pixels the GET
-  beside it refused. The remaining lines are comments explaining why a payload
-  path is gated, and they are worth more here than the length costs.
+  beside it refused — which is why both now build their payload through one
+  `screenshotAccessFor` in this file. The remaining lines are comments
+  explaining why a payload path is gated, and they are worth more here than the
+  length costs.
 
 file: src/app/api/issue-reports/route.ts
 lines: 276

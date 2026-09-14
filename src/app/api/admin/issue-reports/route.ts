@@ -5,10 +5,8 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import {
-  classifyIssueReportScreenshot,
-  viewerIsFullAdmin,
-} from "@/lib/issue-report-screenshot-access";
+import { isFullAdmin } from "@/lib/access-roles";
+import { classifyIssueReportScreenshot } from "@/lib/issue-report-screenshot-access";
 
 const querySchema = z.object({
   status: z.enum(["OPEN", "RESOLVED", "ALL"]).optional().default("OPEN"),
@@ -49,12 +47,13 @@ function summarizeReport(report: {
     email: string;
   };
 }, viewerFullAdmin: boolean) {
+  // The same classification the detail read makes, from the same three stamps,
+  // so the queue and the report cannot disagree about whether a screenshot is
+  // still there or whether this officer may open it (`INV-PRIV-020`).
   const access = classifyIssueReportScreenshot({
-    // The list's own long-standing reading of "retained": it never selects the
-    // blob, so it works from the capture and deletion stamps.
-    retained: Boolean(report.screenshotCapturedAt && !report.screenshotDeletedAt),
     screenshotOrigin: report.screenshotOrigin,
     screenshotCapturedAt: report.screenshotCapturedAt,
+    screenshotExpiresAt: report.screenshotExpiresAt,
     screenshotDeletedAt: report.screenshotDeletedAt,
     screenshotDeleteReason: report.screenshotDeleteReason,
     viewerIsFullAdmin: viewerFullAdmin,
@@ -71,6 +70,7 @@ function summarizeReport(report: {
       deletedAt: report.screenshotDeletedAt,
       retained: access.retained,
       withheld: access.withheld,
+      disposition: access.disposition,
     },
     browserInfo: {
       expiresAt: report.browserInfoExpiresAt,
@@ -106,7 +106,11 @@ export async function GET(request: NextRequest) {
   // Decided once for the whole page rather than per row: it is the same caller
   // for every row, and re-deriving it inside the map would invite a future
   // reader to think it could differ (#2703).
-  const viewerFullAdmin = viewerIsFullAdmin(admin.session.user);
+  // `session.user.accessRoles` is what `requireAdmin` just read from the
+  // database, not the JWT's own claim.
+  const viewerFullAdmin = isFullAdmin({
+    accessRoles: admin.session.user.accessRoles ?? [],
+  });
   const where =
     status === "ALL"
       ? {}
