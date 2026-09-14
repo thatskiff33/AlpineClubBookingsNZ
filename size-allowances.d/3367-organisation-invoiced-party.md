@@ -52,7 +52,7 @@ reason: Three lines net. The member payload builder's object literal MOVED OUT
   has merged.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1567
+lines: 1597
 reason: Six lines, and five of them are the comment. One call site changes from
   `findOrCreateXeroContact(booking.memberId, …)` to
   `findOrCreateXeroContactForInvoicedParty(booking, …)`. The comment is there
