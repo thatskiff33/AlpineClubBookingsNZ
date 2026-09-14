@@ -248,10 +248,18 @@ function normalizeMemberIds(memberIds: Array<string | null | undefined>): string
  */
 export async function computeMemberGuestBoundary(
   db: BookingGuestLookupDb,
-  bookingMemberId: string,
+  /** The BOOKER, or null when the booking is owned by an Organisation (#3369). */
+  bookingMemberId: string | null,
   normalizedMemberIds: readonly string[],
 ): Promise<MemberGuestBoundaryState> {
-  const allowedMemberIds = await getAllowedGuestMemberIds(db, bookingMemberId);
+  // #3369: an organisation has no family, so every member guest on its booking
+  // is BEYOND_FAMILY. That is the same answer the invented school member gave —
+  // it belonged to no family group, so the allowed set was empty for it too —
+  // and it is the fail-closed direction: a guest is asked for consent rather
+  // than assumed to have given it.
+  const allowedMemberIds = bookingMemberId
+    ? await getAllowedGuestMemberIds(db, bookingMemberId)
+    : new Set<string>();
   const scopeByMemberId = new Map<string, MemberGuestBoundaryScope>();
   const beyondFamilyMemberIds: string[] = [];
 
@@ -314,7 +322,8 @@ export interface ResolvedLinkedBookingMembers {
  */
 export async function resolveLinkedBookingMembersWithBoundary(
   db: BookingGuestLookupDb,
-  bookingMemberId: string,
+  /** The BOOKER, or null when the booking is owned by an Organisation (#3369). */
+  bookingMemberId: string | null,
   memberIds: Array<string | null | undefined>,
   options?: {
     skipAuthorization?: boolean;
