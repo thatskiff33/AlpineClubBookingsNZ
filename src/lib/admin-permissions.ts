@@ -160,6 +160,12 @@ const ROUTE_AREA_PREFIXES: Array<{
       // API-key entry stay reachable while the module is still off.
       "/admin/alpine-server",
       "/api/admin/alpine-server",
+      // Video meetings (MiroTalk) setup lives on the Integrations hub (finance)
+      // like the rest of them (#2940). Its API is already covered by the
+      // "/api/admin/integrations" prefix below. NOT feature-gated: there is no
+      // video-meetings module to turn off, and the page is how a club sets the
+      // configuration that used to be environment-only.
+      "/admin/video-meetings",
       "/admin/payments",
       "/admin/internet-banking",
       "/admin/refund-requests",
