@@ -116,7 +116,40 @@ export type TopLevelProperty =
 /**
  * A view of an object literal's OWN top-level keys, with spreads resolved as far
  * as they can be read at the call site. `unreadableKeys` means some key was set
- * by something the parser cannot name, so every lookup has to fail closed.
+ * by something the parser cannot name, so every lookup on it has to fail closed.
+ *
+ * WHY IT IS SHAPED THIS WAY, WITH THE MEASUREMENTS THAT SHAPED IT. This block
+ * travelled here from `audit-writer-census.ts` with the code it describes
+ * (#2723): the rule left, the evidence for it did not, and a rule whose reasons
+ * live in another file is one the next editor relaxes for a good-sounding
+ * reason.
+ *
+ * A spread of INLINE literals contributes its key names, rather than marking
+ * the object unreadable, for one measured reason: the deletion-rejected writer
+ * in `src/app/api/admin/deletion-requests/[id]/route.ts` spreads
+ * `...(suppressed ? { metadata } : {})` and passes no category. A census that
+ * failed closed on any spread would report that site as "category decided
+ * elsewhere" instead of as the omission it is, and the uncategorised count would
+ * read 81 rather than 82 — a site quietly moved from the population that has to
+ * be fixed into an allowlist. A conditional / `&&` / `??` between literals reads
+ * the same way, exactly as `exclusivity-request-write-sites.test.ts` reads its
+ * own payloads. A spread of anything opaque — an identifier, a call result —
+ * still fails closed, because its keys are decided somewhere a reviewer cannot
+ * see.
+ *
+ * `unreadableKeys` ALSO covers a property whose NAME the parser cannot resolve,
+ * and that is not hypothetical tidiness (#2695 review). A computed key —
+ * `{ [SOME_CONSTANT]: … }`, or even `{ ["memberDisclosure"]: … }` — and a getter
+ * (`{ get memberDisclosure() { … } }`) both compile, both set the key at run
+ * time, and both used to be DROPPED: the walk skipped what it could not name, so
+ * the object measured as though the key were absent. For `category` that
+ * reported an omission that is not one; for `memberDisclosure` it was worse,
+ * because `absent` is the safe answer and therefore the unpinned one — a real
+ * member-facing declaration would have measured as neither declared nor
+ * forwarded, i.e. invisible to the census while the reader honoured it and the
+ * member read the text. Anything this walk cannot name marks the whole object
+ * unreadable, which puts every lookup on it into a pinned `forwarded`
+ * population instead.
  */
 export type ResolvedObject = {
   keys: Map<string, TopLevelProperty>;
@@ -207,8 +240,12 @@ export function findTopLevelProperty(
 
 /**
  * The enclosing function/method/class/variable chain, `<module>` at top level.
+ *
  * Used as stable site identity: line numbers move under a rebase — #2618 alone
  * moved one writer from line 131 to line 293 — and a symbol chain does not.
+ * Named function declarations, methods, classes and `const fn = …` initialisers
+ * all contribute; an anonymous arrow inside one of them does not, so a reformat
+ * that wraps a call in another callback does not change the identity.
  */
 export function symbolChain(node: ts.Node): string {
   const names: string[] = [];

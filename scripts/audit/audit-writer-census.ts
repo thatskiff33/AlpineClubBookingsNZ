@@ -298,36 +298,6 @@ const SKIP_DIRECTORIES = new Set([
 ]);
 
 /**
- * A view of an event object's OWN top-level keys, with spreads resolved as far
- * as they can be read at the call site.
- *
- * Spreads matter here for one measured reason: the deletion-rejected writer in
- * `src/app/api/admin/deletion-requests/[id]/route.ts` spreads
- * `...(suppressed ? { metadata } : {})` and passes no category. A census that
- * failed closed on any spread would report that site as "category decided
- * elsewhere" instead of as the omission it is, and the uncategorised count would
- * read 81 rather than 82 — a site quietly moved from the population that has to
- * be fixed into an allowlist. So a spread of INLINE literals (or a conditional /
- * `&&` / `??` between them) contributes its keys, exactly as
- * `exclusivity-request-write-sites.test.ts` reads its own payloads. A spread of
- * anything opaque — an identifier, a call result — still fails closed, because
- * its keys are decided somewhere a reviewer cannot see.
- *
- * `unreadableKeys` ALSO covers a property whose NAME the parser cannot resolve,
- * and that is not hypothetical tidiness (#2695 review). A computed key —
- * `{ [SOME_CONSTANT]: … }`, or even `{ ["memberDisclosure"]: … }` — and a getter
- * (`{ get memberDisclosure() { … } }`) both compile, both set the key at run
- * time, and both used to be DROPPED here: the walk skipped what it could not
- * name, so the object measured as though the key were absent. For `category`
- * that reported an omission that is not one; for `memberDisclosure` it was
- * worse, because `absent` is the safe answer and therefore the unpinned one —
- * a real member-facing declaration would have measured as neither declared nor
- * forwarded, i.e. invisible to the census while the reader honoured it and the
- * member read the text. Anything this walk cannot name now marks the whole
- * object unreadable, which puts every lookup on it into the pinned `forwarded`
- * population instead.
- */
-/**
  * The event/params objects a write site passes, unwrapped through the structured
  * argument builder and through a Prisma `{ data: … }` envelope. Returns null
  * when the payload is not an inline literal — the `forwarded` case.
@@ -628,12 +598,6 @@ function resolveAction(events: readonly ResolvedObject[] | null): string {
 }
 
 /**
- * The enclosing symbol chain, outermost first. Named function declarations,
- * methods, classes and `const fn = …` initialisers all contribute; an anonymous
- * arrow inside one of them does not, so a reformat that wraps a call in another
- * callback does not change the identity.
- */
-/**
  * True for an expression that IS the `auditLog` delegate: `db.auditLog`,
  * `db["auditLog"]`, or a bare `auditLog` destructured off a client.
  *
@@ -760,7 +724,6 @@ function isBoundaryOwnWrite(file: string, sink: AuditWriteSink): boolean {
   return sink.startsWith("auditLog.") || sink === "createAuditLog";
 }
 
-/** True when the declaration of a helper is being read rather than a call. */
 function scanFile(file: string, repoRoot: string): AuditWriteSite[] {
   const relativePath = toPosix(relative(repoRoot, file));
   const ast = parse(file);

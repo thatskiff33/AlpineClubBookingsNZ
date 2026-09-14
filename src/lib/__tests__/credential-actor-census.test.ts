@@ -5,7 +5,7 @@
  * store must carry explicit actor context — a Full Admin, or a NAMED background
  * writer. Before #2723 the store took `updatedByUserId?: string | null`, so a
  * write with no attribution compiled, ran, and stored exactly the `null` a
- * deliberate background write stores. Five of the nine production call sites
+ * deliberate background write stores. Ten of its eighteen production call sites
  * were in that state, and nothing in the repository could say so.
  *
  * THREE LINES, IN ORDER OF STRENGTH, and this file is the third:
@@ -57,7 +57,7 @@ function ids(sites: readonly { id: string }[]): string[] {
 }
 
 /**
- * EVERY PLACE THIS FIGURE IS PUBLISHED.
+ * EVERY PLACE THE CURRENT POPULATION IS PUBLISHED.
  *
  * A census whose failure says only "expected 21, got 22" sends its reader
  * hunting for the other copies of the number, and the copy that gets missed is
@@ -68,15 +68,42 @@ function ids(sites: readonly { id: string }[]): string[] {
 const FIGURE_PUBLISHERS = [
   "src/lib/__tests__/credential-actor-census.test.ts (this file: CREDENTIAL_WRITE_SITES, ACTOR_FORWARDED_SITES, APPROVED_STORE_BYPASSES)",
   "scripts/audit/credential-actor-census.ts (the module header's description of what counts as a site)",
-  "src/lib/integration-credential-actor.ts (the module header: \"Five of the store's nine production call sites omitted it\")",
-  "docs/SECURITY-ATTACK-SURFACE.md (\"Credentials at rest\" → the write-attribution contract)",
-  "docs/invariants/analytics-and-privacy.md (INV-PRIV-019)",
 ] as const;
+
+/**
+ * THE OTHER FIGURE, AND WHY IT IS NOT IN THAT LIST.
+ *
+ * Four documents state how bad things were BEFORE #2723 — ten of eighteen
+ * production call sites storing no attribution. The first draft of this file
+ * listed them as publishers of "the figure" and told a future editor to
+ * re-measure by running the census. That instruction cannot work, and following
+ * it would replace a historical measurement with a present-day one: the census
+ * walks TODAY'S tree, where the answer is zero by construction, because that is
+ * the whole point of the gate.
+ *
+ * A pre-change figure is re-measured against the pre-change tree. This is the
+ * command, and it is the one the figure came from:
+ *
+ *     git grep -nE '\b(setIntegrationCredential|ensureGeneratedCredential|deleteIntegrationCredential)\(' \
+ *       origin/epic/2725-mad -- src ':!src/**\/__tests__/**' | grep -v 'export async function'
+ *
+ * 18 lines — the production call sites. Eight of them pass `updatedByUserId`
+ * (six in the backups route, one in the credentials route, one forwarded
+ * through `setServerNzApiKey`); the other ten pass nothing, seven of those
+ * because `deleteIntegrationCredential` and `ensureGeneratedCredential` took no
+ * attribution argument at all. Three more sites live under `e2e/`.
+ *
+ * If the figure ever has to change, re-run that against the same base ref and
+ * update: `src/lib/integration-credential-actor.ts` (module header),
+ * `docs/SECURITY-ATTACK-SURFACE.md`, `docs/invariants/analytics-and-privacy.md`
+ * (INV-PRIV-019), and `changelog.d/2723-credential-actor-context.md`.
+ */
+const HISTORICAL_FIGURE_IS_NOT_RE_MEASURABLE_HERE = true;
 
 function publishersNote(what: string): string {
   return (
     `${what}\n\nRe-MEASURE rather than increment — run \`npm run credential:census\`. ` +
-    "Then update EVERY place the figure is published:\n" +
+    "Then update EVERY place the current population is published:\n" +
     FIGURE_PUBLISHERS.map((where) => `  - ${where}`).join("\n")
   );
 }
@@ -183,6 +210,15 @@ const MINIMUM_FILES_SCANNED = 1500;
 const MINIMUM_WRITE_SITES = 15;
 
 describe("credential-actor census: the tree names an actor everywhere (#2723)", { timeout: 180_000 }, () => {
+  it("measures the present tree, which is why the BEFORE figure lives elsewhere", () => {
+    // The census answers "how many writers omit an actor TODAY", and the answer
+    // is zero by construction once the gate holds. The pre-#2723 figure the
+    // documents publish is a measurement of a different tree and is re-measured
+    // against that ref — see the comment above this constant for the command.
+    expect(HISTORICAL_FIGURE_IS_NOT_RE_MEASURABLE_HERE).toBe(true);
+    expect(census().actorless).toEqual([]);
+  });
+
   it("resolved a real population, so a clean report means something", () => {
     expect(census().filesScanned).toBeGreaterThan(MINIMUM_FILES_SCANNED);
     expect(census().sites.length).toBeGreaterThanOrEqual(MINIMUM_WRITE_SITES);

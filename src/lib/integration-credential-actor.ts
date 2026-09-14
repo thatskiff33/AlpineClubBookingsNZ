@@ -20,7 +20,15 @@
  * (2) and (3) both stored `null`, so no reader could tell a deliberate system
  * write from an omission, and (3) was the default: the argument was optional,
  * so omitting it compiled, ran, and looked exactly like a legitimate background
- * write. Five of the store's nine production call sites omitted it.
+ * write.
+ *
+ * HOW WIDESPREAD, measured on this branch's merge base rather than estimated:
+ * the store had 18 production call sites outside itself, and TEN of them stored
+ * no attribution at all. Six were deletes and one was the generator — neither
+ * function took an attribution argument, so those seven could not have named
+ * anybody; three were writes that simply omitted the optional one. The
+ * remaining eight passed a member id. Three further sites live in the E2E seed.
+ * `credential-actor-census.test.ts` records the command that reproduces this.
  *
  * THE REMEDY IS STRUCTURAL, NOT POLICED. `CredentialActor` is a required
  * argument on every mutator, so (3) does not compile; `kind` discriminates (1)

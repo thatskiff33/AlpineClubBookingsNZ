@@ -1,10 +1,10 @@
 - **Changing a stored integration credential now always records who changed it (#2723).**
   The encrypted store that holds the Xero, Stripe, Google, backup, Anthropic and
   Alpine Central Server credentials keeps a note of who last wrote each one. Until
-  now that note could be left blank, and five of the places that write a
+  now that note could be left blank, and most of the places that change a
   credential left it blank — so an entry written by a background job and one
   written by an administrator who was simply not recorded looked identical in the
-  audit log. Every write now says which administrator made it, or names the
+  audit log. Deleting a credential could not record anybody at all. Every write now says which administrator made it, or names the
   background job that did, and the code refuses a write that says neither.
 
 - **The audit entry for a credential change can no longer go missing (#2723).**

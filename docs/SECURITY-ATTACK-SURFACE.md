@@ -401,13 +401,35 @@ can tell them apart:
 
 - a **Full Admin**, recorded as the member id on the row's `updatedByUserId`
   column and as `actorKind: "admin"` on the audit row;
-- a **named background actor** from the closed `CREDENTIAL_SYSTEM_ACTORS` list —
-  the Google verify callback and its verify-reset, the Stripe webhook marker and
-  its verify-reset, the Alpine Central Server push registration, the Xero
-  token-key generator, and the E2E seed — recorded as `actorKind: "system"` with
-  the actor's own name. The row's `updatedByUserId` is `NULL` for these, which is
-  now unambiguous: before #2723 the argument was optional, so an omission stored
-  the same `NULL` and five of nine call sites omitted it.
+- a **named background actor** from the closed `CREDENTIAL_SYSTEM_ACTORS` list,
+  recorded as `actorKind: "system"` with the actor's own name. The row's
+  `updatedByUserId` is `NULL` for these, which is now unambiguous: before #2723
+  the argument was optional, so an omission stored the same `NULL`. Measured on
+  the merge base, the store had **18 production call sites** outside itself and
+  **ten of them stored no attribution at all** — every one of the six deletes
+  and the single generator call, because neither function took an attribution
+  argument, plus three writes that simply omitted the optional one.
+
+#### The background writers, in full (#2723)
+
+This is the whole closed list, and it is held to the code by
+`credential-actor-census.test.ts` — a second hand-written list is the defect
+this page already learnt about once, from the rotation runbook two sections up.
+
+- `google-verify-callback` — a Google OAuth round-trip succeeded, so the
+  non-secret verified marker is stamped.
+- `stripe-webhook-verify` — a signature-verified Stripe TEST-MODE webhook event
+  stamped the webhook marker.
+- `servernz-push-registration` — the shared-post sync registered this install
+  for pushes and stored the secret the central server issued.
+- `xero-token-key-generation` — first use of Xero token encryption generated
+  (or, after an auth-secret change, replaced) the wrapped token key.
+- `e2e-stripe-seed` — the E2E staging stack seeding Stripe test-mode keys.
+  Never a real deployment.
+
+**A verify-RESET is not on this list, deliberately.** Dropping a verified marker
+because a credential changed is part of the administrator's write, so those
+deletes carry that person's member id and request context, not a job's name.
 
 **The audit row commits with the secret or not at all.** Both are written inside
 one transaction, on the same client, so a failed audit rolls the credential
@@ -437,7 +459,20 @@ itself is outside that boundary.
 **Reads make no mutation noise.** The Xero token path calls
 `ensureGeneratedCredential` on every token decrypt; it returns the existing key
 and writes nothing, so no audit row. A delete that matches no row writes none
-either, which keeps verify-reset from burying the real deletions.
+either, which keeps verify-reset from burying the real deletions. The Stripe
+webhook marker follows the same rule from the other side: the route stamps it on
+every signature-verified test-mode event, so it is written only when the
+freshness answer would actually change, rather than minting a seven-year row per
+delivery.
+
+**What the census can and cannot see.** It enumerates every DIRECT CALL of the
+three store mutators, found by walking the tree — not every function that
+ultimately causes a credential to change. A wrapper hides its own callers:
+`clearServerNzApiKey` appears, the admin route that calls it does not. That is
+sound rather than a gap, because a wrapper takes the actor as a REQUIRED
+parameter and so cannot supply one itself — the type is what covers its callers,
+and the census covers the wrapper. It is worth stating plainly because "every
+writer" would be a stronger claim than the instrument makes.
 
 - **A database backup + the auth secret decrypts everything.** Anyone who holds
   both a DB dump (or replica) and the auth-secret value can recover every stored

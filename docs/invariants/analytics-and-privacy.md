@@ -745,28 +745,29 @@ does.
 
 Every mutation of the encrypted integration-credential store names its writer,
 and the writer is a person or a NAMED background actor, never an absence.
-Decided on #2723.
+Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2723),
+which carries the before-measurement.
 
 - **`actor` is a required argument on every mutator**, so a write with no
-  attribution does not compile. Omission used to be the default: the store took
-  `updatedByUserId?: string | null`, and five of nine production call sites
-  passed nothing, storing the same `null` a background write stores.
+  attribution does not compile. Omission used to be the default, and most call
+  sites took it, storing the `null` a background write stores.
 - **A system write NAMES itself** from the closed `CREDENTIAL_SYSTEM_ACTORS`
-  list, so the audit row says WHICH background writer touched the secret, not
-  merely that no person did. `assertCredentialActor` is the runtime half, and an
-  `admin` actor must carry a non-empty member id.
-- **The secret and its audit row are ONE local transaction.** The row is written
-  with `createAuditLog` on the transaction's own client, so a failed audit rolls
-  the secret back; it used to land two awaits later in a different module.
+  list, so the row says WHICH background writer touched the secret, not merely
+  that no person did. `assertCredentialActor` is the runtime half, and an
+  `admin` actor carries a non-empty member id.
+- **The secret and its audit row are ONE local transaction**, on the same
+  client, so a failed audit rolls the secret back.
 - **A stale write LOSES.** Every set and delete declares what it expected to
   find, and a compare-and-set claims the exact `(ciphertext, iv, authTag)` tuple
   it read. A loser changes nothing and records nothing.
-- **A read records nothing**: the token generator on the Xero decrypt path makes
-  no audit noise, and a delete matching no row writes none.
-- **No plaintext reaches audit, log or error output.** The audit payload is
-  built from a type with no field a value fits into, and the store calls no
-  logger. That is a property of its own doors, not of a redactor:
-  `INV-PRIV-011`'s list is blind to any door that never calls the logger.
-- **The proof is mechanical.** `credential-actor-census.test.ts` enumerates
-  every writer from the tree; the scanner test seeds an actorless writer, and a
-  bypass reaching the table directly, and proves each is reported.
+- **A read records nothing**, and neither does a delete matching no row nor a
+  freshness marker whose answer would not change.
+- **No plaintext reaches audit, log or error output.** The payload is built from
+  a type with no field a value fits into, and the store calls no logger — a
+  property of its own doors, not of a redactor, since `INV-PRIV-011` is blind to
+  any door that never calls one.
+- **The proof is mechanical, over every DIRECT CALL of a mutator** rather than
+  every function that ends up changing a credential.
+  `credential-actor-census.test.ts` walks the tree; its scanner test proves a
+  seeded actorless writer and a seeded bypass are reported. A wrapper hides its
+  callers, soundly: it requires an actor, so the type covers them.
