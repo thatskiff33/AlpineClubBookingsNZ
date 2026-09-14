@@ -130,6 +130,21 @@ const ADMIN_ROLE_BUNDLES: Partial<
   },
 };
 
+/**
+ * Rooms & Beds — the room/bed inventory page, and since #2937 the home of each
+ * lodge's allocation preferences.
+ *
+ * Named here, beside the area registration and the OR rule below, because those
+ * two and the Bed Allocation board's signpost link are the places that MUST
+ * agree about this path; the board imports it for exactly that reason. The
+ * route literal still appears in `src/config/feature-routes.ts` and in the hub
+ * cards and contextual-help entries that describe the page, each of which is
+ * asserted from disk by its own census (`admin-bed-allocation.test.ts`) and so
+ * deliberately stays a literal there. This constant is not a rename button for
+ * the whole tree — `git grep "/admin/rooms-beds"` still is.
+ */
+export const ROOMS_BEDS_PATH = "/admin/rooms-beds";
+
 const ROUTE_AREA_PREFIXES: Array<{
   area: AdminPermissionArea;
   prefixes: readonly string[];
@@ -274,6 +289,13 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/lodges",
       "/admin/work-parties",
       "/admin/lodge-instructions",
+      // Rooms & Beds (#2937). Registered under lodge so the route map resolves
+      // to a concrete area (drift guard) and a lodge admin keeps reaching it;
+      // admission is actually OR (lodge OR bookings) — see isRoomsBedsPath /
+      // canAccessRoomsBedsPage, honoured by canOpenAdminPath and by the hub
+      // cards that link here. Everything the page renders is gated on the
+      // bookings area by RoomsBedsManager, because its data comes entirely from
+      // the bed-allocation APIs.
       "/admin/rooms-beds",
       // Club events calendar (Lodge Operations). The page is lodge-area gated
       // for admin visibility; write access is broadened to committee members in
@@ -804,6 +826,9 @@ export function canOpenAdminPath(
   if (isConsolidatedFeesPath(pathname)) {
     return canAccessConsolidatedFeesPage(matrix);
   }
+  if (isRoomsBedsPath(pathname)) {
+    return canAccessRoomsBedsPage(matrix);
+  }
   const requirement = getAdminRouteRequirement(pathname, "GET");
   if (!requirement) return false;
   return LEVEL_RANK[matrix[requirement.area]] >= LEVEL_RANK[requirement.level];
@@ -846,6 +871,46 @@ export function canAccessConsolidatedFeesPage(
   matrix: AdminPermissionMatrix,
 ): boolean {
   return matrix.bookings !== "none" || matrix.finance !== "none";
+}
+
+/**
+ * Rooms & Beds (#2937), the second page whose admission is an OR — and for the
+ * same reason as the fee console: it serves two areas at once.
+ *
+ * The route is registered under `lodge` because the inventory is lodge-scoped
+ * (ADR-005) and that is how a lodge admin reaches it. But EVERYTHING the page
+ * renders is bookings-gated: `RoomsBedsManager` shows nothing at all below
+ * `bookings: view`, its data comes entirely from `/api/admin/bed-allocation/*`,
+ * and those routes enforce the bookings area. So the area the route resolves to
+ * and the area its content enforces have never been the same, which the page's
+ * own header comment has flagged as a quirk since #1548.
+ *
+ * #2937 made that quirk load-bearing by moving the allocation preferences
+ * editor here from the Bed Allocation board. On the board the editor needed
+ * `bookings: view`; without this rule it would have needed `bookings: view` AND
+ * `lodge: view`, and two SEEDED roles — `FINANCE_ADMIN` and `ADMIN_MEMBERSHIP`,
+ * both `bookings: view` with `lodge: none` — would have followed the board's
+ * new signpost into a silent redirect, with the setting unreachable for them at
+ * any level. The issue's contract says the relocation changes no permission;
+ * this is what keeps that true.
+ *
+ * It only ever WIDENS: nobody who can open the page today loses it. A
+ * bookings-area admin arriving here gets exactly what `/api/admin/bed-allocation`
+ * already grants them, and a lodge-only admin keeps the (blank) page the manager
+ * has always rendered for them.
+ */
+export function isRoomsBedsPath(pathname: string): boolean {
+  const normalized = normalizePathname(pathname);
+  return (
+    normalized === ROOMS_BEDS_PATH ||
+    normalized.startsWith(`${ROOMS_BEDS_PATH}/`)
+  );
+}
+
+export function canAccessRoomsBedsPage(
+  matrix: AdminPermissionMatrix,
+): boolean {
+  return matrix.lodge !== "none" || matrix.bookings !== "none";
 }
 
 /**
