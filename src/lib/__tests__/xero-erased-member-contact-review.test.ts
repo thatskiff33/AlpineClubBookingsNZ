@@ -384,11 +384,22 @@ describe("erased-member Xero contact review (#3058)", () => {
       itself proved here rather than trusted: reaching a mutating method on any
       delegate — including one this engine never touches — throws.
     */
+    type Refusing = (...args: unknown[]) => unknown;
     const client = mocks.prisma as unknown as Record<
       string,
-      Record<string, () => unknown>
-    >;
-    expect(() => client.member.update({})).toThrow(/must write nothing/);
+      Record<string, Refusing>
+    > & {
+      $executeRaw: (strings: TemplateStringsArray, ...values: unknown[]) => unknown;
+    };
+
+    // EVERY listed mutating method, not a sample of them: a method that fell
+    // out of the set would otherwise leave a silent hole in every other test
+    // in this file.
+    for (const method of mocks.MUTATING_METHODS) {
+      expect(() => client.member[method]({})).toThrow(/must write nothing/);
+    }
+    // Including on a delegate nobody has added yet, which is the whole point
+    // of proxying rather than spying on the delegates this engine reads.
     expect(() => client.somethingNobodyHasAddedYet.deleteMany({})).toThrow(
       /must write nothing/,
     );
