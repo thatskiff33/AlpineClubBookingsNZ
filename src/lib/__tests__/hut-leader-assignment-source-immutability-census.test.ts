@@ -43,6 +43,30 @@ function rel(file: string): string {
   return path.relative(path.resolve(SRC, ".."), file).split(path.sep).join("/");
 }
 
+/**
+ * Does this file STAMP the column, as opposed to reading it?
+ *
+ * #3369 added a `where: { source: HutLeaderAssignmentSource.SCHOOL_BOOKING }` —
+ * the school-member classification census asking whether a member is a school
+ * booking's hut leader — and the original whole-file substring scan called that
+ * a fourth writer. Filtering on a column is not stamping it, and a census that
+ * cannot tell the two apart either grows an allowlist of readers or gets dodged
+ * by renaming a variable, which is worse than both.
+ *
+ * So the match is per LINE and a `where` clause is not one. The fixture test
+ * below proves the narrowing in both directions: a real stamp is still caught,
+ * and a read is not.
+ */
+function stampsTheColumn(source: string): boolean {
+  return source
+    .split("\n")
+    .some(
+      (line) =>
+        line.includes("source: HutLeaderAssignmentSource.") &&
+        !line.includes("where:"),
+    );
+}
+
 describe("#2926 — HutLeaderAssignment.source is write-once", () => {
   it("is stamped by exactly the three known writers, and no others", () => {
     const EXPECTED = [
@@ -55,7 +79,7 @@ describe("#2926 — HutLeaderAssignment.source is write-once", () => {
     ].sort();
 
     const found = FILES.filter((file) =>
-      readFileSync(file, "utf8").includes("source: HutLeaderAssignmentSource."),
+      stampsTheColumn(readFileSync(file, "utf8")),
     )
       .map(rel)
       .sort();
@@ -91,6 +115,45 @@ describe("#2926 — HutLeaderAssignment.source is write-once", () => {
         "a row can be moved in or out of the overlap check after the fact, " +
         "which is the Member.role hole #2926 exists to avoid.",
     ).toEqual([]);
+  });
+
+  it("tells a stamp from a read, so narrowing it did not blind it", () => {
+    // A real insert, in the shape all three writers use.
+    expect(
+      stampsTheColumn(
+        [
+          "await tx.hutLeaderAssignment.create({",
+          "  data: {",
+          "    memberId,",
+          "    source: HutLeaderAssignmentSource.SCHOOL_BOOKING,",
+          "  },",
+          "});",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+
+    // The #3369 read — the same words, filtering rather than writing.
+    expect(
+      stampsTheColumn(
+        [
+          "hutLeaderAssignments: {",
+          "  where: { source: HutLeaderAssignmentSource.SCHOOL_BOOKING },",
+          "  take: 1,",
+          "},",
+        ].join("\n"),
+      ),
+    ).toBe(false);
+
+    // And a file holding BOTH is still a writer: the skip is per line, so a
+    // reader cannot hide a stamp by putting a `where:` somewhere above it.
+    expect(
+      stampsTheColumn(
+        [
+          "  where: { source: HutLeaderAssignmentSource.SCHOOL_BOOKING },",
+          "  data: { source: HutLeaderAssignmentSource.ADMIN },",
+        ].join("\n"),
+      ),
+    ).toBe(true);
   });
 
   it("is not settable through updateMany either", () => {
