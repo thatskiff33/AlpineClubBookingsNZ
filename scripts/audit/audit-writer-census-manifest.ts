@@ -480,7 +480,15 @@ export const AUDIT_CENSUS_TOTALS = {
   // so it lands unpinned. #2936's row and this one are disjoint writers, so the
   // merged total is 478 — RE-MEASURED on the MERGED tree with
   // `npm run audit:census`, never by adding the two branches' deltas together.
-  writeSites: 478,
+  //
+  // 478 -> 479 (#2703): `issue_report.screenshot_withheld`, written only when a
+  // support officer who is not a Full Admin is refused an admin-origin
+  // screenshot. It is its own action rather than a field on the view row beside
+  // it because a refusal is an access-control event somebody should be able to
+  // find in Admin > Audit Log by action name. Categorised `privacy` at the site,
+  // matching every sibling issue-report event, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. RE-MEASURED with `npm run audit:census`.
+  writeSites: 479,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -557,7 +565,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // awaited `createAuditLog`: it is written after a chunk whose provider
     // writes have already happened, so a rejected audit write must not turn a
     // completed run into an error the operator would repeat.
-    logAudit: { total: 266, uncategorised: 0 },
+    // 266 -> 267 (#2703): the withheld-screenshot refusal row. `logAudit`
+    // rather than an awaited `createAuditLog` because it sits on a GET that has
+    // already decided to serve a report, and a rejected audit write must not
+    // turn a successful, correctly-gated read into a 500.
+    logAudit: { total: 267, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -999,7 +1011,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // `issue.reported`. The issue report stays `privacy` rather than matching
     // its `/admin/issue-reports` support surface (decision 5) — moving it to
     // `admin` would have WIDENED a member's own report to `support:view` alone.
-    privacy: 19,
+    // 19 -> 20 (#2703): `issue_report.screenshot_withheld`. It stays `privacy`
+    // for the same reason `issue.reported` does — the row is about a member's
+    // data, so it must not be readable with `support:view` alone, which is
+    // exactly the access the refusal was protecting that data from.
+    privacy: 20,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,

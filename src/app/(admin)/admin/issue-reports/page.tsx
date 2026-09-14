@@ -14,6 +14,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import {
+  IssueReportScreenshotBadge,
+  IssueReportScreenshotPanel,
+} from "@/components/admin/issue-report-screenshot";
+import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
@@ -55,10 +59,7 @@ type IssueReportSummary = {
     expiresAt: string | null;
     deletedAt: string | null;
     retained: boolean;
-    // #2703: the screenshot is stored, but the reporter had admin access when
-    // they captured it and this viewer is not a Full Admin. The API sends no
-    // pixels at all; the page says so plainly rather than showing an empty
-    // frame.
+    /** `INV-PRIV-020` (#2703); see `IssueReportScreenshotState`. */
     withheld: boolean;
   };
   browserInfo: {
@@ -112,23 +113,6 @@ function statusBadge(report: IssueReportSummary) {
     return <Badge className="border-success-6 bg-success-3 text-success-11">Resolved</Badge>;
   }
   return <Badge className="border-warning-6 bg-warning-3 text-warning-11">Open</Badge>;
-}
-
-function screenshotBadge(report: IssueReportSummary) {
-  if (report.screenshot.withheld) {
-    return (
-      <Badge className="border-warning-6 bg-warning-3 text-warning-11">
-        Screenshot withheld
-      </Badge>
-    );
-  }
-  if (report.screenshot.retained) {
-    return <Badge className="border-info-6 bg-info-3 text-info-11">Screenshot retained</Badge>;
-  }
-  if (report.screenshot.deletedAt) {
-    return <Badge className="border-border bg-muted text-muted-foreground">Screenshot deleted</Badge>;
-  }
-  return <Badge variant="outline">No screenshot</Badge>;
 }
 
 export default function AdminIssueReportsPage() {
@@ -307,7 +291,7 @@ export default function AdminIssueReportsPage() {
                           {report.pageTitle || "Untitled page"}
                         </span>
                         {statusBadge(report)}
-                        {screenshotBadge(report)}
+                        <IssueReportScreenshotBadge screenshot={report.screenshot} />
                       </div>
                       <p className="break-all text-xs text-muted-foreground">{report.pageUrl}</p>
                       <p className="line-clamp-2 text-sm text-muted-foreground">{report.description}</p>
@@ -391,7 +375,7 @@ export default function AdminIssueReportsPage() {
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     {statusBadge(selectedReport)}
-                    {screenshotBadge(selectedReport)}
+                    <IssueReportScreenshotBadge screenshot={selectedReport.screenshot} />
                   </div>
                   <a
                     href={selectedReport.pageUrl}
@@ -429,31 +413,9 @@ export default function AdminIssueReportsPage() {
                       </ViewOnlyActionButton>
                     ) : null}
                   </div>
-                  {selectedReport.screenshot.withheld ? (
-                    <div className="rounded-md border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11">
-                      <p className="font-medium">Screenshot withheld</p>
-                      <p className="mt-1">
-                        The person who reported this had admin access when they
-                        captured it, so the picture may show another
-                        member&apos;s personal details. Full Admin access is
-                        needed to view it. The rest of the report is unaffected,
-                        and you can still delete the screenshot.
-                      </p>
-                    </div>
-                  ) : selectedReport.screenshot.dataUrl ? (
-                    <div className="overflow-hidden rounded-md border border-border bg-muted">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={selectedReport.screenshot.dataUrl}
-                        alt="Issue report screenshot"
-                        className="max-h-[520px] w-full object-contain"
-                      />
-                    </div>
-                  ) : (
-                    <div className="rounded-md border border-dashed border-border bg-muted p-4 text-sm text-muted-foreground">
-                      Screenshot is not retained for this report.
-                    </div>
-                  )}
+                  <IssueReportScreenshotPanel
+                    screenshot={selectedReport.screenshot}
+                  />
                   {selectedReport.screenshot.deleteReason ? (
                     <p className="mt-2 text-xs text-muted-foreground">
                       Deletion reason: {selectedReport.screenshot.deleteReason}
