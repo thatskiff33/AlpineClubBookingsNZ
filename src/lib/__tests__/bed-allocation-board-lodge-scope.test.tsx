@@ -463,7 +463,7 @@ describe("bed-allocation board — the allocation preferences signpost (#2937)",
     await waitFor(() =>
       expect(server.boardRequests.at(-1)?.get("lodgeId")).toBe("lodge-2"),
     );
-    expect(screen.getByText("Focused booking")).toBeInTheDocument();
+    expect(await screen.findByText("Focused booking")).toBeInTheDocument();
 
     // MUTATION PROBE: replace `preferencesLodgeId` with `lodgeId` in the
     // signpost and this reads `/admin/rooms-beds?lodgeId=lodge-2`.
@@ -541,7 +541,7 @@ describe("bed-allocation board — a deep-linked booking brings its own lodge (#
       expect(server.boardRequests.at(-1)?.get("lodgeId")).toBe("lodge-2"),
     );
     expect(screen.getByText("River Lodge")).toBeInTheDocument();
-    expect(screen.getByText("Focused booking")).toBeInTheDocument();
+    expect(await screen.findByText("Focused booking")).toBeInTheDocument();
     expect(server.boardRequests.at(-1)?.get("bookingId")).toBe("booking-b");
     expect(server.refusals).toEqual([]);
     // MUTATION PROBE for the adoption effect: delete it and the selection never
@@ -566,7 +566,7 @@ describe("bed-allocation board — a deep-linked booking brings its own lodge (#
 
     expect(server.refusals).toHaveLength(0);
     expect(screen.getByText("River Lodge")).toBeInTheDocument();
-    expect(screen.getByText("Focused booking")).toBeInTheDocument();
+    expect(await screen.findByText("Focused booking")).toBeInTheDocument();
   });
 });
 
@@ -764,7 +764,7 @@ describe("bed-allocation board — the LODGE_MISMATCH backstop (#2701)", () => {
     expect(
       server.boardRequests.some((request) => request.has("lodgeId")),
     ).toBe(false);
-    expect(screen.getByText("Focused booking")).toBeInTheDocument();
+    expect(await screen.findByText("Focused booking")).toBeInTheDocument();
     // Read-only rather than wrong: no lodge is known, so nothing that needs one
     // is offered.
     expect(
@@ -803,7 +803,7 @@ describe("bed-allocation board — the LODGE_MISMATCH backstop (#2701)", () => {
     expect(
       screen.queryByText("This link points at two different lodges"),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Focused booking")).toBeInTheDocument();
+    expect(await screen.findByText("Focused booking")).toBeInTheDocument();
     // Never substituted the surviving active lodge for the booking's own.
     expect(
       server.boardRequests.some(
