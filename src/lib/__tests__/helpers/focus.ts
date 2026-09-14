@@ -5,7 +5,9 @@
 // screen-reader user is not left on a control that has just been re-enabled while
 // the explanation appears somewhere else on the page. Sixteen of them use
 // `src/components/focused-action-error.tsx`; `policy-exception-requests-panel.tsx`
-// and `roster-editor.tsx` inline their own copy of the same alert.
+// and `roster-editor.tsx` call the same failure primitive through
+// `useActionAttention`. All of them focus through `src/hooks/use-scroll-to-feedback.ts`
+// (#2934), which is why one assertion fits every surface.
 //
 // The contract is that the alert HOLDS focus. Two obvious spellings of that are
 // both wrong, and this repo has now shipped both of them:

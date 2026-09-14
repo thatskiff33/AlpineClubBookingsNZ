@@ -895,7 +895,9 @@ that a failed action populates and then takes focus, so a keyboard or
 screen-reader user is not left on a control that has just been re-enabled while
 the explanation appears elsewhere on the page. Sixteen use
 `src/components/focused-action-error.tsx`; `policy-exception-requests-panel.tsx`
-and `roster-editor.tsx` inline their own copy.
+and `roster-editor.tsx` call the same failure primitive directly through
+`useActionAttention`. Since #2934 every one of them focuses and scrolls through
+`src/hooks/use-scroll-to-feedback.ts` — see "Attention after an action" below.
 
 Assert that contract with the shared helper, never by hand:
 
@@ -960,6 +962,41 @@ mounted: the trap steals it back and the release then hands focus to the control
 that opened the dialog — or to `<body>` under a synthetic click, which does not
 focus its button. `focused-action-error-focus-contract.test.tsx` pins this
 deliberately; so, incidentally, does `deletion-requests-client.test.tsx`.
+
+## Attention after an action: one primitive, and how to test a call site
+
+Where the admin's attention goes after an action — a failure, an editor they
+opened, a save that changed the screen — is decided once, in
+`src/hooks/use-scroll-to-feedback.ts` (#2934). Three primitives (`scrollToError`,
+`revealEditor`, `scrollToTop`) and two hooks (`useActionAttention`: failure wins,
+success positions at the top, nothing for a passive re-render;
+`useRevealAttention`: keyed on an explicit-action nonce such as
+`useSectionEditState`'s `editRequestKey`) are the whole surface. Every scroll
+honours `prefers-reduced-motion`, and no call site uses a timer or an animation
+frame to wait for its target.
+
+Testing a call site is the same three assertions each time, and each is
+discriminated by a named test in the tree already:
+
+- **Failure**: `expectRecoveryAlertToHoldFocus(alert)` above — the element the
+  surface anchors, which is the populated box rather than a permanently mounted
+  wrapper when the two differ (`refusal-reload-order.test.tsx`).
+- **Reveal**: after the explicit click, `document.activeElement` is the editor
+  region and a `scrollIntoView` spy was called on it; then re-render the open
+  editor (toggle a control) and assert the spy count did not move
+  (`allocation-preferences-section.test.tsx`).
+- **Success**: `document.activeElement` is the page or card whose top was
+  positioned at, and it contains the confirmation
+  (`lodge-capacity-card.test.tsx`). A surface whose success closes a Radix dialog
+  cannot make this assertion — the dialog's focus release wins, by design, and
+  the scroll still happens — so assert the scroll, not the focus, there.
+
+`admin-attention-primitive-contract.test.ts` is the census that keeps the admin
+tree routed through the module: a direct `scrollIntoView` / `scrollTo`, or a
+focus deferred to `requestAnimationFrame`, fails it, and its one exclusion is
+listed beside the primitive in `DIRECT_SCROLL_EXCLUSIONS`. It scans the tree from
+disk, so `npm run test:related` cannot reach it; run it by name when an admin
+file gains a scroll or a focus.
 
 ## A mutation probe is a change you have to undo
 
