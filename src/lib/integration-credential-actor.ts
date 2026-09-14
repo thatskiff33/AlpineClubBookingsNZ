@@ -413,9 +413,21 @@ export interface CredentialRequestContext {
  * IT IS TYPED, AND THAT IS THE POINT. Rule 4 above holds because this function
  * cannot be handed a plaintext: its parameter list names the provider, the key,
  * the actor evidence and the crypto METADATA, and there is no parameter a value
- * fits into. `credential-plaintext-exposure.test.ts` drives the real store with
- * a sentinel secret and proves the audit rows, the logger and the thrown errors
- * never contain it, which is the behavioural half of the same claim.
+ * fits into. `credential-write-contract.test.ts` -> "no plaintext reaches
+ * audit, log or error output" drives the real store with a sentinel secret and
+ * proves the audit rows, the logger and the thrown errors never contain it,
+ * which is the behavioural half of the same claim.
+ *
+ * WHY THE WRAPPING KEY SOURCE IS NOT CALLED `secretSource`, which is the column
+ * it comes from. `sanitizeAuditMetadata` redacts any key whose normalised form
+ * CONTAINS "secret", so a field named `secretSource` stored `[REDACTED]` on
+ * every row — the one piece of evidence that says which environment variable
+ * wrapped this credential, which is exactly what an operator planning an
+ * auth-secret rotation needs, and the only field of this payload that was
+ * being lost. The value is an env var NAME (`AUTH_SECRET` / `NEXTAUTH_SECRET`),
+ * never a secret, so the redaction was a false positive on the field's
+ * spelling. Renaming the evidence key is the fix; the redactor keeps its
+ * deliberately blunt rule, which is right for everything it was aimed at.
  */
 function buildCredentialAuditEvidence(params: {
   provider: string;
@@ -432,8 +444,16 @@ function buildCredentialAuditEvidence(params: {
     actorKind: evidence.actorKind,
     systemActor: evidence.systemActor,
     expectation: params.expectation,
-    secretSource: params.secretSource ?? null,
-    labelVersion: params.labelVersion ?? null,
+    // PRESENT ONLY WHEN THERE IS ONE. A delete wraps nothing, so it has no
+    // wrapping key and no label version, and a `null` under those names would
+    // have to be read as "unknown" rather than as "not applicable". Absent
+    // keys say the second thing without a convention.
+    ...(params.secretSource === undefined
+      ? {}
+      : { wrappingKeySource: params.secretSource }),
+    ...(params.labelVersion === undefined
+      ? {}
+      : { labelVersion: params.labelVersion }),
   };
 }
 

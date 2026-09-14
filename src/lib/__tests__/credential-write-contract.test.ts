@@ -61,6 +61,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger, logger: mocks.logger }));
 
+import { sanitizeAuditMetadata } from "@/lib/audit";
 import {
   encryptCredential,
   INTEGRATION_CREDENTIAL_LABEL,
@@ -71,6 +72,7 @@ import {
   StaleCredentialWriteError,
   credentialVersionOf,
   type CredentialActor,
+  type CredentialDeleteExpectation,
 } from "@/lib/integration-credential-actor";
 import {
   deleteIntegrationCredential,
@@ -458,6 +460,113 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
     expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it("CLAIMS the whole stored tuple in the delete's own `where`", async () => {
+    // The delete's claim clause had no test at all. Its two outcomes were
+    // driven entirely by the mocked row count, so the predicate could have been
+    // deleted outright and every test in this file still passed — which is
+    // exactly how it went unnoticed that it named the ciphertext alone.
+    const current = storedRow("stripe", "secret_key", "current-value");
+    mocks.tx.integrationCredential.findUnique.mockResolvedValue(current);
+    mocks.tx.integrationCredential.deleteMany.mockResolvedValue({ count: 1 });
+
+    await deleteIntegrationCredential({
+      provider: "stripe",
+      key: "secret_key",
+      actor: ADMIN,
+      expect: { expect: "version", version: credentialVersionOf(current) },
+    });
+
+    // ALL THREE ENCRYPTED COLUMNS, the same tuple `applyCredentialWrite`
+    // claims. AES-GCM over an EMPTY plaintext produces an empty ciphertext
+    // whatever the IV, so a ciphertext-only claim is vacuous for a credential
+    // holding "" — the stale writer would match the winner's row, delete it,
+    // and report success. The iv and authTag are fresh on every encrypt.
+    expect(mocks.tx.integrationCredential.deleteMany).toHaveBeenCalledWith({
+      where: {
+        provider: "stripe",
+        key: "secret_key",
+        ciphertext: current.ciphertext,
+        iv: current.iv,
+        authTag: current.authTag,
+      },
+    });
+    expect(mocks.tx.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("claims NOTHING beyond the identity when the delete is unconditional", async () => {
+    // The other half of the discrimination: under `any` there is no version to
+    // be stale against, so adding the tuple to the predicate would turn a
+    // deliberate unconditional delete into a compare-and-set nobody asked for.
+    mocks.tx.integrationCredential.deleteMany.mockResolvedValue({ count: 1 });
+
+    await deleteIntegrationCredential({
+      provider: "stripe",
+      key: "secret_key",
+      actor: ADMIN,
+      expect: { expect: "any" },
+    });
+
+    expect(mocks.tx.integrationCredential.deleteMany).toHaveBeenCalledWith({
+      where: { provider: "stripe", key: "secret_key" },
+    });
+  });
+
+  it("AES-GCM over an empty plaintext really does produce an empty ciphertext", () => {
+    // The measurement the claim above exists for, pinned rather than asserted
+    // in a comment. If a future cipher or envelope change makes an empty value
+    // produce distinguishing ciphertext, this fails and the reasoning written
+    // across the store, the invariant and the attack-surface page can be
+    // re-read rather than silently believed.
+    const first = encryptCredential({
+      provider: "stripe",
+      key: "secret_key",
+      plaintext: "",
+      label: INTEGRATION_CREDENTIAL_LABEL,
+    });
+    const second = encryptCredential({
+      provider: "stripe",
+      key: "secret_key",
+      plaintext: "",
+      label: INTEGRATION_CREDENTIAL_LABEL,
+    });
+    expect(first.ciphertext).toBe("");
+    expect(second.ciphertext).toBe("");
+    // ...and the two columns that DO discriminate it.
+    expect(first.iv).not.toBe(second.iv);
+    expect(first.authTag).not.toBe(second.authTag);
+  });
+
+  it("types a delete-path error so it cannot claim the expectation a delete forbids", () => {
+    // A COMPILE-TIME claim, exercised at runtime only so it is not dead code.
+    // `StaleCredentialWriteError` is generic over its expectation, and the
+    // delete path instantiates it at `CredentialDeleteExpectation`. This
+    // exhaustive switch has no `default` and a non-optional return type, so it
+    // compiles ONLY while that field really is the two-case union: widen the
+    // error's expectation back to `CredentialWriteExpectation` and `npm run
+    // typecheck` fails here, which is how this stays true.
+    function describeDeleteOutcome(
+      error: StaleCredentialWriteError<CredentialDeleteExpectation>,
+    ): string {
+      switch (error.expectation.expect) {
+        case "version":
+          return "the row moved under a writer holding a token";
+        case "any":
+          return "the row was gone";
+      }
+    }
+
+    expect(
+      describeDeleteOutcome(
+        new StaleCredentialWriteError({
+          provider: "stripe",
+          key: "secret_key",
+          expectation: { expect: "any" },
+          observedVersion: null,
+        }),
+      ),
+    ).toBe("the row was gone");
+  });
+
   it("mints a different version for the same plaintext written twice", async () => {
     // What makes the tuple a usable version at all: a fresh random IV per
     // encrypt, so re-saving an unchanged value still invalidates a held token.
@@ -482,7 +591,21 @@ describe("a stale concurrent write loses deterministically (#2723)", () => {
 // ---------------------------------------------------------------------------
 
 describe("no plaintext reaches audit, log or error output (#2723)", () => {
-  /** Everything the store emitted this test, as one searchable string. */
+  /**
+   * Everything the store emitted this test, as one searchable string.
+   *
+   * AN ERROR IS SERIALISED THE WAY THE LOGGER WOULD SERIALISE IT, own
+   * enumerable properties and all. `JSON.stringify` alone renders an Error as
+   * `{}`, so the first draft picked out name, message and stack by hand — and
+   * that is a narrower view than anything downstream actually takes. Every
+   * error this module throws carries extra own fields (`provider`, `key`,
+   * `expectation`, `observedVersion`, `operation`, `received`), and a standard
+   * pino-style `err` serialiser emits exactly those. None can hold a credential
+   * value today; the point is that this proof would not have FAILED if one
+   * started to — an error attaching its caller's params object would have slid
+   * straight past. The spread is what closes that, and the self-test below
+   * proves the spread is doing something.
+   */
   function everythingEmitted(extra: unknown[] = []): string {
     return JSON.stringify([
       mocks.tx.auditLog.create.mock.calls,
@@ -493,11 +616,42 @@ describe("no plaintext reaches audit, log or error output (#2723)", () => {
       mocks.logger.debug.mock.calls,
       extra.map((value) =>
         value instanceof Error
-          ? { name: value.name, message: value.message, stack: value.stack }
+          ? {
+              // The spread FIRST, so the three non-enumerable fields below win
+              // over anything of the same name an error happens to carry.
+              ...value,
+              name: value.name,
+              message: value.message,
+              stack: value.stack,
+            }
           : value,
       ),
     ]);
   }
+
+  it("SEES a value parked in an error's own property, not just its message", () => {
+    // The instrument's own discrimination test. Against the hand-picked
+    // name/message/stack view this fails, which is the whole finding: the proof
+    // below could not have caught a plaintext travelling as an error field.
+    const error = Object.assign(new Error("nothing to see here"), {
+      params: { value: SECRET },
+    });
+    expect(everythingEmitted([error])).toContain(SECRET);
+  });
+
+  it("reads the fields the store's own errors really carry", () => {
+    // Not a hypothetical shape: this is what a caught StaleCredentialWriteError
+    // hands a logger, and every one of these fields is now inside the search.
+    const error = new StaleCredentialWriteError({
+      provider: "stripe",
+      key: "secret_key",
+      expectation: { expect: "any" },
+      observedVersion: "abc123",
+    });
+    const emitted = everythingEmitted([error]);
+    expect(emitted).toContain("abc123");
+    expect(emitted).toContain("secret_key");
+  });
 
   it("keeps the value out of a successful write's audit row", async () => {
     const result = await setIntegrationCredential({
@@ -521,9 +675,57 @@ describe("no plaintext reaches audit, log or error output (#2723)", () => {
       "key",
       "labelVersion",
       "provider",
-      "secretSource",
+      "systemActor",
+      // NOT `secretSource`: `sanitizeAuditMetadata` redacts any key whose
+      // normalised form contains "secret", so that spelling stored [REDACTED]
+      // on every row and threw away the one field an operator planning an
+      // auth-secret rotation reads. The value is an env var name, not a secret.
+      "wrappingKeySource",
+    ]);
+  });
+
+  it("names the wrapping key source in a form the audit redactor keeps", async () => {
+    await setIntegrationCredential({
+      provider: "stripe",
+      key: "secret_key",
+      value: SECRET,
+      actor: ADMIN,
+      expect: { expect: "any" },
+    });
+
+    const metadata = mocks.tx.auditLog.create.mock.calls[0]?.[0]?.data
+      ?.metadata as Record<string, unknown>;
+    expect(metadata.wrappingKeySource).toBe("AUTH_SECRET");
+    expect(sanitizeAuditMetadata(metadata)).toMatchObject({
+      wrappingKeySource: "AUTH_SECRET",
+    });
+  });
+
+  it("stores NO wrapping-key field on a delete, rather than a redaction marker", async () => {
+    // A delete wraps nothing, so there is no wrapping key to name. The field
+    // used to be written as null under a name the redactor swallowed, which
+    // stored `[REDACTED]` where the truth is "not applicable" — a reader would
+    // take that as a value deliberately hidden from them.
+    mocks.tx.integrationCredential.deleteMany.mockResolvedValue({ count: 1 });
+    await deleteIntegrationCredential({
+      provider: "stripe",
+      key: "secret_key",
+      actor: ADMIN,
+      expect: { expect: "any" },
+    });
+
+    const metadata = mocks.tx.auditLog.create.mock.calls[0]?.[0]?.data
+      ?.metadata as Record<string, unknown>;
+    expect(Object.keys(metadata).sort()).toEqual([
+      "actorKind",
+      "expectation",
+      "key",
+      "provider",
       "systemActor",
     ]);
+    expect(JSON.stringify(sanitizeAuditMetadata(metadata))).not.toContain(
+      "REDACTED",
+    );
   });
 
   it("keeps the value out of a database failure", async () => {
