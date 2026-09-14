@@ -57,7 +57,12 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/xero-stale-operations", () => ({
+// Partial, not wholesale (#3001): only the threshold-dependent filter is pinned
+// here, so that a constant the route later reads from this module — it now takes
+// the stale-reset error code from it — does not arrive `undefined` and turn the
+// route 500 with nothing in the assertion to say why.
+vi.mock("@/lib/xero-stale-operations", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/xero-stale-operations")>()),
   staleRunningXeroOperationFilter: () => ({
     status: "RUNNING",
     startedAt: { lt: new Date("2026-01-01T00:00:00.000Z") },
