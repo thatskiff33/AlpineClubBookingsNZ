@@ -10,6 +10,7 @@ import { applyRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { getSanitizedLodgeInstructions } from "@/lib/lodge-instructions";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { HUT_LEADER_PIN_PATTERN } from "@/lib/hut-leader-pin";
 
 /**
  * Remote, PIN-gated lodge-instructions preview (#1642).
@@ -25,7 +26,7 @@ import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
  */
 const bodySchema = z.object({
   assignmentId: z.string().min(1).max(128),
-  pin: z.string().regex(/^\d{6}$/),
+  pin: z.string().regex(HUT_LEADER_PIN_PATTERN),
 });
 
 function rateLimitResponse(message: string, retryAfter: number) {

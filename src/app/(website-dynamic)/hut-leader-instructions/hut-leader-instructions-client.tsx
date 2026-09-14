@@ -4,6 +4,12 @@ import { useState } from "react";
 import { Printer, ShieldAlert, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SecretInput } from "@/components/ui/secret-input";
+import {
+  HUT_LEADER_PIN_HTML_PATTERN,
+  HUT_LEADER_PIN_LENGTH,
+  isCompleteHutLeaderPin,
+  sanitiseHutLeaderPin,
+} from "@/lib/hut-leader-pin";
 import { Label } from "@/components/ui/label";
 import {
   Card,
@@ -46,14 +52,6 @@ function useUpdatedAtFormatter() {
   // render. Rendering no stamp at all is what this surface did before.
   return (value: string | null): string | null =>
     value ? clubTime.instantLongDate(new Date(value)) : null;
-}
-
-/**
- * Digits only, six at most — the kiosk PIN's shape. Applied to the input's own
- * property by `SecretInput`, never fed back as a `value` prop (#2981).
- */
-function sanitisePin(raw: string): string {
-  return raw.replace(/\D/g, "").slice(0, 6);
 }
 
 export function HutLeaderInstructionsClient({
@@ -191,22 +189,19 @@ export function HutLeaderInstructionsClient({
           <div className="space-y-1.5">
             <Label htmlFor="hut-leader-pin">Kiosk PIN</Label>
             {/*
-              A SecretInput, not an Input, and that is a security boundary rather
-              than a style choice (#2981). This page carries the club's Raw CSS,
-              and a controlled `value={pin}` publishes the live PIN to the DOM
-              `value` ATTRIBUTE, where `input#hut-leader-pin[value^="14"]` reads
-              it one character at a time. Measured in Chromium, Firefox and
-              WebKit; `docs/SECURITY.md` → "Secret entry on pages that carry Raw
-              CSS" is the rule, `e2e/raw-css-secret-reflection.spec.ts` the pin.
+              A SecretInput, not an Input, and that is a security boundary
+              rather than a style choice: this page carries the club's Raw CSS.
+              Rule and mechanism: `docs/SECURITY.md` -> "Secret entry on pages
+              that carry Raw CSS" (#2981).
             */}
             <SecretInput
               id="hut-leader-pin"
               inputMode="numeric"
               autoComplete="one-time-code"
-              maxLength={6}
-              pattern="\d{6}"
-              placeholder="6-digit PIN"
-              sanitise={sanitisePin}
+              maxLength={HUT_LEADER_PIN_LENGTH}
+              pattern={HUT_LEADER_PIN_HTML_PATTERN}
+              placeholder={`${HUT_LEADER_PIN_LENGTH}-digit PIN`}
+              sanitise={sanitiseHutLeaderPin}
               onValueChange={setPin}
               className="tracking-[0.4em] text-center text-lg"
             />
@@ -215,7 +210,7 @@ export function HutLeaderInstructionsClient({
           <Button
             type="submit"
             className="w-full"
-            disabled={submitting || pin.length !== 6}
+            disabled={submitting || !isCompleteHutLeaderPin(pin)}
           >
             {submitting ? "Checking..." : "View instructions"}
           </Button>
