@@ -32,7 +32,7 @@ import type { DataMigrationVerification } from "./types";
  * the write is a row mismatch rather than a crash.
  */
 const verification: DataMigrationVerification = {
-  migration: "20260920010000_add_organisation_record",
+  migration: "20260923020000_add_organisation_record",
   intent:
     "Add the organisation records and the two optional links without touching any existing row: each table gains exactly one nullable column with no default, the new tables start empty, the draining colour can still write, and a school a booking names cannot be deleted out from under it.",
   idempotentReRun: false,
