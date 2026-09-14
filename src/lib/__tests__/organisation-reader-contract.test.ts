@@ -422,6 +422,8 @@ const DECLARED_FILES: Record<string, string> = {
     "an Internet Banking over-payment on a school's booking has no member ledger to credit, and names the organisation in the warning that tells an officer to refund it directly",
   "src/app/api/admin/bookings/search/route.ts":
     "a school's booking is found by the SCHOOL's name, which is what an officer was already typing when the invented member carried it",
+  "src/lib/admin-bookings-service.ts":
+    "the same question on the LIST page's own search box, which the typeahead's fix had missed: written as a member-relation filter it dropped every school booking out of the page, the pagination window and the total count together",
 
   // ---- carried forward from stage 1, unchanged -------------------------
   "src/lib/member-merge-relations.ts":
@@ -509,11 +511,19 @@ const OWNER_PROJECTION = [
   /organisation: \{ name: string; email: string \| null \}(?: \| null)?;?/g,
   // The sweep's own marker comment above any of them, in both the one-line and
   // two-line spellings it was written in.
+  // String.raw, because a plain double-quoted string is not a regex source: the
+  // first cut wrote "//\s#3369…", where JavaScript folds \s to a bare s before
+  // the RegExp ever sees it. Both patterns compiled to something that matched
+  // nothing — harmless while the census passed anyway, and silently absent the
+  // day it mattered.
   new RegExp(
-    "//\s#3369: the owner may be an Organisation[^\n]*\n\s*//[^\n]*\n",
+    String.raw`//\s#3369: the owner may be an Organisation[^\n]*\n\s*//[^\n]*\n`,
     "g",
   ),
-  new RegExp("//\s#3369: the owner may be an Organisation[^\n]*\n", "g"),
+  new RegExp(
+    String.raw`//\s#3369: the owner may be an Organisation[^\n]*\n`,
+    "g",
+  ),
 ];
 
 /** What the census actually reads: the file with the owner projection removed. */
@@ -554,6 +564,26 @@ describe("#3367: the organisation link is read by EXACTLY the declared files", (
     // A walker that silently found nothing would make every assertion below
     // vacuous, which is how a census fails without failing.
     expect(scanned.length).toBeGreaterThan(500);
+  });
+
+  it("every owner-projection pattern actually strips what it claims to", () => {
+    // Two of these were written as double-quoted strings whose `\s` JavaScript
+    // folded to a bare `s` before the RegExp saw it, so they matched nothing.
+    // Harmless while the census passed anyway — and silently absent the day a
+    // reader wrote its marker comment and expected it to be stripped.
+    const stripped = withoutOwnerProjection(
+      [
+        "      // #3369: the owner may be an Organisation; bookingOwner() reads both.",
+        "      organisation: { select: { name: true, email: true } },",
+        "      // #3369: the owner may be an Organisation; bookingOwner() reads",
+        "      // both, and the wall display forbids an email outright.",
+        "      organisation: { select: { name: true } },",
+        "      keep: this,",
+      ].join("\n"),
+    );
+    expect(stripped).not.toContain("#3369");
+    expect(stripped).not.toContain("organisation:");
+    expect(stripped).toContain("keep: this,");
   });
 
   for (const { label, pattern } of NEW_IDENTIFIERS) {

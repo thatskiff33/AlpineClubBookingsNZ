@@ -332,7 +332,6 @@ export async function findOverlappingCapacityHoldingBookings(
       // no projection to build and hands the null member straight back, so an
       // officer overriding a hold saw "Unknown member" for the school booking
       // they were about to override.
-      organisationId: true,
       organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },
@@ -411,7 +410,6 @@ export async function findOverlappingOverriddenNonHoldingBookings(
       // no projection to build and hands the null member straight back, so an
       // officer overriding a hold saw "Unknown member" for the school booking
       // they were about to override.
-      organisationId: true,
       organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },

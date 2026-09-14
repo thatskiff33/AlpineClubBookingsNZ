@@ -53,17 +53,48 @@ function rel(file: string): string {
  * cannot tell the two apart either grows an allowlist of readers or gets dodged
  * by renaming a variable, which is worse than both.
  *
- * So the match is per LINE and a `where` clause is not one. The fixture test
- * below proves the narrowing in both directions: a real stamp is still caught,
- * and a read is not.
+ * So the `where` CLAUSE is removed and what is left is matched. The first cut
+ * skipped the whole LINE instead, which is a different rule and a weaker one: a
+ * single-line write — `updateMany({ where: { id }, data: { source: … } })`,
+ * which is how a one-liner is written and how a formatter leaves a short call —
+ * carries both words on one line and was invisible to it. The fixture below
+ * proves all three directions: a real stamp is caught, a read is not, and a
+ * stamp sharing its line with a filter is still a stamp.
  */
+function withoutWhereClauses(line: string): string {
+  let out = "";
+  let cursor = 0;
+  for (;;) {
+    const at = line.indexOf("where:", cursor);
+    if (at === -1) return out + line.slice(cursor);
+    out += line.slice(cursor, at);
+    const open = line.indexOf("{", at);
+    if (open === -1) return out + line.slice(at + "where:".length);
+    // Brace-balanced, so a nested filter goes with its parent — and a clause
+    // that OPENS on this line and closes on a later one takes the rest of this
+    // line with it, which is correct: everything after it on this line is
+    // inside the filter.
+    let depth = 0;
+    let index = open;
+    for (; index < line.length; index += 1) {
+      if (line[index] === "{") depth += 1;
+      else if (line[index] === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          index += 1;
+          break;
+        }
+      }
+    }
+    cursor = index;
+  }
+}
+
 function stampsTheColumn(source: string): boolean {
   return source
     .split("\n")
-    .some(
-      (line) =>
-        line.includes("source: HutLeaderAssignmentSource.") &&
-        !line.includes("where:"),
+    .some((line) =>
+      withoutWhereClauses(line).includes("source: HutLeaderAssignmentSource."),
     );
 }
 
@@ -144,8 +175,9 @@ describe("#2926 — HutLeaderAssignment.source is write-once", () => {
       ),
     ).toBe(false);
 
-    // And a file holding BOTH is still a writer: the skip is per line, so a
-    // reader cannot hide a stamp by putting a `where:` somewhere above it.
+    // And a file holding BOTH is still a writer: the clause is removed rather
+    // than the line skipped, so a reader cannot hide a stamp by putting a
+    // `where:` somewhere above it.
     expect(
       stampsTheColumn(
         [
@@ -154,6 +186,29 @@ describe("#2926 — HutLeaderAssignment.source is write-once", () => {
         ].join("\n"),
       ),
     ).toBe(true);
+
+    // THE ONE-LINE WRITE, which the first cut could not see at all: a filter
+    // and a stamp on the SAME line. Skipping the line hid it; removing the
+    // clause does not. This is the shape a short `updateMany` is written in.
+    expect(
+      stampsTheColumn(
+        "await tx.hutLeaderAssignment.updateMany({ where: { id }, data: { source: HutLeaderAssignmentSource.ADMIN } });",
+      ),
+    ).toBe(true);
+
+    // The same line without the stamp is still only a read.
+    expect(
+      stampsTheColumn(
+        "const rows = await tx.hutLeaderAssignment.findMany({ where: { source: HutLeaderAssignmentSource.SCHOOL_BOOKING }, take: 1 });",
+      ),
+    ).toBe(false);
+
+    // A nested filter goes with its parent rather than confusing the balance.
+    expect(
+      stampsTheColumn(
+        "const rows = await tx.member.findMany({ where: { hutLeaderAssignments: { some: { source: HutLeaderAssignmentSource.SCHOOL_BOOKING } } } });",
+      ),
+    ).toBe(false);
   });
 
   it("is not settable through updateMany either", () => {
