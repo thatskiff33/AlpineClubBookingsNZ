@@ -543,10 +543,9 @@ function scopeReason(
  *
  * The editor cannot be handed a lodge that no scope settled on: it takes the
  * narrowed {@link LodgeOptionScopeOnLodge} — the `lodge` variant of the shared
- * type —
- * rather than a bare lodge id, so the only way to reach it is to discriminate a
- * real scope, which is what this function does. The per-lodge `key` lives here
- * too, rather than at each call site.
+ * type — rather than a bare lodge id, so the only way to reach it is to
+ * discriminate a real scope, which is what this function does. The per-lodge
+ * `key` lives here too, rather than at each call site.
  *
  * That is a guarantee about the SHAPE, not about the mounting. The editor is
  * still exported, because its own suites drive it directly; mounting it through
