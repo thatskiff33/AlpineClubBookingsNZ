@@ -116,7 +116,7 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
   "src/lib/club-post-mirror.ts::ensurePushRegistration#0":
     "setIntegrationCredential system / any",
   "src/lib/google-config.ts::clearGoogleVerified#0":
-    "deleteIntegrationCredential system / any",
+    "deleteIntegrationCredential (forwarded) actor / any",
   "src/lib/google-config.ts::recordGoogleVerified#0":
     "setIntegrationCredential system / any",
   "src/lib/servernz-config.ts::clearServerNzApiKey#0":
@@ -124,7 +124,7 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
   "src/lib/servernz-config.ts::setServerNzApiKey#0":
     "setIntegrationCredential (forwarded) actor / any",
   "src/lib/stripe-config.ts::clearStripeWebhookVerified#0":
-    "deleteIntegrationCredential system / any",
+    "deleteIntegrationCredential (forwarded) actor / any",
   "src/lib/stripe-config.ts::recordStripeWebhookVerified#0":
     "setIntegrationCredential system / any",
   "src/lib/xero-config.ts::getOperationalXeroEncryptionKey.value#0":
@@ -152,10 +152,14 @@ const ACTOR_FORWARDED_SITES: Record<string, string> = {
   "src/app/api/admin/backups/config/route.ts::POST#6": "same hoisted admin actor",
   "src/app/api/admin/backups/config/route.ts::POST#7": "same hoisted admin actor",
   "src/app/api/admin/backups/config/route.ts::POST#8": "same hoisted admin actor",
+  "src/lib/google-config.ts::clearGoogleVerified#0":
+    "the actor is this helper's own required parameter: a verify-reset belongs to the administrator whose credential write caused it, not to a background job",
   "src/lib/servernz-config.ts::clearServerNzApiKey#0":
     "the actor is this helper's own required parameter, supplied by its caller",
   "src/lib/servernz-config.ts::setServerNzApiKey#0":
     "the actor is this helper's own required parameter, supplied by its caller",
+  "src/lib/stripe-config.ts::clearStripeWebhookVerified#0":
+    "the actor is this helper's own required parameter, for the same reason as the Google verify-reset above",
 };
 
 /**
@@ -183,7 +187,11 @@ describe("credential-actor census: the tree names an actor everywhere (#2723)", 
     expect(census().filesScanned).toBeGreaterThan(MINIMUM_FILES_SCANNED);
     expect(census().sites.length).toBeGreaterThanOrEqual(MINIMUM_WRITE_SITES);
     expect(CREDENTIAL_MUTATORS.length).toBe(3);
-    expect(CREDENTIAL_BOUNDARY_MODULES.length).toBe(2);
+    // Three modules are exempt from the bypass check because they ARE the
+    // implementation: the store, the compare-and-set claim, and the create-only
+    // generator. Pinned, because every addition widens the one check that can
+    // see a writer which skips the store.
+    expect(CREDENTIAL_BOUNDARY_MODULES.length).toBe(3);
   });
 
   it("has NO writer that omits actor context", () => {

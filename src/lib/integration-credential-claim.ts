@@ -23,6 +23,7 @@ import {
   type CredentialWriteExpectation,
 } from "@/lib/integration-credential-actor";
 import type { AuthSecretSource } from "@/lib/integration-crypto";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 /** The encrypted columns one write lands, plus its attribution. */
 export interface CredentialRowWrite {
@@ -94,7 +95,7 @@ export async function applyCredentialWrite(
       });
       return row.updatedAt;
     } catch (error) {
-      if (!isUniqueConstraintError(error)) throw error;
+      if (!isPrismaUniqueConstraintError(error)) throw error;
       // A true race: the row appeared between the read above and this insert.
       // The transaction is now aborted, so this writer cannot report the
       // winner's version — `null` says "unknown from here", and the caller's
@@ -142,19 +143,4 @@ export async function applyCredentialWrite(
   }
   const updated = await readRowForWrite(tx, provider, key);
   return updated?.updatedAt ?? new Date();
-}
-
-/**
- * True for a Prisma unique-constraint conflict (P2002). Detected structurally
- * (by `code`) so a raced insert is tolerated regardless of how the driver
- * surfaces it — same shape as `isUniqueConstraintError` in config-self-heal,
- * inlined here to keep this module free of that boot module's imports.
- */
-export function isUniqueConstraintError(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: unknown }).code === "P2002"
-  );
 }

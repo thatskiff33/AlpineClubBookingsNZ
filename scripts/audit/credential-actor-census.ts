@@ -81,10 +81,18 @@ import {
   type ResolvedObject,
 } from "./ts-call-site-scan";
 
-/** The module that owns the credential boundary; its own writes are not sites. */
+/**
+ * The modules that OWN the credential boundary; their own writes are not sites.
+ *
+ * This is an exemption from the one check that can see a writer which skips the
+ * store, so adding a module here is a reviewed change and the contract test pins
+ * the count. Three today: the store, the compare-and-set claim, and the
+ * create-only generator.
+ */
 export const CREDENTIAL_BOUNDARY_MODULES = [
   "src/lib/integration-credentials.ts",
   "src/lib/integration-credential-claim.ts",
+  "src/lib/integration-credential-generate.ts",
 ] as const;
 
 /** The mutators every credential writer must go through. */

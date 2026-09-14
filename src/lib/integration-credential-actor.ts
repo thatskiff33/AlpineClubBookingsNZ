@@ -60,12 +60,8 @@ import type { AuthSecretSource } from "@/lib/integration-crypto";
 export const CREDENTIAL_SYSTEM_ACTORS = [
   /** Google's OAuth round-trip succeeded; the non-secret verified marker is stamped. */
   "google-verify-callback",
-  /** Verify-reset: a Google credential changed, so the verified marker is dropped. */
-  "google-verify-reset",
   /** A signature-verified Stripe TEST-MODE webhook event stamped the marker. */
   "stripe-webhook-verify",
-  /** Verify-reset: a Stripe credential changed, so the webhook marker is dropped. */
-  "stripe-verify-reset",
   /** The shared-post sync registered this install for pushes and stored the issued secret. */
   "servernz-push-registration",
   /** First use of Xero token encryption auto-generated (or replaced) the wrapped token key. */
@@ -73,6 +69,21 @@ export const CREDENTIAL_SYSTEM_ACTORS = [
   /** The E2E staging stack seeding Stripe test-mode keys. Never a real deployment. */
   "e2e-stripe-seed",
 ] as const;
+
+/**
+ * WHAT IS DELIBERATELY NOT HERE: the two verify-RESETS.
+ *
+ * `google-verify-reset` and `stripe-verify-reset` were on this list, and each
+ * had exactly one caller — the admin credential-write route, which already held
+ * the acting member and passed it as an `admin` actor two statements earlier.
+ * One administrator pressing Save therefore produced two audit rows, one naming
+ * the person and one naming a job with a null member and no request context.
+ * The clears take the caller's actor now (`clearGoogleVerified`,
+ * `clearStripeWebhookVerified`), so the reset is attributed to whoever caused
+ * it, and a name no writer can produce does not sit in a closed list implying
+ * such rows exist. A future background path that genuinely resets a marker with
+ * no person behind it adds its name back here, which is a reviewed change.
+ */
 
 export type CredentialSystemActor = (typeof CREDENTIAL_SYSTEM_ACTORS)[number];
 

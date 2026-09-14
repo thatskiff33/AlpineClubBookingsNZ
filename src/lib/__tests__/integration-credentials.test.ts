@@ -34,7 +34,6 @@ import { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } from "@/lib/integrati
 import type { CredentialActor } from "@/lib/integration-credential-actor";
 import {
   CACHE_TTL_MS,
-  ensureGeneratedCredential,
   getIntegrationsNeedingReentry,
   resetIntegrationCredentialCacheForTests,
   resolveIntegrationCredential,
@@ -44,10 +43,6 @@ import {
 const STRONG_SECRET = "a".repeat(48);
 /** Every write in this file names an actor; the store has no other mode. */
 const ADMIN: CredentialActor = { kind: "admin", memberId: "member-1" };
-const SYSTEM: CredentialActor = {
-  kind: "system",
-  actor: "xero-token-key-generation",
-};
 const OTHER_STRONG_SECRET = "b".repeat(48);
 const originalEnv = { ...process.env };
 
@@ -202,119 +197,5 @@ describe("integration-credentials: state + source-flip + re-entry", () => {
     expect(await getIntegrationsNeedingReentry(["xero", "stripe"])).toEqual([
       "xero",
     ]);
-  });
-});
-
-describe("ensureGeneratedCredential: create-only / create-or-lose (FIX-6)", () => {
-  const P2002 = Object.assign(new Error("Unique constraint failed"), {
-    code: "P2002",
-  });
-
-  it("generates via create (never upsert) when no row exists", async () => {
-    mocks.prisma.integrationCredential.findMany.mockResolvedValue([]);
-    mocks.tx.integrationCredential.create.mockResolvedValue({});
-
-    const value = await ensureGeneratedCredential({
-      provider: "xero",
-      key: "token_key",
-      label: INTEGRATION_CREDENTIAL_LABEL,
-      generate: () => "fresh-generated-key",
-      actor: SYSTEM,
-    });
-
-    expect(value).toBe("fresh-generated-key");
-    expect(mocks.tx.integrationCredential.create).toHaveBeenCalledTimes(1);
-    // Genuinely create-only: no last-writer-wins upsert.
-    expect(mocks.tx.integrationCredential.upsert).not.toHaveBeenCalled();
-  });
-
-  it("on a P2002 create race, returns the winner's value (not ours)", async () => {
-    // First resolve: not configured. After the losing create, re-resolve finds
-    // the concurrent creator's row.
-    mocks.prisma.integrationCredential.findMany
-      .mockResolvedValueOnce([])
-      .mockResolvedValue([storedRow("xero", "token_key", "winner-key")]);
-    mocks.tx.integrationCredential.create.mockRejectedValueOnce(P2002);
-
-    const value = await ensureGeneratedCredential({
-      provider: "xero",
-      key: "token_key",
-      label: INTEGRATION_CREDENTIAL_LABEL,
-      generate: () => "loser-key",
-      actor: SYSTEM,
-    });
-
-    expect(value).toBe("winner-key");
-  });
-
-  it("never overwrites a readable key — returns the existing value", async () => {
-    mocks.prisma.integrationCredential.findMany.mockResolvedValue([
-      storedRow("xero", "token_key", "already-there"),
-    ]);
-    const generate = vi.fn(() => "should-not-be-used");
-
-    const value = await ensureGeneratedCredential({
-      provider: "xero",
-      key: "token_key",
-      label: INTEGRATION_CREDENTIAL_LABEL,
-      generate,
-      actor: SYSTEM,
-    });
-
-    expect(value).toBe("already-there");
-    expect(generate).not.toHaveBeenCalled();
-    expect(mocks.tx.integrationCredential.create).not.toHaveBeenCalled();
-    expect(mocks.tx.integrationCredential.updateMany).not.toHaveBeenCalled();
-  });
-
-  it("replaces an unreadable (needs_reentry) row via a claim keyed on its stale ciphertext", async () => {
-    // Row written under AUTH_SECRET, now unreadable because the secret rotated.
-    const staleRow = storedRow("xero", "token_key", "dead-material");
-    process.env.AUTH_SECRET = OTHER_STRONG_SECRET; // strands the row → needs_reentry
-    mocks.prisma.integrationCredential.findMany.mockResolvedValue([staleRow]);
-    mocks.tx.integrationCredential.updateMany.mockResolvedValue({ count: 1 });
-
-    const value = await ensureGeneratedCredential({
-      provider: "xero",
-      key: "token_key",
-      label: INTEGRATION_CREDENTIAL_LABEL,
-      generate: () => "regenerated-key",
-      actor: SYSTEM,
-    });
-
-    expect(value).toBe("regenerated-key");
-    // The claim is scoped to the exact dead ciphertext, so a racing writer's
-    // claim matches zero rows instead of clobbering the winner.
-    expect(mocks.tx.integrationCredential.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          provider: "xero",
-          key: "token_key",
-          ciphertext: staleRow.ciphertext,
-        }),
-      }),
-    );
-  });
-
-  it("adopts the winner when the replacement claim loses (count 0)", async () => {
-    const staleRow = storedRow("xero", "token_key", "dead-material");
-    process.env.AUTH_SECRET = OTHER_STRONG_SECRET;
-    // Winner already replaced the dead row with material readable under the
-    // current secret.
-    const winnerRow = storedRow("xero", "token_key", "winner-regenerated");
-    mocks.prisma.integrationCredential.findMany
-      .mockResolvedValueOnce([staleRow])
-      .mockResolvedValue([winnerRow]);
-    mocks.tx.integrationCredential.updateMany.mockResolvedValue({ count: 0 });
-
-    const value = await ensureGeneratedCredential({
-      provider: "xero",
-      key: "token_key",
-      label: INTEGRATION_CREDENTIAL_LABEL,
-      generate: () => "our-losing-key",
-      actor: SYSTEM,
-    });
-
-    expect(value).toBe("winner-regenerated");
   });
 });

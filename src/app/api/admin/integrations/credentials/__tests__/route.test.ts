@@ -161,6 +161,15 @@ describe("POST /api/admin/integrations/credentials", () => {
     );
     expect(res.status).toBe(200);
     expect(mocks.clearStripeWebhookVerified).toHaveBeenCalledTimes(1);
+    // ONE administrator, ONE actor, ONE request (#2723 review). The reset used
+    // to hard-code a `stripe-verify-reset` system actor, so a single Save wrote
+    // one row naming the person and one naming a job with a null member.
+    const [resetActor, resetRequest] =
+      mocks.clearStripeWebhookVerified.mock.calls[0];
+    expect(resetActor).toEqual({ kind: "admin", memberId: "admin-1" });
+    expect(resetRequest).toBe(
+      mocks.setIntegrationCredential.mock.calls[0][0].request,
+    );
     // Cross-provider isolation: a Stripe write never touches Xero tokens.
     expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
   });

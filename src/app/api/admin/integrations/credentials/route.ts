@@ -8,6 +8,10 @@ import { getAuditRequestContext } from "@/lib/audit";
 import { isFullAdmin } from "@/lib/access-roles";
 import { requireAdmin } from "@/lib/session-guards";
 import { setIntegrationCredential } from "@/lib/integration-credentials";
+import type {
+  CredentialActor,
+  CredentialRequestContext,
+} from "@/lib/integration-credential-actor";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
 import { deleteXeroTokens } from "@/lib/xero-token-store";
 import { XERO_CREDENTIAL_KEYS, XERO_PROVIDER } from "@/lib/xero-config";
@@ -160,8 +164,20 @@ async function requireFullAdmin() {
  * the tokens are dropped and the operator must reconnect. Changing only the
  * webhook key does NOT drop tokens (that surfaces as a webhook amber badge in a
  * later lane).
+ *
+ * THE ACTOR TRAVELS WITH IT (#2723). A verify-reset is part of the
+ * administrator's Save, not a background job, so the marker deletions are
+ * attributed to the same member and the same request as the credential write
+ * itself. They used to name a `google-verify-reset` / `stripe-verify-reset`
+ * system actor, which made one admin action read as two writers in the log.
  */
-async function applyVerifyReset(provider: string, key: string): Promise<void> {
+async function applyVerifyReset(
+  provider: string,
+  key: string,
+  memberId: string,
+  request: CredentialRequestContext | undefined,
+): Promise<void> {
+  const actor: CredentialActor = { kind: "admin", memberId };
   if (
     provider === XERO_PROVIDER &&
     (key === XERO_CREDENTIAL_KEYS.clientId ||
@@ -174,13 +190,13 @@ async function applyVerifyReset(provider: string, key: string): Promise<void> {
   // green webhook badge can never survive a credential swap. The connection
   // check itself is live-derived (no persisted verified flag to reset).
   if (provider === STRIPE_PROVIDER) {
-    await clearStripeWebhookVerified();
+    await clearStripeWebhookVerified(actor, request);
   }
   // Google (epic decision 6 / D2): writing either Google credential drops the
   // verified marker so the module re-locks until a fresh OAuth round-trip
   // verifies. The verified state is a stored marker (no live-derived check).
   if (provider === GOOGLE_PROVIDER) {
-    await clearGoogleVerified();
+    await clearGoogleVerified(actor, request);
   }
 }
 
@@ -225,6 +241,14 @@ export async function POST(request: Request) {
     );
   }
 
+  // ONE request context for everything this Save does — the credential write
+  // and the verify-reset deletions that follow it are the same administrator's
+  // action, on the same request, and must read that way in the audit log. The
+  // actor is spelled out at each call rather than hoisted, so the credential
+  // census can read "admin" at the write site instead of having to trust a
+  // variable it cannot follow.
+  const requestContext = getAuditRequestContext(request);
+
   let result;
   try {
     // The store writes the audit row itself, inside the same transaction as the
@@ -239,7 +263,7 @@ export async function POST(request: Request) {
       // The form posts the value it wants stored; there is no read-modify-write
       // here for a second Full Admin to make stale.
       expect: { expect: "any" },
-      request: getAuditRequestContext(request),
+      request: requestContext,
     });
   } catch (error) {
     if (error instanceof WeakAuthSecretError) {
@@ -257,7 +281,7 @@ export async function POST(request: Request) {
     );
   }
 
-  await applyVerifyReset(provider, key);
+  await applyVerifyReset(provider, key, guard.memberId, requestContext);
 
   // Response confirms metadata only — the value is never returned.
   return NextResponse.json({
