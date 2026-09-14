@@ -30,7 +30,11 @@ import {
   XeroMemberUnavailableError,
 } from "@/lib/xero-contact-create-recovery";
 import { commitManualXeroContactLink } from "@/lib/xero-manual-contact-link";
-import { findXeroContactHomes } from "@/lib/xero-contact-home";
+import {
+  assertXeroContactHasNoOtherHome,
+  findXeroContactHomes,
+  XeroContactTwoHomesError,
+} from "@/lib/xero-contact-home";
 
 const linkSchema = z.object({
   xeroContactId: z.string().min(1),
@@ -93,41 +97,41 @@ export async function POST(
 
   try {
     /*
-      WHO ALREADY HOLDS THIS CONTACT — asked through `INV-INT-018`'s one
-      accessor, and asked FIRST.
+      WHO ALREADY HOLDS THIS CONTACT — asked FIRST, and answered by the rules
+      that own the question rather than by a reader of my own.
 
-      This used to be a `member.findFirst` over the member table alone, run
-      after the provider round trip below. Two things were wrong with that.
+      This used to be a single `member.findFirst` over the member table alone,
+      run AFTER the provider round trip below. Two things were wrong with that.
       Since #3366 a Xero contact can be held by an ORGANISATION as well — a
       school's own customer — so an officer linking a member to a school's
-      contact sailed past this friendly refusal and hit the raw
-      `XeroContactTwoHomesError` from the commit downstream, which is the
-      enforcement rather than the explanation. And it did so only AFTER a Xero
-      call had been spent on a link that could never be made.
+      contact sailed past this friendly refusal, spent a `getContact` on a link
+      that could never be made, and then met the raw two-homes error from the
+      commit. And even for the member case it was a second opinion on which
+      columns count as a local home, which is the drift `INV-INT-018` exists to
+      stop. The invariant itself never broke — enforcement is downstream and
+      symmetric — but the explanation an officer got was wrong.
 
-      The invariant never broke, because enforcement is downstream. What broke
-      was the officer's experience of it, and a second reader of "which columns
-      count as a local home" is exactly the drift `findXeroContactHomes` exists
-      to stop.
+      The ORGANISATION half runs `assertXeroContactHasNoOtherHome`, which is the
+      SAME refusal `commitManualXeroContactLink` raises under the contact-home
+      lock, so the early message and the enforced one cannot drift apart and no
+      second file reads the organisation record. The MEMBER half asks
+      `findXeroContactHomes`, `INV-INT-018`'s one accessor for ownership.
     */
+    try {
+      await assertXeroContactHasNoOtherHome(prisma, {
+        xeroContactId: parsed.data.xeroContactId,
+        home: { kind: "MEMBER", id },
+      });
+    } catch (error) {
+      if (error instanceof XeroContactTwoHomesError) {
+        return NextResponse.json({ error: error.message }, { status: 409 });
+      }
+      throw error;
+    }
+
     const homes = await findXeroContactHomes(prisma, [parsed.data.xeroContactId]);
     const heldBy = homes.get(parsed.data.xeroContactId);
-    if (heldBy && !(heldBy.kind === "MEMBER" && heldBy.id === id)) {
-      if (heldBy.kind === "ORGANISATION") {
-        const organisation = await prisma.organisation.findUnique({
-          where: { id: heldBy.id },
-          select: { name: true },
-        });
-        return NextResponse.json(
-          {
-            error:
-              `This Xero contact is the Xero customer for ${organisation?.name ?? "an organisation"}` +
-              ", so it cannot also be a member's. One Xero customer belongs to one" +
-              " record (INV-INT-018).",
-          },
-          { status: 409 },
-        );
-      }
+    if (heldBy && heldBy.kind === "MEMBER" && heldBy.id !== id) {
       const holder = await prisma.member.findUnique({
         where: { id: heldBy.id },
         select: { firstName: true, lastName: true },
