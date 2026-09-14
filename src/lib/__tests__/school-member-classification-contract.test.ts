@@ -44,7 +44,7 @@ import {
 const MIGRATIONS_DIR = path.join(process.cwd(), "prisma", "migrations");
 const BACKFILL_SQL_PATH = path.join(
   MIGRATIONS_DIR,
-  "20260922020000_backfill_school_bookings_to_organisations",
+  "20260923040000_backfill_school_bookings_to_organisations",
   "migration.sql",
 );
 /** Every #3369 file that folds a school name, so none of them can drift alone. */
@@ -52,7 +52,7 @@ const NAME_FOLDING_SQL_FILES = [
   BACKFILL_SQL_PATH,
   path.join(
     MIGRATIONS_DIR,
-    "20260922020000_backfill_school_bookings_to_organisations",
+    "20260923040000_backfill_school_bookings_to_organisations",
     "rollback.sql",
   ),
 ] as const;

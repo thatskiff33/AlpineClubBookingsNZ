@@ -4,9 +4,9 @@ BEGIN;
 -- member link becomes OPTIONAL, so a school's booking can be owned by its
 -- Organisation instead of by an invented surnameless person.
 --
--- WINDOWED, and the pair 20260922010000 + 20260922020000 is ONE window. This
+-- WINDOWED, and the pair 20260923030000 + 20260923040000 is ONE window. This
 -- half changes only the SHAPE and leaves every stored value exactly as it is;
--- the backfill that actually empties a member link is 20260922020000. They are
+-- the backfill that actually empties a member link is 20260923040000. They are
 -- never applied apart, because between them the database would allow a booking
 -- with no owner at all: the CHECK constraint that makes "exactly one owner"
 -- true is added by the second half, once the data satisfies it.
@@ -131,7 +131,7 @@ $function$ LANGUAGE plpgsql;
 -- ---------------------------------------------------------------------------
 -- The backfill does not work out which of the old school-shaped member rows is
 -- a school and which is a teacher. It READS the answer from here and refuses to
--- write anything at all while any candidate is missing -- see 20260922020000
+-- write anything at all while any candidate is missing -- see 20260923040000
 -- and docs/guides/school-organisation-cutover.md.
 --
 -- Rows come from two places and "decidedBy" says which: census for a row the

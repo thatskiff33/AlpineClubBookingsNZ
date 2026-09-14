@@ -730,8 +730,8 @@ sequence below is run once, not once per migration.
   complete work that a new worker already owns. The old web colour and **every** old
   worker must therefore be stopped before migrate, and only new workers may start.
 
-- `20260922010000_booking_owner_optional_member` and
-  `20260922020000_backfill_school_bookings_to_organisations` (#3369, stage 4 of
+- `20260923030000_booking_owner_optional_member` and
+  `20260923040000_backfill_school_bookings_to_organisations` (#3369, stage 4 of
   programme #2912). **These two are ONE window and are never applied apart.**
   The first only changes the shape — it makes the booking's member link
   optional, adds two partial unique indexes and creates the empty table the
@@ -781,7 +781,7 @@ says which governs when:
    instead: the exact commands, and why `pg_restore --list` is not one of them, are in
    `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 7.
 5. **Record the pre-migration checks** the runbook lists for the migration in hand
-   — for `20260922020000` that is the census's own output, saved: the counts by
+   — for `20260923040000` that is the census's own output, saved: the counts by
    classification, the CANNOT TELL list (which must be empty) and how many school
    bookings the backfill is about to re-parent. §2.4.2 has the commands. The
    census is read-only and can be run as often as you like; run it once more
@@ -811,8 +811,8 @@ says which governs when:
    is not documented as having and which is deliberately removed from the runtime
    image. Pass all pending migration files, in order — `20260803010000`,
    `20260803020000`, `20260803030000`, `20260803070000`, `20260806000000`,
-   `20260806010000`, and for programme #2912 `20260920010000`, `20260922010000`
-   and `20260922020000` — including the additive rows; exact commands are in
+   `20260806010000`, and for programme #2912 `20260920010000`, `20260923030000`
+   and `20260923040000` — including the additive rows; exact commands are in
    `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 9 and, for the school pair,
    §2.4.2.
 7. **Verify the migrate step**: the dropped column is gone and
@@ -829,9 +829,9 @@ will not start, run the reverse script beside the migration —
 the previous release's images. **When a window carried more than one windowed
 migration, run their reverse scripts in the OPPOSITE order to the one they were
 applied in** — newest first. The #3369 pair is the worked example, and it enforces
-that rule rather than relying on it: `20260922020000/rollback.sql` gives every
+that rule rather than relying on it: `20260923040000/rollback.sql` gives every
 organisation-owned booking its member back, and only then can
-`20260922010000/rollback.sql` re-impose the NOT NULL constraints, which refuse
+`20260923030000/rollback.sql` re-impose the NOT NULL constraints, which refuse
 loudly if it has not run. That refusal is the guard, not the failure. **Never restart the previous release before running
 the reverse script or restoring the backup**: after the drop commits, its client
 names a column that no longer exists, so re-pointing traffic at it does not restore

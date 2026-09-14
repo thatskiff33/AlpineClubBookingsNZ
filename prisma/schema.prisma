@@ -1701,7 +1701,7 @@ model Booking {
   //
   // EXACTLY ONE OF THE TWO IS SET, enforced by the database rather than by
   // convention: `Booking_owner_exactly_one`, a raw-SQL CHECK constraint added by
-  // 20260922010000. Prisma cannot express a CHECK, so the migration and this
+  // 20260923030000. Prisma cannot express a CHECK, so the migration and this
   // comment are its only record — the same arrangement every other CHECK in
   // this schema has. It is what lets `bookingOwner()` in
   // `src/lib/booking-owner.ts` promise a non-null owner projection to its
@@ -3307,7 +3307,7 @@ model PromoRedemptionAllocation {
   // exactly the rows that carry it. The scope is restored by two raw-SQL PARTIAL
   // unique indexes covering the null case — one per `@@unique`, each dropping
   // the member column and predicated on `"memberId" IS NULL` — added by
-  // 20260922010000 and registered in `prisma/partial-unique-indexes.tsv`:
+  // 20260923030000 and registered in `prisma/partial-unique-indexes.tsv`:
   //
   //   PromoRedemptionAllocation_promoRedemption_noMember_unique
   //   PromoRedemptionAllocation_promoCode_booking_noMember_unique
@@ -7948,7 +7948,7 @@ enum SchoolMemberClassificationKind {
 // never by a fallback and never by a name that looks school-ish.
 //
 // This table is where that answer lives, and the backfill migration
-// (20260922020000) READS it and refuses to write anything at all while any
+// (20260923040000) READS it and refuses to write anything at all while any
 // candidate row is missing from it. That is what "fails closed" means here: the
 // classification is an input to the migration, not something the migration
 // works out while it runs.

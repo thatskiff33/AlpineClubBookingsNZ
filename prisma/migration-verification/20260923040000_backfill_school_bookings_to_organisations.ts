@@ -63,7 +63,7 @@ const REQUESTS = `
 `;
 
 const verification: DataMigrationVerification = {
-  migration: "20260922020000_backfill_school_bookings_to_organisations",
+  migration: "20260923040000_backfill_school_bookings_to_organisations",
   intent:
     "Move the bookings of every member the club CLASSIFIED as an organisation onto that school's record, leave a real teacher's booking and an ordinary member's booking exactly as they are, carry the school's own Xero customer across without ever taking a person's, and change no amount anywhere.",
   idempotentReRun: false,
@@ -263,8 +263,8 @@ const verification: DataMigrationVerification = {
           {
             name: "in the operator's order, every booking goes back to the member that actually owned it",
             scripts: [
-              "20260922020000_backfill_school_bookings_to_organisations",
-              "20260922010000_booking_owner_optional_member",
+              "20260923040000_backfill_school_bookings_to_organisations",
+              "20260923030000_booking_owner_optional_member",
             ],
             expectations: [
               {
@@ -349,8 +349,8 @@ const verification: DataMigrationVerification = {
             // migrated database it exited 0 and did half a rollback. This run
             // is what keeps the four sentences calling it unconditional true.
             scripts: [
-              "20260922010000_booking_owner_optional_member",
-              "20260922020000_backfill_school_bookings_to_organisations",
+              "20260923030000_booking_owner_optional_member",
+              "20260923040000_backfill_school_bookings_to_organisations",
             ],
             raises: "school_reverse_wrong_order",
           },
@@ -360,7 +360,7 @@ const verification: DataMigrationVerification = {
             // Literally the shipped defect, restored. Two adversarial lenses
             // found it by reading; only this run finds it by running.
             name: "resolve the owner per ORGANISATION instead of per booking",
-            script: "20260922020000_backfill_school_bookings_to_organisations",
+            script: "20260923040000_backfill_school_bookings_to_organisations",
             harm: "Every booking of a twice-recorded school comes back owned by whichever of its rows has the lowest id. The other school's row ends up owning nothing, its converted request keeps a link to a record the script then cannot delete, and no screen in the application shows any of it.",
             find: `    COALESCE(
         (
@@ -388,21 +388,21 @@ const verification: DataMigrationVerification = {
           },
           {
             name: "unlink only one converted request per organisation",
-            script: "20260922020000_backfill_school_bookings_to_organisations",
+            script: "20260923040000_backfill_school_bookings_to_organisations",
             harm: "A second request spelling the same school keeps pointing at a record the club has rolled back, and the delete guard that exists to stop an organisation disappearing out from under a reference then refuses — so a record the script reports as removed survives the rollback.",
             find: `  AND req."convertedMemberId" = sm.member_id;`,
             replace: `  AND req."convertedMemberId" = (SELECT min(member_id) FROM "school_rollback_member" srm WHERE srm.organisation_id = sm.organisation_id);`,
           },
           {
             name: "clear the organisation's Xero customer instead of returning it",
-            script: "20260922020000_backfill_school_bookings_to_organisations",
+            script: "20260923040000_backfill_school_bookings_to_organisations",
             harm: "The school's Xero customer is dropped on the way back rather than returned to the member it came from. That provider link is the only thing tying years of invoices to the school, the member row that owns the booking again holds none, and the next invoice creates a duplicate customer.",
             find: `SET "xeroContactId" = x.organisation_xero_contact_id`,
             replace: `SET "xeroContactId" = NULL`,
           },
           {
             name: "drop the structural wrong-order guard",
-            script: "20260922010000_booking_owner_optional_member",
+            script: "20260923030000_booking_owner_optional_member",
             harm: "The two reverses can then be run in the wrong order on a club with no school bookings, which exits 0 having restored the shape without restoring the data — a half rollback reported as a success.",
             find: `        WHERE conname = 'Booking_owner_exactly_one'`,
             replace: `        WHERE conname = 'Booking_owner_exactly_one_never_added'`,
@@ -460,8 +460,8 @@ const verification: DataMigrationVerification = {
           {
             name: "refuses rather than guessing which of two rows owned which booking",
             scripts: [
-              "20260922020000_backfill_school_bookings_to_organisations",
-              "20260922010000_booking_owner_optional_member",
+              "20260923040000_backfill_school_bookings_to_organisations",
+              "20260923030000_booking_owner_optional_member",
             ],
             raises: "school_backfill_rollback_unreconstructable",
           },

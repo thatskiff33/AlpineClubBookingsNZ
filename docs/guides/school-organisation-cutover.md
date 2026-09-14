@@ -268,7 +268,7 @@ waiting for it.
 ### 7. Migrate
 
 Follow the windowed sequence in `DEPLOYMENT.md`. Nothing about it is special to
-this release except that two migrations — `20260922010000` and `20260922020000` —
+this release except that two migrations — `20260923030000` and `20260923040000` —
 are **one window and are never applied apart**.
 
 ### 8. Verify
@@ -314,11 +314,11 @@ repository root on the deploy host:
 ```bash
 docker compose exec -T postgres \
   sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
-  < prisma/migrations/20260922020000_backfill_school_bookings_to_organisations/rollback.sql
+  < prisma/migrations/20260923040000_backfill_school_bookings_to_organisations/rollback.sql
 
 docker compose exec -T postgres \
   sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
-  < prisma/migrations/20260922010000_booking_owner_optional_member/rollback.sql
+  < prisma/migrations/20260923030000_booking_owner_optional_member/rollback.sql
 ```
 
 `-v ON_ERROR_STOP=1` matters: without it `psql` prints the refusal and carries on
@@ -341,11 +341,11 @@ about a database that is back on the old model. To roll forward, re-apply the tw
 ```bash
 docker compose exec -T postgres \
   sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
-  < prisma/migrations/20260922010000_booking_owner_optional_member/migration.sql
+  < prisma/migrations/20260923030000_booking_owner_optional_member/migration.sql
 
 docker compose exec -T postgres \
   sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
-  < prisma/migrations/20260922020000_backfill_school_bookings_to_organisations/migration.sql
+  < prisma/migrations/20260923040000_backfill_school_bookings_to_organisations/migration.sql
 ```
 
 They are written to survive that: the classification table and its enum are kept
@@ -378,9 +378,9 @@ the club's data — so this table is the only place the identifiers can be decod
 | --- | --- | --- |
 | `school_member_classification_incomplete` from the backfill | At least one candidate row has no recorded decision. Almost always an officer approved another school booking between your last census and the window. | Run the census (step 1). It prints the list. Record the new rows (steps 3–4), then run the migration again. Nothing was written. |
 | `school_backfill_organisation_unresolved` from the backfill | A classified school row does not match the record minted from its own name. The fold is collapse-then-trim-then-cap, so this should not happen; if it does, the two names differ in a way the fold does not remove. | Stop and get help before re-running. The query in the next row lists the rows involved. |
-| `school_reverse_wrong_order` from `20260922010000/rollback.sql` | The two reverse scripts were run in the order they were applied. | Run `20260922020000/rollback.sql` first, then this one. See "Rolling back". |
-| `school_backfill_rollback_unreconstructable` from `20260922020000/rollback.sql` | A booking owned by a school has no member to give back — the new release has already created one, or two member rows spell one school and the booking request that would say which owned which is gone. | Stop. This is the point at which the reverse scripts are not a release rollback. Restore the verified backup taken immediately before the migration, with the owner leading. |
-| `school_backfill_rollback_xero_unreconstructable` from `20260922020000/rollback.sql` | A school record holds a Xero customer whose original owner cannot be proved from what is left. Returning it to the wrong member would misattribute a provider identity permanently and invisibly. | Stop, and restore from the backup as above. Do not hand the customer back by hand without checking Xero's own history first. |
+| `school_reverse_wrong_order` from `20260923030000/rollback.sql` | The two reverse scripts were run in the order they were applied. | Run `20260923040000/rollback.sql` first, then this one. See "Rolling back". |
+| `school_backfill_rollback_unreconstructable` from `20260923040000/rollback.sql` | A booking owned by a school has no member to give back — the new release has already created one, or two member rows spell one school and the booking request that would say which owned which is gone. | Stop. This is the point at which the reverse scripts are not a release rollback. Restore the verified backup taken immediately before the migration, with the owner leading. |
+| `school_backfill_rollback_xero_unreconstructable` from `20260923040000/rollback.sql` | A school record holds a Xero customer whose original owner cannot be proved from what is left. Returning it to the wrong member would misattribute a provider identity permanently and invisibly. | Stop, and restore from the backup as above. Do not hand the customer back by hand without checking Xero's own history first. |
 | `NOT READY` from the census, and the listed rows are all `CANNOT TELL` | Neither proof holds for those rows — or both do, which counts the same way. | Go and look at the club's records, then record each one with `--classify` (step 4). If a row genuinely cannot be settled, the cutover waits. |
 | The census prints a group under **ROWS THAT WILL BECOME ONE RECORD** that is two different schools | Two schools share a name after folding. | Split it before the window: record the proved rows first (step 3), then correct one school's name on its `/admin/members/<id>` page so the two no longer fold alike, and re-run the census until the group is gone. Nothing refuses the group for you, and merging them is not reversible. |
 

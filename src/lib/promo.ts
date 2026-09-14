@@ -294,7 +294,7 @@ function normalizeAllocations(
   // #3369: the fallback allocation is the BOOKER's, and an organisation-owned
   // booking has no booker member. No per-member entitlement is spent and no cap
   // slot is held, so the honest answer is no allocation row at all rather than
-  // one naming nobody. The partial unique indexes 20260922010000 adds are the
+  // one naming nobody. The partial unique indexes 20260923030000 adds are the
   // backstop for a null that gets in another way, not the reason for this.
   if (fallbackMemberId === null) return [];
 
