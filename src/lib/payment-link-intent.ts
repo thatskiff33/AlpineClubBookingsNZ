@@ -6,7 +6,10 @@
  * resolution and the refusal vocabulary it throws stay in `payment-link.ts`.
  */
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
-import { bookingOwner } from "@/lib/booking-owner";
+import {
+  bookingOwner,
+  bookingOwnerProviderMetadata,
+} from "@/lib/booking-owner";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -359,10 +362,16 @@ export async function createPaymentIntentForPaymentLink(
   });
 
   // Stripe calls stay outside the database transaction.
+  // #3369: the Stripe customer is keyed on WHO OWNS the booking. A school's
+  // is keyed on its organisation, which is what stops a second customer being
+  // minted for it on every payment. `memberId` here is the owning MEMBER's id
+  // and is null for a school, never the organisation's id wearing the wrong
+  // name.
   const customer = await findOrCreateCustomer({
     email: bookingOwner(booking).member.email,
     name: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
-    memberId: bookingOwner(booking).member.id,
+    memberId: bookingOwner(booking).memberId,
+    organisationId: booking.organisationId,
   });
 
   const paymentIntent = await createPaymentIntent({
@@ -370,7 +379,10 @@ export async function createPaymentIntentForPaymentLink(
     customerId: customer.id,
     metadata: {
       bookingId: booking.id,
-      memberId: bookingOwner(booking).memberId,
+      // #3369: a school's intent names its organisation, not a member that
+      // does not exist. `bookingId` is unchanged and is what every reader keys
+      // on.
+      ...bookingOwnerProviderMetadata(booking),
       paymentLinkId: link.id,
     },
     idempotencyKey: repaySupersededIntentId

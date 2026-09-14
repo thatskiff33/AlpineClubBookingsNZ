@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { bookingOwner } from "@/lib/booking-owner";
+import {
+  bookingOwner,
+  bookingOwnerProviderMetadata,
+} from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -663,10 +666,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Find or create Stripe customer
+    // #3369: the Stripe customer is keyed on WHO OWNS the booking. A school's
+    // is keyed on its organisation, which is what stops a second customer being
+    // minted for it on every payment. `memberId` here is the owning MEMBER's id
+    // and is null for a school, never the organisation's id wearing the wrong
+    // name.
     const customer = await findOrCreateCustomer({
       email: bookingOwner(booking).member.email,
       name: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
-      memberId: bookingOwner(booking).member.id,
+      memberId: bookingOwner(booking).memberId,
+      organisationId: booking.organisationId,
     });
 
     // Create the PaymentIntent at the credit-reduced effective amount (#1641).
@@ -684,7 +693,9 @@ export async function POST(request: NextRequest) {
       customerId: customer.id,
       metadata: {
         bookingId: booking.id,
-        memberId: bookingOwner(booking).memberId,
+        // #3369: a school's intent names its organisation. See
+        // `bookingOwnerProviderMetadata`.
+        ...bookingOwnerProviderMetadata(booking),
       },
       idempotencyKey: repaySupersededIntentId
         ? `pi_${booking.id}_repay_${repaySupersededIntentId}`

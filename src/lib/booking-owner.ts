@@ -274,6 +274,30 @@ export function bookingOwner<B extends BookingOwnerSource>(
 }
 
 /**
+ * The owner, as PROVIDER METADATA: exactly one key, naming what the owner is.
+ *
+ * Stripe metadata is a flat map of strings, and every booking-scoped intent the
+ * club creates carries its owner in one. Before #3369 that was always
+ * `memberId`, because a school WAS an invented member. Writing a school's
+ * organisation id under the name `memberId` would carry the school-as-person
+ * model straight into the provider, where nothing can correct it later and
+ * where a reconciliation reading it back would look up a member that does not
+ * exist.
+ *
+ * So a school's intent carries `organisationId` instead, and a person's carries
+ * `memberId` exactly as before. Spread it into the metadata literal. Every
+ * reader that matters keys on `bookingId`, which is unchanged.
+ */
+export function bookingOwnerProviderMetadata(
+  booking: BookingOwnerSource & { organisationId?: string | null },
+): { memberId: string } | { organisationId: string } {
+  const memberId = bookingOwner(booking).memberId;
+  if (memberId) return { memberId };
+  if (booking.organisationId) return { organisationId: booking.organisationId };
+  throw new BookingOwnerMissingError();
+}
+
+/**
  * Where the club can actually SEND to for this booking, or `null`.
  *
  * The projection's `email` is `""` for an organisation with no recorded
