@@ -4,6 +4,10 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import { getWaitlistOfferEmailDeliveries } from "@/lib/waitlist-offer-email-visibility";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
+import {
+  getBookingInvoiceSyncFault,
+  type BookingInvoiceSyncFault,
+} from "@/lib/booking-invoice-sync-status";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 
 /**
@@ -18,6 +22,7 @@ import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-vi
  */
 
 type BookingProviderMismatchId =
+  | "xero-invoice-sync-failed"
   | "xero-invoice-pending"
   | "xero-credit-note-pending"
   | "waitlist-offer-email-failed";
@@ -93,13 +98,88 @@ export interface BookingProviderMismatchDependencies {
   db: BookingProviderMismatchDb;
   loadEffectiveModuleFlags: typeof loadEffectiveModuleFlags;
   getWaitlistOfferEmailDeliveries: typeof getWaitlistOfferEmailDeliveries;
+  getBookingInvoiceSyncFault: typeof getBookingInvoiceSyncFault;
 }
 
 const defaultDependencies: BookingProviderMismatchDependencies = {
   db: prisma as unknown as BookingProviderMismatchDb,
   loadEffectiveModuleFlags,
   getWaitlistOfferEmailDeliveries,
+  getBookingInvoiceSyncFault,
 };
+
+/**
+ * #3001: what the officer looking at this booking is told about its Xero
+ * invoice, and what they should do next.
+ *
+ * WRITTEN FOR A TREASURER, NOT FOR A LOG. Each row answers the same three
+ * questions in the same order — what state this booking is in, what the club can
+ * see in Xero, and what happens next — because a raw provider exception tells
+ * the one person who can fix this nothing they can act on.
+ *
+ * THE SENTENCE THAT CHANGES MOST IS "DO NOT RAISE A SECOND INVOICE". Where the
+ * invoice already reached Xero the remedy inverts, and this class of partial
+ * failure has standing operator guidance across this product that says *do not
+ * repeat the action* (`docs/guides/xero.md`). A warning that showed a failure
+ * beside an unqualified Retry would be walking an officer toward a duplicate
+ * invoice in the club's accounts.
+ *
+ * THE LAST SENTENCE IS THE ENGINE'S, NOT OURS. When the existing recovery path
+ * refuses this operation, the refusal printed here is
+ * `getXeroOperationRetryMeta`'s own prose — so the booking page and the Xero
+ * operations screen can never tell an officer different things about one row,
+ * and the link's label says "Resolve" rather than "Retry" when there is no retry
+ * to offer.
+ */
+function describeBookingInvoiceSyncFault(
+  fault: BookingInvoiceSyncFault,
+  bookingId: string,
+): BookingProviderMismatch {
+  const invoice = fault.invoiceNumber
+    ? `Invoice ${fault.invoiceNumber}`
+    : "The invoice";
+
+  const { label, state } = {
+    INVOICE_NOT_RAISED: {
+      label: "No Xero invoice for this booking",
+      state:
+        "Raising this booking's invoice in Xero failed, so the club's accounts hold no invoice for it and nothing is asking the member to pay. The booking itself is unchanged — it has not been cancelled, and no money has moved.",
+    },
+    PAYMENT_NOT_RECORDED: {
+      label: "Xero has the invoice, but not the payment",
+      state: `${invoice} was raised in Xero, but recording the club's payment against it did not finish. Xero still shows it as awaiting payment for money the club already holds. Do not raise a second invoice.`,
+    },
+    MEMBER_NOT_SENT_INVOICE: {
+      label: "Xero has the invoice, but the member was not sent it",
+      state: `${invoice} was raised in Xero and is correct there, but sending it to the member failed, so they may not know what they owe. Do not raise a second invoice — the member needs the one that exists.`,
+    },
+    PARTLY_COMPLETED: {
+      label: "The Xero invoice completed only in part",
+      state: `${invoice} reached Xero, but a later step of the same operation did not finish. Do not repeat the action — check the invoice in Xero first, then resolve the operation from this booking's Xero activity.`,
+    },
+  }[fault.kind];
+
+  /*
+    The reason is `lastErrorMessage`, which `failXeroSyncOperation` put through
+    `redactSensitiveText` on the way in — the only provider text on the row that
+    has been redacted, and therefore the only one that may be shown to a person
+    (`INV-INT-005`). The projection supplies it for a failed row and never for a
+    partial one, where it would be the previous attempt's message.
+  */
+  const next = fault.retrySupported
+    ? "You can retry it from this booking's Xero activity."
+    : fault.retryBlockedReason;
+
+  return {
+    id: "xero-invoice-sync-failed",
+    label,
+    description: [state, fault.reason, next].filter(Boolean).join(" "),
+    href: buildXeroRecordActivityUrl("Booking", bookingId),
+    linkLabel: fault.retrySupported
+      ? "Retry from Xero activity"
+      : "Resolve from Xero activity",
+  };
+}
 
 export async function getBookingProviderMismatches(
   bookingId: string,
@@ -136,8 +216,32 @@ export async function getBookingProviderMismatches(
   const modules = await deps.loadEffectiveModuleFlags();
   const mismatches: BookingProviderMismatch[] = [];
 
+  /*
+    #3001: the canonical invoice-create operation for this booking, read whether
+    or not a payment row survives. The operation is STORED against the payment,
+    but it is found by the booking's own correlation key — a booking whose
+    payment row is missing or replaced would otherwise match nothing here and the
+    page would report all-clear over a failed invoice.
+  */
+  const invoiceSyncFault = modules.xeroIntegration
+    ? await deps.getBookingInvoiceSyncFault(booking.id)
+    : null;
+
+  if (invoiceSyncFault) {
+    mismatches.push(
+      describeBookingInvoiceSyncFault(invoiceSyncFault, booking.id),
+    );
+  }
+
   if (modules.xeroIntegration && booking.payment) {
-    if (booking.status === "PAID") {
+    /*
+      #3001: SUPPRESSED while a real failure is showing. This row says the outbox
+      "normally catches up on its own", which is true of a booking still waiting
+      and false of one whose operation has already failed — and the two rows
+      together would tell an officer both that nothing is wrong yet and that
+      something is. The precise row wins.
+    */
+    if (booking.status === "PAID" && !invoiceSyncFault) {
       const succeededInvoiceOperations = await deps.db.xeroSyncOperation.count({
         where: {
           entityType: "INVOICE",

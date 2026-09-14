@@ -1,3 +1,5 @@
+import type { XeroSyncOperation } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
 import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
@@ -174,23 +176,15 @@ const OPERATION_SELECT = {
   manuallyResolvedAt: true,
 } as const;
 
-type BookingInvoiceOperation = {
-  id: string;
-  status: string;
-  replayable: boolean;
-  direction: string;
-  entityType: string;
-  operationType: string;
-  localModel: string | null;
-  localId: string | null;
-  queueType: string | null;
-  requestPayload: unknown;
-  responsePayload: unknown;
-  xeroObjectId: string | null;
-  xeroObjectNumber: string | null;
-  lastErrorMessage: string | null;
-  manuallyResolvedAt: Date | null;
-};
+/**
+ * Derived from the Prisma row rather than hand-written, so the columns this
+ * reading takes stay exactly the columns the table has — and so the JSON fields
+ * keep the type `getXeroOperationRetryMeta` expects when the row is handed on.
+ */
+type BookingInvoiceOperation = Pick<
+  XeroSyncOperation,
+  keyof typeof OPERATION_SELECT
+>;
 
 /**
  * Classify a failed or partial invoice-create operation.
