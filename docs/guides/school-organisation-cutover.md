@@ -161,8 +161,31 @@ share a name would be merged here, with nothing on any screen to say it
 happened, and the reverse scripts cannot separate them again afterwards.
 
 The names are printed quoted so leading, trailing and doubled spaces are
-visible. If a group looks wrong, **stop and say so** — the answer is a decision
-about the club's records, not a flag on this tool.
+visible.
+
+**Nothing in the migration refuses a group you have not confirmed.** The club's
+decision is that same-named schools merge exactly as described above, and that an
+operator sees the groups first — so this check is a person's, and it has to be
+done before the window opens rather than during it. The reason it is a person's:
+the ordinary runtime resolve applies this same folding one booking at a time, in
+front of an officer who can see the name they just typed. Here it is applied in
+bulk, silently, inside an outage — and it is what makes the rollback lossy,
+because once two members' bookings sit under one organisation nothing records
+which booking belonged to which.
+
+**If you cannot confirm a group, split it.** Open the member row the census names
+— the id in the first column is its `/admin/members/<id>` page — and correct that
+school's name so the two no longer fold to the same thing: the campus, the town,
+the trust, whatever actually tells them apart. Then run the census again. The two
+rows now fold differently, the group is gone, and the backfill gives each school
+its own record.
+
+**Correct a name AFTER step 3, not before.** The school proof compares the
+member's name against the name on the booking request that converted it, so
+renaming a row that has no recorded decision yet turns it into a CANNOT TELL you
+then have to settle by hand in step 4. A decision already recorded is never
+re-checked — the backfill reads the recorded classification and folds whichever
+name the row now carries — so recording first and renaming second costs nothing.
 
 The record keeps the name, address and Xero customer of the first row by id. A
 second Xero customer stays on its own row, for an officer to merge in Xero
@@ -222,6 +245,11 @@ If it lists **RECORDED DECISIONS THAT CONTRADICT THE PROOFS**, read them. You ma
 well be right and the proof wrong — you can see the club's records and the program
 cannot — but it is worth seeing the disagreement now rather than discovering it
 afterwards.
+
+Read **ROWS THAT WILL BECOME ONE RECORD** again too, and check every group still
+listed is one you confirmed in step 2. Recording decisions changes which rows are
+grouped, because a row only joins a group once it is classified as a school — so
+a group can appear here that was not there the first time.
 
 ### 6. Run the census one last time, after the club is offline
 
@@ -354,7 +382,7 @@ the club's data — so this table is the only place the identifiers can be decod
 | `school_backfill_rollback_unreconstructable` from `20260922020000/rollback.sql` | A booking owned by a school has no member to give back — the new release has already created one, or two member rows spell one school and the booking request that would say which owned which is gone. | Stop. This is the point at which the reverse scripts are not a release rollback. Restore the verified backup taken immediately before the migration, with the owner leading. |
 | `school_backfill_rollback_xero_unreconstructable` from `20260922020000/rollback.sql` | A school record holds a Xero customer whose original owner cannot be proved from what is left. Returning it to the wrong member would misattribute a provider identity permanently and invisibly. | Stop, and restore from the backup as above. Do not hand the customer back by hand without checking Xero's own history first. |
 | `NOT READY` from the census, and the listed rows are all `CANNOT TELL` | Neither proof holds for those rows — or both do, which counts the same way. | Go and look at the club's records, then record each one with `--classify` (step 4). If a row genuinely cannot be settled, the cutover waits. |
-| The census prints a group under **ROWS THAT WILL BECOME ONE RECORD** that is two different schools | Two schools share a name after folding. | Stop before the window. Merging them is not reversible, and deciding what to do is a decision about the club's records. |
+| The census prints a group under **ROWS THAT WILL BECOME ONE RECORD** that is two different schools | Two schools share a name after folding. | Split it before the window: record the proved rows first (step 3), then correct one school's name on its `/admin/members/<id>` page so the two no longer fold alike, and re-run the census until the group is gone. Nothing refuses the group for you, and merging them is not reversible. |
 
 The query behind the second row, for whoever is helping:
 
