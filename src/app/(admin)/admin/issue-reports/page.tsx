@@ -16,6 +16,7 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import {
   IssueReportScreenshotBadge,
   IssueReportScreenshotPanel,
+  type IssueReportScreenshotState,
 } from "@/components/admin/issue-report-screenshot";
 import {
   AdminViewOnlySectionBanner,
@@ -54,12 +55,16 @@ type IssueReportSummary = {
   pageUrl: string;
   pageTitle: string | null;
   description: string;
-  screenshot: {
+  // `disposition` is the server's own classification and the ONE thing the
+  // badge and the panel switch on (`INV-PRIV-020`, #2703). `retained` and
+  // `withheld` ride along for the controls that ask those questions directly -
+  // the Delete button, and the expiry line - and are never re-combined here into
+  // a state the server already named.
+  screenshot: IssueReportScreenshotState & {
     capturedAt: string | null;
     expiresAt: string | null;
     deletedAt: string | null;
     retained: boolean;
-    /** `INV-PRIV-020` (#2703); see `IssueReportScreenshotState`. */
     withheld: boolean;
   };
   browserInfo: {
@@ -416,7 +421,12 @@ export default function AdminIssueReportsPage() {
                   <IssueReportScreenshotPanel
                     screenshot={selectedReport.screenshot}
                   />
-                  {selectedReport.screenshot.deleteReason ? (
+                  {selectedReport.screenshot.disposition === "deleted" &&
+                  selectedReport.screenshot.deleteReason ? (
+                    // Only for an administrator's deletion. An expiry stores the
+                    // internal `retention_expired` marker in the same column,
+                    // and printing that as a "reason" told an officer nothing
+                    // the panel above does not now say in English.
                     <p className="mt-2 text-xs text-muted-foreground">
                       Deletion reason: {selectedReport.screenshot.deleteReason}
                     </p>
