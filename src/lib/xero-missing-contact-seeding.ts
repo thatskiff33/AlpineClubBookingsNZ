@@ -67,7 +67,7 @@ import {
 } from "@/lib/xero-contacts";
 import { readXeroContactCacheFreshness } from "@/lib/xero-contact-cache-freshness";
 import { reportContactCacheFreshness } from "@/lib/xero-contact-cache-freshness-shape";
-import { ACTIVE_XERO_CONTACT_STATUS } from "@/lib/xero-contact-status";
+import { XERO_CONTACT_STATUS_ACTIVE } from "@/lib/xero-contact-status";
 import { getXeroGroupingMode } from "@/lib/xero-member-grouping";
 import {
   CALLS_PER_MEMBER_WITH_GROUPING,
@@ -290,7 +290,7 @@ async function loadCachedContacts(): Promise<{
     // home is `xero-contact-status.ts`. Spelling "ACTIVE" here again is how
     // this census and the erased-member review came to disagree about the same
     // column (#3058).
-    where: { contactStatus: ACTIVE_XERO_CONTACT_STATUS },
+    where: { contactStatus: XERO_CONTACT_STATUS_ACTIVE },
     select: {
       contactId: true,
       name: true,

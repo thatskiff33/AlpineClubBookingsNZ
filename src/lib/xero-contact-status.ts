@@ -51,19 +51,16 @@ export type XeroContactLiveness =
   | "GDPR_ERASED"
   | "UNRECOGNISED";
 
-/** Xero's own spellings, as they arrive in the cache column. */
+/**
+ * Xero's own spellings, as they arrive in the cache column.
+ *
+ * `XERO_CONTACT_STATUS_ACTIVE` is also what a Prisma `where` filters on, since
+ * a database filter cannot call {@link isActiveXeroContactStatus}. Same fact,
+ * spelled the way SQL needs it, so the census and the classifier cannot drift.
+ */
 export const XERO_CONTACT_STATUS_ACTIVE = "ACTIVE";
 export const XERO_CONTACT_STATUS_ARCHIVED = "ARCHIVED";
 export const XERO_CONTACT_STATUS_GDPR_REQUEST = "GDPRREQUEST";
-
-/**
- * The value a Prisma `where` uses to read only live contacts.
- *
- * Exported separately because a database filter cannot call
- * {@link isActiveXeroContactStatus}; it is the same fact, spelled the way SQL
- * needs it, so the census and the classifier cannot drift apart.
- */
-export const ACTIVE_XERO_CONTACT_STATUS = XERO_CONTACT_STATUS_ACTIVE;
 
 export function classifyXeroContactStatus(
   raw: string | null | undefined,

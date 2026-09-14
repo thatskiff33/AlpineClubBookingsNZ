@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import { Contact } from "xero-node";
 
 import {
-  ACTIVE_XERO_CONTACT_STATUS,
+  XERO_CONTACT_STATUS_ACTIVE,
   classifyXeroContactStatus,
   isActiveXeroContactStatus,
   type XeroContactLiveness,
@@ -75,6 +75,6 @@ describe("Xero contact status classification (#3058)", () => {
   it("gives the database filter and the predicate the same answer", () => {
     // The census filters SQL-side and cannot call the predicate, so the one
     // constant it uses must be a status the predicate also calls active.
-    expect(isActiveXeroContactStatus(ACTIVE_XERO_CONTACT_STATUS)).toBe(true);
+    expect(isActiveXeroContactStatus(XERO_CONTACT_STATUS_ACTIVE)).toBe(true);
   });
 });

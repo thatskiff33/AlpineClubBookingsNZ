@@ -194,9 +194,30 @@ export async function getErasedMemberXeroContactReview(options?: {
     one are not erasures at all, and the two filters below are what separate
     them.
 
-    Unbounded by shape and bounded in fact: a row here is one member whose
-    contact link was retired, so the population is erasures plus merges plus
-    manual unlinks, not the member table.
+    ## The read is unbounded, deliberately, and here is the cost
+
+    Two reviewers disagreed about this and BOTH were partly right, so the
+    measurement is written down rather than left to be re-argued.
+
+    It is not a sequential scan: `@@index([localModel, localId, active])` can be
+    used as an index PREFIX on `localModel = 'Member'`. But that correction does
+    not make it cheap, because `'Member'` is not selective — nearly every
+    `XeroObjectLink` row carries it — so the prefix scan reads most of the index
+    plus a heap fetch per row, and the result feeds an `in` list to four further
+    queries.
+
+    It stays unbounded anyway, because the alternatives are worse. A `take`
+    would make `needsReview` and `alreadyRetiredInXero` lie: this shape's
+    contract is that the COUNTS are the whole population and only `rows` is
+    capped, which is what lets a treasurer see the backlog they are working
+    through. And the population is genuinely small and slowly grown — erasures,
+    merges, manual unlinks, stale-link cleanups and school transfers, over the
+    life of one club — not the member table and not a per-booking volume.
+
+    What would make it exact is a composite index on
+    `(localModel, xeroObjectType, active)`, which is a migration, and a migration
+    prefix has to be reserved on the epic before one is written. Left as a stated
+    limit rather than done half-way.
   */
   const retiredLinks = await prisma.xeroObjectLink.findMany({
     where: { localModel: "Member", xeroObjectType: "CONTACT", active: false },

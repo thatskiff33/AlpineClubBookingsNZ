@@ -438,53 +438,36 @@ The bounded run; its census is `INV-INT-022`.
 
 ### INV-INT-024
 
-Erasure changes nothing in Xero; this review is how anybody finds out what it
-left behind.
+No erasure path asks Xero to change, archive, blank or delete the member's
+CONTACT; this review is how anybody finds out what an erasure left behind.
 
-- **No erasure path asks Xero to change, archive, blank or delete the member's
-  CONTACT.** Both erasure paths — the approved `DeletionRequest` anonymisation
-  and the approved lifecycle `DELETE` — reach exactly ONE Xero-named module, for
-  the contact-create fence, and take only reads and a refusal from it; neither
-  names a provider call or an outbox enqueue; and `findOrCreateXeroContact`
-  refuses an anonymised member before any provider call, so even a credit note's
-  contact REPAIR cannot mint a contact for the person just erased. Local erasure
-  never waits on Xero, and there is no provider-cleanup queue, destructive retry
-  state or `erasure pending Xero` state for a replay to create.
-- **It is NOT free of Xero writes altogether, and the guard says which.**
-  Erasure cancels the member's future bookings, and cancelling a paid one
-  enqueues a credit note — a write in the accounting LEDGER, identical to any
-  other cancellation's, touching no contact. Every directly imported module that
-  reaches Xero is declared by name with its reason in
-  `member-erasure-no-xero-mutation-contract.test.ts`; a new one fails. That
-  check is deliberately one level deep, because 31 of the 358 modules in the
-  anonymising erasure's transitive graph reach Xero and an allowlist over those
-  would be a census rather than a guard.
-- **A retired contact link is NOT an erasure.** Four other paths retire one —
-  the merge-loser teardown, the admin manual unlink, the stale-canonical-link
-  cleanup and the `INV-INT-020` transfer — so the erasure is proved POSITIVELY
-  from whichever durable decision record outlives it. Never from the
-  anonymisation markers, which `INV-LIFE-015` calls a strong signal rather than a
-  schema invariant, and which a hard delete leaves no row to carry.
-- **A contact anything local still points at was never orphaned.** Ownership is
-  read through `INV-INT-018`'s one accessor, over both columns, so a school's
-  live Xero customer is never reported as abandoned.
-- **Ids only, to `finance:view`, on both verbs.** A notice quoting an erased
-  member defeats the erasure it reports on, so a row carries a member id, a
+- **No Xero contact write, on any erasure path.** Neither erasure source names a
+  provider call or an outbox enqueue; each reaches one Xero-named module, the
+  contact-create fence; and `findOrCreateXeroContact` refuses an anonymised
+  member before any provider call, so a credit note's contact repair cannot mint
+  one either. Erasure never waits on Xero; no provider-cleanup state exists for
+  a replay to create.
+- **Erasure is not free of Xero writes, and the guard names which.** Cancelling
+  the member's paid future bookings enqueues a credit note — the accounting
+  ledger, not the contact. Every directly imported module reaching Xero is
+  declared in the contract test.
+- **A retired contact link is NOT an erasure.** Four other paths retire one, so
+  the erasure is proved POSITIVELY from a durable decision record — never from
+  the anonymisation markers (`INV-LIFE-015`), which a hard delete leaves no row
+  to carry.
+- **A contact anything local still points at was never orphaned.** Ownership
+  goes through `INV-INT-018`'s one accessor, over both columns.
+- **Ids only, to `finance:view`, on both verbs.** A row carries a member id, a
   contact id, the erasure kind and its date. The contact cache is read for
-  `contactId` and `contactStatus` alone; its other columns hold the erased
-  person's name, email, phone and address. The live status check keeps ONE field
-  of Xero's answer — the status — and writes no `XeroContactCache` row: a full
-  refresh would re-import those details, and a status-only stub would
-  manufacture the NZBN write permission the erasure deletes the row to remove.
-- **A row is retired only by observing Xero, and otherwise stays.** Nothing
-  local can see a treasurer archive a contact: the bulk contact sync's only
-  changed-contact fetcher passes `includeArchived: false`, and the erasure
-  deleted the cache row. So the `POST` — `getContacts` over exactly the listed
-  ids, archived included, stamping the status on the retired `CONTACT` link — is
-  the one thing that makes the list shrink, and no document may say Contact Sync
-  does. A contact left live in Xero stays listed indefinitely, which is the
-  intended retention: the orphaned customer really is still there. Pinned by
-  `xero-erased-member-contact-review.test.ts`,
-  `xero-erased-member-contact-status-check.test.ts`,
-  `member-erasure-no-xero-mutation-contract.test.ts`,
-  `erased-member-contacts-panel.test.tsx`.
+  `contactId` and `contactStatus` alone; the live check keeps only the status
+  and writes no `XeroContactCache` row.
+- **A row is retired only by observing Xero, and otherwise stays.** The `POST` —
+  `getContacts` over the listed ids, archived included — is the one thing that
+  makes the list shrink; no document may say Contact Sync does. A contact left
+  live in Xero stays listed indefinitely.
+
+Rationale: [`xero/ARCHITECTURE.md`](../xero/ARCHITECTURE.md). Pinned by
+`xero-erased-member-contact-review.test.ts`,
+`xero-erased-member-contact-status-check.test.ts`,
+`member-erasure-no-xero-mutation-contract.test.ts`,
+`erased-member-contacts-panel.test.tsx`.
