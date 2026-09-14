@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/access-roles", () => ({ isFullAdmin: mocks.isFullAdmin }));
-vi.mock("@/lib/mirotalk-config", () => ({
+vi.mock("@/lib/mirotalk-config-write", () => ({
   setMirotalkSecret: mocks.setMirotalkSecret,
   clearMirotalkSecret: mocks.clearMirotalkSecret,
 }));

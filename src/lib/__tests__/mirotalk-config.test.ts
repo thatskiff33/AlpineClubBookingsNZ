@@ -50,13 +50,15 @@ vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.createAuditLog }));
 
 import {
   buildMeetingJoinUrl,
-  clearMirotalkSecret,
-  clearMirotalkSecretsForAddressMove,
   getMirotalkConfigurationStatus,
   resetMirotalkWarningsForTests,
+} from "@/lib/mirotalk-config";
+import {
+  clearMirotalkSecret,
+  clearMirotalkSecretsForAddressMove,
   setMirotalkSecret,
   writeMirotalkSettings,
-} from "@/lib/mirotalk-config";
+} from "@/lib/mirotalk-config-write";
 import { MIROTALK_CREDENTIAL_KEYS } from "@/lib/mirotalk-settings-shared";
 
 const MIRO_ENV_KEYS = [

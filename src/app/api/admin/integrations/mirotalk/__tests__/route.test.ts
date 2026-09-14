@@ -30,9 +30,11 @@ vi.mock("@/lib/audit", () => ({
   getAuditRequestContext: mocks.getAuditRequestContext,
 }));
 vi.mock("@/lib/mirotalk-config", () => ({
-  clearMirotalkSecretsForAddressMove: mocks.clearMirotalkSecretsForAddressMove,
   getMirotalkConfigurationStatus: mocks.getMirotalkConfigurationStatus,
   readMirotalkStoredSettings: mocks.readMirotalkStoredSettings,
+}));
+vi.mock("@/lib/mirotalk-config-write", () => ({
+  clearMirotalkSecretsForAddressMove: mocks.clearMirotalkSecretsForAddressMove,
   writeMirotalkSettings: mocks.writeMirotalkSettings,
 }));
 

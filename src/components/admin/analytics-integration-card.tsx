@@ -35,12 +35,8 @@ import {
 } from "@/hooks/use-section-edit-state";
 // `analytics-settings-shared`, never `analytics-settings`: the latter is
 // `server-only`, and importing a VALUE from it here fails `npm run build` with
-// "'server-only' cannot be imported from a Client Component module". See that
-// module's header. It is NOT unguarded until then, as this comment used to
-// say: `client-server-boundary-census.test.ts` walks the real import graph from
-// every `"use client"` module and fails this exact path, naming it
-// `this file -> analytics-settings -> server-only`, inside the REQUIRED
-// `verify` check.
+// "'server-only' cannot be imported from a Client Component module" — and fails
+// `client-server-boundary-census.test.ts` first, in the REQUIRED `verify` check.
 import {
   ANALYTICS_BANNER_MESSAGE_MAX_LENGTH,
   ANALYTICS_STATUS_LABELS,

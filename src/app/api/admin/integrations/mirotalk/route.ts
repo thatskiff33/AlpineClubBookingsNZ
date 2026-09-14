@@ -8,11 +8,13 @@ import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { isFullAdmin } from "@/lib/access-roles";
 import { requireAdmin } from "@/lib/session-guards";
 import {
-  clearMirotalkSecretsForAddressMove,
   getMirotalkConfigurationStatus,
   readMirotalkStoredSettings,
-  writeMirotalkSettings,
 } from "@/lib/mirotalk-config";
+import {
+  clearMirotalkSecretsForAddressMove,
+  writeMirotalkSettings,
+} from "@/lib/mirotalk-config-write";
 import {
   MIROTALK_BASE_URL_MAX_LENGTH,
   MIROTALK_CREDENTIAL_LABELS,

@@ -10,7 +10,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { StaleCredentialWriteError } from "@/lib/integration-credential-actor";
 import { INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH } from "@/lib/integration-credentials";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
-import { clearMirotalkSecret, setMirotalkSecret } from "@/lib/mirotalk-config";
+import { clearMirotalkSecret, setMirotalkSecret } from "@/lib/mirotalk-config-write";
 import {
   MIROTALK_CREDENTIAL_KEYS,
   MIROTALK_CREDENTIAL_LABELS,

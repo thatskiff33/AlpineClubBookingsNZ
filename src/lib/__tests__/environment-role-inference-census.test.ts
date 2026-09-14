@@ -214,7 +214,19 @@ const NOT_ENVIRONMENT_SAFETY_READS: Allowance[] = [
       "Refuses the demo seed when NODE_ENV=production. A refusal in the SAFE direction, and it takes its environment as a parameter rather than reading the process.",
   },
   {
-    file: "src/lib/calendar-events.ts",
+    // MOVED, not added (#2940): this is the same one read, relocated from
+    // `calendar-events.ts` when the join-URL builder became the MiroTalk
+    // resolver. Still warn-only — `loopbackFallback()` returns the same address
+    // on both sides of the `if`, so NODE_ENV decides log volume and nothing
+    // else. It is also the right question to ask here: "is this a production
+    // BUILD" is what separates a developer running `next dev`, where resolving
+    // to localhost:3010 is the expected answer, from a deploy where it means
+    // nothing is configured. Whether the installation is PRODUCTION — the
+    // question `getEnvironmentRole()` answers from the declaration and the
+    // database override — would not change the address either, and asking it
+    // would put a database read on the per-click join path to decide whether to
+    // print a line.
+    file: "src/lib/mirotalk-config.ts",
     reads: 1,
     reason:
       "Warn-only: logs once when the loopback MiroTalk fallback is used in production.",

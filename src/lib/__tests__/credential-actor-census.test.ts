@@ -152,9 +152,18 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
   // between makes the write lose. The clear is the one that needs it most: it
   // is a genuine read-modify-write, and an unconditional delete would remove
   // whatever replaced the secret and report success.
-  "src/lib/mirotalk-config.ts::clearMirotalkSecret#0":
+  "src/lib/mirotalk-config-write.ts::clearMirotalkSecret#0":
     "deleteIntegrationCredential (forwarded) params.actor / (forwarded) params.expect",
-  "src/lib/mirotalk-config.ts::setMirotalkSecret#0":
+  // The THIRD #2940 site, and the one that does not follow the pair above: it
+  // declares `any` on purpose. Changing the meeting server address clears the
+  // secrets paired with the old server, which is a consequence of a different
+  // write rather than a read-modify-write an administrator performed — the
+  // intended end state is "gone" however many times somebody replaced it in
+  // between, so a version fence here would make the clear lose for the wrong
+  // reason. Its own docblock carries that argument.
+  "src/lib/mirotalk-config-write.ts::clearMirotalkSecretsForAddressMove#0":
+    "deleteIntegrationCredential (forwarded) params.actor / any",
+  "src/lib/mirotalk-config-write.ts::setMirotalkSecret#0":
     "setIntegrationCredential (forwarded) params.actor / (forwarded) params.expect",
   "src/lib/servernz-config.ts::clearServerNzApiKey#0":
     "deleteIntegrationCredential (forwarded) actor / any",
@@ -191,9 +200,11 @@ const ACTOR_FORWARDED_SITES: Record<string, string> = {
   "src/app/api/admin/backups/config/route.ts::POST#8": "same hoisted admin actor",
   "src/lib/google-config.ts::clearGoogleVerified#0":
     "the actor is this helper's own required parameter: a verify-reset belongs to the administrator whose credential write caused it, not to a background job",
-  "src/lib/mirotalk-config.ts::clearMirotalkSecret#0":
+  "src/lib/mirotalk-config-write.ts::clearMirotalkSecret#0":
     "the actor and the expectation are both this helper's own required parameters, supplied by the admin route that holds the acting member and the version the screen was shown",
-  "src/lib/mirotalk-config.ts::setMirotalkSecret#0":
+  "src/lib/mirotalk-config-write.ts::clearMirotalkSecretsForAddressMove#0":
+    "the actor is this helper's own required parameter, supplied by the settings route that holds the acting member; the expectation is a deliberate literal `any` rather than a forwarded one, argued at the site",
+  "src/lib/mirotalk-config-write.ts::setMirotalkSecret#0":
     "the actor and the expectation are both this helper's own required parameters, supplied by the admin route that holds the acting member and the version the screen was shown",
   "src/lib/servernz-config.ts::clearServerNzApiKey#0":
     "the actor is this helper's own required parameter, supplied by its caller",
