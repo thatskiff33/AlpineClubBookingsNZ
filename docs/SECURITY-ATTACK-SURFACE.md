@@ -465,6 +465,24 @@ every signature-verified test-mode event, so it is written only when the
 freshness answer would actually change, rather than minting a seven-year row per
 delivery.
 
+**What this contract covers, and what it does not.** Everything above is about
+the `IntegrationCredential` table. Two other secrets are stored elsewhere and
+are outside it, which is worth saying plainly on the page an operator reads to
+plan a rotation or reconstruct an incident:
+
+- **The Xero access and refresh tokens** (`XeroToken`) are their own table, with
+  no actor column and no audit row on any write or delete. `deleteXeroTokens()`
+  wipes them from the verify-reset path described above and from the OAuth
+  disconnect, so an administrator changing a Xero client credential destroys a
+  live provider grant and the trail records the credential write beside it but
+  nothing about the tokens.
+- **A member's TOTP secret** (`Member.totpSecret`) is encrypted at rest and
+  written at enrolment with no audit row of its own.
+
+Neither is a regression — both predate this contract and neither ever carried
+attribution — and neither is in this issue's scope. They are named here so the
+section is not read as covering every stored secret.
+
 **What the census can and cannot see.** It enumerates every DIRECT CALL of the
 three store mutators, found by walking the tree — not every function that
 ultimately causes a credential to change. A wrapper hides its own callers:
