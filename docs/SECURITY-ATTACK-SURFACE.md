@@ -3978,3 +3978,41 @@ global); the G5 observability gap is partially closed by design.
 - **D2 — `getClientIp` trusting `x-real-ip`: ratified.** Removing it breaks
   non-Caddy deploys; the "Caddy always fronts" deployment invariant stands. The
   rate-limiter degraded mode (issue #1142) is documented above.
+
+## Administrator Raw CSS Versus Secret Inputs - 2026-09-14
+
+Issue #2981. **Administrator-authored Raw CSS on `(website)` / `(website-dynamic)`
+could read a typed kiosk PIN one character at a time, and it was reproducible in
+every supported browser engine.** Fixed; the standing rule, the mechanism and the
+guards are stated once in [`SECURITY.md`](SECURITY.md) → "Secret entry on pages
+that carry Raw CSS" and are not restated here.
+
+What this section records is the **measurement**, because the issue was opened on
+jsdom evidence and the whole question was whether a real browser behaves that way.
+It does. On 14 Sep 2026, with React 19.2.8 and the shipped controlled-input shape
+of `input#hut-leader-pin`:
+
+| Engine | typed value in `el.value` | typed value in the `value` **attribute** | `[value^="14"]` matched | CSS engine applied the matched rule |
+| --- | --- | --- | --- | --- |
+| Chromium 153.0.8010.12 | yes | **yes** | **yes** | **yes** (`getComputedStyle` changed per prefix) |
+| Firefox 155.0 | yes | **yes** | **yes** | **yes** |
+| WebKit 26.6 | yes | **yes** | **yes** | **yes** |
+
+Identical at every keystroke and after paste, mid-string edit, rerender and
+submit; `el.defaultValue` tracked the live value throughout, which is the
+mechanism (`react-dom` writes `defaultValue`, and `defaultValue` reflects to the
+`value` content attribute).
+
+- **Actor.** A content/styling administrator, who is deliberately **not** inside
+  the kiosk-PIN trust boundary — the boundary #2827 drew for the group-join
+  payment token. Exfiltration needs no script: a conditional `url()` in a matched
+  rule is enough, and the club's CSP permits `style-src 'unsafe-inline'` (ratified
+  trade-off D1 above) and broad `img-src https:`.
+- **Blast radius.** The kiosk PIN is **shared** and gates the remote lodge
+  instructions plus the kiosk sign-in, so recovery is not confined to one person's
+  session.
+- **Not in scope, and why.** Raw CSS itself stays — the product decision is
+  settled (#2827) and the exposure was narrower than the feature. Ordinary text
+  fields on the same pages are not secrets. `:placeholder-shown` (empty or not)
+  and `:valid`/`:invalid` (satisfies `pattern` or not) remain observable by a
+  stylesheet; neither is character-wise and neither recovers the secret.
