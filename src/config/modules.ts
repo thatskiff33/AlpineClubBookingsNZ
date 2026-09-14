@@ -34,6 +34,7 @@ export const MODULE_KEYS = [
   "memberGuests",
   "aiDiagnostics",
   "maintenanceReports",
+  "memberLodgeRoster",
   "alpineCentralServer",
   "commsPortal",
 ] as const;
@@ -177,6 +178,11 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   // post from this module publishes member-written content to other clubs.
   // An upgrade must not start doing that because nobody opted out (#2993).
   commsPortal: false,
+  // Default OFF, inverting the general ON rule above on purpose: switching the
+  // roster on shows one member's stay pattern — which lodge, which nights — to
+  // every other member who can book that lodge. An upgrade must not start
+  // doing that because nobody opted out (#2942).
+  memberLodgeRoster: false,
 };
 
 export interface ModuleDefinition {
@@ -467,6 +473,17 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "The board works with no central-server connection: posts are club-only unless a member ticks 'share with all clubs'.",
       "Sharing a post with other clubs additionally needs the Alpine Central Server module switched on and connected.",
       "When off, the member board and its admin screens return Not Found. Existing posts are kept and reappear when it is switched back on.",
+    ],
+  },
+  memberLodgeRoster: {
+    key: "memberLodgeRoster",
+    label: "Member lodge roster",
+    description:
+      "Let a signed-in member see who else is staying, for the next 30 nights, at a lodge they can already book. Names and nights only — no contact details, no prices and no booking information. SHOWS MEMBERS TO EACH OTHER: a member's name and the nights they are staying become visible to every other member with access to that lodge, and there is no way for an individual to hide themselves. Off unless you turn it on.",
+    dependencies: [
+      "Choose how much of a name is shown for each lodge under Admin → Lodges → the lodge → Member roster. The default shows full names.",
+      "A booking that includes a child never names anyone in it: it shows a family or group label instead, at every setting.",
+      "When off, the roster page returns Not Found and no roster data is read.",
     ],
   },
 };

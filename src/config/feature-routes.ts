@@ -275,6 +275,23 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     ],
   },
   {
+    // Member lodge roster (#2942). The module is the only switch, and the
+    // page re-checks the flag itself as well so the gate does not live only in
+    // middleware — a module gate that lived only there shipped bypassed once
+    // already (#2780).
+    //
+    // The name is deliberately NOT "/roster": "/lodge/roster" is the kiosk
+    // chore roster and a prefix rule on "/roster" would read as covering it.
+    //
+    // There is no API prefix to list because the roster is rendered entirely
+    // on the server and exposes no endpoint of its own. The per-lodge name
+    // detail is edited through the existing lodge admin route, which belongs
+    // to the Lodges area rather than to this module — an admin must still be
+    // able to see and change the setting while the roster is switched off.
+    flag: "memberLodgeRoster",
+    prefixes: ["/lodge-roster"],
+  },
+  {
     // Alpine Central Server (ServerNZ). Admin -> Modules is the master switch,
     // and for THIS module that is load-bearing rather than tidy: the feature
     // uploads club and booking-officer contact details to a third party which

@@ -195,7 +195,7 @@ beforeEach(() => {
 
 describe("reduceName / bookingLabel / clamp / config (pure rules)", () => {
   it("reduces adult names per level", async () => {
-    const { reduceName } = await import("@/lib/lodge-display-state");
+    const { reduceName } = await import("@/lib/display-name-granularity");
     expect(reduceName("Jane", "Smith", "FULL_NAME")).toBe("Jane Smith");
     expect(reduceName("Jane", "Smith", "FIRST_NAME_SURNAME_INITIAL")).toBe("Jane S");
     expect(reduceName("Jane", "Smith", "FIRST_NAME_ONLY")).toBe("Jane");
@@ -203,7 +203,7 @@ describe("reduceName / bookingLabel / clamp / config (pure rules)", () => {
   });
 
   it("labels organisations with their full name at every level", async () => {
-    const { bookingLabel } = await import("@/lib/lodge-display-state");
+    const { bookingLabel } = await import("@/lib/display-name-granularity");
     const org = { firstName: "Harakeke", lastName: "College", ageTier: "NOT_APPLICABLE" as const };
     for (const level of ["FULL_NAME", "FIRST_NAME_SURNAME_INITIAL", "FIRST_NAME_ONLY", "COUNTS_ONLY"] as const) {
       expect(bookingLabel(org, { granularity: level, containsMinors: true, guestCount: 14 })).toBe("Harakeke College");
@@ -211,7 +211,7 @@ describe("reduceName / bookingLabel / clamp / config (pure rules)", () => {
   });
 
   it("labels bookings with minors as a family, never naming the child", async () => {
-    const { bookingLabel } = await import("@/lib/lodge-display-state");
+    const { bookingLabel } = await import("@/lib/display-name-granularity");
     expect(
       bookingLabel(ADULT_ORGANISER, { granularity: "FIRST_NAME_SURNAME_INITIAL", containsMinors: true, guestCount: 4 })
     ).toBe("Organiser family");
