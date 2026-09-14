@@ -443,6 +443,19 @@ export async function allocateAppliedCreditForBooking(
     await completeSkip(syncOperationId, "No booking or payment.");
     return;
   }
+  // #3369: every write below lands in a MEMBER's credit ledger — the notes, the
+  // allocations, the lock that serialises them. An organisation-owned booking
+  // has no such ledger and can hold no applied credit, so there is nothing here
+  // to do. Resolved once, at the top, so no statement further down has to ask
+  // again.
+  const creditOwnerMemberId = bookingOwner(booking).memberId;
+  if (!creditOwnerMemberId) {
+    await completeSkip(
+      syncOperationId,
+      "The booking is owned by an organisation, which holds no member credit.",
+    );
+    return;
+  }
   const payment = booking.payment;
   // Payment-method-agnostic (#1620/#1641): the engine keys on the booking's
   // invoice + BOOKING_APPLIED ledger, never on payment.source. The enqueue call
@@ -467,7 +480,7 @@ export async function allocateAppliedCreditForBooking(
   // 1) LOCAL: plan the allocation and persist the note-allocation join rows under
   // the ledger lock. Mint-slice join rows are written after the note is minted.
   const plan = await prisma.$transaction(async (tx) => {
-    const creditLedgerMemberId = bookingOwner(booking).memberId;
+    const creditLedgerMemberId = creditOwnerMemberId;
     // #3369: applied credit is a MEMBER ledger entry, so an organisation-owned
     // booking has no ledger to lock and cannot reach this worker with credit
     // applied. A null key would degenerate to a shared advisory key, which is
@@ -485,7 +498,7 @@ export async function allocateAppliedCreditForBooking(
     if (lockedApplied === 0) {
       return null; // a concurrent run already stamped it
     }
-    const lots = await gatherAppliedCreditLots(bookingOwner(booking).memberId, bookingId, tx);
+    const lots = await gatherAppliedCreditLots(creditOwnerMemberId, bookingId, tx);
     const planned = planAppliedCreditAllocation(lots, lockedApplied);
     for (const na of planned.noteAllocations) {
       await tx.memberCreditNoteAllocation.upsert({
@@ -558,7 +571,7 @@ export async function allocateAppliedCreditForBooking(
   if (plan.mintTotalCents > 0) {
     remainderNoteId = await mintAppliedCreditRemainderNote({
       bookingId,
-      memberId: bookingOwner(booking).memberId,
+      memberId: creditOwnerMemberId,
       paymentId: payment.id,
       amountCents: plan.mintTotalCents,
       // Goodwill and a member's own refunded money post to different Xero
@@ -570,7 +583,7 @@ export async function allocateAppliedCreditForBooking(
     const mintedNoteId = remainderNoteId;
 
     await prisma.$transaction(async (tx) => {
-      const creditLedgerMemberId = bookingOwner(booking).memberId;
+      const creditLedgerMemberId = creditOwnerMemberId;
       // #3369: applied credit is a MEMBER ledger entry, so an organisation-owned
       // booking has no ledger to lock and cannot reach this worker with credit
       // applied. A null key would degenerate to a shared advisory key, which is
@@ -637,7 +650,7 @@ export async function allocateAppliedCreditForBooking(
     plan.noteAllocations[0]?.xeroCreditNoteId ?? remainderNoteId;
   if (representativeNoteId) {
     await prisma.$transaction(async (tx) => {
-      const creditLedgerMemberId = bookingOwner(booking).memberId;
+      const creditLedgerMemberId = creditOwnerMemberId;
       // #3369: applied credit is a MEMBER ledger entry, so an organisation-owned
       // booking has no ledger to lock and cannot reach this worker with credit
       // applied. A null key would degenerate to a shared advisory key, which is

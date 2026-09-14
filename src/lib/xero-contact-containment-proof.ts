@@ -452,8 +452,15 @@ export async function requireContainedXeroContactForInvoiceOperation(params: {
    * this operation will leave outstanding. Resolved lazily — see the docblock.
    */
   resolveXeroContactId: () => Promise<string | null | undefined>;
-  /** Fingerprint source ONLY. Never used to choose the contact. */
-  memberId: string;
+  /**
+   * Fingerprint source ONLY. Never used to choose the contact.
+   *
+   * Null since #3369, when the booking is owned by an `Organisation`: there is
+   * no member whose address the contained contact is compared against. The
+   * containment proof itself is unchanged — it is about the CONTACT Xero would
+   * email, which is resolved independently.
+   */
+  memberId: string | null;
   workflow: string;
   xero?: XeroContactContainmentClient | XeroClient;
   tenantId?: string;
@@ -463,10 +470,13 @@ export async function requireContainedXeroContactForInvoiceOperation(params: {
 
   const [xeroContactId, member] = await Promise.all([
     params.resolveXeroContactId(),
-    prisma.member.findUnique({
-      where: { id: params.memberId },
-      select: { email: true },
-    }),
+    params.memberId
+      ? prisma.member.findUnique({
+          where: { id: params.memberId },
+          select: { email: true },
+        })
+      : // #3369: an organisation-owned booking has no member address to compare.
+        null,
   ]);
   if (!xeroContactId) {
     throw new XeroContactContainmentError(
@@ -474,7 +484,7 @@ export async function requireContainedXeroContactForInvoiceOperation(params: {
       "This installation is a copy, and the Xero contact this operation would " +
         "act on cannot be identified from here, so it cannot be proved that " +
         "Xero is unable to email a real member about it. Nothing was written to " +
-        `Xero. Resolve the Xero contact for member ${params.memberId} first — ` +
+        `Xero. Resolve the Xero contact for ${params.memberId ? `member ${params.memberId}` : "the booking's organisation"} first — ` +
         "raising or re-opening an invoice does that (INV-CONFIG-005).",
     );
   }

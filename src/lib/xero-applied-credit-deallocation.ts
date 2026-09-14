@@ -649,6 +649,20 @@ export async function deallocateExcessAppliedCreditForBooking(
     return;
   }
 
+  // #3369: deallocation removes credit from a MEMBER's ledger, and an
+  // organisation-owned booking has none to remove — it can never have had
+  // applied credit in the first place. Resolved once, at the top.
+  const creditOwnerMemberId = bookingOwner(booking).memberId;
+  if (!creditOwnerMemberId) {
+    await completeXeroSyncOperation(options.syncOperationId, {
+      responsePayload: {
+        skipped: true,
+        reason: "The booking is owned by an organisation, which holds no member credit.",
+      },
+    });
+    return;
+  }
+
   /*
     INV-CONFIG-005 (#3036): deallocation REMOVES credit from an invoice, so it
     raises what is outstanding on it — and Xero emails reminders for an
@@ -681,7 +695,7 @@ export async function deallocateExcessAppliedCreditForBooking(
       );
       return response.body.invoices?.[0]?.contact?.contactID;
     },
-    memberId: bookingOwner(booking).memberId,
+    memberId: creditOwnerMemberId,
     workflow: "deallocateExcessAppliedCreditForBooking",
   });
 
@@ -985,7 +999,7 @@ export async function deallocateExcessAppliedCreditForBooking(
     await applyLocalGroup({
       operationId: options.syncOperationId,
       bookingId,
-      memberId: bookingOwner(booking).memberId,
+      memberId: creditOwnerMemberId,
       paymentId: booking.payment.id,
       invoiceId: booking.payment.xeroInvoiceId,
       group,
