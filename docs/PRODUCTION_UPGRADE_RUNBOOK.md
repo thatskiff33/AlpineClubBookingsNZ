@@ -873,7 +873,12 @@ Do not open the window until the census prints `READY`.
    rather than after:
 
    ```sql
-   SELECT lower(regexp_replace(btrim("name"), '\s+', ' ', 'g')) AS folded, count(*)
+   -- The fold is the migration's own: collapse, trim, cap, trim. `btrim` with
+   -- one argument strips only the SPACE character, so trimming before
+   -- collapsing would leave a tab in place for the collapse to turn into a
+   -- space — which is exactly the defect this order exists to avoid.
+   SELECT lower(btrim(left(btrim(regexp_replace("name", '\s+', ' ', 'g')), 200))) AS folded,
+          count(*)
    FROM "Organisation" WHERE kind = 'SCHOOL'
    GROUP BY 1 HAVING count(*) > 1;
    ```
@@ -912,13 +917,32 @@ WHERE migration_name LIKE '20260922%' ORDER BY migration_name;
 ```
 
 **Rollback path.** Reverse order — `20260922020000/rollback.sql` first, then
-`20260922010000/rollback.sql`. The second refuses if the first has not run, which
-is the guard rather than a fault. Once the new release has taken a booking, a
-payment or a refund, the reverse scripts are no longer a release rollback: the
-first will raise `school_backfill_rollback_unreconstructable` on a booking that
-never had a member, and the recovery is the verified backup with the owner
-leading. `SchoolMemberClassification` is deliberately kept by both reverses — it
-is an officer's recorded decisions, and the next attempt needs them.
+`20260922010000/rollback.sql`, each fed to `psql` inside the database container
+with `ON_ERROR_STOP=1`; the command-by-command form is in
+[`guides/school-organisation-cutover.md`](guides/school-organisation-cutover.md)
+→ "Rolling back". The second refuses with `school_reverse_wrong_order` if the
+first has not run, and that refusal reads the presence of the
+`Booking_owner_exactly_one` constraint rather than looking for null rows — so it
+holds for a club with no school bookings too. Once the new release has taken a
+booking, a payment or a refund, the reverse scripts are no longer a release
+rollback: the first will raise `school_backfill_rollback_unreconstructable` on a
+booking that never had a member, and the recovery is the verified backup with the
+owner leading. `SchoolMemberClassification` is deliberately kept by both
+reverses — it is an officer's recorded decisions, and the next attempt needs them.
+
+**Rolling forward after a rollback, and the trap it closes.** Neither reverse
+touches `_prisma_migrations`, exactly as the four earlier reverse scripts in this
+repository say of themselves. So afterwards `prisma migrate status` reports the
+schema up to date, `docker compose --profile migrate run --rm migrate` finds
+nothing pending, and `prisma migrate diff` sees no drift — all three truthfully,
+about a database that is back on the pre-epic model, because these reverses
+restore the shape as well as the data. **Re-apply the two `migration.sql` files
+by hand**, `20260922010000` first, through the same containerised `psql`. They
+are written to survive it: the classification table and its enum survive the
+rollback by design, so section 4 of the first migration guards its type, table,
+index and key rather than creating them bare. Deleting the two
+`_prisma_migrations` rows and migrating again is equivalent and edits migration
+history for no gain.
 
 ---
 

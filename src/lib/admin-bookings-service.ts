@@ -606,19 +606,52 @@ function buildBookingWhere(
   if (query.updatedTo)
     updatedAtFilter.lt = parseDateTimeEnd(query.updatedTo, clubDay.zone);
 
+  /**
+   * The search clause, AND-composed with everything else rather than assigned
+   * to `where.member` — it now spans two relations, so it cannot be one of
+   * them. See the comment where it is built.
+   */
+  const searchFragments: Prisma.BookingWhereInput[] = [];
   if (query.search?.trim()) {
     const queryTerms = query.search.trim().split(/\s+/).filter(Boolean);
-    where.member = {
-      is: {
-        AND: queryTerms.map((term) => ({
-          OR: [
-            { firstName: { contains: term, mode: "insensitive" } },
-            { lastName: { contains: term, mode: "insensitive" } },
-            { email: { contains: term, mode: "insensitive" } },
-          ],
-        })),
-      },
-    };
+    // #3369: EVERY term has to match ONE party — the booking's member, or its
+    // organisation — and the choice of party is made once for the whole search
+    // rather than per term. Written as `where.member = { is: … }` this dropped
+    // every school booking out of the page, the pagination window AND the total
+    // count, because a nullable to-one relation excludes a null-owner row; an
+    // officer typing a school's name got zero results for bookings that display
+    // perfectly with the filter cleared. The typeahead on
+    // /api/admin/bookings/search got this fix at stage 4; the list page's own
+    // search box did not.
+    searchFragments.push({
+      OR: [
+        {
+          member: {
+            is: {
+              AND: queryTerms.map((term) => ({
+                OR: [
+                  { firstName: { contains: term, mode: "insensitive" } },
+                  { lastName: { contains: term, mode: "insensitive" } },
+                  { email: { contains: term, mode: "insensitive" } },
+                ],
+              })),
+            },
+          },
+        },
+        {
+          organisation: {
+            is: {
+              AND: queryTerms.map((term) => ({
+                OR: [
+                  { name: { contains: term, mode: "insensitive" } },
+                  { email: { contains: term, mode: "insensitive" } },
+                ],
+              })),
+            },
+          },
+        },
+      ],
+    });
   }
 
   if (Object.keys(checkInFilter).length > 0) where.checkIn = checkInFilter;
@@ -627,7 +660,7 @@ function buildBookingWhere(
 
   // AND-composed so an explicit status/date choice in the same URL still
   // narrows the result instead of being overwritten by the queue fragment.
-  const andFragments: Prisma.BookingWhereInput[] = [];
+  const andFragments: Prisma.BookingWhereInput[] = [...searchFragments];
   if (query.additionalOwed === "owed") {
     andFragments.push(buildAdditionalOwedWhere());
   }

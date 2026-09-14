@@ -40,6 +40,45 @@ records.
 
 **Do it days before the window, not on the night.**
 
+## Running these commands on the deploy host
+
+**The deploy host has Docker and Docker Compose and nothing else** — no Node, no
+`npm`, no `psql` (`DEPLOYMENT.md` → "Prerequisites"). Every command on this page
+is therefore written to run *inside* a container, and a bare `npm run …` or
+`psql …` pasted at the host shell fails with `command not found`. The two
+wrappers, from the repository root:
+
+```bash
+# Anything that runs repository code — the census, in every form below.
+docker compose --profile migrate run --rm migrate <command>
+
+# Anything that is SQL.
+docker compose exec -T postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1'
+```
+
+The `migrate` service is built from the image's `builder` stage, which carries
+the repository and `node_modules`; the running app image deliberately has `npm`
+and `npx` removed, so do not substitute it.
+
+**Where "save the output" means.** Redirect on the **host**, outside the
+container. A file written inside a container lands in its writable layer and is
+destroyed the next time the deploy script recreates it — measured, and
+§2.4.1 of [`PRODUCTION_UPGRADE_RUNBOOK.md`](../PRODUCTION_UPGRADE_RUNBOOK.md) is
+emphatic about it. So:
+
+```bash
+docker compose --profile migrate run --rm migrate \
+  npm run db:school-classification-census \
+  | tee ./school-census-$(date +%Y%m%d-%H%M).txt
+```
+
+and then move that file off the host, beside the backup.
+
+On a laptop with the repository and a Node toolchain — a rehearsal database, say
+— the bare forms work and are shorter: `npm run db:school-classification-census`.
+Nothing on this page depends on which you use.
+
 ## Step-by-step
 
 ### 1. See what the club actually has
@@ -48,7 +87,9 @@ Run the census against the club's database. It is **read-only**: it writes
 nothing, changes nothing, and can be run as often as you like.
 
 ```bash
-DATABASE_URL='postgresql://…' npm run db:school-classification-census
+docker compose --profile migrate run --rm migrate \
+  npm run db:school-classification-census \
+  | tee ./school-census-$(date +%Y%m%d-%H%M).txt
 ```
 
 It prints something like:
@@ -84,27 +125,63 @@ bookings are not touched.
 **CANNOT TELL** means neither proof held — or, just as importantly, **both** did.
 A row telling two stories about itself is a question, not a tie-break.
 
+**A candidate row must own a booking**, so a school-shaped row that has never
+booked is never classified — and the merge refusal that stops a school being
+merged into a person keys on the classification table. A school-shaped row with
+no bookings is therefore outside everything on this page, including that
+refusal. It is also outside the migration, which has no ownership to move for it.
+
 If you would rather see the numbers yourself, `-- --sql` prints the exact query so
 you can run it against a read-only replica:
 
 ```bash
-npm run db:school-classification-census -- --sql
+docker compose --profile migrate run --rm migrate \
+  npm run db:school-classification-census -- --sql
 ```
 
-### 2. Record the rows the census proved
+### 2. Read the groups that are about to become one record
+
+Below the counts, the census lists every group of rows whose school **names fold
+to the same thing**. Each group becomes **one** record, with **one** email
+address and **one** Xero customer:
+
+```
+ROWS THAT WILL BECOME ONE RECORD
+...
+  "tokoroa primary school" — 2 rows, becoming one record:
+      cm9x4k2p0000abcd  "Tokoroa Primary School"                 office@tps.test  [holds a Xero customer]
+      cm9x4k2p0001efgh  "  Tokoroa   Primary School "            admin@tps.test   [holds a Xero customer]
+```
+
+**Confirm every group is really one school before the window opens.** Usually it
+is — a school gets a new invented row each time it books, which is exactly the
+mess this release cleans up. But two genuinely different schools that happen to
+share a name would be merged here, with nothing on any screen to say it
+happened, and the reverse scripts cannot separate them again afterwards.
+
+The names are printed quoted so leading, trailing and doubled spaces are
+visible. If a group looks wrong, **stop and say so** — the answer is a decision
+about the club's records, not a flag on this tool.
+
+The record keeps the name, address and Xero customer of the first row by id. A
+second Xero customer stays on its own row, for an officer to merge in Xero
+afterwards; that is a visible duplicate rather than a silent overwrite, which is
+the one outcome that could not be undone.
+
+### 3. Record the rows the census proved
 
 ```bash
-npm run db:school-classification-census -- --record-proved
+docker compose --profile migrate run --rm migrate \
+  npm run db:school-classification-census -- --record-proved
 ```
 
 This writes a decision for every row the two proofs settle, recorded as
 `census` with the proof stated. It **never** overwrites a decision a person has
-already made, and it records nothing for a CANNOT TELL row.
+already made, and it records nothing for a CANNOT TELL row. The counts it prints
+afterwards are the counts *after* those writes, so the unrecorded figure should
+already equal the CANNOT TELL count without running it again.
 
-Run the census again. The count of unrecorded rows should now equal the CANNOT
-TELL count.
-
-### 3. Decide the rest yourself
+### 4. Decide the rest yourself
 
 The census prints each undecided row with the facts you need:
 
@@ -117,7 +194,8 @@ Go and look. The club's own records — an old invoice, the booking file, somebo
 who remembers — are what settle it. When you know, record it:
 
 ```bash
-npm run db:school-classification-census -- \
+docker compose --profile migrate run --rm migrate \
+  npm run db:school-classification-census -- \
   --classify cm9x4k2p0000abcd --as ORGANISATION \
   --by "Jordan (treasurer)" --because "2019 invoice file: this is the school itself, not Mr Smith."
 ```
@@ -131,7 +209,7 @@ If a row genuinely cannot be settled, **stop and say so**. The cutover waits. Th
 is the rule this whole programme exists to enforce: nothing is guessed, and no
 surname is invented to get a row past a validator.
 
-### 4. Check the census agrees with you
+### 5. Check the census agrees with you
 
 Run it once more. You want:
 
@@ -144,7 +222,7 @@ well be right and the proof wrong — you can see the club's records and the pro
 cannot — but it is worth seeing the disagreement now rather than discovering it
 afterwards.
 
-### 5. Run the census one last time, after the club is offline
+### 6. Run the census one last time, after the club is offline
 
 Between your last run and the window, an officer could approve another school
 booking and create another candidate. Run the census again **after** traffic has
@@ -152,19 +230,26 @@ been removed and the old application and workers are stopped (step 3 of the
 windowed sequence in `DEPLOYMENT.md`). It takes seconds and it is the difference
 between a clean migration and a refusal in the middle of an outage.
 
-Save the output. It is the pre-migration record for this migration.
+Save the output **on the host** — the `| tee ./school-census-….txt` in step 1 —
+and move the file off the host beside the backup. It is the pre-migration record
+for this migration, and §8 of
+[`PRODUCTION_UPGRADE_RUNBOOK.md`](../PRODUCTION_UPGRADE_RUNBOOK.md) has a row
+waiting for it.
 
-### 6. Migrate
+### 7. Migrate
 
 Follow the windowed sequence in `DEPLOYMENT.md`. Nothing about it is special to
 this release except that two migrations — `20260922010000` and `20260922020000` —
 are **one window and are never applied apart**.
 
-### 7. Verify
+### 8. Verify
 
 After migrating, before starting the new release:
 
-```sql
+```bash
+docker compose exec -T postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' <<'SQL' \
+  | tee ./school-cutover-verify-$(date +%Y%m%d-%H%M).txt
 -- Every school booking now belongs to a school and to no person.
 SELECT count(*) FROM "Booking" WHERE "memberId" IS NULL AND "organisationId" IS NULL;
 -- must be 0
@@ -174,7 +259,11 @@ SELECT count(*) FROM "Booking" WHERE "organisationId" IS NOT NULL;
 
 -- The schools themselves.
 SELECT "name", "email", "xeroContactId" FROM "Organisation" WHERE kind = 'SCHOOL' ORDER BY "name";
+SQL
 ```
+
+The redirection is on the **host**, outside the container, for the same reason as
+the census output above.
 
 Then start the new release and look at two screens with your own eyes:
 
@@ -189,25 +278,105 @@ Then start the new release and look at two screens with your own eyes:
 Only while the new release has not yet taken a booking, a payment or a refund.
 
 Run the two reverse scripts **in the opposite order to the one they were applied
-in**, as the migration database role:
+in**. The scripts are files in the repository and `psql` lives in the database
+container, so feed each one in on the container's standard input — from the
+repository root on the deploy host:
 
 ```bash
-psql "$DATABASE_URL" -f prisma/migrations/20260922020000_backfill_school_bookings_to_organisations/rollback.sql
-psql "$DATABASE_URL" -f prisma/migrations/20260922010000_booking_owner_optional_member/rollback.sql
+docker compose exec -T postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+  < prisma/migrations/20260922020000_backfill_school_bookings_to_organisations/rollback.sql
+
+docker compose exec -T postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+  < prisma/migrations/20260922010000_booking_owner_optional_member/rollback.sql
 ```
 
-The first gives every school booking its member back and returns the Xero
-customer. The second re-imposes the required member link, and **refuses loudly if
-the first has not run** — that refusal is the guard against doing it in the wrong
-order, not a failure.
+`-v ON_ERROR_STOP=1` matters: without it `psql` prints the refusal and carries on
+to the next statement, which is the opposite of what every refusal in these
+scripts is for. Each script is one transaction, so a refusal changes nothing.
 
-If the first script raises `school_backfill_rollback_unreconstructable`, the new
-release has already created a booking that never had a member. Stop. That is the
-point at which the reverse scripts are no longer a release rollback: restore the
-verified backup taken immediately before the migration, with the owner leading.
+The first gives every school booking its member back and returns the Xero
+customer. The second re-imposes the required member link, and **refuses with
+`school_reverse_wrong_order` if the first has not run** — that refusal reads the
+presence of the `Booking_owner_exactly_one` constraint, which is a fact about the
+database's shape, so it holds even for a club with no school bookings at all.
+
+**Then start the next attempt from the migration files, not from `migrate
+deploy`.** Neither reverse touches the migration ledger, so afterwards
+`prisma migrate status` says the database is up to date, `prisma migrate deploy`
+says there is nothing pending, and the drift check agrees — all three truthfully,
+about a database that is back on the old model. To roll forward, re-apply the two
+`migration.sql` files by hand, in order, the same way as above:
+
+```bash
+docker compose exec -T postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+  < prisma/migrations/20260922010000_booking_owner_optional_member/migration.sql
+
+docker compose exec -T postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+  < prisma/migrations/20260922020000_backfill_school_bookings_to_organisations/migration.sql
+```
+
+They are written to survive that: the classification table and its enum are kept
+by the rollback, and the first migration's creation of them is guarded so it does
+not fail with "already exists". Deleting the two `_prisma_migrations` rows and
+running `prisma migrate deploy` instead is equivalent; it edits migration history
+for no gain.
 
 **What is deliberately NOT undone:** the decisions you recorded. They are your
-work, and the next attempt needs them.
+work, and the next attempt needs them — which is the whole reason the roll-forward
+above has to work.
+
+## Settings reference
+
+**There are none, and that is the whole shape of this page.** Nothing here is a
+setting: this is a one-off release with no screen, no toggle and no configurable
+value. The two commands and their flags are documented where they are used above.
+(The operator-guide skeleton in
+[`STYLE_GUIDE.md`](../STYLE_GUIDE.md) asks for this section; it is named rather
+than dropped, because a silently missing section reads as an oversight.)
+
+## Troubleshooting
+
+Every refusal below is deliberate: each one stops with the database exactly as it
+was, because each script is a single transaction. **None of them names a school,
+a member or a count** — a maintenance-window stack trace is the wrong place for
+the club's data — so this table is the only place the identifiers can be decoded.
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `school_member_classification_incomplete` from the backfill | At least one candidate row has no recorded decision. Almost always an officer approved another school booking between your last census and the window. | Run the census (step 1). It prints the list. Record the new rows (steps 3–4), then run the migration again. Nothing was written. |
+| `school_backfill_organisation_unresolved` from the backfill | A classified school row does not match the record minted from its own name. The fold is collapse-then-trim-then-cap, so this should not happen; if it does, the two names differ in a way the fold does not remove. | Stop and get help before re-running. The query in the next row lists the rows involved. |
+| `school_reverse_wrong_order` from `20260922010000/rollback.sql` | The two reverse scripts were run in the order they were applied. | Run `20260922020000/rollback.sql` first, then this one. See "Rolling back". |
+| `school_backfill_rollback_unreconstructable` from `20260922020000/rollback.sql` | A booking owned by a school has no member to give back — the new release has already created one, or two member rows spell one school and the booking request that would say which owned which is gone. | Stop. This is the point at which the reverse scripts are not a release rollback. Restore the verified backup taken immediately before the migration, with the owner leading. |
+| `school_backfill_rollback_xero_unreconstructable` from `20260922020000/rollback.sql` | A school record holds a Xero customer whose original owner cannot be proved from what is left. Returning it to the wrong member would misattribute a provider identity permanently and invisibly. | Stop, and restore from the backup as above. Do not hand the customer back by hand without checking Xero's own history first. |
+| `NOT READY` from the census, and the listed rows are all `CANNOT TELL` | Neither proof holds for those rows — or both do, which counts the same way. | Go and look at the club's records, then record each one with `--classify` (step 4). If a row genuinely cannot be settled, the cutover waits. |
+| The census prints a group under **ROWS THAT WILL BECOME ONE RECORD** that is two different schools | Two schools share a name after folding. | Stop before the window. Merging them is not reversible, and deciding what to do is a decision about the club's records. |
+
+The query behind the second row, for whoever is helping:
+
+```bash
+docker compose exec -T postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' <<'SQL'
+SELECT m."id",
+       m."firstName",
+       btrim(left(btrim(regexp_replace(m."firstName", '\s+', ' ', 'g')), 200)) AS folded
+FROM "Member" m
+JOIN "SchoolMemberClassification" c ON c."memberId" = m."id"
+WHERE c."classification" = 'ORGANISATION'
+  AND m."role" = 'SCHOOL'
+  AND EXISTS (SELECT 1 FROM "Booking" b WHERE b."memberId" = m."id")
+  AND NOT EXISTS (
+    SELECT 1 FROM "Organisation" o
+    WHERE o."kind" = 'SCHOOL'
+      AND lower(btrim(left(btrim(regexp_replace(o."name", '\s+', ' ', 'g')), 200)))
+          = lower(btrim(left(btrim(regexp_replace(m."firstName", '\s+', ' ', 'g')), 200)))
+  )
+ORDER BY m."id";
+SQL
+```
 
 ## What this does not change
 
@@ -218,6 +387,13 @@ work, and the next attempt needs them.
 - **The old school member rows are not deleted.** They hold audit history, so
   they stay — as ordinary non-member contact rows carrying no authority. What
   becomes of them is a separate decision for the club.
+- **A school-shaped row that never booked is untouched, and stays unclassified.**
+  The census only asks about rows that own a booking, so the classification table
+  covers exactly those. The rule that stops a school being merged into a person
+  reads that table, so it holds over the classified rows and not over a
+  school-shaped row with no bookings. Nothing about that is new — such a row was
+  mergeable before this release too — but it is worth knowing that this release
+  does not close it.
 
 ## Related
 
