@@ -368,3 +368,53 @@ describe("a failed Xero invoice operation, on the booking (#3001)", () => {
     ).resolves.toEqual([]);
   });
 });
+
+describe("what a provider failure is allowed to say out loud (#3001)", () => {
+  it("never puts a stored payload error value in front of a person", async () => {
+    /*
+      `INV-INT-005`. The completion payload's `paymentError` and
+      `invoiceEmailError` have been through `sanitizeForJson` — a serialisation
+      guard, NOT the operator-text redactor. The only redacted field on the row
+      is `lastErrorMessage`, which `failXeroSyncOperation` puts through
+      `redactSensitiveText` on the way in, and it is the only text the projection
+      hands over. This asserts the consequence at the surface: whatever a
+      provider stuffed into the payload, it is not what an officer reads.
+    */
+    const deps = makeDeps({
+      invoiceSyncFault: syncFault({
+        kind: "PAYMENT_NOT_RECORDED",
+        invoiceReachedXero: true,
+        invoiceNumber: "INV-0044",
+        // The projection sets this to null for a partial row, and the row's own
+        // payload — secrets and all — is never read for its values at all.
+        reason: null,
+        retrySupported: true,
+      }),
+    });
+
+    const [mismatch] = await getBookingProviderMismatches("booking-1", { deps });
+    const rendered = `${mismatch.label} ${mismatch.description} ${mismatch.linkLabel}`;
+
+    for (const secret of [
+      "Bearer",
+      "access_token",
+      "client_secret",
+      "tenantId",
+      "member@example.org",
+    ]) {
+      expect(rendered).not.toContain(secret);
+    }
+  });
+
+  it("shows the redacted operator message, which is the one text that may be shown", async () => {
+    const deps = makeDeps({
+      invoiceSyncFault: syncFault({
+        reason: "Xero rejected the invoice: account code missing",
+      }),
+    });
+
+    const [mismatch] = await getBookingProviderMismatches("booking-1", { deps });
+
+    expect(mismatch.description).toContain("account code missing");
+  });
+});
