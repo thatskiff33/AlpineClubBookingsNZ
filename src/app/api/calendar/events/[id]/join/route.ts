@@ -3,7 +3,7 @@ import { requireActiveSession } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { canManageCalendarEvents } from "@/lib/calendar-access";
-import { buildMeetingJoinUrl } from "@/lib/calendar-events";
+import { buildMeetingJoinUrl } from "@/lib/mirotalk-config";
 
 /**
  * Mint a MiroTalk join URL for a meeting event, per click.
@@ -50,5 +50,9 @@ export async function POST(
     metadata: { title: event.title },
   });
 
-  return NextResponse.json({ joinUrl: buildMeetingJoinUrl(event.meetingRoom) });
+  // Awaited since #2940: the link is built from the club's own meeting
+  // configuration (Admin -> Integrations) before falling back to the
+  // environment, so resolving it is a read rather than a lookup in memory.
+  const joinUrl = await buildMeetingJoinUrl(event.meetingRoom);
+  return NextResponse.json({ joinUrl });
 }
