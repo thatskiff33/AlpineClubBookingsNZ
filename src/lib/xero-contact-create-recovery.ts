@@ -6,6 +6,7 @@ import {
   lockXeroContactHome,
 } from "@/lib/xero-contact-home";
 import { buildXeroContactUrl, stripXeroOrgShortCode } from "@/lib/xero-links";
+import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-stale-operations";
 import {
   completeXeroSyncOperation,
   upsertXeroObjectLink,
@@ -62,8 +63,11 @@ export const XERO_CONTACT_CREATE_PROVIDER_CREATED_PENDING_LINK_PHASE =
  */
 export const XERO_CONTACT_CREATE_LINK_COMPLETED_AFTER_RECOVERY_PHASE =
   "local_link_committed_after_provider_created_recovery";
+// #3001: one home for the string (`xero-stale-operations.ts`), which the reset
+// route writes and the booking page's invoice warning now reads. Kept exported
+// under this name because that is what this module's callers already import.
 export const XERO_CONTACT_CREATE_STALE_RUNNING_ERROR_CODE =
-  "ORPHANED_STALE_RUNNING";
+  XERO_ORPHANED_STALE_RUNNING_ERROR_CODE;
 export const XERO_CONTACT_CREATE_IN_PROGRESS_CODE =
   "XERO_CONTACT_CREATE_IN_PROGRESS";
 export const XERO_CONTACT_CREATE_IN_PROGRESS_MESSAGE =

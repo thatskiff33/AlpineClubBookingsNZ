@@ -3,22 +3,38 @@ import { describe, expect, it, vi } from "vitest";
 import {
   classifyBookingInvoiceSyncFault,
   getBookingInvoiceSyncFault,
+  type BookingInvoiceSyncContext,
 } from "@/lib/booking-invoice-sync-status";
 
 /**
  * WHAT THE BOOKING PAGE SAYS ABOUT ITS XERO INVOICE (#3001, MAD epic #2725).
  *
- * The cases below are the ones an officer meets, and each of the first four is a
- * different answer to "what do I do now?" — which is why they are four kinds and
- * not one "Xero failed" flag.
+ * The cases below are the ones an officer meets, and each is a different answer
+ * to "what do I do now?" — which is why they are five kinds and not one "Xero
+ * failed" flag.
  *
- * The case this file guards hardest is the one that is NOT a failure: an invoice
- * email that was deliberately withheld. Three separate rules can withhold it and
- * none of them is a fault, so a warning raised for any of them sends an officer
- * to chase a provider that did exactly what it was told.
+ * TWO THINGS THIS FILE GUARDS HARDEST.
+ *
+ * The first is the case that is NOT a failure: an invoice email that was
+ * deliberately withheld. Three separate rules can withhold it and none of them
+ * is a fault, so a warning raised for any of them sends an officer to chase a
+ * provider that did exactly what it was told.
+ *
+ * The second is the case that IS a failure and looks like the opposite. A row
+ * that fails AFTER Xero accepted the invoice carries NO `xeroObjectId` — the
+ * failure writer does not write that column at all — so the evidence that the
+ * invoice exists has to come from what the workflow persisted before it could
+ * fail. Reading it off the operation row answers "no invoice was raised" for
+ * every failure, which is how an officer ends up raising a second one.
  */
 
-/** A booking-invoice create operation, in the shape the projection selects. */
+/**
+ * A booking-invoice create operation, in the shape the projection selects.
+ *
+ * `xeroObjectId` defaults to null and the FAILED cases below leave it there, on
+ * purpose: that is what `failXeroSyncOperation` really produces. A fixture that
+ * sets it on a failed row is describing a row the writers cannot write.
+ */
 function operation(overrides: Record<string, unknown> = {}) {
   return {
     id: "op_1",
@@ -34,10 +50,28 @@ function operation(overrides: Record<string, unknown> = {}) {
     responsePayload: null,
     xeroObjectId: null,
     xeroObjectNumber: null,
+    lastErrorCode: null,
     lastErrorMessage: null,
+    startedAt: null,
     manuallyResolvedAt: null,
     ...overrides,
   } as Parameters<typeof classifyBookingInvoiceSyncFault>[0];
+}
+
+/** The frozen clock this suite runs on (`vitest.clock-setup.ts`). */
+const NOW = new Date("2026-07-01T00:00:00.000Z");
+
+/** "The club has no record of an invoice for this booking." */
+function noEvidence(now: Date = NOW): BookingInvoiceSyncContext {
+  return { evidence: { exists: false, invoiceNumber: null }, now };
+}
+
+/** "The payment, or the primary-invoice link, says Xero has it." */
+function evidenceOf(
+  invoiceNumber: string | null,
+  now: Date = NOW,
+): BookingInvoiceSyncContext {
+  return { evidence: { exists: true, invoiceNumber }, now };
 }
 
 /** The completion payload a real invoice create writes, with its invoice total. */
@@ -51,15 +85,29 @@ function completionPayload(extra: Record<string, unknown>) {
 
 describe("nothing to warn about", () => {
   it("says nothing when the operation succeeded", () => {
-    expect(classifyBookingInvoiceSyncFault(operation())).toBeNull();
+    expect(classifyBookingInvoiceSyncFault(operation(), noEvidence())).toBeNull();
   });
 
-  it.each(["PENDING", "RUNNING", "WAITING_PAYMENT"])(
+  it.each(["PENDING", "WAITING_PAYMENT"])(
     "says nothing while the outbox is still working (%s)",
     (status) => {
-      expect(classifyBookingInvoiceSyncFault(operation({ status }))).toBeNull();
+      expect(
+        classifyBookingInvoiceSyncFault(operation({ status }), noEvidence()),
+      ).toBeNull();
     },
   );
+
+  it("says nothing about an operation that was claimed moments ago", () => {
+    expect(
+      classifyBookingInvoiceSyncFault(
+        operation({
+          status: "RUNNING",
+          startedAt: new Date(NOW.getTime() - 60_000),
+        }),
+        noEvidence(),
+      ),
+    ).toBeNull();
+  });
 
   it("says nothing when an operator has already resolved it directly in Xero", () => {
     // The existing override, and the whole point of it: a failure can be cleared
@@ -72,6 +120,7 @@ describe("nothing to warn about", () => {
           lastErrorMessage: "Xero rejected the invoice",
           manuallyResolvedAt: new Date("2026-06-01T00:00:00.000Z"),
         }),
+        noEvidence(),
       ),
     ).toBeNull();
   });
@@ -81,8 +130,9 @@ describe("a deliberately withheld invoice email is not a failure", () => {
   /*
     #2258, #2929 and #3035. Two are the club's own decision and one is not the
     club's decision at all — this installation being a copy. All three complete
-    the operation SUCCEEDED, and the officer already sees what was withheld
-    through the withheld-email summary, which is where that belongs.
+    the operation SUCCEEDED, and the first two are listed in the booking's
+    withheld-emails banner. The third writes no row anywhere, which is why it is
+    listed here rather than assumed to be visible somewhere else.
   */
   it.each([
     ["the per-booking No emails switch (#2258)", "invoiceEmailWithheldByNoEmails"],
@@ -96,6 +146,7 @@ describe("a deliberately withheld invoice email is not a failure", () => {
           xeroObjectId: "inv_1",
           responsePayload: completionPayload({ [key]: true, invoiceEmailSkipped: true }),
         }),
+        evidenceOf("INV-0041"),
       ),
     ).toBeNull();
   });
@@ -112,6 +163,7 @@ describe("a deliberately withheld invoice email is not a failure", () => {
             invoiceEmailWithheldForEnvironment: true,
           }),
         }),
+        evidenceOf("INV-0041"),
       ),
     ).toBeNull();
   });
@@ -126,8 +178,10 @@ describe("a deliberately withheld invoice email is not a failure", () => {
         xeroObjectNumber: "INV-0042",
         responsePayload: completionPayload({
           invoiceEmailError: { message: "SMTP refused" },
+          invoiceEmailFailureCause: "PROVIDER",
         }),
       }),
+      evidenceOf("INV-0042"),
     );
 
     expect(fault?.kind).toBe("MEMBER_NOT_SENT_INVOICE");
@@ -135,44 +189,135 @@ describe("a deliberately withheld invoice email is not a failure", () => {
 });
 
 describe("the invoice never reached Xero", () => {
-  it("names it as not raised, and carries the redacted reason", () => {
+  it("names it as not raised, carries the redacted reason, and offers the retry", () => {
     expect(
       classifyBookingInvoiceSyncFault(
         operation({
           status: "FAILED",
           lastErrorMessage: "Xero rejected the invoice: account code missing",
         }),
+        noEvidence(),
       ),
     ).toMatchObject({
       kind: "INVOICE_NOT_RAISED",
       invoiceReachedXero: false,
       invoiceNumber: null,
       reason: "Xero rejected the invoice: account code missing",
+      action: { type: "RETRY" },
     });
   });
+});
 
-  it("a FAILED row that DOES carry an invoice id is not called 'not raised'", () => {
-    // It failed after Xero accepted the invoice. Telling an officer no invoice
-    // exists would walk them straight into raising a second one.
+describe("a failure AFTER Xero accepted the invoice (#3001 review blocker)", () => {
+  /*
+    THE CASE THE PROJECTION EXISTS FOR, and the one it used to get backwards.
+
+    `createXeroInvoiceForBooking` does real work after Xero returns the invoice:
+    it stamps the id onto the payment, stamps it onto the primary payment
+    transaction, and settles the applied-credit allocation — which makes another
+    provider round trip. A throw in any of those fails the operation, and
+    `failXeroSyncOperation` writes NO `xeroObjectId`. So the row looks exactly
+    like a first-attempt rejection, and calling it "no invoice was raised" beside
+    a Retry walks an officer into a duplicate invoice in the club's accounts.
+
+    The evidence is what the workflow persisted before it could fail.
+  */
+  it("is called partly completed, not 'not raised', on the payment's stored invoice id", () => {
     expect(
       classifyBookingInvoiceSyncFault(
         operation({
           status: "FAILED",
-          xeroObjectId: "inv_9",
-          xeroObjectNumber: "INV-0099",
-          lastErrorMessage: "Link write failed",
+          // As the failure writer really leaves it.
+          xeroObjectId: null,
+          xeroObjectNumber: null,
+          lastErrorMessage: "Could not settle the applied credit allocation",
         }),
+        evidenceOf("INV-0099"),
       ),
     ).toMatchObject({
       kind: "PARTLY_COMPLETED",
       invoiceReachedXero: true,
       invoiceNumber: "INV-0099",
+      reason: "Could not settle the applied credit allocation",
+    });
+  });
+
+  it("never offers a Retry for it, whatever the recovery engine would run", () => {
+    // The engine supports a retry for this row. Offering it would contradict the
+    // standing guidance printed in the same paragraph — do not repeat the
+    // action — so the affordance is decided here and not there.
+    const fault = classifyBookingInvoiceSyncFault(
+      operation({
+        status: "FAILED",
+        lastErrorMessage: "Link write failed",
+      }),
+      evidenceOf(null),
+    );
+
+    expect(fault?.kind).toBe("PARTLY_COMPLETED");
+    expect(fault?.action).toEqual({ type: "RESOLVE", engineReason: null });
+  });
+});
+
+describe("nobody can tell whether Xero has it", () => {
+  it("reports a stuck RUNNING operation rather than all-clear", () => {
+    // The issue's own opening scenario: a worker dies mid-invoice and the row
+    // stays RUNNING for ever. Until #3001 the booking said nothing at all.
+    expect(
+      classifyBookingInvoiceSyncFault(
+        operation({
+          status: "RUNNING",
+          startedAt: new Date(NOW.getTime() - 60 * 60_000),
+        }),
+        noEvidence(),
+      ),
+    ).toMatchObject({
+      kind: "INVOICE_STATE_UNKNOWN",
+      invoiceReachedXero: false,
+      action: { type: "RESOLVE" },
+    });
+  });
+
+  it("reports the operator's stale-running reset as unknown, not as 'not raised'", () => {
+    // The reset stamps a fixed code and a fixed message on a row nobody saw
+    // through. It says nothing about whether Xero was reached, so neither does
+    // this.
+    expect(
+      classifyBookingInvoiceSyncFault(
+        operation({
+          status: "FAILED",
+          lastErrorCode: "ORPHANED_STALE_RUNNING",
+          lastErrorMessage:
+            "Operation was stuck RUNNING past the staleness threshold and was reset to FAILED by an operator.",
+        }),
+        noEvidence(),
+      ),
+    ).toMatchObject({
+      kind: "INVOICE_STATE_UNKNOWN",
+      action: { type: "RESOLVE" },
+    });
+  });
+
+  it("is NOT unknown once the club's own records show the invoice", () => {
+    expect(
+      classifyBookingInvoiceSyncFault(
+        operation({
+          status: "RUNNING",
+          startedAt: new Date(NOW.getTime() - 60 * 60_000),
+        }),
+        evidenceOf("INV-0100"),
+      ),
+    ).toMatchObject({
+      kind: "PARTLY_COMPLETED",
+      invoiceNumber: "INV-0100",
     });
   });
 });
 
 describe("the invoice reached Xero but something after it did not", () => {
   it("names a failed payment write, and offers the retry the engine supports", () => {
+    // The ONE place "do not raise a second invoice" and a retry legitimately
+    // coexist: the retry records the missing payment and raises nothing.
     const fault = classifyBookingInvoiceSyncFault(
       operation({
         status: "PARTIAL",
@@ -182,13 +327,13 @@ describe("the invoice reached Xero but something after it did not", () => {
           paymentError: { message: "payment write rejected" },
         }),
       }),
+      evidenceOf("INV-0043"),
     );
 
     expect(fault).toMatchObject({
       kind: "PAYMENT_NOT_RECORDED",
       invoiceReachedXero: true,
-      retrySupported: true,
-      retryBlockedReason: null,
+      action: { type: "RETRY" },
     });
   });
 
@@ -202,13 +347,61 @@ describe("the invoice reached Xero but something after it did not", () => {
         xeroObjectId: "inv_3",
         responsePayload: completionPayload({
           invoiceEmailError: { message: "send failed" },
+          invoiceEmailFailureCause: "PROVIDER",
         }),
       }),
+      evidenceOf(null),
     );
 
     expect(fault?.kind).toBe("MEMBER_NOT_SENT_INVOICE");
-    expect(fault?.retrySupported).toBe(false);
-    expect(fault?.retryBlockedReason).toContain("send the invoice from Xero instead");
+    expect(fault?.action).toMatchObject({ type: "RESOLVE" });
+    expect(
+      fault?.action.type === "RESOLVE" ? fault.action.engineReason : null,
+    ).toContain("send the invoice from Xero instead");
+  });
+
+  it.each([
+    ["PROVIDER"],
+    ["NO_EMAILS_UNREADABLE"],
+    ["ROLE_UNCONFIRMED"],
+  ])("carries the email fault's own cause (%s) rather than flattening it", (cause) => {
+    // Three unrelated events share this kind, and the remedy for one of them —
+    // an unreadable "No emails" switch — is the opposite of the other two.
+    const fault = classifyBookingInvoiceSyncFault(
+      operation({
+        status: "PARTIAL",
+        xeroObjectId: "inv_7",
+        responsePayload: completionPayload({
+          invoiceEmailError: { message: "stopped" },
+          invoiceEmailFailureCause: cause,
+        }),
+      }),
+      evidenceOf(null),
+    );
+
+    expect(fault).toMatchObject({
+      kind: "MEMBER_NOT_SENT_INVOICE",
+      emailFailureCause: cause,
+    });
+  });
+
+  it("reports an unnamed cause as unknown rather than guessing one", () => {
+    // Every row written before #3001 is this shape.
+    const fault = classifyBookingInvoiceSyncFault(
+      operation({
+        status: "PARTIAL",
+        xeroObjectId: "inv_8",
+        responsePayload: completionPayload({
+          invoiceEmailError: { message: "stopped" },
+        }),
+      }),
+      evidenceOf(null),
+    );
+
+    expect(fault).toMatchObject({
+      kind: "MEMBER_NOT_SENT_INVOICE",
+      emailFailureCause: null,
+    });
   });
 
   it("leads with the payment when both legs failed", () => {
@@ -225,6 +418,7 @@ describe("the invoice reached Xero but something after it did not", () => {
             invoiceEmailError: { message: "send failed" },
           }),
         }),
+        evidenceOf(null),
       )?.kind,
     ).toBe("PAYMENT_NOT_RECORDED");
   });
@@ -243,6 +437,7 @@ describe("the invoice reached Xero but something after it did not", () => {
             invoiceEmailError: { message: "send failed" },
           }),
         }),
+        evidenceOf(null),
       )?.reason,
     ).toBeNull();
   });
@@ -255,8 +450,47 @@ describe("the invoice reached Xero but something after it did not", () => {
           xeroObjectId: "inv_6",
           responsePayload: completionPayload({}),
         }),
+        evidenceOf(null),
       )?.kind,
     ).toBe("PARTLY_COMPLETED");
+  });
+});
+
+describe("what the stored payload is allowed to put in front of a person", () => {
+  it("reads no VALUE out of the completion payload, only its booleans", () => {
+    /*
+      `INV-INT-005`. `paymentError` and `invoiceEmailError` have been through
+      `sanitizeForJson` — a serialisation guard, NOT the operator-text redactor.
+      The only redacted field on the row is `lastErrorMessage`. This drives the
+      real payload through the real classifier, so a change that started reading
+      an error value out of it fails HERE rather than in production.
+    */
+    const fault = classifyBookingInvoiceSyncFault(
+      operation({
+        status: "PARTIAL",
+        xeroObjectId: "inv_9",
+        xeroObjectNumber: "INV-0044",
+        responsePayload: completionPayload({
+          paymentError: {
+            message: "Bearer sk_live_secret rejected for member@example.org",
+            response: { headers: { authorization: "Bearer sk_live_secret" } },
+          },
+          invoiceEmailError: { message: "client_secret=hunter2" },
+        }),
+      }),
+      evidenceOf("INV-0044"),
+    );
+
+    const rendered = JSON.stringify(fault);
+    for (const secret of [
+      "Bearer",
+      "sk_live_secret",
+      "client_secret",
+      "hunter2",
+      "member@example.org",
+    ]) {
+      expect(rendered).not.toContain(secret);
+    }
   });
 });
 
@@ -274,8 +508,8 @@ describe("which operation is the current one", () => {
     };
 
     // Keyed on the BOOKING, never joined through the payment row — a booking
-    // whose payment is missing or replaced would otherwise match nothing and
-    // the page would report all-clear over a failed invoice.
+    // whose payment row has not been created yet would otherwise match nothing
+    // and the page would report all-clear over a failed invoice.
     expect(args.where).toMatchObject({
       correlationKey: "booking:bkg_77:invoice:v1",
       direction: "OUTBOUND",
@@ -300,9 +534,43 @@ describe("which operation is the current one", () => {
     ).resolves.toBeNull();
   });
 
+  it("corroborates the found row against the payment the row itself names", async () => {
+    // The payment id comes off the operation's own `localId`. Nothing joins back
+    // through the booking, so finding the row and corroborating it stay separate
+    // questions.
+    const readBookingInvoiceEvidenceForPayment = vi
+      .fn()
+      .mockResolvedValue({ exists: true, invoiceNumber: "INV-0101" });
+
+    const fault = await getBookingInvoiceSyncFault("bkg_79", {
+      deps: {
+        db: {
+          xeroSyncOperation: {
+            findFirst: vi.fn().mockResolvedValue(
+              operation({
+                status: "FAILED",
+                localId: "pay_42",
+                lastErrorMessage: "boom",
+              }),
+            ),
+          },
+        },
+        readBookingInvoiceEvidenceForPayment,
+      },
+    });
+
+    expect(readBookingInvoiceEvidenceForPayment).toHaveBeenCalledWith("pay_42");
+    expect(fault).toMatchObject({
+      kind: "PARTLY_COMPLETED",
+      invoiceReachedXero: true,
+      invoiceNumber: "INV-0101",
+      reason: "boom",
+    });
+  });
+
   it("classifies the row the query returned", async () => {
     await expect(
-      getBookingInvoiceSyncFault("bkg_79", {
+      getBookingInvoiceSyncFault("bkg_80", {
         deps: {
           db: {
             xeroSyncOperation: {
@@ -311,6 +579,9 @@ describe("which operation is the current one", () => {
               ),
             },
           },
+          readBookingInvoiceEvidenceForPayment: vi
+            .fn()
+            .mockResolvedValue({ exists: false, invoiceNumber: null }),
         },
       }),
     ).resolves.toMatchObject({ kind: "INVOICE_NOT_RAISED", reason: "boom" });

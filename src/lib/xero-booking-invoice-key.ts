@@ -15,8 +15,10 @@ import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
  * #3001 needs exactly that. The officer-facing warning on a booking has to find
  * the operation from the booking it is looking at, and a join through the
  * payment is both an extra read and an extra way to be wrong: a booking whose
- * payment row is missing, replaced or not yet created would silently match
- * nothing and the page would report all-clear.
+ * payment row has NOT BEEN CREATED YET would silently match nothing and the page
+ * would report all-clear. (That is the real case, and the only one — the payment
+ * is one-to-one with the booking and nothing deletes it. An earlier draft of
+ * this note also claimed "missing or replaced", which overstated it.)
  *
  * ## Why a module of its own
  *

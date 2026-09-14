@@ -32,17 +32,28 @@ import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outc
 const WRITER = path.join(process.cwd(), "src/lib/xero-booking-invoices.ts");
 
 /**
- * The six keys the reader depends on.
+ * The seven keys the reader depends on.
  *
  * Spelled out here rather than derived from the reader's own source, because a
  * test that derives both sides from the same place proves nothing: it would pass
  * against any rename applied consistently to the reader alone — which is exactly
  * the change that breaks it against the STORED rows already in the database.
+ *
+ * NOT ALL SEVEN HAVE A PRODUCTION READER TODAY, and saying otherwise would make
+ * this file's own rationale false. `invoiceEmailWithheldForEnvironment` is
+ * written by three workflows and read by no rule — the environment suppression
+ * needs no remedy, so no surface acts on it. It is pinned anyway, for the reason
+ * this module exists: the payload's shape has ONE home, and a reader that
+ * quietly dropped the key would be the way the third withhold reason gets folded
+ * back into the other two. The other six are each read by the money fence in
+ * `xero-operation-retry.ts`, the booking warning in
+ * `booking-invoice-sync-status.ts`, or both.
  */
 const REQUIRED_KEYS = [
   "paymentError",
   "paymentSkipped",
   "invoiceEmailError",
+  "invoiceEmailFailureCause",
   "invoiceEmailWithheldByNoEmails",
   "invoiceEmailWithheldByCreationChoice",
   "invoiceEmailWithheldForEnvironment",
@@ -62,15 +73,18 @@ describe("the booking-invoice completion payload contract", () => {
 
   it("reads every written key back, so no reader silently sees a constant false", () => {
     const payload = Object.fromEntries(
-      REQUIRED_KEYS.map((key) =>
-        key.endsWith("Error") ? [key, { message: "boom" }] : [key, true],
-      ),
+      REQUIRED_KEYS.map((key) => {
+        if (key.endsWith("Error")) return [key, { message: "boom" }];
+        if (key === "invoiceEmailFailureCause") return [key, "PROVIDER"];
+        return [key, true];
+      }),
     );
 
     expect(readXeroInvoiceOperationOutcome(payload)).toEqual({
       paymentFailed: true,
       paymentSkipped: true,
       invoiceEmailFailed: true,
+      invoiceEmailFailureCause: "PROVIDER",
       invoiceEmailWithheldByNoEmails: true,
       invoiceEmailWithheldByCreationChoice: true,
       invoiceEmailWithheldForEnvironment: true,
@@ -83,6 +97,29 @@ describe("the booking-invoice completion payload contract", () => {
     expect(readXeroInvoiceOperationOutcome(null)).toBeNull();
     expect(readXeroInvoiceOperationOutcome("not an object")).toBeNull();
     expect(readXeroInvoiceOperationOutcome([])).toBeNull();
+  });
+
+  it("reads a cause it does not recognise as unknown rather than passing it on", () => {
+    /*
+      #3001. The cause decides which remedy an officer is given, and one of the
+      three — an unreadable "No emails" switch — must NOT be answered with "send
+      it from Xero yourself". A stored value from outside the enum is a row this
+      code does not understand, so it reads back as `null` and the surface says
+      only what it knows. Rows written before #3001 carry nothing at all and land
+      in the same place.
+    */
+    expect(
+      readXeroInvoiceOperationOutcome({
+        invoiceEmailError: { message: "stopped" },
+        invoiceEmailFailureCause: "SOMETHING_ELSE",
+      }),
+    ).toMatchObject({ invoiceEmailFailed: true, invoiceEmailFailureCause: null });
+
+    expect(
+      readXeroInvoiceOperationOutcome({
+        invoiceEmailError: { message: "stopped" },
+      }),
+    ).toMatchObject({ invoiceEmailFailed: true, invoiceEmailFailureCause: null });
   });
 
   it("keeps the three deliberate withholds apart from the one fault", () => {

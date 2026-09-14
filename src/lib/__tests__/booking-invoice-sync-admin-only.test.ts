@@ -73,12 +73,18 @@ describe("the booking's Xero invoice warning stays behind the admin gate", () =>
 
       The EXPECTED list is written here; the ACTUAL list is read off the tree. A
       test that discovered both would agree with whatever it found.
+
+      BOTH IMPORT FORMS ARE MATCHED. A census that knew only `from "…"` would be
+      silent about `await import("…")`, and this codebase reaches for a dynamic
+      import routinely — `xero-sync.ts` loads its hardening module that way in
+      the very writers this projection reads. A second caller added dynamically
+      is a second place needing the gate, exactly like a static one.
     */
     const expected = ["src/lib/booking-provider-mismatches.ts"];
 
     const importers = productionFilesUnder(path.join(process.cwd(), "src"))
       .filter((file) =>
-        /from\s+["'][^"']*booking-invoice-sync-status["']/.test(
+        /(?:from|import)\s*\(?\s*["'][^"']*booking-invoice-sync-status["']/.test(
           readFileSync(file, "utf8"),
         ),
       )

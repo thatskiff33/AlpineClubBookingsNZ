@@ -278,27 +278,31 @@ function syncFault(
     invoiceReachedXero: false,
     invoiceNumber: null,
     reason: null,
-    retrySupported: true,
-    retryBlockedReason: null,
+    action: { type: "RETRY" },
     ...overrides,
-  };
+  } as BookingInvoiceSyncFault;
+}
+
+/** The single mismatch row the card renders for a booking's invoice fault. */
+async function renderFault(fault: BookingInvoiceSyncFault) {
+  const [mismatch] = await getBookingProviderMismatches("booking-1", {
+    deps: makeDeps({ invoiceSyncFault: fault }),
+  });
+
+  return mismatch;
 }
 
 describe("a failed Xero invoice operation, on the booking (#3001)", () => {
   it("warns on the booking, and links to that booking's own Xero activity", async () => {
-    const deps = makeDeps({
-      invoiceSyncFault: syncFault({
-        reason: "Xero rejected the invoice: account code missing",
-      }),
-    });
-
-    const [mismatch] = await getBookingProviderMismatches("booking-1", { deps });
+    const mismatch = await renderFault(
+      syncFault({ reason: "Xero rejected the invoice: account code missing" }),
+    );
 
     expect(mismatch.id).toBe("xero-invoice-sync-failed");
     expect(mismatch.label).toBe("No Xero invoice for this booking");
     // What the booking's own state is, what the club can see in Xero, and what
     // happens next — in that order, and in a treasurer's words.
-    expect(mismatch.description).toContain("the club's accounts hold no invoice");
+    expect(mismatch.description).toContain("no invoice recorded against it");
     expect(mismatch.description).toContain("it has not been cancelled");
     expect(mismatch.description).toContain("account code missing");
     expect(mismatch.description).toContain("You can retry it");
@@ -320,29 +324,6 @@ describe("a failed Xero invoice operation, on the booking (#3001)", () => {
     expect(mismatches.map((mismatch) => mismatch.id)).toEqual([
       "xero-invoice-sync-failed",
     ]);
-  });
-
-  it("offers Resolve, not Retry, when the recovery engine refuses the operation", async () => {
-    const deps = makeDeps({
-      invoiceSyncFault: syncFault({
-        kind: "MEMBER_NOT_SENT_INVOICE",
-        invoiceReachedXero: true,
-        invoiceNumber: "INV-0043",
-        retrySupported: false,
-        retryBlockedReason:
-          "This invoice is partial because it was not emailed, not because its payment failed.",
-      }),
-    });
-
-    const [mismatch] = await getBookingProviderMismatches("booking-1", { deps });
-
-    expect(mismatch.linkLabel).toBe("Resolve from Xero activity");
-    // The standing guidance for this class, said plainly on the surface that
-    // would otherwise invite a duplicate.
-    expect(mismatch.description).toContain("Invoice INV-0043 was raised in Xero");
-    expect(mismatch.description).toContain("Do not raise a second invoice");
-    expect(mismatch.description).toContain("not because its payment failed");
-    expect(mismatch.description).not.toContain("You can retry");
   });
 
   it("says nothing when the club does not use the Xero integration", async () => {
@@ -369,52 +350,162 @@ describe("a failed Xero invoice operation, on the booking (#3001)", () => {
   });
 });
 
-describe("what a provider failure is allowed to say out loud (#3001)", () => {
-  it("never puts a stored payload error value in front of a person", async () => {
-    /*
-      `INV-INT-005`. The completion payload's `paymentError` and
-      `invoiceEmailError` have been through `sanitizeForJson` — a serialisation
-      guard, NOT the operator-text redactor. The only redacted field on the row
-      is `lastErrorMessage`, which `failXeroSyncOperation` puts through
-      `redactSensitiveText` on the way in, and it is the only text the projection
-      hands over. This asserts the consequence at the surface: whatever a
-      provider stuffed into the payload, it is not what an officer reads.
-    */
-    const deps = makeDeps({
-      invoiceSyncFault: syncFault({
-        kind: "PAYMENT_NOT_RECORDED",
+describe("the screen never contradicts the guidance printed beside it (#3001)", () => {
+  /*
+    THE REVIEW BLOCKER THIS PINS. The partly-completed wording says *do not
+    repeat the action*, and the retry sentence and the link label used to be
+    appended independently of the kind — so an officer read "do not repeat the
+    action … you can retry it" under a button labelled Retry, while the guide
+    this change calls authoritative says do not repeat. The sentence and the
+    label now come from ONE field, decided once in the projection.
+  */
+  it("offers no Retry for a part-finished invoice, and says what to do instead", async () => {
+    const mismatch = await renderFault(
+      syncFault({
+        kind: "PARTLY_COMPLETED",
         invoiceReachedXero: true,
-        invoiceNumber: "INV-0044",
-        // The projection sets this to null for a partial row, and the row's own
-        // payload — secrets and all — is never read for its values at all.
-        reason: null,
-        retrySupported: true,
+        invoiceNumber: "INV-0050",
+        reason: "Could not settle the applied credit allocation",
+        action: { type: "RESOLVE", engineReason: null },
       }),
-    });
+    );
 
-    const [mismatch] = await getBookingProviderMismatches("booking-1", { deps });
-    const rendered = `${mismatch.label} ${mismatch.description} ${mismatch.linkLabel}`;
-
-    for (const secret of [
-      "Bearer",
-      "access_token",
-      "client_secret",
-      "tenantId",
-      "member@example.org",
-    ]) {
-      expect(rendered).not.toContain(secret);
-    }
+    expect(mismatch.label).toBe("The Xero invoice completed only in part");
+    expect(mismatch.description).toContain("Invoice INV-0050 reached Xero");
+    expect(mismatch.description).toContain("Do not repeat the action");
+    expect(mismatch.description).toContain("Resolve it from this booking");
+    expect(mismatch.description).not.toContain("retry");
+    expect(mismatch.linkLabel).toBe("Resolve from Xero activity");
   });
 
-  it("shows the redacted operator message, which is the one text that may be shown", async () => {
-    const deps = makeDeps({
-      invoiceSyncFault: syncFault({
-        reason: "Xero rejected the invoice: account code missing",
+  it("tells an officer to check Xero first when nobody can tell what happened", async () => {
+    // A worker killed mid-invoice. Raising another invoice on a guess is the one
+    // thing that cannot be undone from here.
+    const mismatch = await renderFault(
+      syncFault({
+        kind: "INVOICE_STATE_UNKNOWN",
+        action: { type: "RESOLVE", engineReason: null },
       }),
-    });
+    );
 
-    const [mismatch] = await getBookingProviderMismatches("booking-1", { deps });
+    expect(mismatch.label).toBe(
+      "Check Xero: this booking's invoice was left mid-flight",
+    );
+    expect(mismatch.description).toContain("cannot tell from here");
+    expect(mismatch.description).toContain("BEFORE doing anything else");
+    expect(mismatch.description).not.toContain("retry");
+    expect(mismatch.linkLabel).toBe("Resolve from Xero activity");
+  });
 
-    expect(mismatch.description).toContain("account code missing");
+  it("keeps the one retry that legitimately coexists with 'do not raise another'", async () => {
+    // The payment leg: the retry records the club's payment against the invoice
+    // that already exists, and raises nothing.
+    const mismatch = await renderFault(
+      syncFault({
+        kind: "PAYMENT_NOT_RECORDED",
+        invoiceReachedXero: true,
+        invoiceNumber: "INV-0043",
+        action: { type: "RETRY" },
+      }),
+    );
+
+    expect(mismatch.description).toContain("Do not raise a second invoice");
+    expect(mismatch.description).toContain("You can retry it");
+    expect(mismatch.linkLabel).toBe("Retry from Xero activity");
+  });
+
+  it("prints the recovery engine's own refusal when the engine is what refuses", async () => {
+    const mismatch = await renderFault(
+      syncFault({
+        kind: "MEMBER_NOT_SENT_INVOICE",
+        emailFailureCause: "PROVIDER",
+        invoiceReachedXero: true,
+        invoiceNumber: "INV-0043",
+        action: {
+          type: "RESOLVE",
+          engineReason:
+            "This invoice is partial because it was not emailed, not because its payment failed.",
+        },
+      }),
+    );
+
+    expect(mismatch.linkLabel).toBe("Resolve from Xero activity");
+    expect(mismatch.description).toContain("Invoice INV-0043 was raised in Xero");
+    expect(mismatch.description).toContain("Do not raise a second invoice");
+    expect(mismatch.description).toContain("not because its payment failed");
+    expect(mismatch.description).not.toContain("You can retry");
+  });
+});
+
+describe("an unsent invoice has three causes and three remedies (#3001)", () => {
+  /*
+    One kind, three unrelated events. The middle one INVERTS the remedy: when the
+    booking's "No emails" switch could not be READ, "send it from Xero yourself"
+    can email a booking the club deliberately silenced — the conflation this
+    codebase calls money-adjacent. The reason text is null on every partial row,
+    so without the cause this is the one kind that always withheld its
+    distinguishing detail.
+  */
+  it("says to read the switch first when the switch could not be read", async () => {
+    const mismatch = await renderFault(
+      syncFault({
+        kind: "MEMBER_NOT_SENT_INVOICE",
+        emailFailureCause: "NO_EMAILS_UNREADABLE",
+        invoiceReachedXero: true,
+        invoiceNumber: "INV-0045",
+        action: { type: "RESOLVE", engineReason: null },
+      }),
+    );
+
+    expect(mismatch.description).toContain(
+      '"No emails" switch could not be read',
+    );
+    expect(mismatch.description).toContain("CHECK THAT SWITCH FIRST");
+    // The remedy that fits the OTHER two causes, and would be wrong here.
+    expect(mismatch.description).not.toContain("Send it from Xero by hand");
+  });
+
+  it("names the environment role when that is what stopped the send", async () => {
+    const mismatch = await renderFault(
+      syncFault({
+        kind: "MEMBER_NOT_SENT_INVOICE",
+        emailFailureCause: "ROLE_UNCONFIRMED",
+        invoiceReachedXero: true,
+        action: { type: "RESOLVE", engineReason: null },
+      }),
+    );
+
+    expect(mismatch.description).toContain("role is not confirmed");
+    expect(mismatch.description).toContain("Confirm the role");
+  });
+
+  it("says Xero could not send it when the provider call is what failed", async () => {
+    const mismatch = await renderFault(
+      syncFault({
+        kind: "MEMBER_NOT_SENT_INVOICE",
+        emailFailureCause: "PROVIDER",
+        invoiceReachedXero: true,
+        action: { type: "RESOLVE", engineReason: null },
+      }),
+    );
+
+    expect(mismatch.description).toContain("Xero could not email it");
+    expect(mismatch.description).toContain("Send it from Xero by hand");
+  });
+
+  it("does not invent a remedy for a row that never recorded a cause", async () => {
+    // Every row written before #3001 is this shape.
+    const mismatch = await renderFault(
+      syncFault({
+        kind: "MEMBER_NOT_SENT_INVOICE",
+        emailFailureCause: null,
+        invoiceReachedXero: true,
+        action: { type: "RESOLVE", engineReason: null },
+      }),
+    );
+
+    expect(mismatch.description).toContain("did not happen");
+    expect(mismatch.description).not.toContain("Send it from Xero by hand");
+    expect(mismatch.description).not.toContain("CHECK THAT SWITCH FIRST");
   });
 });

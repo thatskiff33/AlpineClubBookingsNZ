@@ -124,12 +124,14 @@ const defaultDependencies: BookingProviderMismatchDependencies = {
  * beside an unqualified Retry would be walking an officer toward a duplicate
  * invoice in the club's accounts.
  *
- * THE LAST SENTENCE IS THE ENGINE'S, NOT OURS. When the existing recovery path
- * refuses this operation, the refusal printed here is
- * `getXeroOperationRetryMeta`'s own prose — so the booking page and the Xero
- * operations screen can never tell an officer different things about one row,
- * and the link's label says "Resolve" rather than "Retry" when there is no retry
- * to offer.
+ * SO THE LAST SENTENCE AND THE LINK LABEL COME FROM ONE FIELD. `fault.action` is
+ * decided once, in the projection, and both are read off it. Nothing here
+ * appends "you can retry it" independently of the kind — which is how a row
+ * could once read *do not repeat the action … you can retry it* under a button
+ * labelled Retry. Where the action is RESOLVE and the recovery engine is what
+ * refuses, the refusal printed is the engine's own prose, so the booking page
+ * and the Xero operations screen can never tell an officer different things
+ * about one row.
  */
 function describeBookingInvoiceSyncFault(
   fault: BookingInvoiceSyncFault,
@@ -139,25 +141,7 @@ function describeBookingInvoiceSyncFault(
     ? `Invoice ${fault.invoiceNumber}`
     : "The invoice";
 
-  const { label, state } = {
-    INVOICE_NOT_RAISED: {
-      label: "No Xero invoice for this booking",
-      state:
-        "Raising this booking's invoice in Xero failed, so the club's accounts hold no invoice for it and nothing is asking the member to pay. The booking itself is unchanged — it has not been cancelled, and no money has moved.",
-    },
-    PAYMENT_NOT_RECORDED: {
-      label: "Xero has the invoice, but not the payment",
-      state: `${invoice} was raised in Xero, but recording the club's payment against it did not finish. Xero still shows it as awaiting payment for money the club already holds. Do not raise a second invoice.`,
-    },
-    MEMBER_NOT_SENT_INVOICE: {
-      label: "Xero has the invoice, but the member was not sent it",
-      state: `${invoice} was raised in Xero and is correct there, but sending it to the member failed, so they may not know what they owe. Do not raise a second invoice — the member needs the one that exists.`,
-    },
-    PARTLY_COMPLETED: {
-      label: "The Xero invoice completed only in part",
-      state: `${invoice} reached Xero, but a later step of the same operation did not finish. Do not repeat the action — check the invoice in Xero first, then resolve the operation from this booking's Xero activity.`,
-    },
-  }[fault.kind];
+  const { label, state } = describeFaultKind(fault, invoice);
 
   /*
     The reason is `lastErrorMessage`, which `failXeroSyncOperation` put through
@@ -166,19 +150,104 @@ function describeBookingInvoiceSyncFault(
     (`INV-INT-005`). The projection supplies it for a failed row and never for a
     partial one, where it would be the previous attempt's message.
   */
-  const next = fault.retrySupported
-    ? "You can retry it from this booking's Xero activity."
-    : fault.retryBlockedReason;
+  const next =
+    fault.action.type === "RETRY"
+      ? "You can retry it from this booking's Xero activity."
+      : [
+          "Resolve it from this booking's Xero activity once you have checked Xero.",
+          fault.action.engineReason,
+        ]
+          .filter(Boolean)
+          .join(" ");
 
   return {
     id: "xero-invoice-sync-failed",
     label,
     description: [state, fault.reason, next].filter(Boolean).join(" "),
     href: buildXeroRecordActivityUrl("Booking", bookingId),
-    linkLabel: fault.retrySupported
-      ? "Retry from Xero activity"
-      : "Resolve from Xero activity",
+    linkLabel:
+      fault.action.type === "RETRY"
+        ? "Retry from Xero activity"
+        : "Resolve from Xero activity",
   };
+}
+
+/**
+ * The two sentences that differ per kind.
+ *
+ * MEMBER_NOT_SENT_INVOICE is three faults wearing one name, and they want three
+ * different things from an officer. The middle one is the reason this is split
+ * at all: when the booking's "No emails" switch could not be READ, telling an
+ * officer to send the invoice from Xero can email a booking the club silenced —
+ * the conflation this codebase calls money-adjacent. The switch has to be read
+ * first, and the copy says so.
+ */
+function describeFaultKind(
+  fault: BookingInvoiceSyncFault,
+  invoice: string,
+): { label: string; state: string } {
+  switch (fault.kind) {
+    case "INVOICE_NOT_RAISED":
+      return {
+        label: "No Xero invoice for this booking",
+        state:
+          "Raising this booking's invoice in Xero failed, and the club has no invoice recorded against it, so nothing is asking the member to pay. The booking itself is unchanged — it has not been cancelled, and no money has moved.",
+      };
+    case "INVOICE_STATE_UNKNOWN":
+      return {
+        label: "Check Xero: this booking's invoice was left mid-flight",
+        state:
+          "This booking's invoice operation stopped part-way and never reported what happened, so the club cannot tell from here whether Xero holds an invoice for it. Check Xero for an invoice against this booking BEFORE doing anything else — if one is there, raising another would double-bill the member. The booking itself is unchanged.",
+      };
+    case "PAYMENT_NOT_RECORDED":
+      return {
+        label: "Xero has the invoice, but not the payment",
+        state: `${invoice} was raised in Xero, but recording the club's payment against it did not finish. Xero still shows it as awaiting payment for money the club already holds. Do not raise a second invoice.`,
+      };
+    case "MEMBER_NOT_SENT_INVOICE":
+      return describeUnsentInvoice(fault.emailFailureCause, invoice);
+    case "PARTLY_COMPLETED":
+      return {
+        label: "The Xero invoice completed only in part",
+        state: `${invoice} reached Xero, but a later step of the same operation did not finish. Do not repeat the action — check the invoice in Xero first.`,
+      };
+  }
+}
+
+/** The three reasons the member never got their invoice, and their three remedies. */
+function describeUnsentInvoice(
+  cause: Extract<
+    BookingInvoiceSyncFault,
+    { kind: "MEMBER_NOT_SENT_INVOICE" }
+  >["emailFailureCause"],
+  invoice: string,
+): { label: string; state: string } {
+  const raised = `${invoice} was raised in Xero and is correct there`;
+
+  switch (cause) {
+    case "NO_EMAILS_UNREADABLE":
+      return {
+        label: "Xero has the invoice; whether to email it could not be decided",
+        state: `${raised}, but the booking's "No emails" switch could not be read, so nothing was sent to the member. CHECK THAT SWITCH FIRST: if it is on, the club has deliberately silenced this booking and the invoice must not be emailed. Do not raise a second invoice.`,
+      };
+    case "ROLE_UNCONFIRMED":
+      return {
+        label: "Xero has the invoice; this site is not cleared to email it",
+        state: `${raised}, but this installation's role is not confirmed, so nothing was transmitted to the member. Confirm the role under environment safety, then send that one invoice from Xero by hand. Do not raise a second invoice.`,
+      };
+    case "PROVIDER":
+      return {
+        label: "Xero has the invoice, but the member was not sent it",
+        state: `${raised}, but Xero could not email it to the member, so they may not know what they owe. Send it from Xero by hand. Do not raise a second invoice — the member needs the one that exists.`,
+      };
+    case null:
+      // Recorded before the writer named the cause (#3001). Say what is known
+      // and no more, and do not hand out a remedy that fits only two of three.
+      return {
+        label: "Xero has the invoice, but the member was not sent it",
+        state: `${raised}, but sending it to the member did not happen, so they may not know what they owe. Check the operation in Xero activity for what stopped it. Do not raise a second invoice — the member needs the one that exists.`,
+      };
+  }
 }
 
 export async function getBookingProviderMismatches(
@@ -217,11 +286,18 @@ export async function getBookingProviderMismatches(
   const mismatches: BookingProviderMismatch[] = [];
 
   /*
-    #3001: the canonical invoice-create operation for this booking, read whether
-    or not a payment row survives. The operation is STORED against the payment,
-    but it is found by the booking's own correlation key — a booking whose
-    payment row is missing or replaced would otherwise match nothing here and the
-    page would report all-clear over a failed invoice.
+    #3001: the canonical invoice-create operation for this booking. The operation
+    is STORED against the payment, but it is found by the booking's own
+    correlation key — a booking whose payment row has not been created yet would
+    otherwise match nothing here and the page would report all-clear over a
+    failed invoice.
+
+    WHO SEES IT: the caller (`booking-detail-admin-tools.ts`) runs this read
+    behind `isAdmin` — a FULL ADMIN, not the wider admin-tools audience. A
+    booking officer sees the card without this row. That gate is inherited rather
+    than introduced here: it covers every provider mismatch, and #3001 preserves
+    the existing boundary rather than widening one (the issue's required
+    implementation 7). The release note and the operator guide say so plainly.
   */
   const invoiceSyncFault = modules.xeroIntegration
     ? await deps.getBookingInvoiceSyncFault(booking.id)
