@@ -273,12 +273,19 @@ describe("PublicBookingRequestsPanel school group numbers on Save quote (#3412)"
 
     await editYouthCount("2");
     await enterTotal("105.00");
-    // The server accepted the change, so the queue now serves the new party.
+    /*
+     * The save lands and the queue re-reads the row — and it comes back at
+     * THREE youth, not the two typed here, because a second officer moved it in
+     * between. The two numbers have to differ, or this test cannot tell a box
+     * that re-read the server from a box still showing the officer's own stale
+     * copy: with the clear disabled and the server agreeing, every assertion
+     * passes for the wrong reason. That is what a probe found the first time.
+     */
     fetchMock.served.current = {
       ...baseSchoolRequest,
       guests: [
         { firstName: "Tui", lastName: "Teacher", ageTier: "ADULT" },
-        ...Array.from({ length: 2 }, (_, index) => ({
+        ...Array.from({ length: 3 }, (_, index) => ({
           firstName: "School Child",
           lastName: String(index + 1),
           ageTier: "YOUTH",
@@ -288,18 +295,34 @@ describe("PublicBookingRequestsPanel school group numbers on Save quote (#3412)"
     fireEvent.click(await screen.findByRole("button", { name: "Save quote" }));
 
     await waitFor(() => expect(quoteBody(fetchMock)).not.toBeNull());
-    // The box shows what was SAVED, and — because the local edit is gone — the
-    // card no longer reads as carrying an unsaved change, so Hold slots is live
-    // again and nothing would re-post the override.
+    // The box prefills from what the SERVER holds.
     await waitFor(() =>
-      expect((screen.getByLabelText("Youth") as HTMLInputElement).value).toBe("2"),
+      expect((screen.getByLabelText("Youth") as HTMLInputElement).value).toBe("3"),
     );
+    // And with the local edit gone, the card no longer reads as carrying an
+    // unsaved change, so Hold slots is live again.
     await waitFor(() =>
       expect(
         (screen.getByRole("button", { name: "Hold slots" }) as HTMLButtonElement)
           .disabled,
       ).toBe(false),
     );
+
+    // The harm the clear prevents: a stale override that keeps re-posting
+    // itself on every later action. A second save carries no counts at all.
+    await enterTotal("110.00");
+    fireEvent.click(screen.getByRole("button", { name: "Save quote" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/quote")),
+      ).toHaveLength(2),
+    );
+    const secondSave = fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith("/quote"),
+    )[1];
+    expect(
+      JSON.parse(String((secondSave[1] as RequestInit).body)),
+    ).not.toHaveProperty("childCounts");
   });
 
   /*
