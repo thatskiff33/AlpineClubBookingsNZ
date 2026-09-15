@@ -2805,11 +2805,34 @@ export function buildBookingRequestListWhere(
   return { status: filter };
 }
 
+/**
+ * The stored teachers/parent helpers, as the ADMIN QUEUE reads them.
+ *
+ * The names go through `nameField()` — the same helper `schoolTeacherSchema`
+ * uses — because the panel and the server now answer the SAME question from
+ * these two reads (#3412, review round 5, finding E). The panel builds the
+ * party it is about to quote by putting these names in front of the generated
+ * children and comparing that list to the stored one; the server rebuilds it
+ * through `parseSchoolTeachers`, which trims and collapses CR/LF. A raw
+ * `z.string()` here made the two lists differ at the teacher prefix for any row
+ * whose `teachers` column carries an untrimmed name — a hand-repaired row, the
+ * very kind #3412 was reported on.
+ *
+ * Measured before the fix, with a stored `" Tui "` and the officer typing the
+ * stored numbers straight back: Send quote went permanently disabled and the
+ * misplaced-link warning fired against the teacher's own row, which disabled
+ * Save quote too. Both doors shut on a request nothing was wrong with.
+ *
+ * A name the helper rejects (empty, or over 100 characters) now yields the same
+ * empty list this parser has always returned for a shape it cannot read. That
+ * is the answer the server already gives such a row — `parseSchoolTeachers`
+ * refuses it outright — so the two reads agree there as well.
+ */
 function parseAdminTeachers(raw: unknown) {
   const schema = z.array(
     z.object({
-      firstName: z.string(),
-      lastName: z.string(),
+      firstName: nameField(),
+      lastName: nameField(),
       email: z.string().nullable().optional(),
     })
   );

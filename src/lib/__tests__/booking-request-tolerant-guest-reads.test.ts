@@ -101,6 +101,7 @@ import {
   serializeBookingRequestForAdmin,
   UNREADABLE_STORED_GUESTS_MESSAGE,
 } from "@/lib/booking-request";
+import { nameField } from "@/lib/zod-helpers";
 import { prisma } from "@/lib/prisma";
 import { GET as listRequests } from "@/app/api/admin/booking-requests/route";
 import { POST as priceRequest } from "@/app/api/admin/booking-requests/[id]/price/route";
@@ -320,6 +321,50 @@ describe("serializeBookingRequestForAdmin (#2342)", () => {
     expect(serialized).toMatchObject({
       guestDataNeedsAttention: true,
       linkedMemberDataNeedsAttention: true,
+    });
+  });
+
+  /*
+   * #3412 review round 5 (E) — THE TEACHER NAMES THE PANEL SEES MUST BE THE
+   * ONES THE SERVER REBUILDS THE PARTY FROM.
+   *
+   * Since #3412 the admin panel composes the party it is about to quote —
+   * stored teachers first, then the regenerated children — and compares it to
+   * the stored guest list to decide whether the officer's numbers changed
+   * anything. The server composes the same list through `schoolTeacherSchema`,
+   * whose names go through `nameField()` and are trimmed. This serialiser read
+   * the column raw, so on a hand-repaired row carrying " Tui " the two lists
+   * differed at row 0 for EVERY set of numbers, the stored ones included.
+   *
+   * Measured before the fix, typing the stored numbers straight back: Send
+   * quote disabled and the "these numbers renumber that row" warning raised
+   * against the teacher's own link, which disabled Save quote as well. Both
+   * doors shut on a request nothing was wrong with, and no existing flag could
+   * see it — the three cover guests, links and quotes.
+   */
+  it("normalises stored teacher names through the same helper the school reader uses (#3412)", () => {
+    const stored = [
+      { firstName: " Tui ", lastName: "Teacher\r\nSmith", email: null },
+    ];
+
+    const serialized = serializeBookingRequestForAdmin(
+      row({ type: "SCHOOL", schoolName: "Test School", teachers: stored }),
+    );
+
+    // Pinned against the shared helper rather than against a literal, because
+    // the fact under test is "one definition of how a person-name is
+    // normalised", not "these two particular spellings".
+    expect(serialized.teachers).toEqual([
+      {
+        firstName: nameField().parse(stored[0].firstName),
+        lastName: nameField().parse(stored[0].lastName),
+        email: null,
+      },
+    ]);
+    expect(serialized.teachers[0]).toEqual({
+      firstName: "Tui",
+      lastName: "Teacher Smith",
+      email: null,
     });
   });
 });
