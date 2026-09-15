@@ -500,7 +500,17 @@ export const AUDIT_CENSUS_TOTALS = {
   // `vitest related` (it reads the source tree from disk and has no import edge
   // to anything the change touched), so nothing selects it for you and adding
   // the deltas up by hand is how a figure ships one short.
-  writeSites: 482,
+  // 482 -> 483 (#2942, arriving on the eighth main-to-epic sync): `LODGE_MEMBER_ROSTER_SETTINGS_UPDATED`, written by the
+  // new `/api/admin/lodges/[id]/roster-settings` PUT. It records how much of a
+  // name the member lodge roster shows for one lodge, before and after, because
+  // that value decides what one member learns about another and "who widened
+  // this, and from what" is the first question anybody will ask of it.
+  // Categorised `admin` at the site, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npm run audit:census` on the MERGED tree, not by adding one to the literal:
+  // the epic's writers and this one are disjoint, and only a run over the
+  // composed tree can say so.
+  writeSites: 483,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -654,7 +664,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // 127 -> 130 (#2940): the three MiroTalk admin writers above — one settings
     // save and the two refusals — all awaited `createAuditLog`, which is the
     // form every other admin-settings writer beside them uses.
-    createAuditLog: { total: 130, uncategorised: 0 },
+    // 130 -> 131 (#2942, on the eighth sync): the roster name-detail writer above. An AWAITED
+    // `createAuditLog` rather than fire-and-forget `logAudit`, because the
+    // response tells an administrator the disclosure level changed and the
+    // record of that change should not be able to be the part that quietly
+    // failed.
+    createAuditLog: { total: 131, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -933,10 +948,20 @@ export const AUDIT_CENSUS_TOTALS = {
     // and it is `admin` for the same reason the two sibling AI settings writers
     // are: installation configuration that changes what the caps are compared
     // against, not who may sign in or what they may reach.
-    // 105 -> 106 (#2940): `mirotalk.settings.update`. An ordinary admin-settings
+    // 105 -> 106 (#2942): LODGE_MEMBER_ROSTER_SETTINGS_UPDATED. A widening of
+    // who can read what by one site, stated rather than counted: `admin` is
+    // readable with `support:view` alone. The row carries the before and after
+    // name-detail level for one lodge and the id of the administrator who set
+    // it — a configuration value, no member data — and it is `admin` because
+    // every other writer under `/api/admin/lodges/` is, which
+    // `LODGE_GATED_ADMIN_CATEGORIES_2765` below pins as uniform. `lodge` was
+    // the tempting answer, since the SIBLING lobby-display writer files it;
+    // taking it would have opened exactly the split `INV-PRIV-013` exists to
+    // close.
+    // 106 -> 107 (#2940): `mirotalk.settings.update`. An ordinary admin-settings
     // save, read with `support:view` like every other settings row beside it, so
     // it widens nobody's access.
-    admin: 106,
+    admin: 107,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -2392,6 +2417,14 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   // already saying `lodge`, so it WAS a split. These two have none.
   "src/app/api/admin/lodges/route.ts::POST.created#0": "admin",
   "src/app/api/admin/lodges/[id]/route.ts::PATCH.updated#0": "admin",
+  // The member lodge roster's per-lodge name-detail dial (#2942). Classified
+  // under INV-PRIV-013's uniformity rule rather than re-decided: it is a fourth
+  // writer in the same subsystem as the three above, and the subsystem files
+  // `admin`. The pull the other way is real and worth naming — the roster dial
+  // is the twin of `Lodge.displayNameGranularity`, whose writer files `lodge` —
+  // but that writer is in the DISPLAY subsystem, which was #2730's split to
+  // close; importing its answer here would open a new split inside this one.
+  "src/app/api/admin/lodges/[id]/roster-settings/route.ts::PUT#0": "admin",
 
   // ─── Work parties (gated `lodge:edit`) ──────────────────────────────────────
   "src/app/api/admin/work-parties/route.ts::POST#0": "admin",
@@ -2474,6 +2507,7 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   "LODGE_UPDATED",
   "LODGE_ACTIVATED",
   "LODGE_DEACTIVATED",
+  "LODGE_MEMBER_ROSTER_SETTINGS_UPDATED",
   "workparty.create",
   "workparty.update",
   "workparty.delete",

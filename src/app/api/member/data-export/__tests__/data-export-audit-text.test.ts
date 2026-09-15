@@ -1,6 +1,6 @@
 /**
  * THE DATA EXPORT IS A MEMBER-FACING CHANNEL, AND IT READS THE SAME
- * DECLARATION THE MEMBER'S TIMELINE DOES (#2695, `INV-PRIV-017`).
+ * DECLARATION THE MEMBER'S TIMELINE DOES (#2695, `INV-PRIV-018`).
  *
  * WHY THIS FILE EXISTS. #2695 made what a member reads off an audit row an
  * explicit property of the event, declared where the row is written. The member

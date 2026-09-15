@@ -11,7 +11,7 @@ call sites and not its explanation.
 
 Comment compression was taken too, before reaching for any of this. The
 `adminNotes` justification was written out at five call sites and is now four
-lines at each, pointing at `INV-PRIV-017` for the rest; that alone returned
+lines at each, pointing at `INV-PRIV-018` for the rest; that alone returned
 thirty-odd lines across the three routes below.
 
 The four routes' growth is irreducible in the same way at each: the declaration

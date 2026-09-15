@@ -315,8 +315,14 @@ const FIGURES = {
    * and two in the secrets section, which renders one Save and one Clear per
    * secret from a single pair of render sites. This census counts render sites,
    * not the three rows they produce. MEASURED by re-running it.
+   *
+   * 351 -> 361 (#2942, on the eighth sync): the member lodge roster's per-lodge name-detail card
+   * (`lodge-roster-settings-card.tsx`) adds Edit and Save. Cancel is a plain
+   * Button, as it is on the Retention section: it reverts local state and
+   * writes nothing, so gating it would refuse a view-only admin the way out of
+   * a form they could not have changed. MEASURED by re-running this census.
    */
-  callSites: 359,
+  callSites: 361,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -335,8 +341,10 @@ const FIGURES = {
    *
    * 301 -> 306 (#2940): all five of the Video meetings screen's controls opt
    * out — each of its two sections heads itself with its own banner.
+   *
+   * 298 -> 308 (#2942, on the eighth sync): so do the roster name-detail card's two.
    */
-  optOuts: 306,
+  optOuts: 308,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -378,8 +386,11 @@ const FIGURES = {
    * Full Admin requirement themselves. It is carried so a future render of
    * these controls outside this file still says the narrower rule rather than
    * the area one.
+   *
+   * 264 -> 274 (#2942, on the eighth sync): the roster name-detail card likewise heads its own
+   * file with its own banner, so its two are static rather than vouched.
    */
-  staticOptOuts: 272,
+  staticOptOuts: 274,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -434,8 +445,13 @@ const FIGURES = {
    * component — this figure counts files that render one, and the settings
    * section and the host sign-in section each head themselves with their own,
    * which is the one-per-SECTION rule rather than one per page.
+   *
+   * 94 -> 97 (#2942, on the eighth sync): the roster name-detail card heads itself with one banner,
+   * mounted above its loading early-return. Its sibling on the same lodge — the
+   * lobby display card — keeps its own, because the two are separate sections
+   * on separate sub-pages and neither is ever rendered inside the other.
    */
-  bannerComponents: 96,
+  bannerComponents: 97,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

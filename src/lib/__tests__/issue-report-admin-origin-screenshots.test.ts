@@ -1,5 +1,5 @@
 /**
- * `INV-PRIV-020` (#2703) — admin-origin issue-report screenshots are
+ * `INV-PRIV-021` (#2703) — admin-origin issue-report screenshots are
  * Full-Admin-only.
  *
  * WHAT THIS SUITE IS FOR. Viewing an issue report needs `support: view`, and

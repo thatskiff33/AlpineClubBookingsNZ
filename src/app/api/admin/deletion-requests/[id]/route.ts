@@ -607,7 +607,7 @@ export async function POST(
         entityType: "Member",
         entityId: member.id,
         details: body.note ? `Note: ${body.note}` : "No note",
-        // #2695 (`INV-PRIV-017`) — DECLARED INTERNAL, owner decision of 9 August
+        // #2695 (`INV-PRIV-018`) — DECLARED INTERNAL, owner decision of 9 August
         // 2026. This note is typed on the same form as the "do not notify the
         // member" tick below, and the member used to read it on their own
         // timeline whenever it was prose rather than JSON — so the tick meant

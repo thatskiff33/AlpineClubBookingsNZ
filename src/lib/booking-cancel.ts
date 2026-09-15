@@ -2201,7 +2201,7 @@ async function performBookingCancellation(
 
 type CancellationAuditBooking = {
   // #3369: NULL for an organisation-owned booking, and that flows straight
-  // through to the audit row's `subjectMemberId`. `INV-PRIV-018`: an audit
+  // through to the audit row's `subjectMemberId`. `INV-PRIV-019`: an audit
   // subject stays a PERSON, so a school booking writes no subject member and
   // the booking itself carries the identity through entityType/entityId.
   memberId: string | null;

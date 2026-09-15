@@ -690,7 +690,7 @@ describe("who the recovered detail reaches (#2704 with #2695)", () => {
    * The claim rests on a property of two call sites — `stripe-webhook-service`
    * and `payments/charge-saved-method` both put the member-readable text in
    * `errorMessage` — so the property is what is pinned here. This surface is
-   * the decided second door of `INV-PRIV-012` and is named in `INV-PRIV-017`;
+   * the decided second door of `INV-PRIV-012` and is named in `INV-PRIV-018`;
    * both put the readership decision at the surface, which is why a WRITE-side
    * change to what that surface reads owes a test rather than an argument.
    */

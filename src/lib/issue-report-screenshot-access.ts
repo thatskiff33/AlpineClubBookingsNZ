@@ -7,7 +7,7 @@ import {
 import { ISSUE_REPORT_RETENTION_DELETE_REASON } from "@/lib/issue-report-retention";
 
 /**
- * THE ONE HOME for `INV-PRIV-020` (#2703): **admin-origin issue-report
+ * THE ONE HOME for `INV-PRIV-021` (#2703): **admin-origin issue-report
  * screenshot pixels are Full-Admin-only**. Ordinary issue-report text and diagnostics keep
  * the normal `support:view` access model.
  *

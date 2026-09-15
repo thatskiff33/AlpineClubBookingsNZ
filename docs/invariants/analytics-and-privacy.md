@@ -250,7 +250,7 @@ and #2763's bulk member-record rows were not.
   `security`, `communication` or `privacy` as invisible.
   **Whether a member reads a given event's FREE TEXT is declared per event at the
   writing site and denied by default — DECIDED (#2695, 9 Aug 2026) and now
-  BUILT; `INV-PRIV-017` is the rule.** That lever decides text only. The
+  BUILT; `INV-PRIV-018` is the rule.** That lever decides text only. The
   category still decides whether the row reaches the timeline at all, so do not
   reach for a member-visible category in order to achieve visibility, and do not
   accept one as the price of tidying labels: audit rows are append-only, so
@@ -352,7 +352,7 @@ and #2763's bulk member-record rows were not.
   than by gating, which is not the same thing.** Filing `member.bulk-deactivate`
   `admin` took the row out of the member-visible query and left
   `src/lib/audit-query.ts` deciding `details` on a shape test. #2695 has since
-  replaced that with a declaration (`INV-PRIV-017`). Kept because the confusion
+  replaced that with a declaration (`INV-PRIV-018`). Kept because the confusion
   recurs: a re-classification moves ROWS, a declaration decides TEXT, and
   neither substitutes for the other.
 - **Two groups stay `admin` as a recorded decision, not as an unexamined
@@ -683,6 +683,40 @@ enforced by what the server BUILDS rather than by what a component renders.
 
 ## INV-PRIV-017
 
+What one member may learn about another from the lodge roster (#2942).
+
+- **Off unless the club turns it on.** `memberLodgeRoster` defaults false;
+  while false the page is Not Found and no roster row is read.
+- **Names and nights only**, today through `ROSTER_WINDOW_DAYS` nights from
+  `clubTime()`. No history, nothing that widens it.
+- **Only lodges the viewer could already book**, resolved BEFORE any booking
+  row is selected. A listing omits what they may not see rather than refusing.
+- **A withheld field is an ABSENT KEY**, never a hidden one — no null, no empty
+  string, nothing in a `title`, `aria-label` or `data-*`. The select's whole key
+  set is pinned, because no denylist can safely forbid a bare `id`. No per-night
+  occupancy total is returned.
+- **Consulting is not disclosing.** `wholeLodgeHold` is read, because it
+  decides whether a party is named; it never reaches the payload.
+- **Whose name may appear.** Individual names only where
+  `namesAllowedForBooking` allows, reduced by `reduceName` at
+  `Lodge.rosterNameGranularity` (null means `FULL_NAME`, decision D2 —
+  deliberately not the lobby display's default). A booking containing a minor
+  names NOBODY in it, judged over the whole booking rather than the nights on
+  screen.
+- **No per-member opt-out** (decision D3). The module default and the dial bound
+  that.
+- **A custodian is SHOWN, not concealed** (owner decision, 15 Sep 2026). Their
+  bed is an ordinary occupied bed on the calendar, so once the roster gives a
+  head count that concealment only made them the unexplained difference between
+  two screens. A minor custodian is never named, and naming is all-or-nothing,
+  so nobody is identified by elimination.
+- **A whole-lodge hold stays concealed, and this narrows that**: free beds
+  compared against people listed still distinguishes held from full. A property
+  of the pair, and why the module is off by default.
+- Pinned by `src/lib/__tests__/member-lodge-roster-privacy.test.ts`.
+
+## INV-PRIV-018
+
 What a member reads of an audit row's FREE TEXT is a property of the event,
 declared where the row is written and denied when nothing is declared. Owner
 decision, 9 August 2026 (#2695). Reasoning: `src/lib/audit-member-disclosure.ts`.
@@ -714,7 +748,7 @@ decision, 9 August 2026 (#2695). Reasoning: `src/lib/audit-member-disclosure.ts`
   which is not. Nothing is altered; a backfill would publish undeclared text, so
   it is the owner's call.
 
-## INV-PRIV-018
+## INV-PRIV-019
 
 An audit row's SUBJECT is a person. Where a booking is owned by an
 organisation, the row records no subject member, and the booking carries the
@@ -741,7 +775,7 @@ does.
   exactly what stage 4 removes, so the subject would have pointed at a record
   nobody can sign in as and nobody is keeping.
 
-## INV-PRIV-019
+## INV-PRIV-020
 
 Every mutation of the encrypted integration-credential store names its writer,
 and the writer is a person or a NAMED background actor, never an absence.
@@ -772,7 +806,7 @@ which carries the before-measurement.
   seeded actorless writer and a seeded bypass are reported. A wrapper hides its
   callers, soundly: it requires an actor, so the type covers them.
 
-## INV-PRIV-020
+## INV-PRIV-021
 
 Issue-report screenshot PIXELS taken by a reporter who held admin access are
 Full-Admin-only. The report's text and diagnostics keep the ordinary

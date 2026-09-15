@@ -1,6 +1,6 @@
 # File-size allowances for #2703
 
-Both files are admin-origin screenshot boundary work (`INV-PRIV-020`). The third
+Both files are admin-origin screenshot boundary work (`INV-PRIV-021`). The third
 file the gate flagged, `src/app/(admin)/admin/issue-reports/page.tsx`, is NOT
 declared here and takes no allowance: it would have crossed its budget for the
 first time, so the screenshot badge and panel were lifted into

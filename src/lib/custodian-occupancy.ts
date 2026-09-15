@@ -1,3 +1,4 @@
+import { isMinorAgeTier } from "./display-name-granularity";
 import { prisma } from "./prisma";
 import { formatDateOnly, parseDateOnly } from "./date-only";
 import { lodgeNullTolerantScope } from "./lodges";
@@ -72,6 +73,14 @@ export interface CustodianBedHold {
   assignmentId: string;
   memberId: string;
   memberName: string;
+  /**
+   * The name PARTS, so a caller that must reduce the name to a configured
+   * granularity can do so (`reduceName`). `memberName` above is the composed
+   * convenience form and cannot be reduced without re-splitting it, which is
+   * guesswork on any name with more than two words (#2942).
+   */
+  memberFirstName: string;
+  memberLastName: string;
   /** Minor-age custodians are never individually named on a public surface. */
   memberIsMinor: boolean;
   lodgeId: string;
@@ -84,8 +93,6 @@ export interface CustodianBedHold {
   /** Inclusive last held night, `YYYY-MM-DD`. */
   endDate: string;
 }
-
-const MINOR_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);
 
 /**
  * Truncate a `Date` to its UTC date-only midnight — this module's ONE
@@ -100,14 +107,18 @@ function truncateToDateOnly(date: Date): Date {
 }
 
 /**
- * Is this age tier a minor? Exported because the custodian slot on the lobby
+ * Is this age tier a minor? Re-exported because the custodian slot on the lobby
  * TV must never individually name a minor at ANY granularity (the display
  * contract in lodge-display-state.ts), and the hut-leaders API warns the admin
  * at assignment time rather than letting them assume a name will appear.
+ *
+ * The ANSWER lives in `display-name-granularity.ts` with the rest of the naming
+ * rules (#2942). This module used to carry its own tier set and its own
+ * function of the same name; two exported `isMinorAgeTier`s with identical
+ * lists is exactly the drift INV-SSOT is about, since a club that adds an age
+ * tier would fix one and leave the other quietly answering the old question.
  */
-export function isMinorAgeTier(ageTier: string | null | undefined): boolean {
-  return ageTier ? MINOR_AGE_TIERS.has(ageTier) : false;
-}
+export { isMinorAgeTier };
 
 /**
  * Does a hold cover any night of `[from, toExclusive)`?
@@ -242,6 +253,8 @@ export async function findCustodianBedHolds(input: {
       memberId: row.memberId,
       memberName:
         `${row.member.firstName ?? ""} ${row.member.lastName ?? ""}`.trim(),
+      memberFirstName: row.member.firstName ?? "",
+      memberLastName: row.member.lastName ?? "",
       memberIsMinor: isMinorAgeTier(row.member.ageTier),
       lodgeId: row.lodgeId,
       bedId: row.bedId,

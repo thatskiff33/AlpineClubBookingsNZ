@@ -65,7 +65,7 @@
  * particular not `INV-OPS-012`, which an earlier draft cited three times across
  * this change. That rule is about reclassifying a stored row's `category` and
  * what the backfill owes; the only true thing it has to say here is what
- * `INV-PRIV-017` says about itself — this change reclassifies nothing, so
+ * `INV-PRIV-018` says about itself — this change reclassifies nothing, so
  * `INV-OPS-012` owes nothing. Nothing already written is rewritten either way.
  *
  * NO AUDIENCE DECISION LIVES HERE, AND THAT IS DELIBERATE. #2695 made what a
@@ -77,7 +77,7 @@
  *
  * ONE SURFACE OUTSIDE THE AUDIT LOG DOES READ A ROW'S `details` TO A MEMBER,
  * and it is decided rather than incidental: the booking page's replay of the two
- * payment-failure actions to the booking's own member, named in `INV-PRIV-017`
+ * payment-failure actions to the booking's own member, named in `INV-PRIV-018`
  * and bound by `INV-PRIV-012`'s rule that a second door is its own decided
  * readership. The WRITE side here changes what that page has to read, so it is
  * pinned in the tests rather than reasoned about. If a future change makes a

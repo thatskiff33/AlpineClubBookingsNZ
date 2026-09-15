@@ -89,7 +89,7 @@ export async function reportUnappliedCreditElection({
    * `Organisation` (#3369). Only a member can elect to spend account credit, so
    * a null here means a booking that could never have held an election — the
    * report still runs, reads no balance, and records no audit SUBJECT
-   * (`INV-PRIV-018`).
+   * (`INV-PRIV-019`).
    */
   memberId: string | null;
   memberFirstName: string;

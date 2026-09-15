@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 /**
  * How an issue report's screenshot is presented to the officer looking at it.
  *
- * Lifted out of `/admin/issue-reports` when `INV-PRIV-020` (#2703) gave the
+ * Lifted out of `/admin/issue-reports` when `INV-PRIV-021` (#2703) gave the
  * screenshot a third state. The queue badge and the detail panel have to agree
  * about what each state looks like and what it is called, and they sat two
  * hundred lines apart in the page; here they are adjacent and there is one

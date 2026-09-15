@@ -63,7 +63,7 @@ type LoadedReport = {
 /**
  * One access decision for one report and one caller, used by BOTH handlers in
  * this file — the detail read and the reply every PATCH action returns. They
- * carry the same payload, so they are the same boundary (`INV-PRIV-020`).
+ * carry the same payload, so they are the same boundary (`INV-PRIV-021`).
  *
  * `session.user.accessRoles` is what `requireAdmin` just read from the database,
  * not the JWT's own claim, so the Full-Admin half never rests on a stale token.
@@ -212,7 +212,7 @@ export async function GET(
     // ONLY THIS HANDLER WRITES IT. The PATCH reply below builds the same
     // withheld payload and records no view, because resolving or reopening a
     // report is not opening one and never was audited as such. So
-    // `INV-PRIV-020`'s "a refusal writes its own row" means a refused READ.
+    // `INV-PRIV-021`'s "a refusal writes its own row" means a refused READ.
     //
     // `privacy` to match every sibling issue-report event (INV-PRIV-012), which
     // is where a member-data row belongs. It is NOT a second access control:

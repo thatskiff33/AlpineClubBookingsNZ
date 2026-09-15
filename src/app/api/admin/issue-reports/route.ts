@@ -49,7 +49,7 @@ function summarizeReport(report: {
 }, viewerFullAdmin: boolean) {
   // The same classification the detail read makes, from the same three stamps,
   // so the queue and the report cannot disagree about whether a screenshot is
-  // still there or whether this officer may open it (`INV-PRIV-020`).
+  // still there or whether this officer may open it (`INV-PRIV-021`).
   const access = classifyIssueReportScreenshot({
     screenshotOrigin: report.screenshotOrigin,
     screenshotCapturedAt: report.screenshotCapturedAt,

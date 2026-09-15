@@ -800,8 +800,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     ).toEqual(LODGE_GATED_ADMIN_CATEGORIES_2765);
 
     // #2765's fifteen, plus #2749's three other-lodges sites classified under
-    // the same rule on arrival (INV-PRIV-013).
-    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(18);
+    // the same rule on arrival (INV-PRIV-013), plus #2942's member-roster
+    // name-detail writer, classified the same way for the same reason.
+    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(19);
     expect([
       ...new Set(Object.values(LODGE_GATED_ADMIN_CATEGORIES_2765)),
     ]).toEqual(["admin"]);
@@ -999,8 +1000,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
       "src/app/api/admin/lockers/route.ts",
     ]);
     // Eight files from #2765's fifteen sites, plus #2749's two other-lodges
-    // route files.
-    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(10);
+    // route files, plus #2942's roster-settings route file.
+    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(11);
     expect(files.filter((file) => gateOf(file) === "other")).toEqual([]);
 
     /*
@@ -1373,7 +1374,18 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // four is named in a per-site map, so every one lands unpinned and `pinned`
     // does not move. RE-MEASURED on the composed tree, which is the only place
     // the figure is true: each branch alone reported a different one.
-    ).toEqual({ pinned: 127, unpinned: 355 });
+    //
+    // pinned 127 -> 128 (#2942, on the eighth sync), and `unpinned` does NOT move with it: the
+    // member-roster name-detail writer is the first addition in a while that
+    // lands INSIDE a per-site map rather than outside every one of them. It
+    // sits under `/api/admin/lodges/`, whose writers `INV-PRIV-013` pins as
+    // uniformly `admin`, so it had to be entered in
+    // `LODGE_GATED_ADMIN_CATEGORIES_2765` to keep that premise measured rather
+    // than merely asserted. the site total MEASURED on the MERGED
+    // tree with `npm run audit:census` minus the pinned union — the epic's
+    // unpinned additions and this pinned one are disjoint, so neither branch's
+    // pair survives the merge and only a run over the composed tree gives it.
+    ).toEqual({ pinned: 128, unpinned: 355 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
