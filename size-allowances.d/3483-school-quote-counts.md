@@ -1,7 +1,7 @@
 # File-size allowances for #3412
 
 file: src/lib/school-booking-request.ts
-lines: 2677
+lines: 2684
 reason: the shared resolver is the school module's own rule — the strict read,
   the preserved teachers, the regenerated children, the capacity bound, and
   (after review) the refusal of a member link on a row the regeneration
@@ -28,7 +28,7 @@ reason: what grew is one refusal helper, the send path's two new guards, and the
   collide with the four writers epic #2725 is already changing here.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2517
+lines: 2620
 reason: the added lines are one shared payload helper — which DELETED the
   duplicate the approve handler carried — the small predicates it feeds, and the
   inline sentences that say why a button is off, which after review cover the
@@ -38,4 +38,25 @@ reason: the added lines are one shared payload helper — which DELETED the
   predicates read the same local edit state the count boxes write, so extracting
   them means lifting that state out of the card, and the card is the unit an
   officer works in. Splitting this panel by request kind is the seam it really
-  wants and is a change of its own.
+  wants and is a change of its own. The closing review round added the rest: the
+  misplaced-link derivation now takes the link list as an argument, because save
+  quote posts the links on screen and approve reads the ones saved on the
+  request, and drawing one line for both left approve enabled in the state the
+  refusal exists to block. Two thin doors over one derivation, a count of the
+  unsaved link edits, and the two sentences that say which button is off and
+  why — said beside the buttons, because a disabled button cannot say it.
+
+file: src/lib/booking-request.ts
+lines: 2944
+reason: twenty-three lines, all of them the docblock over `parseAdminTeachers`,
+  which now reads stored teacher names through `nameField()` — the helper the
+  school reader already used. The one-line change is invisible without the
+  comment: it matters only because the admin panel composes the party it is
+  about to quote from these names and compares it to the stored guest list, so a
+  raw read made the two lists differ at the teacher prefix on any hand-repaired
+  row and shut both Save quote and Send quote on a request nothing was wrong
+  with. The comment records that measurement and the one behaviour change
+  (a name the helper rejects now yields the empty list this parser already
+  returns for an unreadable shape). The serialiser belongs with the request
+  schemas it is built from; the seam this file wants is public-request versus
+  admin-serialisation, which is a refactor of its own.
