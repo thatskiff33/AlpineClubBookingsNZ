@@ -186,7 +186,16 @@ describe("standing fanout and booking-request linked-member fencing (#2597)", ()
       "[...currentLinkedMembers.values()]",
       "[...linkedMembers.values()]",
     );
-    const noVersionFence = quotes.replace("version: request.version,", "");
+    // Scoped to the hold, which is the only body the detector reads (#3412).
+    // A bare `quotes.replace` deletes the FIRST occurrence in the file, and
+    // saving a quote now claims the request under the same fence — so the
+    // mutation stopped touching the hold's, the contract still held, and this
+    // probe passed while proving nothing.
+    const holdSourceForFence = holdBody(quotes);
+    const noVersionFence = quotes.replace(
+      holdSourceForFence,
+      holdSourceForFence.replace("version: request.version,", ""),
+    );
     const noCurrentLinkProof = quotes.replace(
       /\s+const expectedLinkedEntries = \[\.\.\.linkedMembers\.entries\(\)\]\.sort\([\s\S]*?\n\s+}\n\s+await lockActiveBookingRequestLinkedMembers/,
       "\n      await lockActiveBookingRequestLinkedMembers",
