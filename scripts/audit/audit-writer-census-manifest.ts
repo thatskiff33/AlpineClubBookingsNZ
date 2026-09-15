@@ -439,7 +439,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // this, and from what" is the first question anybody will ask of it.
   // Categorised `admin` at the site, so it does not join
   // `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
-  // `npm run audit:census` on this tree (473 sites, 2328 files scanned), not by
+  // `npm run audit:census` on this tree (473 sites, 2335 files scanned), not by
   // adding one to the literal.
   writeSites: 473,
   /**

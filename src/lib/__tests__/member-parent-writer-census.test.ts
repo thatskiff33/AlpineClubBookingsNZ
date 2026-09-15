@@ -67,7 +67,7 @@ const REVIEWED_PARENT_WRITER_MANIFEST: readonly ReviewedSite[] = [
   })),
   {
     file:
-      "prisma/migration-verification/20260914010000_add_member_parent_partner_exclusion.ts",
+      "prisma/migration-verification/20260929010000_add_member_parent_partner_exclusion.ts",
     site:
       "preExistingOverlapCase/raw-sql-update:dynamic-parent-column",
     persistence: "demo-test-fixture",
@@ -84,7 +84,7 @@ const REVIEWED_PARENT_WRITER_MANIFEST: readonly ReviewedSite[] = [
     "secondaryParentId#3",
   ].map((site): ReviewedSite => ({
     file:
-      "prisma/migration-verification/20260914010000_add_member_parent_partner_exclusion.ts",
+      "prisma/migration-verification/20260929010000_add_member_parent_partner_exclusion.ts",
     site: `module/raw-sql-update:${site}`,
     persistence: "demo-test-fixture",
     classification: "demo-test-only",
@@ -207,7 +207,7 @@ const REVIEWED_PARTNER_WRITER_MANIFEST: readonly ReviewedPartnerSite[] = [
     "module/raw-sql-insert",
   ].map((site): ReviewedPartnerSite => ({
     file:
-      "prisma/migration-verification/20260914010000_add_member_parent_partner_exclusion.ts",
+      "prisma/migration-verification/20260929010000_add_member_parent_partner_exclusion.ts",
     site,
     persistence: "demo-test-fixture",
     operation: "create-or-move",

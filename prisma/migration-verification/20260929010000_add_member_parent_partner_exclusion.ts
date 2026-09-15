@@ -96,7 +96,7 @@ function preExistingOverlapCase(
 }
 
 const verification: DataMigrationVerification = {
-  migration: "20260914010000_add_member_parent_partner_exclusion",
+  migration: "20260929010000_add_member_parent_partner_exclusion",
   intent:
     "Refuse pre-existing direct-parent/partner overlap without leaking pair values, otherwise backfill both parent columns and every partner status into exact canonical pair counts before installing the trigger backstop.",
   executionMode: "isolated_database",

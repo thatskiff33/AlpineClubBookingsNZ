@@ -16,9 +16,9 @@ const read = (relativePath: string) =>
   readFileSync(path.join(root, relativePath), "utf8");
 
 const MIGRATION =
-  "prisma/migrations/20260914010000_add_member_parent_partner_exclusion/migration.sql";
+  "prisma/migrations/20260929010000_add_member_parent_partner_exclusion/migration.sql";
 const ROLLBACK =
-  "prisma/migrations/20260914010000_add_member_parent_partner_exclusion/rollback.sql";
+  "prisma/migrations/20260929010000_add_member_parent_partner_exclusion/rollback.sql";
 
 function expectOrdered(source: string, fragments: readonly string[]) {
   let cursor = -1;
@@ -97,7 +97,7 @@ describe("parent/partner database backstop contract (#3292)", () => {
       "20260806000000_add_hosting_notification_delivery_claim/migration.sql",
       "20260806010000_fence_hosting_coverage_delivery_claims/migration.sql",
       "20260913010000_add_booking_guest_night_adjustment/migration.sql",
-      "20260914010000_add_member_parent_partner_exclusion/migration.sql",
+      "20260929010000_add_member_parent_partner_exclusion/migration.sql",
     ]);
     expect(runbook).toContain(
       "#2543 + #2520 + #2596 + #3271 windowed maintenance window",
@@ -109,7 +109,7 @@ describe("parent/partner database backstop contract (#3292)", () => {
 
     const deployment = read("DEPLOYMENT.md");
     expect(deployment).toContain("Pass all eight pending migration files");
-    expect(deployment).toContain("`20260913010000` and `20260914010000`");
+    expect(deployment).toContain("`20260913010000` and `20260929010000`");
 
     const rollback = read(ROLLBACK);
     expect(rollback).toContain("every other windowed");
@@ -223,7 +223,7 @@ describe("parent/partner database backstop contract (#3292)", () => {
     expect(runner).toContain("await caseClient.query(version)");
     expect(runner).not.toContain("sqlInsideVerificationTransaction");
     const fixture = read(
-      "prisma/migration-verification/20260914010000_add_member_parent_partner_exclusion.ts",
+      "prisma/migration-verification/20260929010000_add_member_parent_partner_exclusion.ts",
     );
     expect(fixture).toContain('executionMode: "isolated_database"');
     expect(fixture).toContain("noDetailOrHint: true");

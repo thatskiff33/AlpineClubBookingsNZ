@@ -316,7 +316,7 @@ in that class:
 - `20260806010000_fence_hosting_coverage_delivery_claims` (#2596) — additive DDL,
   but an old hosting worker ignores the new tokens and can process a new worker's
   live claim, so mixed old/new workers are forbidden.
-- `20260914010000_add_member_parent_partner_exclusion` (#3271 / #3292) — additive
+- `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292) — additive
   DDL with a deliberately incompatible write protocol. The previous runtime can
   attempt an overlap that the new triggers reject and cannot decode the new safe
   database error. Its private repair and public deploy sequence are in
@@ -631,7 +631,7 @@ and nomination. There is no ordering that keeps both versions working.
      prisma/migrations/20260806000000_add_hosting_notification_delivery_claim/migration.sql \
      prisma/migrations/20260806010000_fence_hosting_coverage_delivery_claims/migration.sql \
      prisma/migrations/20260913010000_add_booking_guest_night_adjustment/migration.sql \
-     prisma/migrations/20260914010000_add_member_parent_partner_exclusion/migration.sql
+     prisma/migrations/20260929010000_add_member_parent_partner_exclusion/migration.sql
    ```
    Expect exit 0 with the override reason echoed back as a `WARNING:` line. It
    exits 1 without all three acknowledgements, and exits 1 regardless if `rollback.sql` is
@@ -826,7 +826,7 @@ Both directions were rehearsed against a production-shaped database before merge
 #### 2.4.2 #3271: parent/partner exclusivity backstop
 
 Use this sequence when
-`20260914010000_add_member_parent_partner_exclusion` is pending. The migration is
+`20260929010000_add_member_parent_partner_exclusion` is pending. The migration is
 additive, but it is **not** safe for mixed old-runtime/new-schema traffic: old
 parent and partner writers do not all use the canonical pair-row protocol and do
 not decode its stable database refusal. The maintenance window starts before the
@@ -845,15 +845,17 @@ private repair, not merely before `prisma migrate deploy`.
    `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` only after this proof.
 4. Take and verify a fresh backup at this quiet point. Retain the pre-repair
    before-image and rollback instructions only in the private deployment record.
-5. Run the owner-approved private repair. It must re-read and lock the approved
-   rows, change only the individually approved parent field, preserve the valid
-   partnership and family membership, reconcile email-inheritance provenance, and
-   verify the post-state. Do not paste identifiers, SQL, or before-images into a
-   public issue, PR, transcript, or log attachment.
-6. Repeat the complete read-only parent/partner overlap census. Proceed only when
-   it returns zero. If the approved row changed or any additional pair appears,
-   stop: return those rows privately for individual owner decisions. Do not widen
-   or automate the repair.
+5. The authorized private deployment lane runs the approved repair and supplies
+   the verification result. It must re-read and lock the approved rows, change
+   only the individually approved parent field, preserve the valid partnership
+   and family membership, reconcile email-inheritance provenance, and verify the
+   post-state. Do not paste identifiers, SQL, or before-images into a public issue,
+   PR, transcript, or log attachment.
+6. The same authorized private lane repeats the complete read-only parent/partner
+   overlap census and reports only a sanitized aggregate result publicly. Proceed
+   only when it returns zero. If the approved row changed or any additional pair
+   appears, stop: return those rows privately for individual owner decisions. Do
+   not widen or automate the repair.
 7. Run the exact eight-file `scripts/validate-blue-green-migrations.sh` command
    in §2.4.1 step 9(a) with
    `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a non-empty
@@ -870,7 +872,7 @@ private repair, not merely before `prisma migrate deploy`.
    -- expect one finished row, one applied step, and no rollback marker
    SELECT COUNT(*) AS applied_rows
    FROM "_prisma_migrations"
-   WHERE migration_name = '20260914010000_add_member_parent_partner_exclusion'
+   WHERE migration_name = '20260929010000_add_member_parent_partner_exclusion'
      AND finished_at IS NOT NULL
      AND applied_steps_count = 1
      AND rolled_back_at IS NULL;
@@ -1160,7 +1162,7 @@ migrations in that class. Check for all five:
   token-fenced claim. It ships a no-op `rollback.sql`; old/new worker overlap is
   forbidden in both deploy and rollback directions. Pending windowed migrations
   share **one** window.
-- `20260914010000_add_member_parent_partner_exclusion` (#3271 / #3292) is
+- `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292) is
   `windowed` because the previous runtime can attempt writes rejected by the new
   trigger and cannot decode that safe refusal. Use [§2.4.2](#242-3271-parentpartner-exclusivity-backstop):
   stop every old process before the private repair, preserve the quiet-point
