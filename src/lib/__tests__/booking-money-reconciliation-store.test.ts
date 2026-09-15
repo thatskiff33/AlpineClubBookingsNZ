@@ -54,15 +54,71 @@ describe("booking money reconciliation store", () => {
   });
 
   it("counts every simultaneous reason from one ordered repeatable-read snapshot", async () => {
+    const promo = {
+      priceAdjustmentCents: -2_000,
+      allocations: [{ memberId: "member-1", priceAdjustmentCents: -2_000 }],
+    };
     const findMany = vi.fn().mockResolvedValue([
       row(),
       row({
-        id: "booking-2",
-        totalPriceCents: 9_000,
-        discountCents: 1,
-        finalPriceCents: 123,
+        id: "booking-even-split",
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: 10_000, priceSource: "EVEN_SPLIT" },
+            ],
+          },
+        ],
       }),
-      row({ id: "booking-3", guests: [] }),
+      row({ id: "booking-no-strands", guests: [] }),
+      row({
+        id: "booking-unreadable",
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: null, priceSource: "UNKNOWN" },
+            ],
+          },
+        ],
+      }),
+      row({
+        id: "booking-headline",
+        totalPriceCents: 9_000,
+        finalPriceCents: 9_000,
+      }),
+      row({
+        id: "booking-promo-unknown",
+        promoAdjustmentCents: -2_000,
+        discountCents: 2_000,
+        finalPriceCents: 8_000,
+        promoRedemption: promo,
+        nightAdjustments: [
+          { beneficiaryMemberId: "member-1", amountCents: null },
+        ],
+      }),
+      row({
+        id: "booking-promo-mismatch",
+        promoAdjustmentCents: -2_000,
+        discountCents: 2_000,
+        finalPriceCents: 8_000,
+        promoRedemption: {
+          priceAdjustmentCents: -1_000,
+          allocations: [
+            { memberId: "member-1", priceAdjustmentCents: -1_000 },
+          ],
+        },
+        nightAdjustments: [
+          { beneficiaryMemberId: "member-1", amountCents: -1_000 },
+        ],
+      }),
+      row({ id: "booking-discount", discountCents: 1 }),
+      row({ id: "booking-final", finalPriceCents: 123 }),
     ]);
     const transaction = vi.fn(async (callback) =>
       callback({ booking: { findMany } }),
@@ -78,11 +134,14 @@ describe("booking money reconciliation store", () => {
       expect.objectContaining({ orderBy: { id: "asc" } }),
     );
     expect(result).toMatchObject({
-      totalBookings: 3,
-      byState: { RECONCILED: 1, UNRECONCILED: 2 },
+      totalBookings: 9,
+      byState: { RECONCILED: 2, UNRECONCILED: 7 },
       byReason: {
         NO_SURVIVING_STRANDS: 1,
+        STRAND_EVIDENCE_UNREADABLE: 1,
         HEADLINE_TOTAL_MISMATCH: 1,
+        PROMO_BUILD_UP_NOT_KNOWN: 1,
+        PROMO_BUILD_UP_MISMATCH: 1,
         DISCOUNT_COMPONENT_MISMATCH: 1,
         FINAL_PRICE_RELATION_MISMATCH: 1,
       },
