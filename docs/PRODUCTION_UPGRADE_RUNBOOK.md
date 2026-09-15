@@ -815,8 +815,8 @@ Both directions were rehearsed against a production-shaped database before merge
 
 #### 2.4.2 #3369: a school booking has an organisation, not an invented person
 
-`20260923030000_booking_owner_optional_member` and
-`20260923040000_backfill_school_bookings_to_organisations` are the FOURTH and
+`20260928020000_booking_owner_optional_member` and
+`20260928030000_backfill_school_bookings_to_organisations` are the FOURTH and
 FIFTH `windowed` migrations — the ledger held three before them, which
 [§4](#4-rollback-plan) and `DEPLOYMENT.md` both count — and **they are one
 window**. `prisma migrate
@@ -889,7 +889,7 @@ Do not open the window until the census prints `READY`.
    picks the live one, then the oldest, exactly as the runtime does — but an
    officer should know.
 
-**Migrate.** As §2.4 step 6, with both files in the pending list, `20260923030000`
+**Migrate.** As §2.4 step 6, with both files in the pending list, `20260928020000`
 first. The validator refuses without
 `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a `BLUE_GREEN_MIGRATION_OVERRIDE_REASON`
 naming this window, and `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`.
@@ -915,13 +915,13 @@ WHERE b."memberId" IS NULL AND r."memberId" IS NOT NULL;
 
 -- Both migrations are recorded once each.
 SELECT migration_name, finished_at FROM _prisma_migrations
-WHERE migration_name IN ('20260923030000_booking_owner_optional_member',
-                         '20260923040000_backfill_school_bookings_to_organisations')
+WHERE migration_name IN ('20260928020000_booking_owner_optional_member',
+                         '20260928030000_backfill_school_bookings_to_organisations')
 ORDER BY migration_name;
 ```
 
-**Rollback path.** Reverse order — `20260923040000/rollback.sql` first, then
-`20260923030000/rollback.sql`, each fed to `psql` inside the database container
+**Rollback path.** Reverse order — `20260928030000/rollback.sql` first, then
+`20260928020000/rollback.sql`, each fed to `psql` inside the database container
 with `ON_ERROR_STOP=1`; the command-by-command form is in
 [`guides/school-organisation-cutover.md`](guides/school-organisation-cutover.md)
 → "Rolling back". The second refuses with `school_reverse_wrong_order` if the
@@ -941,7 +941,7 @@ schema up to date, `docker compose --profile migrate run --rm migrate` finds
 nothing pending, and `prisma migrate diff` sees no drift — all three truthfully,
 about a database that is back on the pre-epic model, because these reverses
 restore the shape as well as the data. **Re-apply the two `migration.sql` files
-by hand**, `20260923030000` first, through the same containerised `psql`. They
+by hand**, `20260928020000` first, through the same containerised `psql`. They
 are written to survive it: the classification table and its enum survive the
 rollback by design, so section 4 of the first migration guards its type, table,
 index and key rather than creating them bare. Deleting the two
@@ -1089,8 +1089,8 @@ migrations in that class. Check for all of them:
   moment migrate commits — which means every booking write path on the old colour,
   not just the admin panel. It ships a tested `rollback.sql` and requires the
   maintenance-window sequence in [§2.4](#24-windowed-migration-deploy-sequence).
-- `20260923030000_booking_owner_optional_member` and
-  `20260923040000_backfill_school_bookings_to_organisations` (#3369) are both
+- `20260928020000_booking_owner_optional_member` and
+  `20260928030000_backfill_school_bookings_to_organisations` (#3369) are both
   declared `old_code_compatible=windowed` and are **one window**. The first is
   compatible on its own and says so; it is declared windowed because applying it
   without the second leaves a database that would accept a booking nobody owns.

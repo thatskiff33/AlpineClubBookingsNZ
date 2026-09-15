@@ -1,8 +1,8 @@
--- Reverse 20260923030000_booking_owner_optional_member (#3369, stage 4 of
+-- Reverse 20260928020000_booking_owner_optional_member (#3369, stage 4 of
 -- programme #2912).
 --
--- THIS SCRIPT RUNS SECOND. The window applied 20260923030000 then
--- 20260923040000, so the reverse runs 20260923040000/rollback.sql FIRST (it
+-- THIS SCRIPT RUNS SECOND. The window applied 20260928020000 then
+-- 20260928030000, so the reverse runs 20260928030000/rollback.sql FIRST (it
 -- gives every organisation-owned booking its member back) and this one after.
 -- Run in the other order and the guard at the top of the transaction below
 -- refuses, loudly and without changing anything.
@@ -14,7 +14,7 @@
 -- exits 0 and reports success while doing half a rollback. Measured on a
 -- freshly migrated database: exit 0, no refusal. What the presence of
 -- "Booking_owner_exactly_one" says instead is a fact about the SHAPE rather
--- than about the data -- 20260923040000 adds that constraint and its reverse
+-- than about the data -- 20260928030000 adds that constraint and its reverse
 -- drops it, so while it is there the first reverse has not run, whatever the
 -- club's rows happen to be.
 --
@@ -48,7 +48,7 @@
 -- is nonetheless back on the pre-epic model.
 --
 -- To roll forward, RE-APPLY both `migration.sql` files by hand, in order
--- (20260923030000 then 20260923040000), as the migration role. Section 4 of
+-- (20260928020000 then 20260928030000), as the migration role. Section 4 of
 -- this migration is written to be re-runnable for exactly this reason: the
 -- classification table and its enum survive the rollback, so a bare
 -- `CREATE TYPE` / `CREATE TABLE` would fail with "already exists" and the
@@ -60,7 +60,7 @@
 BEGIN;
 
 -- WRONG ORDER, REFUSED STRUCTURALLY. "Booking_owner_exactly_one" is added by
--- 20260923040000 and dropped by its reverse, so while it exists that reverse
+-- 20260928030000 and dropped by its reverse, so while it exists that reverse
 -- has not run and this script must not either. Unlike a data-dependent check
 -- this holds for a club with no school bookings at all.
 DO $wrong_order$
@@ -71,13 +71,13 @@ BEGIN
           AND conrelid = '"Booking"'::regclass
     ) THEN
         RAISE EXCEPTION 'school_reverse_wrong_order'
-            USING HINT = 'Run prisma/migrations/20260923040000_backfill_school_bookings_to_organisations/rollback.sql first -- it gives every organisation-owned booking its member back, which this script then makes required again. See docs/guides/school-organisation-cutover.md, "Rolling back".';
+            USING HINT = 'Run prisma/migrations/20260928030000_backfill_school_bookings_to_organisations/rollback.sql first -- it gives every organisation-owned booking its member back, which this script then makes required again. See docs/guides/school-organisation-cutover.md, "Rolling back".';
     END IF;
 END;
 $wrong_order$;
 
 -- The trigger goes back to the 20260527120000 body, without the null-booker
--- guard. Safe in this order because 20260923040000/rollback.sql has already
+-- guard. Safe in this order because 20260928030000/rollback.sql has already
 -- restored every "PromoRedemption"."memberId", so no NULL member can reach it.
 CREATE OR REPLACE FUNCTION "sync_promo_redemption_allocation_from_redemption"()
 RETURNS TRIGGER AS $function$

@@ -575,7 +575,16 @@ export async function buildDisplayState(
       continue;
     }
     const guestCount = booking.guests.length;
-    const isOrganisation = bookingOwner(booking).member.ageTier === "NOT_APPLICABLE";
+    // #3369: an ORGANISATION-owned booking has no member and so no age tier —
+    // `bookingOwner()` projects it as `undefined` — and an organisation is a
+    // group outright, whatever its size. The `??` is what makes that true: a
+    // bare `=== "NOT_APPLICABLE"` was false for every school booking once the
+    // backfill moved them off their invented member, and a five-student school
+    // alone in the lodge stopped drawing as a blockout. The member lodge roster
+    // (`member-lodge-roster.ts`) asks this the same way; keep them together.
+    const isOrganisation =
+      (bookingOwner(booking).member.ageTier ?? "NOT_APPLICABLE") ===
+      "NOT_APPLICABLE";
     const isGroup = isOrganisation || guestCount >= WHOLE_LODGE_MIN_GUESTS;
     if (!isGroup) continue;
     const nightMap = perBookingNightCounts.get(booking.id);
