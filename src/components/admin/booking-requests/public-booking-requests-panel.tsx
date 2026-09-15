@@ -640,7 +640,7 @@ export function PublicBookingRequestsPanel({
   function pricingCombos(request: PublicBookingRequestData) {
     const seen = new Set<string>();
     const combos: Array<{ ageTier: string; isMember: boolean }> = [];
-    request.guests.forEach((guest, guestIndex) => {
+    plannedGuests(request).forEach((guest, guestIndex) => {
       const isMember = Boolean(linkedMemberIdFor(request, guestIndex));
       const key = `${guest.ageTier}:${isMember}`;
       if (!seen.has(key)) {
@@ -671,6 +671,69 @@ export function PublicBookingRequestsPanel({
     return countInputs[request.id] ?? deriveChildCounts(request.guests);
   }
 
+  /**
+   * The school group-number override to POST, or null for "leave the submitted
+   * numbers alone" — the ONE place that decision and that payload are made
+   * (#3412). Save quote and Approve both send it, under the same condition:
+   * the officer edited the boxes on a SCHOOL request. Two surfaces building the
+   * same body separately is how they came to disagree in the first place.
+   */
+  function schoolChildCountOverride(
+    request: PublicBookingRequestData,
+  ): Record<SchoolChildTier, number> | null {
+    if (request.type !== "SCHOOL" || !(request.id in countInputs)) return null;
+    const counts = childCountValues(request);
+    return {
+      INFANT: parseCount(counts.INFANT),
+      CHILD: parseCount(counts.CHILD),
+      YOUTH: parseCount(counts.YOUTH),
+    };
+  }
+
+  /**
+   * Does the officer's edit actually change the party? (#3412) False when they
+   * typed the stored numbers back, which is why the refusals below key on this
+   * rather than on "a box was touched" — the server draws the same line.
+   */
+  function schoolCountsChanged(request: PublicBookingRequestData) {
+    const override = schoolChildCountOverride(request);
+    if (!override) return false;
+    const stored = deriveChildCounts(request.guests);
+    return SCHOOL_CHILD_TIERS.some(
+      (tier) => override[tier] !== parseCount(stored[tier]),
+    );
+  }
+
+  /**
+   * #3412: beds held for this request's current numbers cannot be re-sized by a
+   * quote save, so the server refuses one (409). Say so here, before the click,
+   * and point at the button that clears it.
+   */
+  function countChangeBlockedByHold(request: PublicBookingRequestData) {
+    return Boolean(request.heldBookingId) && schoolCountsChanged(request);
+  }
+
+  /**
+   * The party the officer is about to quote: the edited numbers where they
+   * edited them, the stored list otherwise (#3412). The rate boxes below are
+   * built from this, because saving regenerates the list from these same
+   * numbers — read from the stored list instead, a group changed from youth to
+   * children would be quoted with no child rate field at all and the save would
+   * fail on a missing rate.
+   */
+  function plannedGuests(
+    request: PublicBookingRequestData,
+  ): Array<{ ageTier: string }> {
+    const override = schoolChildCountOverride(request);
+    if (!override) return request.guests;
+    return [
+      ...request.teachers.map(() => ({ ageTier: "ADULT" })),
+      ...SCHOOL_CHILD_TIERS.flatMap((tier) =>
+        Array.from({ length: override[tier] }, () => ({ ageTier: tier })),
+      ),
+    ];
+  }
+
   // Teachers/parent helpers (ADULT) plus the current (possibly edited) children.
   function plannedGuestTotal(request: PublicBookingRequestData) {
     const counts = childCountValues(request);
@@ -689,6 +752,14 @@ export function PublicBookingRequestsPanel({
   }
 
   async function handleCreateQuote(request: PublicBookingRequestData) {
+    // #3412: the server refuses this too (409) — the check here only saves the
+    // officer a round trip and says the same sentence.
+    if (countChangeBlockedByHold(request)) {
+      showActionError(
+        "Beds are already held for this request's current numbers. Release the hold first, then save and send the quote again.",
+      );
+      return;
+    }
     setActioningId(request.id);
     setError("");
     try {
@@ -728,6 +799,10 @@ export function PublicBookingRequestsPanel({
         };
       });
 
+      // #3412: saving the quote is the moment the officer's adjusted group
+      // numbers become real — the same override approval takes, sent under the
+      // same condition, so the price, the beds and the approval agree.
+      const childCounts = schoolChildCountOverride(request);
       const response = await fetch(`/api/admin/booking-requests/${request.id}/quote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -738,11 +813,23 @@ export function PublicBookingRequestsPanel({
             guestIndex,
             memberId,
           })),
+          ...(childCounts ? { childCounts } : {}),
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.error || "Failed to create quote");
+      }
+      // #3412: the numbers are now stored on the request, so drop the local
+      // edit and let the boxes prefill from what was saved. Kept, the unsaved
+      // copy would keep winning over the server's and re-post itself on every
+      // later action long after the officer moved on.
+      if (childCounts) {
+        setCountInputs((prev) => {
+          const next = { ...prev };
+          delete next[request.id];
+          return next;
+        });
       }
       toast.success("Quote saved");
       await fetchRequests();
@@ -1006,19 +1093,15 @@ export function PublicBookingRequestsPanel({
     setError("");
     try {
       // Only send a quantity override when the admin actually edited the school
-      // group's child counts; otherwise approve with the submitted numbers. The
-      // map-to-existing-contact decision (issue #1255) rides along in the same
-      // body when the admin chose one and the owner is not already held.
-      const hasCountOverride = request.type === "SCHOOL" && request.id in countInputs;
-      const counts = childCountValues(request);
+      // group's child counts; otherwise approve with the submitted numbers —
+      // the shared decision and payload (#3412). The map-to-existing-contact
+      // decision (issue #1255) rides along in the same body when the admin
+      // chose one and the owner is not already held.
+      const childCounts = schoolChildCountOverride(request);
       const ownerContactMemberId = mappedOwnerContactId(request);
       const payload: Record<string, unknown> = {};
-      if (hasCountOverride) {
-        payload.childCounts = {
-          INFANT: parseCount(counts.INFANT),
-          CHILD: parseCount(counts.CHILD),
-          YOUTH: parseCount(counts.YOUTH),
-        };
+      if (childCounts) {
+        payload.childCounts = childCounts;
       }
       if (ownerContactMemberId) {
         payload.ownerContactMemberId = ownerContactMemberId;
@@ -1672,6 +1755,23 @@ export function PublicBookingRequestsPanel({
                             can&apos;t be changed here. Decline and ask the school to resubmit if
                             those change.
                           </p>
+                          {/* #3412: saving the quote now rewrites the group,
+                              and beds already held for the old numbers are not
+                              re-sized under it. Say so before the click — the
+                              service refuses it with the same sentence. */}
+                          {countChangeBlockedByHold(request) ? (
+                            <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">
+                              Beds are held for this request&apos;s current numbers, so
+                              these new numbers can&apos;t be saved yet. Use{" "}
+                              <strong>Release hold</strong> above, then save and send the
+                              quote again.
+                            </p>
+                          ) : schoolCountsChanged(request) ? (
+                            <p className="text-xs text-muted-foreground">
+                              <strong>Save quote</strong> applies these numbers to the
+                              request, then prices and holds the beds for them.
+                            </p>
+                          ) : null}
                           {plannedGuestTotal(request) > request.schoolGroupSoftCap ? (
                             <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">
                               Over {request.schoolGroupSoftCap}: confirm a club member is staying with the
@@ -2016,7 +2116,9 @@ export function PublicBookingRequestsPanel({
                           size="sm"
                           variant="outline"
                           onClick={() => handleCreateQuote(request)}
-                          disabled={actionsBlocked}
+                          // #3412: a count change under a live hold is refused
+                          // by the service (409), so do not offer the click.
+                          disabled={actionsBlocked || countChangeBlockedByHold(request)}
                         >
                           Save quote
                         </Button>
@@ -2043,7 +2145,18 @@ export function PublicBookingRequestsPanel({
                             size="sm"
                             variant="outline"
                             onClick={() => handleHoldSlots(request)}
-                            disabled={actionsBlocked || Boolean(request.heldBookingId)}
+                            // #3412: holding reserves beds for the numbers
+                            // STORED on the request, and once those beds are
+                            // held the adjusted numbers can no longer be saved
+                            // (the service refuses, 409). Holding first would
+                            // therefore reserve the wrong count and then trap
+                            // the officer between two buttons, so save the
+                            // numbers first — the save is what makes them real.
+                            disabled={
+                              actionsBlocked ||
+                              Boolean(request.heldBookingId) ||
+                              schoolCountsChanged(request)
+                            }
                           >
                             {request.heldBookingId ? "Slots held" : "Hold slots"}
                           </Button>
@@ -2091,6 +2204,17 @@ export function PublicBookingRequestsPanel({
                           Quoting, holding and approving are turned off because
                           this request&rsquo;s saved details could not be read —
                           see the note above. Decline is still available.
+                        </p>
+                      ) : null}
+                      {/* #3412: same reason as the disabled Hold slots button,
+                          stated where a disabled button cannot state it. */}
+                      {!dataNeedsAttention &&
+                      !request.heldBookingId &&
+                      schoolCountsChanged(request) ? (
+                        <p className="text-xs text-muted-foreground">
+                          Hold slots is off until you save the quote: beds are held
+                          for the numbers saved on the request, and saving these new
+                          ones is what makes them the numbers.
                         </p>
                       ) : null}
                       {memberWholeLodge ? (
