@@ -53,6 +53,8 @@ function releaseOneHold(paymentId: string, now: Date) {
           booking: {
             include: {
               member: true,
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
               guests: { include: { nights: true } },
             },
           },
@@ -77,7 +79,14 @@ function releaseOneHold(paymentId: string, now: Date) {
       // allocation/deallocation reconciliation from changing precise slices
       // between this guard, the local restore, and the clearing aggregate.
       await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId);
-      await lockMemberCreditLedger(bookingOwner(fresh.booking).memberId, tx);
+      const creditLedgerMemberId = bookingOwner(fresh.booking).memberId;
+      // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+      // booking has none, so there is no key to take. Passing a null key would
+      // either throw inside the helper or degenerate to a shared advisory key,
+      // which is an `INV-LOCK` hazard that shows up only under concurrency.
+      if (creditLedgerMemberId) {
+        await lockMemberCreditLedger(creditLedgerMemberId, tx);
+      }
 
       if (await findUnconvergedAppliedCreditDeallocation(fresh.id, tx)) {
         return {
@@ -119,11 +128,11 @@ function releaseOneHold(paymentId: string, now: Date) {
       // replay guard; this transaction's guard set (payment still PENDING,
       // hold not yet released, booking still CONFIRMED) is its exactly-once
       // guarantee — re-runs skip released holds before reaching this line.
-      const creditRestoredCents = await restoreCreditFromBooking(
-        bookingOwner(fresh.booking).memberId,
-        fresh.bookingId,
-        tx,
-      );
+      // #3369: no member, no ledger, so nothing to restore. Zero is the fact.
+      const restoreMemberId = bookingOwner(fresh.booking).memberId;
+      const creditRestoredCents = restoreMemberId
+        ? await restoreCreditFromBooking(restoreMemberId, fresh.bookingId, tx)
+        : 0;
 
       // Size the invoice-clearing credit note like the never-captured cancel
       // path (#1547 / booking-cancel.ts), NOT the credit-reduced payment amount
@@ -268,6 +277,8 @@ export async function releaseExpiredInternetBankingHolds(
       booking: {
         include: {
           member: true,
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           guests: { include: { nights: true } },
         },
       },

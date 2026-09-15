@@ -49,7 +49,8 @@ export async function recordManualRefundTaskClosureAudit({
     amountCents: number | null;
     raisedAmountCents: number | null;
     kind: ManualRefundTaskKind | null;
-    booking: { memberId: string };
+    /** The booking OWNER, null when it is owned by an Organisation (#3369). */
+    booking: { memberId: string | null };
   };
   resolution: "completed" | "dismissed";
   actingMemberId: string;

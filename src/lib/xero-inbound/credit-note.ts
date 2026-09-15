@@ -217,10 +217,16 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       continue;
     }
 
+    // #3369: this stamps the note onto a MEMBER CREDIT row, and an
+    // organisation-owned booking has none — credit belongs to a person's
+    // account. Nothing to backfill.
+    const creditOwnerMemberId = bookingOwner(payment.booking).memberId;
+    if (!creditOwnerMemberId) continue;
+
     const bookingLabel = payment.bookingId.slice(0, 8);
     const backfilledCredits = await prisma.memberCredit.updateMany({
       where: {
-        memberId: bookingOwner(payment.booking).memberId,
+        memberId: creditOwnerMemberId,
         sourceBookingId: payment.bookingId,
         amountCents: creditNoteAmountCents,
         type: CreditType.CANCELLATION_REFUND,

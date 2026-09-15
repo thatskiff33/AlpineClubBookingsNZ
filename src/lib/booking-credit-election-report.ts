@@ -84,7 +84,14 @@ export async function reportUnappliedCreditElection({
   extraDetails = {},
 }: {
   bookingId: string;
-  memberId: string;
+  /**
+   * The booking OWNER's member id, or null when the booking is owned by an
+   * `Organisation` (#3369). Only a member can elect to spend account credit, so
+   * a null here means a booking that could never have held an election — the
+   * report still runs, reads no balance, and records no audit SUBJECT
+   * (`INV-PRIV-018`).
+   */
+  memberId: string | null;
   memberFirstName: string;
   memberLastName: string;
   checkIn: Date;
@@ -121,15 +128,16 @@ export async function reportUnappliedCreditElection({
   // disagree. Best-effort: a failed read means the copy states no availability
   // figure at all, which is honest, rather than the elected figure, which may
   // not be.
-  const availableCreditCents = await getMemberCreditBalance(memberId).catch(
-    (err) => {
-      logger.error(
-        { err, bookingId, source },
-        "Could not read the member's live credit balance while reporting a cleared election; the copy will omit availability figures"
-      );
-      return null;
-    }
-  );
+  const availableCreditCents = memberId
+    ? await getMemberCreditBalance(memberId).catch((err) => {
+        logger.error(
+          { err, bookingId, source },
+          "Could not read the member's live credit balance while reporting a cleared election; the copy will omit availability figures"
+        );
+        return null;
+      })
+    // #3369: no member, no ledger, no balance to state.
+    : null;
   // What could actually be handed back against THIS booking: never more than
   // the member elected, and never more than their account still holds. Integer
   // cents throughout.

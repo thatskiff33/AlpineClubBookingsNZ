@@ -1,5 +1,5 @@
 import type { AgeTier, BookingStatus } from "@prisma/client";
-import { bookingOwner } from "@/lib/booking-owner";
+import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import type { CalendarDate } from "@/lib/club-time";
 
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
@@ -641,11 +641,18 @@ export function buildPolicyExceptionApprovalHooks(
           lodgeId: true,
           status: true,
           member: { select: { id: true, email: true, firstName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           guests: { select: { id: true } },
           payment: { select: { status: true } },
         },
       });
-      if (!booking || !bookingOwner(booking).member?.email) return;
+      // #3369: ONE home for "is there an address to send to?".
+      // `bookingOwnerEmail()` turns the organisation projection's honest `""`
+      // into an explicit null, and carries the named-but-unreadable-member case
+      // the hand-written chain here used to spell for itself.
+      const ownerEmail = booking ? bookingOwnerEmail(booking) : null;
+      if (!booking || !ownerEmail) return;
       // What is still owed: the whole price unless the create already settled it
       // ($0 / fully credit-covered bookings reach PAID or CONFIRMED and send
       // their own confirmation).
@@ -654,8 +661,13 @@ export function buildPolicyExceptionApprovalHooks(
         booking.status === "CONFIRMED" ||
         booking.payment?.status === "SUCCEEDED";
       await sendBookingPolicyExceptionApprovedEmail(
-        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).member.id },
-        bookingOwner(booking).member.email,
+        {
+          bookingId: booking.id,
+          // #3369: the OWNING MEMBER, absent for a school. The projection carries
+          // the id only when there is a member to have one.
+          recipientMemberId: bookingOwner(booking).member.id ?? null,
+        },
+        ownerEmail,
         {
           firstName: bookingOwner(booking).member.firstName,
           checkIn: booking.checkIn,
@@ -1079,7 +1091,8 @@ async function executeApprovedNewBooking(args: {
  */
 async function dispatchNewBookingMemberGuestNotifications(args: {
   booking: { id: string; guests: Array<{ id: string; memberId: string | null }> };
-  bookerMemberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  bookerMemberId: string | null;
   actorMemberId: string;
   memberGuestEntries: Map<string, MemberGuestConsentWritePlanEntry>;
 }): Promise<void> {

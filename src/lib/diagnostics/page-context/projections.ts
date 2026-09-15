@@ -161,11 +161,13 @@ function nightsBetween(checkIn: Date, checkOut: Date): number {
   return days > 0 ? days : 0;
 }
 
-function displayName(person: {
-  firstName: string;
-  lastName: string;
-}): string {
-  return `${person.firstName} ${person.lastName}`.trim();
+function displayName(
+  // #3369: null when a booking is owned by an `Organisation` and the caller
+  // selected no owner projection. The empty string is the honest answer — the
+  // pack states no name rather than inventing one.
+  person: { firstName: string; lastName: string } | null,
+): string {
+  return person ? `${person.firstName} ${person.lastName}`.trim() : "";
 }
 
 async function readBooking({
@@ -185,6 +187,8 @@ async function readBooking({
       notes: true,
       lodge: { select: { name: true } },
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },
   });

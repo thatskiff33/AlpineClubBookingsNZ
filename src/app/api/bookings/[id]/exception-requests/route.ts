@@ -108,6 +108,8 @@ export async function POST(
       // instead of flattening it to its envelope and claiming beds nobody books.
       guests: { include: { nights: { select: { stayDate: true } } } },
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       // Whether the live booking holds capacity decides the reservation footprint
       // (#2525 FIX 7); `originBookingRequest` is the #1254 converted-quote signal
       // that `bookingHoldsCapacity` reads for a PENDING booking.

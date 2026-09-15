@@ -154,7 +154,9 @@ describe("lodge check-in blocks a pending minors-only review (#1372)", () => {
         requiresAdminReview: true,
         adminReviewStatus: AdminReviewStatus.PENDING,
         adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
+        memberId: "member-alex",
         member: { firstName: "Alex", lastName: "Parent" },
+        organisation: null,
         guests: [
           {
             id: "guest-blocked",

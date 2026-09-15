@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
-import { bookingOwner } from "@/lib/booking-owner";
+import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
+import { bookingOwnerEmailContext } from "@/lib/booking-email-contract";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -632,6 +633,22 @@ export async function expireMemberGuestConsent(params: {
         return { outcome: "ALREADY_RESOLVED" } as const;
       }
 
+      // #3369: the removal records WHO acted on the booking modification, and
+      // this path stands the booking's owner in for the cron. An organisation
+      // is not a person who can act and `BookingModification.memberId` stays
+      // required precisely because every modification names a person — so a
+      // school's booking cannot be repriced here. The consent row is left as it
+      // is and an officer is told, rather than the guest being removed under
+      // nobody's name or the row being silently dropped.
+      const expiryActorMemberId = bookingOwner(guest.booking).memberId;
+      if (!expiryActorMemberId) {
+        logger.warn(
+          { bookingId: guest.bookingId, guestId },
+          "A member guest's consent expired on an organisation-owned booking. The removal records who acted and an organisation cannot, so an officer must remove the guest and reprice the booking (#3369).",
+        );
+        return { outcome: "ALREADY_RESOLVED" } as const;
+      }
+
       const claimed = await claimConsentTransition(tx, guestId, "EXPIRED", null, now);
       if (!claimed) return { outcome: "ALREADY_RESOLVED" } as const;
 
@@ -647,7 +664,7 @@ export async function expireMemberGuestConsent(params: {
         // receives the credit; the true actor is recorded separately in the audit
         // log as `cron:member-guest-consent-expiry`. The target's id is NOT used —
         // writing it here would attribute to them an act they did not take.
-        actorMemberId: bookingOwner(guest.booking).memberId,
+        actorMemberId: expiryActorMemberId,
         kind: "CONSENT_EXPIRY",
         settlementMethod: "credit",
         today: clubTodayDateOnly,
@@ -999,6 +1016,8 @@ async function notifyMemberGuestConsentOutcome(params: {
         checkIn: true,
         checkOut: true,
         member: { select: { id: true, email: true, firstName: true, lastName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     if (!booking) return;
@@ -1058,12 +1077,19 @@ async function notifyMemberGuestConsentOutcome(params: {
                   ),
                 };
 
-    if (bookingOwner(booking).member?.email) {
+    // #3369: ONE home for "is there an address to send to?" — see
+    // `bookingOwnerEmail()`.
+    const ownerEmail = bookingOwnerEmail(booking);
+    if (ownerEmail) {
       try {
         await sendMemberGuestConsentOutcomeEmail({
-          bookingId,
-          recipient: { kind: "member", memberId: bookingOwner(booking).member.id },
-          email: bookingOwner(booking).member.email,
+          // #3369: a school has no member to name, and the recipient kind that
+          // describes it already exists — see `bookingOwnerEmailContext`.
+          ...bookingOwnerEmailContext(
+            bookingId,
+            bookingOwner(booking).member.id ?? null,
+          ),
+          email: ownerEmail,
           firstName: bookingOwner(booking).member.firstName ?? "",
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,

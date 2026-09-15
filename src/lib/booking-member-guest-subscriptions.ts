@@ -63,7 +63,8 @@ export interface UnpaidMemberGuestInfo {
 export async function findUnpaidMemberGuests(
   db: BookingMemberGuestSubscriptionDb,
   params: {
-    bookingMemberId: string;
+    /** The BOOKER, or null when the booking is owned by an Organisation (#3369). */
+    bookingMemberId: string | null;
     checkIn: Date;
     guests: BookingGuestLike[];
   }
@@ -190,7 +191,8 @@ export async function findUnpaidMemberGuests(
 export async function findUnpaidMemberGuestNames(
   db: BookingMemberGuestSubscriptionDb,
   params: {
-    bookingMemberId: string;
+    /** The BOOKER, or null when the booking is owned by an Organisation (#3369). */
+    bookingMemberId: string | null;
     checkIn: Date;
     guests: BookingGuestLike[];
   }

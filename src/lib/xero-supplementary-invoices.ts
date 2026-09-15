@@ -133,7 +133,8 @@ export async function createXeroSupplementaryInvoice(params: {
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { payment: true, member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { payment: true, member: true, organisation: { select: { name: true, email: true } } },
   });
 
   if (!booking?.payment?.xeroInvoiceId) {

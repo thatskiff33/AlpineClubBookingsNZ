@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { ApiError } from "@/lib/api-error";
 import {
   AdminCreditAdjustmentRequestStatus,
   BookingEventType,
@@ -162,6 +163,53 @@ export async function createCancellationCredit(
  * consumes refundable value like a card refund, so `refundedAmountCents` must
  * reflect it or a later cancel refunds the same cents twice.
  */
+/**
+ * The MEMBER whose account a reduction is being credited to, or a refusal.
+ *
+ * Account credit lands in a person's ledger and is spent from their own
+ * bookings page. An organisation has no such account, and the invented school
+ * member's was unspendable because that row could not sign in — so a school's
+ * reduction cannot be settled this way, and saying so is better than minting a
+ * balance nobody can reach (#3369). Whether a school's reduction should instead
+ * be refunded is a money decision that issue does not make; this refusal is
+ * what puts it in front of a person.
+ *
+ * One home for it because four settlement paths ask the same question, and four
+ * copies of a refusal is four chances to word it differently (`INV-SSOT`).
+ *
+ * ## IT IS A TYPED 400, AND THAT IS THE HALF THAT REACHES THE OFFICER
+ *
+ * It threw a bare `Error` at first, which matched no `instanceof` branch on any
+ * of the six routes these four services sit behind. Measured on all six: four
+ * fell through to a masked `"Failed to modify booking"` 400 and two to a 500,
+ * with the whole edit rolled back and the sentence above reaching nobody. So an
+ * officer offered "refund or account credit" on a school's booking picked credit
+ * and got a server error, with no way to learn that the other option was the
+ * only one available.
+ *
+ * `ApiError` is what every one of those routes already tests for and renders
+ * with its own status — the file's own idiom, two lines away in
+ * `api-error.ts` — so the explanation now arrives at the screen where the
+ * choice was made. The one route that tests only `ManualBookingPaymentError`
+ * converts it at its own boundary, where that conversion already lives.
+ */
+export class SchoolHasNoCreditAccountError extends ApiError {
+  constructor() {
+    super(
+      "This booking belongs to a school, which has no account to credit. Settle the reduction as a refund instead — a school has no member account for credit to be spent from (#3369).",
+      400,
+    );
+    this.name = "SchoolHasNoCreditAccountError";
+  }
+}
+
+export function requireMemberCreditRecipient(memberId: string | null): string {
+  if (!memberId) {
+    throw new SchoolHasNoCreditAccountError();
+  }
+  return memberId;
+}
+
 export async function createBookingModificationCredit(
   memberId: string,
   amountCents: number,
@@ -349,9 +397,21 @@ export async function clampAppliedCreditToBookingPrice(
     memberId,
     bookingId,
     newFinalPriceCents,
-  }: { memberId: string; bookingId: string; newFinalPriceCents: number },
+  }: {
+    /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+    memberId: string | null;
+    bookingId: string;
+    newFinalPriceCents: number;
+  },
   tx: Prisma.TransactionClient
 ): Promise<{ appliedCreditCents: number; refundedExcessCents: number }> {
+  // #3369: the clamp trims a MEMBER's applied credit to the booking's new
+  // price. An organisation-owned booking holds no applied credit, so there is
+  // nothing to clamp, no ledger to lock and no excess to refund. Returning
+  // zeroes is the fact rather than a default.
+  if (memberId === null) {
+    return { appliedCreditCents: 0, refundedExcessCents: 0 };
+  }
   await lockMemberCreditLedger(memberId, tx);
 
   const booking = await tx.booking.findUnique({

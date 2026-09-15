@@ -49,9 +49,12 @@ type WaitlistOfferBooking = {
   // problem — a held bed nobody was told about) from one whose offer has already
   // lapsed (nothing left to do).
   waitlistOfferExpiresAt: Date | null;
+  /** Null for an organisation-owned booking (#3369); the owner is read below. */
   member: {
     email: string;
-  };
+  } | null;
+  /** #3369: the owner may be an Organisation; `bookingOwner()` reads both. */
+  organisation: { name: string; email: string | null } | null;
 };
 
 type WaitlistOfferEmailLog = {

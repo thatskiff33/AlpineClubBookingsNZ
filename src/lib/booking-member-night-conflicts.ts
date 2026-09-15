@@ -211,7 +211,12 @@ export async function findBookingMemberNightConflicts(
     excludeBookingId,
     today,
   }: {
-    actorMemberId: string;
+    /**
+     * The identity the scan runs AS. Nullable since #3369 because one caller
+     * passes the booking's own owner, and an organisation-owned booking has no
+     * member — which simply means no result is ever "the actor's own".
+     */
+    actorMemberId: string | null;
     actorRole: string;
     checkIn: Date;
     checkOut: Date;
@@ -295,6 +300,8 @@ export async function findBookingMemberNightConflicts(
           checkIn: true,
           checkOut: true,
           member: { select: { firstName: true, lastName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           guests: { select: { id: true, memberId: true } },
         },
       },

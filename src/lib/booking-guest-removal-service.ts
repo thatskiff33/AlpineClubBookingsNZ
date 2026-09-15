@@ -75,7 +75,10 @@ import {
   editFinancialReviewOccurrence,
   storedSoldPriceEvidenceForGuest,
 } from "@/lib/stored-sold-price-evidence";
-import { createBookingModificationCredit } from "@/lib/member-credit";
+import {
+  createBookingModificationCredit,
+  requireMemberCreditRecipient,
+} from "@/lib/member-credit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
@@ -134,7 +137,10 @@ export type RemoveBookingGuestResult = {
   paymentCustomerId: string | null;
   memberEmail: string;
   memberName: string;
-  memberId: string;
+  /** The owner's first name, as `bookingOwner()` projects it (#3369). */
+  memberFirstName: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   promoRemoved: boolean;
   // #2390: set only when a usage cap stopped the promotion reaching somebody
   // this edit added; null means everybody the code applies to is covered.
@@ -383,6 +389,8 @@ export async function removeBookingGuestInTransaction({
       },
       payment: true,
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
         promoRedemption: {
           include: {
             guestTargets: { select: { bookingGuestId: true } },
@@ -1185,7 +1193,7 @@ export async function removeBookingGuestInTransaction({
 
   if (paymentImpact.accountCreditAmountCents > 0) {
     await createBookingModificationCredit(
-      bookingOwner(booking).memberId,
+      requireMemberCreditRecipient(bookingOwner(booking).memberId),
       paymentImpact.accountCreditAmountCents,
       bookingId,
       bookingModification.id,
@@ -1234,6 +1242,7 @@ export async function removeBookingGuestInTransaction({
     paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
     memberEmail: bookingOwner(booking).member.email,
     memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+    memberFirstName: bookingOwner(booking).member.firstName,
     memberId: bookingOwner(booking).memberId,
     promoRemoved: promoResult.promoRemoved,
     promoCoverage: promoResult.promoCoverage,

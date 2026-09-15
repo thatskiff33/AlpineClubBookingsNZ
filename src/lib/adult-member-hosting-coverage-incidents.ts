@@ -84,7 +84,13 @@ export const HOSTING_COVERAGE_OWNER_NOTIFICATION_LEASE_MS = 15 * 60 * 1000;
  */
 export interface HostingCoverageOwnerNotificationDelivery {
   bookingId: string;
-  recipientMemberId: string;
+  /**
+   * The booking OWNER this message is addressed to, or null when the booking is
+   * owned by an `Organisation` (#3369). A null recipient becomes the non-login
+   * public-contact identity in `bookingOwnerEmailContext`, which is what a
+   * school has effectively been all along.
+   */
+  recipientMemberId: string | null;
   email: string;
   firstName: string;
   checkIn: Date;
@@ -498,6 +504,8 @@ export async function loadHostingCoverageOwnerNotificationDelivery(
           checkIn: true,
           checkOut: true,
           member: { select: { firstName: true, email: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
       },
     },

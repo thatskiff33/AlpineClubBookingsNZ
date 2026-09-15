@@ -1,6 +1,6 @@
 import "server-only";
 
-import { bookingOwner } from "@/lib/booking-owner";
+import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
@@ -244,6 +244,8 @@ export async function applyManualBookingPayment(
           discountCents: true,
           promoAdjustmentCents: true,
           member: { select: { email: true, firstName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           promoRedemption: { select: { promoCode: { select: { code: true } } } },
           _count: { select: { guests: true } },
         },
@@ -256,7 +258,10 @@ export async function applyManualBookingPayment(
         return null;
       });
 
-    if (!recipient || !bookingOwner(recipient).member?.email) {
+    // #3369: ONE home for "is there an address to send to?" — see
+    // `bookingOwnerEmail()`.
+    const recipientEmail = recipient ? bookingOwnerEmail(recipient) : null;
+    if (!recipient || !recipientEmail) {
       logger.warn(
         { bookingId: input.bookingId },
         "Manual booking mark-paid: a confirmation was requested but the member has no address to send it to"
@@ -289,7 +294,7 @@ export async function applyManualBookingPayment(
         // than only to the admin.
         const outcome = await sendBookingConfirmedEmail(
           { bookingId: input.bookingId, recipientMemberId: bookingOwner(recipient).memberId },
-          bookingOwner(recipient).member.email,
+          recipientEmail,
           bookingOwner(recipient).member.firstName,
           recipient.checkIn,
           recipient.checkOut,

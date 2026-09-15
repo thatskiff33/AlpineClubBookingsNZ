@@ -83,7 +83,9 @@ interface RedemptionAllocation {
 interface RedemptionRow {
   id: string;
   createdAt: string;
-  member: { id: string; name: string; email: string };
+  // #3369: `id` is a MEMBER id and is null when the booking belongs to a
+  // school, which has no member page to link to.
+  member: { id: string | null; name: string; email: string };
   booking: {
     id: string;
     reference: string;
@@ -675,17 +677,26 @@ export function PromoRedemptionsPanel({
                         {redeemedAtLabel(clubTime, row.createdAt)}
                       </TableCell>
                       <TableCell>
-                        <Link
-                          href={`/admin/members/${row.member.id}`}
-                          className="hover:underline"
-                        >
-                          <div className="font-medium text-primary">
-                            {row.member.name}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {row.member.email}
-                          </div>
-                        </Link>
+                        {row.member.id ? (
+                          <Link
+                            href={`/admin/members/${row.member.id}`}
+                            className="hover:underline"
+                          >
+                            <div className="font-medium text-primary">
+                              {row.member.name}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {row.member.email}
+                            </div>
+                          </Link>
+                        ) : (
+                          <>
+                            <div className="font-medium">{row.member.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {row.member.email}
+                            </div>
+                          </>
+                        )}
                         {row.memberUseIndex > 1 ? (
                           <Badge variant="secondary" className="mt-1 text-xs">
                             Use #{row.memberUseIndex}

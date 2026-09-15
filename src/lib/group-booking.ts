@@ -291,10 +291,21 @@ export async function createGroupBooking(
 
   for (let attempt = 1; attempt <= CODE_GENERATION_ATTEMPTS; attempt++) {
     try {
+      // #3369: a group booking is organised by a PERSON — they hand out the
+      // join code, and every joiner's booking hangs off their membership. An
+      // organisation is not one, and a school's party arrives as a school
+      // booking rather than as a group of individually-joining members, so the
+      // situation does not arise. Refused rather than left to a null column.
+      const organiserMemberId = bookingOwner(booking).memberId;
+      if (!organiserMemberId) {
+        throw new Error(
+          "This booking belongs to a school rather than to a member, so it cannot organise a group booking (#3369).",
+        );
+      }
       return await prisma.groupBooking.create({
         data: {
           organiserBookingId: booking.id,
-          organiserMemberId: bookingOwner(booking).memberId,
+          organiserMemberId,
           joinCode: generateGroupBookingCode(),
           paymentMode: input.paymentMode,
           joinDeadline: input.joinDeadline ?? null,

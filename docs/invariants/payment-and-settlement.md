@@ -1070,6 +1070,9 @@ one, check the other.
   `INV-PAY-062`, `INV-PAY-070`, `INV-PAY-063`, `INV-PAY-071`, `INV-PAY-064` and
   `INV-PAY-072`; the refund legs and the anchor `INV-PAY-065`; the fence and
   the constraints `INV-PAY-066`.
+- **Late cash on a cancelled ORGANISATION-owned booking raises a hand-back task,
+  never account credit** (#3369): an organisation has no ledger, so the money
+  sits on the payments board and an admin is told.
 
 ## INV-PAY-067
 

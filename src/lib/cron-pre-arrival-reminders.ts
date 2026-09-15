@@ -45,6 +45,8 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
     },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       // Owner decision D-12 (#2307): the reminder tells a member how many
       // guests are arriving, so it counts the guests who will actually be
       // there. A member guest whose consent is still PENDING holds a bed under

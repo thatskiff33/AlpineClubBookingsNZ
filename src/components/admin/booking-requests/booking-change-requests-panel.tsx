@@ -89,12 +89,17 @@ interface BookingChangeRequestData {
     checkOut: string;
     status: string;
     finalPriceCents: number;
+    // #3369: NULLABLE — a school booking has no member, and an officer can
+    // raise a locked-period change request on one. Declared non-null here, a
+    // hand-written copy of an API shape that was right, it satisfied the
+    // compiler while the render threw inside the `.map()`.
     member: {
       id: string;
       firstName: string;
       lastName: string;
       email: string;
-    };
+    } | null;
+    organisation: { name: string; email: string | null } | null;
     payment: {
       id: string;
       amountCents: number;
@@ -422,6 +427,9 @@ export function BookingChangeRequestsPanel({
               request.requestedChanges?.requested?.summary ||
               "Locked-period booking change";
             const reviewedAt = formatDateTime(request.reviewedAt);
+            // #3369: a school presents through the owner projection; `id` is a
+            // MEMBER id and is absent for one, which is what the link asks.
+            const owner = bookingOwner(request.booking).member;
 
             return (
               <Card
@@ -431,9 +439,7 @@ export function BookingChangeRequestsPanel({
                 <CardHeader>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <CardTitle className="text-lg">
-                        {bookingOwner(request.booking).member.firstName} {bookingOwner(request.booking).member.lastName}
-                      </CardTitle>
+                      <CardTitle className="text-lg">{owner.firstName} {owner.lastName}</CardTitle>
                       <p className="text-sm text-muted-foreground">
                         Requested by {request.requestedBy.firstName} {request.requestedBy.lastName} on{" "}
                         {formatDateTime(request.createdAt)}
@@ -483,23 +489,19 @@ export function BookingChangeRequestsPanel({
 
                   <div className="flex flex-wrap gap-3 text-sm">
                     <Link
-                      href={buildHrefWithReturnTo(
-                        `/bookings/${request.booking.id}`,
-                        currentPath
-                      )}
+                      href={buildHrefWithReturnTo(`/bookings/${request.booking.id}`, currentPath)}
                       className="text-info-11 hover:underline"
                     >
                       Open booking
                     </Link>
-                    <Link
-                      href={buildHrefWithReturnTo(
-                        `/admin/members/${bookingOwner(request.booking).member.id}`,
-                        currentPath
-                      )}
-                      className="text-info-11 hover:underline"
-                    >
-                      Open member
-                    </Link>
+                    {owner.id ? (
+                      <Link
+                        href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentPath)}
+                        className="text-info-11 hover:underline"
+                      >
+                        Open member
+                      </Link>
+                    ) : null}
                   </div>
 
                   {request.status === "REQUESTED" ? (

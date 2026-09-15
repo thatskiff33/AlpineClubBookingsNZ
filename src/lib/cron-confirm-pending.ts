@@ -182,6 +182,8 @@ export function shouldAlertOnSavedCardChargeRefusal(
 
 const pendingBookingInclude = {
   member: true,
+  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+  organisation: { select: { name: true, email: true } },
   // Per-night sets (issue #713) for accurate capacity re-check at the hold window.
   guests: { include: { nights: true } },
   payment: true,
@@ -436,7 +438,10 @@ async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
         // booking request (#707) — or any non-login contact an admin booked for
         // — cannot, so the notice points them at the club contact page instead
         // of the members-only booking flow.
-        bookingOwner(booking).member.canLogin
+        // #3369: an organisation never signs in, so the notice points a school
+        // at the club contact page — the same branch the non-login school
+        // contact already took.
+        bookingOwner(booking).member.canLogin ?? false
       );
     }
   } catch (emailErr) {

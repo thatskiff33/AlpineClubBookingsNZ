@@ -90,7 +90,8 @@ export interface WaitlistQuoteGuest {
 }
 
 export interface WaitlistQuoteEntry {
-  memberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   checkIn: Date;
   checkOut: Date;
   guests: WaitlistQuoteGuest[];

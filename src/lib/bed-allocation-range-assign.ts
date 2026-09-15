@@ -214,6 +214,8 @@ async function classifyBedTakenNights(input: {
               member: {
                 select: { firstName: true, lastName: true, email: true },
               },
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
             },
           },
         },
@@ -347,6 +349,8 @@ async function runAssignBedRangeAttempt(input: {
       where: { id: guest.bookingId },
       select: {
         member: { select: { firstName: true, lastName: true, email: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     for (const stayDate of range.nights) {

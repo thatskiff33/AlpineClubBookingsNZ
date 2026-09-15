@@ -90,7 +90,8 @@ export async function createXeroCreditNote(
     where: { id: paymentId },
     include: {
       booking: {
-        include: { member: true, guests: true },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        include: { member: true, organisation: { select: { name: true, email: true } }, guests: true },
       },
     },
   });
@@ -598,7 +599,8 @@ export async function createUnappliedXeroCreditNote(
     where: { id: paymentId },
     include: {
       booking: {
-        include: { member: true },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        include: { member: true, organisation: { select: { name: true, email: true } } },
       },
     },
   });
@@ -626,17 +628,23 @@ export async function createUnappliedXeroCreditNote(
   });
 
   if (existingLink?.xeroObjectId) {
-    if (bookingModificationId) {
+    // #3369: these stamp the Xero note onto the MEMBER CREDIT the refund
+    // created, and an organisation-owned booking has no member credit to
+    // stamp — credit belongs to a person's account, and this programme does
+    // not invent an organisation ledger. The note itself is created either
+    // way; only the local link is member-scoped.
+    const creditMemberId = bookingOwner(payment.booking).memberId;
+    if (creditMemberId && bookingModificationId) {
       await backfillBookingModificationCreditXeroNote({
-        memberId: bookingOwner(payment.booking).memberId,
+        memberId: creditMemberId,
         bookingId: payment.booking.id,
         bookingModificationId,
         refundAmountCents,
         creditNoteId: existingLink.xeroObjectId,
       });
-    } else {
+    } else if (creditMemberId) {
       await backfillCancellationCreditXeroNote({
-        memberId: bookingOwner(payment.booking).memberId,
+        memberId: creditMemberId,
         bookingId: payment.booking.id,
         refundAmountCents,
         creditNoteId: existingLink.xeroObjectId,
@@ -783,17 +791,23 @@ export async function createUnappliedXeroCreditNote(
       throw new Error("Failed to create unapplied Xero credit note");
     }
 
-    if (bookingModificationId) {
+    // #3369: these stamp the Xero note onto the MEMBER CREDIT the refund
+    // created, and an organisation-owned booking has no member credit to
+    // stamp — credit belongs to a person's account, and this programme does
+    // not invent an organisation ledger. The note itself is created either
+    // way; only the local link is member-scoped.
+    const creditMemberId = bookingOwner(payment.booking).memberId;
+    if (creditMemberId && bookingModificationId) {
       await backfillBookingModificationCreditXeroNote({
-        memberId: bookingOwner(payment.booking).memberId,
+        memberId: creditMemberId,
         bookingId: payment.booking.id,
         bookingModificationId,
         refundAmountCents,
         creditNoteId: createdNote.creditNoteID,
       });
-    } else {
+    } else if (creditMemberId) {
       await backfillCancellationCreditXeroNote({
-        memberId: bookingOwner(payment.booking).memberId,
+        memberId: creditMemberId,
         bookingId: payment.booking.id,
         refundAmountCents,
         creditNoteId: createdNote.creditNoteID,

@@ -196,6 +196,8 @@ export async function POST(
     where: { id: bookingId },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: { include: { nights: true } }, // per-night sets (issue #713)
       promoRedemption: { include: { promoCode: true } },
     },

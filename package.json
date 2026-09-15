@@ -79,6 +79,7 @@
     "db:rehearse-epic": "tsx scripts/rehearse-epic-deploy.ts",
     "config:self-heal": "tsx --conditions=react-server scripts/config-self-heal.ts",
     "db:audit-access-role-cleanup": "tsx scripts/audit-access-role-membership-cleanup.ts",
+    "db:school-classification-census": "tsx --conditions=react-server scripts/school-member-classification-census.ts",
     "induction:baseline": "tsx --conditions=react-server scripts/induction-baseline.ts",
     "xero:audit-invoice-rounding": "tsx --conditions=react-server scripts/audit-xero-invoice-rounding.ts",
     "xero:booking-repair": "tsx --conditions=react-server scripts/xero-booking-repair.ts",

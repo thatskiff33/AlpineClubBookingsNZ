@@ -80,6 +80,7 @@ import {
   clampAppliedCreditToBookingPrice,
   createBookingModificationCredit,
   deriveBookingAppliedCreditCents,
+  requireMemberCreditRecipient,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import {
@@ -355,6 +356,8 @@ export async function modifyBookingDates({
         },
         payment: true,
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         promoRedemption: {
           include: {
             guestTargets: { select: { bookingGuestId: true } },
@@ -1323,7 +1326,7 @@ export async function modifyBookingDates({
 
     if (accountCreditAmountCents > 0) {
       await createBookingModificationCredit(
-        bookingOwner(booking).memberId,
+        requireMemberCreditRecipient(bookingOwner(booking).memberId),
         accountCreditAmountCents,
         bookingId,
         bookingModification.id,
@@ -1408,6 +1411,7 @@ export async function modifyBookingDates({
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
       memberEmail: bookingOwner(booking).member.email,
       memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+      memberFirstName: bookingOwner(booking).member.firstName,
       memberId: bookingOwner(booking).memberId,
       bookingModificationId: bookingModification.id,
     } satisfies DateModificationTransactionResult;
@@ -1584,12 +1588,21 @@ async function dispatchDatePostTransactionSideEffects({
 
   // Owner decision (#1668 review): an override admin may choose not to email
   // the member; the choice is recorded in the audit fields above.
-  const member = result.notifyMember
-    ? await prisma.member.findUnique({
-        where: { id: bookingOwner(result.booking).memberId },
-      })
-    : null;
-  if (member) {
+  // #3369: the OWNER, not a re-read of a member row. A school's booking has no
+  // member to re-read, and the projection carries the same person-shaped name
+  // and address the invented school member used to supply — so the school still
+  // receives the message it received before this stage, at the same address.
+  // The relation was loaded in the same transaction, so this is no staler than
+  // the read it replaces.
+  // #3369: the owner as the transaction already resolved them. A school's
+  // booking has no member row to re-read, and these three fields are the
+  // person-shaped projection the invented school member used to supply, so the
+  // school receives the same message at the same address.
+  const member = {
+    email: result.memberEmail,
+    firstName: result.memberFirstName,
+  };
+  if (result.notifyMember) {
     /*
       #3032 (epic #2797): whether the club is still working out an amount on
       this booking as the email is written. The booking's CURRENT state rather
@@ -1619,7 +1632,7 @@ async function dispatchDatePostTransactionSideEffects({
 
     sendBookingModifiedEmail({
       bookingId: result.booking.id,
-      recipientMemberId: member.id,
+      recipientMemberId: result.memberId,
       email: member.email,
       firstName: member.firstName,
       modificationType: "DATE_CHANGE",
@@ -1753,6 +1766,8 @@ export async function adminShiftBookingDates({
         },
         payment: true,
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     if (!booking) {

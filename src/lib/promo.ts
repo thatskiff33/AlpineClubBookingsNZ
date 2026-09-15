@@ -133,7 +133,12 @@ interface PromoDiscountGuestWithNights extends PromoDiscountGuest {
 
 export interface BookingDetailsForPromo {
   totalPriceCents: number;
-  memberId: string;
+  /**
+   * The BOOKER, or null when the booking is owned by an `Organisation`
+   * (#3369). A members-only promotion already refuses an empty booker, and an
+   * organisation holds no per-member entitlement to spend.
+   */
+  memberId: string | null;
   guests: PromoDiscountGuestWithNights[];
   bookingCheckIn?: Date;
 }
@@ -263,7 +268,10 @@ function clubDateKey(value: Date, zone: ClubTimeZone) {
  */
 function normalizeAllocations(
   allocations: PromoDiscountAllocation[] | undefined,
-  fallbackMemberId: string,
+  // #3369: NULL when the booking is owned by an Organisation. See the early
+  // return below — an organisation holds no per-member entitlement, so the
+  // booker fallback has nobody to be about.
+  fallbackMemberId: string | null,
   discountCents: number,
   priceAdjustmentCents: number,
   freeNightsUsed: number
@@ -282,6 +290,13 @@ function normalizeAllocations(
       }))
       .filter(isBeneficialPromoAllocation);
   }
+
+  // #3369: the fallback allocation is the BOOKER's, and an organisation-owned
+  // booking has no booker member. No per-member entitlement is spent and no cap
+  // slot is held, so the honest answer is no allocation row at all rather than
+  // one naming nobody. The partial unique indexes 20260923030000 adds are the
+  // backstop for a null that gets in another way, not the reason for this.
+  if (fallbackMemberId === null) return [];
 
   const fallback = {
     memberId: fallbackMemberId,
@@ -302,7 +317,12 @@ function normalizeAllocations(
 export function calculatePromoDiscountForGuestRates(
   promo: PromoCodeInput,
   totalPriceCents: number,
-  bookingMemberId: string,
+  /**
+   * The BOOKER. Null since #3369, when the booking is owned by an
+   * `Organisation` — and on an UNASSIGNED promotion that is a refusal, not a
+   * branch. See the throw below.
+   */
+  bookingMemberId: string | null,
   guests: PromoDiscountGuest[],
   assignedMemberIds: string[] | null = null,
   remainingFreeNights?: number,
@@ -338,6 +358,25 @@ export function calculatePromoDiscountForGuestRates(
   // A CAP_ONLY fixed-nightly code that never bites is NOT one of these cases:
   // pricing counts no eligible guest for it at all, so it produced neither an
   // allocation nor a redemption row before this change either.
+  // #3369: an unassigned promotion attributes its WHOLE benefit to the booker,
+  // and an organisation-owned booking has no booker. There is nobody to
+  // attribute it to, so there is no benefit to price — and the decomposed
+  // night adjustments below would have to name a beneficiary member that does
+  // not exist (`BookingGuestNightAdjustment.beneficiaryMemberId`, which is NOT
+  // NULL and is the FIFTH member-linked model a school booking can reach; the
+  // #2912 census named four).
+  //
+  // `validateAndCalculatePromoDiscount` refuses this in words the officer
+  // reads, before pricing runs. Reaching here means a caller skipped that
+  // refusal, so this throws rather than inventing a beneficiary or quietly
+  // dropping the targets and leaving a discount nothing accounts for
+  // (`INV-MONEY-029`).
+  if (bookingMemberId === null) {
+    throw new Error(
+      "An unassigned promotion cannot be priced for a booking with no member: its whole benefit belongs to the booker, and an organisation is not one (#3369).",
+    );
+  }
+
   return {
     ...result,
     allocations: normalizeAllocations(
@@ -784,7 +823,7 @@ export interface PromoRuleCounts {
  */
 export function validatePromoCodeRules(
   promoCode: PromoRuleSubject | null,
-  bookingDetails: { memberId: string; bookingCheckIn?: Date },
+  bookingDetails: { memberId: string | null; bookingCheckIn?: Date },
   todayAtClub: CalendarDate,
   counts: PromoRuleCounts = {},
   assignedMemberIds: string[] | null = null,
@@ -1205,13 +1244,29 @@ export async function validateAndCalculatePromoDiscount(
     };
   }
 
+  // #3369: an unassigned promotion's whole benefit belongs to the person who
+  // made the booking. A school's booking is made by the school, which holds no
+  // member entitlement, so there is nobody for the code to benefit. Said here,
+  // in words an officer reads, rather than left to pricing to discover.
+  if (!hasAssignedMembers(assignedGuestScopeMemberIds) && bookingDetails.memberId === null) {
+    return {
+      error:
+        "This promo code applies to the member who made the booking, and this booking belongs to a school rather than to a person.",
+      beneficiaryMemberIds: [],
+    };
+  }
+
   const beneficiaryUsage = await getPromoBeneficiaryUsage(
     promoCode.id,
     initialBeneficiaryMemberIds,
     options.excludeBookingId,
     db
   );
-  const bookerUsage = beneficiaryUsage[bookingDetails.memberId] ?? {
+  // #3369: no booker, no booker usage. Zero is the fact rather than a default:
+  // an organisation has spent nothing because it holds no entitlement.
+  const bookerUsage = (bookingDetails.memberId
+    ? beneficiaryUsage[bookingDetails.memberId]
+    : undefined) ?? {
     redemptionCount: 0,
     freeNightsUsed: 0,
   };
@@ -1739,7 +1794,12 @@ export async function redeemPromoCode(
   tx: PrismaTx,
   promoCodeId: string,
   bookingId: string,
-  memberId: string,
+  // #3369: the BOOKER, or null when the booking is owned by an Organisation.
+  // The redemption row then names no member and no booker allocation is
+  // written, because an organisation holds no per-member entitlement. Every
+  // per-member cap still counts exactly the rows it counted before, since only
+  // an organisation-owned booking can leave this empty.
+  memberId: string | null,
   discountCents: number,
   priceAdjustmentCents: number,
   freeNightsUsed?: number,
@@ -1830,7 +1890,13 @@ export async function redeemPromoCode(
  */
 export async function replacePromoRedemptionAllocations(
   tx: PrismaTx,
-  redemption: { id: string; promoCodeId: string; bookingId: string; memberId: string },
+  redemption: {
+    id: string;
+    promoCodeId: string;
+    bookingId: string;
+    // #3369: null when the booking is owned by an Organisation.
+    memberId: string | null;
+  },
   discountCents: number,
   priceAdjustmentCents: number,
   freeNightsUsed?: number,

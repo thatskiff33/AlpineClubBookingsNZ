@@ -45,7 +45,13 @@ import { seasonYearOfStoredDate } from "@/lib/financial-year";
 /** A held booking's owner failed re-validation and a fresh contact was
  * substituted at conversion (issue #1255 residual-risk decision 1). */
 export type OwnerSubstitution = {
-  invalidMemberId: string;
+  /**
+   * The contact the accept INTENDED to use, or null when the held booking was
+   * owned by an `Organisation` and therefore named no person at all (#3369).
+   * The alert then says a substitute was minted without naming an intended
+   * member, which is the truth.
+   */
+  invalidMemberId: string | null;
   substituteMemberId: string;
   reason: string;
 };
@@ -409,7 +415,8 @@ export async function planBookingRequestGuestConsent<
 >(
   tx: Prisma.TransactionClient,
   params: {
-    bookingOwnerMemberId: string;
+    /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+    bookingOwnerMemberId: string | null;
     guests: readonly Guest[];
     actor: MemberGuestAddActor;
     policy: MemberGuestAddPolicy;
@@ -595,12 +602,15 @@ export async function sendOwnerSubstitutionAdminAlert(params: {
   const { request, bookingId, ownerSubstitution, failureLogMessage } = params;
   try {
     const [intendedMember, substituteMember] = await Promise.all([
-      prisma.member
-        .findUnique({
-          where: { id: ownerSubstitution.invalidMemberId },
-          select: { firstName: true, lastName: true },
-        })
-        .catch(() => null),
+      ownerSubstitution.invalidMemberId
+        ? prisma.member
+            .findUnique({
+              where: { id: ownerSubstitution.invalidMemberId },
+              select: { firstName: true, lastName: true },
+            })
+            .catch(() => null)
+        : // #3369: no intended member to name.
+          Promise.resolve(null),
       prisma.member
         .findUnique({
           where: { id: ownerSubstitution.substituteMemberId },
@@ -620,7 +630,8 @@ export async function sendOwnerSubstitutionAdminAlert(params: {
     await sendAdminOwnerSubstitutionAlert({
       requestId: request.id,
       bookingId,
-      intendedMemberId: ownerSubstitution.invalidMemberId,
+      // #3369: no intended member when the held booking named an organisation.
+      intendedMemberId: ownerSubstitution.invalidMemberId ?? "",
       intendedMemberName: fullName(intendedMember),
       substituteMemberId: ownerSubstitution.substituteMemberId,
       substituteMemberName: fullName(substituteMember),

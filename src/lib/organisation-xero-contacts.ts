@@ -76,7 +76,10 @@
  */
 import type { XeroClient } from "xero-node";
 
-import { bookingOwner } from "@/lib/booking-owner";
+import {
+  BookingOwnerMissingError,
+  bookingOwner,
+} from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { buildXeroContactUrl } from "@/lib/xero-links";
@@ -138,7 +141,7 @@ export function organisationXeroContactLockKey(organisationId: string): string {
  * one function rather than a sweep.
  */
 export async function findOrCreateXeroContactForInvoicedParty(
-  booking: { memberId: string; organisationId: string | null },
+  booking: { memberId: string | null; organisationId: string | null },
   options?: FindOrCreateOrganisationXeroContactOptions & {
     repairExistingLink?: boolean;
   },
@@ -157,7 +160,14 @@ export async function findOrCreateXeroContactForInvoicedParty(
       options,
     );
   }
-  return findOrCreateXeroContact(bookingOwner(booking).memberId, options);
+  // #3369: past the organisation branch there IS a member, because
+  // `Booking_owner_exactly_one` makes a booking with neither unrepresentable.
+  // Saying so out loud rather than asserting it: a provider call that cannot
+  // name its customer must fail where it can be seen, not send an invoice to
+  // whoever the fallback happened to find.
+  const memberId = bookingOwner(booking).memberId;
+  if (!memberId) throw new BookingOwnerMissingError();
+  return findOrCreateXeroContact(memberId, options);
 }
 
 export interface FindOrCreateOrganisationXeroContactOptions {
@@ -194,11 +204,14 @@ export interface FindOrCreateOrganisationXeroContactOptions {
  * situation a repair exists for.
  */
 export function invoicedPartyContactRepair(booking: {
-  memberId: string;
+  // #3369: nullable, like the resolver's own parameter. The repair closure is
+  // handed a member id by its caller anyway, so the field is only read for the
+  // organisation half.
+  memberId: string | null;
   organisationId: string | null;
 }) {
   return async (
-    memberId: string,
+    memberId: string | null,
     options?: FindOrCreateOrganisationXeroContactOptions & {
       repairExistingLink?: boolean;
     },

@@ -1617,7 +1617,14 @@ interface XeroContactRepairOperationKeys {
 }
 
 interface RetryXeroWriteWithContactRepairOptions<T> {
-  memberId: string;
+  /**
+   * The MEMBER whose contact link is repaired when the provider rejects the
+   * reference. Nullable since #3369: an organisation-owned booking has no
+   * member, and such a caller passes `repairContactLink:
+   * invoicedPartyContactRepair(booking)`, which repairs the organisation's own
+   * contact and never reads this field.
+   */
+  memberId: string | null;
   currentContactId: string;
   workflow: string;
   operationId?: string;
@@ -1630,7 +1637,7 @@ interface RetryXeroWriteWithContactRepairOptions<T> {
     idempotencyKey?: string | null;
   }) => Promise<T>;
   repairContactLink?: (
-    memberId: string,
+    memberId: string | null,
     options?: FindOrCreateXeroContactOptions
   ) => Promise<string>;
   persistUpdatedOperation?: (input: {
@@ -1675,8 +1682,21 @@ export async function retryXeroWriteWithContactRepair<T>(
       throw error;
     }
 
+    // #3369: the DEFAULT repair is member-keyed, so it needs a member. A caller
+    // whose booking can be organisation-owned passes the invoiced-party repair
+    // instead; reaching here without either is a caller that forgot, and a
+    // provider write that cannot name its customer must fail loudly rather than
+    // repair against whoever a search happens to return.
     const repairContactLink =
-      options.repairContactLink ?? findOrCreateXeroContact;
+      options.repairContactLink ??
+      ((memberId: string | null, repairOptions?: FindOrCreateXeroContactOptions) => {
+        if (!memberId) {
+          throw new Error(
+            `Cannot repair a Xero contact for ${options.workflow}: the booking has no member, and no invoiced-party repair was supplied (#3369).`,
+          );
+        }
+        return findOrCreateXeroContact(memberId, repairOptions);
+      });
     const repairedContactId = await repairContactLink(options.memberId, {
       createdByMemberId: options.createdByMemberId,
       repairExistingLink: true,

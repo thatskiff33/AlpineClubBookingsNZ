@@ -77,6 +77,8 @@ type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
     guests: true;
     member: true;
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    organisation: { select: { name: true; email: true } };
   };
 }>;
 
@@ -403,7 +405,14 @@ async function prepareManualSettlement(
   // Third lock tier. Credit writers serialise on a per-member key, not lock(1),
   // so the switch-to-internet-banking precedent deliberately refuses to rely on
   // other writers holding lock(1); this path does the same.
-  await lockMemberCreditLedger(bookingOwner(booking).memberId, tx);
+  const creditLedgerMemberId = bookingOwner(booking).memberId;
+  // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+  // booking has none, so there is no key to take. Passing a null key would
+  // either throw inside the helper or degenerate to a shared advisory key,
+  // which is an `INV-LOCK` hazard that shows up only under concurrency.
+  if (creditLedgerMemberId) {
+    await lockMemberCreditLedger(creditLedgerMemberId, tx);
+  }
 
   if (booking.status === BookingStatus.PAID) {
     // Refusal, never the duplicate-adjudication branch: no manual money fact
@@ -847,6 +856,8 @@ async function settleBookingPaymentInTransaction(
       include: {
         guests: { include: { nights: true } }, // per-night sets (issue #713)
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
 
@@ -1367,7 +1378,14 @@ async function settleBookingPaymentInTransaction(
         },
       });
 
-      await restoreCreditFromBooking(bookingOwner(booking).memberId, booking.id, tx);
+      const restoreMemberId = bookingOwner(booking).memberId;
+      // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+      // booking has none, so there is no key to take. Passing a null key would
+      // either throw inside the helper or degenerate to a shared advisory key,
+      // which is an `INV-LOCK` hazard that shows up only under concurrency.
+      if (restoreMemberId) {
+        await restoreCreditFromBooking(restoreMemberId, booking.id, tx);
+      }
 
       // Durable refund debt, ATOMIC with the cancel claim (mirrors the #1349
       // enqueue-then-execute pattern in booking-cancel): freeze the refund

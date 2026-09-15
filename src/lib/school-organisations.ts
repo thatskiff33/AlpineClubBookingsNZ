@@ -80,6 +80,68 @@ export function normaliseOrganisationName(name: string): string {
   return name.replace(/\s+/g, " ").trim();
 }
 
+/** The column is `VarChar(200)`; a longer name is truncated rather than refused. */
+export const MAX_ORGANISATION_NAME_LENGTH = 200;
+
+/**
+ * THE FOLD — collapse, trim, cap, trim — and the ONE place it is written.
+ *
+ * Every question of the form "do these two strings name the same school?" folds
+ * both sides through here first, whether the question is asked in TypeScript, in
+ * a Prisma filter, or in the SQL of the #3369 backfill and its two reverse
+ * scripts. {@link SCHOOL_NAME_FOLD_SQL} is its PostgreSQL twin, and
+ * `school-member-classification-contract.test.ts` fails if the two disagree.
+ *
+ * ## Why the order is collapse-then-trim, and why that is not a detail
+ *
+ * The first cut of the #3369 backfill folded the member's side the other way
+ * round — `btrim` and then collapse — and PostgreSQL's one-argument `btrim`
+ * strips **only the space character** while `\s` also matches a tab. So a school
+ * whose stored name began with a tab kept it through the trim, had it turned
+ * into a *space* by the collapse, and then matched nothing: the backfill minted
+ * a record whose name began with a space, failed to resolve that record back,
+ * and raised its unresolved-organisation exception in the middle of the
+ * maintenance window. Collapsing first turns every run of whitespace into a
+ * space, which is then exactly what a trim removes.
+ *
+ * ## Why it trims AFTER the cap as well
+ *
+ * The cap is a `left()`/`slice()` on a folded string, so the cut can land on an
+ * internal space and leave a trailing one. Trimming again makes the fold
+ * IDEMPOTENT — `fold(fold(x)) === fold(x)` — which is what lets the backfill
+ * store a folded name in `Organisation.name` and then fold that stored name
+ * again to find the record it just wrote.
+ */
+export function foldOrganisationName(
+  name: string,
+  cap: number = MAX_ORGANISATION_NAME_LENGTH,
+): string {
+  return normaliseOrganisationName(name).slice(0, cap).trim();
+}
+
+/**
+ * The same fold, as a PostgreSQL expression over `expression`.
+ *
+ * SQL migrations cannot import, so the two #3369 migration files and their two
+ * reverse scripts each carry this text inline; the contract test generates it
+ * from here and fails when a file has drifted. That is the same arrangement
+ * `SCHOOL_CLASSIFICATION_CANDIDATE_SQL` uses for the candidate predicate.
+ */
+export function schoolNameFoldSql(
+  expression: string,
+  cap: number = MAX_ORGANISATION_NAME_LENGTH,
+): string {
+  return `btrim(left(btrim(regexp_replace(${expression}, '\\s+', ' ', 'g')), ${cap}))`;
+}
+
+/** The fold plus a case fold: the CLAIM comparison, in SQL. */
+export function schoolNameClaimSql(
+  expression: string,
+  cap: number = MAX_ORGANISATION_NAME_LENGTH,
+): string {
+  return `lower(${schoolNameFoldSql(expression, cap)})`;
+}
+
 /**
  * Are these two names the same school?
  *
@@ -109,9 +171,6 @@ export function isSameOrganisationName(
   return a === b;
 }
 
-/** The column is `VarChar(200)`; a longer name is truncated rather than refused. */
-export const MAX_ORGANISATION_NAME_LENGTH = 200;
-
 /**
  * The NAME a school's Xero contact carries, from either local record.
  *
@@ -131,9 +190,7 @@ export const MAX_ORGANISATION_NAME_LENGTH = 200;
 export const MAX_SCHOOL_XERO_CONTACT_NAME_LENGTH = 100;
 
 export function schoolXeroContactName(name: string): string {
-  return normaliseOrganisationName(name)
-    .slice(0, MAX_SCHOOL_XERO_CONTACT_NAME_LENGTH)
-    .trim();
+  return foldOrganisationName(name, MAX_SCHOOL_XERO_CONTACT_NAME_LENGTH);
 }
 
 export type ResolvedSchoolOrganisation = {
@@ -157,10 +214,7 @@ export function schoolOrganisationNameClaim(
   return {
     kind: OrganisationKind.SCHOOL,
     name: {
-      equals: normaliseOrganisationName(name).slice(
-        0,
-        MAX_ORGANISATION_NAME_LENGTH,
-      ),
+      equals: foldOrganisationName(name),
       mode: "insensitive",
     },
   };
@@ -221,10 +275,7 @@ export async function resolveOrCreateSchoolOrganisation(
   tx: Prisma.TransactionClient,
   input: { name: string; email?: string | null; phone?: string | null },
 ): Promise<ResolvedSchoolOrganisation> {
-  const name = normaliseOrganisationName(input.name).slice(
-    0,
-    MAX_ORGANISATION_NAME_LENGTH,
-  );
+  const name = foldOrganisationName(input.name);
   if (!name) {
     throw new Error(
       "A school organisation cannot be resolved from an empty name (#3367).",

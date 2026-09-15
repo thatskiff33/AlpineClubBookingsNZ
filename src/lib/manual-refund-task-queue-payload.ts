@@ -26,7 +26,9 @@ import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
 type QueueBookingSummary = {
   checkIn: Date;
   checkOut: Date;
-  member: { firstName: string; lastName: string };
+  member: { firstName: string; lastName: string } | null;
+  /** #3369: the owner may be an Organisation; `bookingOwner()` reads both. */
+  organisation: { name: string; email: string | null } | null;
 };
 
 /** An OPEN row the operator has to settle by hand. */
@@ -46,8 +48,13 @@ export type OpenManualRefundTaskRow = {
   reason: string;
   createdAt: Date;
   booking: QueueBookingSummary & {
-    /** #3033: who owns the booking, for the ownership half of the link grant. */
-    memberId: string;
+    /**
+     * #3033: who owns the booking, for the ownership half of the link grant.
+     * Null since #3369 when the owner is an `Organisation`, which never signs
+     * in — so the ownership half simply does not grant, which is what it did
+     * for the invented school member too.
+     */
+    memberId: string | null;
     deletedAt: Date | null;
   };
 };

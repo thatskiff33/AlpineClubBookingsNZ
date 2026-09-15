@@ -140,6 +140,8 @@ const allocationInclude = Prisma.validator<Prisma.BedAllocationInclude>()({
   booking: {
     select: {
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   },
 });

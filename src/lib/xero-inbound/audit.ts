@@ -50,7 +50,9 @@ function getXeroAuditAction(xeroObjectType: string) {
 async function resolveXeroAuditSubjects(links: XeroAuditLocalLink[]) {
   const subjects = new Map<
     string,
-    { subjectMemberId: string; bookingId?: string | null }
+    // #3369, `INV-PRIV-018`: an audit SUBJECT stays a person, so a booking
+    // owned by an `Organisation` carries none and the entity identifies it.
+    { subjectMemberId: string | null; bookingId?: string | null }
   >();
   const idsByModel = new Map<string, Set<string>>();
 

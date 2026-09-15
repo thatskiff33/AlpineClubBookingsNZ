@@ -72,6 +72,11 @@ export type DataMigrationCase = {
    */
   afterMigration?: string;
   expectations: DataMigrationExpectation[];
+  /**
+   * The reverse scripts, executed against the migrated pre-state this case
+   * built, and what must hold once they have. See {@link DataMigrationReverse}.
+   */
+  reverse?: DataMigrationReverse;
 };
 
 /**
@@ -95,6 +100,54 @@ export type DataMigrationMutant = {
   harm: string;
   find: string;
   replace: string;
+};
+
+/**
+ * ONE RUN OF THE REVERSE SCRIPTS, and what must be true afterwards.
+ *
+ * `rollback.sql` beside a windowed migration is validated by
+ * `scripts/validate-blue-green-migrations.sh` — which checks that the FILE
+ * EXISTS. Nothing executed one. That is how #3369's first cut shipped a reverse
+ * that handed one school's bookings, and another school's Xero customer, to the
+ * wrong member: the script read correctly, and the only thing that could have
+ * caught it was running it against the same pre-state the forward migration is
+ * proved against. "A prescribed step nobody has run is not evidence" is this
+ * repository's own rule, and this type is what lets a fixture obey it.
+ */
+export type DataMigrationReverseRun = {
+  /** Plain English: what this run of the reverse scripts is doing. */
+  name: string;
+  /**
+   * Migration directory names whose `rollback.sql` is run, in the order an
+   * operator runs them — normally the reverse of the order they were applied.
+   */
+  scripts: string[];
+  /**
+   * Exactly the rows the named queries must return once the reverses have run.
+   * Omitted for a run that must raise.
+   */
+  expectations?: DataMigrationExpectation[];
+  /**
+   * When set, the run must RAISE and the error must contain this text. A
+   * refusal is a result, and the refusals are half of what a reverse promises.
+   */
+  raises?: string;
+};
+
+/** A deliberate breakage of a REVERSE script, and which script it breaks. */
+export type DataMigrationReverseMutant = DataMigrationMutant & {
+  /** The migration directory name whose `rollback.sql` this mutates. */
+  script: string;
+};
+
+/** The reverse scripts a case exercises, and the mutants that give it teeth. */
+export type DataMigrationReverse = {
+  runs: DataMigrationReverseRun[];
+  /**
+   * Each one must make at least one run fail. Without these the reverse
+   * expectations could be satisfied by a reverse that did nothing.
+   */
+  mutants: DataMigrationReverseMutant[];
 };
 
 export type DataMigrationVerification = {

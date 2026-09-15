@@ -295,6 +295,8 @@ export async function POST(
           },
           payment: true,
           member: true,
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           promoRedemption: {
             include: {
               guestTargets: { select: { bookingGuestId: true } },
@@ -1185,6 +1187,7 @@ export async function POST(
         paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
         memberEmail: bookingOwner(booking).member.email,
         memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+        memberFirstName: bookingOwner(booking).member.firstName,
         memberId: bookingOwner(booking).memberId,
         addedGuestNames: normalizedNewGuests.map((guest) => `${guest.firstName} ${guest.lastName}`),
         bookingModificationId: bookingModification.id,
@@ -1323,10 +1326,20 @@ export async function POST(
     );
 
     // Send email
-    const member = await prisma.member.findUnique({
-      where: { id: bookingOwner(result.booking).memberId },
-    });
-    if (member && notifyMember !== false) {
+    // #3369: the OWNER, not a re-read of a member row. A school's booking has no
+    // member to re-read, and the projection carries the same person-shaped name
+    // and address the invented school member used to supply — so the school still
+    // receives the message it received before this stage, at the same address.
+    // The relation was loaded in the same transaction, so this is no staler than
+    // the read it replaces.
+    // #3369: the owner as the transaction already resolved them — a school's
+    // booking has no member row to re-read, and these are the person-shaped
+    // projection the invented school member used to supply.
+    const member = {
+      email: result.memberEmail,
+      firstName: result.memberFirstName,
+    };
+    if (notifyMember !== false) {
       /*
         #3032 (epic #2797): whether the club is still working out an amount on
         this booking as the email is written. The booking's CURRENT state, read
@@ -1348,7 +1361,7 @@ export async function POST(
 
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
-        recipientMemberId: member.id,
+        recipientMemberId: result.memberId,
         email: member.email,
         firstName: member.firstName,
         modificationType: "GUEST_ADD",

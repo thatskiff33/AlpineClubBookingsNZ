@@ -398,6 +398,8 @@ export async function reconcileXeroCreditSync(
     select: {
       id: true,
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: { select: { id: true, xeroInvoiceId: true } },
     },
   });

@@ -414,6 +414,8 @@ export async function createXeroInvoiceForBooking(
       // #2258: recipient for the withheld-send audit row when the booking's
       // "No emails" switch stops Xero emailing the invoice.
       member: { select: { email: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   });
 

@@ -29,7 +29,7 @@ reason: fifty lines, and the editor itself is not among them — it is
   and which changes only the booking about to be quoted.
 
 file: src/lib/booking-request.ts
-lines: 2928
+lines: 2945
 reason: seven lines, and five of them are the comment. The code is one field:
   `serializeBookingRequestForAdmin` now returns the row's `version`, so the
   officer's correction form can send back the version it was showing and the

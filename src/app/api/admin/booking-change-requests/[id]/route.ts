@@ -52,6 +52,8 @@ const includeRequestDetail = {
       member: {
         select: { id: true, firstName: true, lastName: true, email: true },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: {
         select: {
           id: true,

@@ -328,6 +328,11 @@ export async function findOverlappingCapacityHoldingBookings(
       checkOut: true,
       status: true,
       member: { select: { firstName: true, lastName: true, email: true } },
+      // #3369: the owner may be an Organisation. Without this the accessor has
+      // no projection to build and hands the null member straight back, so an
+      // officer overriding a hold saw "Unknown member" for the school booking
+      // they were about to override.
+      organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },
     orderBy: [{ checkIn: "asc" }, { id: "asc" }],
@@ -336,8 +341,8 @@ export async function findOverlappingCapacityHoldingBookings(
   return rows.map((row) => ({
     id: row.id,
     memberName:
-      [bookingOwner(row).member?.firstName, bookingOwner(row).member?.lastName].filter(Boolean).join(" ") ||
-      bookingOwner(row).member?.email ||
+      [bookingOwner(row).member.firstName, bookingOwner(row).member.lastName].filter(Boolean).join(" ") ||
+      bookingOwner(row).member.email ||
       "Unknown member",
     checkIn: formatDateOnly(row.checkIn),
     checkOut: formatDateOnly(row.checkOut),
@@ -401,6 +406,11 @@ export async function findOverlappingOverriddenNonHoldingBookings(
       checkOut: true,
       status: true,
       member: { select: { firstName: true, lastName: true, email: true } },
+      // #3369: the owner may be an Organisation. Without this the accessor has
+      // no projection to build and hands the null member straight back, so an
+      // officer overriding a hold saw "Unknown member" for the school booking
+      // they were about to override.
+      organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },
     orderBy: [{ checkIn: "asc" }, { id: "asc" }],
@@ -409,8 +419,8 @@ export async function findOverlappingOverriddenNonHoldingBookings(
   return rows.map((row) => ({
     id: row.id,
     memberName:
-      [bookingOwner(row).member?.firstName, bookingOwner(row).member?.lastName].filter(Boolean).join(" ") ||
-      bookingOwner(row).member?.email ||
+      [bookingOwner(row).member.firstName, bookingOwner(row).member.lastName].filter(Boolean).join(" ") ||
+      bookingOwner(row).member.email ||
       "Unknown member",
     checkIn: formatDateOnly(row.checkIn),
     checkOut: formatDateOnly(row.checkOut),

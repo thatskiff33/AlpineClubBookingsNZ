@@ -39,7 +39,7 @@ reason: the create's half of the #2698 ordering case — the amendment detection
   cohort, with the reason at the gate.
 
 file: src/lib/capacity.ts
-lines: 1133
+lines: 1143
 reason: `wholeLodgeHoldRepresentedBeds` and `wholeLodgeHeldNightOccupiedBeds`
   are eight lines of arithmetic and about seventy of docblock, and the docblock
   is the deliverable. The pin they replace read `lodgeCapacity` and was correct

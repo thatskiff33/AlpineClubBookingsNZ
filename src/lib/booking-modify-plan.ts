@@ -812,6 +812,9 @@ export async function prepareGuestPlan(
     // Judged as the booking's own member when the caller asked for member
     // semantics: the profile/bookability gate answers "can THIS person add that
     // member", and for an approved exception request that person is the booker.
+    // #3369: when the caller asked for member semantics the judging person is
+    // the booker, and a school has none. `null` is the honest answer and the
+    // gate treats it as "no member is vouching", which is the fail-closed side.
     guestAuthorizationIsAdmin ? actorId : bookingOwner(booking).memberId,
     {
     actorRole: guestAuthorizationRole,

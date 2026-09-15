@@ -1111,7 +1111,8 @@ async function alertPaymentRecoveryFailure(
 ) {
   const booking = await prisma.booking.findUnique({
     where: { id: operation.bookingId },
-    include: { member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { member: true, organisation: { select: { name: true, email: true } } },
   });
 
   if (!booking) {
@@ -2343,6 +2344,8 @@ async function processCreateAdditionalPaymentIntentOperation(
         member: {
           select: { id: true, email: true, firstName: true, lastName: true },
         },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         // #3181: `status` joins the select because the deferred supplementary
         // invoice this replay now raises is classified partly from it (the
         // primary invoice's local paid/refunded state). Whether an invoice
@@ -2376,9 +2379,12 @@ async function processCreateAdditionalPaymentIntentOperation(
       bookingId: operation.bookingId,
       bookingModificationId,
       paymentId: operation.paymentId,
-      member: bookingOwner(booking).member
+      // #3369: the edit-review charge request is raised against a PERSON's
+      // Stripe customer, so a booking with no member carries none. The sync
+      // already models an absent member, which is the branch a school takes.
+      member: bookingOwner(booking).member.id
         ? {
-            id: bookingOwner(booking).member.id,
+            id: bookingOwner(booking).member.id as string,
             email: bookingOwner(booking).member.email,
             name: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
             stripeCustomerId: booking.payment?.stripeCustomerId ?? null,
@@ -2592,7 +2598,8 @@ async function processCreateAdditionalPaymentIntentOperation(
     where: { id: operation.paymentId },
     include: {
       transactions: true,
-      booking: { include: { member: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      booking: { include: { member: true, organisation: { select: { name: true, email: true } } } },
     },
   });
 
@@ -2666,7 +2673,9 @@ async function processCreateAdditionalPaymentIntentOperation(
     const customer = await findOrCreateCustomer({
       email: member.email,
       name: `${member.firstName} ${member.lastName}`,
-      memberId: member.id,
+      // #3369: the OWNER — a member id, or the organisation beside it.
+      memberId: member.id ?? null,
+      organisationId: payment.booking.organisationId,
     });
     customerId = customer.id;
   }
@@ -2910,7 +2919,8 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
       createdAt: { lt: staleThreshold },
     },
     orderBy: { createdAt: "asc" },
-    include: { booking: { include: { member: true } } },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } },
   });
   if (!oldest) return;
 

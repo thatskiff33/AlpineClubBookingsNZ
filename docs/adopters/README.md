@@ -207,6 +207,9 @@ per-route index if you would rather start from a URL.
   setup order for the separate admin-only diagnostics assistant: provisioning
   and rotating its SELECT-only database role, and reading its readiness
   endpoint.
+- [School Organisation Cutover](../guides/school-organisation-cutover.md) — the
+  one-off release that stops a school being a person, and the classification
+  every school-shaped member row needs before it can run.
 
 ## Policy, runbooks and recovery
 

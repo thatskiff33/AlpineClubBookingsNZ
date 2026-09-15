@@ -57,7 +57,8 @@ type BackfillStore = typeof prisma;
 
 export interface OrphanedAppliedCreditFinding {
   bookingId: string;
-  memberId: string;
+  /** The booking OWNER, null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   appliedCreditCents: number; // positive SIGNED net of BOOKING_APPLIED rows (post-clamp, #1887 F2)
   appliedRowCount: number;
   paymentId: string | null;
@@ -230,8 +231,14 @@ export async function healOrphanedAppliedCredits(options?: {
   const skipped: OrphanedAppliedCreditHealResult["skipped"] = [];
 
   for (const finding of findings) {
+    // #3369: an orphaned APPLIED CREDIT belongs to a member's ledger, so a
+    // finding with no member is a booking owned by an organisation — which can
+    // hold no applied credit and therefore can never orphan any. The scan
+    // reports it either way; the heal has nothing to key on and skips.
+    const findingMemberId = finding.memberId;
+    if (!findingMemberId) continue;
     const outcome = await store.$transaction(async (tx) => {
-      await lockMemberCreditLedger(finding.memberId, tx);
+      await lockMemberCreditLedger(findingMemberId, tx);
 
       const fresh = await tx.booking.findUnique({
         where: { id: finding.bookingId },
@@ -247,7 +254,7 @@ export async function healOrphanedAppliedCredits(options?: {
       }
 
       const restoredCents = await restoreCreditFromBooking(
-        finding.memberId,
+        findingMemberId,
         finding.bookingId,
         tx
       );
@@ -288,7 +295,7 @@ export async function healOrphanedAppliedCredits(options?: {
     if (outcome.healed) {
       healed.push({
         bookingId: finding.bookingId,
-        memberId: finding.memberId,
+        memberId: findingMemberId,
         restoredCents: outcome.restoredCents,
       });
       await recordBookingEvent({

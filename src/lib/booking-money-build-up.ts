@@ -1,6 +1,9 @@
 import type { Prisma } from "@prisma/client";
 
-import { deriveNightAdjustmentState } from "@/lib/night-adjustment-write";
+import {
+  deriveNightAdjustmentState,
+  memberBenefitAllocations,
+} from "@/lib/night-adjustment-write";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 
 export const BOOKING_MONEY_BUILD_UP_INVARIANT = "INV-MONEY-030";
@@ -112,7 +115,10 @@ export type BookingMoneyBuildUpProjection = {
   }>;
   promoRedemption: {
     priceAdjustmentCents: number;
-    allocations: Array<{ memberId: string; priceAdjustmentCents: number }>;
+    // The column as it is since #3369: a school's booker-slot allocation names
+    // no member. `bookingMoneyBuildUpFromProjection` narrows it through the
+    // writer's own rule, so `LoadedBookingMoneyBuildUp` stays member-keyed.
+    allocations: Array<{ memberId: string | null; priceAdjustmentCents: number }>;
   } | null;
   nightAdjustments: Array<{
     bookingGuestId: string | null;
@@ -263,7 +269,10 @@ export function bookingMoneyBuildUpFromProjection(
       args.bookingGuestId,
     ),
     rows,
-    redemption: booking.promoRedemption,
+    redemption: booking.promoRedemption && {
+      priceAdjustmentCents: booking.promoRedemption.priceAdjustmentCents,
+      allocations: memberBenefitAllocations(booking.promoRedemption.allocations),
+    },
   };
 }
 

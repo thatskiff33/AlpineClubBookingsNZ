@@ -42,7 +42,8 @@ async function loadPendingReviewUnderEligibilityLocks(
 
   const current = await tx.booking.findUnique({
     where: { id: bookingId },
-    include: { member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { member: true, organisation: { select: { name: true, email: true } } },
   });
   if (
     !current ||
@@ -79,7 +80,8 @@ export async function PATCH(
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { member: true, organisation: { select: { name: true, email: true } } },
   });
 
   if (!booking) {

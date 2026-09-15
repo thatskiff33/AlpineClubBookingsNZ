@@ -1,4 +1,4 @@
-import { bookingOwner } from "@/lib/booking-owner";
+import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { listRefundsForCharge, processRefund } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
@@ -478,6 +478,8 @@ async function handlePaymentIntentSucceeded(
     where: { id: bookingId },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: true,
     },
   });
@@ -584,7 +586,8 @@ async function handlePaymentIntentSucceeded(
     try {
       const booking = await prisma.booking.findUnique({
         where: { id: bookingId },
-        include: { member: true, guests: true, promoRedemption: { include: { promoCode: true } } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        include: { member: true, organisation: { select: { name: true, email: true } }, guests: true, promoRedemption: { include: { promoCode: true } } },
       });
       if (booking) {
         // Split-booking parent (#738): describe the provisional non-member
@@ -688,7 +691,8 @@ async function handlePaymentIntentFailed(
   try {
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { member: true },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      include: { member: true, organisation: { select: { name: true, email: true } } },
     });
     if (booking) {
       sendAdminPaymentFailureAlert({
@@ -854,6 +858,8 @@ async function handleAdditionalModificationPaymentSucceeded(
     where: { id: bookingId },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: true,
     },
   });
@@ -1011,14 +1017,21 @@ async function handleSetupIntentFailed(
   // Notify member that card setup failed
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { member: { select: { email: true, firstName: true } } },
+    include: {
+      member: { select: { email: true, firstName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
+    },
   });
 
-  if (booking && bookingOwner(booking).member?.email) {
+  // #3369: ONE home for "is there an address to send to?" — see
+  // `bookingOwnerEmail()`.
+  const ownerEmail = booking ? bookingOwnerEmail(booking) : null;
+  if (booking && ownerEmail) {
     sendSetupIntentFailedEmail({
       bookingId: booking.id,
       recipientMemberId: bookingOwner(booking).memberId,
-      email: bookingOwner(booking).member.email,
+      email: ownerEmail,
       firstName: bookingOwner(booking).member.firstName,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
@@ -1148,7 +1161,8 @@ async function alertPaymentAmountMismatch(
   try {
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { member: true },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      include: { member: true, organisation: { select: { name: true, email: true } } },
     });
 
     if (!booking) {
@@ -1346,7 +1360,9 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     member: {
       firstName: string;
       lastName: string;
-    };
+    } | null;
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    organisation: { name: string; email: string | null } | null;
     payment: {
       id: string;
       xeroInvoiceId: string | null;
@@ -1615,7 +1631,9 @@ async function handleCancelledBookingPaymentSucceeded(
     member: {
       firstName: string;
       lastName: string;
-    };
+    } | null;
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    organisation: { name: string; email: string | null } | null;
     payment: {
       id: string;
       xeroInvoiceId: string | null;

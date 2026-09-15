@@ -109,7 +109,7 @@ reason: twenty-two lines, and eighteen of them are prop wiring the shell exists
   step — so the length recorded here is the length after that.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
-lines: 2361
+lines: 2366
 reason: two eight-line night-list projections became one derivation used by
   both, plus the docblock that is the actual deliverable. The route answers TWO
   audiences from one capacity result — a member, who gets the nights and no bed
@@ -123,7 +123,7 @@ reason: two eight-line night-list projections became one derivation used by
   #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
 
 file: src/lib/group-settlement.ts
-lines: 1265
+lines: 1267
 reason: one line of code and eight of comment. The refusal's night list now
   comes from `getCapacityFullNights` instead of an inline filter, and the comment
   is the only record of the two defects that line had: it dropped every

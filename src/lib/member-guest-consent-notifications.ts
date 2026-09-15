@@ -405,7 +405,7 @@ type NotificationContext = {
   checkIn: Date;
   checkOut: Date;
   bookingStatus: string;
-  bookingOwnerMemberId: string;
+  bookingOwnerMemberId: string | null; // #3369: null for an Organisation.
   /**
    * Whether this booking carries an officer-negotiated booking-request price —
    * the same question `isQuotePricedBooking` answers, read from the booking's
@@ -444,6 +444,7 @@ async function loadNotificationContext(
       status: true,
       memberId: true,
       member: { select: { firstName: true, lastName: true } },
+      organisation: { select: { name: true, email: true } },
       // D-14, and the fact that makes the added notice honest for the whole
       // MG4-D-b population (#2309). `evaluateGuestSelfRemoval` defaults
       // `isQuotePriced` to false — "not known to be quote priced" — and every
@@ -577,6 +578,7 @@ export async function sendMemberGuestWithdrawnNotifications(params: {
       checkIn: true,
       checkOut: true,
       member: { select: { firstName: true, lastName: true } },
+      organisation: { select: { name: true, email: true } },
     },
   });
   if (!booking) {

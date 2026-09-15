@@ -46,6 +46,11 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
     },
     include: {
       member: true,
+      // #3369: who owns the booking may be an Organisation, so the owner
+      // projection needs the school's own name and address alongside the
+      // member link. `bookingOwner()` reads both and hands back one person-
+      // shaped owner either way.
+      organisation: { select: { name: true, email: true } },
       // Owner decision D-12 (#2307): the check-in reminder NAMES each guest, so
       // it must not name a member whose consent to being added is still PENDING
       // — the booker would read it as settled, and the named member has not
@@ -76,10 +81,14 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
     // one. (Booking confirmation/updates/cancellation notices are must-send and
     // are never gated.) `booking.member` is loaded via the `member: true`
     // include above, so the memberId is already in hand.
-    const wantsReminder = await shouldSendEmail(
-      bookingOwner(booking).member.id,
-      "bookingReminder",
-    );
+    // #3369: a notification preference belongs to a PERSON, and an
+    // organisation has none. The default applies — which is what a school
+    // already got, because the invented school member never had a preference
+    // row either, so no school's reminder starts or stops arriving today.
+    const reminderMemberId = bookingOwner(booking).memberId;
+    const wantsReminder = reminderMemberId
+      ? await shouldSendEmail(reminderMemberId, "bookingReminder")
+      : true;
     if (!wantsReminder) {
       skipped++;
       continue;

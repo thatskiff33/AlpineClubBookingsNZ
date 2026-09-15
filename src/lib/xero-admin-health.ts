@@ -19,7 +19,8 @@ const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 interface MissingXeroInvoiceBooking {
   bookingId: string;
   paymentId: string;
-  memberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   memberName: string;
   memberEmail: string;
   status: "PAID";
@@ -123,7 +124,9 @@ function formatBookingSnapshot(input: {
     firstName: string;
     lastName: string;
     email: string;
-  };
+  } | null;
+  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+  organisation: { name: string; email: string | null } | null;
   payment: {
     id: string;
     xeroInvoiceId: string | null;
@@ -132,7 +135,7 @@ function formatBookingSnapshot(input: {
   return {
     bookingId: input.id,
     paymentId: input.payment.id,
-    memberId: bookingOwner(input).member.id,
+    memberId: bookingOwner(input).member.id ?? null,
     memberName: `${bookingOwner(input).member.firstName} ${bookingOwner(input).member.lastName}`,
     memberEmail: bookingOwner(input).member.email,
     status: input.status as "PAID",
@@ -171,6 +174,8 @@ export async function getMissingXeroInvoiceBookings(options?: {
           email: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: {
         select: {
           id: true,
@@ -295,6 +300,8 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
           member: {
             select: { firstName: true, lastName: true, email: true },
           },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
       },
     },

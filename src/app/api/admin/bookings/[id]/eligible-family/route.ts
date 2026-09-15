@@ -38,7 +38,14 @@ export async function GET(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  const family = await resolveMemberFamily(bookingOwner(booking).memberId);
+  // #3369: the family-quick-add panel offers the BOOKER's own family group. A
+  // school booking has no booker and therefore no family to offer, which is the
+  // same empty answer the invented school member gave — it belonged to no
+  // group. The 404 is the existing "no member" path, unchanged.
+  const familyOwnerMemberId = bookingOwner(booking).memberId;
+  const family = familyOwnerMemberId
+    ? await resolveMemberFamily(familyOwnerMemberId)
+    : null;
   if (!family) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
