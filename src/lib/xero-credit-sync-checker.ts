@@ -72,6 +72,7 @@
  */
 import { CreditType } from "@prisma/client";
 import { prisma } from "./prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
@@ -397,6 +398,8 @@ export async function reconcileXeroCreditSync(
     select: {
       id: true,
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: { select: { id: true, xeroInvoiceId: true } },
     },
   });
@@ -418,7 +421,7 @@ export async function reconcileXeroCreditSync(
     }
 
     const memberName =
-      `${booking.member.firstName} ${booking.member.lastName}`.trim() || "Member";
+      `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim() || "Member";
     const paymentId = booking.payment?.id ?? null;
     const invoiceId = booking.payment?.xeroInvoiceId ?? null;
 

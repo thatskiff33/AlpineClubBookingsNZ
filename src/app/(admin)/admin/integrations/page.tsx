@@ -5,6 +5,7 @@ import {
   KeyRound,
   Plug,
   Server,
+  Video,
 } from "lucide-react";
 import {
   AdminHubPage,
@@ -51,6 +52,13 @@ const sections: AdminHubSection[] = [
     description:
       "Enter your Anthropic API key, set a monthly spend cap, and review AI usage. Hidden until the AI assistant module is enabled.",
     icon: Bot,
+  },
+  {
+    href: "/admin/video-meetings/setup",
+    title: "Video meetings",
+    description:
+      "Point calendar meeting links at your MiroTalk server and store the host sign-in they use — no environment variables.",
+    icon: Video,
   },
   {
     href: "/admin/alpine-server/setup",

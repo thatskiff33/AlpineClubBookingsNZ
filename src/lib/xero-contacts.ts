@@ -10,7 +10,6 @@
  */
 
 import {
-  Address,
   Contact,
   Phone,
   type XeroClient,
@@ -40,12 +39,21 @@ import { buildXeroContactUpdatePayload } from "./xero-contact-sync";
 import { buildXeroContactCompanyNumberPatch } from "@/lib/xero-contact-date-of-birth";
 import { xeroCalendarDateAsDateOnly } from "@/lib/xero-provider-dates";
 import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
+import { normalizeXeroContactMatchValue } from "@/lib/xero-contact-name-match";
 import {
   applyXeroContactEmailPolicy,
   resolveXeroContactEmailPolicy,
   type XeroContactEmailPolicy,
 } from "@/lib/xero-contact-containment";
 import { ensureXeroContactContained } from "@/lib/xero-contact-containment-proof";
+import {
+  buildXeroAddresses,
+  buildXeroContactShape,
+} from "@/lib/xero-contact-shape";
+import {
+  assertXeroContactHasNoOtherHome,
+  lockXeroContactHome,
+} from "@/lib/xero-contact-home";
 import {
   ambiguousMemberContactCreateReservationWhere,
   assertMemberAvailableForXeroContactChange,
@@ -73,9 +81,89 @@ export class XeroContactValidationError extends Error {
   }
 }
 
+export const XERO_CONTACT_PROVIDER_ANSWER_UNAVAILABLE_CODE =
+  "XERO_CONTACT_PROVIDER_ANSWER_UNAVAILABLE";
+
+/**
+ * The provider could not be asked authoritatively, so nothing was done for this
+ * member (#2939, `INV-INT-023`).
+ *
+ * Raised ONLY for a caller that passed
+ * {@link FindOrCreateXeroContactOptions.requireAuthoritativeMatch}. Two phases
+ * raise it, and they are the two places this function otherwise proceeds on an
+ * answer it does not have:
+ *
+ *  - `EMAIL_SEARCH` — the Xero email search failed for a reason that is not the
+ *    daily limit. The default is to log and fall through to a create, which is
+ *    the right trade for a single invoice (a blocked invoice is expensive, a
+ *    rare duplicate contact is not) and the WRONG one for a bulk seeding run,
+ *    where nothing is blocked and a duplicate customer is permanent: Xero has
+ *    no merge API, so every speculative contact is manual archive work.
+ *  - `DUPLICATE_NAME_RECOVERY` — Xero refused the create on its contact-name
+ *    uniqueness rule. The default recovery adopts the existing same-named
+ *    contact, matched on the NORMALISED NAME ALONE with no email comparison.
+ *    For a single invoice raised by a person who just looked the member up that
+ *    is usually right. In a bulk run over years of club history it is the
+ *    sharpest hazard this tool has: a new member called John Smith and a
+ *    fifteen-year-old "John Smith" at a different address link silently, and
+ *    every invoice, statement and reminder for the new member then lands on the
+ *    old one's account.
+ *
+ * Both leave the member exactly where they were, so the next run picks them up
+ * unchanged.
+ */
+export type XeroContactProviderAnswerPhase =
+  | "EMAIL_SEARCH"
+  | "DUPLICATE_NAME_RECOVERY";
+
+export class XeroContactProviderAnswerUnavailableError extends Error {
+  readonly code = XERO_CONTACT_PROVIDER_ANSWER_UNAVAILABLE_CODE;
+  readonly phase: XeroContactProviderAnswerPhase;
+  readonly memberId: string;
+  readonly originalError: unknown;
+
+  constructor(input: {
+    phase: XeroContactProviderAnswerPhase;
+    memberId: string;
+    originalError: unknown;
+  }) {
+    super(
+      input.phase === "EMAIL_SEARCH"
+        ? "Xero could not be searched for an existing contact, so nothing was " +
+          "done for this member rather than risk creating a second Xero " +
+          "customer for somebody who already has one. Try again later."
+        : "Xero already holds an active contact with this member's name, and " +
+          "nothing here may decide whether it is the same person on the name " +
+          "alone. Link this member by hand, or give the Xero contact a name " +
+          "that tells the two apart.",
+    );
+    this.name = "XeroContactProviderAnswerUnavailableError";
+    this.phase = input.phase;
+    this.memberId = input.memberId;
+    this.originalError = input.originalError;
+  }
+}
+
 export interface FindOrCreateXeroContactOptions {
   createdByMemberId?: string;
   repairExistingLink?: boolean;
+  /**
+   * "If the provider cannot be asked authoritatively, do nothing for this
+   * member" (#2939). Default `false`, which is every existing caller's
+   * behaviour unchanged.
+   *
+   * A document writer wants the opposite of this: an invoice that cannot be
+   * raised is the expensive outcome, so a failed search falls through to a
+   * create and a name collision is recovered by adopting the same-named
+   * contact. A BULK SEEDING run inverts both halves — nothing is blocked, and a
+   * wrong contact is permanent — so it passes `true` and takes
+   * {@link XeroContactProviderAnswerUnavailableError} instead, whose docblock
+   * carries the full reasoning for each phase.
+   *
+   * It never makes this function do MORE: it only ever turns a fallback into a
+   * refusal, so it cannot itself create or link anything the default would not.
+   */
+  requireAuthoritativeMatch?: boolean;
   /**
    * An already-authenticated Xero client, for the containment verification on
    * the steady-state path (#3036 review P1-12).
@@ -293,21 +381,6 @@ export interface XeroContactUpdateData {
 // Normalisation / matching helpers
 // ---------------------------------------------------------------------------
 
-export function normalizeXeroContactMatchValue(
-  value: string | null | undefined
-): string {
-  return (
-    value
-      ?.trim()
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim() ?? ""
-  );
-}
-
 export function buildMemberFullName(member: {
   firstName: string | null;
   lastName: string | null;
@@ -366,7 +439,13 @@ export function namesLookSimilarForPotentialMatch(
   return matchedTokens >= requiredMatches;
 }
 
-function isDuplicateActiveXeroContactNameError(error: unknown): boolean {
+/**
+ * Exported for the organisation-keyed resolve (#3367), which meets the same
+ * Xero rule — contact names are unique — and must adopt the existing contact
+ * rather than mint a second one. Shared rather than copied so the two paths
+ * cannot drift on which provider error means "the name is taken".
+ */
+export function isDuplicateActiveXeroContactNameError(error: unknown): boolean {
   const text = getXeroErrorSearchText(error);
   return (
     text.includes("already assigned to another contact") ||
@@ -378,45 +457,8 @@ function isDuplicateActiveXeroContactNameError(error: unknown): boolean {
 // Address builders / validation
 // ---------------------------------------------------------------------------
 
-function buildXeroAddresses(member: {
-  streetAddressLine1?: string | null;
-  streetAddressLine2?: string | null;
-  streetCity?: string | null;
-  streetRegion?: string | null;
-  streetPostalCode?: string | null;
-  streetCountry?: string | null;
-  postalAddressLine1?: string | null;
-  postalAddressLine2?: string | null;
-  postalCity?: string | null;
-  postalRegion?: string | null;
-  postalPostalCode?: string | null;
-  postalCountry?: string | null;
-}): Address[] {
-  const addresses: Address[] = [];
-  if (member.streetAddressLine1) {
-    addresses.push({
-      addressType: Address.AddressTypeEnum.STREET,
-      addressLine1: member.streetAddressLine1,
-      addressLine2: member.streetAddressLine2 || "",
-      city: member.streetCity || "",
-      region: member.streetRegion || "",
-      postalCode: member.streetPostalCode || "",
-      country: member.streetCountry || "",
-    });
-  }
-  if (member.postalAddressLine1) {
-    addresses.push({
-      addressType: Address.AddressTypeEnum.POBOX,
-      addressLine1: member.postalAddressLine1,
-      addressLine2: member.postalAddressLine2 || "",
-      city: member.postalCity || "",
-      region: member.postalRegion || "",
-      postalCode: member.postalPostalCode || "",
-      country: member.postalCountry || "",
-    });
-  }
-  return addresses;
-}
+// `buildXeroAddresses` moved to `xero-contact-shape.ts` in #3367, unchanged, so
+// the person and organisation payload builders share one copy rather than two.
 
 // Server-side create gate (#2089). Xero's contact-create API requires only a
 // unique contact name; this app additionally keeps email required because Xero
@@ -465,7 +507,9 @@ export function getMissingFieldsForXeroContactCreate(member: {
  * the invoice and credit-note writers, and this must be a no-op for their
  * payloads.
  */
-function stripPersonNameFromStoredContactPayload(payload: unknown): unknown {
+export function stripPersonNameFromStoredContactPayload(
+  payload: unknown,
+): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return payload;
   }
@@ -498,6 +542,14 @@ function stripPersonNameFromStoredContactPayload(payload: unknown): unknown {
   site `applyXeroContactEmailPolicy` is the identity function, so the payload
   below — and therefore its stored request payload and its idempotency key — is
   byte-identical to what it was before that issue.
+
+  #3367 moved the object literal itself into `buildXeroContactShape`, which the
+  ORGANISATION payload builder shares rather than copying (INV-SSOT). This
+  function keeps the two things that are genuinely person-specific: the create
+  gate, and composing Xero's required `name` out of a first and last name. The
+  shape module pins the KEY ORDER, which is load-bearing because
+  `buildXeroPayloadHash` hashes the outbound object into an idempotency key —
+  the payload this produces is byte-identical to the one it produced before.
 */
 function buildMemberXeroContactCreatePayload(
   member: LockedMemberContactCreateSnapshot,
@@ -508,38 +560,24 @@ function buildMemberXeroContactCreatePayload(
     throw new XeroContactValidationError(missingFields);
   }
 
-  const hasAnyPhonePart = Boolean(
-    member.phoneCountryCode?.trim() ||
-      member.phoneAreaCode?.trim() ||
-      member.phoneNumber?.trim(),
-  );
-  return {
+  return buildXeroContactShape(policy, {
     name: `${member.firstName} ${member.lastName}`,
-    firstName: member.firstName,
-    lastName: member.lastName,
-    emailAddress: applyXeroContactEmailPolicy(
-      policy,
-      isPlaceholderContactEmail(member.email) ? "" : member.email,
-    ),
+    person: { firstName: member.firstName, lastName: member.lastName },
+    email: isPlaceholderContactEmail(member.email) ? "" : member.email,
     // #2859: the member's date of birth, in the `dd/mm/yyyy` shape the import
     // side has always read back out of this field. `null` — an EXPLICIT "the
     // field is known to be empty" — because this payload creates the contact,
     // so there is nothing in Xero to clobber. Omitting the argument would mean
     // "nothing is known", which the guard refuses to write into. A member with
     // no date of birth contributes no key at all.
-    ...buildXeroContactCompanyNumberPatch(member.dateOfBirth, null),
-    phones: hasAnyPhonePart
-      ? [
-          {
-            phoneType: Phone.PhoneTypeEnum.MOBILE,
-            phoneCountryCode: member.phoneCountryCode || "",
-            phoneAreaCode: member.phoneAreaCode || "",
-            phoneNumber: member.phoneNumber || "",
-          },
-        ]
-      : [],
-    addresses: buildXeroAddresses(member),
-  };
+    extraFields: buildXeroContactCompanyNumberPatch(member.dateOfBirth, null),
+    phone: {
+      countryCode: member.phoneCountryCode,
+      areaCode: member.phoneAreaCode,
+      number: member.phoneNumber,
+    },
+    addresses: member,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -607,7 +645,13 @@ async function linkMatchedXeroContact(
   );
 }
 
-async function findExistingXeroContactByExactName(input: {
+/**
+ * Exported for the organisation-keyed resolve (#3367), which uses it as its ONE
+ * adoption path — a school's contact may only ever be matched by its exact
+ * name, never by email. Shared rather than copied so both paths normalise and
+ * compare a contact name identically.
+ */
+export async function findExistingXeroContactByExactName(input: {
   xero: XeroClient;
   tenantId: string;
   fullName: string;
@@ -818,6 +862,23 @@ export async function findOrCreateXeroContact(
     // Rate-limit errors must propagate — swallowing them would cause a new
     // contact to be created and waste the daily quota further.
     if (searchErr instanceof XeroDailyLimitError) throw searchErr;
+    /*
+      #2939: a caller that asked for an AUTHORITATIVE answer gets a refusal
+      here rather than the fall-through. The fall-through below is right for a
+      document writer and wrong for a bulk run, and the two differ only in what
+      the expensive outcome is — see `requireAuthoritativeMatch`.
+    */
+    if (options?.requireAuthoritativeMatch) {
+      logger.warn(
+        { err: searchErr, memberId },
+        "Xero email search failed; refusing to create rather than risk a duplicate",
+      );
+      throw new XeroContactProviderAnswerUnavailableError({
+        phase: "EMAIL_SEARCH",
+        memberId,
+        originalError: searchErr,
+      });
+    }
     // Any other error (network timeout, transient 5xx) is logged and we
     // fall through to contact creation. This is intentional: a failed
     // search is recoverable, whereas failing to create the invoice is not.
@@ -854,6 +915,14 @@ export async function findOrCreateXeroContact(
       }
     } catch (nameSearchErr) {
       if (nameSearchErr instanceof XeroDailyLimitError) throw nameSearchErr;
+      // #2939: as for the email search above, and for the same reason.
+      if (options?.requireAuthoritativeMatch) {
+        throw new XeroContactProviderAnswerUnavailableError({
+          phase: "EMAIL_SEARCH",
+          memberId,
+          originalError: nameSearchErr,
+        });
+      }
       logger.warn(
         { err: nameSearchErr, memberId, previousXeroContactId },
         "Xero name search failed during link repair; falling through to contact creation",
@@ -953,6 +1022,27 @@ export async function findOrCreateXeroContact(
     } catch (error) {
       if (error instanceof XeroContactCreatePartialSuccessError) throw error;
       if (isDuplicateActiveXeroContactNameError(error)) {
+        /*
+          #2939: a caller that asked for an AUTHORITATIVE answer never reaches
+          the name recovery below. The recovery adopts the existing same-named
+          contact on a normalised-name match with NO email comparison, which is
+          the one adoption a bulk run must not make silently — see
+          `XeroContactProviderAnswerUnavailableError`. The refusal is raised
+          instead of the search, so it also costs one provider call less: there
+          is nothing an answer could change.
+        */
+        if (options?.requireAuthoritativeMatch) {
+          const refusal = new XeroContactProviderAnswerUnavailableError({
+            phase: "DUPLICATE_NAME_RECOVERY",
+            memberId,
+            originalError: error,
+          });
+          await failXeroSyncOperation(operation.id, refusal, {
+            duplicateCreateError: sanitizeForJson(error),
+            refusedRecovery: "name_match_requires_operator_decision",
+          });
+          throw refusal;
+        }
         try {
           const matchedContact = await findExistingXeroContactByExactName({
             xero,
@@ -1022,6 +1112,21 @@ export async function findOrCreateXeroContact(
   try {
     linkOutcome = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
+      /*
+        INV-INT-018 (#3367) — the contact-home key, taken BEFORE the Member row
+        fence below. See the refusal further down for what it guards; the ORDER
+        is its own rule and its own hazard.
+
+        The organisation-side transfer (`takeXeroContactFromSchoolsOwnMember`)
+        takes a Member ROW lock — it clears the holder's `xeroContactId` — while
+        holding this key. If this path took the row fence first and then waited
+        for the key, the two would close a deadlock cycle on exactly the pair
+        this module calls reachable on purpose: a credit note on a school's
+        earlier booking, against the new booking's invoice. Postgres would abort
+        one with `40P01`. Taking the key first makes "the contact-home key is
+        outer to any Member row lock" a rule every participant keeps.
+      */
+      await lockXeroContactHome(tx, finalResolved.contactId);
       const fresh = await lockMemberForXeroContactLink(tx, memberId);
 
       if (
@@ -1031,6 +1136,30 @@ export async function findOrCreateXeroContact(
       ) {
         return { contactId: fresh.xeroContactId, wonWrite: false };
       }
+
+      /*
+        INV-INT-018 (#3367) — the two-homes refusal, from the MEMBER side.
+
+        Since stage 1 (#3366) a Xero contact id has two possible local homes, and
+        this is the one that is reachable WITHOUT a race: a school's organisation
+        contact carries the school's contact email, which is the same address the
+        invented school member carries, and the email search above asks Xero for
+        exactly that. So a credit note or supplementary invoice on a school
+        booking — none of which stage 2 moves onto the organisation — would find
+        the ORGANISATION's contact and quietly link it to the member, leaving two
+        local records claiming one Xero customer.
+
+        The lock taken above — after the member advisory key, before the member
+        ROW fence — is what stops a concurrent organisation resolve passing its
+        own check at the same moment (INV-LOCK-002). The refusal throws rather
+        than choosing a winner: the settled rule on #2912 is that a person's
+        contact is never reused as the school, and picking one silently is that
+        rule broken from the database side.
+      */
+      await assertXeroContactHasNoOtherHome(tx, {
+        xeroContactId: finalResolved.contactId,
+        home: { kind: "MEMBER", id: memberId },
+      });
 
       if (finalResolved.kind === "matched") {
         await linkMatchedXeroContact(tx, {
@@ -1488,7 +1617,14 @@ interface XeroContactRepairOperationKeys {
 }
 
 interface RetryXeroWriteWithContactRepairOptions<T> {
-  memberId: string;
+  /**
+   * The MEMBER whose contact link is repaired when the provider rejects the
+   * reference. Nullable since #3369: an organisation-owned booking has no
+   * member, and such a caller passes `repairContactLink:
+   * invoicedPartyContactRepair(booking)`, which repairs the organisation's own
+   * contact and never reads this field.
+   */
+  memberId: string | null;
   currentContactId: string;
   workflow: string;
   operationId?: string;
@@ -1501,7 +1637,7 @@ interface RetryXeroWriteWithContactRepairOptions<T> {
     idempotencyKey?: string | null;
   }) => Promise<T>;
   repairContactLink?: (
-    memberId: string,
+    memberId: string | null,
     options?: FindOrCreateXeroContactOptions
   ) => Promise<string>;
   persistUpdatedOperation?: (input: {
@@ -1546,8 +1682,21 @@ export async function retryXeroWriteWithContactRepair<T>(
       throw error;
     }
 
+    // #3369: the DEFAULT repair is member-keyed, so it needs a member. A caller
+    // whose booking can be organisation-owned passes the invoiced-party repair
+    // instead; reaching here without either is a caller that forgot, and a
+    // provider write that cannot name its customer must fail loudly rather than
+    // repair against whoever a search happens to return.
     const repairContactLink =
-      options.repairContactLink ?? findOrCreateXeroContact;
+      options.repairContactLink ??
+      ((memberId: string | null, repairOptions?: FindOrCreateXeroContactOptions) => {
+        if (!memberId) {
+          throw new Error(
+            `Cannot repair a Xero contact for ${options.workflow}: the booking has no member, and no invoiced-party repair was supplied (#3369).`,
+          );
+        }
+        return findOrCreateXeroContact(memberId, repairOptions);
+      });
     const repairedContactId = await repairContactLink(options.memberId, {
       createdByMemberId: options.createdByMemberId,
       repairExistingLink: true,

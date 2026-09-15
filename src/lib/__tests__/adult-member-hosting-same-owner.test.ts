@@ -30,6 +30,7 @@ import {
   evaluateBookingAdultMemberHosting,
   evaluatePersistedBookingAdultMemberHostingReadOnly,
   enqueueHostingCoverageReevaluationForMember,
+  enqueueOwnHostingCoverageReevaluation,
   reconcileSameOwnerCoverageIncident,
   reconcileAdultMemberHostingReviewWithSiblings,
   hostingCoverageActorOptions,
@@ -3915,5 +3916,259 @@ describe("a member is offered the linked move, never deadlocked (#3232)", () => 
       ),
     ).resolves.toBeTruthy();
     expect(queued.length).toBeGreaterThan(0);
+  });
+});
+
+describe("#3480: an organisation-owned booking is not a hosting-coverage participant", () => {
+  // Stage 4 of #2912 (#3369) made `Booking.memberId` nullable so a school's
+  // booking is owned by its Organisation. The participant FENCE took the
+  // consequence — an organisation holds no member-nights, so its booking is not
+  // a participant and is dropped from the re-read — while the PRODUCERS in the
+  // review module did not: `sourceParticipant()` emitted `ownerMemberId: null`
+  // through a type that said `string`. The fence's fingerprint of what it
+  // re-read (school dropped) could never equal the fingerprint of what it was
+  // handed (school present), so it threw `HostingCoverageParticipantRetryError`
+  // — deterministically, on every retry, from inside the caller's transaction.
+  // Two spellings of one decision disagreed; these tests hold the producers to
+  // the fence's answer through the one predicate both now ask.
+  const TODAY = new Date("2026-07-01T00:00:00.000Z");
+  const SCHOOL = { name: "Harakeke College", email: null };
+
+  /** A school's booking: owned by an organisation, students on it, no member. */
+  function schoolBooking(overrides: FakeBooking = {}): FakeBooking {
+    return booking({
+      id: "b-school",
+      memberId: null,
+      organisationId: "org-harakeke",
+      organisation: SCHOOL,
+      guests: [
+        guestRow("student-1", ["2026-07-03", "2026-07-04"]),
+        guestRow("student-2", ["2026-07-03", "2026-07-04"]),
+      ],
+      ...overrides,
+    });
+  }
+
+  it("the standing fan-out skips a school booking the person attends instead of throwing a retry that never clears", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TODAY);
+    try {
+      // THE REACHABLE DOOR: a club member who is also a teacher is a guest on the
+      // school's booking, and the fan-out is by ATTENDANCE. Recording that
+      // member's manual subscription payment, deactivating them, or syncing their
+      // standing from Xero all run this inside their transaction — and before
+      // #3480 every one of them rolled back here with a 409 for a rule about a
+      // booking that has no member to be about.
+      const { db, queued } = makeStore([
+        booking({
+          id: "b-owner-1",
+          memberId: "owner-1",
+          guests: [
+            guestRow("adult-on-b-owner-1", ["2026-07-03", "2026-07-04"], memberRow({ id: "lapsing-adult" })),
+          ],
+        }),
+        schoolBooking({
+          guests: [
+            guestRow("teacher", ["2026-07-03", "2026-07-04"], memberRow({ id: "lapsing-adult" })),
+            guestRow("student-1", ["2026-07-03", "2026-07-04"]),
+          ],
+        }),
+      ]);
+
+      const count = await enqueueHostingCoverageReevaluationForMember(
+        "lapsing-adult",
+        db,
+        CLUB_TODAY_DATE_ONLY,
+      );
+
+      // One item, for the member-owned booking; nothing for the school, and no
+      // retry error. The fence was still taken — for the owner whose item is
+      // real — so the school's absence is a decision, not a skipped fence.
+      expect(count).toBe(1);
+      expect(queued.map((item) => item.memberId)).toEqual(["owner-1"]);
+      expect(queued.map((item) => item.sourceBookingId)).toEqual(["b-owner-1"]);
+      expect(db.$executeRaw).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("approving a school booking at a lodge running the rule evaluates its review and takes no fence", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TODAY);
+    try {
+      // `school-booking-request.ts` calls this entry on every approval with the
+      // §13 `REVIEW_ONLY` carve-out. Before #3480 the school was handed to the
+      // fence as a source with no member and no actor: `sortedUnique` left
+      // nothing to lock and `Prisma.join([])` threw, so the approval rolled back
+      // at every lodge with the rule switched on. The review itself is still
+      // owed — §13 exempts a school from the REFUSAL, not from evaluation — so
+      // the uncovered student-nights are recorded for an officer to see.
+      const { db, queued, updates } = makeStore([schoolBooking()]);
+
+      const outcome = await reconcileAdultMemberHostingReviewWithSiblings(
+        "b-school",
+        db,
+        { enforcement: "REVIEW_ONLY" },
+      );
+
+      expect(outcome.mode).toBe("ENFORCED");
+      expect(outcome.action).toBe("opened");
+      expect(outcome.violation?.affectedNights).toEqual(["2026-07-03", "2026-07-04"]);
+      // The review row was written for the school booking itself.
+      expect(updates.map((update) => update.id)).toContain("b-school");
+      // And none of the member-keyed machinery ran: no row fence, no queue item.
+      expect(db.$executeRaw).not.toHaveBeenCalled();
+      expect(queued).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a school booking confirming through a must-not-refuse door records no own item and takes no fence", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TODAY);
+    try {
+      // An inbound Xero PAID on the school's invoice and an officer's force-confirm
+      // both reach this seam, and neither may be refused. There is no member whose
+      // nights a queue item would re-evaluate, so the honest answer is "nothing
+      // recorded" — not a retry error that rolls back a PAID claim on an invoice
+      // that is already paid.
+      const { db, queued } = makeStore([schoolBooking()]);
+
+      await expect(
+        enqueueOwnHostingCoverageReevaluation("b-school", db, { cause: "SYSTEM_CHANGE" }),
+      ).resolves.toBeNull();
+      expect(db.$executeRaw).not.toHaveBeenCalled();
+      expect(queued).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("#3232 `INV-HOST-050`: a linked-move answer is honoured only for the member who owns the booking (#3480)", () => {
+  // The guard inside the same-owner settle step is #3232's defence in depth: the
+  // acceptance flag turns a refusal into an allowed change with no officer
+  // reason recorded, so it must belong to the owner. `hostingCoverageActorOptions`
+  // already refuses to set the flag for anybody else; this is the last check
+  // before the acceptance is acted on, for a caller that assembled the options
+  // by hand. It had no test at all (the regression #3480 fixed went unnoticed),
+  // so both halves of its predicate are pinned here.
+  const TODAY = new Date("2026-07-01T00:00:00.000Z");
+
+  /** A compliant member-owned booking, so the evaluator lets the flow reach the settle step. */
+  function compliantOwnerBooking(overrides: FakeBooking = {}): FakeBooking {
+    return booking({
+      id: "b-main",
+      memberId: "owner-1",
+      guests: [
+        guestRow("host", ["2026-07-03", "2026-07-04"], memberRow({ id: "host-1" })),
+        guestRow("kid", ["2026-07-03", "2026-07-04"]),
+      ],
+      ...overrides,
+    });
+  }
+
+  it("refuses an actor-less acceptance on a member-owned booking", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TODAY);
+    try {
+      const { db, queued } = makeStore([compliantOwnerBooking()]);
+
+      await expect(
+        reconcileAdultMemberHostingReviewWithSiblings("b-main", db, {
+          // Hand-assembled: the flag without the actor it is supposed to belong to.
+          coverageChange: { cause: "SYSTEM_CHANGE", strandingAcceptedByOwner: true },
+        }),
+      ).rejects.toThrow(/INV-HOST-050/);
+      // The throw is inside the caller's transaction and before any item is
+      // recorded against the acceptance.
+      expect(queued).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refuses an acceptance on a member-owned booking that names somebody other than the owner", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TODAY);
+    try {
+      const { db } = makeStore([compliantOwnerBooking()]);
+
+      await expect(
+        reconcileAdultMemberHostingReviewWithSiblings("b-main", db, {
+          coverageChange: {
+            cause: "SYSTEM_CHANGE",
+            actorMemberId: "somebody-else",
+            strandingAcceptedByOwner: true,
+          },
+        }),
+      ).rejects.toThrow(/INV-HOST-050/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("honours the owner's own acceptance", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TODAY);
+    try {
+      // The positive case, so the two refusals above are not passing because the
+      // settle step throws for everybody.
+      const { db } = makeStore([compliantOwnerBooking()]);
+
+      await expect(
+        reconcileAdultMemberHostingReviewWithSiblings("b-main", db, {
+          coverageChange: {
+            cause: "SYSTEM_CHANGE",
+            actorMemberId: "owner-1",
+            strandingAcceptedByOwner: true,
+          },
+        }),
+      ).resolves.toMatchObject({ mode: "ENFORCED" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never acts on an acceptance for an organisation-owned booking, whoever claims it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TODAY);
+    try {
+      // An organisation never signs in and can accept nothing. Since #3480 an
+      // organisation-owned booking leaves the sibling entry at the participant
+      // decision, before the same-owner settle step exists for it — so the
+      // guard's own `ownerMemberId === null` half is behind two earlier doors
+      // (the participant decision here, and the fence's source assertion) and
+      // cannot be reached through this entry. What CAN be asserted is the
+      // property the guard protects: no acceptance is honoured — no queue item,
+      // no incident, no fence — and the review is still evaluated.
+      const { db, queued, incidents } = makeStore([
+        booking({
+          id: "b-school",
+          memberId: null,
+          organisationId: "org-harakeke",
+          organisation: { name: "Harakeke College", email: null },
+          guests: [guestRow("student-1", ["2026-07-03", "2026-07-04"])],
+        }),
+      ]);
+
+      await expect(
+        reconcileAdultMemberHostingReviewWithSiblings("b-school", db, {
+          enforcement: "REVIEW_ONLY",
+          coverageChange: {
+            cause: "SYSTEM_CHANGE",
+            actorMemberId: "a-teacher",
+            strandingAcceptedByOwner: true,
+          },
+        }),
+      ).resolves.toMatchObject({ mode: "ENFORCED", action: "opened" });
+      expect(queued).toEqual([]);
+      expect(incidents).toEqual([]);
+      expect(db.$executeRaw).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

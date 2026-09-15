@@ -16,6 +16,13 @@ import {
   JOINING_FEE_EXEMPT_MESSAGE,
   resolveMemberJoiningFeeClassification,
 } from "@/lib/joining-fee";
+import {
+  ACCOUNT_MAPPING_DEFAULTS,
+  isCodeExplicitlyConfigured,
+  normalizeMappingCode,
+  resolveAccountMappingSource,
+  type AccountMappingKey,
+} from "@/lib/xero-account-mapping-keys";
 
 export interface EntranceFeeContext {
   category: EntranceFeeCategory;
@@ -44,21 +51,16 @@ export interface EntranceFeeContext {
 // symbol; the message copy now says "joining fees".
 export const ENTRANCE_FEE_EXEMPT_MESSAGE = JOINING_FEE_EXEMPT_MESSAGE;
 
-/** Default fallbacks if no DB record exists or code is null */
-const ACCOUNT_MAPPING_DEFAULTS: Record<string, string | null> = {
-  hutFeesIncome: "200",
-  hutFeeRefunds: "200",
-  stripeBankAccount: "606",
-  stripeFees: null,
-  subscriptionIncome: "203",
-  membershipCancellationCredit: "203",
-};
-
 export type ResolvedAccountMapping = {
   code: string | null;
   itemCode: string | null;
   codeExplicitlyConfigured: boolean;
 };
+
+// `isCodeExplicitlyConfigured` lives in the pure registry module (#2717) so the
+// admin picker can call it too, and is re-exported here because the resolver is
+// where every server caller already looks for it.
+export { isCodeExplicitlyConfigured } from "@/lib/xero-account-mapping-keys";
 
 export async function getResolvedAccountMapping(
   key: string,
@@ -70,9 +72,12 @@ export async function getResolvedAccountMapping(
       select: { code: true, itemCode: true },
     });
     return {
-      code: mapping?.code ?? ACCOUNT_MAPPING_DEFAULTS[key] ?? null,
+      // Blank is not a choice (#2717): a row stored with an empty code falls
+      // back exactly as an unset one does, rather than sending an empty
+      // accountCode to Xero for the outbox to retry on for ever.
+      code: normalizeMappingCode(mapping?.code) ?? ACCOUNT_MAPPING_DEFAULTS[key] ?? null,
       itemCode: mapping?.itemCode ?? null,
-      codeExplicitlyConfigured: mapping?.code != null,
+      codeExplicitlyConfigured: isCodeExplicitlyConfigured(mapping),
     };
   } catch {
     return {
@@ -81,6 +86,46 @@ export async function getResolvedAccountMapping(
       codeExplicitlyConfigured: false,
     };
   }
+}
+
+export type ResolvedAccountMappingWithFallback = ResolvedAccountMapping & {
+  /**
+   * The key whose mapping actually supplied `code` and `itemCode`: the
+   * requested key when the club configured it, otherwise its registered
+   * fallback (`INV-INT-021`).
+   */
+  sourceKey: AccountMappingKey;
+  /** True when the requested key is unset and its fallback is in force. */
+  usingFallback: boolean;
+};
+
+/**
+ * Resolve a mapping key honouring its registered fallback (#2717,
+ * `INV-INT-021`).
+ *
+ * While a key with a fallback is unset this returns the FALLBACK key's
+ * resolution verbatim — code, item code and `codeExplicitlyConfigured` alike —
+ * so a club that upgrades into a new mapping key and does nothing keeps posting
+ * exactly where it posted before. `codeExplicitlyConfigured` therefore
+ * describes whichever mapping is in force, which is what the line-coding rules
+ * at the call sites need; `usingFallback` is the separate fact the setup screen
+ * needs, and it is derived from the REQUESTED key's own flag.
+ *
+ * A key with no registered fallback resolves exactly as
+ * `getResolvedAccountMapping` does.
+ */
+export async function getResolvedAccountMappingWithFallback(
+  key: AccountMappingKey,
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<ResolvedAccountMappingWithFallback> {
+  const requested = await getResolvedAccountMapping(key, store);
+  const { sourceKey, usingFallback } = resolveAccountMappingSource(
+    key,
+    requested.codeExplicitlyConfigured,
+  );
+  if (!usingFallback) return { ...requested, sourceKey, usingFallback: false };
+  const fallback = await getResolvedAccountMapping(sourceKey, store);
+  return { ...fallback, sourceKey, usingFallback: true };
 }
 
 /**

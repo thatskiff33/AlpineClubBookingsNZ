@@ -10,6 +10,7 @@ import {
   hasLodgeAccess,
   type AccessRoleInput,
 } from "@/lib/access-roles";
+import { bookingOwner } from "@/lib/booking-owner";
 
 export type KioskTier = "admin" | "hut-leader" | "lodge" | "staying-guest" | "none";
 
@@ -228,7 +229,7 @@ export async function getKioskDateRange(
 
   for (const b of bookings) {
     const guestRanges =
-      b.memberId === user.id
+      bookingOwner(b).memberId === user.id
         ? [{ stayStart: b.checkIn, stayEnd: b.checkOut }]
         : (b.guests ?? []);
 

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
+import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
 
 /*
@@ -345,9 +346,7 @@ export function MemberWholeLodgeApprovalFields({
         </Label>
         <Input
           id={`whole-lodge-price-${requestId}`}
-          type="number"
-          min="0"
-          step="0.01"
+          {...MONEY_INPUT_PROPS}
           className="w-40"
           value={priceDollars}
           disabled={disabled}

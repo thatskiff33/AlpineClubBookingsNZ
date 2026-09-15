@@ -7,6 +7,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
@@ -71,7 +72,10 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import type { HostingCoverageLinkedMoveInput } from "@/lib/adult-member-hosting-linked-move";
 import logger from "@/lib/logger";
-import { createBookingModificationCredit } from "@/lib/member-credit";
+import {
+  createBookingModificationCredit,
+  requireMemberCreditRecipient,
+} from "@/lib/member-credit";
 import {
   CreditElectionNotAllowedError,
   resolveCreditElectionUpdate,
@@ -938,6 +942,8 @@ export async function modifyBookingBatch({
         },
         payment: true,
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         promoRedemption: {
           include: {
             promoCode: {
@@ -969,7 +975,7 @@ export async function modifyBookingBatch({
     // this is defence in depth rather than the decision).
     if (
       preTransaction &&
-      !(actor.role !== "ADMIN" && booking.memberId !== actor.id)
+      !(actor.role !== "ADMIN" && bookingOwner(booking).memberId !== actor.id)
     ) {
       assertDateEditClearsXeroLockDateFromFacts(
         booking,
@@ -1887,7 +1893,7 @@ export async function modifyBookingBatch({
 
     if (payments.accountCreditAmountCents > 0) {
       await createBookingModificationCredit(
-        booking.memberId,
+        requireMemberCreditRecipient(bookingOwner(booking).memberId),
         payments.accountCreditAmountCents,
         bookingId,
         bookingModification.id,
@@ -1967,7 +1973,7 @@ export async function modifyBookingBatch({
           ? {
               linkedMove: {
                 answer: hostingCoverageLinkedMove,
-                bookingOwnerMemberId: booking.memberId,
+                bookingOwnerMemberId: bookingOwner(booking).memberId,
               },
             }
           : {}),
@@ -2040,9 +2046,10 @@ export async function modifyBookingBatch({
       }),
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-      memberEmail: booking.member.email,
-      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-      memberId: booking.memberId,
+      memberEmail: bookingOwner(booking).member.email,
+      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+      memberFirstName: bookingOwner(booking).member.firstName,
+      memberId: bookingOwner(booking).memberId,
       bookingModificationId: bookingModification.id,
       // MG2 #2307: the cross-family guests this modification added, matched to
       // the rows it actually created, carried OUT of the transaction so the
@@ -2364,7 +2371,7 @@ async function dispatchBatchPostTransactionSideEffects({
       : "booking.modify.batch",
     memberId: actorMemberId,
     targetId: bookingId,
-    subjectMemberId: result.booking.memberId,
+    subjectMemberId: bookingOwner(result.booking).memberId,
     entityType: "BookingModification",
     entityId: result.bookingModificationId,
     category: "booking",
@@ -2431,10 +2438,20 @@ async function dispatchBatchPostTransactionSideEffects({
     return;
   }
 
-  const member = await prisma.member.findUnique({
-    where: { id: result.booking.memberId },
-  });
-  if (!member) return;
+  // #3369: the OWNER, not a re-read of a member row. A school's booking has no
+  // member to re-read, and the projection carries the same person-shaped name
+  // and address the invented school member used to supply — so the school still
+  // receives the message it received before this stage, at the same address.
+  // The relation was loaded in the same transaction, so this is no staler than
+  // the read it replaces.
+  // #3369: the owner as the transaction already resolved them. A school's
+  // booking has no member row to re-read, and these three fields are the
+  // person-shaped projection the invented school member used to supply, so the
+  // school receives the same message at the same address.
+  const member = {
+    email: result.memberEmail,
+    firstName: result.memberFirstName,
+  };
 
   /*
     #3032 (epic #2797): does this booking's money sit under review as this email
@@ -2462,7 +2479,7 @@ async function dispatchBatchPostTransactionSideEffects({
 
   sendBookingModifiedEmail({
     bookingId: result.booking.id,
-    recipientMemberId: member.id,
+    recipientMemberId: result.memberId,
     email: member.email,
     firstName: member.firstName,
     modificationType: "BATCH_MODIFY",

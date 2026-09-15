@@ -160,6 +160,24 @@ After that a nightly job at 3am syncs both directions on its own. It only sends
 entries that changed since last time and only writes entries that genuinely
 differ, so a quiet night costs almost nothing.
 
+Each download deliberately re-asks the server for a small window of time it has
+already covered — currently the last minute before where it got to. That looks
+like wasted work and is not: two changes made at the central server at almost
+the same moment do not always become visible in the order they were stamped, so
+without that overlap a club's entry can be stepped over and stay stale
+indefinitely while the sync keeps reporting success. The repeated entries are
+recognised as unchanged and written nowhere, and an entry your club edited more
+recently is never overwritten by the older copy the overlap re-offers.
+
+This protection depends on the central server marking its place with a
+timestamp, which is what the Alpine Central Server does. A server that marks its
+place with a reference of its own — an id or a token this club's site cannot
+read as a time — gets no overlap, because there is no way to ask for "a minute
+before" a reference. Nothing breaks and the download is unaffected; only the
+protection above is absent. You will not see the difference in the download
+summary, so if you need to know which case you are in, the application log says
+so on every download where the overlap is not applied.
+
 **Who can do what.** Enabling an item and running a sync needs finance **edit**.
 The server address and the API key additionally need **Full Admin**, because
 between them they decide where a credential is sent.
@@ -171,6 +189,7 @@ between them they decide where a credential is sent.
 | Xero Setup | The Xero connection and accounting configuration (`/admin/xero/setup`) | The `xeroIntegration` module; Xero OAuth credentials and tenant tokens configured server-side |
 | Google Analytics | Its settings in place on the hub: GA4 measurement id, consent-banner mode, banner wording, and **Ask visitors to choose again** | The `analytics` module; finance **view** to see the status, finance **edit** to change anything |
 | Alpine Central Server | The ServerNZ connection and shared-data setup (`/admin/alpine-server/setup`) | The `alpineCentralServer` module; finance **edit** to enable an item or run a sync, **Full Admin** for the server address and API key |
+| Video meetings | The MiroTalk meeting server, join-link behaviour and host sign-in (`/admin/video-meetings/setup`) | Finance **view** to read where every value comes from, **Full Admin** to change any of it — including the three host sign-in secrets. See [Calendar and meetings](calendar.md) |
 | Database Backups | The guided backup setup wizard (`/admin/backups/setup`): S3 credentials, destination, nightly schedule, and a verification run | Support view; the S3 credentials and destination writes require Full Admin. See [Database Backups](backups.md) |
 
 Integrations is a **support**/**finance** area hub; the Xero credentials

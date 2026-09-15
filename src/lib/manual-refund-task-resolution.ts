@@ -6,6 +6,7 @@ import {
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
@@ -15,11 +16,8 @@ import {
   executeEditReviewSettlement,
   type EditReviewSettlementRoute,
 } from "@/lib/edit-financial-review-settlement";
-import {
-  MANUAL_PAYMENT_NOTE_MAX,
-  normaliseManualPaymentNote,
-} from "@/lib/manual-subscription-payment";
-import { createBookingModificationCredit } from "@/lib/member-credit";
+import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
+import { createBookingModificationCredit, requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import {
@@ -265,6 +263,7 @@ export async function resolveManualRefundTask(
                 lastName: true,
               },
             },
+            organisation: { select: { name: true, email: true } },
             // #3032: the booking's own status and its primary Xero invoice id,
             // for `hasIssuedPrimaryXeroInvoice`. A completion that moves money on
             // a booking whose invoice was issued has to correct that invoice, or
@@ -497,7 +496,7 @@ export async function resolveManualRefundTask(
           // Its exactly-once key is the `BookingModification` id (D-3032-1), and
           // it writes the refund allocation itself when handed a payment id.
           await createBookingModificationCredit(
-            task.booking.memberId,
+            requireMemberCreditRecipient(bookingOwner(task.booking).memberId),
             settlement.amountCents,
             task.bookingId,
             settlementRoute.bookingModificationId,
@@ -548,10 +547,7 @@ export async function resolveManualRefundTask(
           error instanceof Error &&
           error.message === "Refund amount exceeds captured payments"
         ) {
-          throw new ManualBookingPaymentError(
-            "That is more than was ever captured on this payment — check the amount against the booking's payment history.",
-            400
-          );
+          throw new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
         }
         // #3032: this completion holds no advisory lock, so a concurrent writer
         // on the same payment can move the ledger under it. The compare-and-set
@@ -559,10 +555,13 @@ export async function resolveManualRefundTask(
         // instead of a lost update; the transaction rolls back, so the task is
         // still OPEN and its money is still owed when the operator retries.
         if (error instanceof RefundAllocationRacedError) {
-          throw new ManualBookingPaymentError(
-            "This booking's payment changed while you were closing the task — refresh and try again.",
-            409
-          );
+          throw new ManualBookingPaymentError("This booking's payment changed while you were closing the task — refresh and try again.", 409);
+        }
+        // #3369: the same masking again. A school's reduction settled as account
+        // credit is a CORRECT refusal that reported a 500, on the screen that
+        // had just offered the choice; its message has to arrive.
+        if (error instanceof SchoolHasNoCreditAccountError) {
+          throw new ManualBookingPaymentError(error.message, error.status);
         }
         throw error;
       }
@@ -653,7 +652,7 @@ export async function resolveManualRefundTask(
       settlementAmountCents: settlement?.amountCents ?? null,
       /** #3170: which way this completion sent the money, or null on a dismissal. */
       settlementDirection: settlement ? settlementDirection : null,
-      memberId: task.booking.memberId,
+      memberId: bookingOwner(task.booking).memberId,
       /**
        * #3032: the two facts the post-commit Xero dispatch needs, read under the
        * same transaction as everything else rather than re-queried afterwards.

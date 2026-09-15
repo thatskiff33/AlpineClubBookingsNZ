@@ -895,7 +895,9 @@ that a failed action populates and then takes focus, so a keyboard or
 screen-reader user is not left on a control that has just been re-enabled while
 the explanation appears elsewhere on the page. Sixteen use
 `src/components/focused-action-error.tsx`; `policy-exception-requests-panel.tsx`
-and `roster-editor.tsx` inline their own copy.
+and `roster-editor.tsx` call the same failure primitive directly through
+`useActionAttention`. Since #2934 every one of them focuses and scrolls through
+`src/hooks/use-scroll-to-feedback.ts` — see "Attention after an action" below.
 
 Assert that contract with the shared helper, never by hand:
 
@@ -960,6 +962,50 @@ mounted: the trap steals it back and the release then hands focus to the control
 that opened the dialog — or to `<body>` under a synthetic click, which does not
 focus its button. `focused-action-error-focus-contract.test.tsx` pins this
 deliberately; so, incidentally, does `deletion-requests-client.test.tsx`.
+
+## Attention after an action: one primitive, and how to test a call site
+
+Where the admin's attention goes after an action — a failure, an editor they
+opened, a save that changed the screen — is decided once, in
+`src/hooks/use-scroll-to-feedback.ts` (#2934). **The rule itself is written out
+in that module's docblock and nowhere else**: which primitive each outcome uses,
+why the reveal key is a required argument, what reduced motion does, and what
+the census does and does not hold. This section is about TESTING a call site,
+and deliberately does not restate it.
+
+Testing a call site is the same three assertions each time, and each is
+discriminated by a named test in the tree already:
+
+- **Failure**: `expectRecoveryAlertToHoldFocus(alert)` above — the element the
+  surface anchors, which is the populated box rather than a permanently mounted
+  wrapper when the two differ (`refusal-reload-order.test.tsx`).
+- **Reveal**: `expectRevealed(spy, region)` from the same helper file, with the
+  spy from `installScrollIntoViewSpy()` — the region holds focus, it is what was
+  scrolled, and the total count is what the assertion pins. Then re-render the
+  open editor (toggle a control) and assert the count did not move
+  (`allocation-preferences-section.test.tsx`). Find the region by its ROLE and
+  NAME, not by reading `document.activeElement`: a reveal target that announces
+  only "group" is the defect, and `getByRole("region", { name })` is what fails
+  when the name goes missing. Do not hand-roll the spy — jsdom implements no
+  layout, so `Element.prototype.scrollIntoView` does not exist, and three files
+  had written the same fixture out verbatim before it moved to the helper.
+- **Success**: `document.activeElement` is the page or card whose top was
+  positioned at, and it contains the confirmation
+  (`lodge-capacity-card.test.tsx`). A card below the top of its scroll container
+  is REVEALED rather than reached by scrolling that container to zero, so assert
+  `scrollIntoView` on the card there and `scrollTo` on the container only for a
+  page wrapper (`use-scroll-to-feedback.test.ts`). A surface whose success closes
+  a Radix dialog cannot assert focus at all — the dialog's focus release wins, by
+  design, and the scroll still happens — so assert the scroll there.
+
+`admin-attention-primitive-contract.test.ts` is the census that keeps the admin
+tree routed through the module: a direct `scrollIntoView` / `scrollTo`, or a
+focus deferred to `requestAnimationFrame`, fails it, and its one exclusion is
+listed beside the primitive in `DIRECT_SCROLL_EXCLUSIONS`. A bare effect-driven
+`.focus()` passes it, which is a stated limit rather than an oversight — the
+module says why, and names the four surfaces that still hand-roll their
+attention. It scans the tree from disk, so `npm run test:related` cannot reach
+it; run it by name when an admin file gains a scroll or a focus.
 
 ## A mutation probe is a change you have to undo
 
@@ -1126,6 +1172,40 @@ those were the same sentence, and after a split they are not. It now walks the
 route directory and asserts the guard on every site it finds, with a vacuity
 check so an empty scan fails rather than passes. A count is not the only thing a
 merge or a move can quietly disarm; a hard-coded path is the other.
+
+### A worked example of binding the walk: the money-box guard
+
+[`money-number-input-guard.test.ts`](../src/lib/__tests__/money-number-input-guard.test.ts)
+is in this family and is worth knowing about **before** you trip it, because it
+polices markup rather than a call site. `INV-MONEY-003` says a box someone types
+dollars into is `type="text"` with `inputMode="decimal"` — `MONEY_INPUT_PROPS`
+from [`money-input.ts`](../src/lib/money-input.ts) — never `type="number"`, and
+this guard is the mechanical half of that rule. It walks every non-test `.tsx`
+under `src/` with the TypeScript parser, decides from each `type="number"`
+control's own `id`, `value`, `placeholder` and bound label whether it holds
+money, and fails naming the file and line. The seventy-three legitimate count,
+percentage and duration boxes stay numeric; that discrimination, not the
+detection, is the deliverable.
+
+Two things it does differently from the censuses above, both deliberate:
+
+- **It binds the walk by NAME, not by a total.** `jsxSourceFiles()` reaching
+  "more than 200 files" was true of a walk that had stopped reading two thirds
+  of a 627-file tree, and one directory name added to the scanner's skip list is
+  all that takes. The suite instead asserts the walk reached every subtree in
+  `REQUIRED_SCANNED_SUBTREES`, so a skipped one fails saying which. That is
+  strictly stronger than a total against the mutation that matters, and it does
+  not have to be re-measured by every lane that adds an admin page — which a
+  pinned control count would, making it exactly the merge hazard above.
+- **It proves itself against the tree BEFORE the change that added it.** The
+  seven boxes #2932 converted are in the suite verbatim as they stood, and each
+  must still be flagged after every helper, state variable and prop name in it
+  has been renamed away. A guard that only shows the tree is quiet today cannot
+  tell you whether it would have caught the defect it was written for.
+
+Like every disk-scanning test here it has no import edge to the `.tsx` files it
+reads, so `npm run test:related` cannot select it from a diff. Run it by name
+when a change adds or edits a numeric input.
 
 ## Mocking `requireAdmin`: reference the helper, never wrap it
 

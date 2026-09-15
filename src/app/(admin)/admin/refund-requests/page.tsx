@@ -29,12 +29,13 @@ import {
 } from "@/hooks/use-admin-area-edit-access"
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice"
 import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display"
+import { getRemainingRefundableCents } from "@/lib/booking-payment-state"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { useClubTime } from "@/components/club-time-provider"
 import { parseInstant, type BoundClubTime } from "@/lib/club-time"
 import { formatPayloadCalendarDay } from "../_lib/calendar-day"
-import { parseDecimalDollarsToCents } from "@/lib/money-input"
-import { formatCents } from "@/lib/utils"
+import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
+import { formatCents, formatCentsPlain } from "@/lib/utils"
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL"
 const reviewFilters = new Set<ReviewFilter>(["PENDING", "APPROVED", "REJECTED", "ALL"])
@@ -70,6 +71,7 @@ interface RefundRequestData {
       description: string | null
     }>
     payment: {
+      status: string
       amountCents: number
       refundedAmountCents: number
       stripePaymentIntentId: string | null
@@ -368,15 +370,16 @@ export default function RefundRequestsPage() {
     setReviewingRefundId(req.id)
     setAdminNotes("")
 
-    const payment = req.booking.payment
-    if (payment) {
-      const maxRefundable = (payment.amountCents - payment.refundedAmountCents) / 100
-      setApprovedAmount(
-        req.requestedAmountCents
-          ? Math.min(req.requestedAmountCents / 100, maxRefundable).toFixed(2)
-          : maxRefundable.toFixed(2)
-      )
-    }
+    // #2932: compare in integer cents, render ONCE through the canonical plain
+    // formatter. This divided both amounts by 100 and compared the resulting
+    // doubles - float money arithmetic into a money box (`INV-MONEY-003`).
+    // The ceiling is the one remaining-refundable helper the approve route
+    // already decides by, and there is an ELSE: a request whose booking has no
+    // captured payment used to leave the amount prefilled for the request
+    // viewed before it (#2932 review).
+    const max = getRemainingRefundableCents(req.booking.payment)
+    const requested = req.requestedAmountCents
+    setApprovedAmount(max > 0 ? formatCentsPlain(Math.min(requested || max, max)) : "")
   }
 
   const totalItems = refundRequests.length + creditApprovals.length
@@ -460,9 +463,7 @@ export default function RefundRequestsPage() {
                         req.booking.creditsFromCancellation
                       )
                     : null
-                  const maxRefundable = payment
-                    ? payment.amountCents - payment.refundedAmountCents
-                    : 0
+                  const maxRefundable = getRemainingRefundableCents(payment)
                   const isReviewing = reviewingRefundId === req.id
 
                   return (
@@ -581,10 +582,7 @@ export default function RefundRequestsPage() {
                               <Label htmlFor="approvedAmount">Refund Amount ($)</Label>
                               <Input
                                 id="approvedAmount"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                max={(maxRefundable / 100).toFixed(2)}
+                                {...MONEY_INPUT_PROPS}
                                 value={approvedAmount}
                                 onChange={(e) => setApprovedAmount(e.target.value)}
                                 disabled={!canEditFinance}

@@ -1297,7 +1297,7 @@ export async function reviewMemberDeleteRequest({
     // plainer version of the same defect. Deleted, not nulled: a row that
     // exists and holds `null` reads to `buildXeroContactCompanyNumberPatch` as
     // "we looked, and Xero's NZBN field is empty", which is its permission to
-    // write — and Xero still holds the value (#2873), so manufacturing that
+    // write — and Xero still holds the value (#3058), so manufacturing that
     // permission would let a later namesake matched onto this same contact have
     // a real business number overwritten by a birthday.
     if (fencedMember.xeroContactId) {

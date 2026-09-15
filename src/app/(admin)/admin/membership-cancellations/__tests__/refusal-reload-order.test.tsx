@@ -3,6 +3,7 @@
 import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 /**
  * What the admin is left looking at when an approval is REFUSED (#2392).
@@ -222,6 +223,9 @@ describe("a refused membership-cancellation approval", () => {
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toContain(REFUSAL),
     );
+    // #2934: the refusal is what the admin acts on next, so it takes focus —
+    // the populated inner box, which is the element the page anchors.
+    await expectRecoveryAlertToHoldFocus(screen.getByRole("alert").firstElementChild);
     // …and the reload really happened: the queue now carries the invoice the
     // refusal is about, linked into Xero.
     expect(cancellationGetCount()).toBe(2);

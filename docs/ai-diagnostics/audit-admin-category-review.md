@@ -584,10 +584,10 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  473
+row-producing sites:  483
 uncategorised:        0
-category values: admin 106, booking 102, xero 34, family 35, payment 45,
-                 lodge 65, account 19, security 22, privacy 19,
+category values: admin 107, booking 104, xero 37, family 35, payment 45,
+                 lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
 
@@ -692,8 +692,11 @@ gone with no explanation on it, and a member sees one larger figure where they
 expected two. `payment` for the same audience reason as the review-charge rows
 beside it.
 
-#2942 then added one more (`admin` 105 -> 106, 472 -> 473, MEASURED with
-`npm run audit:census` on that branch rather than added to the literal):
+#2942 then added one more (`admin` 106 -> 107, 482 -> 483 on the MERGED tree —
+the MAD epic's own children carried the total from 472 to 482 without a
+paragraph each here, and the header block above is the measured figure; MEASURED
+with `npm run audit:census` on the merged tree rather than added to either
+branch's total):
 `LODGE_MEMBER_ROSTER_SETTINGS_UPDATED`, the record of how much of a name the
 member lodge roster shows for one lodge, before and after. `admin` rather than
 `lodge`, and the pull the other way is worth stating: the setting is the twin of
@@ -715,6 +718,29 @@ live card request against an unpaid invoice for the same money. `important`
 rather than `critical`: nothing is mis-stated yet and the remedy is a
 reconciliation by hand, which is the same severity the sibling
 `chargeShareUncollected` record carries.
+
+Merging `main` into the epic on 13 Sep 2026 brought BOTH rounds into one tree: #3340's two
+payment rows and #2698's two, so 470 -> 472, `booking` 102 -> 103 and `lodge` 65 -> 66.
+RE-MEASURED with `npm run audit:census` on the merged tree — each side had independently
+measured 470 from different rows, and the numeric lines merged silently without conflicting.
+
+Since then #2698 added two writers carrying four actions, taking 468 -> 470 as
+measured by `npm run audit:census`. One is a SHARED writer for the hut-leader
+assignment create, update and delete (`lodge` 65 -> 66), which recorded nothing
+at all before: an officer could hold a bed for a custodian, move it or hand it
+back, and the only trace was the row itself. It is `lodge` because a hut-leader
+assignment IS the lodge roster, and everyone who can write one already holds
+lodge access, so nobody gains a read. The second is
+`booking.wholeLodgeHold.custodianAmended` (`booking` 102 -> 103): the officer's
+explicit acceptance that holding a bed narrows an existing whole-lodge hold's
+sole occupancy. It is `booking` rather than `lodge` because what narrowed is a
+BOOKING's sole occupancy, matching `booking.exclusiveHold.set` beside it, and
+because whole-lodge hold coverage is derived rather than stored that row IS the
+amendment rather than a note about one. It carries booking ids, dates and
+nights only — no party data. `booking` IS member-visible, so that row also
+appears on the acting officer's own activity list; what makes it safe there,
+and why the roster rows are not member-visible at all, is set out in the
+manifest beside the two counts.
 
 The 22 moves are pinned **per site**, not only by that
 distribution: `REVIEWED_ADMIN_CATEGORIES_2730` in

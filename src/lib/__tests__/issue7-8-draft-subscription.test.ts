@@ -586,7 +586,13 @@ describe("Internet Banking booking payment flow", () => {
     );
     expect(enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith(
       "booking-ib-1",
-      { createdByMemberId: "member-1" }
+      {
+        createdByMemberId: "member-1",
+        // #2929: the create records what it was told about emailing the member.
+        // This is a member booking for themselves, which is always emailed, so
+        // the recorded instruction is SEND and nothing is withheld.
+        invoiceEmailDelivery: "SEND",
+      }
     );
   });
 

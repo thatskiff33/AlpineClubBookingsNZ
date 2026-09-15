@@ -1069,6 +1069,69 @@ cancellation email suppressed (an admin decision, not a requester cancellation).
 A held pointer that is stale or no longer a live `AWAITING_REVIEW` hold is simply
 detached. SCHOOL requests use the same function (no type branch).
 
+Correction and the quote (#2936): an officer may **correct** an unconverted
+request — its dates, its party, its catering preference, its school name and its
+contact details — from the same six states decline claims
+(`CORRECTABLE_BOOKING_REQUEST_STATUSES`), and correcting it **re-opens** it. Every
+`DRAFT` and `SENT` quote flips to `SUPERSEDED` in the same transaction as the
+correction's status-and-version-guarded claim, `priceCents` is cleared and the
+request returns to `VERIFIED`, so no price or quote can outlive the shape it was
+computed from. `SUPERSEDED` again rather than `CANCELLED` — an officer retired
+it — and again it is what kills the requester's live link, since
+`loadSentQuoteByToken` requires `SENT`.
+
+An **accepted** quote blocks the correction outright (`409`), on either
+evidence: a quote row at `ACCEPTED`, or the request's own `acceptedQuoteId`,
+which is set by the accept re-arm before conversion runs and therefore survives a
+conversion that did not finish. Re-opening the agreement is the officer's
+deliberate act — decline it or issue a fresh quote — not a side effect of an
+edit. The claim itself additionally fences on `convertedBookingId: null` and
+`acceptedQuoteId: null`, so the refusal holds under a race as well as at the
+guard.
+
+The hold follows decline's shape exactly: claim first, then release the
+`AWAITING_REVIEW` hold through the shared cancel path with
+`requireRequestHold: true`, then tell any member guests the hold had notified. A
+correction that changes ONLY the catering preference keeps the hold — that is the
+one corrected field a hold does not read. A release that fails is reported as a
+correction that SAVED with its beds still held, never as a failed save, and so is
+every other post-claim failure: the whole block is wrapped the way decline's is.
+
+Beds a correction keeps, or fails to release, are swept by
+`cron-quote-expiry-reminders`' stale-hold phase **once the request's last quote
+response window has lapsed**, which is what selecting `VERIFIED` alongside
+`MODIFICATION_REQUESTED` and `QUERY_PENDING` bought — `VERIFIED` is where a
+correction leaves the request, and the expiry phase cannot see it because the
+correction has just superseded the `SENT` quote that phase selects on.
+
+**That qualifier is load-bearing, not throat-clearing.** The deadline is
+`max(responseTokenExpiresAt)` across the request's quotes, and only a SENT quote
+ever writes one — so a request that has never had a quote sent has no window, no
+deadline, and is skipped on every tick for ever. Beds held on such a request by
+the officer's own "Hold slots" and then kept by a catering-only correction (or
+left behind by a release that failed) have **no** cron recovery at all; the
+officer's Release button is the only thing that frees them. That is the same rule
+that protects a deliberate re-hold (#1296) rather than a gap in this sweep, and
+it is why the page says "once the window lapses" rather than "are swept".
+
+**What a correction is NOT fenced by, and what it is.** `VERIFIED` is a LIVE
+status, not decline's terminal one, so every writer guarding on "not `DECLINED`,
+not `CANCELLED`" sees a corrected request as ordinary. Three of the four quote
+writers are therefore fenced individually: the quote save claims on the request's
+`version`, the quote send claims the quote row while it is still `DRAFT`/`SENT`,
+and the accept re-arm takes `pg_advisory_xact_lock(1)` and re-reads the quote's
+status under it, refusing only a `SUPERSEDED`/`CANCELLED` one so #1232's
+double-accept replay still works.
+
+The fourth — the `MODIFY`/`QUERY` response — is **deliberately left unfenced**,
+so a requester acting on a quote link that was live a moment ago can still move a
+freshly corrected request to `MODIFICATION_REQUESTED`/`QUERY_PENDING`. It writes
+a status and the requester's own message and nothing else: no price, no accepted
+snapshot, no hold, no conversion, and both states it can reach are correctable
+and swept exactly as `VERIFIED` is. Only its quote write was narrowed, to
+`DRAFT`/`SENT`, so it can no longer re-stamp the supersede mark the correction
+made. `docs/CONCURRENCY_AND_LOCKING.md` carries the same split.
+
 Because `QUOTE_SENT` (and other quote-bearing states) DO carry a live `SENT`
 quote a requester could still act on, broadening decline reintroduces a
 decline-vs-requester race. A DECLINED request is made untouchable by every other
@@ -2092,6 +2155,16 @@ offer expires/declined -> WAITLISTED or CANCELLED
 stranded free confirm, admin repair -> WAITLISTED
 ```
 
+An entry may legitimately sit over nights a whole-lodge hold covers (#2930).
+That became reachable when the member calendar started letting a full future
+night be selected — which is how the waitlist is reached at all — so
+`capacity unavailable -> WAITLISTED` now includes "unavailable because the lodge
+is held". It changes no transition. Promotion is gated on
+`checkCapacityForGuestRanges(...).available`, and a hold forces that false
+whatever the bed arithmetic says (`INV-CAP-021`), so the entry keeps its queue
+position until the hold is released rather than being offered or cancelled. The
+member is never told which of the two kept them waiting (ADR-001 decision 6).
+
 Cross-lodge offers (ADR-004, `waitlistOfferedLodgeId` set) accept
 differently: the entry never changes lodge. Confirming re-checks the
 quoted price, creates a fresh booking at the offered lodge through the
@@ -2214,7 +2287,9 @@ the booking has an adult on-site that night.
 Two occupancies with no booking behind them feed this invariant as
 attribution-less rows and so are covered by that last clause: a **custodian bed
 hold** (#2286) and, since #2317, an **exclusive whole-lodge hold** — every
-active bed of the held lodge on every held night. Both are tierless, so both
+active bed of the held lodge on every held night, less the bed-nights a
+custodian holds (`INV-CAP-038`, #2698), so the two sets are disjoint and a
+bed-night is claimed exactly once. Both are tierless, so both
 read as an adult: another booking's unaccompanied minors are kept out of the
 rooms, and no name, booking id or age tier of the held group ever reaches the
 planner. Neither can be displaced: neither has a row to move, and — because a
@@ -2640,7 +2715,16 @@ the custodian bed hold (#2286): it stays a stateless dated record whose
 Upcoming / Active / Past reading is derived from `startDate`/`endDate` against
 today. Adding, changing or clearing its optional `bedId` is a plain field edit —
 the held bed is computed from the row on every query, so shortening, extending
-or deleting the assignment returns the bed with nothing to reconcile.
+or deleting the assignment returns the bed with nothing to reconcile. The same
+is true of the whole-lodge-hold exclusion #2698 added: a hold's represented bed
+set is derived from the live custodian holds at read time and stored nowhere, so
+adding or removing a bed hold moves a bed-night between the two sets with no
+state to migrate. What #2698 does add is a WRITE-time question, not a state: a
+bed hold created or changed over nights an existing whole-lodge hold covers is
+refused with `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD` until the officer accepts
+it explicitly, and the acceptance and the assignment commit together. Deleting
+an assignment now runs under the lodge capacity key, because it widens every
+overlapping hold's represented set.
 
 ## Membership Cancellation, Archive, And Delete Lifecycle
 

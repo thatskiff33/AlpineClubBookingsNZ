@@ -414,6 +414,33 @@ export const AUDIT_CENSUS_TOTALS = {
   // Both are `payment`, both are categorised at the site, so neither joins
   // `UNCATEGORISED_AUDIT_WRITERS`. Re-MEASURED with `npm run audit:census` on
   // this branch (470 sites), never by adding two to the literal.
+  //
+  // 470 -> 472 (#2698): the hut-leader assignment create, update and delete
+  // gain audit rows they never had — `lodge.hut-leader-assignment.created` /
+  // `.updated` / `.deleted`, category `lodge` per the audit guide's roster row
+  // — plus `recordWholeLodgeHoldAmendment` in `custodian-assignment.ts`, which
+  // records the officer's explicit acceptance that a custodian bed narrows an
+  // existing whole-lodge hold (INV-CAP-038), category `booking` to match the
+  // exclusive-hold writer it answers. Coverage is derived rather than stored,
+  // so that row IS the amendment, not a note about one.
+  //
+  // FOUR new actions and only TWO new sites, which is the census measuring
+  // something a delta could not: the three roster rows are written by ONE
+  // shared writer, `recordHutLeaderAssignmentAudit`, because three
+  // near-identical blocks across two route files is the `INV-SSOT-002` shape
+  // and the `lodge` category decision needs one home. Both categorised at the
+  // site, so neither joins `UNCATEGORISED_AUDIT_WRITERS` below. Measured by
+  // RUNNING the census, never by adding to the literal.
+  // 470 -> 471 (#3367): `takeXeroContactFromSchoolsOwnMember` records the ONE
+  // transfer of a Xero contact between two local records (`INV-INT-018`). It
+  // writes through `createAuditLog(params, tx)` on the caller's transaction, so
+  // the audit row and the hand-over it describes commit together. Re-measured as
+  // 473 after the merge with the epic, which brought two writers of its own.
+  // 473 -> 474 (#3367 fix round): `organisation.contacts.teachers_reconciled`,
+  // the record that approving a school booking REPLACED the school's contact
+  // people rather than adding to them. Written on the approval transaction's
+  // own client, so the row and the removal it describes commit together, and
+  // only when something was actually removed.
   // 470 -> 471 (#3354): `AI_SPEND_CURRENCY_RATE_UPDATED` in
   // `/api/admin/ai-spend-currency`, the administrator-set NZD -> club-currency
   // rate both AI spend caps are now compared through. `tx.auditLog.create` with
@@ -432,16 +459,58 @@ export const AUDIT_CENSUS_TOTALS = {
   // join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
   // `npm run audit:census` on this tree (472 sites, 2324 files scanned), not by
   // adding one to the literal.
-  // 472 -> 473 (#2942): `LODGE_MEMBER_ROSTER_SETTINGS_UPDATED`, written by the
+  // 472/474 -> 476 (sync of `main` into `epic/2725-mad`): both branches'
+  // new writers are disjoint and all categorised at the site, so none joins
+  // `UNCATEGORISED_AUDIT_WRITERS`. Re-MEASURED on the MERGED tree with
+  // `npm run audit:census`, never by adding the two deltas together.
+  // 476 -> 477 (#2936): `booking_request.corrected`, the record that an officer
+  // corrected an unconverted school or public request before it was converted.
+  // `logAudit` after the guarded claim has committed, carrying what changed, why,
+  // the previous envelope and price, how many quotes it retired, and — on a
+  // school request — the school record the corrected name will resolve to and the
+  // contact people its teachers would displace (#3367), because that replacement
+  // happens later in a different transaction and this is where the decision
+  // causing it was taken. Categorised `booking` at the site, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. Re-MEASURED by RUNNING
+  // `npm run audit:census` on this tree (477 sites, 2349 files scanned), never by
+  // adding one to the literal.
+  // 477 -> 478 (#2939, merged with the epic): the missing-contact seeding run's
+  // one summary row per chunk, in `/api/admin/xero/missing-contacts`.
+  // Categorised `xero` at the site and named in none of the four per-site maps,
+  // so it lands unpinned. #2936's row and this one are disjoint writers, so the
+  // merged total is 478 — RE-MEASURED on the MERGED tree with
+  // `npm run audit:census`, never by adding the two branches' deltas together.
+  //
+  // 478 -> 479 (#2703): `issue_report.screenshot_withheld`, written only when a
+  // support officer who is not a Full Admin is refused an admin-origin
+  // screenshot. Categorised `privacy` at the site, matching every sibling
+  // issue-report event, so it does not join `UNCATEGORISED_AUDIT_WRITERS`
+  // below. It reached this branch through the seventh main-to-epic sync.
+  //
+  // 479 -> 482 (#2940): the club-editable MiroTalk configuration adds three
+  // `createAuditLog` sites, all in `src/app/api/admin/integrations/mirotalk`.
+  // `mirotalk.settings.update` records a settings save, categorised `admin`;
+  // `mirotalk.settings.denied` and `mirotalk.credentials.denied` record a
+  // non-Full-Admin attempt at the two write routes, categorised `security`,
+  // because `finance: edit` admits a Treasurer-shaped custom role and somebody
+  // reaching either gate is an admin trying to change a capability setting or
+  // write a capability secret they may not. None is named in any of the four
+  // per-site maps, so all three land unpinned. RE-MEASURED by running
+  // `npm run audit:census`: this suite is the documented blind spot of
+  // `vitest related` (it reads the source tree from disk and has no import edge
+  // to anything the change touched), so nothing selects it for you and adding
+  // the deltas up by hand is how a figure ships one short.
+  // 482 -> 483 (#2942, arriving on the eighth main-to-epic sync): `LODGE_MEMBER_ROSTER_SETTINGS_UPDATED`, written by the
   // new `/api/admin/lodges/[id]/roster-settings` PUT. It records how much of a
   // name the member lodge roster shows for one lodge, before and after, because
   // that value decides what one member learns about another and "who widened
   // this, and from what" is the first question anybody will ask of it.
   // Categorised `admin` at the site, so it does not join
   // `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
-  // `npm run audit:census` on this tree (473 sites, 2328 files scanned), not by
-  // adding one to the literal.
-  writeSites: 473,
+  // `npm run audit:census` on the MERGED tree, not by adding one to the literal:
+  // the epic's writers and this one are disjoint, and only a run over the
+  // composed tree can say so.
+  writeSites: 483,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -452,6 +521,32 @@ export const AUDIT_CENSUS_TOTALS = {
    * backlog item to be worked off — it is a regression.
    */
   uncategorised: 0,
+  /**
+   * Of those, sites publishing a purpose-written sentence to the subject member
+   * (#2695). `MEMBER_FACING_AUDIT_WRITERS_2695` pins WHICH; this is the count,
+   * so a swap between two sites cannot hide inside an unchanged total.
+   *
+   * 0 -> 6 (#2695): the credit adjustment approval the owner decided on, plus
+   * the five #2562 `adminNotes` writers whose text a member reads TODAY and
+   * would have lost to the new default. Before this issue no site declared
+   * anything, because there was nothing to declare with: what a member read was
+   * decided by whether the `details` column happened to parse as JSON.
+   */
+  memberFacingSites: 6,
+  /**
+   * Of those, sites whose declaration the census cannot read, pinned per site in
+   * `APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695` with the reason each is
+   * safe. Unlike an unreadable category, an unreadable disclosure cannot leak —
+   * the reader's default is to publish nothing — so this bounds the
+   * measurement's claim rather than holding a gate shut.
+   *
+   * 7 -> 6 (#2723): the credential write route stopped building its own audit
+   * row. The store writes it now, inside the transaction that writes the secret,
+   * from a literal event object — so the conditionally-spread request context
+   * that put the route here is gone, and the store's own site is readable.
+   * Re-measured by running `npm run audit:census`, not by subtracting one.
+   */
+  memberDisclosureForwarded: 6,
   /** Per-sink totals, so a shift between forms cannot cancel out in the total. */
   bySink: {
     // 238 -> 239 (#2623): the waitlist-confirm recovery marker, fire-and-forget
@@ -488,7 +583,15 @@ export const AUDIT_CENSUS_TOTALS = {
     // this sink that record a completed money movement - the epilogue runs after
     // the refund has already been made at Stripe, and must never throw into the
     // recovery worker and replay a refund for the sake of a bookkeeping row.
-    logAudit: { total: 264, uncategorised: 0 },
+    // 265 -> 266 (#2939): the missing-contact seeding summary, above. Not an
+    // awaited `createAuditLog`: it is written after a chunk whose provider
+    // writes have already happened, so a rejected audit write must not turn a
+    // completed run into an error the operator would repeat.
+    // 266 -> 267 (#2703): the withheld-screenshot refusal row. `logAudit`
+    // rather than an awaited `createAuditLog` because it sits on a GET that has
+    // already decided to serve a report, and a rejected audit write must not
+    // turn a successful, correctly-gated read into a 500.
+    logAudit: { total: 267, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -539,6 +642,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // not be withdrawn from Stripe. #3214 landed on `main` first, so this
     // branch's own delta was 120 -> 121 before the merge and is 121 -> 122
     // after it - re-measured, never re-derived by arithmetic.
+    // 122 -> 124 (#2698): the shared hut-leader assignment writer and the
+    // whole-lodge hold amendment record, both awaited `createAuditLog` inside
+    // the write's own transaction — a rolled-back assignment records nothing,
+    // which is what makes accept-writes-both-or-neither a transaction rather
+    // than a cleanup path.
     // 122 -> 123 (#3371): the carried-unpaid-balance record, declared as
     // `recordCarriedEditReviewChargeBalance` in
     // `edit-financial-review-carried-balance.ts` and called post-commit from
@@ -546,12 +654,22 @@ export const AUDIT_CENSUS_TOTALS = {
     // the two review-charge writers it belongs with.
     // NOT `edit-financial-review-charge-request.ts`, which imports only the
     // pure `measureCarriedAskShortfall` from that module and writes no row.
-    // 123 -> 124 (#2942): the roster name-detail writer above. An AWAITED
+    // 124 -> 126 (#3367, recorded on the epic as an inline `// +2 (#3367)` note
+    // on the literal rather than as a bump line): the Xero contact hand-over
+    // and the teachers-reconciled record, both written on the caller's own
+    // transaction client.
+    // 123/126 -> 127 (sync of `main` into `epic/2725-mad`): both branches'
+    // additions land on this helper and are disjoint. Re-MEASURED on the
+    // MERGED tree by running the census, never by adding the deltas together.
+    // 127 -> 130 (#2940): the three MiroTalk admin writers above — one settings
+    // save and the two refusals — all awaited `createAuditLog`, which is the
+    // form every other admin-settings writer beside them uses.
+    // 130 -> 131 (#2942, on the eighth sync): the roster name-detail writer above. An AWAITED
     // `createAuditLog` rather than fire-and-forget `logAudit`, because the
     // response tells an administrator the disclosure level changed and the
     // record of that change should not be able to be the part that quietly
     // failed.
-    createAuditLog: { total: 124, uncategorised: 0 },
+    createAuditLog: { total: 131, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -640,7 +758,28 @@ export const AUDIT_CENSUS_TOTALS = {
     // 101 -> 102 (#3039): the truncated-fan-out row is categorised `booking`,
     // which is a widening of nothing — a bound ceiling is a booking fact and the
     // row names the GroupBooking, not a member.
-    booking: 102,
+    // 102 -> 103 (#2698): `booking.wholeLodgeHold.custodianAmended`, the
+    // officer's acceptance that a custodian bed leaves an existing hold's
+    // represented set. `booking` rather than `lodge` because what narrowed is
+    // a BOOKING's sole occupancy, matching `booking.exclusiveHold.set`. It
+    // widens no ADMIN's access — the same support + bookings reads.
+    //
+    // WHICH WAY IT MOVED FOR A MEMBER, since this census asks that of every
+    // row rather than only of admins (#2698 review A-6). `booking` IS in
+    // `MEMBER_VISIBLE_AUDIT_CATEGORIES` and the writer sets
+    // `memberId: actorMemberId`, so this row DOES appear on one member's own
+    // activity list: the officer who accepted. That is a widening, and it is
+    // safe for the member it is about. The officer sees a record of their own
+    // deliberate action, already on their screen a moment earlier. Nobody else
+    // reaches it: `targetId` is a HutLeaderAssignment cuid, so no other
+    // member's timeline matches, and the hut leader the assignment is FOR is
+    // not named as the subject of this row (the roster rows carry that, under
+    // `lodge`, which is not member-visible). And the member projection
+    // suppresses `metadata` entirely, so `amendedBookingIds`, `nights` and the
+    // per-booking breakdown never reach a member surface — what is left is a
+    // `details` sentence naming no booking, no nights and no party
+    // (`INV-PRIV`).
+    booking: 104,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -819,7 +958,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // the tempting answer, since the SIBLING lobby-display writer files it;
     // taking it would have opened exactly the split `INV-PRIV-013` exists to
     // close.
-    admin: 106,
+    // 106 -> 107 (#2940): `mirotalk.settings.update`. An ordinary admin-settings
+    // save, read with `support:view` like every other settings row beside it, so
+    // it widens nobody's access.
+    admin: 107,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -849,7 +991,15 @@ export const AUDIT_CENSUS_TOTALS = {
     // is a WIDENING of three, and deliberate: a support operator investigating a
     // sudden data loss should be able to see that a restore happened without
     // needing Full Admin to find out.
-    security: 22,
+    // 22 -> 24 (#2940): `mirotalk.settings.denied` and
+    // `mirotalk.credentials.denied`. Both are refusals rather than actions — an
+    // admin holding `finance: edit` but not Full Admin, turned away from the
+    // meeting-server settings and from the host sign-in — which is the same
+    // shape as the credential and role-change refusals already in this figure.
+    // `security` is readable with `support:view` alone, and a refused attempt to
+    // change where a signed join token is sent is exactly what a support
+    // operator correlating an incident needs to see.
+    security: 24,
     // 16 -> 18 (#2595): the two reviewed-move writes. `lodge` is the category
     // every other bed-allocation write already uses, and it is not one of the
     // three (`admin`, `security`, `system`) readable with support:view alone —
@@ -877,10 +1027,20 @@ export const AUDIT_CENSUS_TOTALS = {
     // not already see about that registry.
     // 55 -> 65 (#2780 merged with main): both additions are `lodge` and both are
     // disjoint, so the merged figure is 65. Measured, not added up.
-    lodge: 65,
+    // 65 -> 66 (#2698): ONE writer, `recordHutLeaderAssignmentAudit`, for the
+    // three hut-leader assignment actions — create, update and delete — which
+    // recorded nothing at all before. `lodge` is the audit guide's roster row,
+    // and these are the lodge roster; the officers who can write them already
+    // hold lodge access, so nobody gains a read.
+    lodge: 66,
     // 19 -> 34 (#2581 child 2): the fifteen Xero settings, mapping, replay and
     // retry writers. `xero` is `support` plus `finance`.
-    xero: 34,
+    //
+    // 34 -> 35 (#3367): `xero.contact.moved_to_organisation`. `xero` is the
+    // category every other writer of a member's Xero contact link already uses
+    // (`xero.contact.synced_to_member`), so this keeps the subsystem uniform —
+    // the test `INV-PRIV-013` applies. Nobody's readership changes.
+    xero: 37,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership
@@ -902,7 +1062,13 @@ export const AUDIT_CENSUS_TOTALS = {
     // `issue.reported`. The issue report stays `privacy` rather than matching
     // its `/admin/issue-reports` support surface (decision 5) — moving it to
     // `admin` would have WIDENED a member's own report to `support:view` alone.
-    privacy: 19,
+    // 19 -> 20 (#2703): `issue_report.screenshot_withheld`. `privacy` for the
+    // same reason `issue.reported` is — it is a member-data row — and NOT
+    // because the category hides it from the officer who was refused. It does
+    // not: Admin > Audit Log is a support-area screen with no per-category
+    // filter, so they read it there in full. What the category picks is the AI
+    // Diagnostics correlation entry, which for `privacy` needs membership too.
+    privacy: 20,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,
@@ -2633,6 +2799,135 @@ export const APPROVED_MIGRATION_AUDIT_SQL: Readonly<Record<string, string>> = {
     "The same exception, rows 3-4: `membership` -> `account` on exactly `membership_application.nominator_replaced` and `membership_application.nomination_workflow_refreshed`, matched by prior string AND action. After this no stored row carries `membership`, which re-measures the cost the #2777 locker decision was costed on (see the census test).",
   "prisma/migrations/20260923010000_backfill_historical_audit_categories/migration.sql::insert#0":
     "The same migration's record of itself: one AUDIT_CATEGORY_BACKFILLED row carrying the table-wide null count before, the rewritten count per category and per action, the four corrections by prior string, and the derived after figures — written only when rows actually moved, so a replay appends nothing. Names `\"category\"` and writes `admin` plus an explicit severity, retentionClass and expiresAt.",
+};
+
+/**
+ * Every write site that publishes a purpose-written sentence to the SUBJECT
+ * MEMBER (#2695). Site id to the action it writes.
+ *
+ * WHY THIS IS PINNED AND ITS OPPOSITE IS NOT. A member reads an audit row's
+ * free text only where the writing site declared
+ * `memberDisclosure: { visibility: "member-facing", text }`; everything else —
+ * an `{ visibility: "internal" }` declaration and, far more commonly, no
+ * declaration at all — is denied by the reader. So DELETING a declaration can
+ * only narrow what a member sees, and needs no gate. ADDING one widens it, and
+ * `INV-PRIV-012` reserves a widening of member readership to the owner. This
+ * map is where that shows up: a second member-facing site is a named CI failure
+ * naming the action it would publish, not a quiet line in a route.
+ *
+ * SIX ENTRIES, in two groups, and the split is the thing to read before adding
+ * a seventh. ONE is the owner's decision of 9 August 2026: the credit
+ * adjustment approval, the only explanation a member ever gets for why their
+ * balance moved, which is why both fixes #2695 originally sketched were
+ * refused — each would have taken it away along with everything else. The
+ * other FIVE are #2562's `adminNotes` writers, which are not new disclosures at
+ * all: a member reads that note today, and the five declarations are what keep
+ * it when the reader turned default-deny.
+ *
+ * EACH ENTRY SAYS WHAT ITS SITE PUBLISHES, in the comment above it, because the
+ * pinned VALUE can only be the action — it is measured from the tree and
+ * compared literally. "Which action" and "what text a member ends up reading"
+ * are different questions, and only the second one is the readership.
+ *
+ * MEASURED FROM THE TREE, so editing the route fails this and not only the
+ * table. The entry pins the ACTION as well as the site because the identity is
+ * symbol-keyed: a new writer earlier in the same symbol renumbers the ordinal
+ * after it, and the action is what says whether the site moved or the meaning
+ * did.
+ */
+export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
+  Record<string, string>
+> = {
+  // ─── The owner's decision of 9 August 2026 ──────────────────────────────────
+  // PUBLISHES: a sentence written for the member — the direction in words, the
+  // amount as money, and the officer's `description` of why. Not the row's
+  // `details`, which is the officers' record and names the credit row and the
+  // member who requested the adjustment.
+  //
+  // The only explanation a member ever gets for why their credit balance moved.
+  // Nothing else on any member surface carries it, which is exactly why both
+  // fixes #2695 originally sketched were refused: each would have removed it.
+  "src/lib/member-credit.ts::reviewAdminAdjustmentRequest.result#1":
+    "member.credit.adjustment.approve",
+
+  // ─── #2562's member-facing note, preserved rather than widened ──────────────
+  // These five wrote an officer's `adminNotes` into `details` and the member
+  // read it, because prose does not parse as JSON. That accident is gone; the
+  // declaration is what keeps the text, and it is NOT a new disclosure. #2562
+  // built `adminNotes`/`internalNotes` as a deliberate pair — the private half
+  // "reaches no member surface" and is kept out of the audit row entirely, with
+  // only `internalNoteRecorded` recording that one exists — and the
+  // member-facing half is already emailed to the member on the same decision.
+  // Denying it here would have taken an officer's explanation off the member's
+  // own timeline while leaving it in their inbox.
+  // PUBLISHES: the officer's `adminNotes` on the decision, and nothing when
+  // there is none. One site, two actions: the census records the conditional
+  // verbatim, which is what makes an edit to either branch a visible diff here.
+  "src/app/api/admin/booking-change-requests/[id]/route.ts::PATCH#0":
+    "(dynamic) parsed.data.status === \"APPROVED\" ? \"booking-change-request.approve\" : \"booking-change-request.reject\"",
+  // PUBLISHES: `adminNotes`, which a refusal cannot omit — the route rejects a
+  // refusal without one — and which `notifyMemberOfRefusal` emails as well.
+  "src/app/api/admin/booking-exception-requests/[id]/route.ts::PATCH#0":
+    "booking-policy-exception-request.reject",
+  // PUBLISHES: `adminNotes` ONLY. This site's `details` falls back to the
+  // reviewed policy codes when an officer approves without writing anything,
+  // and those are internal identifiers for the rule that was waived rather than
+  // text written for a member, so that branch declares internal.
+  "src/app/api/admin/booking-exception-requests/[id]/route.ts::PATCH#2":
+    "booking-policy-exception-request.approve",
+  // PUBLISHES: `adminNotes`, which is also stored as the booking's
+  // `adminReviewNotes` and shown to the member on their own booking page. The
+  // email can be suppressed here by "do not notify"; the booking page cannot,
+  // which is why declaring it is preservation rather than widening.
+  "src/app/api/admin/bookings/[id]/review/route.ts::PATCH#0":
+    "booking.review.approve",
+  // PUBLISHES: the same, for the rejection. A rejection cannot omit the note —
+  // the route's schema requires one.
+  "src/app/api/admin/bookings/[id]/review/route.ts::PATCH#1":
+    "booking.review.reject",
+};
+
+/**
+ * Row-producing sites whose member-disclosure declaration the census cannot
+ * read, each with the reason it is nonetheless safe (#2695).
+ *
+ * Unreadable is not the same as dangerous HERE, and the asymmetry is the whole
+ * reason this list can stay short. An unreadable CATEGORY is a hazard because
+ * the safe answer (a canonical value) is the one that has to be supplied. An
+ * unreadable DISCLOSURE is not, because the safe answer is the ABSENT one: the
+ * reader publishes nothing unless it finds a declared sentence on the stored
+ * row, so a site the scanner cannot read still cannot leak — it can only fail
+ * to publish something it meant to.
+ *
+ * So this list exists to keep the measurement honest rather than to hold a gate
+ * shut: it records that six sites are outside the census's sight, so
+ * "one member-facing site" is a claim with a stated boundary instead of a
+ * completeness assertion the scanner cannot support. Five are an opaque spread
+ * of a conditional object into the event; the sixth forwards a whole event
+ * object through a wrapper.
+ *
+ * It was seven until #2723. The credential write route used to build its own
+ * audit row two awaits after the secret landed, with the request context spread
+ * in conditionally — the shape this list is mostly made of. The store now writes
+ * that row itself, inside the transaction that writes the secret, from a literal
+ * event object, so the site the route used to own is gone and the store's own
+ * one is readable.
+ */
+export const APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695: Readonly<
+  Record<string, string>
+> = {
+  "src/app/api/admin/backups/config/route.ts::POST#0":
+    "Spreads a conditional object into the event, so the census fails closed on the whole key set. Declares nothing, so the member reads nothing.",
+  "src/app/api/admin/backups/restore/route.ts::POST#0":
+    "Same spread shape; declares nothing.",
+  "src/app/api/admin/backups/restore/route.ts::POST#1":
+    "Same spread shape; declares nothing.",
+  "src/app/api/admin/backups/restore/route.ts::POST#2":
+    "Same spread shape; declares nothing.",
+  "src/app/api/admin/backups/run/route.ts::POST#0":
+    "Same spread shape; declares nothing.",
+  "src/lib/google-oauth.ts::auditGoogleLink#0":
+    "Forwards a caller-supplied StructuredAuditEvent. `memberDisclosure` is optional on that type and none of its five callers sets one, so the member reads nothing.",
 };
 
 /**

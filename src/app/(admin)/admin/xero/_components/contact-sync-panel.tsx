@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { fetchJson, postJson, XERO_ACTION_NETWORK_ERROR, type ActionResponse } from "./api"
 import { SectionCard, type ToggleSection } from "./shared"
+import { xeroSectionId } from "./types"
 import type { ForceSyncBookingOption, ForceSyncMemberOption, ForceSyncXeroContactOption, SyncResult } from "./types"
 import {
   getXeroPartialSuccessGuidance,
@@ -386,7 +387,7 @@ export function ContactSyncPanel({
         className="mb-3"
       />
       <SectionCard
-        id="xero-section-contactSync"
+        id={xeroSectionId("contactSync")}
         title="Contact Sync"
         description="Run a broad link pass, or repair a single record with a targeted force sync."
         open={open}

@@ -6,6 +6,7 @@ import { AlertTriangle, CheckCircle2, Circle, Clock } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { FocusedActionError } from "@/components/focused-action-error"
+import { bookingOwner } from "@/lib/booking-owner"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
@@ -29,6 +30,7 @@ import {
   ToneChip,
   type ToggleSection,
 } from "./shared"
+import { xeroSectionId } from "./types"
 import type {
   ContactGroupMismatchResponse,
   ContactLinkMismatchResponse,
@@ -306,7 +308,7 @@ export function HealthAndDiagnosticsPanels({
     <>
       <FocusedActionError id="xero-health-error" error={healthError} className="mb-3" />
       <SectionCard
-        id="xero-section-health"
+        id={xeroSectionId("health")}
         title="Health Snapshot"
         description="Quick checks for link coverage, stuck work, missing invoices, and daily Xero budget pressure."
         open={healthOpen}
@@ -322,7 +324,7 @@ export function HealthAndDiagnosticsPanels({
         ) : health ? (
           <div className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              <HealthStatCard label="Unlinked members" value={health.unlinkedMembers.count} subtitle="Active members without a Xero contact link." href={health.unlinkedMembers.href} />
+              <HealthStatCard label="Unlinked members" value={health.unlinkedMembers.count} subtitle="Every active member with no Xero contact link — including ones the bulk create tool below sets aside (schools, anonymised accounts, no usable address)." href={health.unlinkedMembers.href} />
               <HealthStatCard
                 label="Active failed issues"
                 value={health.failedOperations.count}
@@ -484,9 +486,16 @@ function MissingInvoicesList({
                 <Badge variant="outline">{booking.status}</Badge>
               </div>
               <p className="text-sm">
-                <a href={buildHrefWithReturnTo(`/admin/members/${booking.memberId}`, currentXeroPath)} className="text-primary hover:underline">
-                  {booking.memberName}
-                </a>
+                {/* #3369/#3480: a paid school booking can be missing its Xero invoice
+                    too, and a school has no member page — its name is plain text
+                    rather than a link to `/admin/members/null`. */}
+                {bookingOwner(booking).memberId ? (
+                  <a href={buildHrefWithReturnTo(`/admin/members/${bookingOwner(booking).memberId}`, currentXeroPath)} className="text-primary hover:underline">
+                    {booking.memberName}
+                  </a>
+                ) : (
+                  <span className="text-foreground">{booking.memberName}</span>
+                )}
                 <span className="ml-2 text-muted-foreground">{booking.memberEmail}</span>
               </p>
               <p className="text-xs text-muted-foreground">
@@ -524,7 +533,7 @@ function ContactGroupMismatchPanel({
   const clubTime = useClubTime()
   return (
     <SectionCard
-      id="xero-section-contactGroupMismatches"
+      id={xeroSectionId("contactGroupMismatches")}
       title="Contact Group Mismatches"
       description="Audit linked members against the active Xero member-grouping rules under the current mode."
       open={open}
@@ -636,7 +645,7 @@ function ContactLinkMismatchPanel({
   const clubTime = useClubTime()
   return (
     <SectionCard
-      id="xero-section-contactLinkMismatches"
+      id={xeroSectionId("contactLinkMismatches")}
       title="Contact Link Mismatches"
       description="Audit linked members whose local name differs from the cached Xero contact name."
       open={open}

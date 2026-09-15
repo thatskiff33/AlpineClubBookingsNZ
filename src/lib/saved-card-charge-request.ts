@@ -239,7 +239,13 @@ async function cancelSupersededAttemptIntents(
 export async function chargeSavedCardAttempt(params: {
   attempt: SavedCardChargeAttempt;
   bookingId: string;
-  memberId: string;
+  /**
+   * The booking OWNER's member id, or null when it is owned by an
+   * `Organisation` (#3369). A saved card is stored against a person's Stripe
+   * customer, so a null here means there is no saved card to charge and the
+   * caller has already decided what to do about that.
+   */
+  memberId: string | null;
   amountCents: number;
   card: SavedCardToCharge;
 }): Promise<Stripe.PaymentIntent> {

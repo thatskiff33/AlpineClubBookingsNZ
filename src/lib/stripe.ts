@@ -137,10 +137,18 @@ export async function findOrCreateCustomer({
   email,
   name,
   memberId,
+  organisationId,
 }: {
   email: string;
   name: string;
-  memberId: string;
+  /**
+   * The OWNING MEMBER, or null when the booking is owned by an organisation
+   * (#3369). Exactly one of this and {@link organisationId} is set, which is
+   * what `Booking_owner_exactly_one` guarantees at the database.
+   */
+  memberId: string | null;
+  /** The owning organisation, when there is one (#3369). */
+  organisationId?: string | null;
 }): Promise<Stripe.Customer> {
   const stripe = await getStripe();
   const existing = await stripe.customers.list({
@@ -148,12 +156,27 @@ export async function findOrCreateCustomer({
     limit: 100,
   });
 
+  // #3369: the stored customer is matched on WHO OWNS THE BOOKING, and a school
+  // is now an organisation rather than an invented person. Matching a null
+  // member id against absent metadata would never match, so every payment link
+  // for a school would mint a fresh Stripe customer — a duplicate per payment,
+  // which is precisely the provider-side mess this programme exists to end.
+  const ownerKey: "memberId" | "organisationId" = memberId
+    ? "memberId"
+    : "organisationId";
+  const ownerValue = memberId ?? organisationId ?? null;
+  if (!ownerValue) {
+    throw new Error(
+      "A Stripe customer needs an owner: neither a member nor an organisation was given (#3369).",
+    );
+  }
+
   const matchingCustomer = existing.data.find((customer) => {
     if ("deleted" in customer && customer.deleted) {
       return false;
     }
 
-    return customer.metadata?.memberId === memberId;
+    return customer.metadata?.[ownerKey] === ownerValue;
   });
 
   if (matchingCustomer) {
@@ -163,7 +186,7 @@ export async function findOrCreateCustomer({
   return stripe.customers.create({
     email,
     name,
-    metadata: { memberId },
+    metadata: { [ownerKey]: ownerValue },
   });
 }
 

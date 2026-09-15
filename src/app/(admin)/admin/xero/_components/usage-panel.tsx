@@ -6,6 +6,7 @@ import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
 import { fetchJson } from "./api"
 import { BudgetStatusChip, budgetTone, SectionCard, toneFillClass, type ToggleSection } from "./shared"
+import { xeroSectionId } from "./types"
 import type { XeroUsageSummary } from "./types"
 
 export function UsagePanel({
@@ -49,7 +50,7 @@ export function UsagePanel({
 
   return (
     <SectionCard
-      id="xero-section-usage"
+      id={xeroSectionId("usage")}
       title="Xero API Budget"
       description="Daily call volume, hotspots, rate limits, and recent failures from local metering."
       open={open}

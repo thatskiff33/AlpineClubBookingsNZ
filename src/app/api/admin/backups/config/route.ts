@@ -11,6 +11,7 @@ import {
   setIntegrationCredential,
   deleteIntegrationCredential,
 } from "@/lib/integration-credentials";
+import type { CredentialActor } from "@/lib/integration-credential-actor";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
 import {
   BACKUP_PROVIDER,
@@ -151,6 +152,17 @@ export async function POST(request: Request) {
     throw err;
   }
 
+  // Actor and concurrency intent for every credential write below (#2723).
+  // Named once because all nine share one intent, and passed by name at each
+  // call so the store's required arguments stay visible at the site.
+  const actor: CredentialActor = {
+    kind: "admin",
+    memberId: guard.session.user.id,
+  };
+  // The backups form posts the whole configuration it wants stored, so there is
+  // no read-modify-write here for a concurrent admin to make stale.
+  const writeExpectation = { expect: "any" } as const;
+
   const changedKeys: string[] = [];
   try {
     if (body.enabled !== undefined) {
@@ -158,7 +170,8 @@ export async function POST(request: Request) {
         provider: BACKUP_PROVIDER,
         key: BACKUP_CREDENTIAL_KEYS.enabled,
         value: body.enabled ? "true" : "false",
-        updatedByUserId: guard.session.user.id,
+        actor,
+        expect: writeExpectation,
       });
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.enabled);
     }
@@ -167,54 +180,64 @@ export async function POST(request: Request) {
         provider: BACKUP_PROVIDER,
         key: BACKUP_CREDENTIAL_KEYS.retentionDays,
         value: String(body.retentionDays),
-        updatedByUserId: guard.session.user.id,
+        actor,
+        expect: writeExpectation,
       });
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.retentionDays);
     }
     if (body.bucket !== undefined) {
       if (body.bucket.trim() === "") {
-        await deleteIntegrationCredential(
-          BACKUP_PROVIDER,
-          BACKUP_CREDENTIAL_KEYS.bucket,
-        );
+        await deleteIntegrationCredential({
+          provider: BACKUP_PROVIDER,
+          key: BACKUP_CREDENTIAL_KEYS.bucket,
+          actor,
+          expect: writeExpectation,
+        });
       } else {
         await setIntegrationCredential({
           provider: BACKUP_PROVIDER,
           key: BACKUP_CREDENTIAL_KEYS.bucket,
           value: body.bucket.trim(),
-          updatedByUserId: guard.session.user.id,
+          actor,
+          expect: writeExpectation,
         });
       }
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.bucket);
     }
     if (body.region !== undefined) {
       if (body.region.trim() === "") {
-        await deleteIntegrationCredential(
-          BACKUP_PROVIDER,
-          BACKUP_CREDENTIAL_KEYS.region,
-        );
+        await deleteIntegrationCredential({
+          provider: BACKUP_PROVIDER,
+          key: BACKUP_CREDENTIAL_KEYS.region,
+          actor,
+          expect: writeExpectation,
+        });
       } else {
         await setIntegrationCredential({
           provider: BACKUP_PROVIDER,
           key: BACKUP_CREDENTIAL_KEYS.region,
           value: body.region.trim(),
-          updatedByUserId: guard.session.user.id,
+          actor,
+          expect: writeExpectation,
         });
       }
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.region);
     }
     if (body.localPath !== undefined) {
       if (resolvedLocalPath === undefined) {
-        await deleteIntegrationCredential(
-          BACKUP_PROVIDER,
-          BACKUP_CREDENTIAL_KEYS.localPath,
-        );
+        await deleteIntegrationCredential({
+          provider: BACKUP_PROVIDER,
+          key: BACKUP_CREDENTIAL_KEYS.localPath,
+          actor,
+          expect: writeExpectation,
+        });
       } else {
         await setIntegrationCredential({
           provider: BACKUP_PROVIDER,
           key: BACKUP_CREDENTIAL_KEYS.localPath,
           value: resolvedLocalPath,
-          updatedByUserId: guard.session.user.id,
+          actor,
+          expect: writeExpectation,
         });
       }
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.localPath);
@@ -224,7 +247,8 @@ export async function POST(request: Request) {
         provider: BACKUP_PROVIDER,
         key: BACKUP_CREDENTIAL_KEYS.localEnabled,
         value: body.localEnabled ? "true" : "false",
-        updatedByUserId: guard.session.user.id,
+        actor,
+        expect: writeExpectation,
       });
       changedKeys.push(BACKUP_CREDENTIAL_KEYS.localEnabled);
     }

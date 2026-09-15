@@ -15,6 +15,11 @@ import { isXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
 import {
+  assertXeroContactHasNoOtherHome,
+  lockXeroContactHome,
+  XeroContactTwoHomesError,
+} from "@/lib/xero-contact-home";
+import {
   callXeroApi,
   getAuthenticatedXeroClient,
   refreshXeroContactCachesFromContact,
@@ -169,6 +174,26 @@ export async function POST(request: NextRequest) {
 
     const storedXeroLink = buildXeroContactUrl(cachedContact.contactId);
     const member = await prisma.$transaction(async (tx) => {
+      /*
+        INV-INT-018 (#3367): this route is a WRITER THIS STAGE NEWLY EXPOSES.
+
+        It creates a `Member` carrying a `xeroContactId`, and until stage 2 it
+        could not collide with a school: a school's contact was held by the
+        invented school member, so it never appeared in this screen's list of
+        UNLINKED Xero contacts. After the transfer it does — the contact is now
+        held by an `Organisation`, which this route never read — and the route's
+        name-split fallback would cheerfully turn a school name into a first and
+        a last name and mint a person for it.
+
+        So it takes the same contact-home key and the same named refusal every
+        other linker takes. The key is taken FIRST, before anything else in this
+        transaction, per the order in `xero-contact-home.ts`. The refusal itself
+        runs just after the create, so it can name the real member id rather
+        than a placeholder; that is safe because a throw rolls the create back,
+        and it is not a lock-order question — an INSERT locks only the row it
+        is creating, which no other writer can already hold.
+      */
+      await lockXeroContactHome(tx, cachedContact.contactId);
       const created = await tx.member.create({
         data: {
         email,
@@ -212,6 +237,11 @@ export async function POST(request: NextRequest) {
           active: true,
           xeroContactId: true,
         },
+      });
+      // The refusal, under the key taken above. See the note before the create.
+      await assertXeroContactHasNoOtherHome(tx, {
+        xeroContactId: cachedContact.contactId,
+        home: { kind: "MEMBER", id: created.id },
       });
       await ensureMemberAccessRolesFromCompatibilityFields(tx, {
         memberId: created.id,
@@ -328,6 +358,16 @@ export async function POST(request: NextRequest) {
       recovery ? { ...recovery } : undefined,
     );
     if (hostingRetry) return hostingRetry;
+    // INV-INT-018 (#3367): the contact belongs to a school, not a person. Say
+    // which record holds it and refuse, rather than returning a generic 500 an
+    // officer cannot act on. 409, the same status this route already uses for
+    // "something already claims this".
+    if (err instanceof XeroContactTwoHomesError) {
+      return NextResponse.json(
+        { error: err.message, heldBy: err.heldBy },
+        { status: 409 },
+      );
+    }
     if (recovery) {
       logger.error(
         {

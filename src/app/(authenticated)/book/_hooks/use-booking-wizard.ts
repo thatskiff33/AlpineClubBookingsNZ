@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
@@ -30,6 +30,20 @@ import {
   MEMBER_GUEST_NOT_ADDABLE_CODE,
 } from "@/lib/booking-guests";
 import { MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE } from "@/lib/member-guest-refusal";
+import {
+  declarationMatchesACollision,
+  DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
+  DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_CODE,
+  DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
+  findOwnDependantNameCollisions,
+  unresolvedOwnDependantCollisions,
+  type BookerDependant,
+} from "@/lib/booking-dependant-identity";
+import {
+  relinkCollidingGuestToMember,
+  useDependantIdentityAnswers,
+} from "@/lib/use-dependant-identity-answers";
 import type { MemberGuestCandidate } from "@/lib/member-guest-find";
 import { predictMemberGuestConsent } from "../_components/member-guest-preview";
 import {
@@ -37,6 +51,11 @@ import {
   type ExceptionOffer,
 } from "@/lib/booking-exception-offer";
 import type { ExceptionRequestSubmitResult } from "@/components/booking/request-officer-approval-card";
+import {
+  formatCapacityShortMessage,
+  getCapacityShortNights,
+  type AdvisoryNight,
+} from "../_lib/capacity-advisory";
 import {
   type AvailablePromoCode,
   type BookingPaymentMethod,
@@ -85,11 +104,6 @@ interface BookingMemberNightConflict {
   bookingCheckIn?: string;
   bookingCheckOut?: string;
   guestId?: string;
-}
-
-interface AvailabilityNightDetail {
-  date: string;
-  availableBeds: number;
 }
 
 interface SubscriptionStatus {
@@ -310,8 +324,71 @@ export function useBookingWizard() {
   // Cross-lodge waitlist opt-in (ADR-004): other eligible lodges the member
   // would also accept. Only offered when a second eligible lodge exists.
   const [waitlistAlternateLodgeIds, setWaitlistAlternateLodgeIds] = useState<string[]>([]);
-  const [availableBeds, setAvailableBeds] = useState(lodgeCapacity);
-  const [availabilityNightDetails, setAvailabilityNightDetails] = useState<AvailabilityNightDetail[]>([]);
+  // `availableBeds` (the range-wide minimum) is gone with the client hard stop
+  // it existed for (#2930). Every remaining capacity judgement is PER NIGHT,
+  // from `availabilityNightDetails`: a range-wide minimum cannot tell a member
+  // which of their nights is short, and a single night at zero used to condemn
+  // the whole stay — including nights with beds to spare.
+  /**
+   * The SELECTED lodge's effective capacity, as `/api/availability/check`
+   * resolved it (#2930, `INV-CAP-003`), or null when nothing has resolved it
+   * for the lodge now selected.
+   *
+   * Seeded from the club-identity figure, which is the pre-selection FALLBACK
+   * only — exactly the arrangement `admin/book` already documents. That figure
+   * is one lodge's bed count, so at a capped or secondary lodge it is simply
+   * another lodge's number.
+   *
+   * NULL IS "NOT KNOWN FOR THIS LODGE", and it is a real state rather than a
+   * defensive one. Switching lodges clears it, and a REFUSED availability check
+   * clears it too — a member who is not eligible to book a lodge gets a refusal
+   * on every date they pick, and the guests step is reachable through that
+   * branch, so an earlier statement that "the date step replaces this with the
+   * right lodge's value before the guests step can be reached" was not true. A
+   * stale denominator is a confidently wrong number; null is an honestly unknown
+   * one, and `partySizeCeiling` below says what is done about it.
+   */
+  const [resolvedLodgeCapacity, setResolvedLodgeCapacity] = useState<number | null>(
+    lodgeCapacity,
+  );
+  /**
+   * The most guests the wizard will let a member ADD, or null for no ceiling at
+   * all (#2930 fix round).
+   *
+   * ZERO IS NOT A CEILING OF ZERO. A lodge with no configured capacity resolves
+   * to 0 beds by design (`getLodgeCapacityStatus`, source `unconfigured_lodge`),
+   * precisely so it can never be overbooked before somebody configures it. Read
+   * as a ceiling, that disabled every add-guest control at zero guests while the
+   * guests step still needs at least one guest to continue — and since #2930 the
+   * calendar shows every night at that lodge as full and INVITES the member onto
+   * the waitlist. Invitation followed by a step with no way forward is the exact
+   * shape this issue exists to remove, re-created at a different lodge. The
+   * previous code divided by the club-identity figure, which is some other
+   * lodge's bed count and always positive, so the state could not arise.
+   *
+   * Null when the capacity is unknown for the same reason: the server is the
+   * authority on capacity (settled contract point 3, "party-size capacity is
+   * advisory rather than a client hard stop"), it refuses, and the refusal is
+   * what offers the waitlist. A positive capacity still caps the party, because
+   * a party larger than the lodge's beds cannot be satisfied even by a promotion.
+   *
+   * AT ZERO THE SERVER STILL REFUSES OUTRIGHT, and says so rather than offering
+   * a queue: `POST /api/bookings` rejects any party larger than the lodge's
+   * capacity before the waitlist fallback is reached, so an unconfigured lodge
+   * answers "a booking cannot exceed 0 guests" (#2930 second fix round). What
+   * this ceiling change buys is a usable form and a refusal that names its
+   * cause, not a waitlist place. Whether such a lodge should be bookable or
+   * waitlistable at all is a capacity product question this issue does not
+   * settle.
+   */
+  const partySizeCeiling =
+    resolvedLodgeCapacity !== null && resolvedLodgeCapacity > 0
+      ? resolvedLodgeCapacity
+      : null;
+  /** Is the party already at whatever ceiling applies? False when none does. */
+  const partyAtCeiling = (party: readonly unknown[]) =>
+    partySizeCeiling !== null && party.length >= partySizeCeiling;
+  const [availabilityNightDetails, setAvailabilityNightDetails] = useState<AdvisoryNight[]>([]);
   const [perGuestDatesEnabled, setPerGuestDatesEnabled] = useState(false);
   // Issue #713 — per-guest non-contiguous night grid.
   const [multiDateRangesEnabled, setMultiDateRangesEnabled] = useState(false);
@@ -342,6 +419,14 @@ export function useBookingWizard() {
   const [bookingMessageTokens, setBookingMessageTokens] =
     useState<BookingMessageClubTokens | null>(null);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  /**
+   * The booker's OWN recorded dependants (#2721), served by `/api/members/family`
+   * from the same loader `POST /api/bookings` re-runs. Empty until it answers,
+   * and empty is the safe direction here: the wizard simply does not ask the
+   * collision question yet, and the server — which never trusts this list —
+   * still refuses the create.
+   */
+  const [ownDependants, setOwnDependants] = useState<BookerDependant[]>([]);
   // Whether `/api/members/family` has answered at all — see the note in the
   // fetch below and in `predictMemberGuestConsent`.
   const [familyMembersLoaded, setFamilyMembersLoaded] = useState(false);
@@ -407,7 +492,21 @@ export function useBookingWizard() {
     setUseCredit(false);
     setRequestedRoomId(null);
     setAvailabilityNightDetails([]);
+    // #2930 fix round: the capacity belongs to the lodge it was counted for, so
+    // it is discarded here rather than left standing until a response arrives —
+    // which, for a lodge the member cannot book, never does.
+    setResolvedLodgeCapacity(null);
     setShowWaitlistPrompt(false);
+    // #2930 second fix round: the cross-lodge opt-in names OTHER lodges relative
+    // to the one being left, so it belongs to that lodge exactly as the eleven
+    // clears around it do. It was safe while the checkboxes lived only inside
+    // the 409 refusal prompt, whose own handler empties the array before the
+    // prompt is raised; the first fix round put them on the review step too, so
+    // the array can now be filled with no refusal in sight and carried across a
+    // switch as a pre-ticked box for a lodge chosen in another context. The
+    // server drops the primary lodge and any duplicate, so the worst case was
+    // discarded rather than acted on — this is the symmetry, not a money fix.
+    setWaitlistAlternateLodgeIds([]);
     setActiveWorkPartyEvents([]);
     setSelectedWorkPartyEventId(null);
     setAttendingWorkParty(false);
@@ -513,35 +612,6 @@ export function useBookingWizard() {
     return null;
   }
 
-  function getCapacityExceededNights(guestList: GuestData[]): string[] {
-    const dateStrings = getBookingDateStrings();
-    if (!dateStrings) {
-      return [];
-    }
-    if (availabilityNightDetails.length === 0) {
-      return guestList.length > availableBeds ? [dateStrings.checkIn] : [];
-    }
-
-    return availabilityNightDetails
-      .filter((night) => {
-        const activeGuests = guestList.filter((guest) => {
-          const stayStart = guest.stayStart ?? dateStrings.checkIn;
-          const stayEnd = guest.stayEnd ?? dateStrings.checkOut;
-          return stayStart <= night.date && night.date < stayEnd;
-        }).length;
-        return activeGuests > night.availableBeds;
-      })
-      .map((night) => night.date);
-  }
-
-  function formatCapacityExceededMessage(fullNights: string[]) {
-    if (fullNights.length === 1) {
-      return `${lodgeLabel} does not have enough beds on ${fullNights[0]}`;
-    }
-
-    return `${lodgeLabel} does not have enough beds on ${fullNights.length} nights`;
-  }
-
   useEffect(() => {
     if (guests.length <= 1 && perGuestDatesEnabled) {
       setPerGuestDatesEnabled(false);
@@ -564,37 +634,69 @@ export function useBookingWizard() {
   }, [session, router]);
 
   const familyLoadSeqRef = useRef(0);
+  /**
+   * Fetch `/api/members/family` and fold it into state, RESOLVING with the own
+   * dependant list it carried — or with `null` when the load failed.
+   *
+   * Hoisted out of the mount effect (#2721 review) because one caller needs the
+   * answer rather than the side effect. The server's own-dependant refusal sends
+   * the member back to the guests step to answer a question the step draws from
+   * THIS list; when the list is the stale one that caused the refusal, the step
+   * draws nothing and the member is told to answer a question that is not on the
+   * screen. Pressing Continue reproduces it exactly, so the only escapes were a
+   * full page reload or deleting the guest — and the copy suggested neither.
+   *
+   * `useCallback` with no dependencies: the identity is stable, so the mount
+   * effect below still runs once and the event listener it registers is the same
+   * function it removes.
+   */
+  const loadFamilyMembers = useCallback(async (): Promise<{
+    ownDependants: BookerDependant[];
+  } | null> => {
+    // Monotonic request sequence: a slow mount fetch (self blocked) must not
+    // clobber a newer onboarding-confirmed refetch (self bookable) if it
+    // resolves out of order — that would revert the list and render the
+    // seeded ✓ button alongside the amber blocked warning.
+    const seq = (familyLoadSeqRef.current += 1);
+    try {
+      const res = await fetch("/api/members/family");
+      const data = res.ok ? await res.json() : null;
+      // MG3 (#2308): a FAILED load is distinguished from an EMPTY one, and
+      // only the success sets `familyMembersLoaded`. The consent prediction
+      // below decides "is this person my own family?" from this list, so an
+      // empty list that really means "we could not ask" would predict
+      // "Waiting for Mia to approve" over the booker's own child. See
+      // `predictMemberGuestConsent`.
+      if (!data) return null;
+      const ownDependantsFromServer: BookerDependant[] = Array.isArray(
+        data.ownDependants,
+      )
+        ? data.ownDependants
+        : [];
+      // A SUPERSEDED response still reports what it read, and the caller above
+      // uses it only to decide what to say about the request it just made. What
+      // it must not do is write stale state — that is the race this guard has
+      // always existed for.
+      if (seq !== familyLoadSeqRef.current) {
+        return { ownDependants: ownDependantsFromServer };
+      }
+      setFamilyMembers(data.familyMembers || []);
+      setOwnDependants(ownDependantsFromServer);
+      setFamilyMembersLoaded(true);
+      return { ownDependants: ownDependantsFromServer };
+    } catch {
+      return null;
+    }
+  }, []);
   useEffect(() => {
-    const loadFamilyMembers = () => {
-      // Monotonic request sequence: a slow mount fetch (self blocked) must not
-      // clobber a newer onboarding-confirmed refetch (self bookable) if it
-      // resolves out of order — that would revert the list and render the
-      // seeded ✓ button alongside the amber blocked warning.
-      const seq = (familyLoadSeqRef.current += 1);
-      fetch("/api/members/family")
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (seq !== familyLoadSeqRef.current) return;
-          // MG3 (#2308): a FAILED load is distinguished from an EMPTY one, and
-          // only the success sets `familyMembersLoaded`. The consent prediction
-          // below decides "is this person my own family?" from this list, so an
-          // empty list that really means "we could not ask" would predict
-          // "Waiting for Mia to approve" over the booker's own child. See
-          // `predictMemberGuestConsent`.
-          if (!data) return;
-          setFamilyMembers(data.familyMembers || []);
-          setFamilyMembersLoaded(true);
-        })
-        .catch(() => {});
-    };
-    loadFamilyMembers();
+    void loadFamilyMembers();
     // The confirm-details wizard overlays this page on a member's first visit;
     // completing it flips canBeBookedAsMember, so the cached list must refetch
     // or the member's own quick-add button stays disabled until a reload.
     window.addEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, loadFamilyMembers);
     return () =>
       window.removeEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, loadFamilyMembers);
-  }, []);
+  }, [loadFamilyMembers]);
 
   // Pre-select the booker by default (#1680). The signed-in member is the
   // `relationship === "self"` entry; seed them as a guest when the family list
@@ -635,7 +737,11 @@ export function useBookingWizard() {
     // Only a fresh, bookable, within-capacity party gets self injected. Case (a)
     // (a non-empty party) falls through here having spent the opportunity.
     if (guests.length > 0) return;
-    if (guests.length >= lodgeCapacity) return;
+    // Spelled against `partySizeCeiling` rather than through `partyAtCeiling`,
+    // which is re-created every render and would either be a wrong dependency
+    // or a re-run on each one. Same rule, and an exhaustive-deps list that is
+    // honest about what this effect reads.
+    if (partySizeCeiling !== null && guests.length >= partySizeCeiling) return;
     setGuests([
       {
         firstName: self.firstName,
@@ -649,7 +755,7 @@ export function useBookingWizard() {
     setPriceQuote(null);
     setUseCredit(false);
     setMemberNightConflicts([]);
-  }, [familyMembers, guests, lodgeCapacity]);
+  }, [familyMembers, guests, partySizeCeiling]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -837,7 +943,7 @@ export function useBookingWizard() {
 
   function addFamilyMemberAsGuest(fm: FamilyMember) {
     if (guests.some((g) => g.memberId === fm.id)) return;
-    if (guests.length >= lodgeCapacity) return;
+    if (partyAtCeiling(guests)) return;
     if (fm.canBeBooked === false) return;
     const dateStrings = getBookingDateStrings();
     setAppliedPromo(null);
@@ -857,6 +963,54 @@ export function useBookingWizard() {
           : {}),
       },
     ]);
+  }
+
+  /* ---- Own-dependant identity (#2721, `INV-GUEST-019`) ------------------
+   *
+   * Every exact collision between a free-text guest name and one of the
+   * booker's own recorded dependants, plus the answers given about them,
+   * recomputed from the live party on every render.
+   *
+   * ALL OF IT COMES FROM `use-dependant-identity-answers.ts` (owner decision on
+   * #2721, 15 Sep 2026), which the admin booking screen uses too now that an
+   * officer booking on a member's behalf is asked the same question. The rule
+   * underneath is `booking-dependant-identity.ts`, which the create route runs
+   * again against authenticated data — so the wizard asks the question early and
+   * the server, not this, decides the answer.
+   */
+  const dependantIdentity = useDependantIdentityAnswers({
+    party: guests,
+    ownDependants,
+  });
+  const dependantIdentityCollisions = dependantIdentity.collisions;
+  const declaredDependantMemberIds = dependantIdentity.declaredDependantMemberIds;
+
+  /**
+   * "This is my dependant" — move the colliding free-text row onto the member
+   * path, keeping whatever nights the member had already chosen for it.
+   *
+   * The relink itself is `relinkCollidingGuestToMember`, which matches by
+   * NORMALISED NAME and never by index; what stays here is the wizard's own
+   * bookability precondition and its invalidation list — the live one from
+   * `addFamilyMemberAsGuest`, because the party just changed in exactly the ways
+   * that reprice it.
+   */
+  function bookCollidingGuestAsDependant(
+    normalizedName: string,
+    familyMember: FamilyMember,
+  ) {
+    if (familyMember.canBeBooked === false) return;
+    const next = relinkCollidingGuestToMember(
+      guests,
+      normalizedName,
+      familyMember,
+    );
+    if (!next) return;
+    setGuests(next);
+    setAppliedPromo(null);
+    setPriceQuote(null);
+    setUseCredit(false);
+    setMemberNightConflicts([]);
   }
 
   /**
@@ -880,7 +1034,7 @@ export function useBookingWizard() {
    */
   function addMemberGuest(candidate: MemberGuestCandidate) {
     if (guests.some((g) => g.memberId === candidate.memberId)) return;
-    if (guests.length >= lodgeCapacity) return;
+    if (partyAtCeiling(guests)) return;
     const dateStrings = getBookingDateStrings();
     setMemberGuestAddError(null);
     setAppliedPromo(null);
@@ -951,6 +1105,72 @@ export function useBookingWizard() {
     setErrorPaymentTargets([]);
   }
 
+  /**
+   * The server refused the create over own-dependant identity (#2721).
+   *
+   * The wizard asks this question on the guests step and will not leave it
+   * unanswered, so reaching here means the client's picture went STALE — a tab
+   * left open while the dependant was recorded or renamed, a second device, one
+   * swallowed failure of `/api/members/family`, or a request that never came
+   * from this wizard at all.
+   *
+   * WHY THIS REFETCHES, which is the whole point of the function (#2721 review).
+   * Sending the member back to the guests step is only useful if that step can
+   * now draw the question, and the step draws it from the family list. That list
+   * is loaded once on mount and refreshed on one unrelated event, so returning
+   * to the step re-fetched NOTHING: the collisions were recomputed from the same
+   * stale snapshot that caused the refusal, no question rendered, and the member
+   * was told to answer something that was not on the screen. Pressing Continue
+   * reproduced it exactly — a loop whose only escapes were a full page reload or
+   * deleting the guest, neither of which the copy suggested.
+   *
+   * WHY AN INVALID DECLARATION CLEARS THE ANSWERS. The server refuses the whole
+   * party if ANY declaration fails and does not say which, so keeping them is how
+   * the mirror loop happens: the same payload is rebuilt and refused again.
+   * Clearing them re-asks the question, which is exactly what the server's own
+   * sentence tells the member to do, and it is the only answer that terminates.
+   *
+   * WHY THE MESSAGE CAN CHANGE AFTERWARDS. The server's sentence is shown at
+   * once, because the member is waiting. If the refreshed list still leaves the
+   * step with nothing to ask — the fetch failed, or this really was somebody
+   * else's request — it is replaced with copy that names something the member
+   * can actually do, rather than leaving them pressing Continue.
+   */
+  function handleDependantIdentityRefusal(
+    declarationInvalid: boolean,
+    serverMessage: string,
+  ) {
+    setGuestProfileBlocks([]);
+    setMemberNightConflicts([]);
+    setErrorPaymentTargets([]);
+    setStep("guests");
+    setError(serverMessage);
+    // The party as it was submitted — the one the server actually refused.
+    const refusedParty = guests;
+    const declarationsAfterRefusal = declarationInvalid
+      ? []
+      : dependantIdentity.heldDeclarations;
+    if (declarationInvalid) dependantIdentity.clearDeclarations();
+    void loadFamilyMembers().then((fresh) => {
+      if (!fresh) {
+        setError(DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE);
+        return;
+      }
+      // Exactly the gate the guests step will render against, computed from the
+      // refreshed list rather than predicted.
+      const collisions = findOwnDependantNameCollisions(
+        refusedParty,
+        fresh.ownDependants,
+      );
+      const live = declarationsAfterRefusal.filter((declaration) =>
+        declarationMatchesACollision(declaration, collisions),
+      );
+      if (unresolvedOwnDependantCollisions(collisions, live).length === 0) {
+        setError(DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE);
+      }
+    });
+  }
+
   function handleBookingApiError(data: Record<string, unknown>, fallback: string) {
     // MG3 (#2308) / D-8. The server collapses every cross-family refusal to one
     // neutral sentence, and the wizard's job here is to NOT dress it up: the two
@@ -1009,6 +1229,16 @@ export function useBookingWizard() {
       return;
     }
     setMemberGuestAddError(null);
+    if (
+      data.code === DEPENDANT_IDENTITY_UNRESOLVED_CODE ||
+      data.code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE
+    ) {
+      handleDependantIdentityRefusal(
+        data.code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
+        typeof data.error === "string" ? data.error : fallback,
+      );
+      return;
+    }
     if (data.code === "GUEST_PROFILE_REQUIRED") {
       handleGuestProfileRequired(data as {
         error?: string;
@@ -1121,10 +1351,19 @@ export function useBookingWizard() {
       if (res.ok) {
         const data = await res.json();
         if (lostSelectionOwnership()) return;
-        setAvailableBeds(data.minAvailable);
         setAvailabilityNightDetails(data.nightDetails || []);
+        // The selected lodge's own capacity (#2930). Only ever overwritten by a
+        // real number, so a malformed response leaves the previous value rather
+        // than collapsing the party ceiling to zero or NaN.
+        if (typeof data.lodgeCapacity === "number") {
+          setResolvedLodgeCapacity(data.lodgeCapacity);
+        }
       } else {
+        // Refused or failed: BOTH halves of the subtraction become unknown. The
+        // night details already did; the capacity used to keep whatever was
+        // last resolved, for whichever lodge that was (#2930 fix round).
         setAvailabilityNightDetails([]);
+        setResolvedLodgeCapacity(null);
       }
 
       const policyRes = await fetch(
@@ -1189,6 +1428,20 @@ export function useBookingWizard() {
       }
     }
 
+    /*
+      #2721: stop BEFORE the guest split, not after it.
+
+      An own recorded dependant typed as free text is heading for the non-member
+      guest path — provisional, bumpable, invoiced as deferred guest portion —
+      and the whole point of the rule is that they never get there. The block on
+      the guests step renders the choice; this refuses to leave the step while
+      any of it is unanswered, in the SAME words the server would refuse in.
+    */
+    if (dependantIdentity.unresolvedCollisions.length > 0) {
+      setError(DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE);
+      return;
+    }
+
     const guestPayload = buildGuestPayload();
     const stayRangeError = validateGuestStayRanges(guestPayload);
     if (stayRangeError) {
@@ -1196,11 +1449,10 @@ export function useBookingWizard() {
       return;
     }
 
-    const fullNights = getCapacityExceededNights(guestPayload);
-    if (fullNights.length > 0) {
-      setError(formatCapacityExceededMessage(fullNights));
-      return;
-    }
+    // #2930: NO capacity stop here. A known-full range must be able to reach the
+    // server, because the server's 409 is what offers the waitlist. The
+    // per-night shortfall is surfaced as advisory copy on the guests and review
+    // steps instead (`capacityShortNights` below).
 
     setError("");
     setMemberNightConflicts([]);
@@ -1362,6 +1614,9 @@ export function useBookingWizard() {
         checkOut: checkOutStr,
         lodgeId: scopedLodgeId,
         guests: guestPayload,
+        // #2721: only the declarations that still describe a live collision
+        // travel; see `declarationsPayload`.
+        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
@@ -1489,6 +1744,9 @@ export function useBookingWizard() {
         checkIn: checkInStr,
         checkOut: checkOutStr,
         guests: guestPayload,
+        // #2721: only the declarations that still describe a live collision
+        // travel; see `declarationsPayload`.
+        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
@@ -1500,6 +1758,24 @@ export function useBookingWizard() {
             ? true
             : undefined,
         lodgeId: scopedLodgeId,
+        /**
+         * #2930 fix round: the credit the member applied on the review step
+         * travels with the waitlist post too.
+         *
+         * THIS POST CAN CREATE A REAL BOOKING. `POST /api/bookings` runs the
+         * ordinary create first and only falls through to
+         * `createWaitlistedBooking` when capacity refuses — `waitlist: true`
+         * says "and if it refuses, waitlist me", not "do not book me". Since
+         * this became the review step's PRIMARY action rather than a fallback
+         * after a 409, the member reaches it with the credit control on screen
+         * and the total reading as covered; if beds freed up between the
+         * advisory and the press, they got the booking without the credit and
+         * owed more than the screen quoted. `handleSubmit` has always sent it.
+         *
+         * On the waitlist arm it is simply ignored: `createWaitlistedBooking`
+         * takes no `applyCreditCents` and a waitlist place moves no money.
+         */
+        applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         waitlist: true,
         alternateLodgeIds:
           waitlistAlternateLodgeIds.length > 0
@@ -1550,6 +1826,9 @@ export function useBookingWizard() {
         checkIn: checkInStr,
         checkOut: checkOutStr,
         guests: guestPayload,
+        // #2721: only the declarations that still describe a live collision
+        // travel; see `declarationsPayload`.
+        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
@@ -1616,6 +1895,12 @@ export function useBookingWizard() {
         checkIn: checkIn!,
         checkOut: checkOut!,
         guests: buildGuestPayload(),
+        // #2721: an exception request is a CREATE DOOR — approving one builds a
+        // confirmed booking — so it carries the same answers the ordinary create
+        // does. Sending the party without them stripped the declarations from
+        // the one sanctioned route to this door, so a member who had answered
+        // the question honestly was refused as though they had not.
+        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         memberMessage: input.memberMessage,
         supersedeRequestId: input.supersedeRequestId ?? undefined,
       }),
@@ -1628,6 +1913,20 @@ export function useBookingWizard() {
           : "The request could not be sent. Try again.",
       ) as Error & { code?: string };
       if (typeof data?.code === "string") failure.code = data.code;
+      // #2721: the exception door refuses in the create route's own codes, so it
+      // gets the create route's own recovery — re-read the family list and send
+      // the member to the step that can draw the question. Reaching it means the
+      // wizard's picture was stale, and the request panel sits on the review
+      // step where the question cannot be answered.
+      if (
+        failure.code === DEPENDANT_IDENTITY_UNRESOLVED_CODE ||
+        failure.code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE
+      ) {
+        handleDependantIdentityRefusal(
+          failure.code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
+          failure.message,
+        );
+      }
       throw failure;
     }
     return {
@@ -1746,13 +2045,81 @@ export function useBookingWizard() {
     (subscriptionStatus.status === "UNPAID" || subscriptionStatus.status === "OVERDUE");
   const showInviteFamilyGroupMembersLink =
     shouldShowInviteFamilyGroupMembersLink(familyMembers);
+  /**
+   * The nights this party does not fit on, recomputed as the party changes
+   * (#2930). Empty whenever the server's per-night figures are unavailable, so
+   * an unknown capacity never presents itself as a known refusal.
+   */
+  const capacityShortNights = getCapacityShortNights(
+    availabilityNightDetails,
+    guests,
+    getBookingDateStrings(),
+  );
+  /**
+   * The stay cannot be confirmed as it stands, so the realistic outcome of
+   * pressing the button is a waitlist place rather than a booking.
+   *
+   * ADVISORY, AND ONLY ADVISORY. The server still decides: the waitlist join
+   * posts the same proposal and takes whatever answer comes back, including a
+   * real booking if beds freed up in between. What this changes is what the
+   * member is ASKED for on the way — see `showPaymentMethodChoice` below.
+   */
+  const waitlistOnly = capacityShortNights.length > 0;
+  const capacityShortMessage = waitlistOnly
+    ? formatCapacityShortMessage(lodgeLabel, capacityShortNights)
+    : null;
+
+  /**
+   * #2930, settled contract point 5: a waitlist-only flow neither asks for nor
+   * stores a payment-method choice.
+   *
+   * A waitlist place is not a booking and takes no money — `createWaitlistedBooking`
+   * accepts no `paymentMethod` at all and never has. Asking the member to pick
+   * between Card and Internet Banking at that point offers a choice that cannot
+   * be acted on and will not be remembered, and the Internet Banking arm quotes
+   * a payment deadline against a stay that has not been granted. The choice is
+   * obtained later, on the booking itself, when a promotion makes confirmation
+   * possible.
+   */
   const showPaymentMethodChoice =
-    remainingToPay > 0 && !requiresAdminReviewLocal;
+    remainingToPay > 0 && !requiresAdminReviewLocal && !waitlistOnly;
+
+  /**
+   * ONE door to the waitlist on screen at a time (#2930 second fix round).
+   *
+   * There are two of them. The 409 refusal prompt is raised by `handleSubmit`,
+   * which is only reachable from the review step — and it is raised ABOVE that
+   * step, which stays mounted. So when `waitlistOnly` is also true, the member
+   * sees the "Also waitlist me for ..." checkboxes twice and two Join Waitlist
+   * buttons. They cannot disagree, because both render the same
+   * `waitlistAlternateLodgeIds` and call the same `handleJoinWaitlist`; it is a
+   * duplicated control group and a duplicated primary action, not a split state.
+   *
+   * The overlap needs the advisory to FLIP while the prompt is open: a member
+   * presses Confirm only when `waitlistOnly` is false, and the availability
+   * figures behind it can arrive or be recomputed afterwards.
+   *
+   * The review step's door wins because it is the richer one — it carries the
+   * price, the capacity notice and Save as Draft, and it is the door this issue
+   * built. Closing the prompt rather than hiding it also means the flag does not
+   * sit invisibly true, ready to resurface if the advisory clears again.
+   */
+  useEffect(() => {
+    if (waitlistOnly && showWaitlistPrompt) {
+      setShowWaitlistPrompt(false);
+    }
+  }, [showWaitlistPrompt, waitlistOnly]);
 
   useEffect(() => {
     if (
       paymentMethod === "internet_banking" &&
-      (!internetBankingEnabled || remainingToPay <= 0 || requiresAdminReviewLocal)
+      // `waitlistOnly` joins the existing reasons the choice is withdrawn
+      // (#2930), so a method picked before the party grew past the beds cannot
+      // survive into a waitlist join as remembered state.
+      (!internetBankingEnabled ||
+        remainingToPay <= 0 ||
+        requiresAdminReviewLocal ||
+        waitlistOnly)
     ) {
       setPaymentMethod("stripe");
     }
@@ -1761,6 +2128,7 @@ export function useBookingWizard() {
     paymentMethod,
     remainingToPay,
     requiresAdminReviewLocal,
+    waitlistOnly,
   ]);
 
   // Apply or refresh the working bee discount preview when a work party
@@ -1858,6 +2226,11 @@ export function useBookingWizard() {
     setShowWaitlistPrompt,
     waitlistFullNights,
     joiningWaitlist,
+    // #2930 advisory surface: what the member is told about a party that will
+    // not fit, and whether the realistic outcome is a waitlist place.
+    waitlistOnly,
+    capacityShortNights,
+    capacityShortMessage,
     perGuestDatesEnabled,
     handlePerGuestDatesEnabledChange,
     multiDateRangesEnabled,
@@ -1885,6 +2258,15 @@ export function useBookingWizard() {
     internetBankingUnavailableReason,
     internetBankingHoldSummary,
     familyMembers,
+    // #2721 — the own-dependant identity question and its two answers. ALL live
+    // collisions, not only the unanswered ones: a collision every dependant has
+    // been answered for still renders, settled, so the member can take an answer
+    // back. The gate on Continue uses the unanswered subset, in the hook.
+    dependantIdentityCollisions,
+    declaredDependantMemberIds,
+    bookCollidingGuestAsDependant,
+    declareDependantDifferentPerson: dependantIdentity.declareDifferentPerson,
+    withdrawDependantDeclaration: dependantIdentity.withdrawDeclaration,
     subscriptionStatus,
     subscriptionLoading,
     availablePromoCodes,
@@ -1937,7 +2319,10 @@ export function useBookingWizard() {
     showPaymentMethodChoice,
     wizardSteps,
     activeStepIndex,
-    lodgeCapacity,
+    // #2930: the SELECTED lodge's capacity, not the club-identity figure, so
+    // the guests step's party ceiling belongs to the lodge being booked. Null
+    // means no ceiling — see `partySizeCeiling` for the two ways that happens.
+    lodgeCapacity: partySizeCeiling,
     lodges,
     lodgeId,
     lodgeScope,

@@ -248,15 +248,13 @@ and #2763's bulk member-record rows were not.
   precisely the case at the two bulk writers below; "it has no subject member" is
   not a reason to treat a move into `account`, `booking`, `payment`, `family`,
   `security`, `communication` or `privacy` as invisible.
-  **Whether a member should see a given event is meant to be declared per event at
-  the writing site and denied by default — that is DECIDED (#2695, 9 Aug 2026) and
-  NOT YET BUILT.** No such mechanism exists in the tree today: member visibility is
-  entirely a function of the category, so until #2695 lands the category is the
-  only lever there is, and an event withdrawn by a re-classification has no
-  declaration path in the meantime. Do not reach for a member-visible category in
-  order to achieve visibility, and do not accept one as the price of tidying
-  labels: audit rows are append-only, so publishing administrative activity to
-  members cannot be quietly undone.
+  **Whether a member reads a given event's FREE TEXT is declared per event at the
+  writing site and denied by default — DECIDED (#2695, 9 Aug 2026) and now
+  BUILT; `INV-PRIV-018` is the rule.** That lever decides text only. The
+  category still decides whether the row reaches the timeline at all, so do not
+  reach for a member-visible category in order to achieve visibility, and do not
+  accept one as the price of tidying labels: audit rows are append-only, so
+  publishing administrative activity to members cannot be quietly undone.
 - **A ROW'S STORED `details` CAN BE READ SOMEWHERE OTHER THAN THE AUDIT LOG, AND
   THAT SECOND DOOR IS ITS OWN DECIDED READERSHIP** (#3232 D4, owner, 4 September
   2026). The category answers "who finds this row in the Audit Log, and does the
@@ -350,16 +348,13 @@ and #2763's bulk member-record rows were not.
   one of them to `admin` fails CI with the withdrawal named. Moving them is a
   readership change and needs the owner's decision, exactly as this one did — not
   a sweep, and not an inference from a rule that never covered them.
-- **#2755 satisfies #2695's acceptance criterion 5 by re-classification, not by
-  gating, and that is not the same thing.** #2695 lists `member.bulk-deactivate` —
-  whose `details` is the plain sentence `Bulk deactivate: Jane Doe (jane@…)` — as
-  one of three writers whose free text reaches a member timeline, and asks for it
-  to stop. Filing the writer `admin` does stop it, because the row leaves the
-  member-visible query altogether. But the mechanism #2695 is about is untouched:
-  `src/lib/audit-query.ts` still returns `details` on a shape test
-  (`hasLegacyMetadata ? null : log.details`) rather than an audience test, and
-  `member.deletion_rejected` and `member.credit.adjustment.approve` still hand a
-  member an administrator's free text. Do not treat that criterion as delivered.
+- **#2755 satisfied #2695's acceptance criterion 5 by re-classification rather
+  than by gating, which is not the same thing.** Filing `member.bulk-deactivate`
+  `admin` took the row out of the member-visible query and left
+  `src/lib/audit-query.ts` deciding `details` on a shape test. #2695 has since
+  replaced that with a declaration (`INV-PRIV-018`). Kept because the confusion
+  recurs: a re-classification moves ROWS, a declaration decides TEXT, and
+  neither substitutes for the other.
 - **Two groups stay `admin` as a recorded decision, not as an unexamined
   default.** #2730 reviewed all 118 writers that said `admin` and moved 22 to
   `lodge`; the rule it actually applied was *did this site split a subsystem* —
@@ -719,3 +714,126 @@ What one member may learn about another from the lodge roster (#2942).
   compared against people listed still distinguishes held from full. A property
   of the pair, and why the module is off by default.
 - Pinned by `src/lib/__tests__/member-lodge-roster-privacy.test.ts`.
+
+## INV-PRIV-018
+
+What a member reads of an audit row's FREE TEXT is a property of the event,
+declared where the row is written and denied when nothing is declared. Owner
+decision, 9 August 2026 (#2695). Reasoning: `src/lib/audit-member-disclosure.ts`.
+
+- **A site declares, or the member reads nothing.**
+  `memberDisclosure: { visibility: "member-facing", text }` or
+  `{ visibility: "internal" }`. Both member-facing audit channels — the member
+  timeline and `/api/member/data-export` — show that sentence or nothing, and
+  neither reads `details`, `metadata` or either's shape.
+  Omitting it means internal, so no writer can publish by forgetting.
+- **The sentence is neither forgeable nor droppable.** One reserved `metadata`
+  key `src/lib/audit.ts` owns: stripped from caller metadata, re-attached only
+  from a declaration, after the payload is sanitised. So the metadata budget
+  bounds the CALLER'S payload, not the stored column, which a sentence can
+  exceed by the free-text limit.
+- **Two things a member reads off a row are NOT this rule's.** The `summary`
+  column: the short title on every row, derived from the row's columns and
+  sanitised like `details` — denying its 188 writers is a readership change
+  reserved to the owner. And the booking page's replay of two payment-failure
+  `details` to the booking's own member, gated by `buildBookingHistoryItems`'s
+  required audience argument (#3232 D4).
+- **Adding a member-facing site widens member readership and is the owner's
+  (`INV-PRIV-012`); removing one is not.** The six are pinned in
+  `MEMBER_FACING_AUDIT_WRITERS_2695`. This decides TEXT; the category still
+  decides whether the row reaches a timeline at all.
+- **It reclassifies nothing**, so `INV-OPS-012` owes no backfill — and the cost
+  falls both ways. A pre-release row declares nothing, so a member loses an older
+  officer note — the point — and an older credit adjustment's recorded reason,
+  which is not. Nothing is altered; a backfill would publish undeclared text, so
+  it is the owner's call.
+
+## INV-PRIV-019
+
+An audit row's SUBJECT is a person. Where a booking is owned by an
+organisation, the row records no subject member, and the booking carries the
+identity through `entityType`/`entityId`. Decided on #3368 (stage 3 of
+programme #2912) rather than left for stage 4 to settle by whatever a null
+does.
+
+- **`subjectMemberId` means "whose personal history is this?"** — it is what
+  decides whether a row reaches a member's own timeline. An organisation has no
+  timeline, no sign-in and no personal history, so putting its id there would be
+  a category error before it was a privacy one.
+- **Nothing is lost by leaving it unset.** Every one of these rows already
+  carries the booking on `entityType: "Booking"` with its `entityId`, which is
+  what an officer reads the row by, and a school's bookings are reachable
+  through the organisation.
+- **It widens no readership**, so `INV-PRIV-012` is untouched: a row with no
+  subject member reaches strictly fewer member timelines, never more. The
+  category still decides whether the row reaches a timeline at all.
+- **It moves no row already written** (`INV-OPS-012`). Today every booking has a
+  member and every such row has its subject; this rule governs only rows a
+  future organisation-owned booking writes. No backfill is owed and no member's
+  view of their own history changes.
+- **The alternative was recording the school's invented member.** That member is
+  exactly what stage 4 removes, so the subject would have pointed at a record
+  nobody can sign in as and nobody is keeping.
+
+## INV-PRIV-020
+
+Every mutation of the encrypted integration-credential store names its writer,
+and the writer is a person or a NAMED background actor, never an absence.
+Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2723),
+which carries the before-measurement.
+
+- **`actor` is a required argument on every mutator**, so a write with no
+  attribution does not compile. Omission used to be the default, and most call
+  sites took it, storing the `null` a background write stores.
+- **A system write NAMES itself** from the closed `CREDENTIAL_SYSTEM_ACTORS`
+  list, so the row says WHICH background writer touched the secret, not merely
+  that no person did. `assertCredentialActor` is the runtime half, and an
+  `admin` actor carries a non-empty member id.
+- **The secret and its audit row are ONE local transaction**, on the same
+  client, so a failed audit rolls the secret back.
+- **A stale write LOSES.** Every set and delete declares what it expected to
+  find, and a compare-and-set claims the exact `(ciphertext, iv, authTag)` tuple
+  it read. A loser changes nothing and records nothing.
+- **A read records nothing**, and neither does a delete matching no row nor a
+  freshness marker whose answer would not change.
+- **No plaintext reaches audit, log or error output.** The payload is built from
+  a type with no field a value fits into, and the store calls no logger — a
+  property of its own doors, not of a redactor, since `INV-PRIV-011` is blind to
+  any door that never calls one.
+- **The proof is mechanical, over every DIRECT CALL of a mutator** rather than
+  every function that ends up changing a credential.
+  `credential-actor-census.test.ts` walks the tree; its scanner test proves a
+  seeded actorless writer and a seeded bypass are reported. A wrapper hides its
+  callers, soundly: it requires an actor, so the type covers them.
+
+## INV-PRIV-021
+
+Issue-report screenshot PIXELS taken by a reporter who held admin access are
+Full-Admin-only. The report's text and diagnostics keep the ordinary
+`support:view` model, because `support` is a separate permission area from
+`membership` and an image otherwise carries member records across that boundary.
+Decided on [#2703](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2703).
+
+- **Origin is DERIVED SERVER-SIDE AT CREATION and persisted** on
+  `IssueReport.screenshotOrigin`, from the reporter's own stored access roles
+  and signed session. The posted `pageUrl`, route-to-permission reconstruction,
+  DOM masking, signed claimed URLs, reporter-permission replay and caller flags
+  are each explicitly not authority, so forging a page address cannot move the
+  classification.
+- **NULL fails closed.** A row written before the column existed is read as
+  admin-origin. There is no backfill; the 30-day retention sweep drains that
+  population.
+- **Every read path takes the same gate** — the list flag, the detail read and
+  the action reply — so no payload announces or serves pixels its caller cannot
+  open. A caller not admitted sees an authorised-withheld state carrying no
+  pixels and nothing describing the image.
+- **Full Admin means the `ADMIN` role**, read off the DB-verified roles the
+  admin guard returns, never a JWT claim.
+- **Deleting stays `support:edit`**: deletion shrinks the exposure, so gating it
+  would keep pixels alive longer.
+- **The audit distinguishes the outcomes** — viewed, withheld, expired, deleted
+  — and records nothing captured. Each time an officer OPENS a report and is
+  refused, a `privacy` row records the refusal; an action reply is not a view
+  and is not audited as one.
+- One home, `src/lib/issue-report-screenshot-access.ts`; proof in
+  `issue-report-admin-origin-screenshots.test.ts`.

@@ -12,6 +12,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import {
   Card,
   CardContent,
@@ -460,16 +461,10 @@ export default function MembershipCancellationsPage() {
     loadArchiveRequests();
   }, [loadArchiveRequests]);
 
-  // Bring a refusal into view and under the cursor. `scrollIntoView` is guarded
-  // because jsdom does not implement it.
-  useEffect(() => {
-    const node = errorRef.current;
-    if (!error || !node) return;
-    node.focus();
-    if (typeof node.scrollIntoView === "function") {
-      node.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, [error]);
+  // Bring a refusal into view and under the cursor through the shared failure
+  // primitive (#2934): it fires when a refusal ARRIVES, not on every re-render
+  // of the same one, and honours reduced motion.
+  useActionAttention({ error, errorTarget: errorRef, errorBlock: "center" });
 
   // #1787: open the notify-choice dialog for a given cancellation-review action.
   function openNotifyChoice(

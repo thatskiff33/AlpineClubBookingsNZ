@@ -194,7 +194,8 @@ function selectPromoBeneficiaryGuests(
  */
 export function getPromoBeneficiaryMemberIds(
   promo: PromoCodeInput,
-  bookingMemberId: string,
+  /** The BOOKER, or null when the booking is owned by an organisation (#3369). */
+  bookingMemberId: string | null,
   guests: PromoDiscountGuest[],
   assignedMemberIds: string[] | null = null,
   protectedMemberIds?: ReadonlySet<string> | null
@@ -204,7 +205,12 @@ export function getPromoBeneficiaryMemberIds(
   if (selectedGuests.length === 0) return [];
 
   if (!hasAssignedMembers(assignedMemberIds)) {
-    return [bookingMemberId];
+    // #3369: on an unassigned promotion the BOOKER is the sole beneficiary, and
+    // an organisation-owned booking has no booker. No member benefits, so no
+    // per-member cap is spent and none is checked — which is the same set of
+    // rows every cap counted before, since only such a booking can get here
+    // with an empty booker.
+    return bookingMemberId ? [bookingMemberId] : [];
   }
 
   return [...new Set(

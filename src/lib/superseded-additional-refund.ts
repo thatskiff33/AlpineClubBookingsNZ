@@ -1,5 +1,6 @@
 import { BookingEventType, Prisma } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { bookingOutstandingCents } from "@/lib/additional-payment-ask";
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -73,7 +74,8 @@ export async function reportSupersededPaymentRefund(params: {
   let context: {
     memberName: string;
     memberEmail: string;
-    memberId: string;
+    /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
     checkIn: Date;
     checkOut: Date;
     lodgeId: string | null;
@@ -91,6 +93,8 @@ export async function reportSupersededPaymentRefund(params: {
         member: {
           select: { id: true, email: true, firstName: true, lastName: true },
         },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         // Every term of `INV-PAY-047`, because the figure below is the whole
         // outstanding and not just the ask - see the note above the assignment.
         payment: {
@@ -105,11 +109,11 @@ export async function reportSupersededPaymentRefund(params: {
         },
       },
     });
-    if (booking?.member) {
+    if (booking && bookingOwner(booking).member) {
       context = {
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-        memberEmail: booking.member.email,
-        memberId: booking.member.id,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+        memberEmail: bookingOwner(booking).member.email,
+        memberId: bookingOwner(booking).member.id ?? null,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         lodgeId: booking.lodgeId ?? null,
@@ -188,7 +192,7 @@ export async function reportSupersededPaymentRefund(params: {
 
   await sendSupersededPaymentRefundedEmail({
     bookingId,
-    recipientMemberId: context.memberId,
+    recipientMemberId: bookingOwner(context).memberId,
     email: context.memberEmail,
     firstName: context.memberName.split(" ")[0] ?? context.memberName,
     checkIn: context.checkIn,

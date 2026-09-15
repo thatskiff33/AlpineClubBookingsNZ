@@ -565,6 +565,7 @@ describe("Admin refund and credit review page", () => {
                   status: "CANCELLED",
                   creditsFromCancellation: [],
                   payment: {
+                    status: "SUCCEEDED",
                     amountCents: 10000,
                     refundedAmountCents: 0,
                     stripePaymentIntentId: "pi_123",
@@ -635,5 +636,137 @@ describe("Admin refund and credit review page", () => {
         name: /^Reject$/,
       }),
     ).toBeDisabled();
+  });
+  /*
+    #2932 review. `startRefundReview` had an `if (payment)` with no `else`, so
+    opening a review for a request whose booking has no payment showed the
+    amount prefilled for the request reviewed BEFORE it. The server refuses that
+    amount, so it was an interface wart rather than a money leak - but it is a
+    money box, and the number in it was another member's.
+
+    The ceiling was also derived by hand here, `amountCents - refundedAmountCents`
+    in two places, while the approve route decides by
+    `getRemainingRefundableCents`. A payment that never captured therefore
+    offered a ceiling the server would refuse, and a refund larger than the
+    capture could show a negative one. Both places route through the helper now,
+    which is what makes the middle request below read $0.00.
+  */
+  it("clears the refund amount when the next request has nothing refundable", async () => {
+    mocks.currentSearch = "";
+    mocks.sessionUser = {
+      id: "admin-2",
+      role: "ADMIN",
+      accessRoles: [{ role: "ADMIN" }],
+    };
+
+    const refundRequest = (
+      id: string,
+      payment: Record<string, unknown> | null,
+    ) => ({
+      id,
+      bookingId: `booking-${id}`,
+      memberId: `member-${id}`,
+      reason: "Weather closure",
+      requestedAmountCents: null,
+      status: "PENDING",
+      adminNotes: null,
+      approvedAmountCents: null,
+      reviewedAt: null,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      booking: {
+        id: `booking-${id}`,
+        checkIn: "2026-08-01T00:00:00.000Z",
+        checkOut: "2026-08-03T00:00:00.000Z",
+        finalPriceCents: 10000,
+        status: "CANCELLED",
+        noEmails: false,
+        creditsFromCancellation: [],
+        payment,
+      },
+      member: {
+        id: `member-${id}`,
+        firstName: "Jane",
+        lastName: id,
+        email: `${id}@example.com`,
+      },
+    });
+
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/admin/refund-requests?status=PENDING") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            data: [
+              refundRequest("captured", {
+                status: "SUCCEEDED",
+                amountCents: 10000,
+                refundedAmountCents: 0,
+                stripePaymentIntentId: "pi_123",
+              }),
+              // Money was never taken, so nothing is refundable - even though a
+              // hand subtraction of the two cent columns says $100.00.
+              refundRequest("uncaptured", {
+                status: "PENDING",
+                amountCents: 10000,
+                refundedAmountCents: 0,
+                stripePaymentIntentId: null,
+              }),
+              refundRequest("unpaid", null),
+            ],
+            page: 1,
+            pageSize: 25,
+            total: 3,
+          }),
+        });
+      }
+      if (url === "/api/admin/credit-approvals?status=PENDING") {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    render(<RefundRequestsPage />);
+
+    const amountBox = () =>
+      screen.getByLabelText(/Refund Amount/i) as HTMLInputElement;
+
+    /*
+      Only one review panel is open at a time, and the request being reviewed
+      hides its own Review button - so the remaining buttons shift. `expected`
+      pins the whole remaining list at each step, so the walk below fails saying
+      the ordering moved rather than silently clicking a different card.
+    */
+    const whoseCard = (button: HTMLElement) =>
+      [...screen.getAllByText(/^Jane (captured|uncaptured|unpaid)$/)]
+        .reverse()
+        .find(
+          (heading) =>
+            heading.compareDocumentPosition(button) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        )?.textContent;
+
+    const review = async (who: string, expected: string[]) => {
+      const buttons = await screen.findAllByRole("button", { name: "Review" });
+      expect(buttons.map(whoseCard)).toEqual(
+        expected.map((name) => `Jane ${name}`),
+      );
+      fireEvent.click(buttons[expected.indexOf(who)] as HTMLElement);
+    };
+
+    await review("captured", ["captured", "uncaptured", "unpaid"]);
+    expect(amountBox().value).toBe("100.00");
+    expect(screen.getByText("Max refundable: $100.00")).toBeTruthy();
+
+    // No payment row at all: the box is emptied, not left holding $100.00.
+    await review("unpaid", ["uncaptured", "unpaid"]);
+    expect(amountBox().value).toBe("");
+    expect(screen.getByText("Max refundable: $0.00")).toBeTruthy();
+
+    // A payment that never captured: same answer, and it is the one a hand
+    // subtraction of the cent columns got wrong.
+    await review("uncaptured", ["captured", "uncaptured"]);
+    expect(amountBox().value).toBe("");
+    expect(screen.getByText("Max refundable: $0.00")).toBeTruthy();
   });
 });

@@ -662,20 +662,20 @@ export async function POST(req: NextRequest) {
     // (`src/lib/audit-query.ts`). "It has no subject member" is therefore not a
     // reason to think a re-classification here is invisible; `INV-PRIV-012`
     // states the real predicate. Whether a member should see a given event is
-    // meant to become a separate explicit declaration at the writing site,
-    // denied by default: #2695 DECIDED that on 9 Aug 2026 and it is NOT BUILT
-    // YET, so until it lands the category is the only lever there is and these
-    // two events are simply invisible to the member. `admin` is the join that
-    // changes no member's readership in the widening direction.
+    // a separate explicit declaration at the writing site, denied by default:
+    // #2695 DECIDED that on 9 Aug 2026 and has since BUILT it, so the category
+    // decides whether the row reaches the member's timeline at all and the
+    // declaration decides its words. These two events are invisible to the
+    // member either way, and `admin` widens no member's readership.
     //
     // ONE SIDE EFFECT WORTH NAMING, so nobody reads it as a fix. #2695's
     // acceptance criterion 5 asks that `member.bulk-deactivate` stop exposing
     // another member's name and email to a member's own timeline — the `details`
     // sentence below carries both, and the acting officer's own timeline shows
-    // it. This change makes that true by removing the row from the member-visible
-    // query, NOT by gating the free text: `audit-query.ts` still decides
-    // `details` on a shape test rather than an audience test. #2695 is still
-    // needed.
+    // it. This change made that true by removing the row from the member-visible
+    // query rather than by gating the free text; #2695 has since closed the
+    // other half, so `audit-query.ts` no longer decides `details` on a shape
+    // test at all.
     //
     // WHAT IT DOES COST, stated rather than glossed: these two sites NARROW.
     // A member could see a bulk deactivation of their own account on their own

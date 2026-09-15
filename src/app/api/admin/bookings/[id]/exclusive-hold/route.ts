@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
@@ -297,7 +298,7 @@ export async function POST(
             : "booking.exclusiveHold.cleared",
           memberId: session.user.id,
           actorMemberId: session.user.id,
-          subjectMemberId: booking.memberId,
+          subjectMemberId: bookingOwner(booking).memberId,
           targetId: booking.id,
           entityType: "Booking",
           entityId: booking.id,

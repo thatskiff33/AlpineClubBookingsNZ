@@ -3,6 +3,7 @@ import { parseDateOnly } from "@/lib/date-only";
 
 import {
   BOOKING_MONEY_BUILD_UP_INVARIANT,
+  bookingMoneyBuildUpFromProjection,
   d3CompatibleBookingMoneyBuildUpCents,
   readBookingMoneyBuildUp,
   selectBookingMoneyBuildUp,
@@ -30,6 +31,46 @@ function knownRows(amounts: readonly number[], guestIds?: readonly string[]) {
     },
   };
 }
+
+describe("#3369 a school's booker-slot allocation in the projection", () => {
+  it("is narrowed out of the loaded redemption by the writer's own rule, so reader and writer reconcile over the same rows", () => {
+    const loaded = bookingMoneyBuildUpFromProjection(
+      {
+        checkIn: parseDateOnly("2026-08-01"),
+        checkOut: parseDateOnly("2026-08-03"),
+        totalPriceCents: 10_000,
+        guests: [],
+        promoRedemption: {
+          priceAdjustmentCents: -3_000,
+          allocations: [
+            { memberId: null, priceAdjustmentCents: -2_000 },
+            { memberId: BOOKER, priceAdjustmentCents: -1_000 },
+          ],
+        },
+        nightAdjustments: [],
+      },
+      { purpose: "XERO_PROMO_LINE" },
+    );
+    expect(loaded.redemption).toEqual({
+      priceAdjustmentCents: -3_000,
+      allocations: [{ memberId: BOOKER, priceAdjustmentCents: -1_000 }],
+    });
+    // The absence of a promotion is still the absence of a promotion.
+    expect(
+      bookingMoneyBuildUpFromProjection(
+        {
+          checkIn: parseDateOnly("2026-08-01"),
+          checkOut: parseDateOnly("2026-08-03"),
+          totalPriceCents: 10_000,
+          guests: [],
+          promoRedemption: null,
+          nightAdjustments: [],
+        },
+        { purpose: "XERO_PROMO_LINE" },
+      ).redemption,
+    ).toBeNull();
+  });
+});
 
 describe("#3277 canonical D3 build-up selection", () => {
   it("preserves today's amount for a classified redistribution mismatch", () => {

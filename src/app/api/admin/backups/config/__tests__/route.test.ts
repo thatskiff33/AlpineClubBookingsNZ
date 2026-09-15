@@ -83,7 +83,15 @@ describe("POST /api/admin/backups/config", () => {
     asAdmin(true);
     const res = await POST(makeRequest({ bucket: "" }));
     expect(res.status).toBe(200);
-    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith("backup", "bucket");
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith({
+      provider: "backup",
+      key: "bucket",
+      // The admin who submitted the form, named (#2723), and a declared
+      // unconditional clear: the form posts the whole configuration, so there
+      // is no read-modify-write here for a second admin to make stale.
+      actor: { kind: "admin", memberId: "admin-1" },
+      expect: { expect: "any" },
+    });
   });
 
   it("rejects a malformed bucket name with 400", async () => {
