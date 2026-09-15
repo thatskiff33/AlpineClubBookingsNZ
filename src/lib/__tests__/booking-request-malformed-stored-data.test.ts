@@ -44,7 +44,12 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
-    booking: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    booking: {
+      findUnique: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+      update: vi.fn(),
+    },
     member: { findMany: vi.fn().mockResolvedValue([]), create: vi.fn() },
     lodge: {
       findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
@@ -567,6 +572,70 @@ describe("GET /api/admin/booking-requests degrades a corrupt quote blob (#2342)"
     });
     expect(body.data[1].latestQuote?.id).toBe("quote-bad");
     expect(body.data[1].latestQuote?.options).toEqual([]);
+  });
+});
+
+/*
+ * #3412 (review, F16) — the queue serialises the HOLD'S STATUS, not just its id.
+ *
+ * `heldBookingId` alone does not say whether beds are reserved: a cancelled
+ * booking leaves a stale pointer that reserves nothing, which the quote service
+ * deliberately lets the officer past. Keyed on the pointer, the panel disabled
+ * Save quote and sent the officer to Release hold — which 409s on that same dead
+ * pointer, so both doors were shut on a save the service would have accepted.
+ * The panel now keys on this field, so it is the field that has to arrive.
+ */
+describe("GET /api/admin/booking-requests carries the hold's status (#3412)", () => {
+  it("serialises the held booking's status, and null for a pointer that resolves to nothing", async () => {
+    const listRow = (id: string, heldBookingId: string | null) => ({
+      ...requestRow({ id, guests: HEALTHY_GUESTS }),
+      heldBookingId,
+      lodge: null,
+      pricedByMemberId: null,
+      reviewedByMemberId: null,
+      convertedMemberId: null,
+      verifiedAt: null,
+      pricedAt: null,
+      reviewedAt: null,
+      declineReason: null,
+      convertedBookingId: null,
+      attendeesConfirmedAt: null,
+      acceptedQuoteOptionId: null,
+      acceptedPriceCents: null,
+      acceptedAt: null,
+      responseMessage: null,
+      responseMessageAt: null,
+      indicativePriceCents: null,
+      createdAt: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      listRow("req-held", "booking-live"),
+      listRow("req-dangling", "booking-gone"),
+      listRow("req-unheld", null),
+    ] as never);
+    vi.mocked(prisma.bookingRequest.count).mockResolvedValue(3 as never);
+    vi.mocked(prisma.bookingRequestQuote.findMany).mockResolvedValue([] as never);
+    // Only the live hold's booking still exists; "booking-gone" was cancelled
+    // and deleted from under its pointer.
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      { id: "booking-live", status: "AWAITING_REVIEW" },
+    ] as never);
+
+    const res = await listRequests(
+      new NextRequest("http://localhost/api/admin/booking-requests?status=ALL"),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: Array<{ id: string; heldBookingStatus: string | null }>;
+    };
+    expect(body.data.map((row) => row.heldBookingStatus)).toEqual([
+      "AWAITING_REVIEW",
+      null,
+      null,
+    ]);
+    // One batched read for the whole page, not one per row.
+    expect(prisma.booking.findMany).toHaveBeenCalledTimes(1);
   });
 });
 

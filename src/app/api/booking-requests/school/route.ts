@@ -6,12 +6,12 @@ import {
   BookingRequestError,
 } from "@/lib/booking-request";
 import {
+  assertSchoolGuestsWithinLodgeCapacity,
   createSchoolBookingRequest,
   generateSchoolGuests,
   schoolChildCountsSchema,
   schoolTeacherSchema,
 } from "@/lib/school-booking-request";
-import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
@@ -105,15 +105,17 @@ export async function POST(request: NextRequest) {
     // means the club's default lodge, stored as null.
     const lodgeId = await assertRequestedLodgeActive(parsed.data.lodgeId);
 
-    const lodgeCapacity = lodgeId
-      ? await getLodgeCapacity(lodgeId)
-      : await getDefaultLodgeCapacity();
-    if (guests.length > lodgeCapacity) {
-      return NextResponse.json(
-        { error: `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests` },
-        { status: 400 }
-      );
-    }
+    // #3412: the ONE implementation of the school capacity rule, shared with
+    // `createSchoolBookingRequest` below and with the officer's guest-override
+    // resolver. It throws a `BookingRequestError`, which this route's catch
+    // already turns into `{ error }` at the status given — 400 here, because
+    // this public door answers 400 for every rejected submission, where the two
+    // admin doors answer 422.
+    await assertSchoolGuestsWithinLodgeCapacity({
+      guestCount: guests.length,
+      lodgeId,
+      status: 400,
+    });
 
     await createSchoolBookingRequest({
       schoolName: parsed.data.schoolName,
