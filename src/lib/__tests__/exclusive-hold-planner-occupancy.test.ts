@@ -93,6 +93,13 @@ function custodianHold(
     assignmentId: "assignment-1",
     memberId: "member-custodian",
     memberName: "Custodian Name",
+    // The name PARTS became required on `CustodianBedHold` with #2942, which
+    // landed on `main` while this helper was being written on the epic. They
+    // must compose to `memberName` above: a fixture whose parts and whole
+    // disagree would let a caller that reduces the parts pass while the same
+    // caller reading the composed form fails.
+    memberFirstName: "Custodian",
+    memberLastName: "Name",
     memberIsMinor: false,
     lodgeId: LODGE,
     bedName: "A1",

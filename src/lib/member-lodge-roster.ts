@@ -3,6 +3,7 @@ import "server-only";
 import type { DisplayNameGranularity, Prisma } from "@prisma/client";
 
 import { isGuestActiveOnNight } from "./booking-guest-stay-ranges";
+import { bookingOwner } from "./booking-owner";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "./booking-status";
 import {
   findCustodianBedHolds,
@@ -93,6 +94,17 @@ export const MEMBER_ROSTER_BOOKING_SELECT = {
   member: {
     select: { firstName: true, lastName: true, ageTier: true },
   },
+  // #3369: a booking's owner may be an `Organisation` rather than a member, so
+  // `member` is nullable and `bookingOwner()` is the one accessor that answers
+  // "who owns this" for both. THE NAME ONLY, which is the same widening the
+  // sibling lobby-display select took on the same issue: an organisation's name
+  // is what its booking has always been labelled with here — the invented
+  // school member carried it before stage 4 removed that member — so this
+  // preserves the roster's behaviour rather than widening it. Names are
+  // suppressed for an organisation booking either way, because
+  // `namesAllowedForBooking` refuses `NOT_APPLICABLE`, so the name reaches the
+  // GROUP LABEL and nothing else.
+  organisation: { select: { name: true } },
   guests: {
     where: OPERATIONALLY_PRESENT_GUEST_WHERE,
     select: {
@@ -369,7 +381,9 @@ function buildOneLodgeRoster(
     // entire building for five people is fully named the moment any second
     // booking exists in the window, because five is under the group threshold.
     const isGroup =
-      booking.member.ageTier === "NOT_APPLICABLE" ||
+      // #3369: `undefined` is an organisation, which is a group outright.
+      (bookingOwner(booking).member.ageTier ?? "NOT_APPLICABLE") ===
+        "NOT_APPLICABLE" ||
       booking.guests.length >= WHOLE_LODGE_MIN_GUESTS;
     const soleOccupancy =
       booking.wholeLodgeHold ||
@@ -392,7 +406,11 @@ function buildOneLodgeRoster(
     const namesAllowed = namesAllowedForBooking({
       soleOccupancy,
       containsMinors,
-      organiserAgeTier: booking.member.ageTier,
+      // #3369: an ORGANISATION has no age tier, and `NOT_APPLICABLE` is exactly
+      // that — the value the shared rules already reserve for an organiser who
+      // is not a person. The sibling lobby-display call reads it the same way.
+      organiserAgeTier:
+        bookingOwner(booking).member.ageTier ?? "NOT_APPLICABLE",
       granularity,
     });
 
@@ -405,7 +423,7 @@ function buildOneLodgeRoster(
       for (const entry of present) for (const n of entry.nights) nights.add(n);
       const peak = Math.max(...nightCounts.values());
       groups.push({
-        label: bookingLabel(booking.member, {
+        label: bookingLabel(bookingOwner(booking).member, {
           granularity,
           containsMinors,
           guestCount: peak,

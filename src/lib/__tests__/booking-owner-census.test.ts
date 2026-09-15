@@ -782,6 +782,14 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/lib/cron-additional-payment-reminders.ts:433",
   "src/lib/cron-confirm-pending.ts:186",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:887",
+  // Added when the member lodge roster (#2942, from `main`) was routed through
+  // `bookingOwner()` on the eighth epic sync. Verified by hand, which is what
+  // this list asks for: `MEMBER_ROSTER_BOOKING_SELECT` is written
+  // `satisfies Prisma.BookingSelect` and is read back through
+  // `Prisma.BookingGetPayload<{ select: typeof … }>`, so the model IS
+  // compile-checked and a relation this model did not declare would fail to
+  // build. The walk cannot root it only because the literal names no delegate.
+  "src/lib/member-lodge-roster.ts:107",
   "src/lib/payment-link.ts:74",
   "src/lib/payment-reconciliation.ts:81",
   "src/lib/stuck-state-dashboard.ts:619",

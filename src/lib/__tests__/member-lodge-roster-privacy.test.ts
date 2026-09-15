@@ -294,11 +294,24 @@ describe("member lodge roster — what the select may name", () => {
       "guests",
       "lodgeId",
       "member",
+      "organisation",
       "wholeLodgeHold",
     ]);
     expect(
       Object.keys(MEMBER_ROSTER_BOOKING_SELECT.member.select).sort()
     ).toEqual(["ageTier", "firstName", "lastName"]);
+    // THE ARGUMENT FOR `organisation`, which this assertion exists to demand.
+    // #3369 made a booking's owner either a member or an `Organisation`, so
+    // `member` is nullable and `bookingOwner()` is the one accessor for both.
+    // The NAME is the only column, and it is what an organisation booking has
+    // always been labelled with on this surface — the invented school member
+    // carried it until stage 4 removed that member — so this preserves the
+    // roster's behaviour instead of widening it. An organisation reads as
+    // `NOT_APPLICABLE`, which `namesAllowedForBooking` refuses, so the name
+    // reaches the group label and no individual is ever named because of it.
+    expect(
+      Object.keys(MEMBER_ROSTER_BOOKING_SELECT.organisation.select).sort()
+    ).toEqual(["name"]);
     expect(
       Object.keys(MEMBER_ROSTER_BOOKING_SELECT.guests.select).sort()
     ).toEqual([
