@@ -894,6 +894,56 @@ first. The validator refuses without
 `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a `BLUE_GREEN_MIGRATION_OVERRIDE_REASON`
 naming this window, and `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`.
 
+**If the backfill refuses inside the window.** The census in check 1 is the
+guard against this, and it is why check 1 runs after traffic is removed rather
+than the afternoon before. It can still happen: an approval landing between the
+census and the window is exactly the case the backfill's fail-closed check
+exists for. What follows is not obvious, and the obvious thing does not work.
+
+`prisma migrate deploy` writes each migration's `_prisma_migrations` row
+**before** applying it. `20260928030000` raising
+`school_member_classification_incomplete` rolls back its own transaction and
+writes nothing to the club's data — but the row stays, with a NULL
+`finished_at`. Every later `migrate deploy` then refuses with **P3009**, "found
+failed migrations in the target database", before it looks at the pending list
+at all. So recording the missing decisions and running the migration again — the
+natural reading of the refusal — meets a second refusal under a different name,
+in the window, with the club offline.
+
+The state you are in is `20260928020000` **applied** and `20260928030000`
+**failed**. It is safe to sit in: no booking has changed hands, and the only
+schema change in force is a `Booking.memberId` that is now optional, which
+nothing can exercise while every process is stopped. It is also the one state in
+which the two are legitimately apart, and the runbook's "never applied apart"
+above is about what reaches running traffic, not about this.
+
+Two ways out, and the first is usually right.
+
+1. **Finish the classification and go on.** Run the census again; it prints the
+   rows that need a decision. Record each one (steps 3–4 of the cutover guide).
+   Then clear the failed row and migrate again:
+
+   ```bash
+   docker compose --profile migrate run --rm      -e DATABASE_URL="$DATABASE_URL" migrate      npx prisma migrate resolve --rolled-back      20260928030000_backfill_school_bookings_to_organisations
+   ```
+
+   `--rolled-back` is the true statement here: the migration's transaction did
+   roll back, because it raised before its first write. Do not reach for
+   `--applied`, which would tell Prisma the backfill had run and leave every
+   school booking behind forever, invisibly.
+
+2. **Back out of the window.** If the decision needs a person who is not
+   available, run `20260928020000/rollback.sql` **on its own** — not the pair.
+   Its wrong-order guard looks for the `Booking_owner_exactly_one` constraint,
+   which only `20260928030000` adds and which therefore is not there; no NULL
+   member exists for its three `SET NOT NULL` statements to trip over; and
+   `SchoolMemberClassification` is kept, so the decisions already recorded
+   survive for the next attempt. Then `migrate resolve --rolled-back` **both**
+   names, restore the previous release, and re-open the window another day.
+
+Either way, record in [§8](#8-production-execution-record) that the refusal
+happened, which way out was taken, and what the census said the second time.
+
 **Verify the migrate step, before starting anything.**
 
 ```sql
