@@ -446,9 +446,32 @@ Because coverage is derived rather than stored, the audited acceptance IS the
 amendment; there is no bed set on the hold row to edit, and no existing hold is
 migrated.
 
+**The acceptance is a boolean, not a fingerprint of what was shown.** The
+refusal names specific nights and holding bookings; the re-send carries only
+`amendOverlappingHolds: true`, so a whole-lodge hold created between the refusal
+and the acceptance would be narrowed without ever having appeared on the
+officer's screen. That is accepted as a stated limit, on both reviewing lenses'
+recommendation over building a confirmation token, because the accept path
+holds the global and per-lodge keys (so the window needs a concurrent hold on
+the same lodge and nights), the audit row records what was actually narrowed
+rather than what was offered, and it mirrors the over-capacity confirmation on
+the same route. **A confirmation token is the fix if any of those three stops
+being true.**
+
 Removing a custodian hold is the mirror image: it widens every overlapping
 hold's represented set, so the hut-leader DELETE takes the lodge capacity key
 too.
+
+**The night-level write-time re-checks are deliberately out of scope.**
+`dropRowsOnWholeLodgeHeldNights` (`bed-allocation-write-rechecks.ts`) and its
+auto-allocation equivalent drop **every** row on a held night, the custodian's
+bed included. That is correct and deliberately stricter than the representation
+rule: nothing may be placed on a custodian's bed anyway, and the sibling
+custodian re-check drops those rows too. They are a third consumer of a
+**different** question — "may this row be written now?", asked at write time —
+not a second inventory of what a hold covers, so they must not be "fixed" into
+subtracting the custodian's bed-night, which would let a booking be written
+onto a held night.
 
 The over-capacity confirmation in `validateCustodianBedHold` still does not pin
 the hold flag, and since #2698 the reason is arithmetic rather than policy:
