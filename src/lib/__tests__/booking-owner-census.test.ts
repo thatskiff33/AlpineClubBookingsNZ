@@ -483,8 +483,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-payment-intent/route.ts:136",
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:113",
-  "src/lib/adult-member-hosting-review.ts:2875",
-  "src/lib/adult-member-hosting-review.ts:3115",
+  "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:978",
   "src/lib/booking-cancel.ts:479",
   "src/lib/booking-date-modification-service.ts:379",
@@ -789,7 +788,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `Prisma.BookingGetPayload<{ select: typeof … }>`, so the model IS
   // compile-checked and a relation this model did not declare would fail to
   // build. The walk cannot root it only because the literal names no delegate.
-  "src/lib/member-lodge-roster.ts:107",
+  "src/lib/member-lodge-roster.ts:111",
   "src/lib/payment-link.ts:74",
   "src/lib/payment-reconciliation.ts:81",
   "src/lib/stuck-state-dashboard.ts:619",

@@ -135,6 +135,10 @@
  * `src/lib/__tests__/booking-owner.test.ts`.
  */
 
+import type { AgeTier } from "@prisma/client";
+
+/**
+ * The parts of an organisation the owner projection is built from.
 /**
  * The parts of an organisation the owner projection is built from.
  *
@@ -339,4 +343,48 @@ export function bookingOwnerEmail(
   const email = "member" in owner ? owner.member?.email : null;
   const trimmed = typeof email === "string" ? email.trim() : "";
   return trimmed === "" ? null : trimmed;
+}
+/**
+ * THE OWNER'S AGE TIER, and why an organisation's is `NOT_APPLICABLE` (#3480).
+ *
+ * `AgeTier.NOT_APPLICABLE` is the tier this codebase already reserves for an
+ * account that is not a person — it is what the invented school member carried,
+ * and it is the branch every age-tier reader takes for "an organiser who is not
+ * somebody's age". An organisation-owned booking projects NO age tier at all
+ * (`undefined`, per the contract above), so the two facts have to be joined
+ * somewhere: "no age tier" IS "not applicable". This is that somewhere.
+ *
+ * The rule is `??`, and it must never be `===`. `member.ageTier ?? "NOT_APPLICABLE"`
+ * reads `undefined` as not-applicable; `member.ageTier === "NOT_APPLICABLE"`
+ * reads it as false. Before this helper the rule was spelled inline at six
+ * sites, and a seventh had been written with `===`: once the classification
+ * backfill moved school bookings off their invented member, that site stopped
+ * seeing a school as a group, and a five-student school alone in the lodge
+ * stopped drawing as a whole-lodge blockout on the lobby display (#3391). Six
+ * spellings that agree today are six that can drift tomorrow, so there is one
+ * (`INV-SSOT-001`, `INV-SSOT-005`): the value, and the predicate over it.
+ */
+export function bookingOwnerAgeTier(
+  booking: BookingOwnerSource & {
+    member?: { ageTier?: AgeTier | null } | null;
+  },
+): AgeTier {
+  const owner = bookingOwner(booking);
+  // A member-only selection whose member is `null` (a school through a query
+  // that did not load the organisation) has no tier to report either, and gets
+  // the same honest answer rather than a crash.
+  const tier = "member" in owner ? owner.member?.ageTier : undefined;
+  return tier ?? "NOT_APPLICABLE";
+}
+
+/**
+ * Whether the owner has no age tier — an organisation, or an account classified
+ * as age-exempt — which every caller so far reads as "a group outright". The
+ * predicate over {@link bookingOwnerAgeTier} rather than a second comparison at
+ * each site, for the reason given there.
+ */
+export function bookingOwnerHasNoAgeTier(
+  booking: Parameters<typeof bookingOwnerAgeTier>[0],
+): boolean {
+  return bookingOwnerAgeTier(booking) === "NOT_APPLICABLE";
 }

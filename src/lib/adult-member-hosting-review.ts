@@ -30,6 +30,7 @@ import {
   acquireHostingCoverageQueueParticipantProof,
   assertHostingCoverageQueueParticipantsLocked,
   HostingCoverageParticipantRetryError,
+  hostingCoverageParticipantOwnerId,
   lockHostingCoverageMemberLifecycleTarget,
   type HostingCoverageQueueParticipantProof,
   type HostingCoverageSourceParticipant,
@@ -388,7 +389,12 @@ export function toHostingParticipants(
  * soft-deleted rows are excluded — a bumped sibling is not staying.
  */
 function hostingSiblingWhere(
-  booking: Pick<LoadedHostingBooking, "id" | "memberId" | "parentBookingId">,
+  // #3480: the owner column as fetched, nullable since #3369. An organisation's
+  // siblings are the organisation's other halves — `memberId: null` inside the
+  // parent/child `OR` — which is the same relationship a member's halves have.
+  booking: Pick<LoadedHostingBooking, "id" | "parentBookingId"> & {
+    memberId: string | null;
+  },
 ): Prisma.BookingWhereInput {
   const relatedIds: Prisma.BookingWhereInput[] = [
     { parentBookingId: booking.id },
@@ -1997,10 +2003,9 @@ export async function reconcileAdultMemberHostingReview(
  * were protected would quietly widen what this pre-fence read is trusted for.
  */
 async function hasHostingSiblingAtActiveLodge(
-  booking: Pick<
-    LoadedHostingBooking,
-    "id" | "memberId" | "parentBookingId" | "lodgeId"
-  >,
+  booking: Pick<LoadedHostingBooking, "id" | "parentBookingId" | "lodgeId"> & {
+    memberId: string | null;
+  },
   db: AdultMemberHostingReviewDb,
 ): Promise<boolean> {
   const siblings = (await db.booking.findMany({
@@ -2141,11 +2146,11 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
   // #2597: acquire the exact queue owner/actor Member rows BEFORE the first
   // evaluation can take a coverage-owner advisory key. Acquiring only inside
   // the later settle step would invert coverage-owner -> Member against merge.
-  const plannedBooking = (await db.booking.findUnique({
+  const plannedRow = (await db.booking.findUnique({
     where: { id: bookingId },
     select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
-  })) as GroupTripCoverageSourceFacts | null;
-  if (!plannedBooking) {
+  })) as GroupTripCoverageSourceRow | null;
+  if (!plannedRow) {
     return { action: "none", violation: null, mode: null };
   }
   // #2623 T5 + #3209: the mode gate comes BEFORE the fence, and it is a gate on
@@ -2182,72 +2187,108 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
   // it, and adding a group clause beside it would be dead code that no group read
   // could ever exercise. If a later lane ever makes group cover cross lodges, this
   // block is the place that stops being true.
-  const planned = await loadAdultMemberHostingPolicy(plannedBooking.lodgeId, db);
+  const planned = await loadAdultMemberHostingPolicy(plannedRow.lodgeId, db);
   const sourceLodgeActive = hostingModeIsActive(planned.mode);
   // Read only when this lodge would otherwise skip: an active lodge already owes
   // the whole body, so the extra read would answer a question nobody is asking.
   const siblingOwedAtAnotherLodge =
     !sourceLodgeActive &&
-    (await hasHostingSiblingAtActiveLodge(plannedBooking, db));
+    (await hasHostingSiblingAtActiveLodge(plannedRow, db));
   if (!sourceLodgeActive && !siblingOwedAtAnotherLodge) {
     return reconcileAdultMemberHostingReview(bookingId, db, options, true);
   }
   const actorMemberId = options.coverageChange?.actorMemberId ?? null;
-  // #3039: plan the Group Trip dependents BEFORE the participant fence, because the
-  // fence has to lock every owner the queue will name and those owners are exactly
-  // what this read discovers. The plan is unlocked and is therefore a hypothesis;
-  // `lockAndVerifyGroupTripCoverageDependents` below turns it into a fact under the
-  // per-trip key, or fails the whole transaction as a safe retry.
-  const plannedGroupTrip = await planGroupTripCoverageDependents(
-    plannedBooking,
-    planned,
-    db,
-  );
-  // #3232: plan the SAME-OWNER dependents before the fence too, and for the same
-  // reason the Group Trip plan is planned here. Since #3232 the same-owner settle
-  // records one item per dependent BOOKING rather than one item naming the changed
-  // booking's window, and the fence demands a proof source for every booking an
-  // item names — so a dependent discovered only inside the settle step would be
-  // refused by `assertHostingCoverageQueueParticipantsLocked` rather than enqueued.
-  //
-  // NO NEW LOCK AND NO NEW ORDERING (`INV-LOCK-002`). Every same-owner dependent
-  // shares the changed booking's `memberId` by construction (§1), so the `Member`
-  // row set the fence takes is unchanged — the owner is already in it. Only the
-  // proof's `sources` list grows, which is a fingerprint of rows the fence re-reads
-  // under the row lock it already holds.
-  const plannedSameOwner = await planSameOwnerCoverageDependents(
-    plannedBooking,
-    planned,
-    options.coverageChangeVacatedRange ?? null,
-    db,
-  );
-  const participantProof = await acquireOrValidateQueueParticipantProof(
-    [
-      sourceParticipant(plannedBooking),
-      ...plannedSameOwner.map(sourceParticipant),
-      ...(plannedGroupTrip?.dependents ?? []).map(sourceParticipant),
-    ],
-    actorMemberId,
-    db,
-  );
 
-  // The per-TRIP key, then the plan re-verified under it (`INV-LOCK-002`: group
-  // before owner). It is taken here rather than left to the evaluator one call
-  // deeper so that the fan-out's own dependent read is protected too, and the
-  // evaluator's acquisition is then a re-entrant no-op.
-  const verifiedGroupTrip = await lockAndVerifyGroupTripCoverageDependents(
-    plannedBooking,
-    planned,
-    plannedGroupTrip,
-    db,
-  );
+  // ==== #3480: IS THE CHANGED BOOKING A COVERAGE PARTICIPANT AT ALL? ====
+  //
+  // Taken ONCE, here, before anything is planned, locked or enqueued, through the
+  // same predicate the fence applies to its own re-read
+  // (`hostingCoverageParticipantOwnerId`). A school's organisation-owned booking
+  // reaches this entry on every approval (`school-booking-request.ts` calls it
+  // with the §13 `REVIEW_ONLY` carve-out) and on every later edit, and before
+  // this branch existed it was handed to the fence as a source with no member:
+  // with no actor either, `sortedUnique` left NOTHING to lock and `Prisma.join`
+  // threw on the empty list; with an officer acting, the fence re-read dropped
+  // the school and the fingerprints could never agree, so it threw a retry error
+  // that no retry could clear. Either way the approving transaction rolled back.
+  //
+  // What a non-participant IS still owed is the REVIEW. §13 excludes a school
+  // from the ENFORCED refusal, not from evaluation — the hazard is recorded so an
+  // officer sees it, and a stale snapshot is cleared — and its #738 split
+  // siblings are owed theirs. What it is NOT owed is any of the queue work: the
+  // re-evaluation queue is keyed on a member's account, the same-owner scope is
+  // about one member's other bookings, and a school is never in a Group Trip. So
+  // `fanOut` stays `null`, no proof is acquired, no owner key is minted, and the
+  // review runs without a participant context exactly as it does for a lodge
+  // where the rule is off. One decision, and the compiler carries it: nothing
+  // below can name a `CoverageOwnerFacts` for this booking without it.
+  const plannedBooking = coverageParticipantFacts(plannedRow);
+  let fanOut: {
+    proof: HostingCoverageQueueParticipantProof;
+    plannedSameOwner: CoverageOwnerFacts[];
+    verifiedGroupTrip: {
+      identity: GroupTripIdentity;
+      dependents: CoverageOwnerFacts[];
+    } | null;
+  } | null = null;
+  if (plannedBooking) {
+    // #3039: plan the Group Trip dependents BEFORE the participant fence, because the
+    // fence has to lock every owner the queue will name and those owners are exactly
+    // what this read discovers. The plan is unlocked and is therefore a hypothesis;
+    // `lockAndVerifyGroupTripCoverageDependents` below turns it into a fact under the
+    // per-trip key, or fails the whole transaction as a safe retry.
+    const plannedGroupTrip = await planGroupTripCoverageDependents(
+      plannedBooking,
+      planned,
+      db,
+    );
+    // #3232: plan the SAME-OWNER dependents before the fence too, and for the same
+    // reason the Group Trip plan is planned here. Since #3232 the same-owner settle
+    // records one item per dependent BOOKING rather than one item naming the changed
+    // booking's window, and the fence demands a proof source for every booking an
+    // item names — so a dependent discovered only inside the settle step would be
+    // refused by `assertHostingCoverageQueueParticipantsLocked` rather than enqueued.
+    //
+    // NO NEW LOCK AND NO NEW ORDERING (`INV-LOCK-002`). Every same-owner dependent
+    // shares the changed booking's `memberId` by construction (§1), so the `Member`
+    // row set the fence takes is unchanged — the owner is already in it. Only the
+    // proof's `sources` list grows, which is a fingerprint of rows the fence re-reads
+    // under the row lock it already holds.
+    const plannedSameOwner = await planSameOwnerCoverageDependents(
+      plannedBooking,
+      planned,
+      options.coverageChangeVacatedRange ?? null,
+      db,
+    );
+    const participantProof = await acquireOrValidateQueueParticipantProof(
+      [
+        sourceParticipant(plannedBooking),
+        ...plannedSameOwner.map(sourceParticipant),
+        ...(plannedGroupTrip?.dependents ?? []).map(sourceParticipant),
+      ],
+      actorMemberId,
+      db,
+    );
+
+    // The per-TRIP key, then the plan re-verified under it (`INV-LOCK-002`: group
+    // before owner). It is taken here rather than left to the evaluator one call
+    // deeper so that the fan-out's own dependent read is protected too, and the
+    // evaluator's acquisition is then a re-entrant no-op.
+    const verifiedGroupTrip = await lockAndVerifyGroupTripCoverageDependents(
+      plannedBooking,
+      planned,
+      plannedGroupTrip,
+      db,
+    );
+    fanOut = { proof: participantProof, plannedSameOwner, verifiedGroupTrip };
+  }
 
   const outcome = await reconcileAdultMemberHostingReview(
     bookingId,
     db,
     options,
     true,
-    { proof: participantProof, actorMemberId },
+    fanOut ? { proof: fanOut.proof, actorMemberId } : undefined,
   );
   if (outcome.mode === null) return outcome;
   // #3209: `outcome.mode` is THIS lodge's, so it decides the fan-out only when
@@ -2273,6 +2314,10 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
     );
   }
 
+  // #3480: a non-participant has had everything it is owed — its own review and
+  // its siblings' — and there is no account whose other bookings it could strand.
+  if (!fanOut) return outcome;
+
   // #2576 §6 to §8: this booking's rows can also decide whether ANOTHER booking on
   // the same account is compliant. Last, and after the siblings, because it is a
   // question about the resulting state of the whole account at this lodge.
@@ -2280,8 +2325,8 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
     bookingId,
     db,
     options,
-    participantProof,
-    plannedSameOwner,
+    fanOut.proof,
+    fanOut.plannedSameOwner,
   );
 
   // #3039: and this booking's rows can decide whether a booking on ANOTHER ACCOUNT
@@ -2290,9 +2335,9 @@ export async function reconcileAdultMemberHostingReviewWithSiblings(
   // resulting state. It can refuse nothing, so it cannot change the outcome the
   // caller is about to receive — see `settleGroupTripDependentCoverage`.
   await settleGroupTripDependentCoverage(
-    verifiedGroupTrip,
+    fanOut.verifiedGroupTrip,
     actorMemberId,
-    participantProof,
+    fanOut.proof,
     db,
   );
   return outcome;
@@ -2439,6 +2484,80 @@ type CoverageOwnerFactsWithOutcome = CoverageOwnerFacts & {
   adultMemberHostingReview: Prisma.JsonValue | null;
   adultMemberHostingReviewStatus: AdminReviewStatus | null;
 };
+
+/**
+ * A booking AS THE COVERAGE READS FETCH IT: the owner column exactly as the
+ * schema declares it, which since stage 4 of #2912 (#3369) is nullable (#3480).
+ *
+ * This is the type a `select` of `COVERAGE_OWNER_FACTS_BASE_SELECT` really
+ * produces, and it is deliberately NOT `CoverageOwnerFacts`. Until #3480 every
+ * read in this module cast its rows straight to `CoverageOwnerFacts`, whose
+ * `memberId: string` was true when the column was required and became a lie the
+ * day it was not: a school's booking arrived with `memberId: null` under a type
+ * that promised a string, `sourceParticipant()` handed the participant fence an
+ * `ownerMemberId` of `null` under the same promise, and the compiler — having
+ * been told there was nothing to check — checked nothing. So a row is cast to
+ * THIS type, and becomes `CoverageOwnerFacts` only by passing through
+ * `coverageParticipantFacts()` below.
+ */
+export type CoverageOwnerRow = Omit<CoverageOwnerFacts, "memberId"> & {
+  memberId: string | null;
+};
+
+/** What `COVERAGE_OWNER_FACTS_SELECT` really fetches — see `CoverageOwnerRow`. */
+type CoverageOwnerRowWithOutcome = CoverageOwnerRow &
+  Omit<CoverageOwnerFactsWithOutcome, keyof CoverageOwnerFacts>;
+
+/**
+ * THE participant decision, applied to one fetched row (#3480).
+ *
+ * A hosting-coverage participant is a MEMBER holding nights that a qualifying
+ * adult must cover; an organisation-owned booking is not one. That decision
+ * lives in `hostingCoverageParticipantOwnerId` in the fence module — the fence
+ * asks it of what it re-reads under the row lock, and this asks it of what the
+ * producers plan — so the two halves of the proof are taken over the same set
+ * and the fingerprint comparison means "the rows changed" and nothing else.
+ *
+ * THIS IS WHERE THE TYPE BECOMES TRUE. The return type is the row with
+ * `memberId: string`, and nothing else in this module manufactures a
+ * `CoverageOwnerFacts` from a database row: every read casts to
+ * `CoverageOwnerRow` and narrows here, so downstream code that reads
+ * `bookingOwner(facts).memberId` as a `string` — the queue item, the
+ * coverage-owner key, the fence's source list — is reading a value that really
+ * is one. "Prefer unrepresentable over policed" (`INV-SSOT`): a producer that
+ * forgets the decision does not compile, rather than throwing a retry error the
+ * next time a school books.
+ *
+ * `null` means "not a participant", and what a caller does with that depends on
+ * what the row was: a DEPENDENT that is not a participant is simply not in the
+ * set (`coverageParticipantsOf`), while a SOURCE booking that is not a
+ * participant means the whole queue fan-out is not owed — the review is still
+ * evaluated (the §13 school carve-out is a rule about REFUSAL, not about
+ * evaluation), but nothing is enqueued, no fence is taken, and no owner key is
+ * minted, because there is no member for any of those to be about.
+ */
+export function coverageParticipantFacts<R extends CoverageOwnerRow>(
+  row: R,
+): (R & { memberId: string }) | null {
+  if (hostingCoverageParticipantOwnerId(row) === null) return null;
+  // The predicate has just proved the column is a string; the cast records
+  // exactly that and nothing more.
+  return row as R & { memberId: string };
+}
+
+/**
+ * The plural: the participants among a fetched set, in the set's own order, so
+ * the bounded reads' `orderBy` — which is what makes their plan/verify
+ * fingerprints comparable — survives the narrowing.
+ */
+export function coverageParticipantsOf<R extends CoverageOwnerRow>(
+  rows: readonly R[],
+): Array<R & { memberId: string }> {
+  return rows.flatMap((row) => {
+    const facts = coverageParticipantFacts(row);
+    return facts ? [facts] : [];
+  });
+}
 
 /**
  * One booking's own NZ lodge-nights, as the queue's `YYYY-MM-DD` strings.
@@ -2602,12 +2721,16 @@ async function planSameOwnerCoverageDependents(
 ): Promise<CoverageOwnerFacts[]> {
   if (!hostingModeIsActive(resolved.mode)) return [];
   if (!resolved.hostScopes.sameBookingOwner) return [];
-  return (await db.booking.findMany({
-    where: sameOwnerCoverageDependentOverStayUnionWhere(booking, vacated),
-    orderBy: [...COVERAGE_READ_ORDER],
-    take: SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
-    select: COVERAGE_OWNER_FACTS_BASE_SELECT,
-  })) as CoverageOwnerFacts[];
+  // Every row here shares the source's member by the `where` clause, so the
+  // narrowing drops nothing at runtime; it is what lets the type say so (#3480).
+  return coverageParticipantsOf(
+    (await db.booking.findMany({
+      where: sameOwnerCoverageDependentOverStayUnionWhere(booking, vacated),
+      orderBy: [...COVERAGE_READ_ORDER],
+      take: SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
+      select: COVERAGE_OWNER_FACTS_BASE_SELECT,
+    })) as CoverageOwnerRow[],
+  );
 }
 
 /**
@@ -2737,11 +2860,17 @@ async function settleSameOwnerDependentCoverage(
    */
   plannedDependents: readonly CoverageOwnerFacts[],
 ): Promise<void> {
-  const booking = (await db.booking.findUnique({
+  const row = (await db.booking.findUnique({
     where: { id: bookingId },
     select: COVERAGE_OWNER_FACTS_SELECT,
-  })) as CoverageOwnerFactsWithOutcome | null;
-  if (!booking) return;
+  })) as CoverageOwnerRowWithOutcome | null;
+  if (!row) return;
+  // The caller reached this step only because the planning read proved a member
+  // owner and the fence locked that member's row. A re-read that no longer names
+  // a member is a row that changed hands under us — the same answer the
+  // participant assertion below gives for a changed owner (#3480).
+  const booking = coverageParticipantFacts(row);
+  if (!booking) throw new HostingCoverageParticipantRetryError();
 
   const resolved = await loadAdultMemberHostingPolicy(booking.lodgeId, db);
   // The shared predicate rather than its two literals written out, which is what
@@ -2870,9 +2999,21 @@ async function settleSameOwnerDependentCoverage(
   // the options by hand and got it wrong. Fail loudly inside the transaction,
   // where it rolls back, rather than record that a member consented to something
   // on somebody else's booking.
+  //
+  // #3369 WIDENED THIS, and the widening is why the null is spelled out rather
+  // than left to `!==`. Before stage 4 a booking always had a member, so
+  // `(actorMemberId ?? null) !== booking.memberId` was unconditionally true for
+  // an actor-less caller and the guard always fired. `bookingOwner().memberId`
+  // is now `string | null`, and on an ORGANISATION-owned booking it is `null` --
+  // so the two nulls would compare EQUAL and an actor-less caller would walk
+  // straight past a check that used to stop it. An organisation never signs in
+  // and can accept nothing, so no owner at all is the strongest reason to
+  // refuse, not a reason to allow: it is tested first and on its own.
+  const ownerMemberId = bookingOwner(booking).memberId;
   if (
     context.strandingAcceptedByOwner === true &&
-    (context.actorMemberId ?? null) !== bookingOwner(booking).memberId
+    (ownerMemberId === null ||
+      (context.actorMemberId ?? null) !== ownerMemberId)
   ) {
     throw new Error(
       "INV-HOST-050: a linked-move answer can only be honoured for the member " +
@@ -3132,6 +3273,10 @@ function resolveDependentDisposition(
 export type GroupTripCoverageSourceFacts = CoverageOwnerFacts &
   GroupTripIdentityRow & { parentBookingId: string | null };
 
+/** What `GROUP_TRIP_COVERAGE_SOURCE_SELECT` really fetches — see `CoverageOwnerRow`. */
+export type GroupTripCoverageSourceRow = CoverageOwnerRow &
+  GroupTripIdentityRow & { parentBookingId: string | null };
+
 /**
  * Exported for the one post-commit caller that has to load this shape itself:
  * `settleHostingCoverageAfterCommit` reads the written booking once and threads it
@@ -3184,12 +3329,16 @@ async function planGroupTripCoverageDependents(
     (await readInheritedSplitPairGroupTrip(db, booking));
   if (!identity) return null;
 
-  const dependents = (await db.booking.findMany({
-    where: groupTripCoverageDependentWhere(booking, identity),
-    orderBy: [...COVERAGE_READ_ORDER],
-    take: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
-    select: COVERAGE_OWNER_FACTS_BASE_SELECT,
-  })) as CoverageOwnerFacts[];
+  // #3480: a trip sibling owned by an organisation holds no member-nights and
+  // is not a participant, so it is not planned, not locked and not enqueued.
+  const dependents = coverageParticipantsOf(
+    (await db.booking.findMany({
+      where: groupTripCoverageDependentWhere(booking, identity),
+      orderBy: [...COVERAGE_READ_ORDER],
+      take: GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,
+      select: COVERAGE_OWNER_FACTS_BASE_SELECT,
+    })) as CoverageOwnerRow[],
+  );
   // NO CEILING REPORT HERE, deliberately: this read runs at least twice per fan-out
   // (the unlocked plan, then the under-lock re-verify) plus once more on the
   // post-commit drain-scope read, so reporting here produced two or three warnings
@@ -3544,10 +3693,18 @@ export async function enqueueOwnHostingCoverageReevaluation(
   suppliedParticipantProof?: HostingCoverageQueueParticipantProof,
   groupTripFanOut: GroupTripFanOutOptions = {},
 ): Promise<string | null> {
-  const plannedBooking = (await db.booking.findUnique({
+  const plannedRow = (await db.booking.findUnique({
     where: { id: bookingId },
     select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
-  })) as GroupTripCoverageSourceFacts | null;
+  })) as GroupTripCoverageSourceRow | null;
+  if (!plannedRow) return null;
+  // #3480: a school's booking confirms through these same doors — an inbound
+  // Xero PAID on its invoice, an officer's force-confirm — and none of them may
+  // be refused. It is not a participant: there is no member whose nights the
+  // queue would re-evaluate, so there is no item to record and no fence to take.
+  // Before this branch the fence was handed a source with no member, and the
+  // PAID claim on a school's paid invoice rolled back with a retry error.
+  const plannedBooking = coverageParticipantFacts(plannedRow);
   if (!plannedBooking) return null;
 
   const resolved = await loadAdultMemberHostingPolicy(plannedBooking.lodgeId, db);
@@ -3600,10 +3757,13 @@ export async function enqueueOwnHostingCoverageReevaluation(
       suppliedParticipantProof,
     );
   }
-  const booking = (await db.booking.findUnique({
+  const bookingRow = (await db.booking.findUnique({
     where: { id: plannedBooking.id },
     select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
-  })) as GroupTripCoverageSourceFacts | null;
+  })) as GroupTripCoverageSourceRow | null;
+  // A re-read that has stopped naming a member changed hands under the fence:
+  // the same safe retry a changed owner already is (#3480).
+  const booking = bookingRow ? coverageParticipantFacts(bookingRow) : null;
   if (!booking) throw new HostingCoverageParticipantRetryError();
   assertHostingCoverageQueueParticipantsLocked(participantProof, {
     memberId: bookingOwner(booking).memberId,
@@ -3697,7 +3857,17 @@ export async function loadHostingCoverageMemberFanoutCandidates(
   db: AdultMemberHostingReviewDb,
   today: Date,
 ): Promise<GroupTripCoverageSourceFacts[]> {
-  return (await db.booking.findMany({
+  // #3480: THE ONE REACHABLE DOOR FOR A SCHOOL BOOKING INTO THIS FAN-OUT. A club
+  // member may be a guest on a school's organisation-owned booking (a teacher who
+  // is also a member), and this read is by ATTENDANCE, so that booking is in the
+  // candidate set. It is not a participant — no member owns it, so there is no
+  // queue item to write and no `Member` row to fence — and it is narrowed out
+  // here rather than at each of the three callers (the standing fan-out, its
+  // under-lock re-read, and merge's plan) so they cannot disagree about it. The
+  // narrowing happens after `take`, so a school row can occupy one of the fifty
+  // slots; that is a slot, not a lost obligation, and the ceiling is already far
+  // above a member's real footprint.
+  return coverageParticipantsOf((await db.booking.findMany({
     where: {
       deletedAt: null,
       status: { in: [...ACTIVE_BOOKING_STATUSES] },
@@ -3716,7 +3886,7 @@ export async function loadHostingCoverageMemberFanoutCandidates(
     // (`INV-SSOT-001`). Merge's plan takes the same rows as `CoverageOwnerFacts` and
     // is unaffected — this type is a superset.
     select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
-  })) as GroupTripCoverageSourceFacts[];
+  })) as GroupTripCoverageSourceRow[]);
 }
 
 /**
@@ -4047,10 +4217,13 @@ export async function inspectSameOwnerStrandingForOffer(
   db: AdultMemberHostingReviewDb,
   vacatedRange: { checkIn: Date; checkOut: Date } | null,
 ): Promise<StrandedCoverageBooking[]> {
-  const booking = (await db.booking.findUnique({
+  const row = (await db.booking.findUnique({
     where: { id: bookingId },
     select: COVERAGE_OWNER_FACTS_SELECT,
-  })) as CoverageOwnerFactsWithOutcome | null;
+  })) as CoverageOwnerRowWithOutcome | null;
+  // An organisation-owned booking has no same-owner dependents to strand — the
+  // scope is about one MEMBER's account — so there is nothing to offer (#3480).
+  const booking = row ? coverageParticipantFacts(row) : null;
   if (!booking) return [];
   const resolved = await loadAdultMemberHostingPolicy(booking.lodgeId, db);
   // THE SAME PREDICATE THE REFUSAL USES, not a second spelling of it: an offer

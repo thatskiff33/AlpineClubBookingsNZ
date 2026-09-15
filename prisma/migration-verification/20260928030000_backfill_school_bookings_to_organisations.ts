@@ -14,6 +14,30 @@ const OWNERSHIP = `
    ORDER BY b."id"
 `;
 
+/**
+ * EVERY money column the Booking table holds, for every booking.
+ *
+ * Kept apart from OWNERSHIP rather than folded into it: widening that query
+ * would have meant restating six amounts on every ownership row of every case,
+ * and the claim OWNERSHIP makes -- who owns what -- would have been lost among
+ * them. This one makes the ledger row's promise checkable instead of merely
+ * written down. Before it existed a mutant adding `"finalPriceCents" = 0` to
+ * the re-parenting UPDATE in section 4 of the migration passed every
+ * expectation in this file, because the only amounts anything read were the two
+ * promo ones.
+ */
+const BOOKING_AMOUNTS = `
+  SELECT b."id" AS "booking",
+         b."totalPriceCents" AS "total",
+         b."discountCents" AS "discount",
+         b."promoAdjustmentCents" AS "promoAdjustment",
+         b."finalPriceCents" AS "final",
+         b."waitlistOfferedPriceCents" AS "waitlistOffered",
+         b."creditElectionCents" AS "creditElection"
+    FROM "Booking" b
+   ORDER BY b."id"
+`;
+
 /** Every school record the migration left behind, with what it inherited. */
 const ORGANISATIONS = `
   SELECT o."name" AS "name",
@@ -144,6 +168,45 @@ const verification: DataMigrationVerification = {
         VALUES
           ('sc-redemption', 'sc-promo', 'sc-b-school-a', 'sc-school-a', 6000, 0);
 
+        -- THE ASSIGNED-SCOPE SHAPE, and it is here because the booker-scoped
+        -- row above cannot see the defect it exists for. An ASSIGNED promo
+        -- carries one allocation per LINKED member and no booker row at all:
+        -- redeemPromoCode deletes the one the trigger makes. Seeded the same
+        -- way the runtime gets there -- let the trigger insert the booker row,
+        -- then delete it -- so this is a pre-state a club really holds.
+        --
+        -- What it discriminates: the REVERSE gives the redemption its member
+        -- back, which fires the 20260527120000 allocation-sync trigger. With
+        -- nothing to conflict onto, the upsert would INSERT a booker allocation
+        -- carrying the whole 5000 -- a row the forward direction never removed,
+        -- an allocation sum larger than the redemption, and a wrong
+        -- PromoCode.currentRedemptions. Above, the trigger rewrites the same
+        -- 6000 onto the row already there and nothing shows.
+        INSERT INTO "PromoCode" ("id", "code", "type", "updatedAt")
+        VALUES ('sc-promo-assigned', 'SCHOOLGUESTS', 'PERCENTAGE',
+                TIMESTAMP '2026-01-01 00:00:00');
+
+        INSERT INTO "PromoRedemption"
+          ("id", "promoCodeId", "bookingId", "memberId", "discountCents",
+           "priceAdjustmentCents")
+        VALUES
+          ('sc-redemption-assigned', 'sc-promo-assigned', 'sc-b-school-b',
+           'sc-school-b', 5000, 0);
+
+        DELETE FROM "PromoRedemptionAllocation"
+         WHERE "promoRedemptionId" = 'sc-redemption-assigned';
+
+        INSERT INTO "PromoRedemptionAllocation"
+          ("id", "promoRedemptionId", "promoCodeId", "bookingId", "memberId",
+           "discountCents", "freeNightsUsed", "createdAt")
+        VALUES
+          ('sc-alloc-ordinary', 'sc-redemption-assigned', 'sc-promo-assigned',
+           'sc-b-school-b', 'sc-ordinary', 2000, 0,
+           TIMESTAMP '2026-01-02 00:00:00'),
+          ('sc-alloc-teacher', 'sc-redemption-assigned', 'sc-promo-assigned',
+           'sc-b-school-b', 'sc-teacher', 3000, 0,
+           TIMESTAMP '2026-01-02 00:00:00');
+
         -- What the club decided, before the window opened. Two schools proved by
         -- the census, one teacher proved by the census, and nothing guessed.
         INSERT INTO "SchoolMemberClassification"
@@ -222,7 +285,7 @@ const verification: DataMigrationVerification = {
         },
         {
           claim:
-            "the redemption and its one allocation name no member and every cent is exactly what it was",
+            "the booker-scoped redemption and its one allocation name no member, the assigned-scope one keeps both guest allocations untouched, and every cent is exactly what it was",
           sql: PROMO,
           rows: [
             {
@@ -232,6 +295,68 @@ const verification: DataMigrationVerification = {
               allocationMember: null,
               allocationDiscount: 6000,
               allocationRows: "1",
+            },
+            // The guest allocations name members the migration never
+            // classified as a school, so section 5 does not reach them. Only
+            // the redemption's own booker link moves.
+            {
+              booking: "sc-b-school-b",
+              redemptionMember: null,
+              redemptionDiscount: 5000,
+              allocationMember: "sc-ordinary",
+              allocationDiscount: 2000,
+              allocationRows: "2",
+            },
+            {
+              booking: "sc-b-school-b",
+              redemptionMember: null,
+              redemptionDiscount: 5000,
+              allocationMember: "sc-teacher",
+              allocationDiscount: 3000,
+              allocationRows: "2",
+            },
+          ],
+        },
+        {
+          claim:
+            "not one Booking amount moved: re-parenting changes who owns a booking and nothing about what it cost",
+          sql: BOOKING_AMOUNTS,
+          rows: [
+            {
+              booking: "sc-b-ordinary",
+              total: 6000,
+              discount: 0,
+              promoAdjustment: 0,
+              final: 6000,
+              waitlistOffered: null,
+              creditElection: null,
+            },
+            {
+              booking: "sc-b-school-a",
+              total: 120000,
+              discount: 0,
+              promoAdjustment: 0,
+              final: 114000,
+              waitlistOffered: null,
+              creditElection: null,
+            },
+            {
+              booking: "sc-b-school-b",
+              total: 90000,
+              discount: 0,
+              promoAdjustment: 0,
+              final: 90000,
+              waitlistOffered: null,
+              creditElection: null,
+            },
+            {
+              booking: "sc-b-teacher",
+              total: 8000,
+              discount: 0,
+              promoAdjustment: 0,
+              final: 8000,
+              waitlistOffered: null,
+              creditElection: null,
             },
           ],
         },
@@ -327,7 +452,7 @@ const verification: DataMigrationVerification = {
               },
               {
                 claim:
-                  "the promo rows name the booking's own member again and not one cent moved in either direction",
+                  "the promo rows name the booking's own member again, the assigned-scope redemption gains NO booker allocation on the way back, and not one cent moved in either direction",
                 sql: PROMO,
                 rows: [
                   {
@@ -337,6 +462,72 @@ const verification: DataMigrationVerification = {
                     allocationMember: "sc-school-a",
                     allocationDiscount: 6000,
                     allocationRows: "1",
+                  },
+                  // `allocationRows: "2"` is the assertion that matters. The
+                  // reverse writes a member back onto this redemption, which
+                  // fires the allocation-sync trigger; without the trigger
+                  // suppressed around that one statement the upsert finds
+                  // nothing to conflict onto and INSERTS a third row for
+                  // sc-school-b holding the whole 5000. Then this is "3", with
+                  // an sc-school-b row between the two below.
+                  {
+                    booking: "sc-b-school-b",
+                    redemptionMember: "sc-school-b",
+                    redemptionDiscount: 5000,
+                    allocationMember: "sc-ordinary",
+                    allocationDiscount: 2000,
+                    allocationRows: "2",
+                  },
+                  {
+                    booking: "sc-b-school-b",
+                    redemptionMember: "sc-school-b",
+                    redemptionDiscount: 5000,
+                    allocationMember: "sc-teacher",
+                    allocationDiscount: 3000,
+                    allocationRows: "2",
+                  },
+                ],
+              },
+              {
+                claim:
+                  "no Booking amount moved on the way back either",
+                sql: BOOKING_AMOUNTS,
+                rows: [
+                  {
+                    booking: "sc-b-ordinary",
+                    total: 6000,
+                    discount: 0,
+                    promoAdjustment: 0,
+                    final: 6000,
+                    waitlistOffered: null,
+                    creditElection: null,
+                  },
+                  {
+                    booking: "sc-b-school-a",
+                    total: 120000,
+                    discount: 0,
+                    promoAdjustment: 0,
+                    final: 114000,
+                    waitlistOffered: null,
+                    creditElection: null,
+                  },
+                  {
+                    booking: "sc-b-school-b",
+                    total: 90000,
+                    discount: 0,
+                    promoAdjustment: 0,
+                    final: 90000,
+                    waitlistOffered: null,
+                    creditElection: null,
+                  },
+                  {
+                    booking: "sc-b-teacher",
+                    total: 8000,
+                    discount: 0,
+                    promoAdjustment: 0,
+                    final: 8000,
+                    waitlistOffered: null,
+                    creditElection: null,
                   },
                 ],
               },

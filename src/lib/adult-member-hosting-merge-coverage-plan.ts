@@ -7,11 +7,13 @@
  * calls back into here, so the import runs one way only.
  */
 import {
+  coverageParticipantsOf,
   loadAdultMemberHostingPolicy,
   loadHostingCoverageMemberFanoutCandidates,
   sourceParticipant,
   type AdultMemberHostingReviewDb,
   type CoverageOwnerFacts,
+  type CoverageOwnerRow,
 } from "@/lib/adult-member-hosting-review";
 import {
   enqueueHostingCoverageReevaluation,
@@ -64,7 +66,11 @@ export async function buildMemberMergeHostingCoveragePlan(
             checkIn: true,
             checkOut: true,
           },
-        }) as Promise<CoverageOwnerFacts[]>)
+          // #3480: the rows as fetched, then the participant decision. These
+          // were the loser's own bookings and have just been re-pointed at the
+          // master, so every one names a member and the narrowing drops nothing;
+          // it is what lets `sourceParticipant` below promise a string owner.
+        }) as Promise<CoverageOwnerRow[]>).then(coverageParticipantsOf)
       : Promise.resolve([]),
   ]);
   const candidatesById = new Map<string, CoverageOwnerFacts>();

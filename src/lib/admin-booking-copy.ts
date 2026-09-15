@@ -75,6 +75,31 @@ export async function copyBookingToDraft({
   if (source.deletedAt) {
     throw new ApiError("Deleted bookings cannot be copied", 400);
   }
+
+  // #3369: a COPY re-books the same party for a new stay under the same owner,
+  // and this path's create service takes a member. An organisation-owned
+  // booking has none, so copying one would have to mint a school booking — a
+  // different operation with its own Xero and organisation-resolution
+  // obligations, and not one an officer should reach by pressing "copy".
+  // Refused in words, before anything is written.
+  //
+  // BEFORE THE ACTIVE-MEMBER CHECK, AND AS AN `ApiError` (#3480). This refusal
+  // used to sit below that check, and `bookingOwner()` projects an organisation
+  // with no `active` at all — so `!member.active` was true for every school
+  // booking, the officer was told "The booking member is inactive", and the
+  // sentence that says what is actually wrong was unreachable. It was also a
+  // bare `Error`, which the route hands to the log and answers with a generic
+  // "Failed to copy booking" (#1888), so even once reached these words would
+  // not have arrived. Every sibling refusal in this function is an
+  // `ApiError(..., 400)`; this one is too, and it is asked first because the
+  // owner's KIND decides whether the owner's standing is even a question.
+  const sourceOwnerMemberId = bookingOwner(source).memberId;
+  if (!sourceOwnerMemberId) {
+    throw new ApiError(
+      "This booking belongs to a school rather than to a member, so it cannot be copied. Approve a new school booking request instead (#3369).",
+      400,
+    );
+  }
   if (!bookingOwner(source).member.active) {
     throw new ApiError("The booking member is inactive", 400);
   }
@@ -122,19 +147,6 @@ export async function copyBookingToDraft({
     kind: "ADMIN",
     adminMemberId: adminMemberId,
   };
-
-  // #3369: a COPY re-books the same party for a new stay under the same owner,
-  // and this path's create service takes a member. An organisation-owned
-  // booking has none, so copying one would have to mint a school booking — a
-  // different operation with its own Xero and organisation-resolution
-  // obligations, and not one an officer should reach by pressing "copy".
-  // Refused in words, before anything is written.
-  const sourceOwnerMemberId = bookingOwner(source).memberId;
-  if (!sourceOwnerMemberId) {
-    throw new Error(
-      "This booking belongs to a school rather than to a member, so it cannot be copied. Approve a new school booking request instead (#3369).",
-    );
-  }
 
   let resolved: ResolvedLinkedBookingMembers;
   try {

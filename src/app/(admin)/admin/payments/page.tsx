@@ -1101,6 +1101,9 @@ export default function PaymentsPage() {
                 p.booking.creditsFromCancellation
               );
               const xeroChip = xeroStateChip(p.xeroState);
+              // #3369/#3480: an organisation owner has no member page; its name
+              // renders as text rather than as a link to `/admin/members/undefined`.
+              const owner = bookingOwner(p.booking).member;
 
               return (
                 <TableRow key={p.id}>
@@ -1114,12 +1117,18 @@ export default function PaymentsPage() {
                   <TableCell className="text-sm">{clubTime.instantDate(requireInstant(p.lastUpdatedAt))}</TableCell>
                   <TableCell className="text-sm">{formatPayloadCalendarDay(p.booking.checkIn)}</TableCell>
                   <TableCell className="font-medium">
-                    <Link
-                      href={buildHrefWithReturnTo(`/admin/members/${bookingOwner(p.booking).member.id}`, currentPaymentsPath)}
-                      className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {bookingOwner(p.booking).member.lastName}, {bookingOwner(p.booking).member.firstName}
-                    </Link>
+                    {owner.id ? (
+                      <Link
+                        href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentPaymentsPath)}
+                        className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {owner.lastName}, {owner.firstName}
+                      </Link>
+                    ) : (
+                      <span className="text-foreground">
+                        {owner.lastName}, {owner.firstName}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Link

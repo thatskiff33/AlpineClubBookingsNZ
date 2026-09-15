@@ -3,7 +3,11 @@ import "server-only";
 import type { DisplayNameGranularity, Prisma } from "@prisma/client";
 
 import { isGuestActiveOnNight } from "./booking-guest-stay-ranges";
-import { bookingOwner } from "./booking-owner";
+import {
+  bookingOwner,
+  bookingOwnerAgeTier,
+  bookingOwnerHasNoAgeTier,
+} from "./booking-owner";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "./booking-status";
 import {
   findCustodianBedHolds,
@@ -381,9 +385,9 @@ function buildOneLodgeRoster(
     // entire building for five people is fully named the moment any second
     // booking exists in the window, because five is under the group threshold.
     const isGroup =
-      // #3369: `undefined` is an organisation, which is a group outright.
-      (bookingOwner(booking).member.ageTier ?? "NOT_APPLICABLE") ===
-        "NOT_APPLICABLE" ||
+      // #3369: an organisation has no age tier and is a group outright — asked
+      // through the one home of that rule (#3480), as the lobby display does.
+      bookingOwnerHasNoAgeTier(booking) ||
       booking.guests.length >= WHOLE_LODGE_MIN_GUESTS;
     const soleOccupancy =
       booking.wholeLodgeHold ||
@@ -409,8 +413,7 @@ function buildOneLodgeRoster(
       // #3369: an ORGANISATION has no age tier, and `NOT_APPLICABLE` is exactly
       // that — the value the shared rules already reserve for an organiser who
       // is not a person. The sibling lobby-display call reads it the same way.
-      organiserAgeTier:
-        bookingOwner(booking).member.ageTier ?? "NOT_APPLICABLE",
+      organiserAgeTier: bookingOwnerAgeTier(booking),
       granularity,
     });
 

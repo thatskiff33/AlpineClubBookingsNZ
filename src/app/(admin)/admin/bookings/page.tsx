@@ -644,19 +644,33 @@ export default async function AdminBookingsPage({
                 const outstandingAdditionalCents =
                   booking.operational.outstandingAdditionalCents;
                 const nights = nightsBetween(booking.checkIn, booking.checkOut);
+                // #3369/#3480: a school has no member page. The owner's `id` is
+                // `undefined` for an organisation, and a link built from it went
+                // to `/admin/members/undefined`; the school's name is plain text
+                // instead, as the change-requests panel already does.
+                const owner = bookingOwner(booking).member;
 
                 return (
                   <TableRow key={booking.id}>
                     <TableCell>
-                      <Link
-                        href={buildHrefWithReturnTo(`/admin/members/${bookingOwner(booking).member.id}`, currentBookingsPath)}
-                        className="group inline-block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        <span className="block text-sm font-medium text-foreground group-hover:text-primary group-hover:underline">
-                          {bookingOwner(booking).member.firstName} {bookingOwner(booking).member.lastName}
+                      {owner.id ? (
+                        <Link
+                          href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentBookingsPath)}
+                          className="group inline-block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <span className="block text-sm font-medium text-foreground group-hover:text-primary group-hover:underline">
+                            {owner.firstName} {owner.lastName}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">{owner.email}</span>
+                        </Link>
+                      ) : (
+                        <span className="inline-block">
+                          <span className="block text-sm font-medium text-foreground">
+                            {owner.firstName} {owner.lastName}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">{owner.email}</span>
                         </span>
-                        <span className="block text-xs text-muted-foreground">{bookingOwner(booking).member.email}</span>
-                      </Link>
+                      )}
                       {/* #3369: a phone number is a MEMBER's contact detail. A
                           school's own number lives on the organisation record and
                           is not shown in this column, which is what a school row

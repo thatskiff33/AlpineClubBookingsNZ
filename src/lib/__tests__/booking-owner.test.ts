@@ -13,7 +13,9 @@ import { describe, expect, it } from "vitest";
 import {
   BookingOwnerMissingError,
   bookingOwner,
+  bookingOwnerAgeTier,
   bookingOwnerEmail,
+  bookingOwnerHasNoAgeTier,
   bookingOwnerProviderMetadata,
 } from "@/lib/booking-owner";
 
@@ -194,5 +196,51 @@ describe("#3369: where a caller must actually SEND, or name a provider customer"
     expect(() =>
       bookingOwnerProviderMetadata({ memberId: null, organisationId: null }),
     ).toThrow(BookingOwnerMissingError);
+  });
+});
+
+describe("#3480: the owner's age tier has one home, and an organisation's is NOT_APPLICABLE", () => {
+  // The rule was spelled inline at six sites as `member.ageTier ?? "NOT_APPLICABLE"`,
+  // and a seventh had been written with `===`, which is false for the `undefined`
+  // an organisation projects — a five-student school alone in the lodge stopped
+  // drawing as a whole-lodge blockout (#3391). One spelling, asserted here.
+  const memberOwned = {
+    memberId: MEMBER.id,
+    member: MEMBER,
+    organisationId: null,
+    organisation: null,
+  };
+  const schoolOwned = {
+    memberId: null,
+    member: null,
+    organisationId: "org-1",
+    organisation: SCHOOL,
+  };
+
+  it("hands a member's own tier back", () => {
+    expect(bookingOwnerAgeTier(memberOwned)).toBe("ADULT");
+    expect(bookingOwnerHasNoAgeTier(memberOwned)).toBe(false);
+  });
+
+  it("reads an organisation, which has no age, as NOT_APPLICABLE", () => {
+    expect(bookingOwnerAgeTier(schoolOwned)).toBe("NOT_APPLICABLE");
+    expect(bookingOwnerHasNoAgeTier(schoolOwned)).toBe(true);
+  });
+
+  it("gives the same answer for a school reached through a member-only selection", () => {
+    // The projection cannot be built without the organisation, so the caller's
+    // own `member: null` comes back — and a null member has no tier either.
+    expect(bookingOwnerAgeTier({ memberId: null, member: null })).toBe("NOT_APPLICABLE");
+  });
+
+  it("treats an age-exempt account's own NOT_APPLICABLE the same way", () => {
+    // The tier the invented school member carried, and the tier an age-exempt
+    // account still carries: the predicate reads both as "no age tier".
+    expect(
+      bookingOwnerHasNoAgeTier({
+        ...memberOwned,
+        member: { ...MEMBER, ageTier: "NOT_APPLICABLE" as const },
+      }),
+    ).toBe(true);
   });
 });

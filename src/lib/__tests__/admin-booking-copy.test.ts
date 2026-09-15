@@ -288,6 +288,37 @@ describe("copyBookingToDraft", () => {
     );
   });
 
+  it("refuses to copy an organisation-owned booking in words an officer can act on, as a 400 (#3480)", async () => {
+    // #3369 made the member link optional, so a school's booking is owned by its
+    // Organisation and `bookingOwner()` projects it with no `active` and no
+    // member id. The deliberate refusal for that case sat BELOW the
+    // active-member check, and `!undefined` is true — so every school copy was
+    // refused as "The booking member is inactive", and the sentence that says
+    // what is wrong was unreachable. It was also a bare `Error`, which the route
+    // turns into a generic "Failed to copy booking"; as an `ApiError` its words
+    // reach the officer.
+    mocks.bookingFindUnique.mockResolvedValue(
+      makeSourceBooking({
+        memberId: null,
+        member: null,
+        organisationId: "org-1",
+        organisation: { name: "Harakeke College", email: null },
+      }),
+    );
+
+    await expect(
+      copyBookingToDraft({
+        sourceBookingId: "source-booking",
+        targetCheckIn: "2026-09-10",
+        adminMemberId: "admin-1",
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("belongs to a school rather than to a member"),
+      status: 400,
+    });
+    expect(mocks.createDraftBooking).not.toHaveBeenCalled();
+  });
+
   it("rejects deleted source bookings", async () => {
     mocks.bookingFindUnique.mockResolvedValue(
       makeSourceBooking({ deletedAt: new Date("2026-08-10T00:00:00.000Z") }),

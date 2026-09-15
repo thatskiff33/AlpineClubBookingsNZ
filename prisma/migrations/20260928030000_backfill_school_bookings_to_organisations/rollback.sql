@@ -217,11 +217,43 @@ FROM "school_rollback_booking" rb
 WHERE pra."bookingId" = rb.booking_id
   AND pra."memberId" IS NULL;
 
+-- THE TRIGGER IS SUPPRESSED FOR EXACTLY ONE STATEMENT, AND THAT IS NOT
+-- BOOKKEEPING -- it is the difference between restoring rows and minting one
+-- that carries money.
+--
+-- `PromoRedemption_sync_allocation_update` (20260527120000) fires
+-- AFTER UPDATE OF "memberId" and upserts a BOOKER allocation carrying the
+-- redemption's whole "discountCents"/"freeNightsUsed", ON CONFLICT
+-- ("promoRedemptionId", "memberId"). The forward migration is safe from it
+-- because it writes NULL and 20260928020000 taught the function to return
+-- early on a NULL booker. THIS statement writes a member back, so the guard
+-- does not apply and the upsert runs.
+--
+-- For a booker-scoped promo that is harmless: the UPDATE above has just
+-- restored the booker allocation, the upsert conflicts onto it and rewrites
+-- the same figures. For an ASSIGNED-scope promo it is not. Those carry one
+-- allocation per linked member and NO booker row -- `redeemPromoCode` deletes
+-- the one the trigger made -- so nothing conflicts and the upsert INSERTS a
+-- brand-new allocation for the school member holding the entire discount. A
+-- #2299 zero-benefit redemption, which has no allocation rows at all, gets an
+-- all-zero row the runtime deliberately removes. Either way the reverse ends
+-- with an allocation row the forward migration never took away, the allocation
+-- sum exceeds the redemption, and "PromoCode"."currentRedemptions" -- which
+-- 20260731140000 pins to the allocation count -- is left wrong.
+--
+-- Disabling the trigger is transactional: if anything below fails, the
+-- ROLLBACK restores it with the rest of the script.
+ALTER TABLE "PromoRedemption"
+  DISABLE TRIGGER "PromoRedemption_sync_allocation_update";
+
 UPDATE "PromoRedemption" pr
 SET "memberId" = rb.member_id
 FROM "school_rollback_booking" rb
 WHERE pr."bookingId" = rb.booking_id
   AND pr."memberId" IS NULL;
+
+ALTER TABLE "PromoRedemption"
+  ENABLE TRIGGER "PromoRedemption_sync_allocation_update";
 
 UPDATE "Booking" b
 SET "memberId" = rb.member_id,

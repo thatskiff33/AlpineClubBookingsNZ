@@ -38,6 +38,19 @@ BEGIN;
 -- The message names no member, no school and no count. It is raised in a
 -- maintenance window to an operator who is about to run the census again, and
 -- the census is what prints the list.
+--
+-- THE HINT NAMES `migrate resolve` AND THAT IS NOT PADDING. Raising here aborts
+-- the migration, but `prisma migrate deploy` has already written this
+-- migration's `_prisma_migrations` row, and it stays there with a NULL
+-- `finished_at`. Every later `migrate deploy` then refuses with P3009 -- "found
+-- failed migrations in the target database" -- before it looks at anything. So
+-- an operator who does exactly what the obvious half of the hint says, records
+-- the missing decisions and runs the migration again, meets a second refusal
+-- with a different name, inside the window, with the club offline. The failed
+-- row has to be marked rolled back first. The full sequence, and the way out if
+-- the decision cannot be made in the window at all, is in
+-- docs/PRODUCTION_UPGRADE_RUNBOOK.md section 2.4.2 under "If the backfill
+-- refuses inside the window".
 DO $fail_closed$
 BEGIN
     IF EXISTS (
@@ -49,7 +62,7 @@ BEGIN
           )
     ) THEN
         RAISE EXCEPTION 'school_member_classification_incomplete'
-            USING HINT = 'Run npm run db:school-classification-census and record a decision for every row it lists as CANNOT TELL, then run the migration again.';
+            USING HINT = 'Nothing was written. Run npm run db:school-classification-census and record a decision for every row it lists as CANNOT TELL. This migration is now recorded as FAILED, so mark it rolled back -- prisma migrate resolve --rolled-back 20260928030000_backfill_school_bookings_to_organisations -- before running the migration again, or the next attempt refuses with P3009. See PRODUCTION_UPGRADE_RUNBOOK.md section 2.4.2.';
     END IF;
 END;
 $fail_closed$;

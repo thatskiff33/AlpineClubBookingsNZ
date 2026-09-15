@@ -1,7 +1,7 @@
 # File-size allowances for #3392
 
 file: src/app/(admin)/admin/payments/page.tsx
-lines: 1324
+lines: 1333
 reason: one line, and it is an import. The three gross-amount boxes on this
   screen spelled `INV-MONEY-003`'s money-box contract by hand as a bare
   `inputMode="decimal"`, which is the fifth spelling of the same thing and the
@@ -13,4 +13,4 @@ reason: one line, and it is an import. The three gross-amount boxes on this
   would bury that in a move diff — and the alternative, leaving this screen on
   the hand-written spelling because the file is long, is how the other four got
   missed in the first place.
-  #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged.
+  #3368's ownership sweep then added this file's one-line `bookingOwner` import, so the length recorded here is the length after that import; the reasoning above is unchanged. RE-MEASURED by #3480: nine more lines, the payer cell rendered as plain text when the booking is a school's — an organisation has no member page, and the link went to `/admin/members/undefined`.
