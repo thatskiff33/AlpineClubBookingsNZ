@@ -115,14 +115,46 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { SCHOOL_CHILD_NAME_PREFIX } from "@/lib/placeholder-guest-names";
+import {
+  SCHOOL_CHILD_TIERS,
+  sameSchoolGuestList,
+  unchangedSchoolGuestPrefixLength,
+} from "@/lib/school-booking-constants";
 import { nameField } from "@/lib/zod-helpers";
 
-/** Age tiers a school can request counts for. Teachers are always ADULT. */
-const SCHOOL_CHILD_TIERS = [
-  AgeTier.INFANT,
-  AgeTier.CHILD,
-  AgeTier.YOUTH,
-] as const;
+/**
+ * Bound a school party by the lodge's bed count — `INV-CAP`, and ONE
+ * implementation of it (#3412).
+ *
+ * Three doors apply this rule: the public form's route, the create service, and
+ * the officer's guest-override resolver below. All three resolved the capacity
+ * the same way and built the same sentence, so a club that changed the wording
+ * or the null-lodge fallback in one of them would have changed it in one of
+ * them. The status code is the caller's, because the public door answers 400
+ * for every rejected submission while the two admin doors answer 422 for a body
+ * that parsed but cannot be applied; nothing else differs.
+ *
+ * This is the lodge's STATIC bed count, not a per-night availability read. No
+ * beds are held here and no capacity lock is taken. The per-night check stays
+ * where the reservation is (`holdBookingRequestSlots`, and approval's re-check).
+ */
+export async function assertSchoolGuestsWithinLodgeCapacity(input: {
+  guestCount: number;
+  /** The lodge whose bed count binds. Null means the club's default lodge. */
+  lodgeId: string | null;
+  status: 400 | 422;
+}): Promise<number> {
+  const lodgeCapacity = input.lodgeId
+    ? await getLodgeCapacity(input.lodgeId)
+    : await getDefaultLodgeCapacity();
+  if (input.guestCount > lodgeCapacity) {
+    throw new BookingRequestError(
+      `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
+      input.status
+    );
+  }
+  return lodgeCapacity;
+}
 
 // ---------------------------------------------------------------------------
 // Input shapes
@@ -249,26 +281,6 @@ export interface SchoolGuestResolution {
   changed: boolean;
 }
 
-/** Same party, guest for guest? Compared on what is priced and held. */
-function sameGuestList(
-  a: BookingRequestGuest[],
-  b: BookingRequestGuest[]
-): boolean {
-  if (a.length !== b.length) return false;
-  // Indexed access is checked (`noUncheckedIndexedAccess`): a length that
-  // matched is not a promise the element is there once either array has been
-  // through JSON.
-  return a.every((guest, index) => {
-    const other = b[index];
-    return (
-      other !== undefined &&
-      other.firstName === guest.firstName &&
-      other.lastName === guest.lastName &&
-      other.ageTier === guest.ageTier
-    );
-  });
-}
-
 /**
  * Resolve a school request's guest list against an officer's adjusted child
  * counts — the ONE implementation, shared by saving a quote (#3412) and
@@ -288,15 +300,27 @@ function sameGuestList(
  *   convertible by any route: decline it, or repair the stored data.
  * - **The named teachers/parent helpers are preserved** and stay first in the
  *   list; only the bulk children are regenerated (`generateSchoolGuests`).
- * - **Lodge capacity binds the new list** — `INV-CAP`. This is the static bed
- *   count of the lodge, not a per-night availability read: no beds are held
- *   here and no capacity lock is taken, because nothing in this function
- *   reserves anything. The per-night check stays where the reservation is
- *   (`holdBookingRequestSlots`, and approval's re-check — `INV-ADDPAY-008`).
+ * - **Lodge capacity binds the new list** — `INV-CAP`, through the one helper
+ *   all three school doors share (`assertSchoolGuestsWithinLodgeCapacity`).
+ *   This is the static bed count of the lodge, not a per-night availability
+ *   read: no beds are held here and no capacity lock is taken, because nothing
+ *   in this function reserves anything. The per-night check stays where the
+ *   reservation is (`holdBookingRequestSlots`, and approval's re-check —
+ *   `INV-ADDPAY-008`).
+ * - **A member linked to a row the regeneration renumbers is refused (422).**
+ *   Children are regenerated as numbered placeholders, so a link stored against
+ *   child #7 would come to mean a DIFFERENT child once the list is renumbered,
+ *   and that member would then be priced as a member, invoiced and emailed onto
+ *   somebody else's bed. It lives HERE, not in one caller, because both callers
+ *   apply the link POSITIONALLY against the regenerated list — approve as much
+ *   as quote — so a refusal in the quote service alone left approve doing by
+ *   design the thing the refusal exists to prevent, with no new condition on
+ *   the Approve button to stop it.
  *
  * `changed` is the answer to "does persisting this rewrite the party?", and it
  * is false for an override that types the current numbers back — which the
- * panel sends whenever the officer touched a box at all.
+ * panel sends whenever the officer touched a box at all. Nothing is refused
+ * when it is false: an unchanged list renumbers nobody.
  */
 export async function resolveSchoolGuestOverride(input: {
   /** The stored request row; only its two guest-shaped columns are read. */
@@ -309,6 +333,14 @@ export async function resolveSchoolGuestOverride(input: {
    * lodge, not the request's selector.
    */
   lodgeId: string | null;
+  /**
+   * Which guest positions carry a member link — REQUIRED, with no default, so a
+   * future third caller cannot get the refusal above skipped by forgetting it.
+   * Each caller passes the list that will actually be applied positionally:
+   * approve the STORED blob it is about to convert, saving a quote the POSTED
+   * links it is about to write.
+   */
+  linkedGuestIndexes: readonly number[];
 }): Promise<SchoolGuestResolution> {
   const teachers = parseSchoolTeachers(input.request.teachers);
   const storedGuests = parseBookingRequestGuests(input.request.guests);
@@ -320,12 +352,23 @@ export async function resolveSchoolGuestOverride(input: {
     throw new BookingRequestError("At least one guest is required", 422);
   }
   if (overridden) {
-    const lodgeCapacity = input.lodgeId
-      ? await getLodgeCapacity(input.lodgeId)
-      : await getDefaultLodgeCapacity();
-    if (guests.length > lodgeCapacity) {
+    await assertSchoolGuestsWithinLodgeCapacity({
+      guestCount: guests.length,
+      lodgeId: input.lodgeId,
+      status: 422,
+    });
+  }
+  const changed = overridden && !sameSchoolGuestList(storedGuests, guests);
+  if (changed) {
+    const unchangedPrefix = unchangedSchoolGuestPrefixLength(storedGuests, guests);
+    const misplacedIndex = input.linkedGuestIndexes
+      .filter((guestIndex) => guestIndex >= unchangedPrefix)
+      .sort((a, b) => a - b)[0];
+    if (misplacedIndex !== undefined) {
+      const row = storedGuests[misplacedIndex];
+      const rowName = row ? `${row.firstName} ${row.lastName}` : `row ${misplacedIndex + 1}`;
       throw new BookingRequestError(
-        `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
+        `A member is linked to ${rowName}, one of the school's unnamed children, and these group numbers renumber that row — the member would end up on somebody else's bed. Unlink them, save the new numbers, then link them again to the right row so they keep the member rate.`,
         422
       );
     }
@@ -335,7 +378,7 @@ export async function resolveSchoolGuestOverride(input: {
     storedGuests,
     guests,
     overridden,
-    changed: overridden && !sameGuestList(storedGuests, guests),
+    changed,
   };
 }
 
@@ -549,15 +592,11 @@ export async function createSchoolBookingRequest(
   }
 
   const requestedLodgeId = input.lodgeId ?? null;
-  const lodgeCapacity = requestedLodgeId
-    ? await getLodgeCapacity(requestedLodgeId)
-    : await getDefaultLodgeCapacity();
-  if (guests.length > lodgeCapacity) {
-    throw new BookingRequestError(
-      `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
-      422
-    );
-  }
+  await assertSchoolGuestsWithinLodgeCapacity({
+    guestCount: guests.length,
+    lodgeId: requestedLodgeId,
+    status: 422,
+  });
 
   const indicativePriceCents = await calculateSchoolIndicativePriceCents({
     checkIn: input.checkIn,
@@ -745,6 +784,11 @@ export async function approveSchoolBookingRequest(input: {
     request,
     childCounts: input.guestOverride?.childCounts,
     lodgeId: approvalLodgeId,
+    // The STORED blob, because that is the map applied positionally against the
+    // regenerated list a few lines down (`buildApprovalGuestCreates`) — so an
+    // override that renumbers a linked child is refused here rather than
+    // silently moving that member onto another child's bed.
+    linkedGuestIndexes: [...linkedMembers.keys()],
   });
   const schoolName =
     request.schoolName ?? `${request.contactFirstName} ${request.contactLastName}`;

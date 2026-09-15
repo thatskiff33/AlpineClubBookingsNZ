@@ -1995,6 +1995,40 @@ describe("approveSchoolBookingRequest", () => {
     expect(bookingArgs.guests.create).toHaveLength(5);
   });
 
+  /*
+   * #3412 review (B3): APPROVE IS THE OTHER DOOR, AND IT WAS LEFT OPEN.
+   *
+   * Approve builds its linked-member map from the STORED blob and applies it
+   * POSITIONALLY against the regenerated list — so before this, an officer who
+   * could not save a quote with a member linked to a school child could simply
+   * press Approve instead, and that member was priced as a member, invoiced and
+   * emailed onto a different child's bed. The refusal now sits in the shared
+   * resolver, so it covers both.
+   */
+  it("refuses an override that would move a linked member onto another child's row", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({
+        // Index 2 is the second school child: a row the regeneration renumbers.
+        linkedGuestMembers: [{ guestIndex: 2, memberId: "member-1" }],
+      }) as never
+    );
+
+    const refusal = (await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+      guestOverride: { childCounts: { YOUTH: 2 } },
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    )) as { status?: number; message?: string };
+
+    expect(refusal.status).toBe(422);
+    expect(refusal.message).toContain("School Child 2");
+    // Refused before anything was created.
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+    expect(prisma.member.create).not.toHaveBeenCalled();
+  });
+
   it("rejects a quantity override that exceeds the lodge capacity", async () => {
     mockedFindUnique.mockResolvedValue(schoolRequest() as never);
 
@@ -3177,6 +3211,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     const resolution = await resolveSchoolGuestOverride({
       request: storedRequest(),
       lodgeId: "lodge-1",
+      linkedGuestIndexes: [],
     });
 
     expect(resolution.guests).toEqual(STORED_GUESTS);
@@ -3192,6 +3227,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
       request: storedRequest(),
       childCounts: { INFANT: 1, CHILD: 2, YOUTH: 0 },
       lodgeId: "lodge-1",
+      linkedGuestIndexes: [],
     });
 
     expect(resolution.guests).toEqual([
@@ -3214,6 +3250,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
       request: storedRequest(),
       childCounts: { YOUTH: 3 },
       lodgeId: "lodge-1",
+      linkedGuestIndexes: [],
     });
 
     expect(resolution.guests).toEqual(STORED_GUESTS);
@@ -3229,8 +3266,20 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
         request: storedRequest(),
         childCounts: { YOUTH: 39 },
         lodgeId: "lodge-1",
+        linkedGuestIndexes: [],
       })
-    ).rejects.toMatchObject({ status: 422, message: /capacity of 40/ });
+    ).rejects.toMatchObject({ status: 422 });
+    // Asserted as a STRING, and separately: `toMatchObject` does NOT match a
+    // RegExp against a string, so `{ message: /capacity of 40/ }` asserted
+    // nothing at all and any 422 satisfied it (#3412 review, F6).
+    await expect(
+      resolveSchoolGuestOverride({
+        request: storedRequest(),
+        childCounts: { YOUTH: 39 },
+        lodgeId: "lodge-1",
+        linkedGuestIndexes: [],
+      })
+    ).rejects.toThrow("A school booking cannot exceed the lodge capacity of 40 guests");
   });
 
   it("bounds against the club's default lodge when the request names none", async () => {
@@ -3241,6 +3290,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
         request: storedRequest(),
         childCounts: { YOUTH: 3 },
         lodgeId: null,
+        linkedGuestIndexes: [],
       })
     ).rejects.toMatchObject({ status: 422 });
     expect(vi.mocked(getLodgeCapacity)).not.toHaveBeenCalled();
@@ -3255,6 +3305,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
         request: storedRequest({ guests: [{ firstName: "Broken" }] }),
         childCounts: { YOUTH: 18 },
         lodgeId: "lodge-1",
+        linkedGuestIndexes: [],
       })
     ).rejects.toMatchObject({ status: 409 });
   });
@@ -3265,7 +3316,95 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
         request: storedRequest({ teachers: [] }),
         childCounts: { INFANT: 0, CHILD: 0, YOUTH: 0 },
         lodgeId: "lodge-1",
+        linkedGuestIndexes: [],
       })
     ).rejects.toMatchObject({ status: 422 });
+  });
+
+  /*
+   * The link refusal lives HERE, not in the quote service (#3412 review, B3).
+   *
+   * Both callers apply their link map POSITIONALLY against the regenerated
+   * list, so a refusal in the quote service alone left approve doing by design
+   * the very thing the refusal exists to prevent — with no new condition on the
+   * Approve button to stop an officer editing the boxes and approving.
+   */
+  it("refuses a member linked to a row the new numbers renumber", async () => {
+    const refusal = (await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      // Three youth become two children: every child row is renumbered or
+      // retiered from index 2 on.
+      childCounts: { CHILD: 2 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [3],
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    )) as { status?: number; message?: string };
+
+    expect(refusal.status).toBe(422);
+    // Names the row the officer has to find among identical placeholders, and
+    // tells them to LINK AGAIN afterwards — followed literally, the old
+    // "unlink, then save" lost the member their member rate.
+    expect(refusal.message).toContain("School Child 2");
+    expect(refusal.message).toContain("link them again");
+  });
+
+  it("keeps a teacher's link, and any child row the change leaves untouched", async () => {
+    // Adding a fourth youth appends: rows 0-4 are byte-identical in both lists,
+    // so nothing at those positions is renumbered and no link there is at risk.
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      childCounts: { YOUTH: 4 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [0, 4],
+    });
+
+    expect(resolution.changed).toBe(true);
+    expect(resolution.guests).toHaveLength(6);
+  });
+
+  it("measures the boundary against the stored LIST, not the teachers column", async () => {
+    /*
+     * #3412 review (F12). `teachers.length` and the stored list's leading ADULT
+     * run agree when one generator wrote both — and #3412's own incident row
+     * was REPAIRED BY HAND, which is exactly how a production row stops
+     * agreeing. Here the stored list carries a third adult the `teachers`
+     * column does not, so index 2 holds a named adult that regeneration
+     * replaces with a child. A boundary counted in the column would have
+     * allowed a link there.
+     */
+    const refusal = (await resolveSchoolGuestOverride({
+      request: storedRequest({
+        guests: [
+          { firstName: "Tui", lastName: "Teacher", ageTier: "ADULT" },
+          { firstName: "Rimu", lastName: "Helper", ageTier: "ADULT" },
+          { firstName: "Kauri", lastName: "Parent", ageTier: "ADULT" },
+          { firstName: "School Child", lastName: "1", ageTier: "YOUTH" },
+        ],
+      }),
+      childCounts: { YOUTH: 2 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [2],
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    )) as { status?: number; message?: string };
+
+    expect(refusal.status).toBe(422);
+    expect(refusal.message).toContain("Kauri Parent");
+  });
+
+  it("refuses nothing when the officer types the stored numbers back", async () => {
+    // An unchanged list renumbers nobody, so a link anywhere in it is safe —
+    // otherwise a correctly-linked row could never be re-saved at all.
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      childCounts: { YOUTH: 3 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [4],
+    });
+
+    expect(resolution.changed).toBe(false);
   });
 });
