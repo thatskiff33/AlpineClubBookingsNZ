@@ -10,3 +10,13 @@
   offline. Nothing could have gone wrong — the steps touch different tables and
   none depends on another — and not one step changed; only their names, the
   notes explaining the move, and every place the runbooks name them.
+- **A school's booking draws as a whole-lodge blockout on the lodge display
+  again, however small the group (#3369, #3391).** Since the schools work
+  moved school bookings off their stand-in member records, the lobby display
+  was asking "is this a school?" in a way that only the old records could
+  answer yes to, so a school party under the eight-person group threshold with
+  the lodge to itself appeared as an ordinary booking row rather than a
+  blockout. Names were never affected — the school was still labelled by its
+  name and its students were never shown. The display now asks the question
+  the same way the member lodge roster does, and both surfaces carry a test
+  for a school booking in its new shape.
