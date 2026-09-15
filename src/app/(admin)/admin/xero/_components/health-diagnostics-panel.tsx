@@ -486,9 +486,16 @@ function MissingInvoicesList({
                 <Badge variant="outline">{booking.status}</Badge>
               </div>
               <p className="text-sm">
-                <a href={buildHrefWithReturnTo(`/admin/members/${bookingOwner(booking).memberId}`, currentXeroPath)} className="text-primary hover:underline">
-                  {booking.memberName}
-                </a>
+                {/* #3369/#3480: a paid school booking can be missing its Xero invoice
+                    too, and a school has no member page — its name is plain text
+                    rather than a link to `/admin/members/null`. */}
+                {bookingOwner(booking).memberId ? (
+                  <a href={buildHrefWithReturnTo(`/admin/members/${bookingOwner(booking).memberId}`, currentXeroPath)} className="text-primary hover:underline">
+                    {booking.memberName}
+                  </a>
+                ) : (
+                  <span className="text-foreground">{booking.memberName}</span>
+                )}
                 <span className="ml-2 text-muted-foreground">{booking.memberEmail}</span>
               </p>
               <p className="text-xs text-muted-foreground">

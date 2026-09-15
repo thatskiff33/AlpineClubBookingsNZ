@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
-import { bookingOwner } from "@/lib/booking-owner";
 import { formatCents } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -70,7 +69,8 @@ interface WaitlistEntry {
   id: string;
   memberName: string;
   memberEmail: string;
-  memberId: string;
+  /** `null` for an organisation-owned entry, which has no member page (#3369). */
+  memberId: string | null;
   checkIn: string;
   checkOut: string;
   guestCount: number;
@@ -861,16 +861,26 @@ export default function AdminWaitlistPage() {
                 <TableRow key={entry.id}>
                   <TableCell>{entry.waitlistPosition ?? "-"}</TableCell>
                   <TableCell>
-                    <Link
-                      href={buildHrefWithReturnTo(
-                        `/admin/members/${bookingOwner(entry).memberId}`,
-                        currentWaitlistPath
-                      )}
-                      className="hover:underline"
-                    >
-                      <div className="font-medium text-primary">{entry.memberName}</div>
-                      <div className="text-xs text-muted-foreground">{entry.memberEmail}</div>
-                    </Link>
+                    {/* #3369/#3480: an organisation-owned entry has no member
+                        page, so its name is plain text rather than a link to
+                        `/admin/members/null`. */}
+                    {entry.memberId ? (
+                      <Link
+                        href={buildHrefWithReturnTo(
+                          `/admin/members/${entry.memberId}`,
+                          currentWaitlistPath
+                        )}
+                        className="hover:underline"
+                      >
+                        <div className="font-medium text-primary">{entry.memberName}</div>
+                        <div className="text-xs text-muted-foreground">{entry.memberEmail}</div>
+                      </Link>
+                    ) : (
+                      <div>
+                        <div className="font-medium">{entry.memberName}</div>
+                        <div className="text-xs text-muted-foreground">{entry.memberEmail}</div>
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div>{entry.checkIn}</div>

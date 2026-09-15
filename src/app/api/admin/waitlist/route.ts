@@ -108,7 +108,10 @@ export async function GET(request: NextRequest) {
     id: b.id,
     memberName: `${bookingOwner(b).member.firstName} ${bookingOwner(b).member.lastName}`,
     memberEmail: bookingOwner(b).member.email,
-    memberId: bookingOwner(b).member.id,
+    // #3480: the owner's member id, `null` for an organisation. `member.id` is
+    // `undefined` there, which JSON drops, so the page could not tell "no member
+    // page" from a shape it did not expect; `memberId` says it in so many words.
+    memberId: bookingOwner(b).memberId,
     checkIn: formatDateOnly(b.checkIn),
     checkOut: formatDateOnly(b.checkOut),
     guestCount: b.guests.length,
