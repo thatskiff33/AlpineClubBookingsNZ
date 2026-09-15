@@ -3,10 +3,10 @@ import "server-only";
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 import {
-  BOOKING_MONEY_RECONCILIATION_REASON_ORDER,
   reconcileBookingMoney,
+  summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliation,
-  type BookingMoneyReconciliationReason,
+  type BookingMoneyReconciliationSummary,
 } from "@/lib/booking-money-reconciliation";
 
 export const BOOKING_MONEY_RECONCILIATION_SELECT = {
@@ -68,11 +68,7 @@ export async function readBookingMoneyReconciliation(
   return booking ? reconcileStoredBookingMoney(booking) : null;
 }
 
-export type BookingMoneyReconciliationCensus = {
-  totalBookings: number;
-  byState: { RECONCILED: number; UNRECONCILED: number };
-  byReason: Record<BookingMoneyReconciliationReason, number>;
-};
+export type BookingMoneyReconciliationCensus = BookingMoneyReconciliationSummary;
 
 /**
  * Reproducible whole-table classification from one repeatable-read snapshot.
@@ -88,28 +84,8 @@ export async function censusBookingMoneyReconciliation(
         orderBy: { id: "asc" },
         select: BOOKING_MONEY_RECONCILIATION_SELECT,
       });
-      const byReason = Object.fromEntries(
-        BOOKING_MONEY_RECONCILIATION_REASON_ORDER.map((reason) => [reason, 0]),
-      ) as Record<BookingMoneyReconciliationReason, number>;
-      let reconciled = 0;
-      for (const booking of bookings) {
-        const result = reconcileStoredBookingMoney(booking);
-        if (result.state === "RECONCILED") {
-          reconciled += 1;
-          continue;
-        }
-        for (const reason of result.reasons) byReason[reason] += 1;
-      }
-      return {
-        totalBookings: bookings.length,
-        byState: {
-          RECONCILED: reconciled,
-          UNRECONCILED: bookings.length - reconciled,
-        },
-        byReason,
-      };
+      return summarizeBookingMoneyReconciliations(bookings);
     },
     { isolationLevel: "RepeatableRead" },
   );
 }
-

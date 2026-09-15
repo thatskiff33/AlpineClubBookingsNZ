@@ -698,6 +698,15 @@ export default async function AdminBookingsPage({
                             <MiniChip tone="warning" icon={Eye}>Review</MiniChip>
                           </Link>
                         ) : null}
+                        {booking.moneyReconciliation.state === "UNRECONCILED" ? (
+                          <span
+                            title={`Money reconciliation: ${booking.moneyReconciliation.reasons.join(", ")}`}
+                          >
+                            <MiniChip tone="danger" icon={AlertTriangle}>
+                              Money review
+                            </MiniChip>
+                          </span>
+                        ) : null}
                         {booking.deletedAt ? (
                           <MiniChip tone="danger" icon={Trash2}>Deleted</MiniChip>
                         ) : null}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BOOKING_MONEY_RECONCILIATION_REASON_ORDER,
   reconcileBookingMoney,
+  summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliationProjection,
 } from "@/lib/booking-money-reconciliation";
 
@@ -151,5 +152,40 @@ describe("reconcileBookingMoney", () => {
       }),
     );
     expect(result.reasons).toEqual(["PROMO_BUILD_UP_NOT_KNOWN"]);
+  });
+
+  it("summarizes every reason without collapsing simultaneous failures", () => {
+    const summary = summarizeBookingMoneyReconciliations([
+      booking(),
+      booking({ discountCents: 1, finalPriceCents: 1 }),
+    ]);
+    expect(summary.byState).toEqual({ RECONCILED: 1, UNRECONCILED: 1 });
+    expect(summary.byReason.DISCOUNT_COMPONENT_MISMATCH).toBe(1);
+    expect(summary.byReason.FINAL_PRICE_RELATION_MISMATCH).toBe(1);
+  });
+
+  it("classifies #3244's added-guest mismatch without deciding collection or card routing", () => {
+    const value = booking({
+      guests: [
+        ...booking().guests,
+        {
+          priceCents: 2_000,
+          stayStart: null,
+          stayEnd: null,
+          nights: [
+            {
+              stayDate: NIGHT,
+              priceCents: 2_000,
+              priceSource: "SOLD",
+            },
+          ],
+        },
+      ],
+    });
+    expect(reconcileBookingMoney(value)).toEqual({
+      state: "UNRECONCILED",
+      reasons: ["HEADLINE_TOTAL_MISMATCH"],
+    });
+    expect("payment" in value).toBe(false);
   });
 });

@@ -41,6 +41,12 @@ export type BookingMoneyReconciliation =
       ];
     };
 
+export type BookingMoneyReconciliationSummary = {
+  totalBookings: number;
+  byState: { RECONCILED: number; UNRECONCILED: number };
+  byReason: Record<BookingMoneyReconciliationReason, number>;
+};
+
 export type BookingMoneyReconciliationProjection = {
   checkIn: Date;
   checkOut: Date;
@@ -151,3 +157,27 @@ export function reconcileBookingMoney(
       };
 }
 
+export function summarizeBookingMoneyReconciliations(
+  bookings: ReadonlyArray<BookingMoneyReconciliationProjection>,
+): BookingMoneyReconciliationSummary {
+  const byReason = Object.fromEntries(
+    BOOKING_MONEY_RECONCILIATION_REASON_ORDER.map((reason) => [reason, 0]),
+  ) as Record<BookingMoneyReconciliationReason, number>;
+  let reconciled = 0;
+  for (const booking of bookings) {
+    const result = reconcileBookingMoney(booking);
+    if (result.state === "RECONCILED") {
+      reconciled += 1;
+      continue;
+    }
+    for (const reason of result.reasons) byReason[reason] += 1;
+  }
+  return {
+    totalBookings: bookings.length,
+    byState: {
+      RECONCILED: reconciled,
+      UNRECONCILED: bookings.length - reconciled,
+    },
+    byReason,
+  };
+}

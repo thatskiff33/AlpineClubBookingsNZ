@@ -1641,6 +1641,10 @@ describe("createXeroInvoiceForBooking", () => {
               moneyBuildUpStoredCents: -5000,
               moneyBuildUpDerivedCents: -5000,
             }),
+            moneyReconciliation: {
+              state: "UNRECONCILED",
+              reasons: ["FINAL_PRICE_RELATION_MISMATCH"],
+            },
           }),
         }),
       );
@@ -1719,6 +1723,13 @@ describe("createXeroInvoiceForBooking", () => {
               moneyBuildUpStoredCents: -5000,
               moneyBuildUpDerivedCents: 0,
             }),
+            moneyReconciliation: {
+              state: "UNRECONCILED",
+              reasons: [
+                "PROMO_BUILD_UP_MISMATCH",
+                "FINAL_PRICE_RELATION_MISMATCH",
+              ],
+            },
           }),
         }),
       );

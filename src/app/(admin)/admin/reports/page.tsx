@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
+import type { BookingMoneyReconciliationSummary } from "@/lib/booking-money-reconciliation";
 import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,7 @@ const StatusPieChart = dynamic(
 interface ReportData {
   summary: {
     totalBookings: number;
+    moneyReconciliation: BookingMoneyReconciliationSummary;
     totalRevenueCents: number;
     // Booking-level net cash from captured Payment.amountCents less refunds;
     // unlike booked revenue, this is not allocated across stay nights.
@@ -325,6 +327,8 @@ export default function ReportsPage() {
   const additionalLedgerGapWarning = data
     ? getAdditionalLedgerGapWarning(data.summary)
     : null;
+  const unreconciledBookingCount =
+    data?.summary.moneyReconciliation.byState.UNRECONCILED ?? 0;
   const sampledOccupancy =
     occupancyData.length > 60
       ? occupancyData.filter((_, index) => index % Math.ceil(occupancyData.length / 60) === 0)
@@ -339,6 +343,17 @@ export default function ReportsPage() {
     rows.push([]);
     rows.push(["Summary"]);
     rows.push(["Total Bookings", String(data.summary.totalBookings)]);
+    rows.push([
+      "Booking Money Reconciliation",
+      unreconciledBookingCount === 0
+        ? "All reconciled"
+        : `${unreconciledBookingCount} unreconciled`,
+    ]);
+    for (const [reason, count] of Object.entries(
+      data.summary.moneyReconciliation.byReason,
+    )) {
+      if (count > 0) rows.push([`Booking Money Reason: ${reason}`, String(count)]);
+    }
     rows.push(["Booked Revenue", (data.summary.totalRevenueCents / 100).toFixed(2)]);
     rows.push(["Net Collected Cash", (data.summary.netCollectedCents / 100).toFixed(2)]);
     if (additionalLedgerGapWarning) {
@@ -557,6 +572,24 @@ export default function ReportsPage() {
             >
               <p className="font-semibold">Net Collected Cash needs reconciliation</p>
               <p className="mt-1">{additionalLedgerGapWarning}</p>
+            </div>
+          ) : null}
+
+          {unreconciledBookingCount > 0 ? (
+            <div
+              role="alert"
+              data-testid="reports-booking-money-unreconciled"
+              className="reports-print-card rounded-lg border border-danger-6 bg-danger-3 p-4 text-sm text-danger-11 print:border-danger-6"
+            >
+              <p className="font-semibold">Booked Revenue needs reconciliation</p>
+              <p className="mt-1">
+                {unreconciledBookingCount} booking
+                {unreconciledBookingCount === 1 ? "" : "s"} in this report
+                {unreconciledBookingCount === 1 ? " has" : " have"} stored money
+                that does not reconcile to its recorded parts. The figures remain
+                visible, but do not treat them as reconciled until the booking
+                warning is resolved.
+              </p>
             </div>
           ) : null}
 

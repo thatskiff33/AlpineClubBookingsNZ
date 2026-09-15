@@ -155,6 +155,9 @@ describe("AdminBookingsPage", () => {
       checkIn: new Date("2026-07-01T00:00:00.000Z"),
       checkOut: new Date("2026-07-03T00:00:00.000Z"),
       updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+      totalPriceCents: 10000,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
       finalPriceCents: 10000,
       requiresAdminReview: false,
       adminReviewStatus: null,
@@ -166,7 +169,32 @@ describe("AdminBookingsPage", () => {
         lastName: "Ngata",
         email: "aroha@example.test",
       },
-      guests: [],
+      guests: [
+        {
+          id: "guest-1",
+          firstName: "Aroha",
+          lastName: "Ngata",
+          ageTier: "ADULT",
+          isMember: true,
+          priceCents: 10000,
+          stayStart: new Date("2026-07-01T00:00:00.000Z"),
+          stayEnd: new Date("2026-07-03T00:00:00.000Z"),
+          nights: [
+            {
+              stayDate: new Date("2026-07-01T00:00:00.000Z"),
+              priceCents: 5000,
+              priceSource: "NIGHTLY",
+            },
+            {
+              stayDate: new Date("2026-07-02T00:00:00.000Z"),
+              priceCents: 5000,
+              priceSource: "NIGHTLY",
+            },
+          ],
+        },
+      ],
+      promoRedemption: null,
+      nightAdjustments: [],
       payment: null,
       bedAllocations: [],
       modifications: [],
@@ -706,6 +734,21 @@ describe("AdminBookingsPage", () => {
     const html = renderToStaticMarkup(element);
 
     expect(html).not.toContain("Bookings pagination");
+  });
+
+  it("marks an unreconciled booking for officer money review", async () => {
+    installAdminBookingsDbMock([
+      makeBooking({
+        totalPriceCents: 9_000,
+        finalPriceCents: 9_000,
+      }),
+    ]);
+
+    const element = await AdminBookingsPage({ searchParams: Promise.resolve({}) });
+    const html = renderToStaticMarkup(element);
+
+    expect(html).toContain("Money review");
+    expect(html).toContain("Money reconciliation: HEADLINE_TOTAL_MISMATCH");
   });
 
   it("renders pagination controls and preserves the page on sort links (#1738)", async () => {

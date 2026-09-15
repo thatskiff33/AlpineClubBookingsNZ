@@ -10,6 +10,7 @@ import type { BookingDetailLinkedParty } from "../_lib/booking-detail-linked-par
 import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
 import type { BookingDetailHistory } from "../_lib/booking-detail-history";
 import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
+import { BookingMoneyReconciliationNotice } from "./booking-money-reconciliation-notice";
 
 // States with a self-contained outcome worth surfacing as a banner. Active
 // states (payable / under_review) already have their own dedicated UI below.
@@ -78,6 +79,11 @@ export function BookingStatusBanners({
     messages;
   return (
     <>
+      {viewer.canViewAsAdmin ? (
+        <BookingMoneyReconciliationNotice
+          reconciliation={booking.moneyReconciliation}
+        />
+      ) : null}
       {showCompletePaymentCard && (
         <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
           <p className="font-medium">Payment required</p>

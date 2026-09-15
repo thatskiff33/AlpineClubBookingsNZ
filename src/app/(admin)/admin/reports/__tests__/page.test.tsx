@@ -44,6 +44,19 @@ import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 const EMPTY_REPORT = {
   summary: {
     totalBookings: 0,
+    moneyReconciliation: {
+      totalBookings: 0,
+      byState: { RECONCILED: 0, UNRECONCILED: 0 },
+      byReason: {
+        NO_SURVIVING_STRANDS: 0,
+        STRAND_EVIDENCE_UNREADABLE: 0,
+        HEADLINE_TOTAL_MISMATCH: 0,
+        PROMO_BUILD_UP_NOT_KNOWN: 0,
+        PROMO_BUILD_UP_MISMATCH: 0,
+        DISCOUNT_COMPONENT_MISMATCH: 0,
+        FINAL_PRICE_RELATION_MISMATCH: 0,
+      },
+    },
     totalRevenueCents: 0,
     netCollectedCents: 0,
     additionalLedgerGapCents: 0,
@@ -85,6 +98,37 @@ afterEach(() => {
 });
 
 describe("ReportsPage quick ranges", () => {
+  it("warns when booked revenue includes unreconciled booking money", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            ...EMPTY_REPORT,
+            summary: {
+              ...EMPTY_REPORT.summary,
+              totalBookings: 1,
+              moneyReconciliation: {
+                ...EMPTY_REPORT.summary.moneyReconciliation,
+                totalBookings: 1,
+                byState: { RECONCILED: 0, UNRECONCILED: 1 },
+                byReason: {
+                  ...EMPTY_REPORT.summary.moneyReconciliation.byReason,
+                  HEADLINE_TOTAL_MISMATCH: 1,
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    render(<ReportsPage />);
+    expect(
+      await screen.findByTestId("reports-booking-money-unreconciled"),
+    ).toHaveTextContent("1 booking in this report has stored money");
+  });
   it("wraps the full multi-lodge toolbar without changing its keyboard order", async () => {
     vi.stubGlobal(
       "fetch",

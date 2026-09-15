@@ -178,7 +178,15 @@ export async function loadBookingDetailHistory({
     financialReviewPending,
   });
 
-  return { financialReviewPending, bookingNarrative, bookingHistory };
+  return {
+    financialReviewPending,
+    bookingNarrative,
+    bookingHistory,
+    // This is the booking's current derived state, not a durable past event.
+    // Keep it officer-only at the data boundary, matching the other private
+    // integrity evidence loaded above.
+    moneyReconciliation: canSeeAdminTools ? booking.moneyReconciliation : null,
+  };
 }
 
 export type BookingDetailHistory = Awaited<
