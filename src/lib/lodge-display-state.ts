@@ -37,7 +37,11 @@ import { loadEffectiveModuleFlags } from "./module-settings";
 import { canServeMemberPhoneOnLodgeSurface, formatXeroPhone } from "./phone";
 import type { ModuleKey } from "@/config/modules";
 import { prisma } from "./prisma";
-import { bookingOwner } from "@/lib/booking-owner";
+import {
+  bookingOwner,
+  bookingOwnerAgeTier,
+  bookingOwnerHasNoAgeTier,
+} from "@/lib/booking-owner";
 
 // The lobby display's data contract and privacy serialiser (fork issue #28,
 // docs/lobby-display/design.md §5 and §10). THIS FILE IS THE SINGLE
@@ -575,16 +579,13 @@ export async function buildDisplayState(
       continue;
     }
     const guestCount = booking.guests.length;
-    // #3369: an ORGANISATION-owned booking has no member and so no age tier —
-    // `bookingOwner()` projects it as `undefined` — and an organisation is a
-    // group outright, whatever its size. The `??` is what makes that true: a
-    // bare `=== "NOT_APPLICABLE"` was false for every school booking once the
-    // backfill moved them off their invented member, and a five-student school
-    // alone in the lodge stopped drawing as a blockout. The member lodge roster
-    // (`member-lodge-roster.ts`) asks this the same way; keep them together.
-    const isOrganisation =
-      (bookingOwner(booking).member.ageTier ?? "NOT_APPLICABLE") ===
-      "NOT_APPLICABLE";
+    // #3369: an ORGANISATION-owned booking has no member and so no age tier,
+    // and an organisation is a group outright, whatever its size. Asked through
+    // the one home of that rule (#3480, `INV-SSOT-005`): this very line once
+    // spelled it `=== "NOT_APPLICABLE"`, which was false for every school
+    // booking after the backfill, and a five-student school alone in the lodge
+    // stopped drawing as a blockout (#3391).
+    const isOrganisation = bookingOwnerHasNoAgeTier(booking);
     const isGroup = isOrganisation || guestCount >= WHOLE_LODGE_MIN_GUESTS;
     if (!isGroup) continue;
     const nightMap = perBookingNightCounts.get(booking.id);
@@ -634,7 +635,7 @@ export async function buildDisplayState(
       // not a person, and whose branch in `bookingLabel` shows a full name
       // instead of a person's abbreviated one. A school's name is not personal
       // data, so the privacy abbreviation was never protecting anything there.
-      organiserAgeTier: bookingOwner(booking).member.ageTier ?? "NOT_APPLICABLE",
+      organiserAgeTier: bookingOwnerAgeTier(booking),
       granularity,
     });
 
@@ -792,8 +793,7 @@ export async function buildDisplayState(
         containsMinors: bookingContainsMinors,
         // #3369: see the note on the sibling call — an organisation has no age
         // tier, and `NOT_APPLICABLE` is what that is.
-        organiserAgeTier:
-          bookingOwner(assignment.booking).member.ageTier ?? "NOT_APPLICABLE",
+        organiserAgeTier: bookingOwnerAgeTier(assignment.booking),
         granularity,
       });
       if (namesAllowed) {
