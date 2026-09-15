@@ -750,13 +750,16 @@ describe("createBookingRequestQuote school group numbers (#3412)", () => {
     serveBooking({ id: "booking-held", status: BookingStatus.AWAITING_REVIEW });
     resolveAs({ guests: REGENERATED_GUESTS, changed: true });
 
-    await expect(
-      createBookingRequestQuote({
-        requestId: "req-1",
-        adminMemberId: "admin-1",
-        quote: nonCateredPerGuestNight(),
-      })
-    ).rejects.toMatchObject({ status: 409, message: /release the hold/i });
+    const refusal = await createBookingRequestQuote({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      quote: nonCateredPerGuestNight(),
+    }).catch((err: unknown) => err as { status?: number; message?: string });
+    expect(refusal.status).toBe(409);
+    // The message is asserted as a STRING, not through `toMatchObject`, which
+    // does not match a regex against one — a refusal thrown for some other
+    // reason would otherwise satisfy this test.
+    expect(refusal.message).toMatch(/release the hold/i);
 
     // Refused before anything was written: no quote row, no claim.
     expect(prisma.bookingRequestQuote.create).not.toHaveBeenCalled();
@@ -794,19 +797,22 @@ describe("createBookingRequestQuote school group numbers (#3412)", () => {
     vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
       schoolRequest() as never
     );
+    // The member exists and is linkable: the refusal under test must be about
+    // WHERE they are linked, not about whether they could be found.
+    armMemberFindMany(async () => [{ id: "member-1" }]);
     resolveAs({ guests: REGENERATED_GUESTS, changed: true });
 
-    await expect(
-      createBookingRequestQuote({
-        requestId: "req-1",
-        adminMemberId: "admin-1",
-        quote: {
-          ...nonCateredPerGuestNight(),
-          // Index 1 is the first child: one teacher, so teacher indices end at 0.
-          linkedGuestMembers: [{ guestIndex: 1, memberId: "member-1" }],
-        },
-      })
-    ).rejects.toMatchObject({ status: 422, message: /unnamed children/i });
+    const refusal = await createBookingRequestQuote({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      quote: {
+        ...nonCateredPerGuestNight(),
+        // Index 1 is the first child: one teacher, so teacher indices end at 0.
+        linkedGuestMembers: [{ guestIndex: 1, memberId: "member-1" }],
+      },
+    }).catch((err: unknown) => err as { status?: number; message?: string });
+    expect(refusal.status).toBe(422);
+    expect(refusal.message).toMatch(/unnamed children/i);
 
     expect(prisma.bookingRequest.updateMany).not.toHaveBeenCalled();
   });

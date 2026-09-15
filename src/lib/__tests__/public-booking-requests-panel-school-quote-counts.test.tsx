@@ -22,14 +22,34 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
-// Radix Select needs jsdom polyfills this suite does not provide; the pricing
-// mode stays at its Overall-total default, which is what these payloads use.
+// Radix Select needs jsdom polyfills this suite does not provide, so it stands
+// in as a native select — the pricing mode has to be switchable here, because
+// the per guest-night rate boxes are one of the things the adjusted counts
+// change.
 vi.mock("@/components/ui/select", () => ({
-  Select: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectValue: () => <span />,
+  Select: ({
+    children,
+    value,
+    onValueChange,
+  }: {
+    children: ReactNode;
+    value?: string;
+    onValueChange?: (next: string) => void;
+  }) => (
+    <select
+      data-testid="select"
+      value={value ?? ""}
+      onChange={(event) => onValueChange?.(event.target.value)}
+    >
+      {children}
+    </select>
+  ),
+  SelectContent: ({ children }: { children: ReactNode }) => <>{children}</>,
+  SelectItem: ({ children, value }: { children: ReactNode; value: string }) => (
+    <option value={value}>{children}</option>
+  ),
+  SelectTrigger: () => null,
+  SelectValue: () => null,
 }));
 
 vi.mock("@/components/admin/booking-requests/booking-request-contact-picker", () => ({
@@ -172,6 +192,32 @@ describe("PublicBookingRequestsPanel school group numbers on Save quote (#3412)"
     const saveQuote = await screen.findByRole("button", { name: "Save quote" });
     expect((saveQuote as HTMLButtonElement).disabled).toBe(true);
     expect(quoteBody(fetchMock)).toBeNull();
+  });
+
+  it("offers a rate box for every age group the adjusted numbers contain", async () => {
+    // The stored group is youth; the officer re-counts them as children. Read
+    // from the stored list, the per guest-night editor would offer no child
+    // rate at all and the save would fail on a missing one.
+    mockFetch(baseSchoolRequest);
+    render(<PublicBookingRequestsPanel />);
+
+    const pricingMode = (await screen.findAllByTestId("select")).find((node) =>
+      node.textContent?.includes("Per guest-night"),
+    );
+    expect(pricingMode).toBeTruthy();
+    fireEvent.change(pricingMode!, { target: { value: "PER_GUEST_NIGHT" } });
+
+    expect(await screen.findByLabelText("YOUTH non-member")).toBeTruthy();
+
+    await editYouthCount("0");
+    fireEvent.change(await screen.findByLabelText("Children"), {
+      target: { value: "3" },
+    });
+
+    expect(await screen.findByLabelText("CHILD non-member")).toBeTruthy();
+    expect(screen.queryByLabelText("YOUTH non-member")).toBeNull();
+    // The named teacher is still there, so the adult rate stays.
+    expect(await screen.findByLabelText("ADULT non-member")).toBeTruthy();
   });
 
   it("holds the beds only once the change is saved", async () => {

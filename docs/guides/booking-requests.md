@@ -131,6 +131,21 @@ are listed on the booking for you to relay.
    reciprocal-membership courtesy), with the non-member rate shown underneath for
    reference. The pre-fill uses the check-in night's rate, so adjust it if a stay
    crosses a season boundary with different rates.
+
+   **School groups: the group numbers are part of the quote.** A school request
+   carries **Adjust group numbers** (infants, children, youth). Whatever you set
+   there is applied to the request when you press **Save quote**, and everything
+   downstream reads it: the price, the list of attendees the school sees, the
+   guest count in their email, the beds held when you send the quote, and the
+   booking created at approval. The named teachers and parent helpers are kept
+   exactly as submitted, and the group can never exceed the lodge's capacity.
+
+   Two refusals to expect. Beds already held for this request are **not**
+   re-sized by a new set of numbers: press **Release hold** first, then save and
+   send again — the panel says so before you click, and **Hold slots** waits
+   until you have saved. And if a club member is linked to one of the school's
+   unnamed children, changing the numbers is refused rather than moving that
+   member onto a different child; unlink them, then save.
 3. When the requester accepts (or for a priced general request), click
    **Approve & send payment link** (general) or **Approve & invoice school**
    (school groups) to convert it into a booking. Use **Decline** with an
