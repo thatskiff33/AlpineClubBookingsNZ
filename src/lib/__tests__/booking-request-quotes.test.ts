@@ -1363,6 +1363,11 @@ describe("sendBookingRequestQuote", () => {
    */
   it("refuses to send while the officer's group numbers are unsaved", async () => {
     mockDraftQuoteForSend();
+    const schoolRequest = baseRequest({
+      type: BookingRequestType.SCHOOL,
+      schoolName: "Test School",
+      lodgeId: "lodge-1",
+    });
     vi.mocked(prisma.bookingRequestQuote.findFirst).mockResolvedValue({
       id: "quote-1",
       bookingRequestId: "req-1",
@@ -1371,12 +1376,49 @@ describe("sendBookingRequestQuote", () => {
       options: [],
       message: null,
       createdByMemberId: "admin-1",
-      bookingRequest: baseRequest({
-        type: BookingRequestType.SCHOOL,
-        schoolName: "Test School",
-        lodgeId: "lodge-1",
-      }),
+      bookingRequest: schoolRequest,
     } as never);
+    /*
+     * #3412 (review round 5, A): the fixture has NO LIVE HOLD, and that is the
+     * whole point of it.
+     *
+     * The first version of this test left `mockDraftQuoteForSend`'s held
+     * booking in place, so `holdBookingRequestSlots` short-circuited on
+     * "reused" and wrote nothing at all — and the refusal block could be moved
+     * to AFTER the hold with all 76 tests still green. The comment claimed the
+     * beds were protected; only the email and the quote claim were.
+     *
+     * A hold-free request with a priced quote is also the state the officer is
+     * really in: a count change under a live hold is refused by the OTHER 409
+     * ("release the hold first"), so the officer releases, edits, and presses
+     * Send — and this is the send that would reserve beds for the stale party.
+     */
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue({
+      ...schoolRequest,
+      heldBookingId: null,
+      quotes: [
+        {
+          version: 1,
+          options: [
+            {
+              id: "STANDARD",
+              label: "Quote",
+              cateringOption: null,
+              totalCents: 1000,
+              pricingMode: BookingRequestPricingMode.OVERALL_TOTAL,
+              guestBreakdown: [],
+            },
+          ],
+        },
+      ],
+    } as never);
+    vi.mocked(prisma.member.create).mockResolvedValue({ id: "owner-1" } as never);
+    vi.mocked(prisma.booking.create).mockResolvedValue({
+      id: "held-new",
+      guests: [],
+    } as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+    mockedAssertNoConflicts.mockResolvedValue(undefined);
     mocks.mockResolveSchoolGuestOverride.mockResolvedValue({
       teachers: [],
       storedGuests: GUESTS,
@@ -1394,6 +1436,15 @@ describe("sendBookingRequestQuote", () => {
     expect(refusal.status).toBe(409);
     expect(refusal.message).toMatch(/Save quote first/i);
     // Refused before the beds and before the email — the two irreversible acts.
+    // The bed half is asserted on the hold's OWN writes, not on the send's:
+    // `booking.create` is the reservation and `bookingRequest.update` is the
+    // `heldBookingId` pointer that would then 409 the officer's Release hold.
+    // `bookingRequest.findUnique` is the hold's first act of any kind, so this
+    // one fails the moment the refusal moves below `holdBookingRequestSlots`
+    // even if the hold later throws for some unrelated fixture reason.
+    expect(prisma.bookingRequest.findUnique).not.toHaveBeenCalled();
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+    expect(prisma.bookingRequest.update).not.toHaveBeenCalled();
     expect(prisma.bookingRequestQuote.updateMany).not.toHaveBeenCalled();
     expect(mockSendQuoteEmail).not.toHaveBeenCalled();
   });
