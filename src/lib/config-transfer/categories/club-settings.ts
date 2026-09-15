@@ -260,6 +260,18 @@ export const SINGLETONS: SingletonSpec[] = [
       "commsPortal",
     ],
     excluded: {
+      memberLodgeRoster:
+        "turning the roster on discloses one member's stay pattern to every " +
+        "other member who can book that lodge, and the per-lodge name detail " +
+        "that bounds it (Lodge.rosterNameGranularity) does NOT travel in a " +
+        "bundle. An importing club would therefore switch the feature on at " +
+        "the code default, FULL_NAME, which is the most disclosive of the " +
+        "four levels -- publishing full names on an upgrade nobody opted " +
+        "into, through the import door the default-OFF flag closes at the " +
+        "deploy door (#2942). The first version of this entry had the flag " +
+        "travelling and reasoned that not inheriting the source's dial was " +
+        "the safe direction; it is the opposite, because the fallback is the " +
+        "most permissive value rather than the least",
       multiLodge:
         "retired-but-not-yet-dropped flag; kept out of every read via " +
         "CLUB_MODULE_SETTINGS_COLUMN_SELECT and awaiting a contract DROP (#139)",

@@ -40,6 +40,8 @@ function hold(overrides: Partial<CustodianBedHold> = {}): CustodianBedHold {
     assignmentId: "assignment-1",
     memberId: "member-1",
     memberName: "Sam Ranger",
+    memberFirstName: "Sam",
+    memberLastName: "Ranger",
     memberIsMinor: false,
     lodgeId: "lodge-a",
     bedId: "bed-1",

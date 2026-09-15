@@ -165,6 +165,11 @@ export const NON_WEBSITE_ROOT_SEGMENTS: ReadonlySet<string> = new Set([
   "dashboard",
   "induction",
   "lodge-instructions",
+  // #2942: the member lodge roster. An `(authenticated)` route like
+  // dashboard/notices -- no session exists pre-setup, so it redirects to login
+  // rather than being a public website page. It is additionally module-gated
+  // and off by default.
+  "lodge-roster",
   // #2780: the signed-in maintenance-report form. An `(authenticated)` route
   // like dashboard/induction — no session exists pre-setup, so it redirects to
   // login rather than being a public website page.

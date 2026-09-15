@@ -70,6 +70,7 @@ describe("member guide parity", () => {
     // the booking's own page, so the answers are distilled into that entry.
     "being-added-to-a-booking.md": "/bookings/abc123",
     "the-message-board.md": "/message-board",
+    "whos-at-the-lodge.md": "/lodge-roster",
   };
 
   // Files in docs/user-guide/ that are deliberately NOT member guides. Keep this

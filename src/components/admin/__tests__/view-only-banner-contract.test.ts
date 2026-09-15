@@ -291,8 +291,14 @@ const FIGURES = {
    * (`ai-spend-currency-card.tsx`) adds Set/Change rate, Save rate and Cancel.
    * One component rendered on two pages is ONE file to this census. MEASURED by
    * re-running it.
+   *
+   * 349 -> 351 (#2942): the member lodge roster's per-lodge name-detail card
+   * (`lodge-roster-settings-card.tsx`) adds Edit and Save. Cancel is a plain
+   * Button, as it is on the Retention section: it reverts local state and
+   * writes nothing, so gating it would refuse a view-only admin the way out of
+   * a form they could not have changed. MEASURED by re-running this census.
    */
-  callSites: 349,
+  callSites: 351,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -300,8 +306,9 @@ const FIGURES = {
    * 289 -> 292 (#2999): so do the Retention section's three.
    * 292 -> 293 (#3214): so does the night-price control.
    * 293 -> 296 (#3354): so do the AI spend currency card's three.
+   * 296 -> 298 (#2942): so do the roster name-detail card's two.
    */
-  optOuts: 296,
+  optOuts: 298,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -314,8 +321,10 @@ const FIGURES = {
    * COMPONENT, but the static rule is about the FILE.
    * 259 -> 262 (#3354): the AI spend currency card heads itself with its own
    * banner, so its three controls are static.
+   * 262 -> 264 (#2942): the roster name-detail card likewise heads its own
+   * file with its own banner, so its two are static rather than vouched.
    */
-  staticOptOuts: 262,
+  staticOptOuts: 264,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -359,8 +368,13 @@ const FIGURES = {
    * 92 -> 93 (#3354): the AI spend currency card heads itself with one banner,
    * mounted above its loading early-return, and carries it onto both AI
    * settings pages — one component, counted once.
+   *
+   * 93 -> 94 (#2942): the roster name-detail card heads itself with one banner,
+   * mounted above its loading early-return. Its sibling on the same lodge — the
+   * lobby display card — keeps its own, because the two are separate sections
+   * on separate sub-pages and neither is ever rendered inside the other.
    */
-  bannerComponents: 93,
+  bannerComponents: 94,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

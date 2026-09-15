@@ -95,6 +95,7 @@ const MODULES_OFF = {
   maintenanceReports: true,
   alpineCentralServer: false,
   commsPortal: false,
+  memberLodgeRoster: false,
 };
 
 /** Depth-first walk for the publisher element, wherever the page puts it. */
