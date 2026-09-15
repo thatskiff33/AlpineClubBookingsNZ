@@ -151,12 +151,15 @@ are listed on the booking for you to relay.
    re-sized by a new set of numbers: press **Release hold** first, then save and
    send again — the panel says so before you click. (A hold that was already
    cancelled elsewhere does not block you; the panel checks whether the beds are
-   really reserved, not just whether a hold was once placed.) And if a club
-   member is linked to one of the school's unnamed children, changing the
-   numbers is refused rather than moving that member onto a different child's
-   bed: the panel names the member and the row, so unlink them, save the new
-   numbers, then **link them again** to the right row — otherwise they lose the
-   member rate.
+   really reserved, not just whether a hold was once placed.) And a club
+   member's link only gets in the way when the new numbers would hand that
+   person's row to somebody else. Adding more youth to the end of the group
+   leaves every earlier row exactly as it was, so a link there is untouched and
+   the save goes straight through; it is the changes that reach the linked row
+   — cutting the group, or swapping children for youth ahead of it — that are
+   refused, rather than moving that member onto somebody else's bed. The panel
+   names the member and the row, so unlink them, save the new numbers, then
+   **link them again** to the right row — otherwise they lose the member rate.
 3. When the requester accepts (or for a priced general request), click
    **Approve & send payment link** (general) or **Approve & invoice school**
    (school groups) to convert it into a booking. Use **Decline** with an

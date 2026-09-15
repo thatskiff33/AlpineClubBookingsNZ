@@ -367,8 +367,15 @@ export async function resolveSchoolGuestOverride(input: {
     if (misplacedIndex !== undefined) {
       const row = storedGuests[misplacedIndex];
       const rowName = row ? `${row.firstName} ${row.lastName}` : `row ${misplacedIndex + 1}`;
+      // #3412 (review round 5, B): the row is NOT always an unnamed child, and
+      // the sentence used to say it was. The boundary is derived from the two
+      // lists, so on a hand-repaired row — a third adult in `guests` that the
+      // `teachers` column does not carry, which is the case the F12 test pins —
+      // this names a teacher or parent helper and told the officer they were
+      // "one of the school's unnamed children". Say what is true of both: the
+      // person on that row changes.
       throw new BookingRequestError(
-        `A member is linked to ${rowName}, one of the school's unnamed children, and these group numbers renumber that row — the member would end up on somebody else's bed. Unlink them, save the new numbers, then link them again to the right row so they keep the member rate.`,
+        `A member is linked to ${rowName}, and these group numbers change who is on that row — the member would end up on somebody else's bed. Unlink them, save the new numbers, then link them again to the right row so they keep the member rate.`,
         422
       );
     }
