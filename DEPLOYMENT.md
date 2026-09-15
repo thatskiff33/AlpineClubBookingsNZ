@@ -729,12 +729,13 @@ sequence below is run once, not once per migration.
   not: an old hosting worker ignores the token/expiry fields and can take, email and
   complete work that a new worker already owns. The old web colour and **every** old
   worker must therefore be stopped before migrate, and only new workers may start.
-- `20260914010000_add_member_parent_partner_exclusion` (#3271 / #3292). Its
+- `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292). Its
   additive pair-state table and triggers reject a direct-parent/partner overlap
   that the previous runtime can still attempt, and that runtime does not decode
   the new database error. Stop every old runtime and database-capable worker before
-  the private owner-run repair and keep them stopped through the repeat zero-conflict
-  census, migration, verification, and replacement-runtime start. Follow the
+  the authorized private deployment lane's repair and keep them stopped through
+  the repeat zero-conflict census, migration, verification, and
+  replacement-runtime start. Follow the
   issue-specific sequence in `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.2; no member
   identifiers or repair SQL belong in this public repository.
 
@@ -775,10 +776,10 @@ says which governs when:
    **host** path and then move somewhere durable — a `\copy` through
    `docker compose exec postgres psql` writes inside that container's writable layer,
    which the deploy recreates. After migrate those values are unrecoverable.
-   For `20260914010000`, complete the privately approved repair, repeat the full
-   read-only overlap census, and record only that the deployment prerequisite
-   passed. Any changed row or additional pair stops the release for an individual
-   owner decision.
+   For `20260929010000`, obtain the authorized private deployment lane's verified
+   repair and full read-only overlap-census result, and record publicly only that
+   the deployment prerequisite passed. Any changed row or additional pair stops
+   the release for an individual owner decision.
 6. **Run the safety validator, then migrate** — two commands, in that order. The
    validator is `scripts/validate-blue-green-migrations.sh`, a **separate script**
    that `prisma migrate deploy` knows nothing about: the only thing that runs it
@@ -793,9 +794,10 @@ says which governs when:
    dedicated compose service the deploy script uses,
    `docker compose --profile migrate run --rm migrate` — not `npx`, which this host
    is not documented as having and which is deliberately removed from the runtime
-   image. Pass all eight pending migration files, in order — `20260803010000`,
+   image. Pass all twelve pending migration files, in order — `20260803010000`,
    `20260803020000`, `20260803030000`, `20260803070000`, `20260806000000` and
-   `20260806010000`, followed by `20260913010000` and `20260914010000` —
+   `20260806010000`, followed by `20260913010000`, `20260913020000`,
+   `20260913030000`, `20260923010000`, `20260927010000` and `20260929010000` —
    including the additive rows; exact commands are in
    `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 9.
 7. **Verify the migrate step**: the dropped column is gone and
@@ -861,7 +863,7 @@ stop every new worker and start the old-only release.
 
 **When all four windowed migrations were applied in one window, keep traffic
 removed and stop every new app/worker, then reverse them in application order.**
-Run `20260914010000/rollback.sql` first while no relationship writer is active;
+Run `20260929010000/rollback.sql` first while no relationship writer is active;
 verify its pair table, functions, and triggers are gone without changing either
 source table. Then follow `20260806010000/rollback.sql`'s no-op operational
 boundary and leave its nullable columns plus migration history intact. Finally
