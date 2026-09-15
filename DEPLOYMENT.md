@@ -794,9 +794,10 @@ says which governs when:
    dedicated compose service the deploy script uses,
    `docker compose --profile migrate run --rm migrate` — not `npx`, which this host
    is not documented as having and which is deliberately removed from the runtime
-   image. Pass all eight pending migration files, in order — `20260803010000`,
+   image. Pass all twelve pending migration files, in order — `20260803010000`,
    `20260803020000`, `20260803030000`, `20260803070000`, `20260806000000` and
-   `20260806010000`, followed by `20260913010000` and `20260929010000` —
+   `20260806010000`, followed by `20260913010000`, `20260913020000`,
+   `20260913030000`, `20260923010000`, `20260927010000` and `20260929010000` —
    including the additive rows; exact commands are in
    `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 9.
 7. **Verify the migrate step**: the dropped column is gone and

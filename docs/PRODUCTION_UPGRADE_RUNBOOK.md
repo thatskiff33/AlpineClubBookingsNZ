@@ -617,7 +617,7 @@ and nomination. There is no ordering that keeps both versions working.
    Prisma.
 
    9(a) **Validate.** Name every pending migration's `migration.sql`. For this
-   release the complete ordered set is eight migrations; do not validate only the
+   release the complete ordered set is twelve migrations; do not validate only the
    windowed rows:
     ```bash
     ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1 \
@@ -631,6 +631,10 @@ and nomination. There is no ordering that keeps both versions working.
      prisma/migrations/20260806000000_add_hosting_notification_delivery_claim/migration.sql \
      prisma/migrations/20260806010000_fence_hosting_coverage_delivery_claims/migration.sql \
      prisma/migrations/20260913010000_add_booking_guest_night_adjustment/migration.sql \
+     prisma/migrations/20260913020000_ai_spend_currency_settings/migration.sql \
+     prisma/migrations/20260913030000_add_payment_transaction_carried_ask_cents/migration.sql \
+     prisma/migrations/20260923010000_backfill_historical_audit_categories/migration.sql \
+     prisma/migrations/20260927010000_add_member_lodge_roster/migration.sql \
      prisma/migrations/20260929010000_add_member_parent_partner_exclusion/migration.sql
    ```
    Expect exit 0 with the override reason echoed back as a `WARNING:` line. It

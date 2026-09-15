@@ -97,6 +97,10 @@ describe("parent/partner database backstop contract (#3292)", () => {
       "20260806000000_add_hosting_notification_delivery_claim/migration.sql",
       "20260806010000_fence_hosting_coverage_delivery_claims/migration.sql",
       "20260913010000_add_booking_guest_night_adjustment/migration.sql",
+      "20260913020000_ai_spend_currency_settings/migration.sql",
+      "20260913030000_add_payment_transaction_carried_ask_cents/migration.sql",
+      "20260923010000_backfill_historical_audit_categories/migration.sql",
+      "20260927010000_add_member_lodge_roster/migration.sql",
       "20260929010000_add_member_parent_partner_exclusion/migration.sql",
     ]);
     expect(runbook).toContain(
@@ -108,8 +112,10 @@ describe("parent/partner database backstop contract (#3292)", () => {
     );
 
     const deployment = read("DEPLOYMENT.md");
-    expect(deployment).toContain("Pass all eight pending migration files");
-    expect(deployment).toContain("`20260913010000` and `20260929010000`");
+    expect(deployment).toContain("Pass all twelve pending migration files");
+    expect(deployment).toContain(
+      "`20260923010000`, `20260927010000` and `20260929010000`",
+    );
 
     const rollback = read(ROLLBACK);
     expect(rollback).toContain("every other windowed");
