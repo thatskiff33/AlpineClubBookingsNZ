@@ -4,7 +4,7 @@ BEGIN;
 -- booking stops being owned by an invented person and starts being owned by its
 -- Organisation.
 --
--- WINDOWED, and the second half of the pair opened by 20260923030000. THIS is
+-- WINDOWED, and the second half of the pair opened by 20260928020000. THIS is
 -- the migration the pre-epic release cannot survive: after it, bookings exist
 -- whose "memberId" is NULL, and that release reads the column as required.
 -- Required deploy acknowledgements: ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1, a
@@ -24,7 +24,7 @@ BEGIN;
 -- refusal at any point leaves the database exactly as it was.
 --
 -- Operator sequence: docs/guides/school-organisation-cutover.md.
--- Rollback: rollback.sql beside this file, run BEFORE 20260923030000's.
+-- Rollback: rollback.sql beside this file, run BEFORE 20260928020000's.
 
 -- ---------------------------------------------------------------------------
 -- 1. FAIL CLOSED. Nothing below runs while any candidate is unclassified.
@@ -193,7 +193,7 @@ WHERE r."convertedMemberId" = o.member_id
 -- what a school was charged is what a school was charged, and repairing money
 -- rows is explicitly out of this issue's scope.
 --
--- This UPDATE fires PromoRedemption_sync_allocation_update, which 20260923030000
+-- This UPDATE fires PromoRedemption_sync_allocation_update, which 20260928020000
 -- taught to return early on a NULL booker. Running that migration first is what
 -- stops this statement from minting a spurious all-null allocation row.
 UPDATE "PromoRedemption" pr
@@ -204,7 +204,7 @@ WHERE pr."memberId" = o.member_id;
 -- At most one allocation row per redemption can carry a given member, because
 -- of the pre-existing unique index on (promoRedemptionId, memberId) -- so this
 -- cannot produce two NULL-member rows in one scope and cannot violate the
--- partial unique indexes 20260923030000 added.
+-- partial unique indexes 20260928020000 added.
 UPDATE "PromoRedemptionAllocation" pra
 SET "memberId" = NULL
 FROM "school_backfill_org" o

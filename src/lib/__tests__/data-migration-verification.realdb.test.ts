@@ -119,8 +119,8 @@ const TRANSACTION_CONTROL =
  * Measured on a real PostgreSQL before the fix: after #3369's two reverse
  * scripts ran, the chain database — which every case is supposed to leave
  * untouched — still held the case's 4 bookings and 3 members, `Booking`'s
- * `memberId` was back to NOT NULL because `20260923030000/rollback.sql`'s
- * `SET NOT NULL` had committed, and replaying `20260923040000` then died on its
+ * `memberId` was back to NOT NULL because `20260928020000/rollback.sql`'s
+ * `SET NOT NULL` had committed, and replaying `20260928030000` then died on its
  * own section 4 with "null value in column memberId violates not-null
  * constraint". Nothing in the failure pointed at a rollback script.
  *

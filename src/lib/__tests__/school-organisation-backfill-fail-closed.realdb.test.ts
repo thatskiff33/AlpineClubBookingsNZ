@@ -59,9 +59,9 @@ const THIS_SUITE =
 const DATABASE_URL_ENV = "DATA_MIGRATION_VERIFICATION_DATABASE_URL";
 const CI_JOB_ID = "data-migration-verification";
 
-const SHAPE_MIGRATION = "20260923030000_booking_owner_optional_member";
+const SHAPE_MIGRATION = "20260928020000_booking_owner_optional_member";
 const BACKFILL_MIGRATION =
-  "20260923040000_backfill_school_bookings_to_organisations";
+  "20260928030000_backfill_school_bookings_to_organisations";
 
 const databaseUrl = process.env[DATABASE_URL_ENV];
 

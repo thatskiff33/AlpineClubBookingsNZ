@@ -31,7 +31,7 @@
  * - every other row is printed for a person, who records it one at a time under
  *   their own name with their own reason. There is no bulk classify.
  *
- * The backfill migration `20260923040000` READS that table and derives nothing.
+ * The backfill migration `20260928030000` READS that table and derives nothing.
  * That separation is the point: a migration that worked out the answer while it
  * ran would be making the judgement in the dark, at the least reversible moment
  * there is.
@@ -75,7 +75,7 @@ import { foldOrganisationName } from "@/lib/school-organisations";
  *   pointless questions is a census people stop answering.
  *
  * THIS EXACT TEXT IS EMBEDDED IN
- * `20260923040000_backfill_school_bookings_to_organisations/migration.sql`, and
+ * `20260928030000_backfill_school_bookings_to_organisations/migration.sql`, and
  * `school-member-classification-contract.test.ts` compares them. The migration
  * has to ask the same question in SQL because it runs as SQL; the census asks
  * it through Prisma, typed, which is why this constant is documentation AND the

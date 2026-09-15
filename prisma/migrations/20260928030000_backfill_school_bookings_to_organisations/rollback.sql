@@ -1,9 +1,9 @@
--- Reverse 20260923040000_backfill_school_bookings_to_organisations (#3369,
+-- Reverse 20260928030000_backfill_school_bookings_to_organisations (#3369,
 -- stage 4 of programme #2912).
 --
--- THIS SCRIPT RUNS FIRST. The window applied 20260923030000 then
--- 20260923040000, so the reverse runs this one and then
--- 20260923030000/rollback.sql -- reverse order, as
+-- THIS SCRIPT RUNS FIRST. The window applied 20260928020000 then
+-- 20260928030000, so the reverse runs this one and then
+-- 20260928020000/rollback.sql -- reverse order, as
 -- docs/PRODUCTION_UPGRADE_RUNBOOK.md section 4 requires. This script gives
 -- every organisation-owned booking its member back, which is the precondition
 -- for the SET NOT NULL statements in the other one. Running them the other way
@@ -60,7 +60,7 @@
 -- migrations to apply" and `prisma migrate diff` reports no drift, because the
 -- reverses restore the shape as well as the data. To roll forward, RE-APPLY
 -- both `migration.sql` files by hand, in order, as the migration role -- they
--- are written to be re-runnable, which is why 20260923030000 section 4 guards
+-- are written to be re-runnable, which is why 20260928020000 section 4 guards
 -- its type and table creation. Deleting the two `_prisma_migrations` rows and
 -- migrating again is equivalent and edits migration history for no gain.
 -- docs/PRODUCTION_UPGRADE_RUNBOOK.md section 4 carries the same sequence.
@@ -252,7 +252,7 @@ WHERE o."kind" = 'SCHOOL'
   AND NOT EXISTS (SELECT 1 FROM "OrganisationContact" oc WHERE oc."organisationId" = o."id");
 
 -- "SchoolMemberClassification" is deliberately kept -- see
--- 20260923030000/rollback.sql. It is an officer's work, and the next attempt
--- needs it. That is also why 20260923030000 section 4 has to be re-runnable.
+-- 20260928020000/rollback.sql. It is an officer's work, and the next attempt
+-- needs it. That is also why 20260928020000 section 4 has to be re-runnable.
 
 COMMIT;
