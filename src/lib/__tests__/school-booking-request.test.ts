@@ -223,6 +223,7 @@ import {
   approveSchoolBookingRequest,
   createSchoolBookingRequest,
   generateSchoolGuests,
+  resolveSchoolGuestOverride,
 } from "@/lib/school-booking-request";
 // #2739: the night rows this pipeline writes are the #1036 locked prices the
 // #2337 member link then prices against, so the join is asserted here with the
@@ -3134,5 +3135,137 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
 
       expect(bookingData().totalPriceCents).toBe(100000);
     });
+  });
+});
+
+/*
+ * #3412 — the ONE resolver both moments share.
+ *
+ * Saving a quote and approving now ask the same function what the school group
+ * is, given the officer's numbers, so the price and the beds cannot be computed
+ * from different lists. That divergence is the defect: a group agreed down from
+ * 29 to 20 was quoted fourteen times at the stored 29 while the panel read
+ * "= 20 total".
+ */
+describe("resolveSchoolGuestOverride (#3412)", () => {
+  const TEACHERS = [
+    { firstName: "Tui", lastName: "Teacher", email: "tui@school.test" },
+    { firstName: "Rimu", lastName: "Helper", email: null },
+  ];
+  const STORED_GUESTS = [
+    { firstName: "Tui", lastName: "Teacher", ageTier: "ADULT" },
+    { firstName: "Rimu", lastName: "Helper", ageTier: "ADULT" },
+    { firstName: "School Child", lastName: "1", ageTier: "YOUTH" },
+    { firstName: "School Child", lastName: "2", ageTier: "YOUTH" },
+    { firstName: "School Child", lastName: "3", ageTier: "YOUTH" },
+  ];
+
+  function storedRequest(overrides: Record<string, unknown> = {}) {
+    return { teachers: TEACHERS, guests: STORED_GUESTS, ...overrides };
+  }
+
+  beforeEach(() => {
+    // These assertions are about WHICH bound was read, so the counts have to
+    // start at zero here — the approval tests above call the same two mocks.
+    vi.mocked(getLodgeCapacity).mockClear();
+    vi.mocked(getLodgeCapacity).mockResolvedValue(40);
+    vi.mocked(getDefaultLodgeCapacity).mockClear();
+    vi.mocked(getDefaultLodgeCapacity).mockResolvedValue(40);
+  });
+
+  it("leaves the submitted list alone when no counts are given", async () => {
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      lodgeId: "lodge-1",
+    });
+
+    expect(resolution.guests).toEqual(STORED_GUESTS);
+    expect(resolution.overridden).toBe(false);
+    expect(resolution.changed).toBe(false);
+    // Nothing is being varied, so no capacity bound is read at all.
+    expect(vi.mocked(getLodgeCapacity)).not.toHaveBeenCalled();
+    expect(vi.mocked(getDefaultLodgeCapacity)).not.toHaveBeenCalled();
+  });
+
+  it("keeps the named teachers and regenerates the children across tiers", async () => {
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      childCounts: { INFANT: 1, CHILD: 2, YOUTH: 0 },
+      lodgeId: "lodge-1",
+    });
+
+    expect(resolution.guests).toEqual([
+      { firstName: "Tui", lastName: "Teacher", ageTier: "ADULT" },
+      { firstName: "Rimu", lastName: "Helper", ageTier: "ADULT" },
+      { firstName: "School Child", lastName: "1", ageTier: "INFANT" },
+      { firstName: "School Child", lastName: "2", ageTier: "CHILD" },
+      { firstName: "School Child", lastName: "3", ageTier: "CHILD" },
+    ]);
+    expect(resolution.teachers).toHaveLength(2);
+    expect(resolution.changed).toBe(true);
+    expect(vi.mocked(getLodgeCapacity)).toHaveBeenCalledWith("lodge-1");
+  });
+
+  it("reports no change when the officer types the stored numbers back", async () => {
+    // The panel posts the override whenever a box was touched, so "an override
+    // arrived" is not "the party is different" — and only the latter may
+    // rewrite the request or be refused under a hold.
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      childCounts: { YOUTH: 3 },
+      lodgeId: "lodge-1",
+    });
+
+    expect(resolution.guests).toEqual(STORED_GUESTS);
+    expect(resolution.overridden).toBe(true);
+    expect(resolution.changed).toBe(false);
+  });
+
+  it("binds the adjusted list to the lodge's bed count", async () => {
+    vi.mocked(getLodgeCapacity).mockResolvedValue(40);
+
+    await expect(
+      resolveSchoolGuestOverride({
+        request: storedRequest(),
+        childCounts: { YOUTH: 39 },
+        lodgeId: "lodge-1",
+      })
+    ).rejects.toMatchObject({ status: 422, message: /capacity of 40/ });
+  });
+
+  it("bounds against the club's default lodge when the request names none", async () => {
+    vi.mocked(getDefaultLodgeCapacity).mockResolvedValue(4);
+
+    await expect(
+      resolveSchoolGuestOverride({
+        request: storedRequest(),
+        childCounts: { YOUTH: 3 },
+        lodgeId: null,
+      })
+    ).rejects.toMatchObject({ status: 422 });
+    expect(vi.mocked(getLodgeCapacity)).not.toHaveBeenCalled();
+  });
+
+  it("refuses a request whose stored guests cannot be read, counts or not (#2342)", async () => {
+    // The panel prefills those boxes from the SALVAGED list, in which an
+    // unreadable age tier counts as zero — so accepting typed numbers here
+    // would let a 30-child group be priced and invoiced for two.
+    await expect(
+      resolveSchoolGuestOverride({
+        request: storedRequest({ guests: [{ firstName: "Broken" }] }),
+        childCounts: { YOUTH: 18 },
+        lodgeId: "lodge-1",
+      })
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("refuses an empty group", async () => {
+    await expect(
+      resolveSchoolGuestOverride({
+        request: storedRequest({ teachers: [] }),
+        childCounts: { INFANT: 0, CHILD: 0, YOUTH: 0 },
+        lodgeId: "lodge-1",
+      })
+    ).rejects.toMatchObject({ status: 422 });
   });
 });
