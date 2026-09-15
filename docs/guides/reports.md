@@ -51,6 +51,10 @@ date-only lodge nights, interpreted in the club time zone.
    matching captured additional-payment record, a warning above the cards says
    how much **Net Collected Cash** may understate and how many bookings need a
    developer to reconcile their payment ledgers before the figure is trusted.
+   A separate red **Booked Revenue needs reconciliation** warning counts
+   bookings whose stored headline does not reconcile to its recorded parts.
+   The report keeps the stored figures unchanged and includes counts for every
+   reason in the CSV so an operator can investigate without guessing a value.
 2. The charts show **Occupancy Rate**, **Booked Revenue by Day/Week/Month** (the
    granularity is chosen automatically from the range length), **Booking Trends
    (by week)**, **Member vs Non-Member Guests**, and **Booking Status
@@ -128,6 +132,7 @@ long ranges readable.
 | Booked Revenue and Net Collected Cash differ | They measure different things: selected stay-night price versus booking-level captured cash less refunds | Use the [Payments](payments.md) ledger for the transaction detail |
 | Outstanding Additions is non-zero | A price increase is still owing on an overlapping booking | Chase it from [Bookings](bookings.md#chase-money-still-owed-after-a-booking-change) |
 | "Net Collected Cash needs reconciliation" appears | One or more payments say an addition was collected without a matching captured additional-payment record | Ask a developer to reconcile the affected payment ledgers before trusting Net Collected Cash; the warning states the possible understatement and booking count |
+| "Booked Revenue needs reconciliation" appears | One or more stored booking headlines have missing or disagreeing recorded parts | Open the affected bookings from the booking list's **Money review** chips; do not reprice unknown history or treat the warning as an automatic correction |
 
 ## Related links
 

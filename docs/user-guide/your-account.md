@@ -107,7 +107,9 @@ turned off, so you never miss news about a stay you have booked.
 The **Privacy & Data** section gives you two rights:
 
 - **Download My Data** — a machine-readable (JSON) copy of the data the system
-  holds about you, limited to a few downloads per day.
+  holds about you, limited to a few downloads per day. Each booking also says
+  whether its stored total reconciles to the recorded price parts and lists the
+  reasons when it does not; the export never changes the amount.
 - **Request Account Deletion** — asks the club to permanently delete your
   account. This is **irreversible** and an admin reviews it first; on approval
   you are anonymised, your future bookings are cancelled, and your login is

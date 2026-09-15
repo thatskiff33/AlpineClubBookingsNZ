@@ -386,6 +386,37 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   of a child promotion line remain unchanged unless a fixture proves a D3 defect
   and the owner separately approves its correction.
 
+## INV-MONEY-031
+
+- **A stored booking headline is trusted only with its derived reconciliation
+  state; missing or disagreeing recorded parts are explicit and never repaired
+  by the read** (#3278, stage 4 of programme #3272; owner-approved D1-D4,
+  14 September 2026). `reconcileBookingMoney` is the one pure projection. It
+  returns `RECONCILED`, or `UNRECONCILED` with every applicable reason in this
+  order: no surviving strands, unreadable strand evidence, headline-total
+  mismatch, promotion build-up not known, promotion build-up mismatch,
+  discount-component mismatch, and final-price relation mismatch.
+
+  It checks recorded facts only: `Booking.totalPriceCents` against readable
+  whole-guest sold-price evidence; `promoAdjustmentCents` against the
+  `INV-MONEY-029` adjustment build-up when known; `discountCents` against
+  `max(0, -promoAdjustmentCents)`; and `finalPriceCents` through
+  `bookingFinalPriceCents`. `EVEN_SPLIT` remains usable only at whole-guest
+  grain. Unknown provenance, a missing build-up, or a null adjustment becomes a
+  reason, never zero or a present-day reprice. Account credit remains solely in
+  `MemberCredit`.
+
+  Booking detail and lists, officer history, finance metrics, reports and
+  exports, member data export, and per-booking Xero reconciliation input carry
+  the same state and complete ordered reasons. The Xero invoice shape and every
+  displayed or settled amount remain unchanged. A read-only repeatable-read
+  census (`npm run booking-money:census`) reports all state/reason counts from
+  one ordered snapshot and writes nothing. The mutation-verified
+  `booking-money-writer-census.test.ts` names direct headline/component writers
+  and rejects raw-SQL or forwarded-delegate bypasses. A partly-refunded
+  guest-add mismatch is therefore visible for #3244 to repair separately; this
+  rule does not choose a card, charge, refund, credit, or invoice correction.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and
