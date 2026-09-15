@@ -23,16 +23,16 @@ block in the same header, which leaves them under budget.
 Each entry records the file's length after the import.
 
 file: src/app/(admin)/admin/bookings/page.tsx
-lines: 776
-reason: one line: the `bookingOwner` import this route page shell needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
+lines: 790
+reason: one line: the `bookingOwner` import this route page shell needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out. RE-MEASURED by #3480: fourteen lines, the owner cell rendered as plain text when the owner is an organisation, which has no member page — the link used to go to `/admin/members/undefined`. It is the same cell with the `Link` made conditional, and lifting one table cell out of a page shell to save it would be a component for one call site.
 
 file: src/app/(admin)/admin/dashboard/page.tsx
 lines: 909
 reason: one line: the `bookingOwner` import this route page shell needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/(admin)/admin/xero/_components/health-diagnostics-panel.tsx
-lines: 728
-reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out. RE-MEASURED by #2934, which added a second one-line import for the same reason in the same file: `xeroSectionId`, so the id this panel writes onto its section cards and the id `use-xero-connection.ts` reads back to reveal them are one string rather than two (`INV-SSOT-001`). The number is re-measured here rather than declared in a second fragment, because two live entries for one path is refused by the gate and is an unusable input rather than a redundant one.
+lines: 735
+reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out. RE-MEASURED by #2934, which added a second one-line import for the same reason in the same file: `xeroSectionId`, so the id this panel writes onto its section cards and the id `use-xero-connection.ts` reads back to reveal them are one string rather than two (`INV-SSOT-001`). The number is re-measured here rather than declared in a second fragment, because two live entries for one path is refused by the gate and is an unusable input rather than a redundant one. RE-MEASURED by #3480: seven lines making the owner's name a link only when there is a member page to link to; a paid school booking can be missing its Xero invoice too, and the link went to `/admin/members/null`.
 
 file: src/app/api/admin/bookings/[id]/exclusive-hold/route.ts
 lines: 423
@@ -115,8 +115,8 @@ lines: 1415
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/adult-member-hosting-review.ts
-lines: 4509
-reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
+lines: 4682
+reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out. RE-MEASURED by #3480, twice over: the `INV-HOST-050` fix on that branch (+13 lines, a comment and a bound local) had already outgrown the 4509 recorded here, and the participant-decision fix then added the rest — a `CoverageOwnerRow` type for what the coverage reads really fetch, the `coverageParticipantFacts` narrowing that is the only way to make a `CoverageOwnerFacts` from a row, and one decision at the sibling entry about whether the changed booking is a participant at all. Every one of those has to sit beside the reads it types: the whole point is that a read in this module cannot skip the decision, and a helper in another file is a helper a read can fail to import. The rest is the comment saying why an organisation-owned booking used to roll a school approval back.
 
 file: src/lib/bed-allocation-removal.ts
 lines: 792
@@ -246,5 +246,5 @@ lines: 843
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/app/(admin)/admin/waitlist/page.tsx
-lines: 1016
-reason: one line: the `bookingOwner` import. A waitlist entry in this product IS a booking row in a `WAITLIST_*` status — the table links its own id to `/admin/bookings/<id>` — so its owner is a booking's owner and the link to the member's record is read through the one accessor like every other. Splitting a route page shell for one import line is the worse answer; the page's own size debt predates this change and is untouched by it.
+lines: 1026
+reason: one line: the `bookingOwner` import. A waitlist entry in this product IS a booking row in a `WAITLIST_*` status — the table links its own id to `/admin/bookings/<id>` — so its owner is a booking's owner and the link to the member's record is read through the one accessor like every other. Splitting a route page shell for one import line is the worse answer; the page's own size debt predates this change and is untouched by it. RE-MEASURED by #3480: ten lines, the same conditional-link treatment for an organisation-owned entry, whose `memberId` the route now sends as an honest `null` rather than an `undefined` JSON drops; the `bookingOwner` import this entry was written for is gone from the page, because the entry is a DTO that carries the answer already.
