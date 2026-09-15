@@ -2870,9 +2870,21 @@ async function settleSameOwnerDependentCoverage(
   // the options by hand and got it wrong. Fail loudly inside the transaction,
   // where it rolls back, rather than record that a member consented to something
   // on somebody else's booking.
+  //
+  // #3369 WIDENED THIS, and the widening is why the null is spelled out rather
+  // than left to `!==`. Before stage 4 a booking always had a member, so
+  // `(actorMemberId ?? null) !== booking.memberId` was unconditionally true for
+  // an actor-less caller and the guard always fired. `bookingOwner().memberId`
+  // is now `string | null`, and on an ORGANISATION-owned booking it is `null` --
+  // so the two nulls would compare EQUAL and an actor-less caller would walk
+  // straight past a check that used to stop it. An organisation never signs in
+  // and can accept nothing, so no owner at all is the strongest reason to
+  // refuse, not a reason to allow: it is tested first and on its own.
+  const ownerMemberId = bookingOwner(booking).memberId;
   if (
     context.strandingAcceptedByOwner === true &&
-    (context.actorMemberId ?? null) !== bookingOwner(booking).memberId
+    (ownerMemberId === null ||
+      (context.actorMemberId ?? null) !== ownerMemberId)
   ) {
     throw new Error(
       "INV-HOST-050: a linked-move answer can only be honoured for the member " +
