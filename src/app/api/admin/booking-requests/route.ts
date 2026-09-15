@@ -95,6 +95,27 @@ export async function GET(req: NextRequest) {
     latestQuotes.map((quote) => [quote.bookingRequestId, quote])
   );
 
+  // #3412 (review, F16): the held booking's own status, so the panel can draw
+  // the hold gate on the SAME field the service does. `heldBookingId` alone
+  // does not say whether beds are reserved — a cancelled booking leaves a stale
+  // pointer, which `holdBookingRequestSlots` replaces on the next send and
+  // which the quote service deliberately lets the officer past. Keyed on the
+  // pointer, the panel disabled Save quote and sent the officer to Release
+  // hold, which 409s on that same dead pointer. One batched read.
+  const heldBookingIds = requests
+    .map((request) => request.heldBookingId)
+    .filter((id): id is string => Boolean(id));
+  const heldBookingStatusById = new Map(
+    heldBookingIds.length
+      ? (
+          await prisma.booking.findMany({
+            where: { id: { in: heldBookingIds } },
+            select: { id: true, status: true },
+          })
+        ).map((booking) => [booking.id, booking.status] as const)
+      : []
+  );
+
   // Resolve the school-group soft cap per request lodge through the same
   // settings path enforcement uses (loadSchoolGroupSoftCap), so the queue's
   // "Over N" hint can't diverge from the actual per-lodge threshold. A null
@@ -176,6 +197,11 @@ export async function GET(req: NextRequest) {
     return {
       ...serializeBookingRequestForAdmin(request, activeLodgeCount),
       schoolGroupSoftCap: softCapByLodgeId.get(request.lodgeId)!,
+      // Null both when there is no hold and when the pointer is dangling; the
+      // panel treats only AWAITING_REVIEW as beds actually reserved.
+      heldBookingStatus: request.heldBookingId
+        ? heldBookingStatusById.get(request.heldBookingId) ?? null
+        : null,
       pricedByMemberName: request.pricedByMemberId
         ? reviewerNames.get(request.pricedByMemberId) ?? null
         : null,
