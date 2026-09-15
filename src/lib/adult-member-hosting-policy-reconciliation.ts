@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 
-import { bookingOwner } from "@/lib/booking-owner";
+import { hostingCoverageParticipantOwnerId } from "@/lib/adult-member-hosting-queue-participants";
 import { HOSTING_COVERAGE_SOURCE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { clubToday, dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -172,9 +172,10 @@ export async function enqueueActiveHostingIncidentPolicyReconciliation(
     if (nights.length === 0) continue;
     // #3369: hosting coverage is about the nights a MEMBER holds and whether a
     // qualifying adult covers them. An organisation holds no member-nights, so
-    // there is nothing to re-evaluate for its booking.
-    const coverageMemberId = bookingOwner(booking).memberId;
-    if (!coverageMemberId) continue;
+    // there is nothing to re-evaluate for its booking. THE shared predicate
+    // rather than a third spelling of it (#3480, `INV-SSOT-001`).
+    const coverageMemberId = hostingCoverageParticipantOwnerId(booking);
+    if (coverageMemberId === null) continue;
     queueRows.push({
       memberId: coverageMemberId,
       lodgeId: booking.lodgeId,

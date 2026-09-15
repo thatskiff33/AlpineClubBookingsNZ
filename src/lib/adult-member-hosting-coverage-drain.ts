@@ -31,7 +31,8 @@ import {
   loadAdultMemberHostingPolicy,
   reconcileSameOwnerCoverageIncident,
   GROUP_TRIP_COVERAGE_SOURCE_SELECT,
-  type GroupTripCoverageSourceFacts,
+  coverageParticipantFacts,
+  type GroupTripCoverageSourceRow,
 } from "@/lib/adult-member-hosting-review";
 import { sendHostingCoverageLostEmail } from "@/lib/email/booking";
 import logger from "@/lib/logger";
@@ -140,12 +141,16 @@ export async function settleHostingCoverageAfterCommit(
       const booking = (await db.booking.findUnique({
         where: { id: options.bookingId },
         select: GROUP_TRIP_COVERAGE_SOURCE_SELECT,
-      })) as GroupTripCoverageSourceFacts | null;
+      })) as GroupTripCoverageSourceRow | null;
       memberId = booking ? bookingOwner(booking).memberId : null;
       lodgeId = booking?.lodgeId ?? null;
-      if (booking) {
+      // #3480: only a participant can be the source of a Group Trip fan-out; a
+      // school's booking (no member, never in a trip) has no siblings to narrow
+      // the drain to, and is not cast into a type that says otherwise.
+      const participant = booking ? coverageParticipantFacts(booking) : null;
+      if (participant) {
         groupDependentBookingIds =
-          await loadGroupTripCoverageDependentBookingIds(booking, db);
+          await loadGroupTripCoverageDependentBookingIds(participant, db);
       }
     }
     const sourceBookingIds =

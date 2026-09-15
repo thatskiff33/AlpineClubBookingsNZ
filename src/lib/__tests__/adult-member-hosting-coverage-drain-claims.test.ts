@@ -66,6 +66,15 @@ vi.mock("@/lib/adult-member-hosting-review", () => ({
   // import and kills the whole file before a test runs.
   loadGroupTripCoverageDependentBookingIds: mocks.loadGroupDependents,
   GROUP_TRIP_COVERAGE_SOURCE_SELECT: { id: true, memberId: true, lodgeId: true },
+  // #3480: the drain narrows the written booking through the participant
+  // decision before it plans a Group Trip fan-out from it. The real function
+  // is one line — a row with a member owner is a participant, a row without
+  // one is not — and it is spelled here rather than left out for the same
+  // reason as the two above: a factory short of it makes the drain's
+  // try/catch swallow a TypeError and report an empty settle, which fails
+  // the assertions below for a reason that has nothing to do with claims.
+  coverageParticipantFacts: (row: { memberId: string | null }) =>
+    row.memberId === null ? null : row,
   loadHostingCoverageSplitSiblingIds: mocks.loadSplitSiblings,
   reconcileSameOwnerCoverageIncident: mocks.reconcile,
 }));
