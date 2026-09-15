@@ -25,8 +25,8 @@ function row(
     guests: [
       {
         priceCents: 10_000,
-        stayStart: null,
-        stayEnd: null,
+        stayStart: NIGHT,
+        stayEnd: CHECK_OUT,
         nights: [
           {
             stayDate: NIGHT,
@@ -65,8 +65,8 @@ describe("booking money reconciliation store", () => {
         guests: [
           {
             priceCents: 10_000,
-            stayStart: null,
-            stayEnd: null,
+            stayStart: NIGHT,
+            stayEnd: CHECK_OUT,
             nights: [
               { stayDate: NIGHT, priceCents: 10_000, priceSource: "EVEN_SPLIT" },
             ],
@@ -79,8 +79,8 @@ describe("booking money reconciliation store", () => {
         guests: [
           {
             priceCents: 10_000,
-            stayStart: null,
-            stayEnd: null,
+            stayStart: NIGHT,
+            stayEnd: CHECK_OUT,
             nights: [
               { stayDate: NIGHT, priceCents: null, priceSource: "UNKNOWN" },
             ],

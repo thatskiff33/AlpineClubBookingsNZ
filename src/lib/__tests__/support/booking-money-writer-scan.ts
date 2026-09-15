@@ -99,7 +99,11 @@ export function scanBookingMoneyWriterEscapes(file: string, code: string): strin
       }
     }
     if (ts.isBindingElement(node)) {
-      const name = propertyName(node.propertyName ?? node.name);
+      const name = node.propertyName
+        ? propertyName(node.propertyName)
+        : ts.isIdentifier(node.name)
+          ? node.name.text
+          : undefined;
       const binding = parent;
       const declaration = grandparent;
       if (

@@ -54,6 +54,11 @@ function writerKey(
   return `${site.file}|${site.delegate}|${site.methods.join(",")}|${site.fields.join(",")}`;
 }
 
+// The tree walk is intentionally outside each five-second assertion budget,
+// matching the Stage 1/2 censuses that use the same source inventory.
+const DISCOVERED_WRITERS = discoveredBookingMoneyWriterSites();
+const DISCOVERED_ESCAPES = discoveredBookingMoneyWriterEscapes();
+
 describe("INV-MONEY-031 booking money writer census", () => {
   it("discovers direct and raw-SQL mutations, including a newly added writer", () => {
     expect(
@@ -91,7 +96,7 @@ describe("INV-MONEY-031 booking money writer census", () => {
 
   it("rejects delegate forwarding and mutation-proves the alias escape routes", () => {
     expect(
-      discoveredBookingMoneyWriterEscapes(),
+      DISCOVERED_ESCAPES,
       "INV-MONEY-031: booking-money Prisma delegates must remain direct calls so the writer census cannot be bypassed.",
     ).toEqual([]);
     expect(
@@ -116,7 +121,7 @@ describe("INV-MONEY-031 booking money writer census", () => {
 
   it("matches the reviewed production writer manifest exactly", () => {
     expect(
-      discoveredBookingMoneyWriterSites().map(writerKey),
+      DISCOVERED_WRITERS.map(writerKey),
       "INV-MONEY-031: a booking headline or component writer changed. Classify the writer against the canonical derived projection, add a real-shaped fixture, and update this reviewed manifest; never default missing evidence to zero.",
     ).toEqual(REVIEWED_WRITERS);
   });

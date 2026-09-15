@@ -4,8 +4,6 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { deriveNightAdjustmentState } from "@/lib/night-adjustment-write";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 
-export const BOOKING_MONEY_RECONCILIATION_INVARIANT = "INV-MONEY-031";
-
 export const BOOKING_MONEY_RECONCILIATION_REASON_ORDER = [
   "NO_SURVIVING_STRANDS",
   "STRAND_EVIDENCE_UNREADABLE",

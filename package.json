@@ -54,7 +54,7 @@
     "quality:report": "tsx scripts/quality-report.ts",
     "quality:budget": "tsx scripts/ci/check-file-size-budget.ts",
     "audit:census": "tsx scripts/audit/audit-writer-census.ts",
-    "booking-money:census": "tsx scripts/booking-money-reconciliation-census.ts",
+    "booking-money:census": "tsx --conditions=react-server scripts/booking-money-reconciliation-census.ts",
     "diagnostics:bundle": "tsx scripts/diagnostics/generate-knowledge-bundle.ts",
     "diagnostics:provision-role": "tsx scripts/diagnostics/provision-ai-diagnostics-role.ts",
     "setup:check": "tsx --conditions=react-server scripts/setup.ts check",
