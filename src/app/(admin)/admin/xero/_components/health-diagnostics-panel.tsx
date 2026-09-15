@@ -30,6 +30,7 @@ import {
   ToneChip,
   type ToggleSection,
 } from "./shared"
+import { xeroSectionId } from "./types"
 import type {
   ContactGroupMismatchResponse,
   ContactLinkMismatchResponse,
@@ -307,7 +308,7 @@ export function HealthAndDiagnosticsPanels({
     <>
       <FocusedActionError id="xero-health-error" error={healthError} className="mb-3" />
       <SectionCard
-        id="xero-section-health"
+        id={xeroSectionId("health")}
         title="Health Snapshot"
         description="Quick checks for link coverage, stuck work, missing invoices, and daily Xero budget pressure."
         open={healthOpen}
@@ -525,7 +526,7 @@ function ContactGroupMismatchPanel({
   const clubTime = useClubTime()
   return (
     <SectionCard
-      id="xero-section-contactGroupMismatches"
+      id={xeroSectionId("contactGroupMismatches")}
       title="Contact Group Mismatches"
       description="Audit linked members against the active Xero member-grouping rules under the current mode."
       open={open}
@@ -637,7 +638,7 @@ function ContactLinkMismatchPanel({
   const clubTime = useClubTime()
   return (
     <SectionCard
-      id="xero-section-contactLinkMismatches"
+      id={xeroSectionId("contactLinkMismatches")}
       title="Contact Link Mismatches"
       description="Audit linked members whose local name differs from the cached Xero contact name."
       open={open}

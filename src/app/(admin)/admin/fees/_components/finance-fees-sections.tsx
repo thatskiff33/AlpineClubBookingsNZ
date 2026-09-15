@@ -141,15 +141,22 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
   const [stagedBilling, setStagedBilling] = useState<Record<string, string | null>>({});
   const [deleteTarget, setDeleteTarget] = useState<{ action: "DELETE_MEMBERSHIP_FEE" | "DELETE_JOINING_FEE"; id: string; label: string } | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const { scrollToError } = useScrollToFeedback();
+  const { scrollToError, revealEditor } = useScrollToFeedback();
   // The per-fee Edit pencils sit in lists below the form they populate, which
   // renders at the top of the panel — without a scroll nothing visibly changes
-  // on click. Scroll the panel's own top into view (not the page top: these
-  // panels sit below Hut Fees, so the page top would hide them entirely).
+  // on click. Reveal the panel itself (not the page top: these panels sit below
+  // Hut Fees, so the page top would hide them entirely) through the shared
+  // reveal primitive, so the panel also takes focus for keyboard and
+  // screen-reader users (#2934).
+  //
+  // Each panel is therefore a NAMED region: focus landing on an unnamed card
+  // announces only "group". The name is `aria-labelledby` on the panel's own
+  // visible title rather than an `aria-label` repeating its words, so the two
+  // cannot drift (`INV-SSOT-001`), and `tabIndex={-1}` is declarative so React
+  // owns the attribute instead of the primitive writing it behind React's back.
   const joiningPanelRef = useRef<HTMLDivElement>(null);
   const membershipPanelRef = useRef<HTMLDivElement>(null);
-  const scrollToPanelTop = (panel: { current: HTMLDivElement | null }) =>
-    panel.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const scrollToPanelTop = revealEditor;
   // #2264 — example amounts move out of the placeholders (grey text inside a
   // money box reads as an amount already entered) and into hints under each
   // field.
@@ -354,7 +361,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
       <span>{exceptions.length} membered {exceptions.length === 1 ? "family has" : "families have"} no billing member. They will be omitted from family invoice generation.</span>
     </Alert>}
 
-    <Card ref={joiningPanelRef} className="scroll-mt-20"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle>Joining fees</CardTitle><CardDescription>the one-off fee a new member pays to join, per membership type and age tier</CardDescription></div>{data?.canEdit && !entranceEditing && <Button variant="outline" size="sm" aria-label="Edit joining fees" onClick={() => { setEntranceEditing(true); scrollToPanelTop(joiningPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
+    <Card ref={joiningPanelRef} role="region" aria-labelledby="joining-fees-title" tabIndex={-1} className="scroll-mt-20 focus:outline-none"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle id="joining-fees-title">Joining fees</CardTitle><CardDescription>the one-off fee a new member pays to join, per membership type and age tier</CardDescription></div>{data?.canEdit && !entranceEditing && <Button variant="outline" size="sm" aria-label="Edit joining fees" onClick={() => { setEntranceEditing(true); scrollToPanelTop(joiningPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
       <Alert>
         <span>Family joining fees now apply only to members assigned the <strong>Family</strong> membership type. Applicants who previously matched the automatic family heuristic (two adults plus a dependent) are now invoiced their own membership type&apos;s joining fee. A type with no rows raises no joining fee.</span>
       </Alert>
@@ -371,7 +378,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
       <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}{!type.isActive && <span className="ml-2 text-sm text-muted-foreground">(archived)</span>}</div>{type.joiningFees.length === 0 ? <p className="text-sm text-muted-foreground">No joining fee</p> : type.joiningFees.map((fee) => <div key={fee.id} className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{tierLabel(fee.ageTier)}</Badge><span>{dollars(fee.amountCents)} · {fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{entranceEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} ${tierLabel(fee.ageTier)} joining fee`} disabled={saving} onClick={() => { setEditingEntranceFeeId(fee.id); setJoiningTypeId(type.id); setJoiningTier(fee.ageTier ?? "FLAT"); setEntranceAmount((fee.amountCents / 100).toFixed(2)); setEntranceFrom(fee.effectiveFrom); setEntranceTo(fee.effectiveTo ?? ""); scrollToPanelTop(joiningPanelRef); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} ${tierLabel(fee.ageTier)} joining fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_JOINING_FEE", id: fee.id, label: `${type.name} ${tierLabel(fee.ageTier)} joining fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>)}</div>)}</div>
     </CardContent></Card>
 
-    <Card ref={membershipPanelRef} className="scroll-mt-20"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle>Annual membership fees</CardTitle><CardDescription>the fee to be a paid-up member of the club</CardDescription></div>{data?.canEdit && !membershipEditing && <Button variant="outline" size="sm" aria-label="Edit membership fees" onClick={() => { setMembershipEditing(true); scrollToPanelTop(membershipPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
+    <Card ref={membershipPanelRef} role="region" aria-labelledby="membership-fees-title" tabIndex={-1} className="scroll-mt-20 focus:outline-none"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle id="membership-fees-title">Annual membership fees</CardTitle><CardDescription>the fee to be a paid-up member of the club</CardDescription></div>{data?.canEdit && !membershipEditing && <Button variant="outline" size="sm" aria-label="Edit membership fees" onClick={() => { setMembershipEditing(true); scrollToPanelTop(membershipPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
       <p className="text-sm text-muted-foreground">Amounts are GST-inclusive integer cents after saving. Effective ranges are inclusive and may not overlap for one membership type.</p>
       {!familyBillingActive && hasPerFamilySchedule && <Alert variant="warning">
         <span>This club bills members individually, but one or more schedules still use the per-family basis. Those schedules cannot be invoiced and are not reinterpreted; edit each one to a per-member or no-invoice basis. Per-family can only be chosen after switching the family billing mode on the subscription billing settings.</span>

@@ -28,7 +28,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
-import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import {
+  expectRecoveryAlertToHoldFocus,
+  expectRevealed,
+  installScrollIntoViewSpy,
+  removeScrollIntoViewSpy,
+} from "@/lib/__tests__/helpers/focus";
 
 vi.mock("@/components/lodge-select", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/components/lodge-select");
@@ -541,5 +546,57 @@ describe("Hut Fees draws the whole-lodge box from its one home (#2938)", () => {
     expect(screen.getByLabelText(/Flat whole-lodge night rate/)).toHaveValue(
       "600.05",
     );
+  });
+});
+
+describe("Hut Fees takes the officer to the form it opens (#2934)", () => {
+  // Edit and Copy sit at the BOTTOM of the seasons list; the form they open
+  // renders at the top of this card. They used to call the SUCCESS primitive to
+  // do it, which positions at the top of the target's scroll container — the
+  // same mis-routing this issue fixed in `family-groups`, and one that looked
+  // correct here only because Hut Fees happens to sit at the top of the Fees
+  // page. Opening a form is a REVEAL.
+  it("reveals the named Hut fees region on Edit", async () => {
+    const scrollIntoView = installScrollIntoViewSpy();
+    try {
+      mockApi([sourceSeason()]);
+      renderSection();
+      await screen.findByText("Winter 2026");
+      // Loading the list reveals nothing: only an explicit action moves anyone.
+      expect(scrollIntoView).not.toHaveBeenCalled();
+
+      await openTheEdit();
+
+      expectRevealed(
+        scrollIntoView,
+        screen.getByRole("region", { name: "Hut fees" }),
+      );
+    } finally {
+      removeScrollIntoViewSpy();
+    }
+  });
+
+  it("reveals it again on Copy, where the copy notice then takes focus", async () => {
+    const scrollIntoView = installScrollIntoViewSpy();
+    try {
+      mockApi([sourceSeason()]);
+      renderSection();
+      await screen.findByText("Winter 2026");
+
+      await openTheCopy();
+
+      // Not `expectRevealed`: the copy announces WHAT was copied and from what,
+      // in a paragraph that has to exist before it can be focused, so its
+      // effect runs after the reveal and legitimately wins the focus. The
+      // viewport move is still this issue's, and is what is asserted.
+      const region = screen.getByRole("region", { name: "Hut fees" });
+      expect(scrollIntoView.mock.instances).toEqual([region]);
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "start",
+      });
+    } finally {
+      removeScrollIntoViewSpy();
+    }
   });
 });

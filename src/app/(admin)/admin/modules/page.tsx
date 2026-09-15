@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MODULE_KEYS, type ModuleKey, type ModuleSettingsValues } from "@/config/modules";
-import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
@@ -150,7 +150,6 @@ export default function AdminModulesPage() {
   const [savedMessage, setSavedMessage] = useState("");
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
-  const { scrollToError, scrollToTop } = useScrollToFeedback();
 
   async function loadModules() {
     setLoading(true);
@@ -180,13 +179,14 @@ export default function AdminModulesPage() {
     void loadModules();
   }, []);
 
-  useEffect(() => {
-    if (error) scrollToError(feedbackRef);
-  }, [error, scrollToError]);
-
-  useEffect(() => {
-    if (savedMessage) scrollToTop(pageRef);
-  }, [savedMessage, scrollToTop]);
+  // Failure wins, success positions at the top, and neither runs for a
+  // passive re-render — the shared action-attention rule (#2934).
+  useActionAttention({
+    error: error,
+    errorTarget: feedbackRef,
+    success: savedMessage,
+    successTarget: pageRef,
+  });
 
   const modules = useMemo(() => {
     if (!payload || !draft) return [];

@@ -177,7 +177,12 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const sectionRef = useRef<HTMLDivElement>(null);
-  const { scrollToTop } = useScrollToFeedback();
+  // `revealEditor`, not `scrollToTop`: Edit and Copy OPEN a form, which is a
+  // reveal, and the success primitive would position at the top of the section's
+  // scroll container instead. The two look identical here only because Hut Fees
+  // happens to sit at the top of the Fees page — the same mis-routing this issue
+  // fixed in `family-groups` (#2934).
+  const { revealEditor } = useScrollToFeedback();
   /*
     #2938 review — which season the open form was pre-filled from, and a
     counter so copying twice from the same one re-announces it.
@@ -456,7 +461,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     // The Edit buttons sit at the bottom of the seasons table, but the form
     // they open renders at the top of this section — without a scroll the page
     // does not visibly change and the form opens off the top of the screen.
-    scrollToTop(sectionRef);
+    revealEditor(sectionRef);
   }
 
   function startCreate() {
@@ -512,7 +517,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     setCopyAttention((version) => version + 1);
     // Same reason as `startEdit`: the button is at the bottom of the list and
     // the form it opens renders at the top of the section.
-    scrollToTop(sectionRef);
+    revealEditor(sectionRef);
   }
 
   /** Drop every typed-but-unsaved amount and its complaint. */
@@ -863,7 +868,17 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   );
 
   return (
-    <Card ref={sectionRef}>
+    // A NAMED region, because this card is the reveal target Edit and Copy move
+    // focus to; an unnamed card announces only "group". The name comes from the
+    // visible title via `aria-labelledby` rather than an `aria-label` repeating
+    // it (`INV-SSOT-001`), and `tabIndex` is declarative so React owns it.
+    <Card
+      ref={sectionRef}
+      role="region"
+      aria-labelledby="hut-fees-title"
+      tabIndex={-1}
+      className="focus:outline-none"
+    >
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           {/*
@@ -877,7 +892,9 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
             which removes one of the two ways an assistive-technology user
             navigates it.
           */}
-          <CardTitle headingLevel={2}>Hut fees</CardTitle>
+          <CardTitle id="hut-fees-title" headingLevel={2}>
+            Hut fees
+          </CardTitle>
           <CardDescription>
             Nightly hut rates per lodge, season, membership type, and age tier. Season windows
             (dates/active) are also editable on <Link href="/admin/seasons" className="underline">Seasons</Link>.

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
@@ -41,6 +41,7 @@ import {
   SectionCard,
   type ToggleSection,
 } from "./shared"
+import { xeroSectionId } from "./types"
 import type {
   AccountMappings,
   CreditItemMappingKey,
@@ -119,7 +120,6 @@ export function MappingsPanel({
   const [ageTiers, setAgeTiers] = useState<Array<{ tier: string; label: string }>>(FALLBACK_AGE_TIERS)
   const panelRef = useRef<HTMLDivElement>(null)
   const errorRef = useRef<HTMLParagraphElement>(null)
-  const { scrollToError, scrollToTop } = useScrollToFeedback()
   // Xero account mappings gate on the finance area (write routes enforce
   // finance:edit); a finance:view admin sees them read-only (#1940).
   const canEdit = useAdminAreaEditAccess("finance")
@@ -171,13 +171,14 @@ export function MappingsPanel({
     if (connected && open && !accountMappings && !loading) void fetchMappings()
   }, [accountMappings, connected, fetchMappings, loading, open])
 
-  useEffect(() => {
-    if (error) scrollToError(errorRef)
-  }, [error, scrollToError])
-
-  useEffect(() => {
-    if (saved) scrollToTop(panelRef)
-  }, [saved, scrollToTop])
+  // Failure wins, success positions at the top, and neither runs for a
+  // passive re-render — the shared action-attention rule (#2934).
+  useActionAttention({
+    error: error,
+    errorTarget: errorRef,
+    success: saved,
+    successTarget: panelRef,
+  })
 
   const refreshReferenceData = async () => {
     setRefreshingReferenceData(true)
@@ -254,7 +255,7 @@ export function MappingsPanel({
     <div>
       {viewOnlyBanner}
     <SectionCard
-      id="xero-section-mappings"
+      id={xeroSectionId("mappings")}
       title="Account Mappings"
       description={`Map ${clubName} booking transactions to Xero accounts and items.`}
       open={open}

@@ -1412,6 +1412,18 @@ establishes:
 - **A11y baseline:** a global `prefers-reduced-motion: reduce` guard collapses
   animation/transition duration + delay, and both app shells have a
   skip-to-content link targeting a programmatically focusable `#main-content`.
+- **Attention after an admin action (#2934):** one shared primitive
+  (`src/hooks/use-scroll-to-feedback.ts`) decides where focus and the viewport go
+  once an action has a result — a failure brings the actionable message or
+  invalid control into view and beats any success positioning, an editor the
+  admin explicitly opened is revealed and focused, a save or step transition
+  that changed the screen positions at the top of the resulting page or card,
+  and a passive update moves nothing. The rule, its two hooks and what the
+  census does and does not hold are written out ONCE, in that module's docblock;
+  do not restate them here. `admin-attention-primitive-contract.test.ts` fails a
+  direct `scrollIntoView` / `scrollTo` or a `requestAnimationFrame` focus in an
+  admin file. It does **not** catch a bare effect-driven `.focus()`, and four
+  surfaces still hand-roll their attention that way — the module names them.
 - **Final sweep (#1819):** colour-coded calendar seasons, payment choices, and
   focused bed-allocation cards/cells pair their colour with visible text/icons
   or a distinct border style. The shared error `Alert` uses the AA `--danger`

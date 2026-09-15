@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowDown, ArrowUp, GripVertical } from "lucide-react";
 import {
   AdminViewOnlySectionBanner,
@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
+import { useRevealAttention } from "@/hooks/use-scroll-to-feedback";
 import {
   ForbiddenSaveError,
   useSectionEditState,
@@ -227,6 +228,10 @@ export function AllocationPreferencesSection({
   canEdit,
 }: AllocationPreferencesSectionProps) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  // Edit replaces the header button with nothing the admin can stand on, so
+  // focus would drop to <body>; the shared reveal primitive moves it (and the
+  // viewport) to the card instead, keyed on the explicit Edit click (#2934).
+  const cardRef = useRef<HTMLDivElement>(null);
   const lodgeId = scope.lodgeId;
   const endpoint = `/api/admin/bed-allocation/settings?lodgeId=${encodeURIComponent(lodgeId)}`;
   const section = useSectionEditState<AllocationPreferencesDraft>({
@@ -277,6 +282,7 @@ export function AllocationPreferencesSection({
       draft.allocationPriorityOrder.join("|") !==
         saved.allocationPriorityOrder.join("|"),
   });
+  useRevealAttention(cardRef, section.editRequestKey);
   const draft = section.draft;
 
   const move = (from: number, to: number) => {
@@ -317,9 +323,29 @@ export function AllocationPreferencesSection({
         onClearError={() => section.setError("")}
         onClearSuccess={() => section.setSuccess("")}
       />
-      <Card>
+      {/* The reveal target, so it is a NAMED region rather than a bare card: a
+          keyboard or screen-reader user who presses Edit is moved here, and
+          without a role and a name all they are told is "group". The name is
+          `aria-labelledby` on the visible title rather than an `aria-label`
+          repeating its words, so the two cannot drift (`INV-SSOT-001`), and
+          `tabIndex` is declarative so React owns it instead of the primitive
+          writing the attribute behind React's back.
+
+          No `scroll-mt-*` here: the reveal primitive applies the sticky-header
+          clearance itself, and a class restating the same 5rem would be a second
+          definition of it. Declare one only to OVERRIDE the default, as the
+          taller Xero section cards do. */}
+      <Card
+        ref={cardRef}
+        role="region"
+        aria-labelledby="allocation-preferences-title"
+        tabIndex={-1}
+        className="focus:outline-none"
+      >
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base">Allocation preferences</CardTitle>
+          <CardTitle id="allocation-preferences-title" className="text-base">
+            Allocation preferences
+          </CardTitle>
           {draft && !section.editing ? (
             <ViewOnlyActionButton
               canEdit={canEdit}

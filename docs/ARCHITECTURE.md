@@ -1716,7 +1716,12 @@ GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
 copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
 maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Feedback rendering stays
 in the component, because booking-policy sections use `PolicyFeedback` while the
-security cards use `Alert`. A section whose snapshot is a LIST with per-row
+security cards use `Alert`. Where the admin's attention goes is not per-card
+either: the hook counts explicit Edit clicks in `editRequestKey`, and a section
+hands that to `useRevealAttention` (`src/hooks/use-scroll-to-feedback.ts`, the
+one home for failure / reveal / success positioning — #2934) so the card takes
+focus and comes into view when Edit unmounts the button that held focus, and
+never merely because it re-rendered. A section whose snapshot is a LIST with per-row
 edits is not out of scope, but the hook belongs one level down: the OPEN EDITOR
 gets its own instance, keyed on the row being edited AND on an instance counter
 bumped every time an editor is opened

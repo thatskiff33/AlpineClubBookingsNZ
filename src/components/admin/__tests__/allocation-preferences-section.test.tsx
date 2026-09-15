@@ -19,6 +19,11 @@ import {
   AllocationPreferencesSection,
 } from "../allocation-preferences-section";
 import type { LodgeOptionScopeOnLodge } from "@/lib/lodge-option-scope";
+import {
+  expectRevealed,
+  installScrollIntoViewSpy,
+  removeScrollIntoViewSpy,
+} from "@/lib/__tests__/helpers/focus";
 
 /**
  * The EDITABLE half of a settings payload — what the draft is and what a PUT
@@ -131,6 +136,40 @@ describe("AllocationPreferencesSection", () => {
     expect(toggle.checked).toBe(true);
     expect(toggle.disabled).toBe(true);
     expect(screen.getAllByText("Disabled")).toHaveLength(2);
+  });
+
+  it("moves focus and the viewport to the card on Edit, and never on a re-render (#2934)", async () => {
+    const scrollIntoView = installScrollIntoViewSpy();
+    try {
+      vi.stubGlobal("fetch", vi.fn(async () => response()));
+      await renderLoaded();
+      // Loading and rendering the section reveals nothing.
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(document.body);
+
+      // Edit unmounts the button that held focus; the card takes it instead.
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      // The reveal target is a NAMED region, not a bare card: focus landing on
+      // an unnamed container announces "group" and nothing else (#2934).
+      const card = screen.getByRole("region", {
+        name: "Allocation preferences",
+      });
+      expect(card.contains(screen.getByRole("button", { name: "Cancel" }))).toBe(true);
+      // React owns the tabindex — the primitive must not be writing it onto the
+      // element behind React's back.
+      expect(card.getAttribute("tabindex")).toBe("-1");
+      expectRevealed(scrollIntoView, card);
+
+      // Editing a control re-renders the open editor; that must not pull the
+      // admin back to the top of the card.
+      const toggle = screen.getByRole("checkbox", { name: "Auto allocation enabled" });
+      toggle.focus();
+      fireEvent.click(toggle);
+      expect(document.activeElement).toBe(toggle);
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    } finally {
+      removeScrollIntoViewSpy();
+    }
   });
 
   it("renders every disabled priority in canonical order, including empty read-only state", async () => {
