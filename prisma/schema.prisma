@@ -4741,6 +4741,18 @@ model ClubModuleSettings {
   // to CLUB_MODULE_SETTINGS_COLUMN_SELECT, so the previously deployed client
   // never names it.
   commsPortal             Boolean  @default(false)
+  // Member lodge roster (#2942): a signed-in member may see who else is
+  // staying at a lodge they can already book, over the next 30 lodge nights,
+  // as names and nights only. Default OFF. By the taxonomy in
+  // docs/adopters/configure-or-fork.md a roster is a general-purpose module
+  // and would normally default ON; this one INVERTS to OFF because turning it
+  // on discloses one member's stay pattern to another, which is a choice a
+  // club has to make deliberately rather than inherit from an upgrade. Safe
+  // to add as a defaulted column because every read narrows to
+  // CLUB_MODULE_SETTINGS_COLUMN_SELECT, so a previously deployed client never
+  // names it. How much of a name is shown is a separate per-lodge dial,
+  // Lodge.rosterNameGranularity.
+  memberLodgeRoster       Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -4785,6 +4797,16 @@ model Lodge {
   // (FIRST_NAME_SURNAME_INITIAL). Enum defined with the lobby-display
   // models at the end of this file.
   displayNameGranularity DisplayNameGranularity?
+  // Per-lodge name detail for the MEMBER LODGE ROSTER (#2942). Deliberately a
+  // SECOND column rather than a reuse of displayNameGranularity above: that
+  // one governs a screen on the wall inside the hut, read by people already
+  // in the building, while this governs a web page any signed-in member can
+  // open. The two surfaces may be set differently, which a single column
+  // cannot express. Null = the roster default (FULL_NAME, owner decision D2
+  // as amended 14 Sep 2026) — NOT the same default as the wall, which is
+  // FIRST_NAME_SURNAME_INITIAL. Both reduce through the one shared
+  // implementation in src/lib/display-name-granularity.ts.
+  rosterNameGranularity  DisplayNameGranularity?
   // Committee notice board for the lobby display (fork issue #36): the one
   // deliberately AUTHORED display surface — free text, admin-edited,
   // rendered as text nodes only ({{config:<key>}} placeholders resolve

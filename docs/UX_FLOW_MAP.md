@@ -1135,6 +1135,41 @@ Two doors into one form, one officer queue behind them.
   verified identity. The officer is emailed a new-report notification through the
   existing notification-rules machinery.
 
+## Member lodge roster (#2942)
+
+Who else is staying, over a bounded forward window, for members only. Off
+unless the club turns it on.
+
+- **Member door** — a **Who's at the lodge** entry in the main navigation
+  (shown only while the `memberLodgeRoster` module is on) leads to
+  `/lodge-roster`. There is no dashboard card and no API route: the page is
+  rendered entirely on the server, so there is no endpoint to call directly and
+  nothing crosses into the browser but what is drawn.
+- **What it shows** — one card per lodge the member can already book, each
+  listing the people staying and the nights they are here. With exactly one
+  active lodge the card chrome and the lodge name come off, per the ADR-002
+  presentation rule. The window is the club's today through
+  `ROSTER_WINDOW_DAYS` lodge nights; there is no history and no parameter that
+  widens it.
+- **Whose names** — only bookings that are `PAID` or `COMPLETED` count as a
+  stay, so a confirmed-but-unpaid booking is absent and the lodge can be busier
+  than the page suggests. Names are reduced by `Lodge.rosterNameGranularity`
+  (four levels, defaulting to the full name). A booking naming nobody — one
+  containing a child, an organisation's booking, a whole-lodge hire, or a party
+  of eight or more that was alone on every one of its nights — appears as one
+  labelled row with the size of its busiest night.
+- **What is never here** — contact details, dates of birth, addresses, money,
+  booking ids or notes, beds, group identity, dietary information, and any
+  signal of a whole-lodge or custodian hold. The rule is `INV-PRIV-017` and it
+  is enforced by what the server BUILDS, not by what the page renders: a
+  withheld field is an absent key.
+- **Admin door** — **Admin → Lodges → the lodge → Member roster** sets the name
+  detail for that lodge. It stays visible and editable while the module is off,
+  so the disclosure level can be chosen before the feature is switched on, and
+  it says which state the roster is currently in.
+- **No opt-out** — a member cannot remove themselves (owner decision D3). The
+  page says so itself rather than leaving it to the guide.
+
 ## Club message board (#2994, epic #2992)
 
 One member-written board, club-local for now.

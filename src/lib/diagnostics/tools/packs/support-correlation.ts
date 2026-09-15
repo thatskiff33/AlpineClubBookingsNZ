@@ -43,7 +43,7 @@
  * sites when #2581 opened — 69 `logAudit`, 11 `createAuditLog`, 2 hand-built Prisma
  * writes, none through `createStructuredAuditLog` — and `main` still measured those
  * same 82 immediately before this change, out of 426 write sites in total. #2581's
- * second child classified all 82 at the source, so the census now reads 472 write
+ * second child classified all 82 at the source, so the census now reads 473 write
  * sites and ZERO uncategorised: no NEW row is born invisible to these five entries.
  *
  * THE GAP STOPPED GROWING WITH CHILD 2 AND CHILD 3 CLOSED THE MEASURED PART, and the

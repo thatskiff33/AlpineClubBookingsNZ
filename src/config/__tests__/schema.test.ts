@@ -244,6 +244,7 @@ describe("featureFlagsSchema", () => {
         maintenanceReports: true,
         alpineCentralServer: false,
         commsPortal: false,
+        memberLodgeRoster: false,
       }),
     ).toBeDefined();
   });

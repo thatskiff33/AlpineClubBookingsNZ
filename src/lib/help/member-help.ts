@@ -442,6 +442,47 @@ const messageBoardHelp: HelpPageContent = {
   ],
 };
 
+const lodgeRosterHelp: HelpPageContent = {
+  title: "Who's at the lodge",
+  summary:
+    "Everyone staying over the next 30 nights, at the lodges you can book. Names and nights only — no contact details, no prices, nothing else about anybody's booking. How much of a name you see is your club's choice, and bookings that include a child show a family label instead of names.",
+  actions: [
+    "Each lodge you can book has its own card, with the people staying listed underneath it.",
+    "Read across from a name to see the nights that person is here; a stay with a gap in it shows both parts.",
+    "Ask a club administrator if you want the list to show less of each name, or not to run at all.",
+  ],
+  questions: [
+    {
+      q: "Am I on this list too?",
+      a: "Yes. If your club has the roster switched on, your name and the nights you are staying are visible to every other member who can book that lodge, and there is no setting that hides you. If that worries you, talk to your club — they choose whether the roster runs at all and how much of a name it shows.",
+    },
+    {
+      q: "Why do some bookings show a family name instead of people?",
+      a: "Because the booking includes someone under 18. Those bookings name nobody at all, the adults included, and show something like 'Smith family' or 'Family of 4'. Naming the adults beside a family label would identify the child by association, so the whole booking is shown as a group. School and club bookings show the organisation's name for the same kind of reason.",
+    },
+    {
+      q: "Does it show the custodian?",
+      a: "Yes. If someone is staying as the lodge custodian they are listed with the nights they are there, marked as the custodian, so you can see at a glance whether the place is being looked after. A custodian under 18 is never named, and in that case the listing says only that a custodian is in residence.",
+    },
+    {
+      q: "Why is somebody I know is going not on the list?",
+      a: "The list shows stays that are paid or finished. A booking somebody has made but not yet paid for does not appear, so the lodge can end up busier than the list suggests.",
+    },
+    {
+      q: "Why do I only see part of a name?",
+      a: "Your club picks one of four settings, per lodge: the full name, a first name and surname initial like 'Jane S', the first name alone, or no names at all and just a count. The setting starts at full names.",
+    },
+    {
+      q: "Why can I not find this page?",
+      a: "Your club has not switched the Member lodge roster module on. Your club administrator can turn it on.",
+    },
+    {
+      q: "Can I see further ahead, or look back at who was there?",
+      a: "No. The list is always the next 30 nights and there is no history — once a night has passed it is gone from the list.",
+    },
+  ],
+};
+
 export const memberHelpEntries: HelpPageEntry[] = [
   entry("/book", bookHelp),
   entry("/bookings", bookingsListHelp),
@@ -449,6 +490,7 @@ export const memberHelpEntries: HelpPageEntry[] = [
   entry("/profile", profileHelp),
   entry("/dashboard", dashboardHelp),
   entry("/message-board", messageBoardHelp),
+  entry("/lodge-roster", lodgeRosterHelp),
   entry("/induction", inductionHelp),
   entry("/lodge-instructions", lodgeInstructionsHelp),
 ];
