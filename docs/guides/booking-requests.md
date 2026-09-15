@@ -160,6 +160,16 @@ are listed on the booking for you to relay.
    refused, rather than moving that member onto somebody else's bed. The panel
    names the member and the row, so unlink them, save the new numbers, then
    **link them again** to the right row — otherwise they lose the member rate.
+
+   **Member links only count once they are saved.** Linking a guest to a member
+   stages the change on screen; **Save quote** is what writes it to the request.
+   Approving reads what is written, so the panel now says so before you click:
+   if a **saved** link sits on a row your new numbers would give to somebody
+   else, **Approve** is switched off with the reason (unlinking on screen does
+   not clear it — unlink, save, then re-link), and if you have linked or
+   unlinked anyone without saving, the panel warns that approving would go ahead
+   with the saved links instead. A member you linked but did not save would be
+   invoiced at non-member rates.
 3. When the requester accepts (or for a priced general request), click
    **Approve & send payment link** (general) or **Approve & invoice school**
    (school groups) to convert it into a booking. Use **Decline** with an

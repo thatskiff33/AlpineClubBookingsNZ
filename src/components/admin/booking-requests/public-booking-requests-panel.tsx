@@ -795,8 +795,9 @@ export function PublicBookingRequestsPanel({
    * The boundary is derived from the two lists, exactly as the server derives
    * it, rather than counted in the `teachers` column and applied to `guests`.
    */
-  function misplacedSchoolLink(
+  function misplacedSchoolLinkAmong(
     request: PublicBookingRequestData,
+    links: readonly UiMemberLink[],
   ): UiMemberLink | null {
     if (!schoolCountsChanged(request)) return null;
     const unchangedPrefix = unchangedSchoolGuestPrefixLength(
@@ -804,10 +805,71 @@ export function PublicBookingRequestsPanel({
       plannedGuests(request),
     );
     return (
-      [...activeMemberLinks(request)]
+      [...links]
         .sort((a, b) => a.guestIndex - b.guestIndex)
         .find((link) => link.guestIndex >= unchangedPrefix) ?? null
     );
+  }
+
+  /**
+   * What SAVE QUOTE would be refused for: it posts the links on screen
+   * (`activeMemberLinks`, the officer's edits where they made any), and the
+   * service checks the list it is about to write.
+   */
+  function misplacedSchoolLink(
+    request: PublicBookingRequestData,
+  ): UiMemberLink | null {
+    return misplacedSchoolLinkAmong(request, activeMemberLinks(request));
+  }
+
+  /**
+   * What APPROVE would be refused for — and it is a DIFFERENT question (#3412
+   * review round 5, C).
+   *
+   * Approve posts no links at all: the service reads the `linkedGuestMembers`
+   * blob SAVED on the request and applies it positionally to the regenerated
+   * list. So an officer who unlinks a member on screen watches the save-quote
+   * warning clear and Save quote come back, and then gets a 422 from Approve
+   * naming the link they just removed — because unlinking on screen has not
+   * reached the row yet.
+   *
+   * Each door is therefore drawn against what THAT door reads. This one is the
+   * stored blob, and it gates the Approve button.
+   */
+  function misplacedSchoolLinkOnApprove(
+    request: PublicBookingRequestData,
+  ): UiMemberLink | null {
+    return misplacedSchoolLinkAmong(request, request.linkedGuestMembers);
+  }
+
+  /**
+   * Link edits made on screen that no save has carried to the request (#3412
+   * review round 5, C).
+   *
+   * Approve reads the stored blob, so an unsaved link is not refused — it is
+   * SILENTLY DROPPED, and that member is invoiced at non-member rates. Nothing
+   * about the screen says so, and this round made it worse by disabling Save
+   * quote in exactly the state where a link has been added and the numbers
+   * changed: Approve was left as the only enabled way out of it.
+   *
+   * Approve is not disabled for this. Approving the stored links is a
+   * legitimate thing to do, and Save quote is not always available to clear it
+   * — the officer is told what will happen instead, before the click.
+   */
+  function unsavedLinkEditCount(request: PublicBookingRequestData) {
+    const local = memberLinks[request.id];
+    if (!local) return 0;
+    const stored = new Map(
+      request.linkedGuestMembers.map((link) => [link.guestIndex, link.memberId]),
+    );
+    const localMap = new Map(
+      local.map((link) => [link.guestIndex, link.memberId]),
+    );
+    let differences = 0;
+    new Set([...stored.keys(), ...localMap.keys()]).forEach((guestIndex) => {
+      if (stored.get(guestIndex) !== localMap.get(guestIndex)) differences += 1;
+    });
+    return differences;
   }
 
   /** How the misplaced link's row reads on screen, so the officer can find it. */
@@ -2307,11 +2369,17 @@ export function PublicBookingRequestsPanel({
                           size="sm"
                           variant={memberWholeLodge ? "default" : "outline"}
                           onClick={() => handleApprove(request)}
+                          // #3412 (review round 5, C): approve reads the links
+                          // SAVED on the request, so it is refused (422) by a
+                          // saved link the officer's numbers would move —
+                          // whatever the link editor on screen currently shows.
+                          // Gated on its own question, not on Save quote's.
                           disabled={
                             actionsBlocked ||
                             (!memberWholeLodge &&
                               request.type !== "SCHOOL" &&
-                              request.status !== "PRICED")
+                              request.status !== "PRICED") ||
+                            misplacedSchoolLinkOnApprove(request) !== null
                           }
                         >
                           {memberWholeLodge
@@ -2349,6 +2417,41 @@ export function PublicBookingRequestsPanel({
                           the request — and sending also emails the school that
                           headcount — so saving these new ones is what makes them
                           the numbers.
+                        </p>
+                      ) : null}
+                      {/* #3412 (review round 5, C): approving reads the member
+                          links SAVED on the request, not the ones on screen.
+                          Both halves of that were silent — a saved link made
+                          approve fail after the click, and an unsaved one was
+                          dropped without a word and invoiced at non-member
+                          rates. */}
+                      {!dataNeedsAttention &&
+                      misplacedSchoolLinkOnApprove(request) !== null ? (
+                        <p className="text-xs text-warning-11">
+                          Approving is off: a member is linked to{" "}
+                          <strong>
+                            {schoolGuestRowLabel(
+                              request,
+                              misplacedSchoolLinkOnApprove(request)!.guestIndex,
+                            )}
+                          </strong>{" "}
+                          on the saved request, and these numbers change who is
+                          on that row. Approving reads the saved links, so
+                          unlinking here is not enough on its own — unlink,
+                          save the quote, then link them again to the right row
+                          so they keep the member rate.
+                        </p>
+                      ) : null}
+                      {!dataNeedsAttention && unsavedLinkEditCount(request) > 0 ? (
+                        <p className="text-xs text-warning-11">
+                          {unsavedLinkEditCount(request) === 1
+                            ? "One member link change here has not been saved."
+                            : `${unsavedLinkEditCount(request)} member link changes here have not been saved.`}{" "}
+                          Approving uses the links saved on the request, not the
+                          ones on screen: a member you linked here would be
+                          missed, and that guest invoiced at non-member rates,
+                          while one you unlinked here would still be linked.
+                          Press <strong>Save quote</strong> first.
                         </p>
                       ) : null}
                       {memberWholeLodge ? (

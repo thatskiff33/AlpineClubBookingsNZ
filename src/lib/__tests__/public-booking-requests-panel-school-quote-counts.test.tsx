@@ -417,6 +417,87 @@ describe("PublicBookingRequestsPanel school group numbers on Save quote (#3412)"
     expect(quoteBody(fetchMock)).toBeNull();
   });
 
+  /*
+   * #3412 review round 5 (C) — APPROVE AND SAVE QUOTE READ DIFFERENT LINKS,
+   * AND THE PANEL DREW ONE LINE FOR BOTH.
+   *
+   * Save quote posts the links on screen; approve posts none and reads the
+   * blob saved on the request. The warning above was derived from the screen
+   * alone, so unlinking cleared it and brought Save quote back — and then
+   * Approve, which was gated on neither check, 422'd naming the link that had
+   * just been removed. Approve was also the ONLY enabled way out of that
+   * state, because this round had disabled Save quote rather than letting it
+   * fail on the click.
+   */
+  it("keeps Approve off for a SAVED link the numbers would move, even after unlinking on screen", async () => {
+    mockFetch({
+      ...baseSchoolRequest,
+      linkedGuestMembers: [{ guestIndex: 2, memberId: "member-1" }],
+    });
+    render(<PublicBookingRequestsPanel />);
+
+    // Youth become children: every child row from index 1 on changes tier, so
+    // the saved link at index 2 would land on a different person's bed.
+    await editYouthCount("0");
+    fireEvent.change(await screen.findByLabelText("Children"), {
+      target: { value: "3" },
+    });
+
+    const approve = await screen.findByRole("button", {
+      name: "Approve & invoice school",
+    });
+    const saveQuote = await screen.findByRole("button", { name: "Save quote" });
+    expect((saveQuote as HTMLButtonElement).disabled).toBe(true);
+    expect((approve as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Unlink" }));
+
+    // Save quote posts the screen's links, which no longer carry it — so that
+    // door opens, exactly as it did before.
+    await waitFor(() =>
+      expect((saveQuote as HTMLButtonElement).disabled).toBe(false),
+    );
+    // Approve still reads the SAVED blob, which still carries it. It stays off
+    // and says why, instead of failing after the click.
+    expect((approve as HTMLButtonElement).disabled).toBe(true);
+    expect(await screen.findByText(/Approving is off/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/unlinking here is not enough on its own/i),
+    ).toBeTruthy();
+  });
+
+  /*
+   * #3412 review round 5 (C) — an unsaved link edit is not refused by approve,
+   * it is SILENTLY DROPPED. A member linked on screen and never saved is
+   * invoiced at non-member rates; one unlinked on screen is still linked. Say
+   * so before the click. Approve is not disabled for this — approving the saved
+   * links is a legitimate thing to do.
+   */
+  it("says that approving would ignore link edits that have not been saved", async () => {
+    mockFetch({
+      ...baseSchoolRequest,
+      // Row 0 is the teacher, whom no set of numbers renumbers — so this test
+      // is about the unsaved edit alone, with no refusal in play.
+      linkedGuestMembers: [{ guestIndex: 0, memberId: "member-1" }],
+    });
+    render(<PublicBookingRequestsPanel />);
+
+    const approve = await screen.findByRole("button", {
+      name: "Approve & invoice school",
+    });
+    expect(screen.queryByText(/has not been saved/i)).toBeNull();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Unlink" }));
+
+    expect(
+      await screen.findByText(/One member link change here has not been saved/i),
+    ).toBeTruthy();
+    expect(
+      await screen.findByText(/invoiced at non-member rates/i),
+    ).toBeTruthy();
+    expect((approve as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("leaves a link on a row the change does not touch alone", async () => {
     // Appending a fifth youth renumbers nothing: rows 0-4 are identical in both
     // lists, so the link at index 2 still means the same placeholder.

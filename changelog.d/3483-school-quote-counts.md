@@ -20,12 +20,19 @@
 
   Two things you will notice. If beds are already held for this request, the new
   numbers cannot be saved until you press **Release hold** — the held beds are
-  not silently re-sized, and the panel now says so before you click. And if a
-  club member is linked to one of the school's unnamed children, changing the
-  numbers is refused rather than quietly moving that member onto a different
-  child: the panel names the member and the row, so you can unlink them, save,
-  and link them again to the right row. Changing the teachers or parent helpers
-  is still not done here.
+  not silently re-sized, and the panel now says so before you click. And when
+  the new numbers would hand a linked member's row to somebody else, the change
+  is refused rather than quietly moving that member onto another bed: the panel
+  names the member and the row, so you can unlink them, save, and link them
+  again to the right row. Numbers that leave the linked row alone — adding more
+  youth to the end of the group, say — save as normal. Changing the teachers or
+  parent helpers is still not done here.
 
-  The same numbers are also checked when you press **Approve & invoice school**,
-  which used to move a linked member onto another child's row without saying so.
+  **Approve & invoice school** is checked on the same rule, and it used to move
+  a linked member onto another row without saying so. It reads the member links
+  **saved** on the request rather than the ones showing on screen, so the panel
+  now draws that line where approve really draws it: a saved link the new
+  numbers would move switches Approve off and says why — unlinking on screen is
+  not enough on its own — and a link you have added or removed without saving
+  is called out before you click, because approving would go ahead with the
+  saved links and invoice an unsaved linked member at non-member rates.
