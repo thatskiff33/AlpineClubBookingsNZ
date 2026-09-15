@@ -13,10 +13,19 @@
   list. The named teachers and parent helpers are kept as they are; only the
   child numbers change, and the group still cannot exceed the lodge's capacity.
 
+  Saving is also the step that comes first now. **Hold slots** and **Send
+  quote** are both switched off until you have saved a change, because each
+  reserves the beds for the numbers stored on the request — and sending emails
+  the school that headcount as well. The panel says so beside the buttons.
+
   Two things you will notice. If beds are already held for this request, the new
   numbers cannot be saved until you press **Release hold** — the held beds are
   not silently re-sized, and the panel now says so before you click. And if a
   club member is linked to one of the school's unnamed children, changing the
   numbers is refused rather than quietly moving that member onto a different
-  child: unlink them first. Changing the teachers or parent helpers is still not
-  done here.
+  child: the panel names the member and the row, so you can unlink them, save,
+  and link them again to the right row. Changing the teachers or parent helpers
+  is still not done here.
+
+  The same numbers are also checked when you press **Approve & invoice school**,
+  which used to move a linked member onto another child's row without saying so.

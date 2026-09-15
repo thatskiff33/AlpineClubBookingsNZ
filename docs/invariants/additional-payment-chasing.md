@@ -351,7 +351,10 @@ more beds than actually remain on any night; the admin sees the same
 capacityExceeded outcome as the fresh path. That override is resolved by ONE
 function for both moments it is applied (#3412, `resolveSchoolGuestOverride`):
 the #2342 strict read, the teachers preserved, the children regenerated, the
-lodge's bed count bounding the result. Saving a quote applies it too, and
+lodge's bed count bounding the result, and a member link on a row the
+regeneration renumbers refused (422) rather than re-targeted — that last one in
+the resolver precisely because BOTH doors apply the link map positionally.
+Saving a quote applies it too, and
 persists the regenerated list on the request in the transaction minting the
 quote, under a version/status/hold-guarded claim — so the price, the sent
 breakdown, the hold and the approval read one list rather than two.

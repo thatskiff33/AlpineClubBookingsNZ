@@ -1274,15 +1274,18 @@ School group requests share this quote lifecycle. The public form shows a soft
 warning above 25 total students, teachers, and parent helpers because a club
 member must host larger groups, but the hard submission limit remains lodge
 capacity. Admins can adjust the bulk child counts, and **saving the quote is
-where that adjustment lands** (#3412): the guest list is regenerated from the
-preserved teachers/parent helpers and the adjusted counts and PERSISTED on the
-request in the transaction that mints the quote, so pricing, the sent quote's
-breakdown, the send-time hold and approval all read one list. Approval applies
-the same override through the same resolver, and still reprices and rechecks
-per-night capacity against that final list. A count change is refused (409)
-while a live `AWAITING_REVIEW` hold exists — the hold is reused as-is on re-send
-and never re-sized — and the request write is a version/status/hold-guarded
-claim, so a save that lost a race writes nothing.
+where that adjustment lands** (#3412): the regenerated guest list is persisted
+on the request in the transaction that mints the quote, so pricing, the sent
+quote's breakdown, the send-time hold and approval all read one list. Approval
+applies the same override through the same resolver, and still reprices and
+rechecks per-night capacity against that final list. What the resolver
+guarantees is
+[`INV-ADDPAY-008`](invariants/additional-payment-chasing.md#inv-addpay-008); why
+a live hold makes a count change a refusal rather than a re-size is
+[`INV-ADDPAY-006`](invariants/additional-payment-chasing.md#inv-addpay-006).
+Both writes are claims rather than overwrites: the request row on
+version/status/hold, and the quote row on its own status, so neither a save nor
+a send that lost a race writes anything or emails anybody.
 The non-login records these flows create are classified by `Member.role`, not
 counted as paying members: school groups (the school contact and each teacher)
 get role `SCHOOL`, and general public booking-request contacts get `NON_MEMBER`.

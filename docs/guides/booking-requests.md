@@ -140,12 +140,23 @@ are listed on the booking for you to relay.
    booking created at approval. The named teachers and parent helpers are kept
    exactly as submitted, and the group can never exceed the lodge's capacity.
 
+   **Save quote applies the numbers and prices them. It does not reserve any
+   beds.** The beds are reserved when you send the quote, or when you press
+   **Hold slots** — so set the numbers, save, and then reserve. Until you save,
+   both of those buttons are switched off and the panel says why: each would
+   reserve the beds for the numbers still stored on the request, and sending
+   would email the school that headcount too.
+
    Two refusals to expect. Beds already held for this request are **not**
    re-sized by a new set of numbers: press **Release hold** first, then save and
-   send again — the panel says so before you click, and **Hold slots** waits
-   until you have saved. And if a club member is linked to one of the school's
-   unnamed children, changing the numbers is refused rather than moving that
-   member onto a different child; unlink them, then save.
+   send again — the panel says so before you click. (A hold that was already
+   cancelled elsewhere does not block you; the panel checks whether the beds are
+   really reserved, not just whether a hold was once placed.) And if a club
+   member is linked to one of the school's unnamed children, changing the
+   numbers is refused rather than moving that member onto a different child's
+   bed: the panel names the member and the row, so unlink them, save the new
+   numbers, then **link them again** to the right row — otherwise they lose the
+   member rate.
 3. When the requester accepts (or for a priced general request), click
    **Approve & send payment link** (general) or **Approve & invoice school**
    (school groups) to convert it into a booking. Use **Decline** with an
