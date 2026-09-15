@@ -190,8 +190,8 @@ lines: 924
 reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
 
 file: src/lib/lodge-display-state.ts
-lines: 1038
-reason: one line: the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column. Nothing else in the file changed shape, so there is no seam here that #3368 created and could split back out.
+lines: 923
+reason: RE-MEASURED at 923 on the eighth `main`-into-epic sync (#2725), which made this file 115 lines SHORTER than this entry recorded. #2942 extracted `reduceName`, `namesAllowedForBooking`, `bookingLabel` and the minor-tier predicate into `src/lib/display-name-granularity.ts` so the member lodge roster could import the same rules, and #3369's edit to those functions moved with them. The number is re-measured in this entry rather than declared in a second fragment, because two live entries for one path is refused. The original reasoning stands: one line here is the `bookingOwner` import this domain module needs to ask who owns a booking through the one accessor instead of reading the column.
 
 file: src/lib/member-guest-consent-service.ts
 lines: 1207

@@ -58,7 +58,7 @@ share.
 So the system records, when a report is filed, whether the person filing it had
 admin access at the time. If they did, the picture is treated as possibly showing
 another member's record and **only a Full Admin can open it**. The rule is
-written down once, as `INV-PRIV-020`.
+written down once, as `INV-PRIV-021`.
 
 What you see if you are not a Full Admin:
 

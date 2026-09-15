@@ -56,7 +56,7 @@ type IssueReportSummary = {
   pageTitle: string | null;
   description: string;
   // `disposition` is the server's own classification and the ONE thing the
-  // badge and the panel switch on (`INV-PRIV-020`, #2703). `retained` and
+  // badge and the panel switch on (`INV-PRIV-021`, #2703). `retained` and
   // `withheld` ride along for the controls that ask those questions directly -
   // the Delete button, and the expiry line - and are never re-combined here into
   // a state the server already named.

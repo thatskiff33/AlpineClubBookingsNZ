@@ -210,7 +210,7 @@ export async function PATCH(
         ? "Booking change request approved"
         : "Booking change request rejected",
     details: parsed.data.adminNotes?.trim() || null,
-    // #2695 (`INV-PRIV-017`) - member-facing, which PRESERVES what the member
+    // #2695 (`INV-PRIV-018`) - member-facing, which PRESERVES what the member
     // reads today rather than widening it: `adminNotes` is #2562's member-facing
     // half, already emailed to them with this decision, while `internalNotes`
     // reaches no member surface and is not in this row at all.

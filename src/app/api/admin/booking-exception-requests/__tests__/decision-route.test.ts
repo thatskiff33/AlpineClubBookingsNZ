@@ -910,7 +910,7 @@ describe("PATCH — the officer-note split", () => {
   });
 
   it("publishes the officer's note to the member, and the policy codes to nobody", async () => {
-    // #2695 (`INV-PRIV-017`) fix round. The approval's `details` falls back to
+    // #2695 (`INV-PRIV-018`) fix round. The approval's `details` falls back to
     // the REVIEWED POLICY CODES when an officer approves without writing
     // anything — `MINIMUM_STAY` and its siblings — and the first cut of the
     // declaration published that fallback, under a comment describing only the

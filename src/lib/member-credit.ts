@@ -954,7 +954,7 @@ export async function reviewAdminAdjustmentRequest(
         memberId: adminId,
         targetId: memberId,
         details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
-        // #2695 (`INV-PRIV-017`) — DECLARED MEMBER-FACING, owner decision of
+        // #2695 (`INV-PRIV-018`) — DECLARED MEMBER-FACING, owner decision of
         // 9 August 2026. The only explanation a member ever gets for why their
         // credit balance moved, which is why both fixes the issue originally
         // sketched were refused: each would have taken it away.

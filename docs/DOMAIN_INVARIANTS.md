@@ -689,10 +689,11 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-014` | Diagnostics filters and typed search reach the provider ungated |
 | `INV-PRIV-015` | A hut leader's PIN session: ten minutes' inactivity, twelve-hour ceiling, Lock control |
 | `INV-PRIV-016` | Kiosk Group Trip disclosure by tier: linkage ordinal only; never `joinCode` |
-| `INV-PRIV-017` | Member-visible audit text: declared at the write site, denied by default |
-| `INV-PRIV-018` | An audit row's subject is a person; an organisation-owned booking records none |
-| `INV-PRIV-019` | Credential writes name a person or a named system actor, audited atomically |
-| `INV-PRIV-020` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
+| `INV-PRIV-017` | Member lodge roster: off by default, absent keys, no opt-out |
+| `INV-PRIV-018` | Member-visible audit text: declared at the write site, denied by default |
+| `INV-PRIV-019` | An audit row's subject is a person; an organisation-owned booking records none |
+| `INV-PRIV-020` | Credential writes name a person or a named system actor, audited atomically |
+| `INV-PRIV-021` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
 
 ## Membership Lifecycle
 

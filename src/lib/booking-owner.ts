@@ -116,7 +116,7 @@
  *   `findOrCreateXeroContactForInvoicedParty` is that decision's home; the
  *   member-keyed provider paths route onto it.
  *
- * ## DECISION — the audit subject: `INV-PRIV-018`
+ * ## DECISION — the audit subject: `INV-PRIV-019`
  *
  * Recorded in `docs/invariants/analytics-and-privacy.md`, not restated here.
  * In one line: an audit row's subject stays a PERSON, an organisation-owned

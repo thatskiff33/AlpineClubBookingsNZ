@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  482
+row-producing sites:  483
 uncategorised:        0
-category values: admin 106, booking 104, xero 37, family 35, payment 45,
+category values: admin 107, booking 104, xero 37, family 35, payment 45,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -691,6 +691,20 @@ nobody has to act - but an officer opening the earlier change finds its request
 gone with no explanation on it, and a member sees one larger figure where they
 expected two. `payment` for the same audience reason as the review-charge rows
 beside it.
+
+#2942 then added one more (`admin` 106 -> 107, 482 -> 483 on the MERGED tree —
+the MAD epic's own children carried the total from 472 to 482 without a
+paragraph each here, and the header block above is the measured figure; MEASURED
+with `npm run audit:census` on the merged tree rather than added to either
+branch's total):
+`LODGE_MEMBER_ROSTER_SETTINGS_UPDATED`, the record of how much of a name the
+member lodge roster shows for one lodge, before and after. `admin` rather than
+`lodge`, and the pull the other way is worth stating: the setting is the twin of
+the lobby display's name-granularity dial, whose writer files `lodge`. That
+writer sits in the DISPLAY subsystem, which #2730 unified; this one sits under
+`/api/admin/lodges/`, where every writer files `admin`. Following the sibling
+would have opened a split inside the lodge-records group rather than closing
+one.
 
 Since then #3220 added the refused stranded-intent record (`payment` 41 -> 42,
 467 -> 468 - taken from `npm run audit:census` on the merged tree, not from this

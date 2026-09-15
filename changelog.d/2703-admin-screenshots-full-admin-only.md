@@ -35,4 +35,4 @@
   before. Neither entry records anything about what the picture showed, and both
   are readable by anyone who can already open Admin > Audit Log.
 
-  The rule behind all of this is written down once, as `INV-PRIV-020`.
+  The rule behind all of this is written down once, as `INV-PRIV-021`.

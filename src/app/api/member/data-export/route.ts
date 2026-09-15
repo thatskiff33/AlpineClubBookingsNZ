@@ -199,7 +199,7 @@ export async function GET() {
       take: 500, // Cap at 500 entries to keep export manageable
       select: {
         action: true,
-        // `metadata`, NOT `details` (#2695, `INV-PRIV-017`). This file is a
+        // `metadata`, NOT `details` (#2695, `INV-PRIV-018`). This file is a
         // member-facing channel like the member's own timeline, so it reads the
         // same declaration and nothing else: the sentence the writing site
         // declared for this member, or nothing. `details` is the officers'

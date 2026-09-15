@@ -96,7 +96,7 @@ const FIGURE_PUBLISHERS = [
  * If the figure ever has to change, re-run that against the same base ref and
  * update: `src/lib/integration-credential-actor.ts` (module header),
  * `docs/SECURITY-ATTACK-SURFACE.md`, `docs/invariants/analytics-and-privacy.md`
- * (INV-PRIV-019), and `changelog.d/2723-credential-actor-context.md`.
+ * (INV-PRIV-020), and `changelog.d/2723-credential-actor-context.md`.
  */
 const HISTORICAL_FIGURE_IS_NOT_RE_MEASURABLE_HERE = true;
 
