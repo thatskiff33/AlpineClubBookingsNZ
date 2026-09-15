@@ -316,7 +316,7 @@ const FIGURES = {
    * secret from a single pair of render sites. This census counts render sites,
    * not the three rows they produce. MEASURED by re-running it.
    *
-   * 351 -> 361 (#2942, on the eighth sync): the member lodge roster's per-lodge name-detail card
+   * 359 -> 361 (#2942, on the eighth sync): the member lodge roster's per-lodge name-detail card
    * (`lodge-roster-settings-card.tsx`) adds Edit and Save. Cancel is a plain
    * Button, as it is on the Retention section: it reverts local state and
    * writes nothing, so gating it would refuse a view-only admin the way out of
@@ -342,7 +342,7 @@ const FIGURES = {
    * 301 -> 306 (#2940): all five of the Video meetings screen's controls opt
    * out — each of its two sections heads itself with its own banner.
    *
-   * 298 -> 308 (#2942, on the eighth sync): so do the roster name-detail card's two.
+   * 306 -> 308 (#2942, on the eighth sync): so do the roster name-detail card's two.
    */
   optOuts: 308,
   /**
@@ -387,7 +387,7 @@ const FIGURES = {
    * these controls outside this file still says the narrower rule rather than
    * the area one.
    *
-   * 264 -> 274 (#2942, on the eighth sync): the roster name-detail card likewise heads its own
+   * 272 -> 274 (#2942, on the eighth sync): the roster name-detail card likewise heads its own
    * file with its own banner, so its two are static rather than vouched.
    */
   staticOptOuts: 274,
@@ -446,7 +446,7 @@ const FIGURES = {
    * section and the host sign-in section each head themselves with their own,
    * which is the one-per-SECTION rule rather than one per page.
    *
-   * 94 -> 97 (#2942, on the eighth sync): the roster name-detail card heads itself with one banner,
+   * 96 -> 97 (#2942, on the eighth sync): the roster name-detail card heads itself with one banner,
    * mounted above its loading early-return. Its sibling on the same lodge — the
    * lobby display card — keeps its own, because the two are separate sections
    * on separate sub-pages and neither is ever rendered inside the other.
