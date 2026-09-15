@@ -666,6 +666,16 @@ export async function createBookingRequestQuote(input: {
     throw new BookingRequestError("This booking request cannot be quoted", 409);
   }
 
+  // #2342: the transaction below OVERWRITES request.linkedGuestMembers with
+  // whatever the client posted, and the admin panel posts its DISPLAY list —
+  // which is empty for a row whose stored link blob failed to parse, because
+  // the tolerant reader falls back to no links. Without this strict re-read one
+  // "Save quote" would permanently replace a recoverable member link with
+  // nothing, and the guest would later convert and invoice as a NON-MEMBER.
+  // Refuse instead: a row whose stored links cannot be read cannot be quoted.
+  // (Approval and hold already re-read the column strictly through
+  // linkedGuestMemberMap; this closes the one path that WRITES it.)
+  parseBookingRequestLinkedGuestMembers(request.linkedGuestMembers);
   // #3412 — the officer's adjusted group numbers, resolved through the SAME
   // helper approval uses, so the party priced here and the party converted
   // later cannot diverge. It strict-reads the stored guests (#2342), preserves
@@ -681,16 +691,6 @@ export async function createBookingRequestQuote(input: {
     ? schoolCountAdjustment.guests
     : parseBookingRequestGuests(request.guests);
   const persistGuests = schoolCountAdjustment?.persist ?? false;
-  // #2342: the transaction below OVERWRITES request.linkedGuestMembers with
-  // whatever the client posted, and the admin panel posts its DISPLAY list —
-  // which is empty for a row whose stored link blob failed to parse, because
-  // the tolerant reader falls back to no links. Without this strict re-read one
-  // "Save quote" would permanently replace a recoverable member link with
-  // nothing, and the guest would later convert and invoice as a NON-MEMBER.
-  // Refuse instead: a row whose stored links cannot be read cannot be quoted.
-  // (Approval and hold already re-read the column strictly through
-  // linkedGuestMemberMap; this closes the one path that WRITES it.)
-  parseBookingRequestLinkedGuestMembers(request.linkedGuestMembers);
   const linkedGuestMembers = normalizeLinkedGuestMembers(
     input.quote.linkedGuestMembers,
     guests.length
