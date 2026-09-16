@@ -10,7 +10,7 @@ finance queue route into `manual-refund-task-queue-reads.ts` — so the entries
 below are only for files that were already over budget before this change.
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 1860
+lines: 1871
 reason: the settle dialog now renders one column of night-price boxes per
   strand of the edit, and the evidence block carries every strand the parked
   edit recorded. The two new pieces are already in their own files — the
