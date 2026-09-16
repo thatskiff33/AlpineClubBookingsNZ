@@ -39,7 +39,7 @@ import {
   assertNoPendingEditFinancialReview,
   findOpenEditFinancialReviewTask,
   raiseEditFinancialReviewTask,
-  raiseParkedEditFinancialReviewTasks,
+  raiseParkedEditFinancialReviewTask,
   EditFinancialReviewError,
   EditFinancialReviewPendingError,
   EDIT_FINANCIAL_REVIEW_PENDING_CODE,
@@ -152,10 +152,10 @@ describe("#3030 occurrence key - the same structural edit is one occurrence", ()
 
   it("carries its namespace and version in the clear, and 64 hex characters of digest", () => {
     const key = editFinancialReviewOccurrenceKey(occurrence());
-    expect(key).toMatch(/^edit-financial-review:v1:[0-9a-f]{64}$/);
+    expect(key).toMatch(/^edit-financial-review:v2:[0-9a-f]{64}$/);
   });
 
-  it("MUTATION: PINS the digest for a fixed occurrence, so widening the hashed material without bumping v1 fails loudly", () => {
+  it("MUTATION: PINS the digest for a fixed occurrence, so widening the hashed material without bumping the version fails loudly", () => {
     // Every OTHER test in this describe recomputes the key on both sides -
     // key(a) === key(a), key(shuffled) === key(base), the discrimination cases -
     // so all of them would still pass if the canonicalisation, the field set or
@@ -172,8 +172,15 @@ describe("#3030 occurrence key - the same structural edit is one occurrence", ()
     // If you are here because this failed: do NOT re-pin it. Either you changed
     // the material and must bump the namespace version (and then re-pin), or you
     // changed the canonicalisation and must not have.
+    //
+    // RE-PINNED ONCE, at `v2` (#3498). Owner decision D1 moved the grain of a
+    // work item from the guest strand to the EDIT, so the material widened to
+    // every strand the parked edit records - which is exactly the change this
+    // pin exists to make deliberate. The namespace moved with it, so every `v1`
+    // key on file still matches its own row and nothing collides. The old pin
+    // was `edit-financial-review:v1:3d3fcd8e9b0b3de5bab1fee6a9e794146bb7747c19633cef428bce52e1667eca`.
     expect(editFinancialReviewOccurrenceKey(occurrence())).toBe(
-      "edit-financial-review:v1:3d3fcd8e9b0b3de5bab1fee6a9e794146bb7747c19633cef428bce52e1667eca",
+      "edit-financial-review:v2:bcfe9c7f6f3e1a56aab8d86d354ac2e851d73c71ac034f46cc530e5175c10505",
     );
   });
 
@@ -694,15 +701,16 @@ describe("#3166/#3194 parked raise - the payment id it stamps is the shared gate
   }
 
   async function stampedPaymentId(booking: ReturnType<typeof parkedBooking>) {
-    const taskIds = await raiseParkedEditFinancialReviewTasks({
+    const taskId = await raiseParkedEditFinancialReviewTask({
       booking,
       guests: [{ id: "guest-1", memberId: "member-1" }],
       addedGuests: [],
-      occurrences: [occurrence()],
+      // #3498: ONE occurrence for the whole parked edit, and ONE task id back.
+      occurrence: occurrence(),
       bookingModificationId: "mod-1",
       store: store(),
     });
-    expect(taskIds).toEqual(["task-new"]);
+    expect(taskId).toBe("task-new");
     expect(mocks.create).toHaveBeenCalledTimes(1);
     return mocks.create.mock.calls[0][0].data.paymentId;
   }
