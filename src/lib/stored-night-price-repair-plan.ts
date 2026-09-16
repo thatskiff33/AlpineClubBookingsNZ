@@ -177,11 +177,13 @@ export async function loadUnpricedNightsSummaries({
     repairable simply is not in the list, on the screen or in the request, so the
     two cannot disagree about which box belongs to which guest (#3498).
   */
-  return bookingGuestIds.flatMap((bookingGuestId) => {
+  return bookingGuestIds.flatMap((bookingGuestId, index) => {
     const guest = byId.get(bookingGuestId);
     if (!guest) return [];
     const summary = unpricedNightsSummaryForGuest(guest);
-    return summary ? [{ bookingGuestId, summary }] : [];
+    return summary
+      ? [{ bookingGuestId, summary, absorbsSettlement: index === 0 }]
+      : [];
   });
 }
 
@@ -189,6 +191,29 @@ export async function loadUnpricedNightsSummaries({
 export type RepairableStrand = {
   bookingGuestId: string;
   summary: UnpricedNightsSummary;
+  /**
+   * Whether the amount being SETTLED moves what this strand is worth (#3498).
+   *
+   * True for at most one strand of an item, and only ever the one the item
+   * leads with — the strand the money is about. Everything else must come to
+   * its own stored total exactly, which is #3214's arithmetic with both
+   * variable parts at zero.
+   *
+   * IT IS NOT "the first strand with blanks", and the difference is money. The
+   * shape that separates them is the ordinary parked removal: the departing
+   * guest leads because their nights are what moved, their own rows read
+   * perfectly so they have no blanks at all, and a REMAINING guest nobody
+   * touched is the first strand with any. Making that guest's nights come to
+   * their total plus the refund would move a stranger's stay by the amount of
+   * somebody else's — silently, and against the figure a later part-refund is
+   * worked out from.
+   *
+   * FALSE FOR EVERY STRAND is therefore an ordinary answer, and it is exactly
+   * what happened before #3498 on such a task: the lead strand offered no boxes,
+   * so the settled amount moved no strand's stored worth and the booking's
+   * re-price summed the strands as they stood.
+   */
+  absorbsSettlement: boolean;
 };
 
 /**
@@ -303,21 +328,19 @@ export async function planStoredNightPriceRepair({
   }
 
   const deltaCents = settlementDeltaCents(settled);
-  return repairable.map(({ bookingGuestId, summary }, index) => {
+  return repairable.map(({ bookingGuestId, summary, absorbsSettlement }, index) => {
     const check = checkStoredNightPriceRepair({
       summary,
       entries: requested[index] ?? [],
-      deltaCents:
-        /*
-          THE SETTLED AMOUNT MOVES EXACTLY ONE STRAND'S WORTH, and on a
-          multi-strand item that strand is the LEAD - the one the card is headed
-          by and the one the officer priced. Every other strand's figures must
-          come to its stored total exactly, which is `deltaCents: 0` and is the
-          same arithmetic #3214's strand reconcile already runs. Spreading the
-          amount across strands would be an allocation nobody stated, which is
-          the derivation `INV-MOD-028` forbids.
-        */
-        index === 0 ? deltaCents : 0,
+      /*
+        THE SETTLED AMOUNT MOVES AT MOST ONE STRAND'S WORTH, and never a strand
+        it is not about. `absorbsSettlement` says which, and says FALSE for all
+        of them where the strand the money is about has no blanks — see its own
+        docblock for the removal shape that makes the distinction money rather
+        than tidiness. Spreading the amount across strands would be an
+        allocation nobody stated, which is the derivation `INV-MOD-028` forbids.
+      */
+      deltaCents: absorbsSettlement ? deltaCents : 0,
     });
     if (!check.ok) throw new ManualBookingPaymentError(check.message, 400);
     return { bookingGuestId, summary, entries: check.entries };

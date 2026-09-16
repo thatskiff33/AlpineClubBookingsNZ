@@ -116,8 +116,13 @@ interface ManualRefundTask {
    * #3498: ONE ENTRY PER REPAIRABLE STRAND of this item, in the item's own
    * strand order. The officer's figures go back as a parallel array and the
    * server matches them by POSITION, so this order may not be re-sorted here.
+   * `absorbsSettlement` says which entry the settled amount moves the stored
+   * worth of — at most one, and on the ordinary parked removal none at all.
    */
-  unpricedNights?: readonly UnpricedNightsSummary[] | null;
+  unpricedNights?: readonly {
+    summary: UnpricedNightsSummary;
+    absorbsSettlement?: boolean;
+  }[] | null;
   /**
    * #3033: this row's booking belongs to the person looking at it, and still
    * exists — so they may open it as its member even without admin bookings
@@ -1008,7 +1013,7 @@ export function ManualRefundTaskQueue() {
    * (`INV-SSOT`): a screen with its own arithmetic would enable a button the
    * server then refuses, or the reverse.
    */
-  const unpricedNights: readonly UnpricedNightsSummary[] =
+  const unpricedNights =
     target !== null && target.task.unpricedNights
       ? target.task.unpricedNights
       : [];
@@ -1025,15 +1030,15 @@ export function ManualRefundTaskQueue() {
    * #3498: the same verdict as before, once PER STRAND this item offers boxes
    * for, in the item's own order.
    *
-   * The settled amount moves exactly one strand's worth and that strand is the
-   * FIRST - the one the card is headed by and the one the officer priced. Every
-   * other strand's figures must come to its stored total unchanged, which is a
-   * delta of zero. That is the server's rule too, stated once in
-   * `planStoredNightPriceRepair`; this screen applies the same arithmetic
-   * through the same checker, so it cannot enable a button the server refuses
-   * (`INV-SSOT`).
+   * The settled amount moves AT MOST ONE strand's worth, and the payload says
+   * which (`absorbsSettlement`) rather than this screen deciding. Every other
+   * strand's figures must come to its stored total unchanged, which is a delta
+   * of zero. The rule is the server's, stated once on `RepairableStrand`; this
+   * screen applies the same arithmetic through the same checker, so it cannot
+   * enable a button the server refuses (`INV-SSOT`).
    */
-  const nightPriceStrands = unpricedNights.map((summary, index) => {
+  const nightPriceStrands = unpricedNights.map((strand, index) => {
+    const summary = strand.summary;
     const values = nightPriceInputs[index] ?? {};
     const entries: RecordedNightPrice[] = [];
     /*
@@ -1067,14 +1072,20 @@ export function ManualRefundTaskQueue() {
             : [...unreadableNightDates, date];
       } else entries.push({ date, priceCents: cents });
     }
-    // The lead strand is the one this settlement moves; every other strand
-    // reconciles to its own stored total exactly.
-    const deltaCents =
-      index === 0
-        ? nightPriceDeltaCents
-        : nightPriceDeltaCents === null
-          ? null
-          : 0;
+    /*
+      WHICH strand the settlement moves is the SERVER'S answer, read off the
+      payload rather than guessed from the position. "The first one with boxes"
+      is wrong and wrong expensively: on an ordinary parked removal the strand
+      the money is about is the guest who LEFT, whose own rows read perfectly and
+      who therefore has no boxes at all, while the first strand with any belongs
+      to a guest nobody touched. Applying the refund to that guest's target would
+      move a stranger's stay by somebody else's amount.
+    */
+    const deltaCents = strand.absorbsSettlement
+      ? nightPriceDeltaCents
+      : nightPriceDeltaCents === null
+        ? null
+        : 0;
     // A partial or malformed answer never reaches the checker as if it were
     // whole: the entries are only complete when every box parsed, and an
     // unreadable one is answered here, by name, before the checker sees a

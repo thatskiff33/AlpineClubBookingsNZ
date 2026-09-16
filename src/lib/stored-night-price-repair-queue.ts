@@ -7,8 +7,8 @@ import {
   GUEST_SELECT,
   reviewTaskGuestIds,
   unpricedNightsSummaryForGuest,
+  type RepairableStrand,
 } from "@/lib/stored-night-price-repair-plan";
-import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
 
 /**
  * #3191 (epic #2797): reading the unpriced-night summaries for a WHOLE FINANCE
@@ -30,6 +30,14 @@ import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
  */
 
 /**
+ * One repairable strand as the finance queue sends it, which is
+ * {@link RepairableStrand} MINUS the guest id: the browser never names a strand
+ * (see `UnpricedNightsSummary`), and the server re-derives the ids from the
+ * task's own stored context when the figures come back.
+ */
+export type QueueRepairableStrand = Omit<RepairableStrand, "bookingGuestId">;
+
+/**
  * The summaries for a whole queue load, keyed by TASK id.
  *
  * Keyed by task rather than by guest so the queue payload never has to hold a
@@ -48,7 +56,7 @@ export async function unpricedNightsSummariesByTaskId({
     reviewContext: unknown;
   }>;
   store: Prisma.TransactionClient;
-}): Promise<Map<string, UnpricedNightsSummary[]>> {
+}): Promise<Map<string, QueueRepairableStrand[]>> {
   // #3498: a LIST per task, because one item now names every strand of the
   // parked edit and each of them may have blanks to fill. The order is the
   // task's own strand order, which is what the settle path binds the officer's
@@ -58,7 +66,7 @@ export async function unpricedNightsSummariesByTaskId({
     const guestIds = reviewTaskGuestIds(task);
     if (guestIds.length > 0) guestIdsByTaskId.set(task.id, guestIds);
   }
-  const summaries = new Map<string, UnpricedNightsSummary[]>();
+  const summaries = new Map<string, QueueRepairableStrand[]>();
   if (guestIdsByTaskId.size === 0) return summaries;
 
   const guests = await store.bookingGuest.findMany({
@@ -69,11 +77,14 @@ export async function unpricedNightsSummariesByTaskId({
   });
   const byGuestId = new Map(guests.map((guest) => [guest.id, guest]));
   for (const [taskId, guestIds] of guestIdsByTaskId) {
-    const forTask = guestIds.flatMap((guestId) => {
+    const forTask = guestIds.flatMap((guestId, index) => {
       const guest = byGuestId.get(guestId);
       if (!guest) return [];
       const summary = unpricedNightsSummaryForGuest(guest);
-      return summary ? [summary] : [];
+      // `absorbsSettlement` is derived here exactly as the settle path derives
+      // it, from the same lead-first order: the browser must apply the SAME
+      // arithmetic the server will, or it enables a button the server refuses.
+      return summary ? [{ summary, absorbsSettlement: index === 0 }] : [];
     });
     if (forTask.length > 0) summaries.set(taskId, forTask);
   }
@@ -98,7 +109,7 @@ export async function unpricedNightsSummariesForQueue(args: {
     reviewContext: unknown;
   }>;
   store: Prisma.TransactionClient;
-}): Promise<Map<string, UnpricedNightsSummary[]>> {
+}): Promise<Map<string, QueueRepairableStrand[]>> {
   try {
     return await unpricedNightsSummariesByTaskId(args);
   } catch (err) {
@@ -106,6 +117,6 @@ export async function unpricedNightsSummariesForQueue(args: {
       { err },
       "Failed to read unpriced night summaries for the finance queue; its rows are answered without them",
     );
-    return new Map<string, UnpricedNightsSummary[]>();
+    return new Map<string, QueueRepairableStrand[]>();
   }
 }

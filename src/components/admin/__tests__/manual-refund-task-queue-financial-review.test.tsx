@@ -514,12 +514,16 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
 const REVIEW_WITH_BLANKS = {
   ...REVIEW_TASK,
   // #3498: ONE ENTRY PER REPAIRABLE STRAND of the item. This review names one
-  // strand, so it is one entry - which is what every case below describes.
+  // strand, and it IS the strand the settlement moves - so `absorbsSettlement`
+  // is true and every case below reconciles against the target it always did.
   unpricedNights: [
     {
-      dates: ["2026-08-11", "2026-08-12"],
-      knownNightTotalCents: 6000,
-      storedGuestTotalCents: 12000,
+      summary: {
+        dates: ["2026-08-11", "2026-08-12"],
+        knownNightTotalCents: 6000,
+        storedGuestTotalCents: 12000,
+      },
+      absorbsSettlement: true,
     },
   ],
 };

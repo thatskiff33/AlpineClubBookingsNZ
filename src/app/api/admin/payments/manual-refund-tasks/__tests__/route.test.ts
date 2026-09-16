@@ -830,9 +830,15 @@ describe("unpriced nights on a review row (#3191)", () => {
     // item now covers the whole parked edit. This review names one strand.
     expect(body.tasks[0].unpricedNights).toEqual([
       {
-        dates: ["2026-08-11"],
-        knownNightTotalCents: 6000,
-        storedGuestTotalCents: 12000,
+        summary: {
+          dates: ["2026-08-11"],
+          knownNightTotalCents: 6000,
+          storedGuestTotalCents: 12000,
+        },
+        // #3498: the strand the settled amount moves the stored worth of. This
+        // review names one strand and it leads, so it is this one - and the
+        // browser reads the answer rather than guessing it from the position.
+        absorbsSettlement: true,
       },
     ]);
   });

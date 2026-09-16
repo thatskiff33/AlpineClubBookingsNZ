@@ -98,14 +98,21 @@ const TWO_REPAIRABLE_STRANDS = {
   ...ONE_ITEM_PER_EDIT,
   unpricedNights: [
     {
-      dates: ["2026-08-10", "2026-08-11"],
-      knownNightTotalCents: 0,
-      storedGuestTotalCents: 12000,
+      summary: {
+        dates: ["2026-08-10", "2026-08-11"],
+        knownNightTotalCents: 0,
+        storedGuestTotalCents: 12000,
+      },
+      // The strand the item leads with, and the one the settlement moves.
+      absorbsSettlement: true,
     },
     {
-      dates: ["2026-08-10", "2026-08-11"],
-      knownNightTotalCents: 0,
-      storedGuestTotalCents: 14000,
+      summary: {
+        dates: ["2026-08-10", "2026-08-11"],
+        knownNightTotalCents: 0,
+        storedGuestTotalCents: 14000,
+      },
+      absorbsSettlement: false,
     },
   ],
 };
@@ -290,6 +297,64 @@ describe("the settle dialog asks each strand separately (#3498 D1)", () => {
         { date: "2026-08-11", priceCents: 7000 },
       ],
     ]);
+  });
+
+  it("MUTATION: reconciles each strand against the target the SERVER named", async () => {
+    /*
+      THE CASE THAT SEPARATES "the strand the settlement moves" FROM "the first
+      strand with boxes", on the screen. Here the payload says the SECOND strand
+      absorbs the settlement - the shape of a parked edit where the guest the
+      money is about is not the first one with blanks - so the club handing
+      $40.00 back means the first strand still has to come to its own $120.00
+      and the second to $140.00 less $40.00.
+
+      Guessing from the position instead enables the button on the other pair of
+      figures and disables it on this one, which is a screen asking an officer to
+      move a stranger's stay by somebody else's amount.
+    */
+    const settlementOnSecond = {
+      ...ONE_ITEM_PER_EDIT,
+      unpricedNights: [
+        { ...TWO_REPAIRABLE_STRANDS.unpricedNights[0]!, absorbsSettlement: false },
+        { ...TWO_REPAIRABLE_STRANDS.unpricedNights[1]!, absorbsSettlement: true },
+      ],
+    };
+    await renderQueue({
+      tasks: [settlementOnSecond],
+      viewerCanViewBookings: true,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /Record the adjustment/i }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getAllByTestId("unpriced-night-price-fields").length,
+      ).toBe(2),
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: /club owes the member/i }));
+    fireEvent.change(screen.getByLabelText(/Amount/i), {
+      target: { value: "40.00" },
+    });
+    fireEvent.change(screen.getByLabelText(/Note/i), {
+      target: { value: "Priced from the booking's own payment history." },
+    });
+
+    const fieldsets = screen.getAllByTestId("unpriced-night-price-fields");
+    // Strand one: untouched by the settlement, so its own $120.00.
+    const [firstA, firstB] = within(fieldsets[0]!).getAllByRole("textbox");
+    fireEvent.change(firstA!, { target: { value: "60.00" } });
+    fireEvent.change(firstB!, { target: { value: "60.00" } });
+    // Strand two: $140.00 less the $40.00 going back.
+    const [secondA, secondB] = within(fieldsets[1]!).getAllByRole("textbox");
+    fireEvent.change(secondA!, { target: { value: "50.00" } });
+    fireEvent.change(secondB!, { target: { value: "50.00" } });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Pay the member back/i }),
+      ).toBeEnabled(),
+    );
   });
 
   it("will not close while ANY strand's figures are short", async () => {

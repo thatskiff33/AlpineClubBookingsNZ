@@ -4,7 +4,7 @@ import {
   type EditFinancialReviewEvidence,
 } from "@/lib/edit-financial-review-context";
 import { bookingOwner } from "@/lib/booking-owner";
-import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
+import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
 /**
  * What the finance settlement queue's loader sends to the browser, and the one
@@ -114,7 +114,8 @@ export type OpenManualRefundTaskPayload = {
    * strand order, because one item now covers the whole parked edit. The order
    * is load-bearing: the officer's figures come back as a parallel array and the
    * server matches them by position, which is how no payload here has to carry a
-   * guest-strand id.
+   * guest-strand id. `absorbsSettlement` says which entry — at most one, and
+   * sometimes none — the settled amount moves the stored worth of.
    *
    * READ LIVE by the route rather than taken from the stored context, and the
    * difference matters: the context records the evidence as it stood BEFORE the
@@ -122,7 +123,7 @@ export type OpenManualRefundTaskPayload = {
    * if it were the second would ask an officer to price nights that are no
    * longer there.
    */
-  unpricedNights: readonly UnpricedNightsSummary[];
+  unpricedNights: readonly QueueRepairableStrand[];
 };
 
 function memberName(booking: QueueBookingSummary): string {
@@ -152,7 +153,7 @@ function memberName(booking: QueueBookingSummary): string {
 export function toOpenManualRefundTaskPayload(
   task: OpenManualRefundTaskRow,
   viewerMemberId: string | null | undefined,
-  unpricedNights: readonly UnpricedNightsSummary[],
+  unpricedNights: readonly QueueRepairableStrand[],
 ): OpenManualRefundTaskPayload {
   const reviewContext = parseEditFinancialReviewContext(task.reviewContext);
 
