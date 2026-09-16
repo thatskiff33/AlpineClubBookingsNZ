@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, Role } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
@@ -33,10 +33,20 @@ import {
  * `COMPLETED` booking may take a late guest — had to be made in four places and
  * would have been made in three.
  *
- * This suite pins the converged rule (`canModifyBookingInActiveLifecycle`) for
- * EVERY role and EVERY `BookingStatus`, so a widening or narrowing is a diff in
- * this file rather than a silent divergence; and it refuses a new hardcoded
- * booking-status eligibility list anywhere near an edit door.
+ * This suite pins the converged rule for EVERY role and EVERY `BookingStatus`,
+ * so a widening or narrowing is a diff in this file rather than a silent
+ * divergence; and it refuses a new hardcoded booking-status eligibility list
+ * anywhere near an edit door.
+ *
+ * WHAT THIS CENSUS CANNOT SEE, stated because a guard that claims more than it
+ * catches is itself the defect (`INV-SSOT-004`). It reads text, so it matches
+ * two SHAPES: a bracketed literal naming two or more statuses, and a
+ * parenthesised chain of two or more `status === "X"` comparisons. A list
+ * expressed as a `switch` with fall-through cases, as an object map
+ * (`{ PENDING: true, PAID: true }`), as a union TYPE, or as a literal with a
+ * nested bracket inside it, is invisible to it — as is any door outside the
+ * population below. The failure message says so too, so whoever trips it knows
+ * what the guard is and is not promising.
  */
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
@@ -52,7 +62,7 @@ const read = (relative: string): string => {
 /**
  * Every non-test source file under a tracked directory, by WALK rather than by
  * name (`INV-SSOT-004`: a population measured by name is not the population). A
- * fifth edit door added next month is in this list the moment its file exists,
+ * fifth edit ROUTE added next month is in this list the moment its file exists,
  * which is the only way a census can see the copy it was written to prevent.
  */
 const sourceFilesUnder = (relativeRoot: string): string[] => {
@@ -80,12 +90,13 @@ const sourceFilesUnder = (relativeRoot: string): string[] => {
 const ALL_STATUSES: readonly string[] = Object.values(BookingStatus);
 
 /**
- * The role strings this predicate is ever handed. `ADMIN` is the only one the
- * policy module tests by name; everything else takes the member branch, and
- * both spellings the tree uses for it are pinned so neither can drift into the
- * admin branch unnoticed.
+ * Every role the schema has, DERIVED rather than listed (`INV-SSOT-004` again).
+ * An earlier draft of this file pinned `["USER", "MEMBER", "ADMIN"]`, and
+ * `"MEMBER"` is not a `Role` in this tree at all while `LODGE`, `NON_MEMBER` and
+ * `SCHOOL` are — so "every role" was three guesses, one of them fictional. The
+ * issue's acceptance criterion is every role, and this is what makes that true.
  */
-const ROLES = ["USER", "MEMBER", "ADMIN"] as const;
+const ROLES: readonly string[] = Object.values(Role);
 
 /** The converged answer, written out once, for every status and every role. */
 const EXPECTED_EDITABLE: Record<string, boolean> = {
@@ -109,14 +120,17 @@ const EXPECTED_EDITABLE_WITH_OVERRIDE: Record<string, boolean> = {
 };
 
 describe("#3245: the edit-eligibility answer, pinned per role and per status", () => {
-  it("covers every BookingStatus the schema has", () => {
+  it("covers every BookingStatus and every Role the schema has", () => {
     // The pins below are keyed by name, so a status added to the schema and not
     // added here would simply never be asserted. This is what makes "every
-    // status" true rather than merely claimed.
+    // status" true rather than merely claimed — and the same for roles, which
+    // an earlier draft of this file got wrong by listing them.
     expect(Object.keys(EXPECTED_EDITABLE).sort()).toEqual([...ALL_STATUSES].sort());
     expect(Object.keys(EXPECTED_EDITABLE_WITH_OVERRIDE).sort()).toEqual(
       [...ALL_STATUSES].sort(),
     );
+    expect(ROLES.length, "Role enum reachable and non-empty").toBeGreaterThan(1);
+    expect(ROLES).toContain("ADMIN");
   });
 
   for (const role of ROLES) {
@@ -213,7 +227,8 @@ describe("#3245: the edit-eligibility answer, pinned per role and per status", (
     // The two statuses other invariants lean on this refusing. `AWAITING_REVIEW`
     // is INV-MOD-047's reason the approval preservation path can never meet a
     // blank; `DRAFT` is #2266's lifecycle-inert edit, which these three doors do
-    // not implement.
+    // not implement. #3245 deleted a dead `MEMBER_MODIFIABLE_BOOKING_STATUSES`
+    // that disagreed with the first of these.
     for (const role of ROLES) {
       for (const status of [BookingStatus.AWAITING_REVIEW, BookingStatus.DRAFT]) {
         expect(canModifyBookingInActiveLifecycle(status, role)).toBe(false);
@@ -227,193 +242,340 @@ describe("#3245: the edit-eligibility answer, pinned per role and per status", (
   });
 });
 
-describe("#3245: the refusal sentence has one home, and is generated from the rule", () => {
+describe("#3245: the refusal has one home, and one call", () => {
   const STANDARD =
     "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified";
+  const REFUSED = BookingStatus.CANCELLED;
+
+  it("is null when the booking IS editable, so a door cannot refuse a legal edit", () => {
+    for (const role of ROLES) {
+      expect(activeLifecycleEditRefusal(BookingStatus.PAID, role)).toBeNull();
+      expect(
+        activeLifecycleEditRefusal(BookingStatus.COMPLETED, role, {
+          includeFinishedStay: true,
+        }),
+      ).toBeNull();
+    }
+  });
 
   it("is word for word what the three copies used to say", () => {
     // Byte-for-byte: this is what makes the convergence behaviour-preserving at
     // the three doors that were restating it.
-    expect(activeLifecycleEditRefusal()).toBe(STANDARD);
+    expect(activeLifecycleEditRefusal(REFUSED, "ADMIN")).toBe(STANDARD);
   });
 
   it("names the override's wider set when the override is on", () => {
     // The one place the sentence CHANGED (#3245). The date service used to send
     // the standard four here too, on an admin path where COMPLETED had in fact
     // just been admitted — so the refusal named a set that was not the one being
-    // applied. Generating it from the options is what makes it true.
-    expect(activeLifecycleEditRefusal({ includeFinishedStay: true })).toBe(
+    // applied. Deriving it from the same call is what makes it true.
+    expect(
+      activeLifecycleEditRefusal(REFUSED, "ADMIN", { includeFinishedStay: true }),
+    ).toBe(
       "Only PENDING, PAYMENT_PENDING, CONFIRMED, PAID, or COMPLETED bookings can be modified",
     );
   });
 
   it("names exactly the statuses the predicate admits, not a list of its own", () => {
     for (const options of [{}, { includeFinishedStay: true }]) {
-      const named = activeLifecycleEditRefusal(options).match(/[A-Z][A-Z_]{2,}/g) ?? [];
+      const admitted = activeLifecycleEditableStatuses("ADMIN", options);
+      // Non-vacuity: an empty set would make the sentence "Only no bookings can
+      // be modified", whose status tokens are `[]` — and `[]` equals `[]`. The
+      // assertion below would then pass while saying nothing at all.
+      expect(admitted.length, "the editable set is not empty").toBeGreaterThan(0);
+      const named = activeLifecycleEditRefusal(REFUSED, "ADMIN", options)?.match(
+        /[A-Z][A-Z_]{2,}/g,
+      );
       expect(
-        [...named].sort(),
+        [...(named ?? [])].sort(),
         `The refusal sentence and the predicate have drifted apart. The ` +
           `sentence is GENERATED from activeLifecycleEditableStatuses for ` +
           `exactly this reason (INV-SSOT-001) — do not type it out.`,
-      ).toEqual([...activeLifecycleEditableStatuses("ADMIN", options)].sort());
+      ).toEqual([...admitted].sort());
     }
   });
 });
 
 /**
- * The tree the ban is measured over: every route under the bookings API, plus
- * the edit services that sit in `src/lib` outside it. Named files are a risk
- * (`INV-SSOT-004`), which is why the routes are walked and the named list below
- * is kept to modules that a route reaches — the "every door is here" pin at the
- * end of this file is what keeps it honest.
+ * The tree the ban is measured over. Three parts, and the second exists because
+ * the first cannot reach a door that lives in `src/lib` — which is the shape all
+ * four current doors have:
+ *
+ *  1. every route under the bookings API, WALKED;
+ *  2. every `src/lib` file that imports the edit-policy module, MEASURED — so a
+ *     new service asking this question through the one home is in the census the
+ *     moment it exists, rather than when somebody remembers to list it;
+ *  3. the named edit modules, as a floor. A brand-new service that hardcodes a
+ *     list WITHOUT importing the policy module is in none of the three, and that
+ *     is the census's stated blind spot rather than a claim it quietly fails.
+ *
+ * Walking the whole of `src/lib` was measured and rejected: 53 status literals
+ * across cron sweeps, waitlist, Xero, payment reconciliation and diagnostics,
+ * nearly all of them different questions. That allowlist would be the rule.
  */
 const BOOKINGS_API_TREE = "src/app/api/bookings";
-const EDIT_SERVICES = [
+const NAMED_EDIT_MODULES = [
   "src/lib/booking-date-modification-service.ts",
   "src/lib/booking-guest-removal-service.ts",
   "src/lib/booking-modify-validation.ts",
   "src/lib/booking-modify.ts",
   "src/lib/booking-batch-modification-service.ts",
+  // Holds the self-removal eligibility set the guest-removal door's other
+  // branch reads, so the same door has two eligibility answers; both are in
+  // the census.
+  "src/lib/booking-guest-self-removal.ts",
 ];
+const EDIT_POLICY_MODULE = "src/lib/booking-edit-policy.ts";
 
-/** The four doors, and the file that holds each one's eligibility gate. */
-const EDIT_DOORS = [
+const policyImporters = (): string[] =>
+  sourceFilesUnder("src/lib").filter(
+    (file) =>
+      file !== EDIT_POLICY_MODULE &&
+      /from "@\/lib\/booking-edit-policy"/.test(
+        fs.readFileSync(path.join(REPO_ROOT, file), "utf8"),
+      ),
+  );
+
+const population = (): string[] =>
+  [
+    ...new Set([
+      ...sourceFilesUnder(BOOKINGS_API_TREE),
+      ...policyImporters(),
+      ...NAMED_EDIT_MODULES,
+    ]),
+  ].sort();
+
+/**
+ * The five server-side gates that decide whether a booking may be edited, and
+ * the derivation each reaches. Four are the doors above; `adminShiftBookingDates`
+ * is the fifth gate in the same family (#1668's price-frozen date move), which
+ * takes the WIDER base predicate directly.
+ *
+ * The regexes are whitespace-tolerant on purpose: an earlier draft pinned the
+ * exact single-line spelling, so re-wrapping a call — which Prettier does the
+ * moment a line grows — failed with "no longer reaches the one home", which
+ * would have been untrue.
+ */
+const EDIT_GATES = [
   {
     name: "batch edit (PUT /api/bookings/[id]/modify)",
     gate: "src/lib/booking-modify-validation.ts",
-    // The batch edit takes the WIDER base predicate directly: unlike the other
-    // three it has an admin lifecycle-skipping path, so DRAFT and the waitlist
-    // trio are genuinely editable there. It was already derived before #3245.
-    derivation: /canModifyBookingStatusForRole\(booking\.status, role\)/,
+    // Takes the WIDER base predicate: unlike the other three doors it has an
+    // admin lifecycle-skipping path, so DRAFT and the waitlist trio are
+    // genuinely editable there. Already derived before #3245.
+    derivation: /canModifyBookingStatusForRole\(\s*booking\.status,\s*role,?\s*\)/,
+  },
+  {
+    name: "admin shift-dates override (adminShiftBookingDates)",
+    gate: "src/lib/booking-date-modification-service.ts",
+    derivation: /canModifyBookingStatusForRole\(\s*booking\.status,\s*"ADMIN",?\s*\)/,
   },
   {
     name: "date change (PUT /api/bookings/[id]/modify-dates)",
     gate: "src/lib/booking-date-modification-service.ts",
-    derivation: /canModifyBookingInActiveLifecycle\(\s*booking\.status,\s*actor\.role,\s*editOptions,?\s*\)/,
+    derivation:
+      /activeLifecycleEditRefusal\(\s*booking\.status,\s*actor\.role,\s*\{\s*includeFinishedStay:\s*adminOverride,?\s*\},?\s*\)/,
   },
   {
     name: "guest removal (DELETE /api/bookings/[id]/guests/[guestId])",
     gate: "src/lib/booking-guest-removal-service.ts",
-    derivation: /canModifyBookingInActiveLifecycle\(booking\.status, actorRole\)/,
+    derivation: /activeLifecycleEditRefusal\(\s*booking\.status,\s*actorRole,?\s*\)/,
   },
   {
     name: "guest add (POST /api/bookings/[id]/guests)",
     gate: "src/app/api/bookings/[id]/guests/route.ts",
-    derivation: /canModifyBookingInActiveLifecycle\(booking\.status, actorRole\)/,
+    derivation: /activeLifecycleEditRefusal\(\s*booking\.status,\s*actorRole,?\s*\)/,
   },
 ] as const;
 
-/**
- * A bracketed literal that enumerates two or more `BookingStatus` values — the
- * shape every one of the three copies had. Matched over comment-stripped
- * source, and deliberately not anchored to `.includes(` or to a variable name:
- * the fourth copy will be spelled differently from the first three, which is
- * how the first three came to look plausible.
- */
-const statusListLiterals = (source: string): string[] => {
-  const token = new RegExp(
-    `(?:"|'|\`|\\bBookingStatus\\.)(${ALL_STATUSES.join("|")})\\b`,
-    "g",
-  );
-  return [...source.matchAll(/\[[^[\]]*\]/g)]
-    .filter((match) => {
-      const named = new Set(
-        [...match[0].matchAll(token)].map((hit) => hit[1]),
-      );
-      return named.size >= 2;
-    })
-    .map((match) => match[0].replace(/\s+/g, " "));
-};
+const STATUS_TOKEN = `(?:"|'|\`|\\bBookingStatus\\.)(${ALL_STATUSES.join("|")})\\b`;
+// Anchored so `assignment.status` (a bed allocation) is not read as a booking
+// status: either the `booking.status` / `bookingStatus` spellings, or a bare
+// `status` identifier that is not a property of something else.
+const STATUS_COMPARISON = `(?:booking\\.status|bookingStatus|(?<![.\\w])status)\\s*(?:===|!==)\\s*${STATUS_TOKEN}`;
+
+const distinctStatuses = (fragment: string, source: string): Set<string> =>
+  new Set([...fragment.matchAll(new RegExp(source, "g"))].map((hit) => hit[1] ?? ""));
 
 /**
- * The only files in the population allowed to enumerate booking statuses, each
- * with the reason it is not a second answer to "is this booking still
- * editable?". Adding a line here is a deliberate act with a reason attached;
- * that is the point of an allowlist over a name list.
- *
- * Both entries are the same defect shape one QUESTION over, not one predicate
- * over, which is why #3245 did not convert them: doing so would widen a
- * member-facing door rather than converge one. Both are #3497.
+ * The two shapes a hardcoded eligibility set takes here: a bracketed literal
+ * naming two or more statuses, and a parenthesised chain of two or more
+ * `status === "X"` comparisons. The second was added after review pointed out
+ * that the copy most likely to be written fresh is the chain, and that one is
+ * live in the population today (the guest-add route's hold window) — so the
+ * shape demonstrably goes unseen unless it is matched.
  */
-const STATUS_LIST_ALLOWED: Record<string, string> = {
-  "src/app/api/bookings/[id]/cancel-preview/route.ts":
-    "answers 'can this be CANCELLED?', which is a different and wider set " +
-    "(CANCELLABLE_BOOKING_STATUSES in booking-cancel.ts admits the three " +
-    "no-money statuses as well). Its list is itself a divergence from that " +
-    "one — filed as #3497 — but converging it widens a cancellation path and " +
-    "belongs in that issue, not in #3245's behaviour-preserving convergence.",
-  "src/app/api/bookings/[id]/notes/route.ts":
-    "answers 'may a note be edited on this booking?', a third question again, " +
-    "and its set omits PAID. Same shape, same follow-up (#3497).",
-  "src/lib/booking-modify-validation.ts":
-    "FULLY_PAID_BOOKING_STATUSES answers 'is a ZERO-DOLLAR booking paid up?' " +
-    "for the guest-name edit — a money question, not an eligibility one. It " +
-    "equals IN_PROGRESS_EDIT_STATUSES today by coincidence, and collapsing it " +
-    "onto the edit policy would tie a money test to a rule that can move for " +
-    "reasons that have nothing to do with money. It is already named, " +
-    "documented and used once, which is one home for its own question. This " +
-    "file's EDIT gate is derived, and is pinned by EDIT_DOORS below.",
+const statusSetExpressions = (source: string): string[] => [
+  ...[...source.matchAll(/\[[^[\]]*\]/g)]
+    .filter((match) => distinctStatuses(match[0], STATUS_TOKEN).size >= 2)
+    .map((match) => match[0].replace(/\s+/g, " ")),
+  ...[...source.matchAll(/\([^()]*\)/g)]
+    .filter((match) => distinctStatuses(match[0], STATUS_COMPARISON).size >= 2)
+    .map((match) => match[0].replace(/\s+/g, " ")),
+];
+
+/**
+ * The status sets in the population that are NOT a second answer to "is this
+ * booking still editable?", each keyed to the EXACT expression permitted and the
+ * reason it is permitted.
+ *
+ * Exact expressions rather than whole files, because a whole-file exemption
+ * switches the ban off in that file — and one of the files below is a DOOR'S OWN
+ * GATE, so a second hardcoded list added beside the derived one would have been
+ * invisible. A new set in an exempted file now trips the census like any other.
+ */
+const PERMITTED_STATUS_SETS: Record<string, { reason: string; expressions: string[] }> = {
+  "src/app/api/bookings/[id]/cancel-preview/route.ts": {
+    reason:
+      "answers 'can this be CANCELLED?', a different and wider question " +
+      "(CANCELLABLE_BOOKING_STATUSES in booking-cancel.ts admits three more). " +
+      "Its list is itself a divergence from that one — filed as #3497 — but " +
+      "converging it widens a member-facing cancellation path and belongs in " +
+      "that issue, not in #3245's behaviour-preserving convergence.",
+    expressions: ['["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"]'],
+  },
+  "src/app/api/bookings/[id]/notes/route.ts": {
+    reason:
+      "answers 'may a note be edited on this booking?', a third question " +
+      "again, and its set omits PAID. Same shape, same follow-up (#3497).",
+    expressions: ['["PAYMENT_PENDING", "CONFIRMED", "PENDING"]'],
+  },
+  "src/app/api/bookings/[id]/arrival-time/route.ts": {
+    reason:
+      "answers 'may an arrival time still be set?' as a NEGATIVE pair — a " +
+      "finished or cancelled stay — which is neither the edit set nor a " +
+      "subset of it.",
+    expressions: [
+      '(booking.status === "CANCELLED" || booking.status === "COMPLETED")',
+      '(booking.status === "CANCELLED" || booking.status === "COMPLETED")',
+    ],
+  },
+  "src/app/api/bookings/[id]/guests/route.ts": {
+    reason:
+      "the HOLD WINDOW, not eligibility: whether an unpaid booking is still " +
+      "inside its hold and may be released to PAYMENT_PENDING. It runs long " +
+      "after the eligibility gate has admitted the booking.",
+    expressions: [
+      '(booking.status === "PENDING" || booking.status === "PAYMENT_PENDING")',
+    ],
+  },
+  "src/lib/booking-modify-validation.ts": {
+    reason:
+      "FULLY_PAID_BOOKING_STATUSES answers 'is a ZERO-DOLLAR booking paid " +
+      "up?' for the guest-name edit — a money question. It equals " +
+      "IN_PROGRESS_EDIT_STATUSES today by coincidence, and collapsing it onto " +
+      "the edit policy would tie a money test to a rule that can move for " +
+      "reasons that have nothing to do with money.",
+    expressions: ["[ BookingStatus.PAID, BookingStatus.COMPLETED, ]"],
+  },
+  "src/lib/booking-guest-self-removal.ts": {
+    reason:
+      "SELF_REMOVABLE_GUEST_BOOKING_STATUSES answers 'may a guest take " +
+      "THEMSELVES off?', which is deliberately wider — it admits DRAFT. It is " +
+      "already one home for its own question, read by the removal service and " +
+      "the consent card.",
+    expressions: [
+      "[ BookingStatus.DRAFT, BookingStatus.PENDING, BookingStatus.PAYMENT_PENDING, BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.WAITLISTED, BookingStatus.WAITLIST_OFFERED, BookingStatus.AWAITING_REVIEW, ]",
+    ],
+  },
+  "src/lib/booking-cancel.ts": {
+    reason:
+      "the cancellation sets — the one home for 'can this be cancelled?' and " +
+      "its no-money subset. A different question from editing; #3497 is the " +
+      "issue for giving IT one home across its own three doors.",
+    expressions: [
+      '[ "PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "WAITLISTED", "WAITLIST_OFFERED", "AWAITING_REVIEW", ]',
+      '[ "WAITLISTED", "WAITLIST_OFFERED", "AWAITING_REVIEW", ]',
+      '["PAYMENT_PENDING", "CONFIRMED", "PAID"]',
+      "[ BookingStatus.PAYMENT_PENDING, BookingStatus.CONFIRMED, BookingStatus.PAID, ]",
+    ],
+  },
+  "src/lib/diagnostics/tools/packs/booking-evidence.ts": {
+    reason:
+      "a read-only diagnostics pack. These are display filters over booking " +
+      "history — which bookings to show as dropped, which as waitlisted — and " +
+      "gate no edit.",
+    expressions: ['["CANCELLED", "BUMPED"]', '[ "WAITLISTED", "WAITLIST_OFFERED", ]'],
+  },
 };
 
 describe("#3245: no edit door states the eligibility rule a second time", () => {
-  const population = (): string[] => [
-    ...sourceFilesUnder(BOOKINGS_API_TREE),
-    ...EDIT_SERVICES,
-  ];
-
-  it("the walk really reaches every door, so the ban is not vacuous", () => {
+  it("the population really reaches every gate, so the ban is not vacuous", () => {
     const files = population();
-    for (const door of EDIT_DOORS) {
-      expect(files, `${door.name}'s gate dropped out of the census`).toContain(
-        door.gate,
+    for (const gate of EDIT_GATES) {
+      expect(files, `${gate.name}'s gate dropped out of the census`).toContain(
+        gate.gate,
       );
     }
-    for (const service of EDIT_SERVICES) {
-      expect(fs.existsSync(path.join(REPO_ROOT, service)), `${service} is missing`).toBe(
-        true,
-      );
-    }
+    // The measured half is doing work rather than being subsumed by the names:
+    // if every policy importer were already a named module, the "measured"
+    // claim in the docblock above would be decoration.
+    expect(
+      policyImporters().some((file) => !NAMED_EDIT_MODULES.includes(file)),
+      "the measured half of the population adds files the names do not",
+    ).toBe(true);
   });
 
-  it("NO file near an edit door enumerates booking statuses", () => {
-    const offenders = population()
-      .filter((file) => !(file in STATUS_LIST_ALLOWED))
-      .flatMap((file) =>
-        statusListLiterals(read(file)).map((literal) => `${file}: ${literal}`),
-      );
+  it("NO file near an edit door states a booking-status set of its own", () => {
+    const offenders = population().flatMap((file) => {
+      const permitted = [...(PERMITTED_STATUS_SETS[file]?.expressions ?? [])];
+      return statusSetExpressions(read(file))
+        .filter((found) => {
+          const at = permitted.indexOf(found);
+          if (at === -1) return true;
+          // Consume it, so a file permitted ONE copy of an expression cannot
+          // quietly grow a second.
+          permitted.splice(at, 1);
+          return false;
+        })
+        .map((found) => `${file}: ${found}`);
+    });
     expect(
       offenders,
-      `These files state a booking-status list of their own. "Is this booking ` +
+      `These files state a booking-status set of their own. "Is this booking ` +
         `still editable?" has ONE home — canModifyBookingStatusForRole and ` +
         `canModifyBookingInActiveLifecycle in src/lib/booking-edit-policy.ts ` +
-        `(INV-SSOT-001). Call one of them. If your door genuinely needs a ` +
-        `different set, express it there as a NAMED DERIVATION with its ` +
-        `reason, the way canModifyBookingInActiveLifecycle is — do not write ` +
-        `a second definition. #3245 removed three of these; #3200's real bug ` +
-        `was written by copying one of them. If the list answers a DIFFERENT ` +
-        `question, add it to STATUS_LIST_ALLOWED with that reason.`,
+        `(INV-SSOT-001), with activeLifecycleEditRefusal for the sentence. ` +
+        `Call one of them. If your door genuinely needs a different set, ` +
+        `express it THERE as a named derivation with its reason — do not ` +
+        `write a second definition. #3245 removed three of these plus a dead ` +
+        `fifth; #3200's real bug was written by copying one. If the set ` +
+        `answers a DIFFERENT question, add the exact expression to ` +
+        `PERMITTED_STATUS_SETS with that reason.\n` +
+        `NOTE this census matches two shapes only — a bracketed literal, and ` +
+        `a parenthesised chain of === comparisons. A switch, an object map or ` +
+        `a union type is NOT caught, and a door outside the population is not ` +
+        `seen at all. Passing it is not proof there is no copy.`,
     ).toEqual([]);
   });
 
-  it("keeps the allowlist honest", () => {
-    // Both directions: the file still exists, and it still needs the exemption
-    // it was given. An allowlist entry that no longer matches is a rule quietly
-    // relaxed, and #3497 is expected to empty this map.
-    const stale = Object.keys(STATUS_LIST_ALLOWED).filter(
-      (file) => statusListLiterals(read(file)).length === 0,
-    );
+  it("keeps the permitted list honest", () => {
+    // Both directions: every permitted expression is still present, and the
+    // file still exists. A permission that no longer matches is a rule quietly
+    // relaxed, and #3497 is expected to empty several of these.
+    const stale: string[] = [];
+    for (const [file, { expressions }] of Object.entries(PERMITTED_STATUS_SETS)) {
+      const found = statusSetExpressions(read(file));
+      for (const expression of expressions) {
+        const at = found.indexOf(expression);
+        if (at === -1) stale.push(`${file}: ${expression}`);
+        else found.splice(at, 1);
+      }
+    }
     expect(
       stale,
-      `These files are exempted from the booking-status-list ban but no ` +
-        `longer enumerate one. Delete the entry rather than leaving a ` +
-        `standing exemption nothing needs.`,
+      `These expressions are permitted but no longer appear. Delete the entry ` +
+        `rather than leaving a standing exemption nothing needs — an exemption ` +
+        `kept past its subject is how a later copy gets waved through.`,
     ).toEqual([]);
   });
 
   it("NO file outside the policy module states the refusal sentence", () => {
     // The second half of the duplication: three doors carried the same
     // hand-typed sentence beside their three hand-typed lists. It is generated
-    // now, so any occurrence outside the one home is a copy.
+    // now, so any occurrence outside the one home is a copy. Wording-anchored,
+    // so a re-typed "may be modified" would evade — the shape above is the
+    // guard that matters; this one catches the literal paste.
     const offenders = population().filter((file) =>
       /bookings can be modified/.test(read(file)),
     );
@@ -426,17 +588,33 @@ describe("#3245: no edit door states the eligibility rule a second time", () => 
     ).toEqual([]);
   });
 
-  for (const door of EDIT_DOORS) {
-    it(`${door.name} derives its answer`, () => {
-      const source = read(door.gate);
+  it("the refusal sentence cannot be built without the status it is about", () => {
+    // The structural half of the fix, and the reason the sentence builder is
+    // not exported: a door that asked the predicate with
+    // `{ includeFinishedStay: true }` and then printed a sentence built
+    // WITHOUT it would reproduce exactly the bug #3245 fixed, and every other
+    // check in this file would stay green. One call, or nothing.
+    const policy = read(EDIT_POLICY_MODULE);
+    expect(policy).toMatch(
+      /export function activeLifecycleEditRefusal\(\s*status: string,\s*role: string,/,
+    );
+    expect(
+      policy,
+      `activeLifecycleEditRefusalText is the sentence WITHOUT the status. ` +
+        `Exporting it lets a caller state the options twice and get two ` +
+        `different answers (INV-SSOT-002).`,
+    ).not.toMatch(/export function activeLifecycleEditRefusalText/);
+  });
+
+  for (const gate of EDIT_GATES) {
+    it(`${gate.name} derives its answer`, () => {
+      const source = read(gate.gate);
       expect(
         source,
-        `${door.gate} no longer reaches the one home. If you moved the gate, ` +
+        `${gate.gate} no longer reaches the one home. If you moved the gate, ` +
           `move this pin with it; do not delete it.`,
-      ).toMatch(door.derivation);
-      expect(source).toMatch(
-        /from "@\/lib\/booking-edit-policy"/,
-      );
+      ).toMatch(gate.derivation);
+      expect(source).toMatch(/from "@\/lib\/booking-edit-policy"/);
     });
   }
 });

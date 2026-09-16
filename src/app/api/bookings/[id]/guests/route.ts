@@ -110,7 +110,6 @@ import {
 import { nameField } from "@/lib/zod-helpers";
 import {
   activeLifecycleEditRefusal,
-  canModifyBookingInActiveLifecycle,
   getBookingEditPolicy,
 } from "@/lib/booking-edit-policy";
 import { hasIssuedPrimaryXeroInvoice, isSettledBookingStatus } from "@/lib/booking-payment-state";
@@ -331,9 +330,8 @@ export async function POST(
       // has nothing new to handle here. Widening this gate is a real change.
       // #3245: derived, not restated. `includeFinishedStay` stays off, so the
       // COMPLETED exclusion survives the convergence unchanged.
-      if (!canModifyBookingInActiveLifecycle(booking.status, actorRole)) {
-        throw new ApiError(activeLifecycleEditRefusal(), 400);
-      }
+      const editRefusal = activeLifecycleEditRefusal(booking.status, actorRole);
+      if (editRefusal) throw new ApiError(editRefusal, 400);
 
       const editPolicy = getBookingEditPolicy({
         status: booking.status,

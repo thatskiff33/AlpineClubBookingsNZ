@@ -359,7 +359,7 @@ describe("why the guest-add correction changes no behaviour today", () => {
         `say so. DO NOT DELETE IT: it is the only guard keeping a finished ` +
         `stay out of this door's settlement.`,
     ).toMatch(
-      /!canModifyBookingInActiveLifecycle\(booking\.status, actorRole\)/,
+      /activeLifecycleEditRefusal\(\s*booking\.status,\s*actorRole,?\s*\)/,
     );
 
     // And the derivation itself excludes COMPLETED, which is the half that

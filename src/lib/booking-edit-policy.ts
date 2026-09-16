@@ -290,20 +290,54 @@ export function activeLifecycleEditableStatuses(
 }
 
 /**
- * The refusal, with one home too (#3245). It is GENERATED from the set above
- * rather than typed out, so a change to the rule cannot leave three doors
- * telling a member something that is no longer true — which is the failure the
- * three copied sentences were one edit away from.
+ * The refusal, with one home too (#3245) — and it takes the STATUS, not just
+ * the options, deliberately. `null` means "no refusal", so a caller gets its
+ * answer and its sentence from ONE call and cannot state the options twice.
+ *
+ * The earlier shape exported the predicate and a separate options-taking
+ * sentence, and a door was free to ask the predicate with
+ * `{ includeFinishedStay: true }` and then print a sentence built without it.
+ * That is precisely the defect this issue exists to remove, one level up — the
+ * rule and the words about the rule disagreeing — and no census can see it,
+ * because both calls are correct on their own. `INV-SSOT-002`: both sides of a
+ * comparison come from one helper. This is the structural remedy `INV-SSOT-001`
+ * prefers over a guard, and it is why `activeLifecycleEditRefusalText` below is
+ * NOT exported.
+ *
+ * The structural option that was REJECTED, since the rule asks for that to be
+ * named: making a door unable to express a status list at all — branding
+ * `BookingStatus` so a bare array cannot be compared against it, or funnelling
+ * all four doors through one required-argument gatekeeper. The first touches
+ * every status comparison in the tree; the second is a redesign of four
+ * independent services. Both are far larger than this issue, so the remaining
+ * gap — a door hand-writing a fresh list — is covered by a census rather than
+ * by the type system, and `booking-edit-eligibility-one-home.test.ts` states
+ * what that census can and cannot see.
+ */
+export function activeLifecycleEditRefusal(
+  status: string,
+  role: string,
+  options: ActiveLifecycleEditOptions = {},
+): string | null {
+  return canModifyBookingInActiveLifecycle(status, role, options)
+    ? null
+    : activeLifecycleEditRefusalText(options);
+}
+
+/**
+ * The sentence itself, GENERATED from the set above rather than typed out, so a
+ * change to the rule cannot leave three doors telling a member something that is
+ * no longer true.
  *
  * Role-independent for the same reason the predicate is, so it takes no role:
  * the wording a member sees and the wording an admin sees are the same sentence
  * about the same four statuses. It enumerates against `ADMIN` — the WIDEST role,
  * whose editable set contains every other role's — so that if the two ever did
  * diverge the sentence would name a superset rather than hide a status somebody
- * is in fact allowed. The pin below asserts they do not diverge, and its exact
- * text is pinned by `booking-edit-eligibility-one-home.test.ts`.
+ * is in fact allowed. The pin asserts they do not diverge, and the exact text is
+ * pinned by `booking-edit-eligibility-one-home.test.ts`.
  */
-export function activeLifecycleEditRefusal(
+function activeLifecycleEditRefusalText(
   options: ActiveLifecycleEditOptions = {},
 ): string {
   const statuses = activeLifecycleEditableStatuses("ADMIN", options);

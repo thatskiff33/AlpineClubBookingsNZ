@@ -53,7 +53,6 @@ import {
 } from "@/lib/adult-member-hosting-review";
 import {
   activeLifecycleEditRefusal,
-  canModifyBookingInActiveLifecycle,
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
@@ -491,9 +490,10 @@ export async function removeBookingGuestInTransaction({
 
   // #3245: derived, not restated. A self-removal answers a different question
   // and keeps its own named set (`SELF_REMOVABLE_GUEST_BOOKING_STATUSES`).
-  if (!isSelfRemoval && !canModifyBookingInActiveLifecycle(booking.status, actorRole)) {
-    throw new BookingGuestRemovalError(activeLifecycleEditRefusal(), 400);
-  }
+  const editRefusal = isSelfRemoval
+    ? null
+    : activeLifecycleEditRefusal(booking.status, actorRole);
+  if (editRefusal) throw new BookingGuestRemovalError(editRefusal, 400);
   if (
     isSelfRemoval &&
     !SELF_REMOVABLE_GUEST_BOOKING_STATUSES.has(booking.status)

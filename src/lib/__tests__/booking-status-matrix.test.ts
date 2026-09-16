@@ -5,7 +5,6 @@ import {
   ACTIVE_BOOKING_STATUSES,
   CAPACITY_HOLDING_BOOKING_STATUSES,
   IMMEDIATE_PAYMENT_BOOKING_STATUSES,
-  MEMBER_MODIFIABLE_BOOKING_STATUSES,
   OPERATIONAL_STAY_BOOKING_STATUSES,
   PAYMENT_OWED_BOOKING_STATUSES,
   isCapacityHoldingBookingStatus,
@@ -15,7 +14,11 @@ import {
 
 // Issue #816 booking capacity/waitlist/bed-allocation review:
 // the booking-status helper sets each encode a load-bearing invariant
-// (capacity holding, payment owed, operational stay, member-editable, etc.).
+// (capacity holding, payment owed, operational stay, etc.).
+// #3245 removed `MEMBER_MODIFIABLE_BOOKING_STATUSES` and its pin here: it was a
+// second, and wrong, answer to a question `booking-edit-policy.ts` owns, with no
+// production reader. Its membership is pinned there now, per role and per
+// status, against the code that actually gates an edit.
 // This matrix locks their exact membership and the helper functions that read
 // them, so a status accidentally added to or dropped from a set fails loudly.
 // It complements booking-status-bed-allocation-ownership.test.ts (#813), which
@@ -43,15 +46,6 @@ describe("booking status set matrix (issue #816)", () => {
         BookingStatus.CONFIRMED,
         BookingStatus.DRAFT,
         BookingStatus.PENDING,
-      ]),
-    );
-    expect(sorted(MEMBER_MODIFIABLE_BOOKING_STATUSES)).toEqual(
-      sorted([
-        BookingStatus.PENDING,
-        BookingStatus.PAYMENT_PENDING,
-        BookingStatus.CONFIRMED,
-        BookingStatus.PAID,
-        BookingStatus.AWAITING_REVIEW,
       ]),
     );
     expect(sorted(OPERATIONAL_STAY_BOOKING_STATUSES)).toEqual(
@@ -110,7 +104,6 @@ describe("booking status set matrix (issue #816)", () => {
       ...CAPACITY_HOLDING_BOOKING_STATUSES,
       ...PAYMENT_OWED_BOOKING_STATUSES,
       ...IMMEDIATE_PAYMENT_BOOKING_STATUSES,
-      ...MEMBER_MODIFIABLE_BOOKING_STATUSES,
       ...OPERATIONAL_STAY_BOOKING_STATUSES,
       ...ACTIVE_BOOKING_STATUSES,
     ];
