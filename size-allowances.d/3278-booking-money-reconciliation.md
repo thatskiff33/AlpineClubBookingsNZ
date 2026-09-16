@@ -1,7 +1,7 @@
 # File-size allowances for #3278
 
 file: src/app/(admin)/admin/bookings/page.tsx
-lines: 765
+lines: 799
 reason: the compact status-cell chip belongs beside the existing booking and
   operational review signals; extracting nine lines would split one row.
 
@@ -16,12 +16,12 @@ reason: the route classifies the same coherent booking projection already used
   for its aggregate, avoiding a second read or a divergent report cohort.
 
 file: src/app/api/member/data-export/route.ts
-lines: 358
+lines: 371
 reason: the existing booking export query must carry the complete canonical
   projection so the exported state describes the same stored record.
 
 file: src/lib/admin-bookings-service.ts
-lines: 1397
+lines: 1439
 reason: list hydration already owns the one bounded heavy booking projection;
   classifying there avoids another query and keeps pagination coherent.
 
@@ -31,6 +31,6 @@ reason: reconciliation must use the exact contributing booking cohort and the
   same stable snapshot as the existing finance calculations.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1440
+lines: 1604
 reason: reconciliation evidence stays attached to both the initial operation
   payload and its stale-contact repair without changing the provider invoice shape.
