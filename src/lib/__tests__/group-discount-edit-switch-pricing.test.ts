@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgeTier, BookingGuestNightPriceSource } from "@prisma/client";
 import type { SeasonRateData } from "@/lib/policies/pricing";
+import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
 
 /**
  * #2770 (INV-MOD-026): what the club's `applyToEdits` switch actually does to
@@ -208,8 +209,10 @@ async function pricedPricing(
   const result = await calculateModifiedPricing(...args);
   if (result.kind !== "priced") {
     throw new Error(
-      `Expected a priced modification, got financial review: ${result.occurrences
-        .map((occurrence) => occurrence.cause)
+      `Expected a priced modification, got financial review: ${editFinancialReviewStrandRecords(
+        result.occurrence,
+      )
+        .map((strand) => strand.cause)
         .join(", ")}`,
     );
   }

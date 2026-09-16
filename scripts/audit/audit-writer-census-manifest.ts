@@ -522,7 +522,14 @@ export const AUDIT_CENSUS_TOTALS = {
   // this suite is the documented blind spot of `vitest related` — it reads the
   // source tree from disk and has no import edge to anything a change touches,
   // so nothing selects it for you.
-  writeSites: 483,
+  // 483 -> 484 (#3498): `booking-payment.manual-refund-task.reopen`, the record
+  // that an officer put a DISMISSED money task back on the finance queue. One
+  // awaited `createAuditLog` inside the reopen's own transaction, carrying the
+  // dismissing officer, when they closed it and the note they wrote - all three
+  // of which the status claim beside it clears off the row, so this entry is the
+  // only place they survive. Categorised `payment` at the site, so it does not
+  // join `UNCATEGORISED_AUDIT_WRITERS` below.
+  writeSites: 484,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -681,7 +688,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // response tells an administrator the disclosure level changed and the
     // record of that change should not be able to be the part that quietly
     // failed.
-    createAuditLog: { total: 131, uncategorised: 0 },
+    // 131 -> 132 (#3498): the manual-refund-task reopen record.
+    createAuditLog: { total: 132, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -842,7 +850,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // needs to know that one change's ask now rides on another's is the one
     // reconciling the club's money. It widens nobody's access: `payment` is the
     // category those siblings already use.
-    payment: 45,
+    // 45 -> 46 (#3498): the reopen record, which is a money decision being
+    // undone and belongs with the closure it reverses.
+    payment: 46,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

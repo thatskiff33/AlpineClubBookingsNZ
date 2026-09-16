@@ -199,6 +199,86 @@ describe("#3030 occurrence key - the same structural edit is one occurrence", ()
     );
   });
 
+  /**
+   * #3498: THE OTHER STRANDS ARE IDENTITY MATERIAL TOO, and leaving them out is
+   * the hole point (4) describes one grain higher up.
+   *
+   * Owner decision D1 made one work item cover the whole parked edit, so two
+   * genuinely different edits to one booking can present the SAME lead strand -
+   * same guest, same cause, same nights, same stored rows - and destroy
+   * completely different evidence elsewhere in the party. On the lead's material
+   * alone they hash to one key, and `findFreeOccurrenceSlot` would then find the
+   * first edit's settled row, create nothing, and the second adjustment would
+   * never be reviewed by anybody. That is the exact failure the key's own
+   * docblock names, with the strand list as the thing that has changed.
+   *
+   * MUTATION PROOF, and it is the reason these cases exist rather than the
+   * key-material comment: dropping `otherStrands` from the hashed material
+   * leaves every other test in this file passing, including the pinned digest,
+   * because they all describe one-strand edits.
+   */
+  const otherStrand = (bookingGuestId: string, priceCents: number | null) => ({
+    bookingGuestId,
+    cause: "COUNTERPART_STRAND_UNREADABLE" as const,
+    surrenderedNightDates: [day("2026-08-02")],
+    addedNightDates: [],
+    storedEvidence: {
+      guestTotalCents: 9000,
+      nightPrices: [{ date: day("2026-08-02"), priceCents }],
+    },
+  });
+
+  it("MUTATION: is a different occurrence when the SAME lead strand sits beside a different party (#3498)", () => {
+    const withOne = occurrence({ otherStrands: [otherStrand("guest-2", 4500)] });
+    const withTwo = occurrence({
+      otherStrands: [otherStrand("guest-2", 4500), otherStrand("guest-3", 4500)],
+    });
+    expect(editFinancialReviewOccurrenceKey(withOne)).not.toBe(
+      editFinancialReviewOccurrenceKey(occurrence()),
+    );
+    expect(editFinancialReviewOccurrenceKey(withTwo)).not.toBe(
+      editFinancialReviewOccurrenceKey(withOne),
+    );
+  });
+
+  it("MUTATION: is a different occurrence when another strand's STORED EVIDENCE differs (#3498)", () => {
+    // The sequence the evidence fingerprint exists for, now reachable through a
+    // strand the lead knows nothing about: settle, edit again, and the second
+    // edit finds different rows on a guest nobody has touched.
+    expect(
+      editFinancialReviewOccurrenceKey(
+        occurrence({ otherStrands: [otherStrand("guest-2", 4500)] }),
+      ),
+    ).not.toBe(
+      editFinancialReviewOccurrenceKey(
+        occurrence({ otherStrands: [otherStrand("guest-2", null)] }),
+      ),
+    );
+  });
+
+  it("does not depend on the order the other strands were recorded in", () => {
+    // The same reason the night prices are sorted: the planner's read order is
+    // not a fact about the edit, and a key that shifted with it would make a
+    // replay raise a second task.
+    const ordered = occurrence({
+      otherStrands: [otherStrand("guest-2", 4500), otherStrand("guest-3", null)],
+    });
+    const reversed = occurrence({
+      otherStrands: [otherStrand("guest-3", null), otherStrand("guest-2", 4500)],
+    });
+    expect(editFinancialReviewOccurrenceKey(reversed)).toBe(
+      editFinancialReviewOccurrenceKey(ordered),
+    );
+  });
+
+  it("hashes an ABSENT strand list and an EMPTY one identically, because they mean the same thing", () => {
+    // A one-strand edit is stored without the field at all, and a caller that
+    // spells it `[]` must not mint a second identity for the same edit.
+    expect(editFinancialReviewOccurrenceKey(occurrence({ otherStrands: [] }))).toBe(
+      editFinancialReviewOccurrenceKey(occurrence()),
+    );
+  });
+
   it("distinguishes a night surrendered, reviewed, re-added and surrendered AGAIN - which is the case a date-only key loses money on", () => {
     // First occurrence: three stored nights, the last of them unpriced.
     const first = occurrence({

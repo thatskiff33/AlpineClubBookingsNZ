@@ -321,8 +321,14 @@ const FIGURES = {
    * Button, as it is on the Retention section: it reverts local state and
    * writes nothing, so gating it would refuse a view-only admin the way out of
    * a form they could not have changed. MEASURED by re-running this census.
+   *
+   * 361 -> 362 (#3498): the finance queue's reopen card adds one - the **Put
+   * back on the queue** control on a dismissed money task. It carries the
+   * DEFAULT `describeReason`, like every other control on that surface: the
+   * finance queue renders no `AdminViewOnlySectionBanner` at all, so each of its
+   * buttons explains its own view-only state.
    */
-  callSites: 361,
+  callSites: 362,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -407,12 +413,22 @@ const FIGURES = {
   renderSiteVouchedOptOuts: 29,
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
-  /** Controls that KEEP the per-button reason, and the files holding them. */
-  exceptions: 53,
-  exceptionFiles: 29,
-  /** The remainder bucket: neither a member detail card nor dialog-only. */
-  leafControls: 39,
-  leafFiles: 23,
+  /**
+   * Controls that KEEP the per-button reason, and the files holding them.
+   *
+   * 53 -> 54 in 29 -> 30 files (#3498): the finance queue's reopen card, which
+   * is a new file and heads no banner - the same shape as the settle card it
+   * sits beside, where each button explains its own view-only state.
+   */
+  exceptions: 54,
+  exceptionFiles: 30,
+  /**
+   * The remainder bucket: neither a member detail card nor dialog-only.
+   *
+   * 39 -> 40 in 23 -> 24 files (#3498): the reopen card's own control.
+   */
+  leafControls: 40,
+  leafFiles: 24,
   /**
    * Components that render an `AdminViewOnlySectionBanner`.
    *

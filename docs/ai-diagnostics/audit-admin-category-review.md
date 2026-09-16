@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  483
+row-producing sites:  484
 uncategorised:        0
-category values: admin 107, booking 104, xero 37, family 35, payment 45,
+category values: admin 107, booking 104, xero 37, family 35, payment 46,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -691,6 +691,14 @@ nobody has to act - but an officer opening the earlier change finds its request
 gone with no explanation on it, and a member sees one larger figure where they
 expected two. `payment` for the same audience reason as the review-charge rows
 beside it.
+
+#3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
+`npm run audit:census` on that branch rather than added to the literal):
+`booking-payment.manual-refund-task.reopen`, the record that an officer put a
+DISMISSED money task back on the finance queue. `payment` for the same audience
+reason as the closure it reverses, and it carries what that closure looked like —
+who dismissed it, when, and the note they wrote — because the status claim beside
+it clears all three off the row, so this entry is the only place they survive.
 
 #2942 then added one more (`admin` 106 -> 107, 482 -> 483 on the MERGED tree —
 the MAD epic's own children carried the total from 472 to 482 without a

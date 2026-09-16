@@ -279,6 +279,15 @@ function EditFinancialReviewEvidenceBlock({
 }: {
   evidence: EditFinancialReviewEvidence;
 }) {
+  /*
+    #3498: DEFAULTED, because this arrives over the wire. A browser holding a
+    cached bundle for the minutes after a deploy receives rows from the older
+    route, which sends no such field - and the card losing its whole evidence
+    block over a missing list would take the money work off the screen at
+    exactly the moment somebody is doing it. An absent list and an empty one
+    mean the same thing here: this item describes one strand.
+  */
+  const otherStrands = evidence.otherStrands ?? [];
   return (
     <div
       className="space-y-1 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
@@ -289,7 +298,7 @@ function EditFinancialReviewEvidenceBlock({
         Booked stay: {formatClubDate(evidence.bookingCheckIn)} to{" "}
         {formatClubDate(evidence.bookingCheckOut)}
       </p>
-      {evidence.otherStrands.length > 0 ? (
+      {otherStrands.length > 0 ? (
         /*
          * #3498 (owner decision D1): the OTHER guests the same change touched.
          *
@@ -310,18 +319,18 @@ function EditFinancialReviewEvidenceBlock({
           data-testid="manual-refund-task-review-other-strands"
         >
           <p className="font-medium text-foreground">
-            The same change also touched {evidence.otherStrands.length}{" "}
-            {evidence.otherStrands.length === 1 ? "other guest" : "other guests"}{" "}
+            The same change also touched {otherStrands.length}{" "}
+            {otherStrands.length === 1 ? "other guest" : "other guests"}{" "}
             on this booking. What was stored for{" "}
-            {evidence.otherStrands.length === 1 ? "them" : "each of them"} is
+            {otherStrands.length === 1 ? "them" : "each of them"} is
             below. It is here so nothing is lost; there is one adjustment to
             record for this change, not one per guest.
           </p>
-          {evidence.otherStrands.map((strand, index) => (
+          {otherStrands.map((strand, index) => (
             <EditFinancialReviewStrandBlock
               key={index}
               strand={strand}
-              heading={`Guest ${index + 2} of ${evidence.otherStrands.length + 1}`}
+              heading={`Guest ${index + 2} of ${otherStrands.length + 1}`}
             />
           ))}
         </div>

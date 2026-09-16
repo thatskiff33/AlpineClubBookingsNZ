@@ -171,7 +171,7 @@ re-creatable.
   That tooltip never appears (disabled buttons receive no pointer events), and
   gated controls also stay out of the keyboard tab order, so "tab to the button
   to hear why" is wrong too. **Check the screen before you write "the banner
-  says why":** 53 controls still carry their own per-button reason instead —
+  says why":** 54 controls still carry their own per-button reason instead —
   controls inside a dialog, popover, or dropdown; leaf toolbars dropped into
   another page's layout; the member detail **credit** card, whose buttons
   are gated on finance while that page's banner states membership; and the

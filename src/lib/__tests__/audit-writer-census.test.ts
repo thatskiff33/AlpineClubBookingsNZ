@@ -1385,7 +1385,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // tree with `npm run audit:census` minus the pinned union — the epic's
     // unpinned additions and this pinned one are disjoint, so neither branch's
     // pair survives the merge and only a run over the composed tree gives it.
-    ).toEqual({ pinned: 128, unpinned: 355 });
+    // 355 -> 356 (#3498): the manual-refund-task reopen record, which is a new
+    // unpinned writer and joins neither map.
+    ).toEqual({ pinned: 128, unpinned: 356 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

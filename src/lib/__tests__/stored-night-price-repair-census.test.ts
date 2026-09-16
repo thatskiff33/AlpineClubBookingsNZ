@@ -400,7 +400,11 @@ describe("nothing in this feature can derive an amount", () => {
     */
     const raw = readFileSync(join(SRC, SCOPED_FILE), "utf8");
     const { code, exemptLines } = scannedSource(raw);
-    expect(code).toContain("nightPriceEntries");
+    // #3498 renamed the per-night derivation as it moved to one column of boxes
+    // PER STRAND. Same code, same scan: `nightPriceStrands` is what
+    // `nightPriceEntries` became, and each strand's own entries are built inside
+    // it, so this anchor still lands on the arithmetic this census is aimed at.
+    expect(code).toContain("nightPriceStrands");
     expect(code).toContain("nightPricesBlocked");
     // Rendered six hundred lines below the night-price code, on the file's last
     // element: if the scan stops early, this is what says so. An identifier

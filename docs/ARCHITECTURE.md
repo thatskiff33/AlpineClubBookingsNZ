@@ -1146,7 +1146,7 @@ tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
 figures rather than trusting a hand count: **97 components render a banner, and
-308 of the 361 `ViewOnlyActionButton` call sites opt out** of the per-button
+308 of the 362 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
 test currently pins, which is the only authority.) Those 308 split by WHICH rule
@@ -1156,7 +1156,7 @@ pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
 through the wizard shell* below. The
-remaining **53 controls across 29 files deliberately keep the per-button
+remaining **54 controls across 30 files deliberately keep the per-button
 default** (`describeReason` left at `true`), in three shapes:
 
 - **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
@@ -1171,7 +1171,7 @@ default** (`describeReason` left at `true`), in three shapes:
   the booking capacity/exclusive hold controls, the family-group login-holder
   and request-review sub-sections, and the non-member contact form). Nothing
   local proves an ancestor renders a banner above them, so the reason stays on
-  the control. (39 controls across 23 files.) Nine of those 39 sit inside a
+  the control. (40 controls across 24 files.) Nine of those 40 sit inside a
   setup wizard and are **scope** exceptions rather than indirection ones: each is
   gated on a permission NARROWER than the banner its shell renders, so an admin
   who has the wizard's area but not that narrower one meets no banner at all.
