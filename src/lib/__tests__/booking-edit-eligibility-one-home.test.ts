@@ -570,6 +570,30 @@ describe("#3245: no edit door states the eligibility rule a second time", () => 
     ).toEqual([]);
   });
 
+  it("the lifecycle-status module grows no second answer to THIS question", () => {
+    // Targeted rather than general, and the reason is measured: #3245 deleted
+    // `MEMBER_MODIFIABLE_BOOKING_STATUSES` from `booking-status.ts` — a dead,
+    // canonically-named, test-blessed set that admitted AWAITING_REVIEW and so
+    // disagreed with every edit door. That module is THE home for booking-status
+    // sets and holds a dozen legitimate ones, so putting it in the ban above
+    // would tax every unrelated set added there for ever. What must not come
+    // back is a set NAMED for this question, which is what made the deleted one
+    // the most findable wrong example in the tree.
+    const names =
+      read("src/lib/booking-status.ts").match(
+        /export const ([A-Z0-9_]*(?:MODIFIABLE|EDITABLE)[A-Z0-9_]*)/g,
+      ) ?? [];
+    expect(
+      names,
+      `src/lib/booking-status.ts has grown a set named for "which bookings ` +
+        `may be modified/edited". That question is answered by ` +
+        `canModifyBookingInActiveLifecycle in src/lib/booking-edit-policy.ts ` +
+        `(INV-SSOT-001). #3245 deleted exactly such a set from this module: it ` +
+        `had no production reader and it was WRONG, and its name is what made ` +
+        `it the example somebody would have copied.`,
+    ).toEqual([]);
+  });
+
   it("NO file outside the policy module states the refusal sentence", () => {
     // The second half of the duplication: three doors carried the same
     // hand-typed sentence beside their three hand-typed lists. It is generated
