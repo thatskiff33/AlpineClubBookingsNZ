@@ -1052,15 +1052,15 @@ one, check the other.
   OPEN `ManualRefundTask` of kind `EDIT_FINANCIAL_REVIEW`. `amountCents` NULL
   means the amount is genuinely unknown and `0` may never be used to mean it;
   `paymentId` records the booking's captured money AT RAISE TIME and nothing
-  backfills it — since #3194 the completion re-reads the booking's own payment
+  backfills it; since #3194 the completion re-reads the booking's own payment
   and routes on that. Identity is the `occurrenceKey`, minted only by
   `editFinancialReviewOccurrenceKey`
   (`src/lib/edit-financial-review-occurrence.ts`), never a `reason` sentence, so
-  a replay of one edit raises one task and no more. Completion carries the
+  a replay of one edit raises one task, covering the edit ([INV-PAY-067]). Completion carries the
   admin's confirmed POSITIVE integer cents plus a note, written inside the same
   status-guarded claim as the status so it cannot apply twice; a figure differing
   from one the task already held is the audited amendment D2 permits on this
-  kind alone, with `raisedAmountCents` preserving what it was raised with.
+  kind alone, `raisedAmountCents` preserving what it was raised with.
   DISMISSED means reviewed and this system moved no money, and writes no amount;
   its REQUIRED note says whether nothing was owed or the club settled it outside
   the task. Nothing moves at Stripe, in the ledger, in Xero or as account credit
@@ -1069,24 +1069,36 @@ one, check the other.
   settlement routing `INV-PAY-061` and `INV-PAY-069`; the charging direction
   `INV-PAY-062`, `INV-PAY-070`, `INV-PAY-063`, `INV-PAY-071`, `INV-PAY-064` and
   `INV-PAY-072`; the refund legs and the anchor `INV-PAY-065`; the fence and
-  the constraints `INV-PAY-066`.
+  the constraints `INV-PAY-066`; reopening, `INV-PAY-099`.
 - **Late cash on a cancelled ORGANISATION-owned booking raises a hand-back task,
   never account credit** (#3369): an organisation has no ledger, so the money
   sits on the payments board and an admin is told.
 
 ## INV-PAY-067
 
-- **One task per parked STRAND, and the DEPARTING strand is always one of them**
-  (#3032). The occurrence key is minted per strand, so a replay of the same edit
-  re-derives the same keys and creates nothing. A remaining strand is recorded
-  when its own rows cannot be read; it carries no surrendered nights and its
-  honest resolution is often DISMISSED with a note. The strand actually leaving
-  is recorded on every parked removal, whether or not its own rows read cleanly,
-  because the delete destroys the guest's night rows: where that strand's rows
-  ARE exact its cause is `COUNTERPART_STRAND_UNREADABLE`, its stored evidence
-  carries the real per-night prices, and no `amountCents` is written, because
-  the money that goes back also depends on the cancellation tier and the promo
-  recalculation a parked removal skips. **A parked edit never destroys a number
+- **One task per parked EDIT, carrying every strand it records, and the
+  DEPARTING strand is always one of them** (#3032; the grain moved from the
+  strand to the edit in #3498, owner decision D1). The occurrence key is minted
+  over the whole edit — the lead strand's identity material plus every other
+  recorded strand's, sorted so the planner's read order cannot change it — so a
+  replay re-derives the same key and creates nothing, while a genuinely different
+  edit that happens to present the same lead strand does not collide with it.
+  WHICH strands are recorded is unchanged: a remaining strand is recorded when
+  its own rows cannot be read, and the strand actually leaving is recorded on
+  every parked removal, whether or not its own rows read cleanly, because the
+  delete destroys the guest's night rows. Where that strand's rows ARE exact its
+  cause is `COUNTERPART_STRAND_UNREADABLE`, its stored evidence carries the real
+  per-night prices, and no `amountCents` is written, because the money that goes
+  back also depends on the cancellation tier and the promo recalculation a parked
+  removal skips. **No stored figure may be lost when the grain moves**: every
+  field a per-strand record carried is still recorded, on the lead strand or in
+  the occurrence's strand list, and
+  `edit-financial-review-strand-census.test.ts` fails by name when one is
+  dropped. The item LEADS with the strand whose night set the edit moves —
+  unreadable before readable, and a guest id as the tie-break so the choice is a
+  pure function of the strand set — because that is the strand the money hangs
+  on, and a card that led with any of the others is the near-miss #3498 was filed
+  for. **A parked edit never destroys a number
   the system could have known.**
 
 ## INV-PAY-060
@@ -1095,7 +1107,9 @@ one, check the other.
   (#3166). A replay collapses into an OPEN task and only an OPEN task; a
   COMPLETED or DISMISSED row at the same key means a person already answered
   that question, so the raise walks past it onto a `#n` recurrence key and writes
-  a new OPEN task. The settled row is never reopened, amended or re-keyed. A
+  a new OPEN task. The RAISE never reopens, amends or re-keys a settled row;
+  reopening is an officer's own audited act and only from DISMISSED
+  ([INV-PAY-099]). A
   replay cannot see a terminal row: the raise runs inside the caller's
   transaction, and a new edit reaches the raise only after
   `assertNoPendingEditFinancialReview` has confirmed nothing on the booking is
@@ -1250,6 +1264,33 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **A share may not be added to a request the member has already paid, or to
     one whose supplementary invoice has already been issued.** Both are REFUSED
     before the claim with the task left OPEN. The Xero leg is `INV-PAY-070`.
+
+## INV-PAY-099
+
+- **A DISMISSED money task may be put back on the queue; a COMPLETED one may
+  not** (#3498, owner decision D2). A dismissal is a DECISION — reviewed, and
+  this system moved no money for that occurrence — and a decision can be wrong;
+  before this it was terminal, the queue read only `status: "OPEN"`, and the
+  unique `occurrenceKey` meant the occurrence was never raised again, so a wrong
+  dismissal was silent, permanent and invisible to every later reader. A
+  completion is a MOVEMENT, settled against an anchor that enforces exactly-once
+  ([INV-PAY-065]), so reopening one would invite a second pricing the database
+  then refuses — it is refused by status, before anything is claimed. A
+  dismissal with no `completedByMemberId` is refused as well: those are the
+  Stripe webhook's own records of a capture it had already refunded
+  ([INV-ADDPAY-037]), and putting one in the hand-settle queue would invite a
+  second refund of money that has gone back. The transition is the same
+  status-fenced conditional update the closure uses in the other direction, it
+  moves no money and calls no provider, and it clears `completedAt` and
+  `completedByMemberId` while leaving the dismissal's own `note` as the officer
+  wrote it. The reopen is audited as
+  `booking-payment.manual-refund-task.reopen` with a REQUIRED note, carrying who
+  dismissed the row, when, and what they said — the claim clears all three from
+  the row, so that entry is the only place they survive. Reopening re-arms
+  everything the OPEN status governs, including the pending-review fence
+  ([INV-PAY-066]) and the member-facing banner. Home:
+  `src/lib/manual-refund-task-reopen.ts`; pinned by
+  `manual-refund-task-reopen.test.ts`.
 
 ## INV-PAY-098
 
