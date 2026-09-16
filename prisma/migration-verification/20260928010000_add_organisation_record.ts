@@ -36,6 +36,10 @@ const verification: DataMigrationVerification = {
   intent:
     "Add the organisation records and the two optional links without touching any existing row: each table gains exactly one nullable column with no default, the new tables start empty, the draining colour can still write, and a school a booking names cannot be deleted out from under it.",
   idempotentReRun: false,
+  // This migration carries its own BEGIN/COMMIT, so it runs byte-for-byte
+  // in a disposable database rather than being rewritten to fit inside a
+  // verification transaction (INV-SSOT-002, #3292).
+  executionMode: "isolated_database",
   cases: [
     {
       name: "a club whose booking and booking request predate the organisation records",

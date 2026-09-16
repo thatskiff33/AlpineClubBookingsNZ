@@ -14,6 +14,7 @@ const verification: DataMigrationVerification = {
   migration: "20260911020000_backfill_booking_guest_night_price_source",
   intent:
     "Classify only the three migration-authored even-split populations and exact officer-repair audit evidence, leave every other historical row UNKNOWN, and preserve every priceCents value byte for byte.",
+  executionMode: "isolated_database",
   idempotentReRun: true,
   cases: [
     {

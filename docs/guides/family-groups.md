@@ -83,6 +83,12 @@ Where the age appears:
 - the members of a suggestion on the
   [Family Suggestions](family-suggestions.md) page
 
+For a child request, a member who already has a pending or confirmed partner
+link with the requester remains visible but is disabled with an explanation.
+That is deliberate: hiding the existing record would make **Create new** look
+like the right recovery and could create a duplicate. Correct whichever
+relationship is wrong, then review the request again.
+
 Where it deliberately does **not** appear: the ordinary groups table on this
 page, and any member-facing or public screen. Those are routine views with no
 action attached to an individual member, so they stay as they are.
@@ -158,6 +164,7 @@ Whether families are billed together is not set here — it is the club-level
 | Two candidates show the same age | They really are the same age — age alone cannot separate them | Use the email address, the age tier, and the **has login / no login** note on the same row |
 | "Family links are limited to 4 generations…" | Approving would make the family chain longer than great-grandparent → grandparent → parent → child | Link the member under a nearer relative, or unlink a generation that no longer needs recording |
 | "Cannot link a parent or ancestor as a dependant" | The chosen member is already further up this family, so the link would loop back on itself | Check who is already recorded as whose parent on the member detail pages |
+| "The same two members cannot be both direct parent/dependant and partners." | The requested parent and dependant already have a pending or confirmed partner link | Check both member records and correct whichever relationship is wrong; the request remains pending for review |
 | "This parent has no email address the club can send to, so there is nothing for the dependant to inherit" | Since #2716 inheritance is **direct-parent only**, so this is about that one parent — not about anybody further up the family. They are a young parent, hold a placeholder address, have left the club, or are themselves inheriting | Record an email address for **that parent**, or choose **Use child's own email** to approve without inheriting. Looking further up the family will not help: the address no longer travels past them |
 | "A member with this email already exists" when saving a login holder | Someone else already signs in with that address, and only one member per address can. Usually that is a member outside this family group — but it can also be a second member *inside* it who has **Can Login** on while storing a different address of their own | Search the address on Members and change or de-login one of them, or merge the duplicate. If nobody outside the family turns up, check this family's own members for a second one with **Can Login** ticked |
 | A revoke fails | The invitation was just claimed or already revoked | Refresh; it may have been accepted |

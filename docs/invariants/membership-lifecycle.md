@@ -743,48 +743,47 @@ TTL because the invitee must complete the membership process first).
 
 ## INV-LIFE-024
 
-The declared Partner/Husband/Wife relationship (#1742) is a `MemberPartnerLink`
-row: a symmetric, consent-based link between two ADULT members, stored as a
-canonical ordered pair (`memberAId < memberBId`, DB CHECK constraint — which
-also makes self-partnering unrepresentable) with a `PENDING -> CONFIRMED`
-lifecycle. It is independent of family groups and is the eligibility signal for
-double-bed shared occupancy (#1741). Invariants: **at most one CONFIRMED
-partner per member at a time**, enforced in `src/lib/member-partner-link.ts`
-under `pg_advisory_xact_lock` on both member ids (sorted order, so pair
-transactions cannot deadlock) and backstopped by two raw partial unique indexes
-(`MemberPartnerLink_memberA/B_confirmed_unique WHERE status = 'CONFIRMED'`,
-documented in `prisma/partial-unique-indexes.tsv`); both members must be ADULT
-and active; consent is required from the other member unless (a) an admin
-assigns the link directly (`assignedByAdminId` recorded, CONFIRMED
-immediately; both members are then emailed unless the assigning admin chose
-not to notify — the suppression is audited `notifyMember: false`, #1769a),
-(b) the target has **no login** and the initiator is the adult currently
-recorded as the target's details voucher (`detailsConfirmedByMemberId`) in a
-group containing the target ("one login manages the family" — #2284 (S4)
-replaced the old family-group-ADMIN gate; that voucher is self-assignable by any
-adult login co-member sharing the group, so this one-step path is open to every
-adult in the group, not a designated one. A login-holding target always consents
-personally, and the no-login target's address is emailed that the link was
-recorded), or (c) the link
-forms on a `PartnerInviteToken` claim minted with `createPartnerLink` — the
-claim itself is the consent, so the claim page discloses the partnership
-before the claimer accepts, and both parties' eligibility (including the
-inviter's login standing) is re-validated inside the claim transaction.
-Confirming a stale request re-validates the initiator too — a link is never
-confirmed that a fresh request could not create. Declined, withdrawn, and
-dissolved links are
-hard-deleted — history lives in the audit log — so the same pair can re-form
-later without tripping the pair-unique constraint; either partner may dissolve
-a CONFIRMED link unilaterally (the other is emailed); an admin removing a
-CONFIRMED link likewise emails both members unless the admin chose not to
-notify (suppression audited `notifyMember: false`, #1769a), while a
-still-PENDING admin removal emails no one. When a link becomes
-CONFIRMED, all other PENDING requests involving either member are pruned in the
-same transaction. A member may have at most one outstanding outgoing PENDING
-request. A link claim conflict on token claim (either side already has a confirmed
-partner, inviter no longer eligible) skips the link without failing the
-family-group join, and the skip is audited. The member-facing request API is
-`INV-LIFE-090`.
+The declared Partner/Husband/Wife relationship (#1742) is a symmetric,
+consent-based `MemberPartnerLink` between two active ADULT members. It is
+independent of family groups and is the eligibility signal for double-bed
+sharing (#1741). The row is a canonical pair (`memberAId < memberBId`, whose DB
+CHECK also forbids self-partnering) with a `PENDING -> CONFIRMED` lifecycle. A
+member has at most one CONFIRMED partner, enforced under sorted per-member
+advisory locks and by the two `MemberPartnerLink_memberA/B_confirmed_unique`
+partial indexes documented in `prisma/partial-unique-indexes.tsv`.
+
+**Neither a PENDING nor CONFIRMED partner pair may also be a direct
+parent/dependant pair in either orientation or parent column.** Every partner
+writer checks direct parentage; every existing-member parent writer checks all
+partner statuses. Selectors are hints only; the under-lock write guard is
+authoritative. The FK-less internal `MemberParentPartnerExclusion` table is the
+database backstop: statement triggers derive canonical-pair parent and partner
+counts, its primary key serializes application and direct-SQL writers, and its
+CHECK permits either count but never both. It is derived state, never a second
+relationship authority. Writers take applicable lifecycle locks, sorted partner
+locks, then sorted pair rows and re-read `Member` and `MemberPartnerLink` before
+writing.
+
+The other member consents unless:
+
+- an admin assigns a CONFIRMED link directly, recording `assignedByAdminId`;
+- the target has no login and the initiator is its current
+  `detailsConfirmedByMemberId` voucher in a shared family group (#2284). Any
+  adult login co-member may become that voucher; a login holder always consents
+  personally; or
+- a `PartnerInviteToken` minted with `createPartnerLink` is claimed after the
+  page discloses the partnership.
+
+Admin assignment and removal notification choices are audited; direct
+assignment emails both members unless suppressed, pending removal emails none,
+and confirmed removal emails both unless suppressed. The one-step no-login path
+emails the target. Token claim and stale confirmation revalidate both parties,
+including inviter login standing. Declined, withdrawn, and dissolved rows are
+hard-deleted (history remains in audit), so a pair may later re-form. Either
+partner may dissolve, emailing the other. Confirmation prunes every other pending
+request involving either member in the same transaction; each member may have
+only one outgoing pending request. Member-facing request privacy and token-claim
+conflict behavior are `INV-LIFE-090`.
 
 ## INV-LIFE-090
 
@@ -799,7 +798,15 @@ same message, no link id or status — with the suppressed attempt audited
 confirmed-partner check runs only after every requester-side conflict so no
 error ordering re-opens the probe. Unknown-email (404) and
 not-adult (422) feedback stays distinguishable, and the family memberId path
-keeps its specific conflict errors.
+keeps its specific conflict errors. A link claim conflict on token claim
+(either side already has a confirmed partner, inviter no longer eligible, or
+the two members are directly related as parent/dependant) skips the link without
+failing the family-group join, and the skip is audited. The successful family
+join retains its own audit and notifications; no partner-link success audit or
+partner notification is emitted for the skipped relationship. A by-email
+direct-parent conflict follows the same generic-success privacy boundary as the
+already-partnered suppression: no link, partner email, or partner-link success
+audit, and no membership oracle.
 
 ## INV-LIFE-025
 
@@ -1640,52 +1647,34 @@ advisory-lock participants, no DB CHECK constraint).
 
 ### INV-LIFE-078
 
-- **Relation buckets.** Every Member-referencing relation is classified into
-  exactly one bucket by `MEMBER_MERGE_RELATION_SPECS`, enforced complete by a
-  DMMF/schema test that fails CI if a new relation is added unclassified:
-  - **move** — history re-points loser → master (`updateMany`): bookings, guests,
-    credits, refunds, redemptions, committee/hut-leader/lodge-access-created,
-    actor and reviewer back-references, and the five Member self-relations
-    (parent / secondary parent / email-inheritance / details-confirmed-by), whose
-    self-cycles are nulled on the master first.
-  - **resolve** — a unique constraint means a per-model resolver dedupes before
-    moving: `MemberSubscription`/`SeasonalMembershipAssignment` (per season),
-    `MemberAccessRole`, `MemberLodgeAccess`, `CommitteeAssignment`,
-    `PromoCodeAssignment`, `PromoRedemptionAllocation` (both uniques),
-    `MembershipCancellationRequestParticipant`, `GroupBookingJoin`,
-    `NotificationPreference` (1-1), `MemberInductionSignOff` (earliest sign-off
-    wins), `MemberInductionAssignedSigner`, `FamilyGroupMember` (keep the
-    master's row and re-point the family's billing membership at it; #2520
-    removed the old `MAX(ADMIN > MEMBER)` role upgrade and then dropped the
-    column it wrote), and `MemberPartnerLink` (canonical
-    `memberAId < memberBId` pair, self-pairs and duplicates deleted, and at most
-    one CONFIRMED partner kept for the master).
-  - **cascade** — the loser's auth identity and ephemeral tokens
-    (password-reset / email-verification / email-change tokens, all 2FA rows,
-    partner-invite tokens) are never moved; they die with `member.delete(loser)`.
-  - **snapshot** — FK-less scalar member-id columns
-    (`MemberLifecycleActionRequest.memberId`, `BookingModification.memberId`,
-    `MemberApplication` nominator/reviewer ids, `NominationToken`,
-    `IssueReport.resolvedById`, `AuditLog` columns, the settings-audit
-    `updatedByMemberId` columns, `CalendarEvent`/`CalendarEventSeries.createdById`,
-    …) are **left pointing at the loser's id by design** as immutable history;
-    the same historic audit rows that reference the loser keep its id and stored
-    names on purpose. These carry no `@relation`, so the relation walk above
-    cannot see them and they used to be listed by hand and non-exhaustively —
-    which is how the two calendar columns escaped both (#2243). They are now
-    enumerated mechanically as well: any FK-less `String` column whose name is
-    used elsewhere in the schema as a Member FK column must appear in
-    `MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS`, and `member-merge-dmmf.test.ts` fails
-    on the next one that does not. Columns with bespoke names
-    (`MemberApplication.nominator1Id`, `RefundRequest.reviewedBy`,
-    `IntegrationCredential.updatedByUserId` — a misnomer, it holds a member id —
-    and the like) are invisible to that scan and stay hand-documented, so that
-    part of the list is explicitly **best-effort, not exhaustive**.
-    One column found by the same review is deliberately **moved, not
-    snapshotted**: `BookingRequest.convertedMemberId` is the identity pointer to
-    the member a booking request converted into, replayed as a live member id by
-    the idempotent approval path, so the merge re-points it loser → master
-    alongside its FK twin `requestedByMemberId` (#2243).
+- **Relation buckets.** `MEMBER_MERGE_RELATION_SPECS` classifies every
+  Member-referencing relation into exactly one bucket; a DMMF/schema test fails
+  when a new relation is unclassified:
+  - **move** — live history re-points loser → master: bookings, guests, credits,
+    refunds, redemptions, actor/reviewer and committee/lodge references, plus
+    Member self-relations. Master self-cycles are nulled first.
+  - **resolve** — unique-constrained models dedupe before moving:
+    subscriptions/seasonal assignments, access and committee assignments,
+    promos, cancellation participants, group joins, notification preferences,
+    induction rows, family membership, and `MemberPartnerLink`. Family billing
+    follows the retained master row; induction keeps the earliest sign-off;
+    partner links stay canonical, delete self-pairs/duplicates, and retain at
+    most one confirmed master partner.
+  - **cascade** — the loser's auth identity, password/email tokens, 2FA rows,
+    and partner-invite tokens never move; `member.delete(loser)` removes them.
+  - **derived** — statement triggers derive the FK-less
+    `MemberParentPartnerExclusion` endpoints from parent fields and partner rows.
+    Merge moves only source edges; triggers apply their net deltas and deferred
+    cleanup removes empty loser pairs.
+  - **snapshot** — FK-less historical member-id scalars deliberately retain the
+    loser's id and stored names. `MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS` and
+    `member-merge-dmmf.test.ts` mechanically cover any FK-less `String` column
+    whose name is also used by a Member FK (#2243). Bespoke names such as
+    `MemberApplication.nominator1Id`, `RefundRequest.reviewedBy`, and the
+    misnamed `IntegrationCredential.updatedByUserId` remain hand-documented, so
+    that subset is explicitly best-effort. `BookingRequest.convertedMemberId`
+    is the exception: it is a replayed live identity pointer and moves with its
+    FK twin `requestedByMemberId`.
 
 ### INV-LIFE-079
 

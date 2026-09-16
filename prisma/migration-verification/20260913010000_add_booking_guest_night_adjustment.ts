@@ -13,6 +13,10 @@ const verification: DataMigrationVerification = {
   intent:
     "Add the night adjustment build-up table without touching any stored amount or any existing table; a row names exactly one target, may carry a not-known amount, and cascades with its redemption.",
   idempotentReRun: false,
+  // The committed migration owns an explicit BEGIN/COMMIT envelope. #3292's
+  // verifier therefore gives it a disposable database rather than nesting it
+  // inside the fixture runner's rollback transaction.
+  executionMode: "isolated_database",
   cases: [
     {
       name: "a booking priced before the table existed, then one promo build-up written after it",

@@ -73,6 +73,8 @@ export interface RequestMemberMatch extends MemberOption, WithMemberAgeLabel {
   canLogin?: boolean;
   alreadyInGroup: boolean;
   parentLinks?: ParentLinkSummary[];
+  /** Present when the row must stay visible but cannot be selected. */
+  ineligibleReason?: string;
 }
 
 export interface FamilyGroupRequest {
@@ -154,6 +156,7 @@ export interface FamilyGroupRequestSearchResult
   active: boolean;
   canLogin?: boolean;
   parentLinks?: ParentLinkSummary[];
+  ineligibleReason?: string;
 }
 
 export const AGE_TIER_COLORS: Record<string, string> = {
@@ -363,6 +366,7 @@ export function mapFamilyGroupRequestSearchResults(
       alreadyInGroup: request.familyGroup.members.some(
         (groupMember) => groupMember.id === member.id
       ),
+      ineligibleReason: member.ineligibleReason,
     }));
 }
 
@@ -375,16 +379,28 @@ export function buildInitialRequestSelections(
   for (const request of requests) {
     const existingSelection = current[request.id];
     if (existingSelection) {
-      nextSelections[request.id] = existingSelection;
-      continue;
+      const refreshedMatch = request.matchingMembers.find(
+        (candidate) => candidate.id === existingSelection,
+      );
+      const currentStillAllowed =
+        existingSelection === "__create__"
+          ? request.canCreateMemberFromRequest === true
+          : !refreshedMatch?.ineligibleReason;
+      if (currentStillAllowed) {
+        nextSelections[request.id] = existingSelection;
+        continue;
+      }
     }
-    const [onlyMatchingMember] = request.matchingMembers;
+    const eligibleMatches = request.matchingMembers.filter(
+      (candidate) => !candidate.ineligibleReason,
+    );
+    const [onlyEligibleMatch] = eligibleMatches;
     if (
       request.type === "CHILD_REQUEST" &&
-      request.matchingMembers.length === 1 &&
-      onlyMatchingMember
+      eligibleMatches.length === 1 &&
+      onlyEligibleMatch
     ) {
-      nextSelections[request.id] = onlyMatchingMember.id;
+      nextSelections[request.id] = onlyEligibleMatch.id;
     }
     if (
       request.type === "CHILD_REQUEST" &&

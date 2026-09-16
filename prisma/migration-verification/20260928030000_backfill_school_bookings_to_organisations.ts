@@ -91,6 +91,10 @@ const verification: DataMigrationVerification = {
   intent:
     "Move the bookings of every member the club CLASSIFIED as an organisation onto that school's record, leave a real teacher's booking and an ordinary member's booking exactly as they are, carry the school's own Xero customer across without ever taking a person's, and change no amount anywhere.",
   idempotentReRun: false,
+  // This migration carries its own BEGIN/COMMIT, so it runs byte-for-byte
+  // in a disposable database rather than being rewritten to fit inside a
+  // verification transaction (INV-SSOT-002, #3292).
+  executionMode: "isolated_database",
   cases: [
     {
       name: "one school recorded twice, its teacher, and an ordinary member",

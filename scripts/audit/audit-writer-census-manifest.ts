@@ -457,7 +457,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // opening the earlier change finds its ask gone with no explanation on it, and
   // this is what answers them. Categorised `payment` at the site, so it does not
   // join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
-  // `npm run audit:census` on this tree (472 sites, 2324 files scanned), not by
+  // `npm run audit:census` on this tree (472 sites, 2329 files scanned), not by
   // adding one to the literal.
   // 472/474 -> 476 (sync of `main` into `epic/2725-mad`): both branches'
   // new writers are disjoint and all categorised at the site, so none joins
@@ -508,8 +508,20 @@ export const AUDIT_CENSUS_TOTALS = {
   // Categorised `admin` at the site, so it does not join
   // `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
   // `npm run audit:census` on the MERGED tree, not by adding one to the literal:
-  // the epic's writers and this one are disjoint, and only a run over the
-  // composed tree can say so.
+  // the epic's writers and main's are disjoint, and only a run over the composed
+  // tree can say so.
+  //
+  // MEASURED AGAIN on the tenth main-to-epic sync, which composed #3271
+  // (parent/partner exclusivity). The two sides disagreed here — main's manifest
+  // said 473 over 2335 files, this epic's said 483 — and the composed tree
+  // answers 483 over 2415 files, with `uncategorised` still 0. That the merged
+  // figure equals one side's is a RESULT, not a reason to have skipped the run:
+  // #3271 added 80 files and no new row-producing audit site, which is a fact
+  // about that epic and nothing a reader could have derived from the two
+  // literals. Adding the deltas up by hand is how a figure ships one short, and
+  // this suite is the documented blind spot of `vitest related` — it reads the
+  // source tree from disk and has no import edge to anything a change touches,
+  // so nothing selects it for you.
   writeSites: 483,
   /**
    * Of those, sites whose event object carries no `category` key.
