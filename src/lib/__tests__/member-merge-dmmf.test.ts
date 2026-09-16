@@ -12,7 +12,10 @@ import {
   parseFkLessMemberIdColumns,
   parseMemberRelationOwnerKeys,
 } from "@/lib/member-merge-schema-coverage";
-import { MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS } from "@/lib/member-merge-snapshot-columns";
+import {
+  MEMBER_MERGE_DERIVED_MEMBER_ID_COLUMNS,
+  MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS,
+} from "@/lib/member-merge-snapshot-columns";
 
 const schemaText = readFileSync(
   join(process.cwd(), "prisma", "schema.prisma"),
@@ -27,6 +30,19 @@ const specKeys = MEMBER_MERGE_RELATION_SPECS.map((s) => s.key);
 // than having to go and find it (#2691).
 
 describe("member-merge relation classification completeness", () => {
+  it("classifies pair-state endpoints as trigger-derived rather than snapshots", () => {
+    expect(MEMBER_MERGE_DERIVED_MEMBER_ID_COLUMNS).toEqual([
+      "MemberParentPartnerExclusion.memberAId",
+      "MemberParentPartnerExclusion.memberBId",
+    ]);
+    expect(MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS).not.toEqual(
+      expect.arrayContaining([...MEMBER_MERGE_DERIVED_MEMBER_ID_COLUMNS]),
+    );
+    expect(schemaText).toMatch(
+      /model MemberParentPartnerExclusion[\s\S]*?memberAId\s+String[\s\S]*?memberBId\s+String/,
+    );
+  });
+
   it("classifies queued hosting actor attribution as a live FK-less move", () => {
     expect(MEMBER_MERGE_FK_LESS_MOVE_COLUMNS).toContainEqual({
       key: "HostingCoverageReevaluation.actorMemberId",
@@ -333,17 +349,20 @@ model AttributeFirstThing {
 
   it("documents every FK-less member-id column the schema scan can find", () => {
     const detected = parseFkLessMemberIdColumns(schemaText);
-    const documented = new Set(MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS);
+    const documented = new Set([
+      ...MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS,
+      ...MEMBER_MERGE_DERIVED_MEMBER_ID_COLUMNS,
+    ]);
 
     expect(
       detected.filter((c) => !documented.has(c)),
       "INV-LIFE-078 (docs/invariants/membership-lifecycle.md): a member merge " +
-        "leaves FK-less scalar member-id columns pointing at the loser's id as " +
-        "immutable history, and every column the schema scan can see must be " +
-        "enumerated in MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS. The hand-kept list " +
+        "classifies every FK-less scalar member-id column as immutable history, " +
+        "a live move, or trigger-derived state, and every column the schema scan " +
+        "can see must be enumerated. The hand-kept list " +
         "is how CalendarEvent.createdById and CalendarEventSeries.createdById " +
         "escaped both the relation walk and the documentation (#2243). Classify " +
-        "the column above — snapshot, or a live move — and add it there.",
+        "the column above — snapshot, live move, or derived — and add it there.",
     ).toEqual([]);
   });
 
@@ -433,7 +452,10 @@ model FutureAuditThing {
 }
 `;
     const detected = parseFkLessMemberIdColumns(injected);
-    const documented = new Set(MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS);
+    const documented = new Set([
+      ...MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS,
+      ...MEMBER_MERGE_DERIVED_MEMBER_ID_COLUMNS,
+    ]);
 
     expect(detected).toContain("FutureAuditThing.createdById");
     expect(detected.filter((c) => !documented.has(c))).toEqual([

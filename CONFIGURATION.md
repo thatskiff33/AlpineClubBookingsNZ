@@ -1782,9 +1782,15 @@ Collision rules refuse approval (BLOCK) when a mapping target is inactive or
 archived, already belongs to a family group (for a family application), is
 mapped for two people at once, is a nominator on this application, is an admin
 mapped as a dependent, or when the application email belongs to a *different*
-login-capable member. A target that already has this season's membership
-coverage is kept as-is and excluded from new subscription billing (SKIP with a
-note, repeated in the post-approval warnings), so nobody is double-charged.
+login-capable member. Mapping an applicant and dependant onto two existing
+records also refuses a parent link when those records already have either a
+pending or confirmed partner link. The mapping preview names that conflict and
+approval re-checks it after taking the same sorted relationship locks as every
+other existing-member parent writer; a changed relationship returns 409 and
+nothing from the application is saved. A target that already has this season's
+membership coverage is kept as-is and excluded from new subscription billing
+(SKIP with a note, repeated in the post-approval warnings), so nobody is
+double-charged.
 
 Mapping also refuses (BLOCK) when a **scoped** admin's mapping would overwrite
 the login email of a member who holds a privileged access role — the same

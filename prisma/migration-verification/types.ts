@@ -47,6 +47,17 @@ export type DataMigrationExpectation = {
   rows: Record<string, unknown>[];
 };
 
+/** A stable PostgreSQL failure the real migration is expected to raise. */
+export type DataMigrationExpectedError = {
+  message: string;
+  code?: string;
+  constraint?: string;
+  /** Strings that must not appear anywhere in the serialized driver error. */
+  absentText?: string[];
+  /** Set true when PostgreSQL DETAIL and HINT must both be absent. */
+  noDetailOrHint?: boolean;
+};
+
 /**
  * One pre-state and the claims that must hold about it afterwards.
  *
@@ -72,6 +83,8 @@ export type DataMigrationCase = {
    */
   afterMigration?: string;
   expectations: DataMigrationExpectation[];
+  /** Omit for an ordinary successful migration case. */
+  expectedError?: DataMigrationExpectedError;
 };
 
 /**
@@ -104,6 +117,13 @@ export type DataMigrationVerification = {
   intent: string;
   cases: DataMigrationCase[];
   mutants: DataMigrationMutant[];
+  /**
+   * `isolated_database` clones the pre-migration database for every case and
+   * sends each migration body as one byte-for-byte query. Use it for an
+   * explicit BEGIN/COMMIT migration: translating that envelope to a savepoint
+   * would test a different program (INV-SSOT-002).
+   */
+  executionMode?: "case_transaction" | "isolated_database";
   /**
    * True when running the whole `migration.sql` a second time must change
    * nothing — the property that makes a one-shot repair safe to replay. Only

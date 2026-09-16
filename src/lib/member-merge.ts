@@ -40,6 +40,14 @@ import {
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import { canonicalPartnerPair } from "@/lib/member-partner-link-shared";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  acquireMemberParentPartnerPairLocks,
+  isMemberParentPartnerExclusionViolation,
+  loadMemberMergeExclusivityTopology,
+} from "@/lib/member-parent-partner-exclusivity";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
 import {
@@ -294,10 +302,6 @@ export type PartnerLinkPlan = {
   warnings: string[];
 };
 
-function canonicalPair(a: string, b: string): [string, string] {
-  return a < b ? [a, b] : [b, a];
-}
-
 /**
  * Re-point the loser's partner links onto the master, honouring the
  * `memberAId < memberBId` CHECK, deleting self-pairs and duplicates, and
@@ -357,8 +361,8 @@ export function planPartnerLinkMerge(
       continue;
     }
 
-    const [a, b] = canonicalPair(masterId, other);
-    updates.push({ id: link.id, memberAId: a, memberBId: b });
+    const pair = canonicalPartnerPair(masterId, other);
+    updates.push({ id: link.id, ...pair });
     masterPartners.add(other);
     if (link.status === "CONFIRMED") masterHasConfirmed = true;
   }
@@ -635,6 +639,18 @@ export async function evaluateMemberMergeGuards(params: {
   }
 
   blockers.push(...(await evaluateFamilyLinkGraphBlockers(db, masterId, loserId)));
+  const exclusivityTopology = await loadPlannedMemberMergeExclusivityTopology(
+    db,
+    masterId,
+    loserId,
+  );
+  if (exclusivityTopology.conflictingPairCount > 0) {
+    blockers.push({
+      code: "parent_partner_overlap",
+      label: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      count: exclusivityTopology.conflictingPairCount,
+    });
+  }
   blockers.push(
     ...(await evaluateContactCreateRecoveryBlockers(db, masterId, loserId)),
   );
@@ -1197,6 +1213,52 @@ async function loadPartnerLinkPlan(
   return planPartnerLinkMerge(loserLinks, masterLinks, masterId, loserId);
 }
 
+/**
+ * Read all incident links once, then project the exact link set that the
+ * existing PartnerLinkPlan will leave behind. The unprojected set still feeds
+ * the participant locks; only the projected set feeds the overlap check.
+ */
+async function loadPlannedMemberMergeExclusivityTopology(
+  db: MergeDbClient,
+  masterId: string,
+  loserId: string,
+) {
+  const currentLinks = await db.memberPartnerLink.findMany({
+    where: {
+      OR: [
+        { memberAId: { in: [masterId, loserId] } },
+        { memberBId: { in: [masterId, loserId] } },
+      ],
+    },
+    select: { id: true, memberAId: true, memberBId: true, status: true },
+  });
+  const plan = planPartnerLinkMerge(
+    currentLinks.filter(
+      (link) => link.memberAId === loserId || link.memberBId === loserId,
+    ),
+    currentLinks.filter(
+      (link) => link.memberAId === masterId || link.memberBId === masterId,
+    ),
+    masterId,
+    loserId,
+  );
+  const deletedIds = new Set(plan.deleteIds);
+  const updatesById = new Map(
+    plan.updates.map((update) => [update.id, update]),
+  );
+  const projectedLinks = currentLinks
+    .filter((link) => !deletedIds.has(link.id))
+    .map((link) => updatesById.get(link.id) ?? link);
+
+  return loadMemberMergeExclusivityTopology(
+    db,
+    masterId,
+    loserId,
+    currentLinks,
+    projectedLinks,
+  );
+}
+
 async function summariseResolveCollisions(
   db: MergeDbClient,
   masterId: string,
@@ -1521,9 +1583,14 @@ export async function executeMemberMerge(params: {
     // Dual advisory lock in sorted id order (deadlock-free) on the shared
     // member-lifecycle key space, so a merge serialises with any concurrent
     // delete/archive/merge touching either member.
-    const [lockA, lockB] = [masterId, loserId].sort();
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockA}`}))`;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockB}`}))`;
+    await acquireMemberLifecycleLocks(tx, [masterId, loserId]);
+
+    const exclusivityTopologyBeforeLocks =
+          await loadPlannedMemberMergeExclusivityTopology(
+            tx,
+            masterId,
+            loserId,
+          );
 
     // #2595 — merge is a partner-link WRITER (step 2 re-points the duplicate's
     // links onto the master) and, since this change, a partner-link READER whose
@@ -1550,7 +1617,48 @@ export async function executeMemberMerge(params: {
     // graph — only a second holder of one that already exists. It cannot cycle:
     // the partner-link service takes this key and no other tier, so a holder of
     // it never waits on anything merge holds. Sorted inside the helper.
-    await acquireMemberPartnerLinkLocks(tx, [masterId, loserId]);
+    await acquireMemberPartnerLinkLocks(
+      tx,
+      exclusivityTopologyBeforeLocks.participantIds,
+    );
+    await acquireMemberParentPartnerPairLocks(
+      tx,
+      exclusivityTopologyBeforeLocks.prospectivePairs,
+    );
+    const exclusivityTopologyUnderLocks =
+      await loadPlannedMemberMergeExclusivityTopology(
+        tx,
+        masterId,
+        loserId,
+      );
+    if (
+      exclusivityTopologyUnderLocks.participantIds.join("\u0000") !==
+        exclusivityTopologyBeforeLocks.participantIds.join("\u0000") ||
+      exclusivityTopologyUnderLocks.prospectivePairs
+        .map((pair) => pair.join("\u0000"))
+        .join("\u0001") !==
+        exclusivityTopologyBeforeLocks.prospectivePairs
+          .map((pair) => pair.join("\u0000"))
+          .join("\u0001")
+    ) {
+      throw new MemberMergeError(
+        "Family relationship participants changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
+        409,
+        "merge_drift_in_transaction",
+        { driftFields: ["parentPartnerParticipants", "parentPartnerPairs"] },
+      );
+    }
+    if (exclusivityTopologyUnderLocks.conflictingPairCount > 0) {
+      throw new MemberMergeError(
+        MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+        409,
+        "parent_partner_overlap",
+        {
+          conflictingPairCount:
+            exclusivityTopologyUnderLocks.conflictingPairCount,
+        },
+      );
+    }
 
     const [masterFull, loserFull] = await Promise.all([
       tx.member.findUnique({ where: { id: masterId } }),
@@ -2160,7 +2268,19 @@ export async function executeMemberMerge(params: {
     // stale values and the #2243 fix would silently stop working (#2243).
     timeout: 120_000,
     maxWait: 10_000,
-  }).catch((error) => refuseMergeOrRethrow(client, refusalContext, error));
+  }).catch((error) =>
+    refuseMergeOrRethrow(
+      client,
+      refusalContext,
+      isMemberParentPartnerExclusionViolation(error)
+        ? new MemberMergeError(
+            MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+            409,
+            "parent_partner_overlap",
+          )
+        : error,
+    ),
+  );
   await settleHostingCoverageAfterCommit({ limit: 50 }, client);
 
   if (sweptShares.length > 0) {

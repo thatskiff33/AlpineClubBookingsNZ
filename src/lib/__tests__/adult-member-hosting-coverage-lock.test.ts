@@ -390,7 +390,9 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
 
     const merge = readRepoFile("src/lib/member-merge.ts");
     const mergePolicyLock = merge.indexOf("lockAdultMemberHostingPolicySet(tx)");
-    const mergeLifecycleLock = merge.indexOf("member-lifecycle:${lockA}");
+    const mergeLifecycleLock = merge.indexOf(
+      "await acquireMemberLifecycleLocks(tx, [masterId, loserId])",
+    );
     const relationMoves = merge.indexOf("const relationMoves = await applyMoves(");
     const mergeMemberRows = merge.indexOf(
       "lockMemberMergeHostingCoverageParticipants(tx,",
@@ -435,14 +437,18 @@ describe("the per-owner coverage lock (#2576 §9)", () => {
       // policy-set key and the member-lifecycle pair. Pinned by position, because
       // taking it any later would invert the documented lodge -> member order.
       "await acquireMemberMergePartnerSharedLodgeLocks(",
-      "member-lifecycle:${lockA}",
-      // #2595: merge writes partner links (step 2) and READS them to decide a
-      // destructive bed write (step 3b), so it takes the canonical
-      // member-partner-link keys too — LAST, matching the reviewed move's
-      // member-lifecycle -> member-partner-link order so no new wait-graph edge
-      // is created. Pinned by position: taking it before the lifecycle pair
-      // would invert that order against `bed-allocation-move.ts`.
-      "await acquireMemberPartnerLinkLocks(tx, [masterId, loserId])",
+      "await acquireMemberLifecycleLocks(tx, [masterId, loserId])",
+      // #2595/#3271: merge writes partner links and reads the final relationship
+      // topology before destructive relationship and bed writes. After the
+      // lifecycle pair it derives every prospective parent/partner participant,
+      // takes their canonical member-partner-link keys LAST, then re-reads and
+      // refuses drift or overlap before moving anything. Reverting this to only
+      // master+loser would reopen races involving a third participant.
+      "const exclusivityTopologyBeforeLocks =",
+      "await acquireMemberPartnerLinkLocks(",
+      "exclusivityTopologyBeforeLocks.participantIds,",
+      "const exclusivityTopologyUnderLocks =",
+      "exclusivityTopologyUnderLocks.conflictingPairCount > 0",
       "const relationMoves = await applyMoves(",
       "const hostingPlan = await buildMemberMergeHostingCoveragePlan(",
       "await lockMemberMergeHostingCoverageParticipants(tx,",
