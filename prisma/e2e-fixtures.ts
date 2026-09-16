@@ -343,6 +343,8 @@ export const PAID_CANCEL_WINDOW = relWindow(300, 2);
 // a run and steal the cooldown the spec's manual re-send depends on.
 export const ADDITIONAL_OWED_BOOKING_ID = "e2e-additional-owed";
 export const ADDITIONAL_OWED_WINDOW = relWindow(320, 2);
+export const UNRECONCILED_BOOKING_ID = "e2e-unreconciled-booking";
+export const UNRECONCILED_BOOKING_WINDOW = relWindow(340, 1);
 export const ADDITIONAL_OWED_AMOUNT_CENTS = 21_000;
 
 // --- Membership application fixture (e2e/membership-application.spec.ts) --

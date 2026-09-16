@@ -46,6 +46,10 @@ import {
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
 import { prisma } from "@/lib/prisma";
+import {
+  reconcileBookingMoney,
+  type BookingMoneyReconciliation,
+} from "@/lib/booking-money-reconciliation";
 
 export type BookingSortBy = "member" | "lastUpdated" | "checkIn" | "guests" | "total" | "status";
 export type SortDir = "asc" | "desc";
@@ -160,6 +164,7 @@ interface AdminBookingOperationalState {
 
 export type AdminBookingRow = BookingCandidate & {
   operational: AdminBookingOperationalState;
+  moneyReconciliation: BookingMoneyReconciliation;
   // This booking overlaps another booking's exclusive whole-lodge hold
   // (ADR-001 decision 1, issue #119). Admin-only signal; flagged so staff see
   // the clash from the ordinary booking's side. A held booking itself is never
@@ -796,15 +801,33 @@ async function loadBookingCandidates(
           lastName: true,
           ageTier: true,
           isMember: true,
+          priceCents: true,
           stayStart: true,
           stayEnd: true,
           // The canonical night set (#2628). `deriveBedState` compares expected
           // guest-nights against the booking's BedAllocation rows, so without
           // these a sparse stay's gap nights are expected, never allocated, and
           // the booking never reaches "complete".
-          nights: { select: { stayDate: true } },
+          nights: {
+            select: {
+              stayDate: true,
+              priceCents: true,
+              priceSource: true,
+            },
+          },
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      },
+      promoRedemption: {
+        select: {
+          priceAdjustmentCents: true,
+          allocations: {
+            select: { memberId: true, priceAdjustmentCents: true },
+          },
+        },
+      },
+      nightAdjustments: {
+        select: { beneficiaryMemberId: true, amountCents: true },
       },
       payment: {
         select: {
@@ -1188,6 +1211,7 @@ async function hydrateBookingPage(
           invoiceLinkedPaymentIds,
           { bedAllocationEnabled }
         ),
+        moneyReconciliation: reconcileBookingMoney(booking),
         // Defaulted here so the row type is satisfied; set for real by
         // annotateExclusiveHoldOverlaps on the hydrated page (#119).
         overlapsExclusiveHold: false,

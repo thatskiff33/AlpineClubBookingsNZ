@@ -51,6 +51,8 @@ import {
   ADDITIONAL_OWED_AMOUNT_CENTS,
   ADDITIONAL_OWED_BOOKING_ID,
   ADDITIONAL_OWED_WINDOW,
+  UNRECONCILED_BOOKING_ID,
+  UNRECONCILED_BOOKING_WINDOW,
   LOCKED_OUT_MEMBER,
   PAID_CANCEL_BOOKING_ID,
   PAID_CANCEL_WINDOW,
@@ -1152,6 +1154,35 @@ async function main() {
     data: { paymentId: paidCancelPayment.id, kind: "PRIMARY", source: "STRIPE", amountCents: paidCancelBooking.finalPriceCents, status: "SUCCEEDED", stripePaymentIntentId: "pi_e2e_paid_cancel" },
   });
   await prisma.bookingEvent.create({ data: { bookingId: paidCancelBooking.id, type: "MEMBER_PAID", actorMemberId: nadia.id, amountCents: paidCancelBooking.finalPriceCents } });
+
+  // Stage 4 of #3272: deterministic, synthetic officer-visibility fixture.
+  // The headline remains self-consistent while the recorded guest strand is
+  // deliberately $1 higher, so the derived classifier must expose
+  // HEADLINE_TOTAL_MISMATCH without repairing or moving any money.
+  const unreconciledBooking = await prisma.booking.create({
+    data: {
+      id: UNRECONCILED_BOOKING_ID,
+      memberId: nadia.id,
+      checkIn: d(UNRECONCILED_BOOKING_WINDOW.checkIn),
+      checkOut: d(UNRECONCILED_BOOKING_WINDOW.checkOut),
+      status: "CONFIRMED",
+      totalPriceCents: NIGHTLY,
+      finalPriceCents: NIGHTLY,
+    },
+  });
+  await addGuest(
+    unreconciledBooking.id,
+    {
+      firstName: NOMINATOR_TWO.firstName,
+      lastName: NOMINATOR_TWO.lastName,
+      ageTier: "ADULT",
+      isMember: true,
+      memberId: nadia.id,
+    },
+    UNRECONCILED_BOOKING_WINDOW.checkIn,
+    UNRECONCILED_BOOKING_WINDOW.checkOut,
+    NIGHTLY + 100,
+  );
 
   // Outstanding additional payment spec (#2350): a PAID booking whose price was
   // pushed up after payment, with the extra still uncollected. Seeded directly

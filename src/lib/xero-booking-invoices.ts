@@ -69,6 +69,7 @@ import {
   d3CompatibleBookingMoneyBuildUpCents,
   selectLoadedBookingMoneyBuildUp,
 } from "@/lib/booking-money-build-up";
+import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 
 // #1765 — the aggregate Payment statuses that prove cash was captured at some
 // point. Settlement gating must pair one of these with a positive NET capture
@@ -500,6 +501,7 @@ export async function createXeroInvoiceForBooking(
   const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents(
     promoMoneyBuildUpSelection,
   );
+  const moneyReconciliation = reconcileBookingMoney(booking);
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
@@ -625,6 +627,7 @@ export async function createXeroInvoiceForBooking(
   const requestPayload = {
     invoices: [buildInvoice(contactId)],
     moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
+    moneyReconciliation,
   };
 
   if (operationId) {

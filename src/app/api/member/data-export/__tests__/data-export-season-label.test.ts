@@ -167,4 +167,58 @@ describe("the member data export names a season the way the screen does", () => 
     expect(text).not.toContain("2026/2027");
     expect(text).not.toContain("2025/2026");
   });
+
+  it("exports the canonical booking-money state and complete ordered reasons", async () => {
+    const checkIn = new Date("2026-08-01T00:00:00.000Z");
+    const checkOut = new Date("2026-08-02T00:00:00.000Z");
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        checkIn,
+        checkOut,
+        status: "CONFIRMED",
+        totalPriceCents: 10_000,
+        discountCents: 1,
+        promoAdjustmentCents: 0,
+        finalPriceCents: 9_999,
+        hasNonMembers: false,
+        nonMemberHoldUntil: null,
+        notes: null,
+        createdAt: new Date("2026-07-01T00:00:00.000Z"),
+        guests: [
+          {
+            firstName: "Mere",
+            lastName: "Member",
+            ageTier: "ADULT",
+            isMember: true,
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              {
+                stayDate: checkIn,
+                priceCents: 10_000,
+                priceSource: "SOLD",
+              },
+            ],
+            consentStatus: null,
+          },
+        ],
+        payment: null,
+        promoRedemption: null,
+        nightAdjustments: [],
+      },
+    ]);
+
+    const response = await dataExportGet();
+    const body = (await response.json()) as {
+      bookings: Array<{ moneyReconciliation: unknown }>;
+    };
+    expect(body.bookings[0]!.moneyReconciliation).toEqual({
+      state: "UNRECONCILED",
+      reasons: [
+        "DISCOUNT_COMPONENT_MISMATCH",
+        "FINAL_PRICE_RELATION_MISMATCH",
+      ],
+    });
+  });
 });

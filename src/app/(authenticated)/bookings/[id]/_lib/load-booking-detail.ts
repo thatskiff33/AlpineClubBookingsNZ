@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { reconcileStoredBookingMoney } from "@/lib/booking-money-reconciliation-store";
 
 /**
  * The booking-detail READ MODEL: the one `findUnique` every section of the
@@ -17,7 +18,15 @@ export async function loadBookingDetail(id: string) {
       // beneficiary bindings and pricing rows from this list, so it must be
       // the same order the modify/modify-quote fetches use.
       guests: {
-        include: { nights: { select: { stayDate: true } } },
+        include: {
+          nights: {
+            select: {
+              stayDate: true,
+              priceCents: true,
+              priceSource: true,
+            },
+          },
+        },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
       payment: {
@@ -52,6 +61,9 @@ export async function loadBookingDetail(id: string) {
       },
       promoRedemption: {
         include: {
+          allocations: {
+            select: { memberId: true, priceAdjustmentCents: true },
+          },
           promoCode: {
             select: {
               code: true,
@@ -62,6 +74,9 @@ export async function loadBookingDetail(id: string) {
             },
           },
         },
+      },
+      nightAdjustments: {
+        select: { beneficiaryMemberId: true, amountCents: true },
       },
       creditsFromCancellation: {
         select: {
@@ -174,7 +189,9 @@ export async function loadBookingDetail(id: string) {
       },
     },
   });
-  return booking;
+  return booking
+    ? { ...booking, moneyReconciliation: reconcileStoredBookingMoney(booking) }
+    : null;
 }
 
 /** The loaded booking, once `notFound()` has ruled out `null`. */

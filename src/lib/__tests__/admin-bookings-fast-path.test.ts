@@ -57,9 +57,10 @@ function makeGuests(count: number) {
     // guest carries the two nights its half-open envelope describes — the 1st
     // and the 2nd. Without them the derived state is measured off the old
     // envelope fallback instead of the canonical nights.
+    priceCents: 10_000,
     nights: [
-      { stayDate: new Date("2026-07-01T00:00:00.000Z") },
-      { stayDate: new Date("2026-07-02T00:00:00.000Z") },
+      { stayDate: new Date("2026-07-01T00:00:00.000Z"), priceCents: 5_000, priceSource: "NIGHTLY" },
+      { stayDate: new Date("2026-07-02T00:00:00.000Z"), priceCents: 5_000, priceSource: "NIGHTLY" },
     ],
   }));
 }
@@ -71,6 +72,9 @@ function makeBooking(id: string, overrides: Record<string, unknown> = {}) {
     checkIn: new Date("2026-07-01T00:00:00.000Z"),
     checkOut: new Date("2026-07-03T00:00:00.000Z"),
     updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+    totalPriceCents: 10_000,
+    discountCents: 0,
+    promoAdjustmentCents: 0,
     finalPriceCents: 10_000,
     requiresAdminReview: false,
     adminReviewStatus: null,
@@ -83,6 +87,8 @@ function makeBooking(id: string, overrides: Record<string, unknown> = {}) {
       email: `${id}@example.test`,
     },
     guests: [],
+    promoRedemption: null,
+    nightAdjustments: [],
     _count: { guests: 0 },
     payment: null,
     bedAllocations: [],

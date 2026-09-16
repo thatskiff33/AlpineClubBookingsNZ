@@ -71,7 +71,7 @@ vi.mock("@/lib/finance-booking-metrics", () => ({
 const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
 
 function reportBooking(overrides: Record<string, unknown> = {}) {
-  return {
+  const value = {
     id: "booking-1",
     createdAt: new Date("2025-01-01T10:00:00.000Z"),
     checkIn: day("2026-04-07"),
@@ -103,6 +103,46 @@ function reportBooking(overrides: Record<string, unknown> = {}) {
       transactions: [],
     },
     ...overrides,
+  };
+  const guests = value.guests as Array<{
+    id: string;
+    isMember: boolean;
+    stayStart: Date | null;
+    stayEnd: Date | null;
+    nights: Array<Record<string, unknown>>;
+  }>;
+  const guestBase = Math.floor(value.finalPriceCents / guests.length);
+  let guestRemainder = value.finalPriceCents - guestBase * guests.length;
+  return {
+    ...value,
+    totalPriceCents: value.finalPriceCents,
+    discountCents: 0,
+    promoAdjustmentCents: 0,
+    promoRedemption: null,
+    nightAdjustments: [],
+    guests: guests.map((guest) => {
+      const priceCents = guestBase + (guestRemainder-- > 0 ? 1 : 0);
+      const dates: Date[] = [];
+      for (
+        let cursor = guest.stayStart ?? value.checkIn;
+        cursor < (guest.stayEnd ?? value.checkOut);
+        cursor = new Date(cursor.getTime() + 86_400_000)
+      ) {
+        dates.push(cursor);
+      }
+      const nightBase = Math.floor(priceCents / dates.length);
+      let nightRemainder = priceCents - nightBase * dates.length;
+      return {
+        ...guest,
+        priceCents,
+        nights: dates.map((stayDate, index) => ({
+          ...(guest.nights[index] ?? {}),
+          stayDate,
+          priceCents: nightBase + (nightRemainder-- > 0 ? 1 : 0),
+          priceSource: "SOLD" as const,
+        })),
+      };
+    }),
   };
 }
 
@@ -156,6 +196,10 @@ describe("admin reports route", () => {
       totalGuests: 1,
       memberGuests: 1,
       nonMemberGuests: 0,
+      moneyReconciliation: {
+        totalBookings: 1,
+        byState: { RECONCILED: 1, UNRECONCILED: 0 },
+      },
     });
     expect(data.revenue[0]).toMatchObject({ revenueCents: 33, bookingCount: 1 });
     expect(data.statusBreakdown).toEqual({

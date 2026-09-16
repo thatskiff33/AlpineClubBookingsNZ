@@ -787,6 +787,7 @@ describe("#2307 member data export includes guest consent state", () => {
         status: "PAID",
         totalPriceCents: 12000,
         discountCents: 0,
+        promoAdjustmentCents: 0,
         finalPriceCents: 12000,
         hasNonMembers: false,
         nonMemberHoldUntil: null,
@@ -799,6 +800,12 @@ describe("#2307 member data export includes guest consent state", () => {
             ageTier: "ADULT",
             isMember: false,
             priceCents: 6000,
+            stayStart: new Date("2026-08-01"),
+            stayEnd: new Date("2026-08-03"),
+            nights: [
+              { stayDate: new Date("2026-08-01"), priceCents: 3000, priceSource: "SOLD" },
+              { stayDate: new Date("2026-08-02"), priceCents: 3000, priceSource: "SOLD" },
+            ],
             consentStatus: null,
           },
           {
@@ -807,11 +814,18 @@ describe("#2307 member data export includes guest consent state", () => {
             ageTier: "ADULT",
             isMember: true,
             priceCents: 6000,
+            stayStart: new Date("2026-08-01"),
+            stayEnd: new Date("2026-08-03"),
+            nights: [
+              { stayDate: new Date("2026-08-01"), priceCents: 3000, priceSource: "SOLD" },
+              { stayDate: new Date("2026-08-02"), priceCents: 3000, priceSource: "SOLD" },
+            ],
             consentStatus: "PENDING",
           },
         ],
         payment: null,
         promoRedemption: null,
+        nightAdjustments: [],
       },
     ] as any);
 

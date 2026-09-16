@@ -25,10 +25,60 @@ vi.mock("@/lib/prisma", () => ({
 
 import { getLegacyDashboardBookingExport } from "@/lib/finance-legacy-dashboard-export";
 
+type LegacyFixture = {
+  checkIn: Date;
+  checkOut: Date;
+  finalPriceCents: number;
+  guests: Array<{ id: string }>;
+};
+
+function fixtureRows<T extends LegacyFixture>(rows: T[]) {
+  return rows.map((row) => {
+    const guestBase = Math.floor(row.finalPriceCents / row.guests.length);
+    let guestRemainder = row.finalPriceCents - guestBase * row.guests.length;
+    return {
+      ...row,
+      totalPriceCents: row.finalPriceCents,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      promoRedemption: null,
+      nightAdjustments: [],
+      guests: row.guests.map((guest) => {
+        const priceCents = guestBase + (guestRemainder-- > 0 ? 1 : 0);
+        const nights: Date[] = [];
+        for (
+          let date = row.checkIn;
+          date < row.checkOut;
+          date = new Date(date.getTime() + 86_400_000)
+        ) {
+          nights.push(date);
+        }
+        const nightBase = Math.floor(priceCents / nights.length);
+        let nightRemainder = priceCents - nightBase * nights.length;
+        return {
+          ...guest,
+          priceCents,
+          stayStart: null,
+          stayEnd: null,
+          nights: nights.map((stayDate) => ({
+            stayDate,
+            priceCents: nightBase + (nightRemainder-- > 0 ? 1 : 0),
+            priceSource: "SOLD" as const,
+          })),
+        };
+      }),
+    };
+  });
+}
+
+function mockRows<T extends LegacyFixture>(rows: T[]) {
+  mockFindMany.mockResolvedValue(fixtureRows(rows));
+}
+
 describe("finance legacy dashboard export", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFindMany.mockResolvedValue([
+    mockRows([
       {
         id: "booking-realized",
         checkIn: new Date("2026-04-08T00:00:00.000Z"),
@@ -61,7 +111,7 @@ describe("finance legacy dashboard export", () => {
       expect.objectContaining({
         select: expect.objectContaining({
           id: true,
-          guests: { select: { id: true } },
+          guests: { select: expect.objectContaining({ id: true }) },
         }),
       })
     );
@@ -77,6 +127,8 @@ describe("finance legacy dashboard export", () => {
         nights: 3,
         guest_nights: 6,
         total: 300,
+        money_reconciliation_state: "RECONCILED",
+        money_reconciliation_reasons: [],
       },
     ]);
     expect(result.forward_bookings).toEqual([
@@ -90,6 +142,8 @@ describe("finance legacy dashboard export", () => {
         nights: 1,
         guest_nights: 2,
         total: 100,
+        money_reconciliation_state: "RECONCILED",
+        money_reconciliation_reasons: [],
         pipeline_bucket: "COMMITTED",
         days_until_arrival: 0,
         month_of_stay: "2026-04",
@@ -104,6 +158,8 @@ describe("finance legacy dashboard export", () => {
         nights: 2,
         guest_nights: 2,
         total: 100,
+        money_reconciliation_state: "RECONCILED",
+        money_reconciliation_reasons: [],
         pipeline_bucket: "AT_RISK",
         days_until_arrival: 21,
         month_of_stay: "2026-05",
@@ -124,7 +180,7 @@ describe("finance legacy dashboard export", () => {
     const createdAt = new Date("2026-04-07T12:00:00.000Z");
     expect(createdAt.toISOString().slice(0, 10)).toBe("2026-04-07");
 
-    mockFindMany.mockResolvedValue([
+    mockRows([
       {
         id: "booking-nz-morning",
         checkIn: new Date("2026-04-08T00:00:00.000Z"),
@@ -160,7 +216,7 @@ describe("finance legacy dashboard export", () => {
       The host zones are pinned through PowerShell-safe `withTimeZone`, and the
       instant is the first of the club day so that any host west of NZ disagrees.
     */
-    mockFindMany.mockResolvedValue([
+    mockRows([
       {
         id: "booking-nz-morning",
         checkIn: new Date("2026-04-08T00:00:00.000Z"),

@@ -201,6 +201,9 @@ const MODULE_IMPORTERS = new Set([
   "src/lib/booking-create-promo.ts",
   // Stage 3's one reader/projection consumes the derived state from this module.
   "src/lib/booking-money-build-up.ts",
+  // Stage 4's booking-headline reconciliation consumes the same canonical
+  // derived adjustment state; it never writes or supplies a second classifier.
+  "src/lib/booking-money-reconciliation.ts",
 ]);
 
 const SOURCE = sourceFiles();
