@@ -295,13 +295,38 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,
     }));
 
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+      requestPayload: {
+        queueType: "CREATE_INVOICE",
+        legacyMetadata: { retryCount: 1 },
+      },
+    });
+
     mocks.bookingFindUnique.mockResolvedValue({
       id: "booking-1",
       memberId: "member-1",
       status: BookingStatus.PAID,
-      guests: [],
+      totalPriceCents: 10000,
+      promoAdjustmentCents: 0,
+      discountCents: 0,
+      finalPriceCents: 10000,
+      guests: [
+        {
+          priceCents: 10000,
+          stayStart: new Date("2026-08-01T00:00:00Z"),
+          stayEnd: new Date("2026-08-02T00:00:00Z"),
+          nights: [
+            {
+              stayDate: new Date("2026-08-01T00:00:00Z"),
+              priceCents: 10000,
+              priceSource: "QUOTED",
+            },
+          ],
+        },
+      ],
       member: { email: "ada@example.org" },
       promoRedemption: null,
+      nightAdjustments: [],
       payment: {
         id: "payment-1",
         xeroInvoiceId: "inv-already",
@@ -324,6 +349,19 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     });
 
     expect(result).toBe("inv-already");
+    expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledWith({
+      where: { id: "op-retry-claimed" },
+      data: {
+        requestPayload: expect.objectContaining({
+          queueType: "CREATE_INVOICE",
+          legacyMetadata: { retryCount: 1 },
+          moneyReconciliation: {
+            state: "RECONCILED",
+            reasons: [],
+          },
+        }),
+      },
+    });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "op-retry-claimed",
       expect.objectContaining({

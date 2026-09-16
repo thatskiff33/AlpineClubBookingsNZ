@@ -80,6 +80,7 @@ import {
   selectLoadedBookingMoneyBuildUp,
 } from "@/lib/booking-money-build-up";
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
+import { asRecord } from "@/lib/xero-json";
 
 // #1765 — the aggregate Payment statuses that prove cash was captured at some
 // point. Settlement gating must pair one of these with a positive NET capture
@@ -444,8 +445,24 @@ export async function createXeroInvoiceForBooking(
     // #2262 H3 — a CLAIMED operation (the operator retry claims FAILED/PARTIAL
     // -> RUNNING before calling in; the outbox claims PENDING -> RUNNING) must
     // not be stranded RUNNING when the invoice already exists: close it
-    // SUCCEEDED against the existing invoice so the ops panel reads true.
+    // SUCCEEDED against the existing invoice so the ops panel reads true. A
+    // replay of a pre-Stage-4 operation can reach this shortcut before the
+    // normal request-payload write below, so enrich its durable evidence first.
     if (options?.syncOperationId) {
+      const operation = await prisma.xeroSyncOperation.findUnique({
+        where: { id: options.syncOperationId },
+        select: { requestPayload: true },
+      });
+      const requestPayload = asRecord(operation?.requestPayload) ?? {};
+      await prisma.xeroSyncOperation.update({
+        where: { id: options.syncOperationId },
+        data: {
+          requestPayload: sanitizeForJson({
+            ...requestPayload,
+            moneyReconciliation: reconcileBookingMoney(booking),
+          }),
+        },
+      });
       await completeXeroSyncOperation(options.syncOperationId, {
         status: "SUCCEEDED",
         responsePayload: {
