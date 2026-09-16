@@ -175,6 +175,24 @@ export const recordedNightPricesSchema = z
   .max(370);
 
 /**
+ * The whole item's figures: ONE ARRAY PER REPAIRABLE STRAND, in the order the
+ * screen was offered them (#3498).
+ *
+ * POSITIONAL, and deliberately carries no guest-strand id. The server re-derives
+ * which strands are repairable from the task's own stored context inside the
+ * settle transaction and matches these by index, refusing a length mismatch as a
+ * race - so a stale screen cannot write one guest's figures onto another guest's
+ * nights, and the browser still never names a strand
+ * (see {@link UnpricedNightsSummary}).
+ *
+ * The outer cap is a BOUND on work an authenticated request can ask for, like
+ * the inner one: a booking's party, not a rule about bookings.
+ */
+export const recordedStrandNightPricesSchema = z
+  .array(recordedNightPricesSchema)
+  .max(60);
+
+/**
  * WHICH WAY the settled amount moves what this strand is worth.
  *
  * The same two strings as `ManualRefundTaskDirection`, spelled as a union so

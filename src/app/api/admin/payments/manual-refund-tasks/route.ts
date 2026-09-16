@@ -235,7 +235,7 @@ export async function GET() {
       toOpenManualRefundTaskPayload(
         task,
         guard.session.user.id,
-        unpricedNights.get(task.id) ?? null,
+        unpricedNights.get(task.id) ?? [],
       ),
     ),
     // True only when the notices read itself failed. The surface says so in a

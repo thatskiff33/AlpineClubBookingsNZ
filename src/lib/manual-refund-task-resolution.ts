@@ -131,8 +131,12 @@ export type ManualRefundTaskResolution =
        * optional for the reason the two fields above are. Why it is optional
        * rather than mandatory, and why a partial answer is refused rather than
        * completed, is `stored-night-price-repair.ts` and `INV-MOD-028`.
+       *
+       * #3498: ONE ARRAY PER REPAIRABLE STRAND of this item, in the order the
+       * screen offered them. One item covers the whole parked edit now, so the
+       * blanks it can fill can belong to several guests.
        */
-      recordedNightPrices: RecordedNightPrice[] | null;
+      recordedNightPrices: RecordedNightPrice[][] | null;
     }
   | {
       taskId: string;
@@ -147,7 +151,7 @@ export type ManualRefundTaskResolution =
        * nothing to settle would park forever. Nothing moves, so the figures must
        * come to the strand's stored total unchanged.
        */
-      recordedNightPrices: RecordedNightPrice[] | null;
+      recordedNightPrices: RecordedNightPrice[][] | null;
       /**
        * A dismissal moves no money, so there is no direction to record and none
        * may be sent. The database says the same thing
@@ -426,7 +430,8 @@ export async function resolveManualRefundTask(
 
     // #3191/#3219 D2: the night prices, checked BEFORE the claim so a refusal
     // leaves the task OPEN. The store owns the rules and the refusal.
-    const nightPriceRepair = await planStoredNightPriceRepair({
+    // #3498: one plan per repairable strand of this item.
+    const nightPriceRepairs = await planStoredNightPriceRepair({
       task,
       requested: input.recordedNightPrices,
       settled: settlement
@@ -572,7 +577,7 @@ export async function resolveManualRefundTask(
     // condition, is `recordReviewClosurePricing`'s docblock.
     if (task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
       await recordReviewClosurePricing({
-        plan: nightPriceRepair,
+        plans: nightPriceRepairs,
         task,
         actingMemberId,
         resolution,
@@ -609,7 +614,10 @@ export async function resolveManualRefundTask(
        * so the operator's receipt can say it happened. Zero when none were sent,
        * which is the ordinary case and is not a failure.
        */
-      recordedNightPriceCount: nightPriceRepair?.entries.length ?? 0,
+      recordedNightPriceCount: nightPriceRepairs.reduce(
+        (total, plan) => total + plan.entries.length,
+        0,
+      ),
       /**
        * #3030: the refund this completion actually MADE, or null.
        *

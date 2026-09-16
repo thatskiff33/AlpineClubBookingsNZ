@@ -53,6 +53,7 @@ export function UnpricedNightPriceFields({
   check,
   explanation,
   legend = "What did these nights sell for?",
+  fieldIdPrefix,
   disabled,
 }: {
   summary: UnpricedNightsSummary;
@@ -87,8 +88,23 @@ export function UnpricedNightPriceFields({
    * a guest holds and says so.
    */
   legend?: string;
+  /**
+   * #3498: what this fieldset's input ids are built from, when a screen renders
+   * MORE THAN ONE of it.
+   *
+   * A parked edit's work item now covers every strand of the edit, so the settle
+   * dialog can show one of these per strand - and two strands of one booking
+   * routinely hold the SAME lodge nights. Keying the inputs by date alone gave
+   * them duplicate `id`s, which is not cosmetic: a `<Label htmlFor>` then points
+   * at whichever the browser finds first, so clicking one guest's date label
+   * focuses another guest's box.
+   *
+   * Defaults to the single-fieldset id every pre-#3498 screen already renders.
+   */
+  fieldIdPrefix?: string;
   disabled: boolean;
 }) {
+  const inputIdPrefix = fieldIdPrefix ?? "unpriced-night";
   /*
     #3191 fix round. Deterministic ids rather than `useFieldHint()`, because
     EVERY box is described by the same two paragraphs and a hook cannot be
@@ -144,14 +160,14 @@ export function UnpricedNightPriceFields({
         {summary.dates.map((date) => (
           <div key={date} className="flex items-center gap-2">
             <Label
-              htmlFor={`unpriced-night-${date}`}
+              htmlFor={`${inputIdPrefix}-${date}`}
               className="w-40 shrink-0 text-sm font-normal"
             >
               {formatClubDate(date)}
             </Label>
             <span className="text-sm">$</span>
             <Input
-              id={`unpriced-night-${date}`}
+              id={`${inputIdPrefix}-${date}`}
               {...MONEY_INPUT_PROPS}
               className="w-28"
               value={values[date] ?? ""}

@@ -5,7 +5,7 @@ import type { ManualRefundTaskKind, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import {
   GUEST_SELECT,
-  reviewTaskGuestId,
+  reviewTaskGuestIds,
   unpricedNightsSummaryForGuest,
 } from "@/lib/stored-night-price-repair-store";
 import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
@@ -48,25 +48,34 @@ export async function unpricedNightsSummariesByTaskId({
     reviewContext: unknown;
   }>;
   store: Prisma.TransactionClient;
-}): Promise<Map<string, UnpricedNightsSummary>> {
-  const guestIdByTaskId = new Map<string, string>();
+}): Promise<Map<string, UnpricedNightsSummary[]>> {
+  // #3498: a LIST per task, because one item now names every strand of the
+  // parked edit and each of them may have blanks to fill. The order is the
+  // task's own strand order, which is what the settle path binds the officer's
+  // figures to positionally - so it must survive this read unchanged.
+  const guestIdsByTaskId = new Map<string, string[]>();
   for (const task of tasks) {
-    const guestId = reviewTaskGuestId(task);
-    if (guestId !== null) guestIdByTaskId.set(task.id, guestId);
+    const guestIds = reviewTaskGuestIds(task);
+    if (guestIds.length > 0) guestIdsByTaskId.set(task.id, guestIds);
   }
-  const summaries = new Map<string, UnpricedNightsSummary>();
-  if (guestIdByTaskId.size === 0) return summaries;
+  const summaries = new Map<string, UnpricedNightsSummary[]>();
+  if (guestIdsByTaskId.size === 0) return summaries;
 
   const guests = await store.bookingGuest.findMany({
-    where: { id: { in: [...new Set(guestIdByTaskId.values())] } },
+    where: {
+      id: { in: [...new Set([...guestIdsByTaskId.values()].flat())] },
+    },
     select: GUEST_SELECT,
   });
   const byGuestId = new Map(guests.map((guest) => [guest.id, guest]));
-  for (const [taskId, guestId] of guestIdByTaskId) {
-    const guest = byGuestId.get(guestId);
-    if (!guest) continue;
-    const summary = unpricedNightsSummaryForGuest(guest);
-    if (summary) summaries.set(taskId, summary);
+  for (const [taskId, guestIds] of guestIdsByTaskId) {
+    const forTask = guestIds.flatMap((guestId) => {
+      const guest = byGuestId.get(guestId);
+      if (!guest) return [];
+      const summary = unpricedNightsSummaryForGuest(guest);
+      return summary ? [summary] : [];
+    });
+    if (forTask.length > 0) summaries.set(taskId, forTask);
   }
   return summaries;
 }
@@ -89,7 +98,7 @@ export async function unpricedNightsSummariesForQueue(args: {
     reviewContext: unknown;
   }>;
   store: Prisma.TransactionClient;
-}): Promise<Map<string, UnpricedNightsSummary>> {
+}): Promise<Map<string, UnpricedNightsSummary[]>> {
   try {
     return await unpricedNightsSummariesByTaskId(args);
   } catch (err) {
@@ -97,6 +106,6 @@ export async function unpricedNightsSummariesForQueue(args: {
       { err },
       "Failed to read unpriced night summaries for the finance queue; its rows are answered without them",
     );
-    return new Map<string, UnpricedNightsSummary>();
+    return new Map<string, UnpricedNightsSummary[]>();
   }
 }

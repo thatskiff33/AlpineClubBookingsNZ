@@ -85,9 +85,15 @@ export type OpenManualRefundTaskPayload = {
   reviewEvidence: EditFinancialReviewEvidence | null;
   reviewEvidenceUnreadable: boolean;
   /**
-   * #3191: the nights on this review's guest whose stored price is blank, and
-   * the two totals the officer's figures have to reconcile against. NULL when
-   * there is nothing this screen can repair, which is most rows.
+   * #3191: the nights whose stored price is blank, and the two totals the
+   * officer's figures have to reconcile against. EMPTY when there is nothing
+   * this screen can repair, which is most rows.
+   *
+   * #3498: ONE ENTRY PER REPAIRABLE STRAND of this item, in the item's own
+   * strand order, because one item now covers the whole parked edit. The order
+   * is load-bearing: the officer's figures come back as a parallel array and the
+   * server matches them by position, which is how no payload here has to carry a
+   * guest-strand id.
    *
    * READ LIVE by the route rather than taken from the stored context, and the
    * difference matters: the context records the evidence as it stood BEFORE the
@@ -95,7 +101,7 @@ export type OpenManualRefundTaskPayload = {
    * if it were the second would ask an officer to price nights that are no
    * longer there.
    */
-  unpricedNights: UnpricedNightsSummary | null;
+  unpricedNights: readonly UnpricedNightsSummary[];
 };
 
 function memberName(booking: QueueBookingSummary): string {
@@ -125,7 +131,7 @@ function memberName(booking: QueueBookingSummary): string {
 export function toOpenManualRefundTaskPayload(
   task: OpenManualRefundTaskRow,
   viewerMemberId: string | null | undefined,
-  unpricedNights: UnpricedNightsSummary | null,
+  unpricedNights: readonly UnpricedNightsSummary[],
 ): OpenManualRefundTaskPayload {
   const reviewContext = parseEditFinancialReviewContext(task.reviewContext);
 

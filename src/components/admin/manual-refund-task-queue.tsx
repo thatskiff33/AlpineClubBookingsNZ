@@ -26,6 +26,7 @@ import type { ManualRefundTaskKind } from "@prisma/client";
 import {
   EDIT_FINANCIAL_REVIEW_CAUSE_LABEL,
   type EditFinancialReviewEvidence,
+  type EditFinancialReviewStrandEvidence,
 } from "@/lib/edit-financial-review-context";
 import { useClubTime } from "@/components/club-time-provider";
 import {
@@ -104,7 +105,12 @@ interface ManualRefundTask {
    * screen behaved before #3191, so a cached client bundle against a newer route
    * degrades to the old behaviour rather than throwing.
    */
-  unpricedNights?: UnpricedNightsSummary | null;
+  /**
+   * #3498: ONE ENTRY PER REPAIRABLE STRAND of this item, in the item's own
+   * strand order. The officer's figures go back as a parallel array and the
+   * server matches them by POSITION, so this order may not be re-sorted here.
+   */
+  unpricedNights?: readonly UnpricedNightsSummary[] | null;
   /**
    * #3033: this row's booking belongs to the person looking at it, and still
    * exists — so they may open it as its member even without admin bookings
@@ -219,6 +225,48 @@ function formatNightList(dates: readonly CalendarDate[]): string {
  * map, and the guest's member id and guest-strand id are not on the wire at all
  * (`toEditFinancialReviewEvidence`).
  */
+function EditFinancialReviewStrandBlock({
+  strand,
+  heading,
+  testId,
+}: {
+  strand: EditFinancialReviewStrandEvidence;
+  /** What this strand is called on the card. No name and no id - see below. */
+  heading?: string;
+  testId?: string;
+}) {
+  return (
+    <div className="space-y-1" data-testid={testId}>
+      {heading ? <p className="font-medium text-foreground">{heading}</p> : null}
+      <p className="font-medium text-foreground">
+        {EDIT_FINANCIAL_REVIEW_CAUSE_LABEL[strand.cause]}
+      </p>
+      <p>Nights given back: {formatNightList(strand.surrenderedNightDates)}</p>
+      <p>
+        Nights added by the same change:{" "}
+        {formatNightList(strand.addedNightDates)}
+      </p>
+      <p>
+        Stored total for this guest:{" "}
+        {strand.storedEvidence.guestTotalCents === null
+          ? "none stored"
+          : formatCents(strand.storedEvidence.guestTotalCents)}
+      </p>
+      <p>
+        Stored night prices before the change:{" "}
+        {strand.storedEvidence.nightPrices.length === 0
+          ? "none stored"
+          : strand.storedEvidence.nightPrices
+              .map(
+                (night) =>
+                  `${formatClubDate(night.date)} ${formatStoredNightPrice(night.priceCents)}`,
+              )
+              .join(" · ")}
+      </p>
+    </div>
+  );
+}
+
 function EditFinancialReviewEvidenceBlock({
   evidence,
 }: {
@@ -229,34 +277,48 @@ function EditFinancialReviewEvidenceBlock({
       className="space-y-1 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
       data-testid="manual-refund-task-review-evidence"
     >
-      <p className="font-medium text-foreground">
-        {EDIT_FINANCIAL_REVIEW_CAUSE_LABEL[evidence.cause]}
-      </p>
-      <p>
-        Nights given back: {formatNightList(evidence.surrenderedNightDates)}
-      </p>
-      <p>Nights added by the same change: {formatNightList(evidence.addedNightDates)}</p>
-      <p>
-        Stored total for this guest:{" "}
-        {evidence.storedEvidence.guestTotalCents === null
-          ? "none stored"
-          : formatCents(evidence.storedEvidence.guestTotalCents)}
-      </p>
-      <p>
-        Stored night prices before the change:{" "}
-        {evidence.storedEvidence.nightPrices.length === 0
-          ? "none stored"
-          : evidence.storedEvidence.nightPrices
-              .map(
-                (night) =>
-                  `${formatClubDate(night.date)} ${formatStoredNightPrice(night.priceCents)}`,
-              )
-              .join(" · ")}
-      </p>
+      <EditFinancialReviewStrandBlock strand={evidence} />
       <p>
         Booked stay: {formatClubDate(evidence.bookingCheckIn)} to{" "}
         {formatClubDate(evidence.bookingCheckOut)}
       </p>
+      {evidence.otherStrands.length > 0 ? (
+        /*
+         * #3498 (owner decision D1): the OTHER guests the same change touched.
+         *
+         * One item covers the whole parked edit now, so everything the six
+         * dismissed cards used to carry on the live booking that prompted this
+         * is here instead - "kept as supporting detail rather than as separate
+         * work", in the decision's own words. Nothing is dropped and nothing is
+         * summarised away: each block below is exactly what that guest's own
+         * item said.
+         *
+         * NUMBERED, NEVER NAMED. The payload carries no guest identifier at all
+         * (`toEditFinancialReviewEvidence`), so the card could not print one if
+         * it wanted to - which is the point, on a screen a Finance Viewer with
+         * no bookings access can open.
+         */
+        <div
+          className="space-y-2 border-t border-border pt-2"
+          data-testid="manual-refund-task-review-other-strands"
+        >
+          <p className="font-medium text-foreground">
+            The same change also touched {evidence.otherStrands.length}{" "}
+            {evidence.otherStrands.length === 1 ? "other guest" : "other guests"}{" "}
+            on this booking. What was stored for{" "}
+            {evidence.otherStrands.length === 1 ? "them" : "each of them"} is
+            below. It is here so nothing is lost; there is one adjustment to
+            record for this change, not one per guest.
+          </p>
+          {evidence.otherStrands.map((strand, index) => (
+            <EditFinancialReviewStrandBlock
+              key={index}
+              strand={strand}
+              heading={`Guest ${index + 2} of ${evidence.otherStrands.length + 1}`}
+            />
+          ))}
+        </div>
+      ) : null}
       {evidence.guestsAddedByEdit ? (
         /*
          * #3166: what the same change did to the REST of the party.
@@ -796,9 +858,13 @@ export function ManualRefundTaskQueue() {
    * from an even split, not from the amount above. `INV-MOD-028` prohibits
    * deriving a historical amount, and a box that arrives with a number in it is
    * a derivation an officer can accept by pressing a button.
+   *
+   * #3498: keyed by STRAND INDEX first, because one item can offer a column of
+   * boxes per guest and two guests of one booking routinely hold the same lodge
+   * nights. Keyed by date alone, one guest's typing appeared in another's boxes.
    */
   const [nightPriceInputs, setNightPriceInputs] = useState<
-    Record<string, string>
+    Record<number, Record<string, string>>
   >({});
   const [submitting, setSubmitting] = useState(false);
   /**
@@ -915,10 +981,10 @@ export function ManualRefundTaskQueue() {
    * (`INV-SSOT`): a screen with its own arithmetic would enable a button the
    * server then refuses, or the reverse.
    */
-  const unpricedNights =
+  const unpricedNights: readonly UnpricedNightsSummary[] =
     target !== null && target.task.unpricedNights
       ? target.task.unpricedNights
-      : null;
+      : [];
   const nightPriceDeltaCents =
     target === null || target.resolution === "dismissed"
       ? 0
@@ -928,24 +994,37 @@ export function ManualRefundTaskQueue() {
             amountCents: pricedAmountCents,
           })
         : null;
-  const nightPriceEntries: RecordedNightPrice[] = [];
-  /*
-    Boxes holding something that is NOT an amount, kept apart from boxes holding
-    nothing. `parseDecimalDollarsToCents` answers null for "1,200.00", "$45",
-    "45." and a stray letter alike, and folding those in with "not typed" is how
-    an officer looking at a full column of figures gets told to "give an amount
-    for every night listed" - true of the entries this screen built, and visibly
-    false of what is on their screen. `money-input.ts` says the caller must turn
-    that null into a validation error the person can see (#2685); this is that
-    caller.
-  */
-  let unreadableNightDates: NonEmptyDates | null = null;
-  let nightBoxesTyped = 0;
-  if (unpricedNights) {
-    for (const date of unpricedNights.dates) {
-      const raw = nightPriceInputs[date] ?? "";
+  /**
+   * #3498: the same verdict as before, once PER STRAND this item offers boxes
+   * for, in the item's own order.
+   *
+   * The settled amount moves exactly one strand's worth and that strand is the
+   * FIRST - the one the card is headed by and the one the officer priced. Every
+   * other strand's figures must come to its stored total unchanged, which is a
+   * delta of zero. That is the server's rule too, stated once in
+   * `planStoredNightPriceRepair`; this screen applies the same arithmetic
+   * through the same checker, so it cannot enable a button the server refuses
+   * (`INV-SSOT`).
+   */
+  const nightPriceStrands = unpricedNights.map((summary, index) => {
+    const values = nightPriceInputs[index] ?? {};
+    const entries: RecordedNightPrice[] = [];
+    /*
+      Boxes holding something that is NOT an amount, kept apart from boxes
+      holding nothing. `parseDecimalDollarsToCents` answers null for "1,200.00",
+      "$45", "45." and a stray letter alike, and folding those in with "not
+      typed" is how an officer looking at a full column of figures gets told to
+      "give an amount for every night listed" - true of the entries this screen
+      built, and visibly false of what is on their screen. `money-input.ts` says
+      the caller must turn that null into a validation error the person can see
+      (#2685); this is that caller.
+    */
+    let unreadableNightDates: NonEmptyDates | null = null;
+    let boxesTyped = 0;
+    for (const date of summary.dates) {
+      const raw = values[date] ?? "";
       if (raw.trim() === "") continue;
-      nightBoxesTyped += 1;
+      boxesTyped += 1;
       const cents = parseNightInput(raw);
       /*
         Built as a NON-EMPTY list by construction (#3191 fix round), because
@@ -959,32 +1038,38 @@ export function ManualRefundTaskQueue() {
           unreadableNightDates === null
             ? [date]
             : [...unreadableNightDates, date];
-      } else nightPriceEntries.push({ date, priceCents: cents });
+      } else entries.push({ date, priceCents: cents });
     }
-  }
-  // A partial or malformed answer never reaches the checker as if it were whole:
-  // the entries are only complete when every box parsed, and an unreadable one
-  // is answered here, by name, before the checker sees a vector it would call
-  // short. Neither branch fills anything in.
-  const nightPriceCheck: StoredNightPriceRepairCheck | null =
-    !unpricedNights || nightBoxesTyped === 0 || nightPriceDeltaCents === null
-      ? null
-      : unreadableNightDates !== null
-        ? {
-            ok: false,
-            message: nightPriceRepairUnreadableMessage(unreadableNightDates),
-            // The ONE definition of what the blanks must come to, shared with
-            // the checker rather than restated for this branch.
-            targetCents: unpricedNightTargetCents(
-              unpricedNights,
-              nightPriceDeltaCents,
-            ),
-          }
-        : checkStoredNightPriceRepair({
-            summary: unpricedNights,
-            entries: nightPriceEntries,
-            deltaCents: nightPriceDeltaCents,
-          });
+    // The lead strand is the one this settlement moves; every other strand
+    // reconciles to its own stored total exactly.
+    const deltaCents =
+      index === 0
+        ? nightPriceDeltaCents
+        : nightPriceDeltaCents === null
+          ? null
+          : 0;
+    // A partial or malformed answer never reaches the checker as if it were
+    // whole: the entries are only complete when every box parsed, and an
+    // unreadable one is answered here, by name, before the checker sees a
+    // vector it would call short. Neither branch fills anything in.
+    const check: StoredNightPriceRepairCheck | null =
+      boxesTyped === 0 || deltaCents === null
+        ? null
+        : unreadableNightDates !== null
+          ? {
+              ok: false,
+              message: nightPriceRepairUnreadableMessage(unreadableNightDates),
+              // The ONE definition of what the blanks must come to, shared with
+              // the checker rather than restated for this branch.
+              targetCents: unpricedNightTargetCents(summary, deltaCents),
+            }
+          : checkStoredNightPriceRepair({
+              summary,
+              entries,
+              deltaCents,
+            });
+    return { summary, index, values, check, targetKnown: deltaCents !== null };
+  });
   /*
     REQUIRED SINCE #3219 D2, where it used to be merely "blocked once you start".
     Leaving every box blank was a valid answer before that decision and is not
@@ -997,14 +1082,27 @@ export function ManualRefundTaskQueue() {
     NOTHING NEW IS SAID HERE: the paragraph above the boxes already says, in D2's
     own words, that the review cannot be closed until the figures are recorded.
 
-    Rows that offer no boxes have `unpricedNights === null`, so this flag leaves
-    them alone - but since #3257 their closure RE-PRICES THE BOOKING too, with
-    nothing saying so first. It is recorded afterwards, in the booking's own
-    PRICE_REBASE row and the closure's audit entry, rather than reworded here.
+    #3498: EVERY strand the item offers boxes for, because the server checks
+    every one of them and the screen posts all or nothing. Rows that offer no
+    boxes have an empty list, so this flag leaves them alone - but since #3257
+    their closure RE-PRICES THE BOOKING too, with nothing saying so first. It is
+    recorded afterwards, in the booking's own PRICE_REBASE row and the closure's
+    audit entry, rather than reworded here.
   */
-  const nightPricesBlocked =
-    unpricedNights !== null &&
-    (nightPriceDeltaCents === null || nightPriceCheck?.ok !== true);
+  const nightPricesBlocked = nightPriceStrands.some(
+    (strand) => strand.check?.ok !== true,
+  );
+  /*
+    What goes on the wire: one array per strand, in the item's order, or null
+    when nothing is being recorded. Sent ONLY when every strand reconciles - a
+    partial answer is never posted, because the button is disabled behind it.
+  */
+  const recordedNightPrices: RecordedNightPrice[][] | null =
+    nightPriceStrands.length > 0 && !nightPricesBlocked
+      ? nightPriceStrands.map((strand) =>
+          strand.check?.ok ? [...strand.check.entries] : [],
+        )
+      : null;
 
   async function submit() {
     if (!target) return;
@@ -1036,9 +1134,7 @@ export function ManualRefundTaskQueue() {
               so a settle with no repair sends exactly the body it sent before
               this issue.
             */
-            ...(nightPriceCheck?.ok
-              ? { recordedNightPrices: nightPriceCheck.entries }
-              : {}),
+            ...(recordedNightPrices ? { recordedNightPrices } : {}),
           }),
         },
       );
@@ -1566,21 +1662,38 @@ export function ManualRefundTaskQueue() {
                     could fill the blanks in, exactly those bookings would park
                     forever, which is the defect this issue exists to remove.
                   */}
-                  {unpricedNights ? (
+                  {/*
+                    #3498: one fieldset per strand of the edit this item covers.
+                    Numbered rather than named, because the payload carries no
+                    guest identifier at all - the redaction
+                    `toEditFinancialReviewEvidence` performs would be worth
+                    nothing if the boxes beside it printed a name.
+                  */}
+                  {nightPriceStrands.map((strand) => (
                     <UnpricedNightPriceFields
-                      summary={unpricedNights}
-                      values={nightPriceInputs}
+                      key={strand.index}
+                      summary={strand.summary}
+                      fieldIdPrefix={`unpriced-night-${strand.index}`}
+                      legend={
+                        nightPriceStrands.length === 1
+                          ? "What did these nights sell for?"
+                          : `Guest ${strand.index + 1} of ${nightPriceStrands.length}: what did these nights sell for?`
+                      }
+                      values={strand.values}
                       onChange={(date, value) =>
                         setNightPriceInputs((current) => ({
                           ...current,
-                          [date]: value,
+                          [strand.index]: {
+                            ...(current[strand.index] ?? {}),
+                            [date]: value,
+                          },
                         }))
                       }
-                      targetKnown={nightPriceDeltaCents !== null}
-                      check={nightPriceCheck}
+                      targetKnown={strand.targetKnown}
+                      check={strand.check}
                       disabled={submitting || unverified !== null}
                     />
-                  ) : null}
+                  ))}
                   <div className="space-y-2">
                     <Label htmlFor="manual-refund-task-note">
                       Note{target.resolution === "dismissed" ? " (required)" : " (optional)"}
