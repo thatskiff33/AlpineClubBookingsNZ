@@ -16,13 +16,19 @@ const REVIEWED_WRITERS = [
   "prisma/demo-seed.ts|bookingGuestNight|create,deleteMany|priceCents,priceSource",
   "prisma/demo-seed.ts|promoRedemption|create,deleteMany|discountCents",
   "prisma/demo-seed.ts|promoRedemptionAllocation|deleteMany|",
+  "src/app/api/admin/bookings/[id]/capacity-hold/route.ts|booking|opaquePayload|",
+  "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts|booking|opaquePayload|",
+  "src/app/api/admin/bookings/[id]/force-confirm/route.ts|booking|opaquePayload|",
+  "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts|booking|opaquePayload|",
+  "src/app/api/admin/bookings/[id]/review/route.ts|booking|opaquePayload|",
   "src/app/api/bookings/[id]/guests/route.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/app/api/bookings/[id]/guests/route.ts|bookingGuest|create|priceCents",
   "src/app/api/bookings/[id]/guests/route.ts|bookingGuestNight|create|",
   "src/app/api/lodge/guests/[date]/arrive/route.ts|bookingGuest|opaquePayload|",
   "src/instrumentation.node.ts|booking|deleteMany|",
   "src/lib/booking-batch-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
-  "src/lib/booking-create.ts|booking|create|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
+  "src/lib/booking-cancel.ts|booking|opaquePayload|",
+  "src/lib/booking-create.ts|booking|create,opaquePayload|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/booking-create.ts|bookingGuest|create|",
   "src/lib/booking-create.ts|bookingGuestNight|opaquePayload|",
   "src/lib/booking-date-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
@@ -41,11 +47,15 @@ const REVIEWED_WRITERS = [
   "src/lib/booking-request.ts|bookingGuest|create,deleteMany,update|priceCents",
   "src/lib/booking-request.ts|bookingGuestNight|deleteMany,opaquePayload|",
   "src/lib/booking-review-price-rebase.ts|booking|updateMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
+  "src/lib/cron-group-settlement-reaper.ts|booking|opaquePayload|",
   "src/lib/group-booking.ts|booking|create|finalPriceCents,totalPriceCents",
   "src/lib/group-booking.ts|bookingGuest|create|",
   "src/lib/group-booking.ts|bookingGuestNight|opaquePayload|",
+  "src/lib/group-cancel.ts|booking|opaquePayload|",
+  "src/lib/internet-banking-payment-cron.ts|booking|opaquePayload|",
   "src/lib/member-guest-consent-service.ts|bookingGuest|opaquePayload|",
-  "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|deleteMany|",
+  "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|createMany,deleteMany,opaquePayload|amountCents",
+  "src/lib/payment-reconciliation.ts|booking|opaquePayload|",
   "src/lib/promo.ts|promoRedemption|create,delete,update|discountCents,priceAdjustmentCents",
   "src/lib/promo.ts|promoRedemptionAllocation|deleteMany,opaquePayload|",
   "src/lib/school-booking-request.ts|booking|create,update|finalPriceCents,totalPriceCents",
@@ -128,6 +138,27 @@ describe("INV-MONEY-031 booking money writer census", () => {
         methods: ["createMany"],
         fields: ["amountCents"],
       },
+    ]);
+  });
+
+  it("discovers aliased options, mutable array rows, opaque options builders, and both upsert branches", () => {
+    expect(
+      scanBookingMoneyWriterSites(
+        "src/lib/options-and-rows.ts",
+        `async function mutant(tx) {
+          const options = { data: { finalPriceCents: 1 } };
+          await tx.booking.update(options);
+          const rows = [];
+          rows.push({ amountCents: 2 });
+          rows.unshift({ amountCents: 3 });
+          await tx.bookingGuestNightAdjustment.createMany({ data: rows });
+          await tx.booking.update(buildOptions());
+          await tx.booking.upsert({ where: { id: "x" }, create: { finalPriceCents: 4 }, update: { discountCents: 5 } });
+        }`,
+      ),
+    ).toEqual([
+      { file: "src/lib/options-and-rows.ts", delegate: "booking", methods: ["opaquePayload", "update", "upsert"], fields: ["discountCents", "finalPriceCents"] },
+      { file: "src/lib/options-and-rows.ts", delegate: "bookingGuestNightAdjustment", methods: ["createMany"], fields: ["amountCents"] },
     ]);
   });
 

@@ -135,6 +135,65 @@ function resolveLocalBinding(
   return undefined;
 }
 
+/** The mutating array methods are evidence only before the payload use. */
+function localArrayMutations(
+  use: ts.Identifier,
+  source: ts.SourceFile,
+): ts.Expression[] {
+  const name = use.text;
+  const expressions: ts.Expression[] = [];
+  const scope = enclosingScope(use);
+  if (!scope) return expressions;
+  const declaresName = (block: ts.Block): boolean => {
+    let declared = false;
+    const find = (node: ts.Node) => {
+      if (node !== block && isNestedScope(node)) return;
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text === name
+      ) {
+        declared = true;
+      }
+      ts.forEachChild(node, find);
+    };
+    ts.forEachChild(block, find);
+    return declared;
+  };
+  const visit = (node: ts.Node) => {
+    if (
+      node !== scope &&
+      (ts.isFunctionLike(node) || ts.isClassLike(node) || ts.isSourceFile(node) ||
+        (ts.isBlock(node) && declaresName(node)))
+    ) return;
+    if (node.getStart(source) >= use.getStart(source)) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name
+    ) {
+      expressions.push(node.right);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === name
+    ) {
+      const method = node.expression.name.text;
+      if (method === "push" || method === "unshift") {
+        expressions.push(...node.arguments);
+      } else if (method === "splice") {
+        expressions.push(...node.arguments.slice(2));
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  return expressions;
+}
+
 /** Delegate forwarding can hide a write from the direct call-site census. */
 export function scanBookingMoneyWriterEscapes(file: string, code: string): string[] {
   const source = ts.createSourceFile(
@@ -216,22 +275,39 @@ export function scanBookingMoneyWriterSites(
     fields.forEach((field) => site.fields.add(field));
     found.set(delegate, site);
   };
-  const mutationData = (call: ts.CallExpression): ts.Expression | undefined => {
-    const options = call.arguments[0];
-    if (!options || !ts.isObjectLiteralExpression(options)) return undefined;
-    const data = options.properties.find((property) => {
+  const mutationPayloads = (call: ts.CallExpression): {
+    payloads: ts.Expression[];
+    opaqueOptions: boolean;
+  } => {
+    let options = call.arguments[0];
+    if (options && ts.isIdentifier(options)) {
+      options = resolveLocalBinding(options, source);
+    }
+    if (!options || !ts.isObjectLiteralExpression(options)) {
+      return { payloads: [], opaqueOptions: true };
+    }
+    const names =
+      ts.isPropertyAccessExpression(call.expression) && call.expression.name.text === "upsert"
+        ? ["create", "update"]
+        : ["data"];
+    const data = options.properties.filter((property) => {
       if (ts.isShorthandPropertyAssignment(property)) {
-        return property.name.text === "data";
+        return names.includes(property.name.text);
       }
       if (!ts.isPropertyAssignment(property)) return false;
       return (
         (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
-        property.name.text === "data"
+        names.includes(property.name.text)
       );
     });
-    if (!data) return undefined;
-    if (ts.isShorthandPropertyAssignment(data)) return data.name;
-    return ts.isPropertyAssignment(data) ? data.initializer : undefined;
+    return {
+      payloads: data.map((property) =>
+        ts.isShorthandPropertyAssignment(property)
+          ? property.name
+          : property.initializer,
+      ),
+      opaqueOptions: data.length === 0,
+    };
   };
   const inspectPayload = (
     expression: ts.Expression,
@@ -243,9 +319,20 @@ export function scanBookingMoneyWriterSites(
     seen.add(expression);
     if (ts.isIdentifier(expression)) {
       const binding = resolveLocalBinding(expression, source);
-      return binding
-        ? inspectPayload(binding, delegate, nested, seen)
-        : { fields: new Set(), opaque: true };
+      if (!binding) return { fields: new Set(), opaque: true };
+      const result = inspectPayload(binding, delegate, nested, seen);
+      if (ts.isArrayLiteralExpression(binding)) {
+        const mutations = localArrayMutations(expression, source);
+        for (const mutation of mutations) {
+          const next = inspectPayload(mutation, delegate, nested, seen);
+          next.fields.forEach((field) => result.fields.add(field));
+          result.opaque ||= next.opaque;
+        }
+        if (binding.elements.length === 0 && mutations.length === 0) {
+          result.opaque = true;
+        }
+      }
+      return result;
     }
     if (ts.isArrayLiteralExpression(expression)) {
       return expression.elements.reduce(
@@ -311,9 +398,9 @@ export function scanBookingMoneyWriterSites(
       if (delegate) {
         const tracked = TRACKED_FIELDS[delegate];
         if (tracked) {
-          const payload = mutationData(node);
-          const inspected = payload ? inspectPayload(payload, delegate) : undefined;
-          const written = inspected ? [...inspected.fields] : [];
+          const payload = mutationPayloads(node);
+          const inspected = payload.payloads.map((entry) => inspectPayload(entry, delegate));
+          const written = [...new Set(inspected.flatMap((entry) => [...entry.fields]))];
           if (written.length > 0 || node.expression.name.text.startsWith("delete")) {
             record(delegate, node.expression.name.text, written);
           }
@@ -322,11 +409,9 @@ export function scanBookingMoneyWriterSites(
           // object payload is still useful evidence even if one of its ordinary
           // (non-money) values is computed.
           if (
-            inspected?.opaque &&
+            (payload.opaqueOptions || inspected.some((entry) => entry.opaque)) &&
             written.length === 0 &&
-            payload !== undefined &&
-            !ts.isObjectLiteralExpression(payload) &&
-            !ts.isArrayLiteralExpression(payload)
+            !node.expression.name.text.startsWith("delete")
           ) record(delegate, "opaquePayload", []);
         }
       }
