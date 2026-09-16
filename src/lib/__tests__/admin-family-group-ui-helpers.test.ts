@@ -68,6 +68,41 @@ describe("admin-family-group-ui-helpers", () => {
     });
   });
 
+  it("does not auto-select a direct-partner conflict and preserves its disabled reason", () => {
+    const conflict = "The same two members cannot be both relationships.";
+    const request: FamilyGroupRequest = {
+      ...baseRequest,
+      matchingMembers: [
+        {
+          ...baseRequest.matchingMembers[0],
+          ineligibleReason: conflict,
+        },
+      ],
+    };
+
+    expect(buildInitialRequestSelections([request], {})).toEqual({});
+    expect(
+      buildInitialRequestSelections([request], {
+        [request.id]: request.matchingMembers[0].id,
+      }),
+    ).toEqual({});
+    expect(
+      mapFamilyGroupRequestSearchResults(request, [
+        {
+          id: "child-2",
+          firstName: "Bea",
+          lastName: "Child",
+          email: "bea@example.com",
+          ageTier: "CHILD",
+          active: true,
+          canLogin: false,
+          ageLabel: "8 years",
+          ineligibleReason: conflict,
+        },
+      ])[0].ineligibleReason,
+    ).toBe(conflict);
+  });
+
   it("defaults same-email adult requests to create when no matches exist", () => {
     const adultRequest: FamilyGroupRequest = {
       ...baseRequest,
