@@ -16,6 +16,9 @@ import {
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
+
+const CAPTURED_STATUSES = new Set<string>(CAPTURED_PAYMENT_STATUS_LIST);
 import { raiseDeletedBookingModificationRefundTask } from "@/lib/deleted-booking-modification-payment";
 
 const schema = z.object({
@@ -86,11 +89,10 @@ export async function POST(
       return NextResponse.json({ error: "Payment transaction not found" }, { status: 404 });
     }
 
-    if (
-      paymentTransaction.status === "SUCCEEDED" ||
-      paymentTransaction.status === "PARTIALLY_REFUNDED" ||
-      paymentTransaction.status === "REFUNDED"
-    ) {
+    // #3244: written out here, but it is CAPTURED_PAYMENT_STATUS_LIST, which
+    // has one home (`INV-SSOT-001`). `hasCapturedPayment`'s amount clause is
+    // NOT wanted: a zero-amount intent still has Xero work to release.
+    if (CAPTURED_STATUSES.has(paymentTransaction.status)) {
       const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
         paymentIntentId
       );

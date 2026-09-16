@@ -112,7 +112,11 @@ import {
   activeLifecycleEditRefusal,
   getBookingEditPolicy,
 } from "@/lib/booking-edit-policy";
-import { hasIssuedPrimaryXeroInvoice, isSettledBookingStatus } from "@/lib/booking-payment-state";
+import {
+  hasCapturedPayment,
+  hasIssuedPrimaryXeroInvoice,
+  isSettledBookingStatus,
+} from "@/lib/booking-payment-state";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
@@ -983,14 +987,29 @@ export async function POST(
        * took its status list from the eligibility gate above instead, omitting
        * COMPLETED. Worked example in `docs/invariants/single-source-of-truth.md`.
        *
-       * The SUCCEEDED-only test below is deliberately left alone rather than
-       * folded into `hasCapturedPayment`: that would newly treat a refunded
-       * payment as settled and charge a card, which is a money decision this
-       * issue does not make.
+       * #3244 finished the job #3200 left: the SUCCEEDED-only test that used to
+       * sit here is now `hasCapturedPayment`, the same predicate the other three
+       * doors reach through `applyPaymentAdjustments`
+       * (`booking-modify-settlement.ts`). All four now answer "has money
+       * already moved through this card?" identically. Owner decision, 17 Sep
+       * 2026, on #3244 — the alternative of treating a fully-refunded booking
+       * as unpaid was rejected because it would have replaced one divergence
+       * with another.
+       *
+       * It moves the answer BOTH ways, and both are intended:
+       *
+       *  - WIDER: `PARTIALLY_REFUNDED` / `REFUNDED` now count as paid, so the
+       *    difference is charged to the original card instead of collected
+       *    from nobody. That is the reachable defect this issue was filed for.
+       *  - NARROWER, and a fix rather than a cost: the amount clause means a
+       *    ZERO-DOLLAR booking is no longer card-settled here. The zero-dollar
+       *    auto-pay writes `amountCents: 0` with a null intent and leaves
+       *    `source` STRIPE, so this door used to route it as chargeable with
+       *    nothing to charge. The other three doors always refused it.
        */
       const hasSettledPayment =
         isSettledBookingStatus(booking.status) &&
-        booking.payment?.status === "SUCCEEDED";
+        hasCapturedPayment(booking.payment);
       const hasSucceededPayment =
         hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
       const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);

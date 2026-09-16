@@ -1171,6 +1171,127 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
       }
     );
   });
+
+  /**
+   * #3244: the same booking, part-refunded. Owner decision, 17 Sep 2026 — this
+   * door now asks the shared `hasCapturedPayment`, exactly as the batch edit,
+   * the date change and the guest removal already do through
+   * `applyPaymentAdjustments`.
+   *
+   * BEFORE this issue the door asked `payment.status === "SUCCEEDED"` inline,
+   * so a partly-refunded booking read as never paid HERE and as paid at the
+   * other three doors. It was reachable — `PARTIALLY_REFUNDED` is a payment
+   * status and the eligibility gate reads only the booking status — and the
+   * consequence was that the club collected NOTHING for the added guest.
+   */
+  const partlyRefundedPayment = {
+    id: "p1",
+    bookingId: "bk1",
+    amountCents: 10000,
+    source: "STRIPE",
+    status: "PARTIALLY_REFUNDED",
+    stripePaymentIntentId: "pi_original",
+    stripeCustomerId: "cus_123",
+    xeroInvoiceId: "inv_primary",
+    refundedAmountCents: 2500,
+    changeFeeCents: 0,
+    additionalPaymentIntentId: null,
+    additionalAmountCents: 0,
+    additionalPaymentStatus: null,
+  };
+
+  it("collects the difference on a PARTLY-REFUNDED booking (#3244)", async () => {
+    const booking = makeBooking({ payment: partlyRefundedPayment });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_guest_extra",
+      client_secret: "guest_extra_secret",
+    } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    // The whole point of #3244: before it, this was 0 and no intent was minted.
+    expect(data.additionalAmountCents).toBe(10000);
+    expect(data.additionalPaymentClientSecret).toBe("guest_extra_secret");
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 10000,
+        metadata: expect.objectContaining({
+          bookingId: "bk1",
+          type: "modification_additional",
+          reason: "guest_add_price_increase",
+        }),
+      })
+    );
+  });
+
+  /**
+   * #3244, the other direction, and the reason the change is NOT purely a
+   * widening. `hasCapturedPayment` also requires `amountCents > 0`, so a
+   * zero-dollar booking no longer reads as card-settled at this door.
+   *
+   * That is a fix rather than a cost: the zero-dollar auto-pay writes
+   * `{ amountCents: 0, status: SUCCEEDED, stripePaymentIntentId: null }` and
+   * leaves `source` at its STRIPE default, so this door used to treat such a
+   * booking as chargeable with no payment intent to charge against. The other
+   * three doors have always refused it, which is what makes this convergence
+   * rather than a new divergence.
+   */
+  it("does NOT mint a card charge for a ZERO-DOLLAR settled booking (#3244)", async () => {
+    const booking = makeBooking({
+      totalPriceCents: 0,
+      finalPriceCents: 0,
+      payment: {
+        ...partlyRefundedPayment,
+        status: "SUCCEEDED",
+        amountCents: 0,
+        refundedAmountCents: 0,
+        stripePaymentIntentId: null,
+      },
+    });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_should_not_be_used",
+      client_secret: "should_not_be_used",
+    } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(200);
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+  });
 });
 
 // ============================================================================

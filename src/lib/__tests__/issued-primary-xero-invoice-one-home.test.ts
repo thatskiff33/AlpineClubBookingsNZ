@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { canModifyBookingInActiveLifecycle } from "@/lib/booking-edit-policy";
 import {
+  hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
@@ -134,6 +135,34 @@ const SETTLEMENT_MODULE = "src/lib/booking-modify-settlement.ts";
 const BOOKINGS_API_TREE = "src/app/api/bookings";
 
 const XERO_INVOICE_ID = /\bxeroInvoiceId\b/;
+
+/**
+ * #3244: a READ of `Payment.status` that decides something. Anchored to the
+ * comparison rather than the bare word, so a route that selects the column, or
+ * WRITES it (`status: "SUCCEEDED"` in an update), is not mistaken for a route
+ * that re-derives "is this paid?" from it.
+ */
+const PAYMENT_STATUS_READ =
+  /payment(?:\?)?\.status\s*(?:===|!==)|\bstatus\s*(?:===|!==)\s*"(?:SUCCEEDED|PARTIALLY_REFUNDED|REFUNDED)"/;
+
+/**
+ * Routes allowed to compare `Payment.status`, each with the reason it is not a
+ * second answer to "has money already moved through this card?".
+ */
+const PAYMENT_STATUS_ALLOWED: Record<string, string> = {
+  "src/app/api/bookings/[id]/confirm-payment/route.ts":
+    "asks two different questions. `payment.status === \"SUCCEEDED\" && " +
+    "booking.status === \"PAID\"` is an IDEMPOTENCY short-circuit — this " +
+    "confirmation already landed, so just re-queue the invoice — not 'has " +
+    "money moved'. `refundedHistory` asks whether a refund has HAPPENED, " +
+    "which is the opposite reading of the same column: `hasCapturedPayment` " +
+    "answers true for a refunded payment, so calling it here would inv" +
+    "ert the meaning.",
+  "src/app/api/bookings/[id]/refund-request/route.ts":
+    "asks 'has this booking already been refunded IN FULL?', to refuse a " +
+    "second appeal. `hasCapturedPayment` answers true for a fully refunded " +
+    "payment, so it is not the predicate this door wants.",
+};
 
 /**
  * The only files under the bookings API tree allowed to name
@@ -311,6 +340,88 @@ describe("no edit door states the rule a second time", () => {
         `bug was exactly this: a list copied here from the eligibility gate, ` +
         `missing COMPLETED. #3245 then removed the gate's own copy.`,
     ).toEqual([]);
+  });
+
+  it("the one home answers a part-refunded card as PAID, at every door", () => {
+    // #3244's whole substance in one place. `hasCapturedPayment` is what the
+    // other three doors reach through `applyPaymentAdjustments`, and it admits
+    // the two refunded shapes because the money DID move through that card and
+    // it is still the right instrument to collect from.
+    const partRefunded = {
+      status: "PARTIALLY_REFUNDED",
+      amountCents: 10_000,
+      refundedAmountCents: 2_500,
+    };
+    expect(hasCapturedPayment(partRefunded)).toBe(true);
+    expect(hasCapturedPayment({ status: "REFUNDED", amountCents: 10_000 })).toBe(
+      true,
+    );
+    expect(hasCapturedPayment({ status: "SUCCEEDED", amountCents: 10_000 })).toBe(
+      true,
+    );
+    // And the guest-add door's own composite is the same shape the settlement
+    // module applies: settled booking status AND a captured card.
+    expect(
+      isSettledBookingStatus("CONFIRMED") && hasCapturedPayment(partRefunded),
+    ).toBe(true);
+    // The narrowing half: a zero-amount capture is not a card to collect from.
+    expect(hasCapturedPayment({ status: "SUCCEEDED", amountCents: 0 })).toBe(
+      false,
+    );
+  });
+
+  it("NO route under the bookings API reads Payment.status directly", () => {
+    // #3244 extends #3200's ban to the SECOND field read at this door, which is
+    // the acceptance criterion that issue carries. "Has money already moved
+    // through this card?" is `hasCapturedPayment` in
+    // `src/lib/booking-payment-state.ts`, and the guest-add door used to answer
+    // it with `booking.payment?.status === "SUCCEEDED"` — the same shape as the
+    // invoice defect #3200 fixed, one field over, and unlike that one it was
+    // REACHABLE: a partly-refunded booking was answered "never paid" here and
+    // "paid" at the other three doors, so the club collected nothing.
+    //
+    // Measured over the whole tree, not over the four doors by name
+    // (`INV-SSOT-004`).
+    const tree = sourceFilesUnder(BOOKINGS_API_TREE);
+    expect(tree).toEqual(
+      expect.arrayContaining(EDIT_DOORS.map((door) => door.route)),
+    );
+    const offenders = filesMentioning(
+      tree.filter((file) => !(file in PAYMENT_STATUS_ALLOWED)),
+      PAYMENT_STATUS_READ,
+    );
+    expect(
+      offenders,
+      `These routes decide something from Payment.status directly. "Has ` +
+        `money already moved through this card?" has one home — ` +
+        `hasCapturedPayment in src/lib/booking-payment-state.ts ` +
+        `(INV-SSOT-001), which admits SUCCEEDED, PARTIALLY_REFUNDED and ` +
+        `REFUNDED and requires a non-zero amount. Ask it. #3244's bug was ` +
+        `exactly this read: a partly-refunded booking collected nothing at ` +
+        `this door and the difference at the other three. If the route only ` +
+        `DISPLAYS the status or writes it, add it to PAYMENT_STATUS_ALLOWED ` +
+        `with its reason.`,
+    ).toEqual([]);
+  });
+
+  it("keeps the Payment.status allowlist honest", () => {
+    const stale = Object.keys(PAYMENT_STATUS_ALLOWED).filter(
+      (file) => !PAYMENT_STATUS_READ.test(read(file)),
+    );
+    expect(
+      stale,
+      `These files are exempted from the Payment.status ban but no longer ` +
+        `match it. Delete the entry rather than leaving a standing exemption ` +
+        `nothing needs.`,
+    ).toEqual([]);
+  });
+
+  it("the guest-add door reaches the captured-payment home directly", () => {
+    const source = read(GUEST_ADD_ROUTE);
+    expect(source).toMatch(
+      /import\s*\{[^}]*\bhasCapturedPayment\b[^}]*\}\s*from\s*"@\/lib\/booking-payment-state"/,
+    );
+    expect(source).toMatch(/hasCapturedPayment\(booking\.payment\)/);
   });
 
   it("every file that reaches applyPaymentAdjustments is one of the doors above", () => {
