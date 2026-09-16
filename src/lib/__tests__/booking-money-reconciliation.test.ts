@@ -154,6 +154,28 @@ describe("reconcileBookingMoney", () => {
     expect(result.reasons).toEqual(["PROMO_BUILD_UP_NOT_KNOWN"]);
   });
 
+  it.each([-2_000, 2_000])(
+    "keeps a member-less allocation of %i cents unknown rather than inventing zero",
+    (priceAdjustmentCents) => {
+      const result = reconcileBookingMoney(
+        booking({
+          promoAdjustmentCents: 0,
+          discountCents: 0,
+          finalPriceCents: 10_000,
+          promoRedemption: {
+            priceAdjustmentCents,
+            allocations: [{ memberId: null, priceAdjustmentCents }],
+          },
+          nightAdjustments: [],
+        }),
+      );
+      expect(result).toEqual({
+        state: "UNRECONCILED",
+        reasons: ["PROMO_BUILD_UP_NOT_KNOWN"],
+      });
+    },
+  );
+
   it("summarizes every reason without collapsing simultaneous failures", () => {
     const summary = summarizeBookingMoneyReconciliations([
       booking(),
