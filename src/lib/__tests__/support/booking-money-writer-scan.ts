@@ -279,7 +279,7 @@ export function scanBookingMoneyWriterSites(
     payloads: ts.Expression[];
     opaqueOptions: boolean;
   } => {
-    let options = call.arguments[0];
+    let options: ts.Expression | undefined = call.arguments[0];
     if (options && ts.isIdentifier(options)) {
       options = resolveLocalBinding(options, source);
     }
@@ -290,23 +290,23 @@ export function scanBookingMoneyWriterSites(
       ts.isPropertyAccessExpression(call.expression) && call.expression.name.text === "upsert"
         ? ["create", "update"]
         : ["data"];
-    const data = options.properties.filter((property) => {
+    const payloads: ts.Expression[] = [];
+    for (const property of options.properties) {
       if (ts.isShorthandPropertyAssignment(property)) {
-        return names.includes(property.name.text);
+        if (names.includes(property.name.text)) payloads.push(property.name);
+        continue;
       }
-      if (!ts.isPropertyAssignment(property)) return false;
-      return (
+      if (
+        ts.isPropertyAssignment(property) &&
         (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
         names.includes(property.name.text)
-      );
-    });
+      ) {
+        payloads.push(property.initializer);
+      }
+    }
     return {
-      payloads: data.map((property) =>
-        ts.isShorthandPropertyAssignment(property)
-          ? property.name
-          : property.initializer,
-      ),
-      opaqueOptions: data.length === 0,
+      payloads,
+      opaqueOptions: payloads.length === 0,
     };
   };
   const inspectPayload = (
@@ -335,7 +335,7 @@ export function scanBookingMoneyWriterSites(
       return result;
     }
     if (ts.isArrayLiteralExpression(expression)) {
-      return expression.elements.reduce(
+      return expression.elements.reduce<{ fields: Set<string>; opaque: boolean }>(
         (result, element) => {
           if (!ts.isExpression(element)) return { fields: result.fields, opaque: true };
           const next = inspectPayload(element, delegate, nested, seen);
