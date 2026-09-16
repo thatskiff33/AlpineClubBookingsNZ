@@ -1,7 +1,7 @@
 # File-size allowances for #2936
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2306
+lines: 2670
 reason: fifty lines, and the editor itself is not among them — it is
   `booking-request-correction-editor.tsx`, a new 677-line file of its own, which
   is where the split this panel could offer has already been taken. What is left
@@ -28,8 +28,15 @@ reason: fifty lines, and the editor itself is not among them — it is
   says which of the two child-count controls on this card changes the request
   and which changes only the booking about to be quoted.
 
+  RE-MEASURED by the ninth sync of `main` into this epic. #3412's school
+  group-number work landed on `main` and grew this same panel by 364 lines
+  there, so the figure above is the composed length of both changes rather
+  than this issue's alone. The correction wiring described here is unchanged
+  by that merge; only the number is. Re-measured in this entry rather than
+  declared in a second fragment, because two live entries for one path is
+  refused by the gate.
 file: src/lib/booking-request.ts
-lines: 2945
+lines: 2968
 reason: seven lines, and five of them are the comment. The code is one field:
   `serializeBookingRequestForAdmin` now returns the row's `version`, so the
   officer's correction form can send back the version it was showing and the
@@ -46,8 +53,11 @@ reason: seven lines, and five of them are the comment. The code is one field:
   allowance, so the two entries are folded here rather than left for a gate
   that cannot choose between two numbers.
 
+  RE-MEASURED by the ninth sync of `main` into this epic: twenty-three lines
+  of #3412's school group-number reads arriving from `main` in the same
+  module. One file, one allowance, so the number is re-measured here.
 file: src/lib/booking-request-quotes.ts
-lines: 1875
+lines: 2136
 reason: a hundred and ten lines across the four quote writers, and they are not a
   feature — they are this issue's own counterpart reconciliation, which the
   concurrency checklist requires and which cannot be done anywhere but at each
@@ -81,3 +91,13 @@ reason: a hundred and ten lines across the four quote writers, and they are not 
   of those sentences belongs at the writer it describes: a reader deciding
   whether to copy the guard beside them is the exact reader who has to be told
   which of the four is not one.
+
+  RE-MEASURED by the ninth sync of `main` into this epic, which is also where
+  this file's one real merge conflict was. #3412 made the same two writers
+  CLAIM rather than overwrite, for its own reason — a party rewritten under
+  a save, and a quote superseded under a send — and this issue made them
+  claim for the correction's. Neither guard was dropped for the other: the
+  save's `where` is #3412's superset (version AND status AND `heldBookingId`)
+  and the version fence this issue added is the part of it that refuses a
+  correction, which `status` alone cannot see. The comment at each writer
+  now records both routes to the same hole, which is most of the growth.

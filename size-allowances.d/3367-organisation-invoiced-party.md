@@ -8,7 +8,7 @@ genuinely the worse answer. Three of them, and the growth in the other two,
 come from the adversarial review round rather than from the first build.
 
 file: src/lib/school-booking-request.ts
-lines: 2772
+lines: 2901
 reason: The school approval transaction gains the resolve-or-create of the
   school's own `Organisation`, the link from the booking and the request, and
   the teacher association. Every one of those writes has to happen INSIDE the
@@ -24,6 +24,10 @@ reason: The school approval transaction gains the resolve-or-create of the
   work and it belongs to stage 3 (#3368), which rewrites this area's ownership
   reads anyway.
 
+  RE-MEASURED by the ninth sync of `main` into this epic: #3412's one resolver
+  for a school group's numbers, used at quote and at approve, landed on
+  `main` in this module. One file, one allowance, so the number is
+  re-measured here rather than declared in a second fragment.
 file: src/lib/xero-contacts.ts
 lines: 2066
 reason: Three lines net. The member payload builder's object literal MOVED OUT
