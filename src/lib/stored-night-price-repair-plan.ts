@@ -44,7 +44,7 @@ import {
  */
 
 /** The night rows and the total this module reads off a guest strand. */
-type RepairableGuest = {
+export type RepairableGuest = {
   id: string;
   priceCents: number;
   nights: ReadonlyArray<{ stayDate: Date; priceCents: number | null }>;
@@ -169,18 +169,41 @@ export async function loadUnpricedNightsSummaries({
     where: { id: { in: [...new Set(bookingGuestIds)] } },
     select: GUEST_SELECT,
   });
-  const byId = new Map(guests.map((guest) => [guest.id, guest]));
-  /*
-    IN THE TASK'S OWN STRAND ORDER, and the filter is what makes the result a
-    contract rather than a lookup: the officer is offered exactly these, in this
-    order, and sends their figures back in the same order. A strand that is not
-    repairable simply is not in the list, on the screen or in the request, so the
-    two cannot disagree about which box belongs to which guest (#3498).
-  */
+  return repairableStrands(
+    bookingGuestIds,
+    new Map(guests.map((guest) => [guest.id, guest])),
+  );
+}
+
+/**
+ * THE ONE definition of which strands a settle may fill in, in what order, and
+ * which of them the settled amount moves (`INV-SSOT`, #3498).
+ *
+ * IN THE TASK'S OWN STRAND ORDER, and the filter is what makes the result a
+ * contract rather than a lookup: the officer is offered exactly these, in this
+ * order, and sends their figures back in the same order. A strand that is not
+ * repairable simply is not in the list, on the screen or in the request, so the
+ * two cannot disagree about which box belongs to which guest.
+ *
+ * TWO CALLERS, WHICH IS WHY IT IS A FUNCTION. The settle path reads one task
+ * inside its own transaction; the finance queue reads a whole page of them in
+ * one query and cannot use that read. What they must not do is answer the
+ * `absorbsSettlement` question twice — the browser applies it to decide what
+ * each column of boxes has to come to, and the server applies it again to decide
+ * whether to accept them, so two spellings of it is a screen that enables a
+ * button the server refuses, or refuses one it would have taken.
+ */
+export function repairableStrands(
+  bookingGuestIds: readonly string[],
+  guestById: ReadonlyMap<string, RepairableGuest>,
+): RepairableStrand[] {
   return bookingGuestIds.flatMap((bookingGuestId, index) => {
-    const guest = byId.get(bookingGuestId);
+    const guest = guestById.get(bookingGuestId);
     if (!guest) return [];
     const summary = unpricedNightsSummaryForGuest(guest);
+    // `index === 0` is the LEAD strand of the occurrence, which is the strand
+    // the item is about — see `RepairableStrand.absorbsSettlement` for why that
+    // is not the same as the first strand with blanks, and what it costs.
     return summary
       ? [{ bookingGuestId, summary, absorbsSettlement: index === 0 }]
       : [];

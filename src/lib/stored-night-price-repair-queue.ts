@@ -5,8 +5,8 @@ import type { ManualRefundTaskKind, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import {
   GUEST_SELECT,
+  repairableStrands,
   reviewTaskGuestIds,
-  unpricedNightsSummaryForGuest,
   type RepairableStrand,
 } from "@/lib/stored-night-price-repair-plan";
 
@@ -77,15 +77,13 @@ export async function unpricedNightsSummariesByTaskId({
   });
   const byGuestId = new Map(guests.map((guest) => [guest.id, guest]));
   for (const [taskId, guestIds] of guestIdsByTaskId) {
-    const forTask = guestIds.flatMap((guestId, index) => {
-      const guest = byGuestId.get(guestId);
-      if (!guest) return [];
-      const summary = unpricedNightsSummaryForGuest(guest);
-      // `absorbsSettlement` is derived here exactly as the settle path derives
-      // it, from the same lead-first order: the browser must apply the SAME
-      // arithmetic the server will, or it enables a button the server refuses.
-      return summary ? [{ summary, absorbsSettlement: index === 0 }] : [];
-    });
+    // Through the SAME function the settle path uses, so the answer the browser
+    // is given and the answer the server will check against are one definition
+    // rather than two that agree today (`INV-SSOT`). The guest id is dropped
+    // here and nowhere else: the browser never names a strand.
+    const forTask = repairableStrands(guestIds, byGuestId).map(
+      ({ summary, absorbsSettlement }) => ({ summary, absorbsSettlement }),
+    );
     if (forTask.length > 0) summaries.set(taskId, forTask);
   }
   return summaries;
