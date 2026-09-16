@@ -86,7 +86,12 @@ export function AdminBookingToolsCard({
   returnToWaitlistReleasesHold = false,
 }: {
   bookingId: string;
-  memberId: string;
+  /**
+   * The booking OWNER's member id, or null when it is owned by an
+   * `Organisation` (#3369): a school has no member page to link to, so the
+   * card names it without a link.
+   */
+  memberId: string | null;
   memberName: string;
   /**
    * The booking's own lodge (#2678). NOT NULL in the schema, and deliberately
@@ -319,12 +324,16 @@ export function AdminBookingToolsCard({
             />
           )}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-            <Link
-              className="text-muted-foreground underline hover:text-accent-foreground"
-              href={buildHrefWithReturnTo(`/admin/members/${memberId}`, returnTo)}
-            >
-              Member: {memberName}
-            </Link>
+            {memberId ? (
+              <Link
+                className="text-muted-foreground underline hover:text-accent-foreground"
+                href={buildHrefWithReturnTo(`/admin/members/${memberId}`, returnTo)}
+              >
+                Member: {memberName}
+              </Link>
+            ) : (
+              <span className="text-muted-foreground">Booked by: {memberName}</span>
+            )}
             {isFeatureHrefVisible(bedAllocationHref, features) ? (
               <Link
                 className="text-muted-foreground underline hover:text-accent-foreground"

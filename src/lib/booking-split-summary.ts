@@ -39,13 +39,20 @@ export interface ProvisionalChildSummary {
  */
 export async function getProvisionalNonMemberChildSummary(parent: {
   id: string;
-  memberId: string;
+  // #3369: null when the parent booking is owned by an Organisation.
+  memberId: string | null;
 }): Promise<ProvisionalChildSummary | null> {
+  // #3369: a provisional non-member child is a SPLIT of a member's own party —
+  // the member pays their share now and the non-member guests pay theirs later.
+  // A school booking has no member to split from and has never had one of
+  // these, so there is nothing to describe.
+  if (parent.memberId === null) return null;
+  const parentMemberId = parent.memberId;
   try {
     const child = await prisma.booking.findFirst({
       where: {
         parentBookingId: parent.id,
-        memberId: parent.memberId,
+        memberId: parentMemberId,
         status: BookingStatus.PENDING,
         nonMemberHoldUntil: { not: null },
       },

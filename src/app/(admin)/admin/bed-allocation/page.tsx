@@ -44,6 +44,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
 import {
@@ -95,8 +96,8 @@ import {
   describeBedAllocationDrop,
 } from "./_components/allocation-drag-feedback";
 import { useSyncedScroll } from "./_components/use-synced-scroll";
-import { AllocationPreferencesSection } from "./_components/allocation-preferences-section";
 import { useScopedDashboard } from "./_components/use-scoped-dashboard";
+import { ROOMS_BEDS_PATH } from "@/lib/admin-permissions";
 import {
   bedAllocationRemovalCategoryForAnchor,
   useBedAllocationRemovalDialog,
@@ -140,15 +141,6 @@ function describeBulkConflicts(
  */
 function nightAfter(stayDate: string): string {
   return addCalendarDays(requireCalendarDate(stayDate), 1);
-}
-
-async function readApiError(response: Response, fallback: string) {
-  try {
-    const body = (await response.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 /**
@@ -465,6 +457,13 @@ export default function AdminBedAllocationPage() {
   // on this, so the ALL_LODGES sentinel can never leak into a query string or
   // a removal anchor.
   const lodgeId = lodgeScope.kind === "lodge" ? lodgeScope.lodgeId : null;
+  // The lodge the Allocation preferences signpost may NAME (#2937): this
+  // board's lodge, but only one Rooms & Beds could itself settle on. Why a
+  // deactivated lodge must not be carried is at the signpost itself.
+  const preferencesLodgeId =
+    lodgeId !== null && lodges.some((lodge) => lodge.id === lodgeId)
+      ? lodgeId
+      : null;
   /**
    * `INV-CAP-033`, owner decisions 4 and 6: every allocation control that needs
    * a concrete lodge is disabled without one, with the reason on screen. This
@@ -549,7 +548,7 @@ export default function AdminBedAllocationPage() {
           throw new Error(body.error ?? "Failed to load bed allocation");
         }
         throw new Error(
-          await readApiError(response, "Failed to load bed allocation"),
+          await apiErrorMessageFromResponse(response, "Failed to load bed allocation"),
         );
       }
       return (await response.json()) as DashboardPayload;
@@ -676,19 +675,6 @@ export default function AdminBedAllocationPage() {
    * that clears the focus.
    */
   const focusedBookingOwnsLodge = highlightedBookingId !== "";
-
-  /**
-   * Narrower, and only for COPY: the board is focused on a booking and has not
-   * yet been told which lodge that is. "Told" means the server ANSWERED —
-   * `scopedLodgeId` present, whether an id or an explicit null. A payload
-   * without the field is the deploy-drain case (an old-colour server that
-   * cannot answer), and there the board stays honestly unresolved rather than
-   * guessing.
-   */
-  const awaitingFocusedBookingLodge =
-    focusedBookingOwnsLodge &&
-    lodgeSelection === null &&
-    !(payload !== null && payload.scopedLodgeId !== undefined);
 
   // A refused window has NO columns. Enumerating it anyway would build a column
   // per night for whatever the admin typed — a year, a century — and the board
@@ -873,7 +859,7 @@ export default function AdminBedAllocationPage() {
     try {
       const response = await request();
       if (!response.ok) {
-        throw new Error(await readApiError(response, "Request failed"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Request failed"));
       }
       toast.success(success);
       await loadDashboard();
@@ -961,7 +947,7 @@ export default function AdminBedAllocationPage() {
 
         if (!response.ok) {
           setPayload(snapshot);
-          toast.error(await readApiError(response, "Failed to allocate bed"));
+          toast.error(await apiErrorMessageFromResponse(response, "Failed to allocate bed"));
           await loadDashboard();
           return;
         }
@@ -1035,7 +1021,7 @@ export default function AdminBedAllocationPage() {
               `That bed was just taken for ${stayDate} — refreshing the board`,
             );
           } else {
-            toast.error(await readApiError(response, "Failed to allocate bed"));
+            toast.error(await apiErrorMessageFromResponse(response, "Failed to allocate bed"));
           }
           await loadDashboard();
           return;
@@ -1611,43 +1597,57 @@ export default function AdminBedAllocationPage() {
         </Alert>
       ) : null}
 
-      {lodgeId ? (
-        <AllocationPreferencesSection
-          key={lodgeId}
-          lodgeId={lodgeId}
-          canEdit={canEditBookings}
-          renderViewOnlyBanner={false}
-          onSaved={async () => {
-            // Preferences change both the header state and the planner output;
-            // reload the complete dashboard instead of patching one field.
-            await loadDashboard();
-          }}
-        />
-      ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Allocation preferences</CardTitle>
-          </CardHeader>
-          {/*
-            One card, one honest message per scope state (#2701). This used to
-            say "Choose a lodge to continue" in every state, including the three
-            where there is nothing to choose from.
-          */}
-          <CardContent className="text-sm text-muted-foreground">
-            {lodgeScope.kind === "all"
-              ? lodgeScope.reason === "chosen"
-                ? "Preferences are set per lodge. Choose a single lodge to see and edit them."
-                : "Preferences are set per lodge, and your admin role cannot choose one."
-              : lodgeScope.kind === "unavailable"
-                ? "The lodge list could not be loaded, so preferences cannot be shown. Retry above."
-                : lodgeScope.kind === "empty"
-                  ? "This club has no active lodge, so there are no preferences to show."
-                  : lodgesLoading || awaitingFocusedBookingLodge
-                    ? "Loading lodge…"
-                    : "Choose a lodge to continue."}
-          </CardContent>
-        </Card>
-      )}
+      {/*
+        #2937: the editor no longer lives on this board. It is configuration an
+        operator revisits rarely, and it now sits beside the rooms and beds it
+        orders guests into, in Bookings Setup -> Rooms & Beds. What stays is the
+        signpost, because this board is where an officer is standing when they
+        notice the ordering is wrong.
+
+        The link carries the board's own lodge when it has one (ADR-003), so the
+        officer lands where they were looking rather than on whatever Rooms &
+        Beds would default to. In every other scope state there is no lodge to
+        carry and the plain link is the honest one: this page must never invent
+        a lodge id for a link any more than for a write.
+
+        `preferencesLodgeId` is narrower than `lodgeId`, and the gap is real.
+        While a booking is focused this board DELIBERATELY holds that booking's
+        lodge even once it is deactivated (`focusedBookingOwnsLodge` above — the
+        fix for three HIGH findings). A deactivated lodge is filtered out of
+        `/api/admin/lodges`, so Rooms & Beds cannot honour it: `LodgeSelect`'s
+        ADR-002 normaliser replaces it with the first active lodge, and below
+        two lodges the selector renders nothing, so the swap never reaches the
+        screen: the officer edits a DIFFERENT lodge with a live Save. Before the
+        move this was an explicit refusal — the settings endpoint answers "lodge
+        not found or not active" verbatim. So the link names a lodge only when
+        the board can see it in the active list it already holds.
+
+        No visibility guard belongs on the link: every viewer of this board holds
+        `bookings: view`, and `/admin/rooms-beds` admits on lodge OR bookings
+        (`canAccessRoomsBedsPage`), so it could only ever answer yes.
+      */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Allocation preferences</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            Auto allocation and the order the preferences are applied in are set
+            per lodge, in{" "}
+            <Link
+              className="underline"
+              href={
+                preferencesLodgeId
+                  ? `${ROOMS_BEDS_PATH}?lodgeId=${encodeURIComponent(preferencesLodgeId)}`
+                  : ROOMS_BEDS_PATH
+              }
+            >
+              Bookings Setup &rarr; Rooms &amp; Beds
+            </Link>
+            . Changes there apply to the next allocation run on this board.
+          </p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

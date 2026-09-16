@@ -9,6 +9,7 @@ import {
 } from "@prisma/client";
 
 import type { BookingGuestNightPriceSource } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { logAudit } from "@/lib/audit";
@@ -79,6 +80,7 @@ import {
   clampAppliedCreditToBookingPrice,
   createBookingModificationCredit,
   deriveBookingAppliedCreditCents,
+  requireMemberCreditRecipient,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import {
@@ -354,6 +356,8 @@ export async function modifyBookingDates({
         },
         payment: true,
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         promoRedemption: {
           include: {
             guestTargets: { select: { bookingGuestId: true } },
@@ -372,7 +376,7 @@ export async function modifyBookingDates({
       throw new ApiError("Booking not found", 404);
     }
 
-    if (booking.memberId !== actor.id && actor.role !== "ADMIN") {
+    if (bookingOwner(booking).memberId !== actor.id && actor.role !== "ADMIN") {
       throw new ApiError("Forbidden", 403);
     }
     await assertBookingNotQuotePriced(tx, bookingId);
@@ -576,7 +580,7 @@ export async function modifyBookingDates({
     }));
     const seasonYear = seasonYearOfStoredDate(newCheckIn);
     await assertMembershipTypeBookingAllowed(tx, {
-      ownerMemberId: booking.memberId,
+      ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,
       seasonYear,
       // Finding 2 (privacy re-review of MG3 #2308) — see
@@ -590,7 +594,7 @@ export async function modifyBookingDates({
     let priceBreakdown;
     try {
       priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         checkIn: newCheckIn,
         checkOut: newCheckOut,
         guests: guestsForPricing,
@@ -646,7 +650,7 @@ export async function modifyBookingDates({
     };
     const guestsForMemberNightGuard = await markCrossFamilyGuestsOnBooking(
       tx,
-      booking.memberId,
+      bookingOwner(booking).memberId,
       booking.guests.map((g, index) => ({
         memberId: g.memberId ?? null,
         stayStart: newCheckIn,
@@ -785,7 +789,7 @@ export async function modifyBookingDates({
       const application = await validateAndCalculatePromoDiscount(
         promo,
         {
-          memberId: booking.memberId,
+          memberId: bookingOwner(booking).memberId,
           bookingCheckIn: newCheckIn,
           totalPriceCents: newTotalPriceCents,
           guests: guestNightRates,
@@ -975,7 +979,7 @@ export async function modifyBookingDates({
       : 0;
     if (appliedBeforeClamp > 0) {
       const clampedCredit = await clampAppliedCreditToBookingPrice(
-        { memberId: booking.memberId, bookingId, newFinalPriceCents },
+        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents },
         tx,
       );
       const effectivePriceCents =
@@ -1322,7 +1326,7 @@ export async function modifyBookingDates({
 
     if (accountCreditAmountCents > 0) {
       await createBookingModificationCredit(
-        booking.memberId,
+        requireMemberCreditRecipient(bookingOwner(booking).memberId),
         accountCreditAmountCents,
         bookingId,
         bookingModification.id,
@@ -1367,7 +1371,7 @@ export async function modifyBookingDates({
           ? {
               linkedMove: {
                 answer: hostingCoverageLinkedMove,
-                bookingOwnerMemberId: booking.memberId,
+                bookingOwnerMemberId: bookingOwner(booking).memberId,
               },
             }
           : {}),
@@ -1405,9 +1409,10 @@ export async function modifyBookingDates({
       zeroDollarAutoPaid,
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-      memberEmail: booking.member.email,
-      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-      memberId: booking.memberId,
+      memberEmail: bookingOwner(booking).member.email,
+      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+      memberFirstName: bookingOwner(booking).member.firstName,
+      memberId: bookingOwner(booking).memberId,
       bookingModificationId: bookingModification.id,
     } satisfies DateModificationTransactionResult;
   });
@@ -1513,7 +1518,7 @@ async function dispatchDatePostTransactionSideEffects({
       : "booking.modify.dates",
     memberId: actorMemberId,
     targetId: bookingId,
-    subjectMemberId: result.booking.memberId,
+    subjectMemberId: bookingOwner(result.booking).memberId,
     entityType: "BookingModification",
     entityId: result.bookingModificationId,
     category: "booking",
@@ -1583,12 +1588,21 @@ async function dispatchDatePostTransactionSideEffects({
 
   // Owner decision (#1668 review): an override admin may choose not to email
   // the member; the choice is recorded in the audit fields above.
-  const member = result.notifyMember
-    ? await prisma.member.findUnique({
-        where: { id: result.booking.memberId },
-      })
-    : null;
-  if (member) {
+  // #3369: the OWNER, not a re-read of a member row. A school's booking has no
+  // member to re-read, and the projection carries the same person-shaped name
+  // and address the invented school member used to supply — so the school still
+  // receives the message it received before this stage, at the same address.
+  // The relation was loaded in the same transaction, so this is no staler than
+  // the read it replaces.
+  // #3369: the owner as the transaction already resolved them. A school's
+  // booking has no member row to re-read, and these three fields are the
+  // person-shaped projection the invented school member used to supply, so the
+  // school receives the same message at the same address.
+  const member = {
+    email: result.memberEmail,
+    firstName: result.memberFirstName,
+  };
+  if (result.notifyMember) {
     /*
       #3032 (epic #2797): whether the club is still working out an amount on
       this booking as the email is written. The booking's CURRENT state rather
@@ -1618,7 +1632,7 @@ async function dispatchDatePostTransactionSideEffects({
 
     sendBookingModifiedEmail({
       bookingId: result.booking.id,
-      recipientMemberId: member.id,
+      recipientMemberId: result.memberId,
       email: member.email,
       firstName: member.firstName,
       modificationType: "DATE_CHANGE",
@@ -1752,6 +1766,8 @@ export async function adminShiftBookingDates({
         },
         payment: true,
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     if (!booking) {
@@ -1913,7 +1929,7 @@ export async function adminShiftBookingDates({
     // routing, and an unmarked party is exactly the silent read-out C1 closed.
     const capacityRangesForGuard = await markCrossFamilyGuestsOnBooking(
       tx,
-      booking.memberId,
+      bookingOwner(booking).memberId,
       capacityRanges,
       { skipAuthorization: true, bookingId },
     );
@@ -2094,9 +2110,9 @@ export async function adminShiftBookingDates({
       capacityOverridden,
       choreWarnings,
       bookingModificationId: bookingModification.id,
-      memberId: booking.memberId,
-      memberEmail: booking.member.email,
-      memberFirstName: booking.member.firstName,
+      memberId: bookingOwner(booking).memberId,
+      memberEmail: bookingOwner(booking).member.email,
+      memberFirstName: bookingOwner(booking).member.firstName,
       guestCount: booking.guests.length,
       finalPriceCents: booking.finalPriceCents,
       paymentReference: booking.payment?.reference ?? null,

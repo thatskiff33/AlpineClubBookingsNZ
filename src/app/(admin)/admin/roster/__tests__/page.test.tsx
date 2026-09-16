@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus"
 
 vi.mock("@/hooks/use-admin-area-edit-access", () => ({
   useAdminAreaEditAccess: () => true,
@@ -177,6 +178,10 @@ describe("admin roster page draft transitions", () => {
 
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-07-02" } })
     await waitFor(() => expect(screen.getByText("Roster could not be loaded because the service could not be reached. Try again.")).toBeTruthy())
+    // #2934: the page-level failure takes focus through the shared primitive.
+    await expectRecoveryAlertToHoldFocus(
+      screen.getByText("Roster could not be loaded because the service could not be reached. Try again."),
+    )
     expect(screen.queryByText("Aroha Guest")).toBeNull()
     const retry = screen.getByRole("button", { name: "Try again" })
     fireEvent.click(retry)

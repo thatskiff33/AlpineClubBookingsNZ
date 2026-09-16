@@ -78,6 +78,7 @@ vi.mock("@/components/ui/select", () => {
 });
 
 import { SetupPanels } from "../setup-panels";
+import { xeroSectionId } from "../types";
 
 function renderPanel() {
   return render(
@@ -116,6 +117,23 @@ beforeEach(() => {
       };
     }
     return {};
+  });
+});
+
+describe("SetupPanels is a reveal target (#2934)", () => {
+  it("is a region named by its own visible title, at the id the reveal looks up", () => {
+    // `use-xero-connection.ts` resolves a "go to section" request with
+    // `getElementById(xeroSectionId(section))` and hands the card to the shared
+    // reveal primitive, which focuses it. Focus landing on an unnamed card
+    // announces only "group", so the card carries `role="region"` and takes its
+    // name from the title a sighted user reads — and the id both sides use is
+    // minted once, in `_components/types.ts`.
+    renderPanel();
+
+    const region = screen.getByRole("region", { name: "Setup Tools" });
+    expect(region.id).toBe(xeroSectionId("setup"));
+    expect(region.getAttribute("tabindex")).toBe("-1");
+    expect(document.getElementById(xeroSectionId("setup"))).toBe(region);
   });
 });
 

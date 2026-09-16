@@ -77,6 +77,7 @@ import {
   loadCancellationPolicy,
 } from "./cancellation";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
+import { bookingOwner } from "@/lib/booking-owner";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
@@ -252,7 +253,8 @@ export async function settleGroupBookingOnOrganiserCancel(
       deletedAt: null,
       status: { in: [...ACTIVE_CHILD_STATUSES] },
     },
-    include: { member: true, payment: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { member: true, organisation: { select: { name: true, email: true } }, payment: true },
   });
 
   let settlement = cancellationFence.settlement;
@@ -637,7 +639,7 @@ export async function settleGroupBookingOnOrganiserCancel(
       action: "booking.cancel",
       memberId: sessionUserId,
       targetId: child.id,
-      subjectMemberId: child.memberId,
+      subjectMemberId: bookingOwner(child).memberId,
       entityType: "Booking",
       entityId: child.id,
       category: "booking",
@@ -675,9 +677,9 @@ export async function settleGroupBookingOnOrganiserCancel(
     );
 
     sendBookingCancelledEmail(
-      { bookingId: child.id, recipientMemberId: child.memberId },
-      child.member.email,
-      child.member.firstName,
+      { bookingId: child.id, recipientMemberId: bookingOwner(child).memberId },
+      bookingOwner(child).member.email,
+      bookingOwner(child).member.firstName,
       child.checkIn,
       child.checkOut,
       refundForChild,
@@ -881,7 +883,7 @@ export async function executeGroupSettlementRefundPlan(
     logAudit({
       action: "booking.payment.refund_recovered",
       targetId: child.id,
-      subjectMemberId: child.memberId,
+      subjectMemberId: bookingOwner(child).memberId,
       entityType: "Booking",
       entityId: child.id,
       category: "booking",

@@ -204,6 +204,12 @@ const mockGetHoldPolicy = vi.fn();
 vi.mock("@/lib/member-credit", () => ({
   clampAppliedCreditToBookingPrice: (...args: unknown[]) => mockClamp(...args),
   deriveBookingAppliedCreditCents: (...args: unknown[]) => mockDerive(...args),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 vi.mock("@/lib/booking-payment-cleanup", () => ({
   queueSupersededPrimaryIntentCancellations: (...args: unknown[]) =>

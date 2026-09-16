@@ -108,6 +108,11 @@ describe("GET /api/admin/roster/[date] age tier display", () => {
         id: "booking-1",
         checkIn: new Date("2026-07-10T00:00:00.000Z"),
         checkOut: new Date("2026-07-11T00:00:00.000Z"),
+        // #3369: the roster query loads BOTH halves of the owner for its
+        // "Booking for …" group label, so a row it returns always carries both.
+        memberId: "member-1",
+        member: { firstName: "Ana", lastName: "Reid" },
+        organisation: null,
         guests: [
           {
             id: "guest-1",

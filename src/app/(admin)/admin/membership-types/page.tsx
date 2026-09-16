@@ -39,7 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { useClubTime } from "@/components/club-time-provider";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { seasonSelectLabel } from "@/lib/season-label";
@@ -1048,7 +1048,6 @@ export default function AdminMembershipTypesPage() {
   const [savedMessage, setSavedMessage] = useState("");
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
-  const { scrollToError, scrollToTop } = useScrollToFeedback();
   const { confirm, confirmDialog } = useConfirm();
   // Membership types resolve to the membership area (their write routes enforce
   // membership:edit), so gate all editors on that area (#1940).
@@ -1120,13 +1119,14 @@ export default function AdminMembershipTypesPage() {
     void loadMembershipTypes();
   }, []);
 
-  useEffect(() => {
-    if (error) scrollToError(feedbackRef);
-  }, [error, scrollToError]);
-
-  useEffect(() => {
-    if (savedMessage) scrollToTop(pageRef);
-  }, [savedMessage, scrollToTop]);
+  // Failure wins, success positions at the top, and neither runs for a
+  // passive re-render — the shared action-attention rule (#2934).
+  useActionAttention({
+    error: error,
+    errorTarget: feedbackRef,
+    success: savedMessage,
+    successTarget: pageRef,
+  });
 
   function updateEditorDraft(patch: Partial<DraftMembershipType>) {
     if (editorTarget?.mode === "edit" && editingType) {

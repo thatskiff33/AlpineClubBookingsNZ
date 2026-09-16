@@ -14,6 +14,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import {
   readHostingCoverageOverridePrompt,
@@ -312,15 +313,9 @@ export function PolicyExceptionRequestsPanel({
     fetchItems();
   }, [fetchItems]);
 
-  useEffect(() => {
-    if (!error) return;
-    const alert = errorRef.current;
-    if (!alert) return;
-    alert.focus({ preventScroll: true });
-    if (typeof alert.scrollIntoView === "function") {
-      alert.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, [error]);
+  // The permanently mounted recovery alert takes focus through the shared
+  // failure primitive (#2934) — the same call `FocusedActionError` makes.
+  useActionAttention({ error, errorTarget: errorRef, errorBlock: "center" });
 
   function resetDecisionForm() {
     setOpenId(null);

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getPaymentIntent } from "@/lib/stripe";
@@ -65,7 +66,7 @@ export async function POST(
     }
 
     if (
-      payment.booking.memberId !== session.user.id &&
+      bookingOwner(payment.booking).memberId !== session.user.id &&
       !isAdmin
     ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -210,7 +211,7 @@ export async function POST(
       action: "booking.modification.payment.confirmed",
       memberId: session.user.id,
       targetId: bookingId,
-      subjectMemberId: payment.booking.memberId,
+      subjectMemberId: bookingOwner(payment.booking).memberId,
       entityType: "Booking",
       entityId: bookingId,
       category: "payment",

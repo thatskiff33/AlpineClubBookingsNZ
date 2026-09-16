@@ -97,3 +97,46 @@ describe("sendEmail placeholder recipient suppression (#1935)", () => {
     expect(mocks.getActiveEmailSuppression).toHaveBeenCalled();
   });
 });
+
+describe("sendEmail with no recipient at all (#3369)", () => {
+  // An organisation with no recorded address presents itself with an empty
+  // `email`, because "no address" is the truth and an invented one is not —
+  // see `bookingOwner()`. Fifty-two booking send sites read that field straight
+  // through, so the gate is HERE: one place, not fifty-two guards. Without it
+  // an EmailLog row is written and an empty recipient is handed to the
+  // provider, which rejects it as a delivery failure that hides the cause.
+  it.each([
+    ["an empty string", ""],
+    ["whitespace only", "   "],
+  ])("skips %s without queueing anything", async (_label, to) => {
+    const outcome = await sendEmail({
+      bookingContext: "none",
+      to,
+      subject: "Your booking is confirmed",
+      html: "<p>confirmed</p>",
+      templateName: "booking-confirmed",
+    });
+
+    expect(outcome.status).toBe("skipped_no_recipient");
+    expect(outcome.emailLogId).toBeNull();
+    expect(mocks.emailLogCreate).not.toHaveBeenCalled();
+    expect(mocks.getActiveEmailSuppression).not.toHaveBeenCalled();
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+    // And it is VISIBLE. A silent skip on a booking send is the same defect at
+    // one remove: nothing reached the member and nobody knows.
+    expect(mocks.logger.warn).toHaveBeenCalled();
+  });
+
+  it("does not mistake a real address for an absent one", async () => {
+    const outcome = await sendEmail({
+      bookingContext: "none",
+      to: "office@school.test",
+      subject: "Your booking is confirmed",
+      html: "<p>confirmed</p>",
+      templateName: "booking-confirmed",
+    });
+
+    expect(outcome.status).not.toBe("skipped_no_recipient");
+    expect(mocks.emailLogCreate).toHaveBeenCalled();
+  });
+});

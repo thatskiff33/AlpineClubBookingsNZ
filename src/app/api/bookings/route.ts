@@ -34,6 +34,13 @@ import {
   type NonMemberPricingRequirements,
 } from "@/lib/subscription-lockout-enforcement";
 import {
+  checkOwnDependantIdentity,
+  dependantIdentityDeclarationSchema,
+  loadBookerDependants,
+  DEPENDANT_IDENTITY_UNRESOLVED_CODE,
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
+} from "@/lib/booking-dependant-identity";
+import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
   getBookingGuestValidationErrorResponse,
@@ -133,6 +140,16 @@ const createBookingSchema = z.object({
     )
     .min(1)
     .max(200),
+  // #2721: the booker's answers to "this guest has the same name as your own
+  // recorded dependant". One entry per dependant the collision was with, each
+  // naming that dependant explicitly — see `booking-dependant-identity.ts` for
+  // why a generic override is not a shape this field can hold. The cap is far
+  // above any real family and exists so a hostile payload cannot turn the guard
+  // into a loop over an unbounded array.
+  dependantIdentityDeclarations: z
+    .array(dependantIdentityDeclarationSchema)
+    .max(50)
+    .optional(),
   notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
   promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
@@ -357,6 +374,7 @@ export async function POST(request: NextRequest) {
     memberReviewJustification,
     adultMemberHostingReason,
     paymentMethod,
+    dependantIdentityDeclarations,
   } = parsed.data;
   let guestInputs: BookingGuestInput[] = [];
 
@@ -392,6 +410,14 @@ export async function POST(request: NextRequest) {
     ? { kind: "ADMIN", adminMemberId: session.user.id }
     : { kind: "MEMBER" };
   let memberGuestEntries = new Map<string, MemberGuestConsentWritePlanEntry>();
+  /**
+   * The member ids on this party that actually resolved to a bookable member —
+   * the own-dependant guard's forgery defence (#2721, `INV-GUEST-019`). Hoisted
+   * out of the try so the guard below can be handed it; see
+   * `checkOwnDependantIdentity` for why it is an argument rather than a
+   * precondition about the party's provenance.
+   */
+  let memberPathMemberIds: ReadonlySet<string> = new Set<string>();
 
   try {
     const { members: linkedMembers, boundary } =
@@ -428,6 +454,7 @@ export async function POST(request: NextRequest) {
         crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
       }
     );
+    memberPathMemberIds = new Set(linkedMembers.keys());
     const normalizedGuests = normalizeBookingGuestInputs(guests, linkedMembers);
     const consentPlan = planMemberGuestConsentWrites({
       guests: normalizeGuestStayRanges(normalizedGuests, { checkIn, checkOut }),
@@ -460,6 +487,83 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     throw error;
+  }
+
+  /**
+   * OWN-DEPENDANT IDENTITY (#2721, `INV-GUEST-019`).
+   *
+   * `memberPathMemberIds` is what makes "already on the member path" a fact
+   * rather than a claim: it holds the ids that really resolved to a bookable
+   * member, so a forged `isMember: true` or an invented member id is read as
+   * the free-text row it is. The guard takes it as a required argument, so this
+   * cannot be weakened by moving the call or by passing a different party.
+   *
+   * Placed BEFORE the person-night, hosting and capacity pre-flights and before
+   * any create service, so a party that is about to put a member on the
+   * bumpable non-member queue is stopped while it is still only a proposal.
+   *
+   * IT RUNS ON THE AUTHORISED ON-BEHALF CREATE TOO, and unlike the member-guest
+   * boundary check beside it there is no `isAuthorizedOnBehalf` arm here (owner
+   * decision on #2721, 15 Sep 2026). The two are not the same class of check.
+   * The boundary check gates the OFFICER'S OWN AUTHORITY, which the officer can
+   * see in front of them. This one protects A THIRD PARTY'S BED — a real child
+   * on a provisional, bumpable, separately invoiced guest row at non-member
+   * prices — and the parent is not at the screen to notice. A silent path is
+   * worst exactly where the affected person cannot see it, so do not restore the
+   * skip; the admin booking screen carries the control to answer it with.
+   *
+   * WHOSE DEPENDANTS ARE READ IS `effectiveMemberId`, WHICH IS THE MEMBER THE
+   * BOOKING IS FOR — `forMemberId` on an on-behalf create, the session user
+   * otherwise. Never `session.user.id`, which on this path is the officer: that
+   * would both miss every real collision and start answering questions about the
+   * officer's own family on somebody else's booking, which is the disclosure
+   * half of this rule (`INV-GUEST-019`).
+   *
+   * The dependant read is skipped entirely for a party that is all member-linked
+   * and carries no declaration — the common family booking — so the ordinary
+   * path pays nothing for this.
+   */
+  if (
+    guestInputs.some((guest) => !guest.memberId?.trim()) ||
+    (dependantIdentityDeclarations?.length ?? 0) > 0
+  ) {
+    const bookerDependants = await loadBookerDependants(
+      prisma,
+      effectiveMemberId,
+    );
+    const dependantIdentityRefusal = checkOwnDependantIdentity({
+      party: guestInputs,
+      memberPathMemberIds,
+      dependants: bookerDependants,
+      declarations: dependantIdentityDeclarations,
+    });
+    if (dependantIdentityRefusal) {
+      return NextResponse.json(
+        {
+          code: dependantIdentityRefusal.code,
+          // The CODE is the same on both paths — each client keys on it to send
+          // whoever is at the screen back to the guest step — but the SENTENCE
+          // is not: "your dependant" is wrong in both halves when the reader is
+          // an officer, so the on-behalf wording says whose dependant it is and
+          // where the answer lives. Substituted here rather than inside the
+          // guard because this handler is the only place that knows which of the
+          // two people is reading the response.
+          error:
+            isAuthorizedOnBehalf &&
+            dependantIdentityRefusal.code === DEPENDANT_IDENTITY_UNRESOLVED_CODE
+              ? DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE
+              : dependantIdentityRefusal.error,
+          // The collisions are deliberately NOT echoed (#2721 review). They were,
+          // and nothing read them: the wizard re-derives the question from
+          // `/api/members/family`, because a refusal this client did not expect
+          // is by definition one whose cached list is stale — and it has to
+          // re-read that list anyway to draw the answers, which the response
+          // body does not carry. Names and member ids travelling to no consumer
+          // are a payload waiting for someone to start trusting it.
+        },
+        { status: dependantIdentityRefusal.status },
+      );
+    }
   }
 
   /**

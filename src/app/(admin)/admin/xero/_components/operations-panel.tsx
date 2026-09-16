@@ -30,6 +30,7 @@ import {
   ToneChip,
   type ToggleSection,
 } from "./shared"
+import { xeroSectionId } from "./types"
 import type { XeroOperation } from "./types"
 
 export function OperationsPanel({
@@ -362,7 +363,7 @@ export function OperationsPanel({
     <div>
       {viewOnlyBanner}
     <SectionCard
-      id="xero-section-operations"
+      id={xeroSectionId("operations")}
       title="Xero Operations"
       description="Recent outbound sync attempts and replayable failures."
       open={open}

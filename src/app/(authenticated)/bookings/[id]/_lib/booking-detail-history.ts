@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import type { BoundClubTime } from "@/lib/club-time";
 import { buildBookingHistoryItems } from "@/lib/booking-history";
@@ -113,7 +114,7 @@ export async function loadBookingDetailHistory({
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
-      firstName: booking.member.firstName,
+      firstName: bookingOwner(booking).member.firstName,
       adminReviewStatus: booking.adminReviewStatus,
       adminReviewNotes: booking.adminReviewNotes,
       adminReviewReason: booking.adminReviewReason,

@@ -53,6 +53,7 @@ import {
   GroupBookingPaymentMode,
   PaymentStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import { prisma } from "@/lib/prisma";
@@ -354,7 +355,13 @@ type ReleasedChild = {
   // The child's own lodge: the freed beds are at this lodge, so its waitlist
   // queue (not the default lodge's) is the one to re-process (multi-lodge).
   lodgeId: string;
-  memberId: string;
+  /**
+   * The released child's OWNER. A group settlement is a member's, and a joiner
+   * books under their own membership, so this is never null in practice —
+   * `bookingOwner().member.id` is `undefined` only for an organisation, which
+   * cannot join a group booking (#3369).
+   */
+  memberId: string | undefined;
   memberEmail: string;
   memberFirstName: string;
 };
@@ -397,6 +404,8 @@ async function releaseSettlementChildren(
         checkOut: true,
         lodgeId: true,
         member: { select: { id: true, email: true, firstName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     const lockedLodgeIds = new Set(
@@ -418,6 +427,8 @@ async function releaseSettlementChildren(
         checkOut: true,
         lodgeId: true,
         member: { select: { id: true, email: true, firstName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     if (children.some((child) => !lockedLodgeIds.has(child.lodgeId))) {
@@ -504,9 +515,9 @@ async function releaseSettlementChildren(
       checkIn: child.checkIn,
       checkOut: child.checkOut,
       lodgeId: child.lodgeId,
-      memberId: child.member.id,
-      memberEmail: child.member.email,
-      memberFirstName: child.member.firstName,
+      memberId: bookingOwner(child).member.id,
+      memberEmail: bookingOwner(child).member.email,
+      memberFirstName: bookingOwner(child).member.firstName,
     }));
   });
 }
@@ -554,6 +565,8 @@ async function cancelReapedChildren(
         checkOut: true,
         lodgeId: true,
         member: { select: { id: true, email: true, firstName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
 
@@ -581,9 +594,9 @@ async function cancelReapedChildren(
       checkIn: child.checkIn,
       checkOut: child.checkOut,
       lodgeId: child.lodgeId,
-      memberId: child.member.id,
-      memberEmail: child.member.email,
-      memberFirstName: child.member.firstName,
+      memberId: bookingOwner(child).member.id,
+      memberEmail: bookingOwner(child).member.email,
+      memberFirstName: bookingOwner(child).member.firstName,
     }));
   });
 }
@@ -615,7 +628,10 @@ async function finishExpiry({
 
     try {
       await sendGroupJoinCancelledEmail({
-        bookingContext: { bookingId: child.id, recipientMemberId: child.memberId },
+        bookingContext: {
+          bookingId: child.id,
+          recipientMemberId: bookingOwner(child).memberId ?? null,
+        },
         email: child.memberEmail,
         firstName: child.memberFirstName,
         organiserName,
@@ -724,7 +740,10 @@ async function finishReap({
   for (const child of released) {
     try {
       await sendGroupJoinReleasedEmail({
-        bookingContext: { bookingId: child.id, recipientMemberId: child.memberId },
+        bookingContext: {
+          bookingId: child.id,
+          recipientMemberId: bookingOwner(child).memberId ?? null,
+        },
         email: child.memberEmail,
         firstName: child.memberFirstName,
         organiserName,

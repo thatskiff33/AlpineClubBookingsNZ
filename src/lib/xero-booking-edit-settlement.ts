@@ -210,6 +210,7 @@ export async function queueXeroBookingEditSettlement(
   if (decision.financialAction.type === "primary-invoice") {
     const queued = await enqueueXeroBookingInvoiceOperation(input.bookingId, {
       createdByMemberId: input.createdByMemberId,
+      invoiceEmailDelivery: null,
     });
     await kickQueuedXeroOperation(queued);
   } else if (decision.financialAction.type === "supplementary-invoice") {

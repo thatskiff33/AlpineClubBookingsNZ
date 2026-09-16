@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Prisma, type BedAllocationSource } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
@@ -139,6 +140,8 @@ const allocationInclude = Prisma.validator<Prisma.BedAllocationInclude>()({
   booking: {
     select: {
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   },
 });
@@ -469,7 +472,7 @@ async function loadPreviewState(
       approvedRows.some((row) => row.bookingId === bookingId),
   );
   const bookingMemberName = new Map(
-    matchingRows.map((row) => [row.bookingId, personName(row.booking.member)]),
+    matchingRows.map((row) => [row.bookingId, personName(bookingOwner(row.booking).member)]),
   );
 
   const categoryCounts: Record<BedAllocationRemovalCategory, number> = {

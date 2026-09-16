@@ -48,6 +48,8 @@ function booking(
         : overrides.offerExpiresAt,
     noEmails: overrides.noEmails ?? false,
     member: { email: "member@example.com" },
+    // #3369: a member-owned fixture; the owner projection reads both halves.
+    organisation: null,
   };
 }
 

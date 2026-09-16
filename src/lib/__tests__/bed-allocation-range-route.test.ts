@@ -270,7 +270,12 @@ describe("POST /api/admin/bed-allocation/allocations/range", () => {
 
     const response = await post(validBody);
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: "Not found" });
+    // #2931: the status stays 404 (every gated address answers that way), and
+    // the body NAMES the refusal so a screen need not guess it from the status.
+    await expect(response.json()).resolves.toEqual({
+      error: "Not found",
+      code: "MODULE_DISABLED",
+    });
     expect(mockAssignBedRange).not.toHaveBeenCalled();
   });
 

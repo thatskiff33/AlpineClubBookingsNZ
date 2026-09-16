@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   xeroSyncCursorFindUnique: vi.fn(),
   memberFindMany: vi.fn(),
   memberFindUnique: vi.fn(),
+  // #2939: `applyInboundMemberContactPatch` now takes the contact-home lock and
+  // asks the OTHER table whether this Xero contact is already a school's
+  // customer before it claims the link (INV-INT-018). Default: nobody else
+  // holds it, which is the ordinary inbound case.
+  organisationFindFirst: vi.fn().mockResolvedValue(null),
   memberUpdate: vi.fn(),
   memberCreditAggregate: vi.fn(),
   memberCreditCreate: vi.fn(),
@@ -41,6 +46,8 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionUpdateMany: vi.fn(),
   paymentTransactionCreate: vi.fn(),
   memberCreditFindFirst: vi.fn(),
+  manualRefundTaskFindFirst: vi.fn(),
+  manualRefundTaskCreate: vi.fn(),
   reconcileBedAllocations: vi.fn(),
   // #2576 §9: an inbound Xero PAID is a confirmation, so it records the bounded
   // hosting re-evaluation with the PAID claim and drains it after the commit.
@@ -428,6 +435,9 @@ describe("processStoredXeroInboundEvents", () => {
         },
         xeroSyncOperation: {
           findMany: mocks.txOperationFindMany,
+        },
+        organisation: {
+          findFirst: mocks.organisationFindFirst,
         },
         member: {
           findUnique: mocks.memberFindUnique,
@@ -1592,6 +1602,11 @@ describe("processStoredXeroInboundEvents", () => {
             create: mocks.memberCreditCreate,
             aggregate: mocks.memberCreditAggregate,
           },
+          // #3369: the durable record of money the system cannot move itself.
+          manualRefundTask: {
+            findFirst: mocks.manualRefundTaskFindFirst,
+            create: mocks.manualRefundTaskCreate,
+          },
           // The in-tx enqueue reads its dedup lookups through this same client.
           xeroObjectLink: {
             findFirst: mocks.txLinkFindFirst,
@@ -1871,7 +1886,14 @@ describe("processStoredXeroInboundEvents", () => {
   function mockPostLockReconcileEvent(params: {
     lockedBookingStatus: "CANCELLED" | "PAYMENT_PENDING";
     capacityAvailable: boolean;
+    /**
+     * #3369: who owns the booking. An ORGANISATION has no member account, so
+     * the credit-mint arm cannot mint and raises a manual hand-back task
+     * instead. Default is the member the rest of this file assumes.
+     */
+    owner?: "member" | "organisation";
   }) {
+    const organisationOwned = params.owner === "organisation";
     const txOperationUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
     mocks.transaction.mockImplementation(
       async (callback: (tx: unknown) => Promise<unknown>) => {
@@ -1898,6 +1920,11 @@ describe("processStoredXeroInboundEvents", () => {
             findFirst: mocks.memberCreditFindFirst,
             create: mocks.memberCreditCreate,
             aggregate: mocks.memberCreditAggregate,
+          },
+          // #3369: the durable record of money the system cannot move itself.
+          manualRefundTask: {
+            findFirst: mocks.manualRefundTaskFindFirst,
+            create: mocks.manualRefundTaskCreate,
           },
           xeroObjectLink: { findFirst: mocks.txLinkFindFirst },
           xeroSyncOperation: {
@@ -1950,7 +1977,8 @@ describe("processStoredXeroInboundEvents", () => {
       xeroRefundCreditNoteId: null,
       booking: {
         id: "booking_ib_pl",
-        memberId: "mem_pl",
+        memberId: organisationOwned ? null : "mem_pl",
+        organisationId: organisationOwned ? "org_pl" : null,
         lodgeId: "lodge_ib_pl",
         checkIn: new Date("2026-07-10"),
         checkOut: new Date("2026-07-12"),
@@ -1959,11 +1987,16 @@ describe("processStoredXeroInboundEvents", () => {
         discountCents: 0,
         promoAdjustmentCents: 0,
         guests: [{ id: "guest_pl", nights: [] }],
-        member: {
-          email: "member@example.com",
-          firstName: "Alice",
-          lastName: "Smith",
-        },
+        member: organisationOwned
+          ? null
+          : {
+              email: "member@example.com",
+              firstName: "Alice",
+              lastName: "Smith",
+            },
+        organisation: organisationOwned
+          ? { name: "Tokoroa Primary School", email: "office@tps.test" }
+          : null,
         promoRedemption: null,
       },
     };
@@ -1987,7 +2020,7 @@ describe("processStoredXeroInboundEvents", () => {
         {
           id: "pay_ib_pl",
           bookingId: "booking_ib_pl",
-          booking: { memberId: "mem_pl" },
+          booking: { memberId: organisationOwned ? null : "mem_pl" },
         },
       ]);
 
@@ -1999,6 +2032,7 @@ describe("processStoredXeroInboundEvents", () => {
     );
 
     mocks.memberCreditFindFirst.mockResolvedValue(null);
+    mocks.manualRefundTaskFindFirst.mockResolvedValue(null);
     mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_account_credit_pl" });
     const accountingApi = {
       getInvoice: vi.fn().mockResolvedValue({
@@ -2083,6 +2117,84 @@ describe("processStoredXeroInboundEvents", () => {
       "lodge_ib_pl"
     );
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
+  });
+
+  it("raises a manual hand-back task when the cancelled booking belongs to a school (#3369)", async () => {
+    // A school paid by internet banking for a booking the club had already
+    // cancelled. There is no member account to hold the money as credit — an
+    // organisation has none, and the invented school member's was unspendable
+    // because that row could not sign in. The first cut of stage 4 answered
+    // that with a `logger.warn` whose comment claimed it gave the club "a
+    // visible, actionable line": no task, nothing on the stuck-state dashboard,
+    // and a caller that treats the outcome as ordinary. The money became a log
+    // line.
+    mockPostLockReconcileEvent({
+      lockedBookingStatus: "CANCELLED",
+      capacityAvailable: true,
+      owner: "organisation",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    // No credit, because there is no account to mint into.
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+
+    // The money is carried by a durable record on the payments board instead,
+    // sized at the invoice's quantified cash rather than the payment's face
+    // amount, and fixed at creation like every other hand-back.
+    expect(mocks.manualRefundTaskCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        bookingId: "booking_ib_pl",
+        paymentId: "pay_ib_pl",
+        amountCents: 12345,
+        raisedAmountCents: 12345,
+        kind: "CANCELLED_BOOKING_HAND_BACK",
+      }),
+    });
+    const reason = mocks.manualRefundTaskCreate.mock.calls[0]?.[0]?.data?.reason;
+    expect(reason).toContain("organisation");
+    expect(reason).toContain("#3369");
+
+    // And an admin is told, the way the other three anomalies in this arm do.
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 12345,
+        memberName: "Tokoroa Primary School",
+        errorMessage: expect.stringContaining("manual refund task"),
+      }),
+    );
+
+    // The booking is not resurrected, exactly as for a member.
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+  });
+
+  it("raises only ONE hand-back task however often the webhook is replayed (#3369)", async () => {
+    // Webhooks are delivered any number of times and this is money. The dedup
+    // is on the (booking, payment, kind) triple rather than on status, so a
+    // replay after an officer has CLOSED the task does not raise a second one.
+    mockPostLockReconcileEvent({
+      lockedBookingStatus: "CANCELLED",
+      capacityAvailable: true,
+      owner: "organisation",
+    });
+    mocks.manualRefundTaskFindFirst.mockResolvedValue({ id: "task_existing" });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.manualRefundTaskCreate).not.toHaveBeenCalled();
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
   });
 
   it("still flips a booking that is unchanged after the lodge-lock re-read to PAID (#1587)", async () => {

@@ -1,5 +1,6 @@
 import type { AgeTier } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { ApiError } from "@/lib/api-error";
@@ -64,6 +65,8 @@ export async function copyBookingToDraft({
     include: {
       guests: true,
       member: { select: { id: true, active: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   });
   if (!source) {
@@ -72,7 +75,32 @@ export async function copyBookingToDraft({
   if (source.deletedAt) {
     throw new ApiError("Deleted bookings cannot be copied", 400);
   }
-  if (!source.member.active) {
+
+  // #3369: a COPY re-books the same party for a new stay under the same owner,
+  // and this path's create service takes a member. An organisation-owned
+  // booking has none, so copying one would have to mint a school booking — a
+  // different operation with its own Xero and organisation-resolution
+  // obligations, and not one an officer should reach by pressing "copy".
+  // Refused in words, before anything is written.
+  //
+  // BEFORE THE ACTIVE-MEMBER CHECK, AND AS AN `ApiError` (#3480). This refusal
+  // used to sit below that check, and `bookingOwner()` projects an organisation
+  // with no `active` at all — so `!member.active` was true for every school
+  // booking, the officer was told "The booking member is inactive", and the
+  // sentence that says what is actually wrong was unreachable. It was also a
+  // bare `Error`, which the route hands to the log and answers with a generic
+  // "Failed to copy booking" (#1888), so even once reached these words would
+  // not have arrived. Every sibling refusal in this function is an
+  // `ApiError(..., 400)`; this one is too, and it is asked first because the
+  // owner's KIND decides whether the owner's standing is even a question.
+  const sourceOwnerMemberId = bookingOwner(source).memberId;
+  if (!sourceOwnerMemberId) {
+    throw new ApiError(
+      "This booking belongs to a school rather than to a member, so it cannot be copied. Approve a new school booking request instead (#3369).",
+      400,
+    );
+  }
+  if (!bookingOwner(source).member.active) {
     throw new ApiError("The booking member is inactive", 400);
   }
   if (source.guests.length === 0) {
@@ -124,7 +152,7 @@ export async function copyBookingToDraft({
   try {
     resolved = await resolveLinkedBookingMembersWithBoundary(
       prisma,
-      source.memberId,
+      sourceOwnerMemberId,
       memberGuestIds,
       {
         skipAuthorization: true,
@@ -137,7 +165,7 @@ export async function copyBookingToDraft({
       adminMemberId,
       {
         actorRole: "ADMIN",
-        onBehalfOfMemberId: source.memberId,
+        onBehalfOfMemberId: bookingOwner(source).memberId,
         // D-8: a blocked cross-family member is refused neutrally, even here —
         // the admin copying the booking may be looking at a member whose details
         // the source booking's owner should not have handed over in the first
@@ -212,7 +240,7 @@ export async function copyBookingToDraft({
   const guests = consentPlan.guests;
 
   const booking = await createDraftBooking({
-    effectiveMemberId: source.memberId,
+    effectiveMemberId: sourceOwnerMemberId,
     isOnBehalf: true,
     sessionUserId: adminMemberId,
     // A copy stays at the source booking's authoritative lodge. Omitting this
@@ -304,7 +332,7 @@ export async function copyBookingToDraft({
     action: "booking.copy.created",
     memberId: adminMemberId,
     targetId: booking.id,
-    subjectMemberId: source.memberId,
+    subjectMemberId: bookingOwner(source).memberId,
     entityType: "Booking",
     entityId: booking.id,
     category: "booking",

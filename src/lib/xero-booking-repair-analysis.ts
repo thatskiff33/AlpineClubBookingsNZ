@@ -13,9 +13,10 @@ import {
   readJsonRecord,
   readJsonString,
 } from "./xero-booking-repair-utils";
+import { bookingOwner } from "@/lib/booking-owner";
 
 export function buildMemberName(booking: BookingRepairRecord) {
-  return `${booking.member.firstName} ${booking.member.lastName}`.trim();
+  return `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim();
 }
 
 function getCancellationCreditEntries(booking: BookingRepairRecord) {

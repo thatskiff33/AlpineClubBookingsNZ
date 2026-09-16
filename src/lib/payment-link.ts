@@ -70,6 +70,8 @@ type ResolvedPaymentLink = Prisma.PaymentLinkGetPayload<{
     booking: {
       include: {
         member: true;
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true; email: true } };
         guests: true;
         payment: true;
         groupBookingJoin: { select: { id: true } };
@@ -99,6 +101,8 @@ export async function loadPaymentLinkRecord(token: string): Promise<ResolvedPaym
       booking: {
         include: {
           member: true,
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           guests: true,
           payment: true,
           // #1967: lets link flows tell a genuine split child (#738) apart

@@ -5,6 +5,7 @@ import {
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
@@ -109,7 +110,7 @@ export async function POST(request: NextRequest) {
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
-  if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
+  if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (booking.organiserSettled) {
@@ -231,7 +232,14 @@ export async function POST(request: NextRequest) {
     // Credit writers serialize on a per-member key, not lock(1). Compose all
     // three tiers in the global -> lodge -> member order before aggregating so
     // this read cannot race an applied-credit writer.
-    await lockMemberCreditLedger(locked.memberId, tx);
+    const creditLedgerMemberId = bookingOwner(locked).memberId;
+    // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+    // booking has none, so there is no key to take. Passing a null key would
+    // either throw inside the helper or degenerate to a shared advisory key,
+    // which is an `INV-LOCK` hazard that shows up only under concurrency.
+    if (creditLedgerMemberId) {
+      await lockMemberCreditLedger(creditLedgerMemberId, tx);
+    }
 
     if (holdBedSlots) {
       const capacity = await checkCapacityForGuestRanges(
@@ -416,6 +424,7 @@ export async function POST(request: NextRequest) {
   try {
     const queued = await enqueueXeroBookingInvoiceOperation(booking.id, {
       createdByMemberId: session.user.id,
+      invoiceEmailDelivery: null,
     });
     // #1620 — enqueue the applied-credit allocation AFTER the invoice op (older
     // createdAt → processed first) so the invoice exists when the allocation

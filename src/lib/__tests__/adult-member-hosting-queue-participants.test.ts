@@ -23,6 +23,7 @@ import {
   HOSTING_COVERAGE_RETRY_MESSAGE,
   HostingCoverageParticipantFenceUnavailableError,
   HostingCoverageParticipantRetryError,
+  hostingCoverageParticipantOwnerId,
   isPostgresLockNotAvailable,
   isHostingCoverageParticipantRetry,
   lockActiveBookingRequestLinkedMembers,
@@ -773,5 +774,44 @@ describe("participant fence source contract (#2619)", () => {
     expect(
       (error as unknown as { statusCode?: unknown }).statusCode,
     ).toBeUndefined();
+  });
+});
+
+describe("what a hosting-coverage participant is (#3369, one home since #3480)", () => {
+  // The fence's re-read and every producer in the review module ask this one
+  // predicate, so the two halves of a proof are taken over the same set. A
+  // member-owned booking is a participant, keyed on its owner; an
+  // organisation-owned booking — a school's, since #3369 — is not.
+  it("names the owning member of a member-owned booking", () => {
+    expect(hostingCoverageParticipantOwnerId({ memberId: "member-1" })).toBe("member-1");
+  });
+
+  it("answers null for an organisation-owned booking, which holds no member-nights", () => {
+    expect(hostingCoverageParticipantOwnerId({ memberId: null })).toBeNull();
+  });
+
+  it("drops an organisation-owned booking from the fence's re-read rather than fingerprinting it", async () => {
+    // The verifier's side of the agreement: handed a member-owned source, it
+    // re-reads a set that also contains a school booking and issues a proof over
+    // the member-owned one alone, instead of reporting the school as a change.
+    const db = {
+      $executeRaw: vi.fn(async () => 1),
+      member: {
+        findMany: vi.fn(async () => [{ id: "member-1" }]),
+      },
+      booking: {
+        findMany: vi.fn(async () => [
+          { id: "b-member", memberId: "member-1", lodgeId: "lodge-a" },
+        ]),
+      },
+    } as never;
+    const proof = await acquireHostingCoverageQueueParticipantProof(
+      {
+        sources: [{ bookingId: "b-member", ownerMemberId: "member-1", lodgeId: "lodge-a" }],
+        actorMemberId: null,
+      },
+      db,
+    );
+    expect(proof.sources.map((source) => source.bookingId)).toEqual(["b-member"]);
   });
 });

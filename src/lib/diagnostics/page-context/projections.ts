@@ -33,6 +33,7 @@
 
 import "server-only";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { formatDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 
@@ -160,11 +161,13 @@ function nightsBetween(checkIn: Date, checkOut: Date): number {
   return days > 0 ? days : 0;
 }
 
-function displayName(person: {
-  firstName: string;
-  lastName: string;
-}): string {
-  return `${person.firstName} ${person.lastName}`.trim();
+function displayName(
+  // #3369: null when a booking is owned by an `Organisation` and the caller
+  // selected no owner projection. The empty string is the honest answer — the
+  // pack states no name rather than inventing one.
+  person: { firstName: string; lastName: string } | null,
+): string {
+  return person ? `${person.firstName} ${person.lastName}`.trim() : "";
 }
 
 async function readBooking({
@@ -184,6 +187,8 @@ async function readBooking({
       notes: true,
       lodge: { select: { name: true } },
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },
   });
@@ -215,7 +220,12 @@ async function readBooking({
   }
 
   if (includeSensitive) {
-    facts.push(sensitiveFact("booking.member-name", displayName(booking.member)));
+    // The fact KEY is a stable operator-facing string and is NOT an ownership
+    // read (#3368): the sweep rewrote it along with the value beside it, which
+    // renamed a diagnostics fact. Left as it was.
+    facts.push(
+      sensitiveFact("booking.member-name", displayName(bookingOwner(booking).member)),
+    );
     if (booking.notes) {
       facts.push(sensitiveFact("booking.notes", booking.notes));
     }
@@ -297,7 +307,7 @@ async function readPayment({
 
   if (includeSensitive) {
     facts.push(
-      sensitiveFact("payment.payer-name", displayName(payment.booking.member)),
+      sensitiveFact("payment.payer-name", displayName(bookingOwner(payment.booking).member)),
     );
   }
 

@@ -142,6 +142,10 @@ describe("POST /api/admin/payments/[id]/generate-invoice", () => {
 
     expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("booking_1", {
       createdByMemberId: "admin_1",
+      // #2929: this surface has no creation-time email choice to express, and
+      // the option is required so it has to say so. A null inherits whatever
+      // the original enqueue for this same invoice recorded.
+      invoiceEmailDelivery: null,
     });
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({
       limit: 1,

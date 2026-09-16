@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
@@ -51,6 +52,8 @@ const includeRequestDetail = {
       member: {
         select: { id: true, firstName: true, lastName: true, email: true },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: {
         select: {
           id: true,
@@ -197,7 +200,7 @@ export async function PATCH(
         : "booking-change-request.reject",
     memberId: session.user.id,
     targetId: existing.booking.id,
-    subjectMemberId: existing.booking.memberId,
+    subjectMemberId: bookingOwner(existing.booking).memberId,
     entityType: "BookingChangeRequest",
     entityId: id,
     category: "booking",
@@ -207,6 +210,13 @@ export async function PATCH(
         ? "Booking change request approved"
         : "Booking change request rejected",
     details: parsed.data.adminNotes?.trim() || null,
+    // #2695 (`INV-PRIV-018`) - member-facing, which PRESERVES what the member
+    // reads today rather than widening it: `adminNotes` is #2562's member-facing
+    // half, already emailed to them with this decision, while `internalNotes`
+    // reaches no member surface and is not in this row at all.
+    memberDisclosure: parsed.data.adminNotes?.trim()
+      ? { visibility: "member-facing", text: parsed.data.adminNotes.trim() }
+      : { visibility: "internal" },
     metadata: {
       bookingId: existing.booking.id,
       requestId: id,

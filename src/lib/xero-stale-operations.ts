@@ -9,6 +9,38 @@ import { prisma } from "@/lib/prisma";
 export const STALE_RUNNING_XERO_OPERATION_MINUTES = 15;
 
 /**
+ * THE ERROR CODE a stale-RUNNING reset stamps on the row it fails (#3001).
+ *
+ * One home, because three places depend on the exact string: the operator reset
+ * route writes it, the contact-create recovery reads it back, and the booking
+ * page's invoice warning uses it to tell an operation that FAILED from an
+ * operation that was never seen through — a worker killed mid-invoice leaves no
+ * evidence either way, so the honest reading of such a row is that the invoice
+ * state is UNKNOWN rather than that no invoice was raised.
+ */
+export const XERO_ORPHANED_STALE_RUNNING_ERROR_CODE = "ORPHANED_STALE_RUNNING";
+
+/**
+ * True when a RUNNING operation was claimed longer ago than the staleness
+ * threshold, i.e. it is almost certainly stuck rather than genuinely in flight.
+ *
+ * The row-level counterpart of {@link staleRunningXeroOperationFilter}, and
+ * written to agree with it: a null `startedAt` is never stale, exactly as the
+ * filter's `lt` comparison never matches one.
+ */
+export function isStaleRunningXeroOperation(
+  startedAt: Date | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!startedAt) return false;
+
+  return (
+    startedAt.getTime() <
+    now.getTime() - STALE_RUNNING_XERO_OPERATION_MINUTES * 60_000
+  );
+}
+
+/**
  * Prisma `where` filter matching XeroSyncOperation rows stuck in RUNNING past
  * the staleness threshold. Rows with a null startedAt are never matched by the
  * `lt` comparison, so only genuinely-claimed-and-stuck rows are counted.

@@ -122,6 +122,7 @@ import {
   hasCapturedPayment,
   isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
+import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import {
   deriveBookingAppliedCreditCents,
@@ -555,7 +556,11 @@ async function assembleBookingFinanceState(
     await Promise.all([
       deriveBookingAppliedCreditCents(bookingId, tx),
       readCancellationCredits(tx, bookingId),
-      getMemberCreditBalance(booking.memberId, tx),
+      // #3369: an organisation holds no account credit, so the evidence pack
+      // reports zero rather than reading a ledger that does not exist.
+      bookingOwner(booking).memberId
+        ? getMemberCreditBalance(bookingOwner(booking).memberId as string, tx)
+        : Promise.resolve(0),
     ]);
 
   const [xeroActivity, refundPosture, primaryInvoiceLinked] = await Promise.all([

@@ -8,6 +8,8 @@
  * unit-testable.
  */
 
+import { selectTypesRequiringHutRates } from "@/lib/membership-type-rate-coverage";
+
 export const HUT_FEE_FLAT_KEY = "FLAT";
 export const HUT_FEE_SEASON_TYPES = ["WINTER", "SUMMER"] as const;
 
@@ -34,16 +36,13 @@ export function hutFeeCellKey(
  * Rate-bearing membership types shown as grid rows: every active MEMBER_RATE
  * type plus the built-in NON_MEMBER type (the non-member rate holder). Other
  * NON_MEMBER_RATE and BLOCK_BOOKING types carry zero own hut-fee rows — the
- * D2 invariant — and are not shown.
+ * D2 invariant, `INV-MOD-007` — and are not shown. The rule itself is asked in
+ * one place (#2933).
  */
 export function filterHutFeeRateTypes<
   T extends { isActive: boolean; key: string; bookingBehavior: string },
 >(types: T[]): T[] {
-  return types.filter(
-    (type) =>
-      type.isActive &&
-      (type.bookingBehavior === "MEMBER_RATE" || type.key === "NON_MEMBER"),
-  );
+  return selectTypesRequiringHutRates(types);
 }
 
 /** The tier cells one type's row carries: each age tier, or the single FLAT cell. */

@@ -211,6 +211,11 @@ describe("#1285 check-in reminders honor the bookingReminder preference", () => 
     checkIn: new Date("2026-04-10T00:00:00.000Z"),
     checkOut: new Date("2026-04-12T00:00:00.000Z"),
     status: "CONFIRMED",
+    // #3369: the reminder asks the OWNER's preference, and the owner is read
+    // through `bookingOwner()` — so the fixture carries the member id the
+    // lookup is keyed on, and an empty organisation slot beside it.
+    memberId: "member-1",
+    organisation: null,
     member: {
       id: "member-1",
       email: "mia@example.com",

@@ -13,10 +13,10 @@
 
 import { randomBytes } from "crypto";
 import {
-  ensureGeneratedCredential,
   getIntegrationCredentialValue,
   resolveIntegrationCredential,
 } from "@/lib/integration-credentials";
+import { ensureGeneratedCredential } from "@/lib/integration-credential-generate";
 import { readEnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import { XERO_TOKEN_KEY_LABEL } from "@/lib/integration-crypto";
 
@@ -208,6 +208,7 @@ export async function getOperationalXeroEncryptionKey(): Promise<
     key: XERO_CREDENTIAL_KEYS.tokenKey,
     label: XERO_TOKEN_KEY_LABEL,
     generate: () => randomBytes(32).toString("hex"),
+    actor: { kind: "system", actor: "xero-token-key-generation" },
   });
   return value ?? undefined;
 }

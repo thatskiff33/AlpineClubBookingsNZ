@@ -1473,6 +1473,29 @@ describe("retryXeroSyncOperation", () => {
     expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
   });
 
+  it("refuses it for a withheld-at-creation PARTIAL too (#2929)", async () => {
+    // Same hazard, second reason. Like the case above, this payload carries NO
+    // `paymentSkipped`, so the refusal has to come from the withhold key
+    // itself -- which is the point of checking it rather than trusting that an
+    // Internet Banking operation always says its payment was skipped.
+    const withheldAtCreation = makeOperation({
+      status: "PARTIAL",
+      xeroObjectId: "inv_123",
+      responsePayload: {
+        invoice: { invoices: [{ total: 45.67 }] },
+        paymentError: null,
+        invoiceEmailWithheldByCreationChoice: true,
+      },
+    });
+    mocks.findUniqueOperation.mockResolvedValue(withheldAtCreation);
+
+    expect(getXeroOperationRetryMeta(withheldAtCreation).supported).toBe(false);
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).rejects.toThrow();
+    expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+  });
+
   it("still repairs a genuine payment fault, and a legacy payload of unknown shape", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({

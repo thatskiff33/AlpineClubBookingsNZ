@@ -4,6 +4,7 @@ import {
   formatDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
+import { bookingOwner } from "@/lib/booking-owner";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import {
   isGuestActiveOnNight,
@@ -210,7 +211,12 @@ export async function findBookingMemberNightConflicts(
     excludeBookingId,
     today,
   }: {
-    actorMemberId: string;
+    /**
+     * The identity the scan runs AS. Nullable since #3369 because one caller
+     * passes the booking's own owner, and an organisation-owned booking has no
+     * member — which simply means no result is ever "the actor's own".
+     */
+    actorMemberId: string | null;
     actorRole: string;
     checkIn: Date;
     checkOut: Date;
@@ -294,6 +300,8 @@ export async function findBookingMemberNightConflicts(
           checkIn: true,
           checkOut: true,
           member: { select: { firstName: true, lastName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           guests: { select: { id: true, memberId: true } },
         },
       },
@@ -348,7 +356,7 @@ export async function findBookingMemberNightConflicts(
       throw memberGuestCrossFamilyRefusal([guest.memberId]);
     }
 
-    const isOwnBooking = guest.booking.memberId === actorMemberId;
+    const isOwnBooking = bookingOwner(guest.booking).memberId === actorMemberId;
     const isSelfGuest = guest.memberId === actorMemberId;
     // #2250 — one server-side rule, shared with the booking detail page's
     // affordance and with the removal service's own status gate, so no surface
@@ -356,7 +364,7 @@ export async function findBookingMemberNightConflicts(
     const { canSelfRemove } = evaluateGuestSelfRemoval({
       actorMemberId,
       guestMemberId: guest.memberId,
-      bookingOwnerMemberId: guest.booking.memberId,
+      bookingOwnerMemberId: bookingOwner(guest.booking).memberId,
       bookingStatus: guest.booking.status,
       bookingCheckIn: guest.booking.checkIn,
       bookingGuestCount: guest.booking.guests.length,
@@ -386,8 +394,8 @@ export async function findBookingMemberNightConflicts(
             bookingId: guest.booking.id,
             bookingStatus: guest.booking.status,
             bookingOwnerName: displayName(
-              guest.booking.member.firstName,
-              guest.booking.member.lastName,
+              bookingOwner(guest.booking).member.firstName,
+              bookingOwner(guest.booking).member.lastName,
             ),
             bookingCheckIn: formatDateOnly(guest.booking.checkIn),
             bookingCheckOut: formatDateOnly(guest.booking.checkOut),

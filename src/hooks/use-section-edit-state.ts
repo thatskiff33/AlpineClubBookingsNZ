@@ -119,6 +119,14 @@ export interface SectionEditState<T extends object> {
   /** Update the draft. Ignored while `draft` is `null`. */
   setDraft: (update: Partial<T> | ((current: T) => T)) => void;
   startEditing: () => void;
+  /**
+   * Counts explicit `startEditing` calls, starting at `0`. Hand it to
+   * `useRevealAttention` (`@/hooks/use-scroll-to-feedback`) to bring the
+   * section into view and focus when the admin clicks Edit — and only then:
+   * a re-render with `editing` already `true` leaves it unchanged, so the
+   * editor is never focused because content re-rendered (#2934).
+   */
+  editRequestKey: number;
   /** Restore every field from the snapshot and leave edit mode. */
   cancelEditing: () => void;
   save: () => Promise<void>;
@@ -148,6 +156,7 @@ export function useSectionEditState<T extends object>(
   const [loading, setLoading] = useState(Boolean(options.load));
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [editRequestKey, setEditRequestKey] = useState(0);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -216,7 +225,10 @@ export function useSectionEditState<T extends object>(
     });
   }, []);
 
-  const startEditing = useCallback(() => setEditing(true), []);
+  const startEditing = useCallback(() => {
+    setEditing(true);
+    setEditRequestKey((key) => key + 1);
+  }, []);
 
   const cancelEditing = useCallback(() => {
     // Restoring the snapshot object wholesale is the point of the hook: no
@@ -263,6 +275,7 @@ export function useSectionEditState<T extends object>(
     loading,
     saving,
     editing,
+    editRequestKey,
     dirty,
     valid,
     error,

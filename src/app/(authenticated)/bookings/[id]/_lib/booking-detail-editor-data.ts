@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import type { auth } from "@/lib/auth";
 import type { BoundClubTime } from "@/lib/club-time";
@@ -78,7 +79,13 @@ export async function buildBookingDetailEditorData({
     !hasCapturedPayment(booking.payment);
   const editorCredit = creditElectionEligible
     ? {
-        availableCents: await getMemberCreditBalance(booking.memberId),
+        // #3369: an organisation holds no account credit, so the editor's
+        // credit card reports zero — the fact, not a fallback for a balance.
+        availableCents: bookingOwner(booking).memberId
+          ? await getMemberCreditBalance(
+              bookingOwner(booking).memberId as string,
+            )
+          : 0,
         electionCents: booking.creditElectionCents,
         appliedCents: await deriveBookingAppliedCreditCents(booking.id),
       }
@@ -317,7 +324,7 @@ export async function buildBookingDetailEditorData({
     // #2266: the booking OWNER's member id — the shared PromoCodeInput
     // validates on-behalf promo entry against the member's assignments, not
     // the acting admin's.
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId ?? undefined,
     // #2266: promo lodge restrictions validate against THIS booking's lodge.
     lodgeId: booking.lodgeId,
   };

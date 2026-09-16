@@ -84,6 +84,58 @@ and machine `action`, the actor, the affected member (subject), the entity, and
 primary drill-down links. Expanding a row reveals the request ID, IP, user
 agent, **retention class**, raw details, and JSON metadata.
 
+### Very large entries, and the older ones that look broken (#2704)
+
+Some entries record structured evidence — a before-and-after snapshot, a list of
+what changed — rather than a sentence. There is a size limit on that field, and
+until this release an entry that ran past it was simply **cut off at the
+thousandth character**, wherever that happened to fall.
+
+That produced two problems on exactly the entries you most want to read.
+
+- The expanded row showed a wall of broken text instead of named fields, with no
+  metadata panel and none of the drill-through links.
+- Worse, the cut could land **in the middle of a value**. An entry recording an
+  amount of 1234567 could be stored showing `1`, with nothing on screen to say
+  it was a fragment. Anyone reading it would have read a figure that was wrong
+  by six orders of magnitude.
+
+**From this release an entry that will not fit keeps whole fields instead.** It
+records as many complete fields as there is room for, tells you how long the
+full record was, and names the fields it could not keep. On a very wide entry
+the list of names can itself run out of room; when that happens the entry also
+carries `_droppedKeyCount`, the number of fields dropped altogether, so a short
+list of names is never mistaken for the whole story. Which fields survive does
+not depend on the order they were written in — the small ones are taken first,
+so one long note cannot push the amount, the booking and the payment reference
+off the entry. A long piece of *text* inside one is still shortened — you will
+see `...[TRUNCATED]` at the end of it — but a number, an identifier or a date is
+now either recorded in full or listed as dropped. **Nothing on the screen is
+ever a piece of a value pretending to be the whole one.**
+
+**Entries recorded before this release are read back the same way, as far as
+that is possible.** The cut already happened and nothing can undo it, so the
+screen rebuilds the fields that were complete before the cut and discards the
+part that was not. Such an entry is marked `_recoveredFromTruncatedText` in its
+metadata panel, and **the original stored text is still shown beside it** under
+Details. That is deliberate: the rebuilt fields are a convenience, and the
+stored text is the club's actual record. Nothing is rewritten in the database —
+what changed is only how it is read.
+
+One place is worth being exact about: a member's own booking page, which shows
+the reason a payment failed. That page decides its own readership (see the note
+at the end of the member section below) and **no code on it changed** — but it
+reads the stored entry, so what it reads changed with everything else. It gets
+*less*, not more. When the recorded reason was too long, the entry used to stop
+being readable and the page fell back to showing the member the whole stored
+record, punctuation and internal references and all; now it reads the recorded
+reason itself, shortened if need be, or falls back to a plain sentence. That is
+pinned by a test rather than argued, because "this cannot widen what a member
+reads" is the kind of claim that has to be checked. On the member's own activity
+history it changes nothing at all — that is decided by the rule in "What a
+member reads on their own timeline", which reads neither this field nor its
+shape.
+
 ### Categories, and what they are actually for
 
 The **Category** on an entry is not a colour or a label for tidiness. It is the
@@ -275,14 +327,13 @@ touched*: a member's own photo or their own cancellation request stays theirs to
 see, while the administration of their record — fields, activation, roles — does
 not. Each entry concerns the member reading it, and a member's view never
 shows the stored metadata, the request ID, the IP address, the user agent, the
-retention class or any drill-down link. It **does** show the entry's own
-free-text line where it has one: that line is dropped only when what the entry
-recorded is structured data rather than a sentence, which is a property of the
-entry and not of who is reading it. (One size caveat, because it is easy to
-miss: structured data long enough to be clipped at the platform's
-1000-character limit stops reading as structured, so a very long payload comes
-back as the clipped text.) If a member asks why sign-in entries have started
-appearing, that is why.
+retention class or any drill-down link. Whether it shows the entry's own
+free-text line is decided by what the entry **declares** for the member — see
+"What a member reads on their own timeline" below, which replaced an older rule
+that dropped the line whenever the entry recorded structured data rather than a
+sentence. Nothing about the size or the shape of what was recorded decides it
+any more. If a member asks why sign-in entries have started appearing, that is
+why.
 
 **A second thing on the member side, from this release.** Twenty-six of the kinds
 of entry that gained a category are now inside the member-visible slice when they
@@ -292,14 +343,14 @@ administrator who made the change, so the only member timeline they reach is tha
 administrator's own. Two reach an ordinary member, and both are about that member:
 an **issue report** appears for the member who filed it, and a change to a
 member's **billing family** appears for the member it was made for. Neither shows
-the request ID, the IP or any drill-down link, and neither normally shows the
-stored details either — both record structured data rather than a sentence, which
-a member's view drops. The one exception is size: an issue report records the
-page address and title the member was on, and a page address long enough to push
-that past the 1000-character clip stops reading as structured, so the clipped
-text is shown. What that shows the member is their own page address and title, so
-nothing travels that should not; the billing-family entry is nowhere near the
-limit. **They do name who acted, unless that person is a Full Admin.** A member's
+the request ID, the IP or any drill-down link, and neither shows the stored
+details either — neither declares anything for the member, and an entry that
+declares nothing shows nothing. That was once a statement about their *shape*,
+with a size exception: an issue report records the page address and title the
+member was on, and a page address long enough to be clipped stopped reading as
+structured, so the clipped text was shown. Both the rule and its exception are
+gone; what governs now is the declaration.
+**They do name who acted, unless that person is a Full Admin.** A member's
 view renders a Full
 Admin as "Club admin", but a scoped officer — a Finance Manager, say, who is not
 a Full Admin — is rendered by name. That is how every entry a member can already
@@ -344,11 +395,73 @@ entry rather than the menu the screen sits under, and both are left that way on
 purpose — filing issue reports under `admin` would have made them readable by
 more people, not fewer.
 
+### What a member reads on their own timeline (#2695)
+
+A member can see some of these entries about themselves, on their own profile
+page. Which entries they see is the Category, as above. **What they read of each
+one is a separate decision, and from this release the club makes it on purpose.**
+
+It used to be made by accident. An entry's free-text note was shown to the member
+whenever it happened to be an ordinary sentence, and hidden whenever it happened
+to be stored as structured data — a difference nobody chose and nobody could see
+from the screen. Two consequences were live:
+
+- An administrator declining an account-deletion request typed a note on the same
+  form as the **Do not notify the member** tick, and the member read the note on
+  their own timeline anyway. The tick suppressed the email and nothing else.
+- A member receiving a credit adjustment read a sentence written for officers,
+  naming two internal record numbers and the member who requested it.
+
+Now each event states what the member may read, and **an event that says nothing
+shows the member nothing**. So a new kind of entry can never publish an officer's
+words by accident; somebody has to decide to publish them.
+
+**What a member sees today**, and it is deliberately a short list:
+
+- the **reason for a credit adjustment** — why their balance moved, which is the
+  only explanation they ever get for it, now written for them rather than
+  borrowed from the officers' copy;
+- the **note on a booking decision** — review approve or decline, a booking change
+  request, and a policy-exception decision. This is the note the member already
+  reads with the decision: on a booking review it is shown on their own booking
+  page as the **Admin note**, and on the other two it is emailed with the
+  decision. The officer's *private* note has never been on the audit entry at
+  all. A policy-exception *approval* written without a note publishes nothing —
+  what the entry records in that case is the internal code for the rule that was
+  waived, which is not a sentence written for anybody.
+
+Everything else shows the member what happened, when, and who did it — and not an
+officer's free text. **Officers lose nothing:** every entry keeps its full wording
+on this screen.
+
+**The same rule now covers the download.** Profile → Export my data used to put
+the stored note of every entry about that member into the file, whatever it said
+— so a deletion-decline note written under **Do not notify the member** came back
+in the download even though it had never appeared on screen. The file now carries
+the same words the member's own history shows, and nothing else.
+
+**Three things worth knowing.** The change applies to entries recorded *before*
+this release too, so a deletion-decline note written last year stops being visible
+to the member from the day you upgrade. Nothing is deleted — the note is still
+here, for anyone with the access to read this screen. **That cuts both ways:** an
+older entry states nothing about the member either, so a member who received a
+credit adjustment last season no longer sees the recorded reason for it. The
+credit, its amount and its date are unaffected, and the reason is still on the
+entry for you to read. And the two levers are separate: a Category change moves
+whole *entries* on and off a member's timeline, while this decides the *words*
+within one. Neither does the other's job.
+
+**One member-facing screen is outside this rule, on purpose.** A member's own
+booking page shows the reason a payment failed, which is read from the entry the
+payment attempt wrote. That page decides its own readership — it is the surface
+the owner ruled on in September 2026 — and this rule governs the audit history
+and the data download rather than every page that happens to quote an entry.
+
 ### Some entries have no category at all
 
 `Category` is optional in the database, and **82 of the platform's places that
 record an audit entry used not to set one**. As of this release **none do**: all
-473 now record a category, measured on every build rather than estimated.
+483 now record a category, measured on every build rather than estimated.
 
 **And a new one can no longer forget.** Recording an entry without a category is
 now refused three separate ways. Giving the 82 places a category and stopping the
@@ -370,7 +483,7 @@ that order and both landing in this release; this is the second:
    maintenance script outside the normal path.
 
 The practical effect for you: an entry recorded the ordinary way — through the
-platform’s own recording step, which is how every one of the 473 places does it —
+platform’s own recording step, which is how every one of the 483 places does it —
 cannot be born without a category any more. **It is not a mathematical
 guarantee**, and it is worth saying so rather than overclaiming: someone writing
 directly to the database table in a migration, or building a query by hand, is
@@ -626,6 +739,28 @@ person to look at and never acted on automatically: a member trying five
 different weekends to find one that suits a friend produces exactly the same
 pattern as somebody probing, and only a human who knows both people can tell
 them apart. Treat it as a conversation to have if it keeps happening.
+
+### Issue-report screenshot entries (#2703)
+
+A screenshot taken by somebody who had admin access is shown only to a Full
+Admin (`INV-PRIV-021`; see [Issue Reports](issue-reports.md) ->
+"Screenshots taken by an officer"). Two `privacy`-category actions record how
+that went, and **neither records anything about what the picture showed**.
+
+| Action | Written when | What it contains |
+| --- | --- | --- |
+| `issue_report.admin_viewed` | Every time an officer opens a report, as before | Now also a `screenshotDisposition` saying which of five things happened to the picture: `viewed` (shown to this officer), `withheld` (exists, but they are not a Full Admin), `expired` (cleared by the 30-day sweep), `deleted` (an administrator deleted it) or `none` (there never was one) |
+| `issue_report.screenshot_withheld` | Each time an officer OPENS a report and is refused an admin-taken screenshot. Resolving or reopening a report is not a view and is not recorded as one, exactly as before this change | Who was refused, which report, and a fixed reason. Severity **important**, so a run of them is easy to spot |
+
+Both are `privacy`, matching every other issue-report event. **Be clear about
+what that does and does not do.** Anyone who can open Admin > Audit Log reads
+these rows in full — that screen is a support-area surface with no
+per-category filter, so `privacy` withholds nothing from a support-only
+officer there. What the category decides is which AI Diagnostics correlation
+entry can return the row, and there `privacy` needs **Support + Membership**.
+It is the right category under `INV-PRIV-012` either way, because that is where
+a member-data row belongs; it is simply not a second access control on top of
+the screen.
 
 ## Troubleshooting
 

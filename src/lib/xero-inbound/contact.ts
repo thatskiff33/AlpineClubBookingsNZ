@@ -10,6 +10,7 @@ import {
   type InboundMemberContactPatch,
 } from "@/lib/xero-contact-create-recovery";
 import { parseXeroContactDateOfBirth } from "@/lib/xero-contact-date-of-birth";
+import { XeroContactTwoHomesError } from "@/lib/xero-contact-home";
 import { xeroCalendarDateAsDateOnly } from "@/lib/xero-provider-dates";
 import { writeXeroInboundAuditLogs } from "./audit";
 
@@ -231,7 +232,24 @@ export async function reconcileXeroContact(contactId: string) {
         setCanonicalLink: canApplyCanonicalLink,
       });
     } catch (error) {
+      /*
+        THE TWO-HOMES REFUSAL IS A TERMINAL SKIP HERE, not a failure (#2939).
+
+        `applyInboundMemberContactPatch` started taking the refusal in this same
+        change, and this loop had no bucket for it: rethrowing marks the inbound
+        event FAILED, and a failed event is re-claimed every cycle, forever,
+        spending a provider call on each pass. Nothing is corrupted — the
+        refusal is precisely the thing that stopped a person adopting a school's
+        Xero customer — but the state is permanently red with no operator
+        remedy, because the remedy is in Xero rather than here.
+
+        It joins the three skips above for the reason they are skips: the
+        participant cannot be applied and will not become applicable by being
+        retried, so the honest outcome is to record why and carry on with the
+        other members on this contact.
+      */
       if (
+        error instanceof XeroContactTwoHomesError ||
         error instanceof XeroMemberUnavailableError ||
         error instanceof XeroContactLinkChangedError ||
         (error instanceof Error && error.message === `Member not found: ${member.id}`)

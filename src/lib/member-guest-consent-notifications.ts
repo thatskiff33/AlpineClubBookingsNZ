@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -404,7 +405,7 @@ type NotificationContext = {
   checkIn: Date;
   checkOut: Date;
   bookingStatus: string;
-  bookingOwnerMemberId: string;
+  bookingOwnerMemberId: string | null; // #3369: null for an Organisation.
   /**
    * Whether this booking carries an officer-negotiated booking-request price —
    * the same question `isQuotePricedBooking` answers, read from the booking's
@@ -443,6 +444,7 @@ async function loadNotificationContext(
       status: true,
       memberId: true,
       member: { select: { firstName: true, lastName: true } },
+      organisation: { select: { name: true, email: true } },
       // D-14, and the fact that makes the added notice honest for the whole
       // MG4-D-b population (#2309). `evaluateGuestSelfRemoval` defaults
       // `isQuotePriced` to false — "not known to be quote priced" — and every
@@ -479,11 +481,11 @@ async function loadNotificationContext(
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     bookingStatus: booking.status,
-    bookingOwnerMemberId: booking.memberId,
+    bookingOwnerMemberId: bookingOwner(booking).memberId,
     isQuotePriced: Boolean(
       booking.originBookingRequest ?? booking.heldForBookingRequest,
     ),
-    bookerName: `${booking.member.firstName} ${booking.member.lastName}`.trim(),
+    bookerName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim(),
     party: booking.guests.map((guest) => ({
       firstName: guest.firstName,
       lastName: guest.lastName,
@@ -576,6 +578,7 @@ export async function sendMemberGuestWithdrawnNotifications(params: {
       checkIn: true,
       checkOut: true,
       member: { select: { firstName: true, lastName: true } },
+      organisation: { select: { name: true, email: true } },
     },
   });
   if (!booking) {
@@ -587,7 +590,7 @@ export async function sendMemberGuestWithdrawnNotifications(params: {
     return result;
   }
   const bookerName =
-    `${booking.member.firstName} ${booking.member.lastName}`.trim();
+    `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim();
 
   const targets = await db.member.findMany({
     where: { id: { in: targetMemberIds } },

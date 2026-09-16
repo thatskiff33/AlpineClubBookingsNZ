@@ -453,7 +453,11 @@ export function markCrossFamilyMemberGuests<Guest extends GuestWithMemberId>(
  */
 export async function markCrossFamilyGuestsOnBooking<Guest extends GuestWithMemberId>(
   db: BookingGuestLookupDb,
-  bookingMemberId: string,
+  /**
+   * The BOOKER. Null since #3369, when the booking is owned by an
+   * `Organisation` — see the null branch below.
+   */
+  bookingMemberId: string | null,
   guests: readonly Guest[],
   options?: {
     skipAuthorization?: boolean;
@@ -482,6 +486,23 @@ export async function markCrossFamilyGuestsOnBooking<Guest extends GuestWithMemb
 
   if (await memberGuestBoundaryRecomputeIsSkippable(db, options?.bookingId)) {
     return guests as Array<Guest & MemberGuestConsentGuestFields>;
+  }
+
+  if (bookingMemberId === null) {
+    // #3369: an organisation-owned booking has no booker, so it has no family
+    // for a guest to be inside. Every member guest on it is BEYOND_FAMILY,
+    // which is the same answer the invented school member produced — it never
+    // belonged to a family group, so `getAllowedGuestMemberIds` returned an
+    // empty set for it and every guest fell outside. The consent rules a school
+    // booking meets are therefore exactly the ones it met before, and the
+    // direction of any error is fail-closed: a guest is asked for consent
+    // rather than assumed to have given it.
+    return markCrossFamilyMemberGuests(guests, {
+      scopeByMemberId: new Map(
+        memberIds.map((memberId) => [memberId, "BEYOND_FAMILY" as const]),
+      ),
+      beyondFamilyMemberIds: memberIds,
+    });
   }
 
   const boundary = await computeMemberGuestBoundary(db, bookingMemberId, memberIds);

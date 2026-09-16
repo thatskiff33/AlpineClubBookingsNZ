@@ -20,6 +20,7 @@ import {
 import {
   buildPolicyExceptionApprovalHooks,
   resolveNewBookingExecutionParams,
+  PolicyExceptionDependantIdentityUnresolvedError,
   PolicyExceptionExecutionCapacityError,
 } from "@/lib/booking-exception-approval";
 import { parseFrozenEvidence } from "@/lib/booking-exception-requests";
@@ -444,6 +445,13 @@ export async function PATCH(
       outcome: "success",
       summary: "Booking-policy exception request refused",
       details: adminNotes,
+      // #2695 (`INV-PRIV-018`) - member-facing, which PRESERVES what the member
+      // reads today rather than widening it: `adminNotes` is #2562's member-facing
+      // half, already emailed to them with this decision, while `internalNotes`
+      // reaches no member surface and is not in this row at all.
+      memberDisclosure: adminNotes
+        ? { visibility: "member-facing", text: adminNotes }
+        : { visibility: "internal" },
       metadata: {
         source,
         requestId: id,
@@ -625,6 +633,23 @@ export async function PATCH(
         { status: 400 },
       );
     }
+    if (error instanceof PolicyExceptionDependantIdentityUnresolvedError) {
+      // #2721: the frozen party names one of the requester's OWN recorded
+      // dependants as a free-text guest and nothing says which person is meant.
+      // The transaction rolled back, so the request is untouched — and this is
+      // not a capacity wait, so it is not reported as kept pending. The officer
+      // cannot answer this question on the member's behalf, which is why the
+      // message tells them to send it back instead of offering an override.
+      return NextResponse.json(
+        {
+          id,
+          status: "REQUESTED",
+          error: error.message,
+          code: "DEPENDANT_IDENTITY_UNRESOLVED",
+        },
+        { status: 409 },
+      );
+    }
     if (error instanceof BookingGuestValidationError) {
       // A guest-authorisation refusal from the new-booking executor's pipeline
       // (#2526 review): a member id the requester may not book, an incomplete
@@ -677,6 +702,21 @@ export async function PATCH(
         outcome: "success",
         summary: "Booking-policy exception request approved and executed",
         details: adminNotes ?? reviewedReasonCodes.join(", "),
+        // #2695 (`INV-PRIV-018`) - `adminNotes` ONLY, which preserves what the
+        // member reads today rather than widening it: it is #2562's
+        // member-facing half, already emailed to them with this decision, while
+        // `internalNotes` reaches no member surface and is not in this row.
+        //
+        // The `details` fallback beside it is deliberately NOT published. When
+        // an officer approves without writing anything, `details` records the
+        // reviewed policy codes — `ADULT_MEMBER_HOSTING_REQUIRED` and its
+        // siblings — which are internal identifiers for the rule that was
+        // waived, not a sentence written for the member. A declaration is a
+        // promise that somebody wrote this FOR them, so a code declares
+        // internal and the member reads nothing from this row.
+        memberDisclosure: adminNotes
+          ? { visibility: "member-facing", text: adminNotes }
+          : { visibility: "internal" },
         metadata: {
           source,
           requestId: id,

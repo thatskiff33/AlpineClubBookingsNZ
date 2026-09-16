@@ -5,8 +5,10 @@ import { stripComments } from "./support/strip-comments";
 import {
   bookingManagementAuthorizationRole,
   ANY_ADMIN_ADMISSION_PATHS,
+  canAccessRoomsBedsPage,
   canOpenAdminPath,
   canViewAdminHrefWithMatrix,
+  emptyAdminPermissionMatrix,
   financeAccessLevelFromMatrix,
   getAdminPermissionLevel,
   getAdminPermissionMatrix,
@@ -812,6 +814,41 @@ describe("admin route requirements", () => {
     expect(canOpenAdminPath({ accessRoles: ["ADMIN" as const] }, "/dashboard")).toBe(
       false,
     );
+  });
+
+  it("admits Rooms & Beds on lodge OR bookings, so the allocation preferences stay reachable (#2937)", () => {
+    // Both SEEDED roles here hold `bookings: view` with `lodge: none`. They can
+    // read the Bed Allocation board today, and since #2937 that board's only
+    // route to the allocation preferences is a link to /admin/rooms-beds. The
+    // map registers that path under `lodge`, so without the OR rule the admin
+    // layout would redirect them away from the setting with no message at all.
+    for (const role of ["FINANCE_ADMIN", "ADMIN_MEMBERSHIP"] as const) {
+      const bookingsOnly = { accessRoles: [role] };
+      expect(getAdminPermissionMatrix(bookingsOnly).lodge).toBe("none");
+      expect(getAdminPermissionMatrix(bookingsOnly).bookings).not.toBe("none");
+      expect(canOpenAdminPath(bookingsOnly, "/admin/rooms-beds")).toBe(true);
+    }
+
+    // The rule only ever widens: a club-defined lodge-only role keeps the page
+    // the route map has always given it.
+    expect(
+      canAccessRoomsBedsPage({
+        ...emptyAdminPermissionMatrix(),
+        lodge: "view",
+      }),
+    ).toBe(true);
+    expect(canAccessRoomsBedsPage(emptyAdminPermissionMatrix())).toBe(false);
+
+    // And it is not a hole: an area that is neither lodge nor bookings is still
+    // refused, and the rule does not leak onto neighbouring lodge paths.
+    const contentOnly = { accessRoles: ["ADMIN_CONTENT" as const] };
+    expect(canOpenAdminPath(contentOnly, "/admin/rooms-beds")).toBe(false);
+    expect(
+      canOpenAdminPath(
+        { accessRoles: ["FINANCE_ADMIN" as const] },
+        "/admin/roster",
+      ),
+    ).toBe(false);
   });
 
   /**

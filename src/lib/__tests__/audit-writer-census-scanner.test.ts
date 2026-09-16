@@ -32,7 +32,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  AUDIT_CENSUS_TSV_COLUMNS,
   describeCategory,
+  describeMemberDisclosure,
+  renderCensusTsv,
   scanAuditWriterCensus,
 } from "../../../scripts/audit/audit-writer-census";
 
@@ -255,5 +258,248 @@ describe("audit writer census scanner: the bypasses a review demonstrated (#2581
     });
 
     expect(report(census)).toEqual([]);
+  });
+});
+
+/**
+ * The same claim, for the #2695 member-disclosure column.
+ *
+ * The population that matters here is the INVERSE of the category one, and the
+ * difference is what these tests are about. For `category`, the dangerous
+ * reading is `absent` and the census PINS it, so a site the walk cannot read
+ * lands in a set somebody has to explain. For `memberDisclosure`, `absent` is
+ * the SAFE answer — the reader publishes nothing without a declared sentence —
+ * so `absent` is deliberately unpinned. That makes "measured as absent" the one
+ * outcome a real declaration must never produce: the site would be in neither
+ * the pinned member-facing set nor the pinned forwarded set, invisible to the
+ * census, while the runtime reader honoured it and the member read the text.
+ */
+describe("audit writer census scanner: a declaration the walk cannot name (#2695)", () => {
+  function disclosures(census: ReturnType<typeof scanAuditWriterCensus>) {
+    return census.sites.map((site) => describeMemberDisclosure(site.memberDisclosure));
+  }
+
+  it("treats a COMPUTED property key as unreadable rather than as an absent one", () => {
+    // Both objects declare member-facing text at run time; neither names the key
+    // in a form `propertyName` can resolve. The walk used to SKIP a property it
+    // could not name, so the object measured as though the key were not there.
+    const census = tree({
+      "src/lane.ts": `
+        const KEY = "memberDisclosure";
+        export async function write(logAudit: any, note: string) {
+          logAudit({
+            action: "member.deletion_rejected",
+            category: "privacy",
+            [KEY]: { visibility: "member-facing", text: note },
+          });
+          logAudit({
+            action: "member.credit.adjustment.approve",
+            category: "payment",
+            ["memberDisclosure"]: { visibility: "member-facing", text: note },
+          });
+        }
+      `,
+    });
+
+    expect(disclosures(census)).toEqual([
+      "forwarded:unreadable keys",
+      "forwarded:unreadable keys",
+    ]);
+    // Neither is in the member-facing set — the walk genuinely cannot read the
+    // declaration — but neither is silently absent either, which is the point:
+    // both land in the population the manifest pins and a reviewer sees.
+    expect(census.memberFacing).toHaveLength(0);
+    expect(census.memberDisclosureForwarded).toHaveLength(2);
+  });
+
+  it("treats a GETTER as unreadable too, and the same for the category column", () => {
+    // The second form of the same hole. A getter names the key plainly and
+    // holds no initialiser expression, so the walk skipped it — and it skipped
+    // it for `category` as well, which reported an omission that is not one.
+    const census = tree({
+      "src/lane.ts": `
+        export async function write(logAudit: any, note: string) {
+          logAudit({
+            action: "member.deletion_rejected",
+            get category() { return "privacy"; },
+            get memberDisclosure() {
+              return { visibility: "member-facing" as const, text: note };
+            },
+          });
+        }
+      `,
+    });
+
+    expect(disclosures(census)).toEqual(["forwarded:unreadable keys"]);
+    expect(report(census)).toEqual([
+      { sink: "logAudit", category: "forwarded:unreadable keys" },
+    ]);
+    // And NOT counted as a writer that forgot its category, which is the
+    // failure a reviewer would otherwise have to chase to a getter.
+    expect(census.uncategorised).toHaveLength(0);
+  });
+
+  it("still reads an ordinary declaration, so failing closed has not become failing always", () => {
+    const census = tree({
+      "src/lane.ts": `
+        export async function write(logAudit: any, note: string) {
+          logAudit({
+            action: "member.credit.adjustment.approve",
+            category: "payment",
+            memberDisclosure: { visibility: "member-facing", text: note },
+          });
+          logAudit({
+            action: "member.deletion_rejected",
+            category: "privacy",
+            memberDisclosure: { visibility: "internal" },
+          });
+          logAudit({ action: "member.updated", category: "account" });
+        }
+      `,
+    });
+
+    expect(disclosures(census)).toEqual([
+      "member-facing",
+      "internal",
+      "(absent)",
+    ]);
+    expect(census.memberDisclosureForwarded).toHaveLength(0);
+  });
+});
+
+/**
+ * The census FILE a human reads, as opposed to the census a test reads.
+ *
+ * #2695's acceptance criterion is "re-census every event currently rendered to
+ * members", and this TSV is the artifact that is done with. Nothing tested the
+ * renderer, so three columns were added to both row builders and to neither the
+ * header: the ninth column read `omitsRetentionInputs` and carried a
+ * disclosure, and three columns had no name at all.
+ */
+describe("audit writer census TSV (#2695)", () => {
+  it("names every column each row actually carries", () => {
+    const census = tree({
+      "src/lane.ts": `
+        export async function write(logAudit: any, prisma: any, note: string) {
+          logAudit({
+            action: "member.credit.adjustment.approve",
+            category: "payment",
+            summary: "Credit adjusted",
+            details: \`for \${note}\`,
+            memberDisclosure: { visibility: "member-facing", text: note },
+          });
+          await prisma.auditLog.updateMany({ where: {}, data: { archivedAt: new Date() } });
+        }
+      `,
+      "prisma/migrations/20260101000000_x/migration.sql": `
+        INSERT INTO "AuditLog" ("id", "action", "category") VALUES ('a', 'b', 'admin');
+      `,
+    });
+
+    const lines = renderCensusTsv(census).split("\n");
+    const header = lines[0]?.split("\t") ?? [];
+
+    expect(header).toEqual(AUDIT_CENSUS_TSV_COLUMNS);
+    // A write site, a non-row-producing DML statement and a migration SQL row
+    // all share the table, so all three row shapes are counted against it.
+    expect(lines).toHaveLength(4);
+    for (const line of lines.slice(1)) {
+      expect(line.split("\t")).toHaveLength(header.length);
+    }
+
+    // The column that carried a disclosure under the wrong name, read by name.
+    const site = lines[1]?.split("\t") ?? [];
+    expect(site[header.indexOf("memberDisclosure")]).toBe("member-facing");
+    expect(site[header.indexOf("detailsText")]).toBe("dynamic");
+    expect(site[header.indexOf("detailsShape")]).toBe("text");
+    expect(site[header.indexOf("summaryText")]).toBe("constant");
+    expect(site[header.indexOf("omitsRetentionInputs")]).toBe("true");
+  });
+});
+
+/**
+ * RE-CENSUSING THE DETAIL SHAPES (#2704).
+ *
+ * The issue asks for the legacy and current `details` shapes to be re-censused,
+ * and this is the column that makes that reproducible instead of a hand count:
+ * a payload written as `JSON.stringify(…)` is governed by the structural
+ * reduction, a sentence keeps the honest text clip, and the two are now
+ * distinguishable in the artifact a human reads.
+ *
+ * PINNED AS BEHAVIOUR, NOT AS A POPULATION — kept after review, but NOT for the
+ * reason first given. "An exact 104-entry pin would cost every lane a manifest
+ * edit" argued against a strawman: the manifest beside this one already pins
+ * per-category counts, so a lane adding a writer already edits it, and the
+ * option never weighed was one more integer bucket rather than a hundred named
+ * entries. The reason that carries is what a count of this particular column
+ * would and would not catch. Every other pinned count guards a per-site
+ * DECISION a writer can get wrong — a category, a disclosure — so a moving
+ * number means somebody chose. This one is a passive fact about how a payload
+ * was spelled, governed by a boundary that covers all four write forms whatever
+ * the spelling; a lane converting `details: JSON.stringify(x)` to
+ * `details: serialise(x)` would move the bucket while changing nothing the
+ * reduction does, and a lane adding the hundred-and-fifth payload writer would
+ * move it while doing nothing that needs review. A number that moves for
+ * reasons nobody needs to act on teaches its readers to re-baseline it, which
+ * is how the comment-stripper population drifted three times. What HAS to be
+ * true is that the scanner can tell the shapes apart, and these fixtures say so.
+ *
+ * Measured on this tree: 104 payload sites, 167 text, 198 absent, 8 unreadable,
+ * plus 7 migration statements with no event object to read. The 104 is
+ * corroborated independently — and by a command that REPRODUCES, which the
+ * first version of this sentence did not: a bare
+ * `grep -rn "details: JSON.stringify" src/ scripts/` returns 122, because the
+ * census does not scan tests, mocks, `e2e`, `generated`, `fixtures` or
+ * `test-utils`, and because two of the hits are DOCBLOCK mentions this very
+ * change added — this module and `audit-structured-detail.ts` both quote the
+ * spelling while describing it. Excluding the census's own directories leaves
+ * 106; excluding the two prose mentions leaves 104:
+ *
+ *   grep -rn --include=*.ts --include=*.tsx --include=*.js --include=*.mjs \
+ *     --include=*.cjs "details: JSON.stringify" src/ scripts/ \
+ *     | grep -vE "__tests__|__mocks__|/e2e/|/generated/|/fixtures/|/test-utils/" \
+ *     | grep -vE "\.test\.|\.spec\.|\.d\.ts" \
+ *     | grep -vE ":[0-9]+: \*"
+ */
+describe("audit writer census detail shapes (#2704)", () => {
+  it("tells a JSON payload apart from a sentence, and from no details at all", () => {
+    const census = tree({
+      "src/lane.ts": `
+        export async function write(logAudit: any, note: string, payload: any) {
+          logAudit({
+            action: "booking.period.update",
+            category: "booking",
+            details: JSON.stringify({ before: 1, after: 2 }),
+          });
+          logAudit({
+            action: "booking.review.reject",
+            category: "booking",
+            details: \`Declined. \${note}\`,
+          });
+          logAudit({
+            action: "booking.confirm_pending_guests",
+            category: "booking",
+            summary: "Confirmed",
+          });
+          logAudit({
+            action: "booking.forwarded",
+            category: "booking",
+            details: payload,
+          });
+        }
+      `,
+    });
+
+    const shapeByAction = new Map(
+      census.sites.map((site) => [site.action, site.detailsShape.kind]),
+    );
+
+    expect(shapeByAction.get("booking.period.update")).toBe("payload");
+    expect(shapeByAction.get("booking.review.reject")).toBe("text");
+    expect(shapeByAction.get("booking.confirm_pending_guests")).toBe("absent");
+    // A payload assembled elsewhere reads as `text`. That UNDER-counts, which is
+    // the safe direction for a measurement nobody gates on: it can understate
+    // how many payload writers exist and can never invent one.
+    expect(shapeByAction.get("booking.forwarded")).toBe("text");
   });
 });

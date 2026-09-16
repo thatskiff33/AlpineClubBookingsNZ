@@ -18,6 +18,7 @@ import {
   readMemberExceptionRequests,
 } from "@/lib/booking-exception-request-service";
 import { mapExceptionRequestError } from "@/lib/booking-exception-request-http";
+import { dependantIdentityDeclarationSchema } from "@/lib/booking-dependant-identity";
 
 /**
  * A guest's explicit night set (#713), mirroring the create route's own field.
@@ -52,6 +53,19 @@ const createSchema = z.object({
     .min(1)
     .max(200),
   memberMessage: z.string().max(5000),
+  /**
+   * #2721: the requester's answers to "this guest has the same name as your own
+   * recorded dependant". An exception request is a CREATE DOOR — approving one
+   * builds a confirmed booking — so it asks the same question the create route
+   * asks, in the same shape, and the service verifies the answers against the
+   * requester's authoritative records rather than trusting them. The cap
+   * mirrors the create route's: far above any real family, and there so a
+   * hostile payload cannot turn the guard into a loop over an unbounded array.
+   */
+  dependantIdentityDeclarations: z
+    .array(dependantIdentityDeclarationSchema)
+    .max(50)
+    .optional(),
   supersedeRequestId: z.string().trim().min(1).optional(),
 });
 
@@ -90,8 +104,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { lodgeId, checkIn, checkOut, guests, memberMessage, supersedeRequestId } =
-    parsed.data;
+  const {
+    lodgeId,
+    checkIn,
+    checkOut,
+    guests,
+    memberMessage,
+    dependantIdentityDeclarations,
+    supersedeRequestId,
+  } = parsed.data;
 
   const parsedCheckIn = parseDateOnly(checkIn);
   const parsedCheckOut = parseDateOnly(checkOut);
@@ -118,6 +139,9 @@ export async function POST(req: NextRequest) {
       checkOut: parsedCheckOut,
       guests,
       memberMessage,
+      ...(dependantIdentityDeclarations
+        ? { dependantIdentityDeclarations }
+        : {}),
       supersedeRequestId: supersedeRequestId ?? null,
     });
 

@@ -11,6 +11,7 @@ import {
   within,
 } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 // #1940: the page now reads the session permission matrix for view-only gating;
 // provide an edit-level admin session so the pre-existing edit-interaction cases
 // keep working.
@@ -142,6 +143,24 @@ describe("AdminMembershipTypesPage", () => {
     vi.clearAllMocks();
     global.fetch = fetchMock as typeof fetch;
     mockFetch();
+  });
+
+  it("focuses a load failure so the admin lands on what to act on (#2934)", async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/admin/membership-types") {
+        return jsonResponse({ error: "Membership types are unavailable." }, false);
+      }
+      if (url.startsWith("/api/admin/xero/contact-groups")) {
+        return jsonResponse({ groups: [] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(<AdminMembershipTypesPage />);
+
+    const failure = await screen.findByText("Membership types are unavailable.");
+    await expectRecoveryAlertToHoldFocus(failure);
   });
 
   it("renders a scannable list and posts the new order when a type is moved", async () => {

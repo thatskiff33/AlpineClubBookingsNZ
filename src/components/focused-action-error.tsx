@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode } from "react";
+import { scrollToError } from "@/hooks/use-scroll-to-feedback";
 import { cn } from "@/lib/utils";
 
 /**
@@ -59,12 +60,13 @@ export function FocusedActionError({
   // after the commit, so a synchronous `document.activeElement` assertion taken
   // when the message appears is a race. Assert it with
   // `expectRecoveryAlertToHoldFocus` from `@/lib/__tests__/helpers/focus`.
+  //
+  // The focus-then-scroll itself is the shared failure primitive (#2934), so the
+  // reduced-motion rule and the "focus without the browser's own jump" order
+  // are written once, in `@/hooks/use-scroll-to-feedback`.
   useEffect(() => {
     if (!error) return;
-    const alert = errorRef.current;
-    if (!alert) return;
-    alert.focus({ preventScroll: true });
-    alert.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    scrollToError(errorRef, { block: "center" });
   }, [attentionKey, error]);
 
   return (

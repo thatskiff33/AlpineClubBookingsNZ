@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { bookingOwner } from "@/lib/booking-owner";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -456,7 +457,7 @@ export function BookingApprovalsPanel({
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">
-                        {booking.member.firstName} {booking.member.lastName}
+                        {bookingOwner(booking).member.firstName} {bookingOwner(booking).member.lastName}
                       </CardTitle>
                       <p className="text-sm text-muted-foreground">
                         Created {clubTime.instantDateTime(new Date(booking.createdAt))} —{" "}
@@ -476,7 +477,7 @@ export function BookingApprovalsPanel({
                           the review status, same as the other three lists. */}
                       <DiagnosticsRecordButton
                         recordId={booking.id}
-                        subject={`the booking for ${booking.member.firstName} ${booking.member.lastName} awaiting review`}
+                        subject={`the booking for ${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} awaiting review`}
                       />
                     </div>
                   </div>
