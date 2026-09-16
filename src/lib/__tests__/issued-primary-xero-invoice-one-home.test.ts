@@ -137,17 +137,39 @@ const BOOKINGS_API_TREE = "src/app/api/bookings";
 const XERO_INVOICE_ID = /\bxeroInvoiceId\b/;
 
 /**
- * #3244: a READ of `Payment.status` that decides something. Anchored to the
+ * #3244: a READ of a payment status that decides something. Anchored to the
  * comparison rather than the bare word, so a route that selects the column, or
  * WRITES it (`status: "SUCCEEDED"` in an update), is not mistaken for a route
  * that re-derives "is this paid?" from it.
+ *
+ * The `PaymentStatus.X` alternation is not decoration: it is the spelling the
+ * converged call site used before this issue, so a hand revert would have
+ * evaded a ban written only against the string literal. Both reviews of #3244
+ * found that independently.
+ *
+ * WHAT IT CANNOT SEE, stated rather than implied (`INV-SSOT-004`): a loose
+ * `==`, a status copied into a local first (`const s = p.status`), and a
+ * membership test against a list the caller builds itself
+ * (`MY_STATUSES.includes(payment.status)`). None exists in the tree today —
+ * that was measured, not assumed — and the failure message says so, because a
+ * guard that claims more than it catches is the defect it exists to prevent.
  */
 const PAYMENT_STATUS_READ =
-  /payment(?:\?)?\.status\s*(?:===|!==)|\bstatus\s*(?:===|!==)\s*"(?:SUCCEEDED|PARTIALLY_REFUNDED|REFUNDED)"/;
+  /payment(?:\?)?\.status\s*(?:===|!==)|\.status\s*(?:===|!==)\s*PaymentStatus\.(?:SUCCEEDED|PARTIALLY_REFUNDED|REFUNDED)|\bstatus\s*(?:===|!==)\s*"(?:SUCCEEDED|PARTIALLY_REFUNDED|REFUNDED)"/;
 
 /**
  * Routes allowed to compare `Payment.status`, each with the reason it is not a
  * second answer to "has money already moved through this card?".
+ *
+ * THE STRUCTURAL OPTION THAT WAS REJECTED, which `INV-SSOT-001` requires to be
+ * named rather than left implied: making the column unreadable outside the
+ * payment-state module — a branded status type, or a row type that omits
+ * `status` at every query site. `hasIssuedPrimaryXeroInvoice` gets that for
+ * free because it takes `xeroInvoiceId` as a REQUIRED parameter, so a caller
+ * who has not loaded it fails to compile. `Payment.status` has no such lever:
+ * it is a plain Prisma enum column that legitimate readers below genuinely
+ * need, and branding it would touch every payment query in the tree. There is
+ * no compile-time remedy available here, which is why this is a census.
  */
 const PAYMENT_STATUS_ALLOWED: Record<string, string> = {
   "src/app/api/bookings/[id]/confirm-payment/route.ts":
@@ -400,7 +422,11 @@ describe("no edit door states the rule a second time", () => {
         `exactly this read: a partly-refunded booking collected nothing at ` +
         `this door and the difference at the other three. If the route only ` +
         `DISPLAYS the status or writes it, add it to PAYMENT_STATUS_ALLOWED ` +
-        `with its reason.`,
+        `with its reason.\n` +
+        `NOTE this ban matches a COMPARISON only. A loose \`==\`, a status ` +
+        `copied into a local first, or a membership test against a list you ` +
+        `built yourself are NOT caught. Passing it is not proof there is no ` +
+        `second answer.`,
     ).toEqual([]);
   });
 
@@ -417,11 +443,24 @@ describe("no edit door states the rule a second time", () => {
   });
 
   it("the guest-add door reaches the captured-payment home directly", () => {
+    // It asks the STATUS half, `isCapturedPaymentStatus`, not the whole of
+    // `hasCapturedPayment` — deliberately, and this pin is where that is
+    // recorded. The full predicate also requires `amountCents > 0`, and a
+    // zero-dollar booking (credit, or a 100% promo) carries `amountCents: 0`
+    // with a SUCCEEDED status. Using it here would stop asking that member for
+    // an added guest's price, because the Xero arm cannot cover them when the
+    // integration is off — a NEW under-collection at the very door this issue
+    // exists to stop under-collecting at. Both #3244 reviews found it.
     const source = read(GUEST_ADD_ROUTE);
     expect(source).toMatch(
-      /import\s*\{[^}]*\bhasCapturedPayment\b[^}]*\}\s*from\s*"@\/lib\/booking-payment-state"/,
+      /import\s*\{[^}]*\bisCapturedPaymentStatus\b[^}]*\}\s*from\s*"@\/lib\/booking-payment-state"/,
     );
-    expect(source).toMatch(/hasCapturedPayment\(booking\.payment\)/);
+    expect(source).toMatch(/isCapturedPaymentStatus\(booking\.payment\?\.status/);
+    expect(
+      source,
+      `The guest-add door must not adopt the amount clause without a ` +
+        `decision: it silently stops collecting from zero-dollar bookings.`,
+    ).not.toMatch(/hasCapturedPayment\(/);
   });
 
   it("every file that reaches applyPaymentAdjustments is one of the doors above", () => {

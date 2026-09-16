@@ -9,6 +9,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import {
   findPaymentTransactionByIntentId,
+  isCapturedTransactionStatus,
   markPaymentIntentTransactionSucceeded,
 } from "@/lib/payment-transactions";
 import {
@@ -16,9 +17,6 @@ import {
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
 import { hasAdminAccess } from "@/lib/access-roles";
-import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
-
-const CAPTURED_STATUSES = new Set<string>(CAPTURED_PAYMENT_STATUS_LIST);
 import { raiseDeletedBookingModificationRefundTask } from "@/lib/deleted-booking-modification-payment";
 
 const schema = z.object({
@@ -89,10 +87,12 @@ export async function POST(
       return NextResponse.json({ error: "Payment transaction not found" }, { status: 404 });
     }
 
-    // #3244: written out here, but it is CAPTURED_PAYMENT_STATUS_LIST, which
-    // has one home (`INV-SSOT-001`). `hasCapturedPayment`'s amount clause is
-    // NOT wanted: a zero-amount intent still has Xero work to release.
-    if (CAPTURED_STATUSES.has(paymentTransaction.status)) {
+    // #3244: this asks the question of ONE PaymentTransaction, so its home is
+    // `isCapturedTransactionStatus` (#3170) — NOT the aggregate
+    // `CAPTURED_PAYMENT_STATUS_LIST`, which `booking-payment-state.ts` says in
+    // terms must not be merged with it. They spell the same three values and
+    // answer different questions.
+    if (isCapturedTransactionStatus(paymentTransaction.status)) {
       const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
         paymentIntentId
       );

@@ -113,8 +113,8 @@ import {
   getBookingEditPolicy,
 } from "@/lib/booking-edit-policy";
 import {
-  hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
+  isCapturedPaymentStatus,
   isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
 import { clubTime } from "@/lib/club-time/server";
@@ -996,20 +996,30 @@ export async function POST(
        * as unpaid was rejected because it would have replaced one divergence
        * with another.
        *
-       * It moves the answer BOTH ways, and both are intended:
+       * It WIDENS and does not narrow. `PARTIALLY_REFUNDED` and `REFUNDED` now
+       * count as paid, so the difference is charged instead of collected from
+       * nobody — the reachable defect this issue was filed for.
        *
-       *  - WIDER: `PARTIALLY_REFUNDED` / `REFUNDED` now count as paid, so the
-       *    difference is charged to the original card instead of collected
-       *    from nobody. That is the reachable defect this issue was filed for.
-       *  - NARROWER, and a fix rather than a cost: the amount clause means a
-       *    ZERO-DOLLAR booking is no longer card-settled here. The zero-dollar
-       *    auto-pay writes `amountCents: 0` with a null intent and leaves
-       *    `source` STRIPE, so this door used to route it as chargeable with
-       *    nothing to charge. The other three doors always refused it.
+       * It asks `isCapturedPaymentStatus`, the STATUS half, rather than the
+       * full `hasCapturedPayment` the other three doors use. That is deliberate
+       * and it is the one place this door differs from them. The full predicate
+       * also requires `amountCents > 0`, and a ZERO-DOLLAR booking — a stay
+       * fully covered by credit or a 100% promo — carries
+       * `{ amountCents: 0, status: SUCCEEDED }`. Using it here would have made
+       * this door stop asking that member for the added guest's price, because
+       * the Xero arm below cannot cover them at a club with the integration off.
+       * That is a NEW under-collection, at the very door this issue exists to
+       * stop under-collecting at, and it was never put to the owner.
+       *
+       * The money IS collectable: the additional-payment mint creates a FRESH
+       * intent and only reuses the Stripe customer (`findOrCreateCustomer` when
+       * there is none), so a null `stripePaymentIntentId` on the zero-dollar row
+       * is no obstacle. The other three doors share that hole; converging onto
+       * it would have been converging onto a defect. Filed separately.
        */
       const hasSettledPayment =
         isSettledBookingStatus(booking.status) &&
-        hasCapturedPayment(booking.payment);
+        isCapturedPaymentStatus(booking.payment?.status ?? "");
       const hasSucceededPayment =
         hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
       const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);

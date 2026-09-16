@@ -1,46 +1,52 @@
 # File-size allowance for #3501 — the guest-add door's money question
 
-One already-over-budget file grows, by nineteen lines, and every one of them is
-comment.
+One already-over-budget file grows, by twenty-nine lines, every one of them
+comment or import wrapping. The behavioural change is a single line.
 
-**Compression was taken first, and a split was taken where one existed.** The
-change itself is a one-line substitution: `payment.status === "SUCCEEDED"`
-becomes `hasCapturedPayment(booking.payment)`. Four of the nineteen lines are the
-import, which crosses the print width once a third name joins it and so wraps
-from one line to five. The docblock was written at twenty-three lines and cut to
-fourteen before this fragment was opened. In the same pull request the sibling
-route `confirm-modification-payment/route.ts` was converged onto the same one
-home and kept *inside* its budget by hoisting a module-level `Set` — so the
-allowance below is what was left after doing that work, not instead of it.
+**Compression came first, and a split was taken where one existed.** The sibling
+route `confirm-modification-payment/route.ts` was converged in the same pull
+request and kept *inside* its budget, by routing it to
+`isCapturedTransactionStatus` — the home that answers the question it is
+actually asking — rather than to the aggregate list it was first pointed at. So
+the allowance below is what was left after doing that work, not instead of it.
+
+**Why the figure grew during review, which is the honest part of this fragment.**
+It was opened at nineteen lines. Two adversarial reviews then found that the
+obvious convergence — asking the whole of `hasCapturedPayment`, exactly as the
+other three doors do — would have silently stopped collecting from **zero-dollar
+bookings**, because that predicate also requires `amountCents > 0` and a stay
+covered entirely by credit or a 100% promo carries `amountCents: 0` with a
+`SUCCEEDED` status. At a club with the Xero integration off, nobody would have
+been asked for the added guest's price at all: a new silent under-collection, at
+the very door this issue exists to stop under-collecting at.
+
+The door therefore asks the **status half** (`isCapturedPaymentStatus`) and the
+docblock has to say why it differs from its three siblings. That explanation is
+the growth. It is also the single most deletable-looking thing in the file — a
+later reader who sees three doors calling one predicate and a fourth calling
+another will "fix" the inconsistency unless the reason is sitting there. The
+first draft of this change made exactly that mistake in the opposite direction,
+and wrote a test asserting the loss was correct.
 
 **Why the explanation cannot move somewhere thinner.** This door settles for
-itself rather than through `applyPaymentAdjustments`, which is exactly why it
-drifted in the first place (#3200 fixed the invoice half of the same drift, at
-the same line). A reader arriving at this block needs to know, at the block,
-that the substitution moves the answer in **two** directions and that both are
-intended: wider for the two refunded shapes, which is the defect the issue was
-filed for, and narrower for a zero-dollar booking, which is a fix the owner's
-decision did not explicitly cover and which was found by tracing rather than
-assumed. The second half is the one a later reader would otherwise "correct" —
-it looks like an accidental regression and is not. A comment that lives in the
-policy module instead is a comment nobody reads at the moment they need it,
-which is the failure `AGENTS.md` records as the reason its own mandatory reading
-list was replaced by a routing table.
-
-Splitting the route is not available here and would not help if it were: the
-settlement arithmetic is one linear block inside one transaction callback, and
-lifting eight lines of it into a helper would put the rule and the reason for
-the rule in different files — the thing `INV-SSOT-001` asks us not to do.
+itself rather than through `applyPaymentAdjustments`, which is why it drifted in
+the first place — #3200 fixed the invoice half of the same drift at the same
+line. There is no shared settlement site the note could live at instead, because
+not sharing the settlement site is the defect being worked around. Splitting the
+route would not help either: the arithmetic is one linear block inside one
+transaction callback, and lifting it into a helper puts the rule and the reason
+for the rule in different files, which is the thing `INV-SSOT-001` asks us not
+to do.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1568
-reason: nineteen lines, all comment and import wrapping, on a one-line
-  behavioural substitution. The docblock explains that the shared predicate
-  moves this door's answer BOTH ways — wider for PARTIALLY_REFUNDED and
-  REFUNDED, narrower for a zero-amount capture — and says why the narrowing is a
-  fix rather than a regression, since the zero-dollar auto-pay leaves a null
-  Stripe intent behind a SUCCEEDED row whose source is still STRIPE. Without
-  that note the next reader restores the old test and re-opens the defect. The
-  door settles inline rather than through `applyPaymentAdjustments`, so there is
-  no shared settlement site the explanation could live at instead, and the
-  block cannot be split out without separating the rule from its reason.
+lines: 1578
+reason: twenty-nine lines of comment and import wrapping on a one-line
+  substitution. The docblock records that this door asks the STATUS half of the
+  captured question rather than the full `hasCapturedPayment` its three siblings
+  use, and why: the amount clause would have stopped it asking zero-dollar
+  bookings for an added guest's price, which the Xero arm cannot cover when the
+  integration is off. Without that note the difference reads as an oversight and
+  gets "corrected", re-opening a money loss that two reviews caught. The door
+  settles inline rather than through `applyPaymentAdjustments`, so there is no
+  shared site the explanation could live at, and the block cannot be split out
+  without separating the rule from its reason.
