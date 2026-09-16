@@ -53,11 +53,19 @@ import {
   WholeLodgeAvailabilityStrip,
   WholeLodgeRequestBadges,
 } from "@/components/admin/booking-requests/whole-lodge-request-controls";
+// #3412: the bulk child tiers a school group is counted in — ONE definition,
+// shared with the server generator and the public form. Teachers and parent
+// helpers are the named ADULTs and are not adjusted here. This copy stopped
+// being cosmetic when Save quote began pricing the officer's numbers: it
+// decides which rate boxes exist and what is posted.
+import {
+  SCHOOL_CHILD_TIERS,
+  unchangedSchoolGuestPrefixLength,
+  sameSchoolGuestList,
+  type SchoolChildTier,
+} from "@/lib/school-booking-constants";
+import { SCHOOL_CHILD_NAME_PREFIX } from "@/lib/placeholder-guest-names";
 
-// Bulk child tiers a school group is counted in. Teachers/parent helpers are
-// ADULT and are not adjusted here.
-const SCHOOL_CHILD_TIERS = ["INFANT", "CHILD", "YOUTH"] as const;
-type SchoolChildTier = (typeof SCHOOL_CHILD_TIERS)[number];
 const SCHOOL_CHILD_TIER_LABELS: Record<SchoolChildTier, string> = {
   INFANT: "Infants",
   CHILD: "Children",
@@ -244,6 +252,14 @@ interface PublicBookingRequestData {
   // correction so the server refuses one written over a request an accept or a
   // decline has moved underneath the officer.
   version: number;
+  /**
+   * The held booking's own status, or null when there is no hold (#3412 review,
+   * F16). The pointer alone does not say whether beds are actually reserved: a
+   * cancelled booking leaves a stale pointer that reserves nothing, and the
+   * service deliberately lets the officer past it. This is that field, so panel
+   * and service ask the same question of the same data.
+   */
+  heldBookingStatus: string | null;
   acceptedQuoteOptionId: string | null;
   acceptedPriceCents: number | null;
   acceptedAt: string | null;
@@ -645,7 +661,7 @@ export function PublicBookingRequestsPanel({
   function pricingCombos(request: PublicBookingRequestData) {
     const seen = new Set<string>();
     const combos: Array<{ ageTier: string; isMember: boolean }> = [];
-    request.guests.forEach((guest, guestIndex) => {
+    plannedGuests(request).forEach((guest, guestIndex) => {
       const isMember = Boolean(linkedMemberIdFor(request, guestIndex));
       const key = `${guest.ageTier}:${isMember}`;
       if (!seen.has(key)) {
@@ -676,6 +692,205 @@ export function PublicBookingRequestsPanel({
     return countInputs[request.id] ?? deriveChildCounts(request.guests);
   }
 
+  /**
+   * The school group-number override to POST, or null for "leave the submitted
+   * numbers alone" — the ONE place that decision and that payload are made
+   * (#3412). Save quote and Approve both send it, under the same condition:
+   * the officer edited the boxes on a SCHOOL request. Two surfaces building the
+   * same body separately is how they came to disagree in the first place.
+   */
+  function schoolChildCountOverride(
+    request: PublicBookingRequestData,
+  ): Record<SchoolChildTier, number> | null {
+    if (request.type !== "SCHOOL" || !(request.id in countInputs)) return null;
+    const counts = childCountValues(request);
+    return {
+      INFANT: parseCount(counts.INFANT),
+      CHILD: parseCount(counts.CHILD),
+      YOUTH: parseCount(counts.YOUTH),
+    };
+  }
+
+  /**
+   * The party the officer is about to quote: the edited numbers where they
+   * edited them, the stored list otherwise (#3412). The rate boxes below are
+   * built from this, because saving regenerates the list from these same
+   * numbers — read from the stored list instead, a group changed from youth to
+   * children would be quoted with no child rate field at all and the save would
+   * fail on a missing rate.
+   *
+   * It carries NAMES as well as tiers, because every question below is about
+   * which stored rows the regeneration moves, and a row is only unmoved if it
+   * is identical — tier and name. This mirrors the server's
+   * `generateSchoolGuests`: the named teachers first, then the children
+   * numbered 1..N across the tiers in order. That mirroring is a known
+   * duplication (the remedy needs the `AgeTier` enum as a runtime value in this
+   * bundle); the comparison helpers below are shared with the server, so what
+   * is duplicated is the composition rule alone.
+   */
+  function plannedGuests(
+    request: PublicBookingRequestData,
+  ): Array<{ firstName: string; lastName: string; ageTier: string }> {
+    const override = schoolChildCountOverride(request);
+    if (!override) return request.guests;
+    let childNumber = 0;
+    return [
+      ...request.teachers.map((teacher) => ({
+        firstName: teacher.firstName,
+        lastName: teacher.lastName,
+        ageTier: "ADULT",
+      })),
+      ...SCHOOL_CHILD_TIERS.flatMap((tier) =>
+        Array.from({ length: override[tier] }, () => {
+          childNumber += 1;
+          return {
+            firstName: SCHOOL_CHILD_NAME_PREFIX,
+            lastName: String(childNumber),
+            ageTier: tier as string,
+          };
+        }),
+      ),
+    ];
+  }
+
+  /**
+   * Does the officer's edit actually change the party? (#3412)
+   *
+   * Asked of the two LISTS, element by element, through the same helper the
+   * server's resolver uses — not by comparing per-tier totals, which is a
+   * different question wearing the same answer most of the time. False when
+   * they typed the stored numbers back, which is why the refusals below key on
+   * this rather than on "a box was touched".
+   */
+  function schoolCountsChanged(request: PublicBookingRequestData) {
+    if (schoolChildCountOverride(request) === null) return false;
+    return !sameSchoolGuestList(request.guests, plannedGuests(request));
+  }
+
+  /**
+   * #3412: beds held for this request's current numbers cannot be re-sized by a
+   * quote save, so the server refuses one (409). Say so here, before the click,
+   * and point at the button that clears it.
+   *
+   * Keyed on the hold's STATUS, which the queue serialises, and not merely on
+   * the pointer: the server blocks only a live `AWAITING_REVIEW` hold, because
+   * a pointer left behind by a cancelled booking reserves nothing and "must not
+   * trap the officer". Keyed on the pointer, this panel disabled Save quote and
+   * sent the officer to Release hold, which 409s on a dead pointer — both doors
+   * shut on a save the server would have accepted (#3412 review, F16).
+   */
+  function schoolHoldIsLive(request: PublicBookingRequestData) {
+    return request.heldBookingStatus === "AWAITING_REVIEW";
+  }
+
+  function countChangeBlockedByHold(request: PublicBookingRequestData) {
+    return schoolHoldIsLive(request) && schoolCountsChanged(request);
+  }
+
+  /**
+   * The member link these numbers would move onto somebody else's bed, if any
+   * (#3412 review, F7).
+   *
+   * The children are numbered placeholders, so a link stored against child #7
+   * comes to mean a DIFFERENT child once the list is renumbered — the server
+   * refuses the save for it (422). Working that out before the click is as
+   * cheap as the hold check, and without it the officer links a member, adjusts
+   * the numbers, and presses a Save quote that is certain to fail.
+   *
+   * The boundary is derived from the two lists, exactly as the server derives
+   * it, rather than counted in the `teachers` column and applied to `guests`.
+   */
+  function misplacedSchoolLinkAmong(
+    request: PublicBookingRequestData,
+    links: readonly UiMemberLink[],
+  ): UiMemberLink | null {
+    if (!schoolCountsChanged(request)) return null;
+    const unchangedPrefix = unchangedSchoolGuestPrefixLength(
+      request.guests,
+      plannedGuests(request),
+    );
+    return (
+      [...links]
+        .sort((a, b) => a.guestIndex - b.guestIndex)
+        .find((link) => link.guestIndex >= unchangedPrefix) ?? null
+    );
+  }
+
+  /**
+   * What SAVE QUOTE would be refused for: it posts the links on screen
+   * (`activeMemberLinks`, the officer's edits where they made any), and the
+   * service checks the list it is about to write.
+   */
+  function misplacedSchoolLink(
+    request: PublicBookingRequestData,
+  ): UiMemberLink | null {
+    return misplacedSchoolLinkAmong(request, activeMemberLinks(request));
+  }
+
+  /**
+   * What APPROVE would be refused for — and it is a DIFFERENT question (#3412
+   * review round 5, C).
+   *
+   * Approve posts no links at all: the service reads the `linkedGuestMembers`
+   * blob SAVED on the request and applies it positionally to the regenerated
+   * list. So an officer who unlinks a member on screen watches the save-quote
+   * warning clear and Save quote come back, and then gets a 422 from Approve
+   * naming the link they just removed — because unlinking on screen has not
+   * reached the row yet.
+   *
+   * Each door is therefore drawn against what THAT door reads. This one is the
+   * stored blob, and it gates the Approve button.
+   */
+  function misplacedSchoolLinkOnApprove(
+    request: PublicBookingRequestData,
+  ): UiMemberLink | null {
+    return misplacedSchoolLinkAmong(request, request.linkedGuestMembers);
+  }
+
+  /**
+   * Link edits made on screen that no save has carried to the request (#3412
+   * review round 5, C).
+   *
+   * Approve reads the stored blob, so an unsaved link is not refused — it is
+   * SILENTLY DROPPED, and that member is invoiced at non-member rates. Nothing
+   * about the screen says so, and this round made it worse by disabling Save
+   * quote in exactly the state where a link has been added and the numbers
+   * changed: Approve was left as the only enabled way out of it.
+   *
+   * Approve is not disabled for this. Approving the stored links is a
+   * legitimate thing to do, and Save quote is not always available to clear it
+   * — the officer is told what will happen instead, before the click.
+   */
+  function unsavedLinkEditCount(request: PublicBookingRequestData) {
+    const local = memberLinks[request.id];
+    if (!local) return 0;
+    const stored = new Map(
+      request.linkedGuestMembers.map((link) => [link.guestIndex, link.memberId]),
+    );
+    const localMap = new Map(
+      local.map((link) => [link.guestIndex, link.memberId]),
+    );
+    let differences = 0;
+    new Set([...stored.keys(), ...localMap.keys()]).forEach((guestIndex) => {
+      if (stored.get(guestIndex) !== localMap.get(guestIndex)) differences += 1;
+    });
+    return differences;
+  }
+
+  /** How the misplaced link's row reads on screen, so the officer can find it. */
+  function schoolGuestRowLabel(
+    request: PublicBookingRequestData,
+    guestIndex: number,
+  ) {
+    const guest = request.guests[guestIndex];
+    return guest ? `${guest.firstName} ${guest.lastName}` : `row ${guestIndex + 1}`;
+  }
+
+  /** Every reason this request's adjusted numbers cannot be saved right now. */
+  function countChangeBlocked(request: PublicBookingRequestData) {
+    return countChangeBlockedByHold(request) || misplacedSchoolLink(request) !== null;
+  }
+
   // Teachers/parent helpers (ADULT) plus the current (possibly edited) children.
   function plannedGuestTotal(request: PublicBookingRequestData) {
     const counts = childCountValues(request);
@@ -694,6 +909,10 @@ export function PublicBookingRequestsPanel({
   }
 
   async function handleCreateQuote(request: PublicBookingRequestData) {
+    // #3412 review (F14): no early return restating the service's refusal. The
+    // button is disabled by the same predicate, so it was unreachable, and the
+    // `catch` below already shows the server's own sentence verbatim — which
+    // makes the service the ONE place that wording lives.
     setActioningId(request.id);
     setError("");
     try {
@@ -733,6 +952,10 @@ export function PublicBookingRequestsPanel({
         };
       });
 
+      // #3412: saving the quote is the moment the officer's adjusted group
+      // numbers become real — the same override approval takes, sent under the
+      // same condition, so the price, the beds and the approval agree.
+      const childCounts = schoolChildCountOverride(request);
       const response = await fetch(`/api/admin/booking-requests/${request.id}/quote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -743,11 +966,23 @@ export function PublicBookingRequestsPanel({
             guestIndex,
             memberId,
           })),
+          ...(childCounts ? { childCounts } : {}),
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.error || "Failed to create quote");
+      }
+      // #3412: the numbers are now stored on the request, so drop the local
+      // edit and let the boxes prefill from what was saved. Kept, the unsaved
+      // copy would keep winning over the server's and re-post itself on every
+      // later action long after the officer moved on.
+      if (childCounts) {
+        setCountInputs((prev) => {
+          const next = { ...prev };
+          delete next[request.id];
+          return next;
+        });
       }
       toast.success("Quote saved");
       await fetchRequests();
@@ -771,12 +1006,25 @@ export function PublicBookingRequestsPanel({
       // Sending a quote auto-holds capacity, which materialises the owner
       // contact, so the map-to-existing decision (issue #1255) must ride along.
       const ownerContactMemberId = mappedOwnerContactId(request);
+      // #3412 (review, B1): send the group numbers currently in the boxes, so
+      // the service can refuse to hold beds and email the school for one party
+      // while the officer is looking at another. Sending holds and emails from
+      // the party STORED on the request, so an unsaved edit here is the very
+      // defect this issue fixes, one button over.
+      const childCounts = schoolChildCountOverride(request);
+      const sendBody =
+        ownerContactMemberId || childCounts
+          ? {
+              ...(ownerContactMemberId ? { ownerContactMemberId } : {}),
+              ...(childCounts ? { childCounts } : {}),
+            }
+          : null;
       const response = await fetch(`/api/admin/booking-requests/${request.id}/send-quote`, {
         method: "POST",
-        ...(ownerContactMemberId
+        ...(sendBody
           ? {
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ownerContactMemberId }),
+              body: JSON.stringify(sendBody),
             }
           : {}),
       });
@@ -1011,19 +1259,15 @@ export function PublicBookingRequestsPanel({
     setError("");
     try {
       // Only send a quantity override when the admin actually edited the school
-      // group's child counts; otherwise approve with the submitted numbers. The
-      // map-to-existing-contact decision (issue #1255) rides along in the same
-      // body when the admin chose one and the owner is not already held.
-      const hasCountOverride = request.type === "SCHOOL" && request.id in countInputs;
-      const counts = childCountValues(request);
+      // group's child counts; otherwise approve with the submitted numbers —
+      // the shared decision and payload (#3412). The map-to-existing-contact
+      // decision (issue #1255) rides along in the same body when the admin
+      // chose one and the owner is not already held.
+      const childCounts = schoolChildCountOverride(request);
       const ownerContactMemberId = mappedOwnerContactId(request);
       const payload: Record<string, unknown> = {};
-      if (hasCountOverride) {
-        payload.childCounts = {
-          INFANT: parseCount(counts.INFANT),
-          CHILD: parseCount(counts.CHILD),
-          YOUTH: parseCount(counts.YOUTH),
-        };
+      if (childCounts) {
+        payload.childCounts = childCounts;
       }
       if (ownerContactMemberId) {
         payload.ownerContactMemberId = ownerContactMemberId;
@@ -1726,6 +1970,46 @@ export function PublicBookingRequestsPanel({
                             asked for. To change the request itself — its dates, its teachers
                             or its catering — use &ldquo;Correct this request&rdquo; above.
                           </p>
+                          {/* #3412: saving the quote now rewrites the group,
+                              and beds already held for the old numbers are not
+                              re-sized under it. Say so before the click — the
+                              service refuses it with the same sentence. */}
+                          {countChangeBlockedByHold(request) ? (
+                            <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">
+                              Beds are held for this request&apos;s current numbers, so
+                              these new numbers can&apos;t be saved yet. Use{" "}
+                              <strong>Release hold</strong> above, then save and send the
+                              quote again.
+                            </p>
+                          ) : misplacedSchoolLink(request) ? (
+                            /* #3412 review (F7): the 422 the save would hit,
+                               said before the click and naming BOTH the member
+                               and the row — the officer is otherwise scanning
+                               a list of identical "School Child N" rows. */
+                            <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">
+                              {misplacedSchoolLink(request)?.label ?? "A member"} is
+                              linked to{" "}
+                              <strong>
+                                {schoolGuestRowLabel(
+                                  request,
+                                  misplacedSchoolLink(request)!.guestIndex,
+                                )}
+                              </strong>
+                              , and these numbers renumber that row — they can&apos;t be
+                              saved while the link is there. Unlink them below, save the
+                              new numbers, then link them again to the right row so they
+                              keep the member rate.
+                            </p>
+                          ) : schoolCountsChanged(request) ? (
+                            /* #3412 review (B4): Save quote does NOT hold beds.
+                               It applies the numbers and prices them; the beds
+                               are held by Send quote or by Hold slots. */
+                            <p className="text-xs text-muted-foreground">
+                              <strong>Save quote</strong> applies these numbers to the
+                              request and prices them. The beds are reserved later, when
+                              you send the quote or press <strong>Hold slots</strong>.
+                            </p>
+                          ) : null}
                           {plannedGuestTotal(request) > request.schoolGroupSoftCap ? (
                             <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">
                               Over {request.schoolGroupSoftCap}: confirm a club member is staying with the
@@ -2066,14 +2350,28 @@ export function PublicBookingRequestsPanel({
                           size="sm"
                           variant="outline"
                           onClick={() => handleCreateQuote(request)}
-                          disabled={actionsBlocked}
+                          // #3412: a count change under a live hold is refused
+                          // by the service (409), and one that would renumber a
+                          // member's row is refused too (422) — so do not offer
+                          // the click for either.
+                          disabled={actionsBlocked || countChangeBlocked(request)}
                         >
                           Save quote
                         </Button>
                         <Button
                           size="sm"
                           onClick={() => handleSendQuote(request)}
-                          disabled={actionsBlocked || !request.latestQuote}
+                          // #3412 (review, B1): sending HOLDS THE BEDS and
+                          // EMAILS the school, both for the party stored on the
+                          // request — so an unsaved group-number edit here is
+                          // the same defect one button over: 29 beds held and a
+                          // quote for 29 while the panel reads "= 20 total".
+                          // The service refuses it as well.
+                          disabled={
+                            actionsBlocked ||
+                            !request.latestQuote ||
+                            schoolCountsChanged(request)
+                          }
                         >
                           Send quote
                         </Button>
@@ -2093,7 +2391,18 @@ export function PublicBookingRequestsPanel({
                             size="sm"
                             variant="outline"
                             onClick={() => handleHoldSlots(request)}
-                            disabled={actionsBlocked || Boolean(request.heldBookingId)}
+                            // #3412: holding reserves beds for the numbers
+                            // STORED on the request, and once those beds are
+                            // held the adjusted numbers can no longer be saved
+                            // (the service refuses, 409). Holding first would
+                            // therefore reserve the wrong count and then trap
+                            // the officer between two buttons, so save the
+                            // numbers first — the save is what makes them real.
+                            disabled={
+                              actionsBlocked ||
+                              Boolean(request.heldBookingId) ||
+                              schoolCountsChanged(request)
+                            }
                           >
                             {request.heldBookingId ? "Slots held" : "Hold slots"}
                           </Button>
@@ -2110,11 +2419,17 @@ export function PublicBookingRequestsPanel({
                           size="sm"
                           variant={memberWholeLodge ? "default" : "outline"}
                           onClick={() => handleApprove(request)}
+                          // #3412 (review round 5, C): approve reads the links
+                          // SAVED on the request, so it is refused (422) by a
+                          // saved link the officer's numbers would move —
+                          // whatever the link editor on screen currently shows.
+                          // Gated on its own question, not on Save quote's.
                           disabled={
                             actionsBlocked ||
                             (!memberWholeLodge &&
                               request.type !== "SCHOOL" &&
-                              request.status !== "PRICED")
+                              request.status !== "PRICED") ||
+                            misplacedSchoolLinkOnApprove(request) !== null
                           }
                         >
                           {memberWholeLodge
@@ -2143,6 +2458,52 @@ export function PublicBookingRequestsPanel({
                           see the note above. Decline is still available.
                         </p>
                       ) : null}
+                      {/* #3412: same reason as the disabled Hold slots button,
+                          stated where a disabled button cannot state it. */}
+                      {!dataNeedsAttention && schoolCountsChanged(request) ? (
+                        <p className="text-xs text-muted-foreground">
+                          Hold slots and Send quote are off until you save the
+                          quote: both reserve the beds for the numbers saved on
+                          the request — and sending also emails the school that
+                          headcount — so saving these new ones is what makes them
+                          the numbers.
+                        </p>
+                      ) : null}
+                      {/* #3412 (review round 5, C): approving reads the member
+                          links SAVED on the request, not the ones on screen.
+                          Both halves of that were silent — a saved link made
+                          approve fail after the click, and an unsaved one was
+                          dropped without a word and invoiced at non-member
+                          rates. */}
+                      {!dataNeedsAttention &&
+                      misplacedSchoolLinkOnApprove(request) !== null ? (
+                        <p className="text-xs text-warning-11">
+                          Approving is off: a member is linked to{" "}
+                          <strong>
+                            {schoolGuestRowLabel(
+                              request,
+                              misplacedSchoolLinkOnApprove(request)!.guestIndex,
+                            )}
+                          </strong>{" "}
+                          on the saved request, and these numbers change who is
+                          on that row. Approving reads the saved links, so
+                          unlinking here is not enough on its own — unlink,
+                          save the quote, then link them again to the right row
+                          so they keep the member rate.
+                        </p>
+                      ) : null}
+                      {!dataNeedsAttention && unsavedLinkEditCount(request) > 0 ? (
+                        <p className="text-xs text-warning-11">
+                          {unsavedLinkEditCount(request) === 1
+                            ? "One member link change here has not been saved."
+                            : `${unsavedLinkEditCount(request)} member link changes here have not been saved.`}{" "}
+                          Approving uses the links saved on the request, not the
+                          ones on screen: a member you linked here would be
+                          missed, and that guest invoiced at non-member rates,
+                          while one you unlinked here would still be linked.
+                          Press <strong>Save quote</strong> first.
+                        </p>
+                      ) : null}
                       {memberWholeLodge ? (
                         <p className="text-xs text-muted-foreground">
                           Approving confirms the booking, charges the priced
@@ -2158,8 +2519,11 @@ export function PublicBookingRequestsPanel({
                           Hold slots reserves the beds for this school request
                           before it is approved or quoted — approving a school
                           reuses the held booking (#1352), and sending a quote
-                          auto-holds too, so use Hold slots to reserve capacity
-                          while you set group numbers or the contact. An
+                          auto-holds too. Set the group numbers and the contact
+                          FIRST and save the quote, then reserve capacity: beds
+                          are held for the numbers saved on the request, and
+                          once they are held the numbers can no longer be
+                          changed without releasing the hold (#3412). An
                           accepted-but-unpaid booking can still be bumped by the
                           confirm-pending job if the lodge capacity for these
                           nights is later lowered below what is booked.

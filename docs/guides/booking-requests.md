@@ -131,6 +131,45 @@ are listed on the booking for you to relay.
    reciprocal-membership courtesy), with the non-member rate shown underneath for
    reference. The pre-fill uses the check-in night's rate, so adjust it if a stay
    crosses a season boundary with different rates.
+
+   **School groups: the group numbers are part of the quote.** A school request
+   carries **Adjust group numbers** (infants, children, youth). Whatever you set
+   there is applied to the request when you press **Save quote**, and everything
+   downstream reads it: the price, the list of attendees the school sees, the
+   guest count in their email, the beds held when you send the quote, and the
+   booking created at approval. The named teachers and parent helpers are kept
+   exactly as submitted, and the group can never exceed the lodge's capacity.
+
+   **Save quote applies the numbers and prices them. It does not reserve any
+   beds.** The beds are reserved when you send the quote, or when you press
+   **Hold slots** — so set the numbers, save, and then reserve. Until you save,
+   both of those buttons are switched off and the panel says why: each would
+   reserve the beds for the numbers still stored on the request, and sending
+   would email the school that headcount too.
+
+   Two refusals to expect. Beds already held for this request are **not**
+   re-sized by a new set of numbers: press **Release hold** first, then save and
+   send again — the panel says so before you click. (A hold that was already
+   cancelled elsewhere does not block you; the panel checks whether the beds are
+   really reserved, not just whether a hold was once placed.) And a club
+   member's link only gets in the way when the new numbers would hand that
+   person's row to somebody else. Adding more youth to the end of the group
+   leaves every earlier row exactly as it was, so a link there is untouched and
+   the save goes straight through; it is the changes that reach the linked row
+   — cutting the group, or swapping children for youth ahead of it — that are
+   refused, rather than moving that member onto somebody else's bed. The panel
+   names the member and the row, so unlink them, save the new numbers, then
+   **link them again** to the right row — otherwise they lose the member rate.
+
+   **Member links only count once they are saved.** Linking a guest to a member
+   stages the change on screen; **Save quote** is what writes it to the request.
+   Approving reads what is written, so the panel now says so before you click:
+   if a **saved** link sits on a row your new numbers would give to somebody
+   else, **Approve** is switched off with the reason (unlinking on screen does
+   not clear it — unlink, save, then re-link), and if you have linked or
+   unlinked anyone without saving, the panel warns that approving would go ahead
+   with the saved links instead. A member you linked but did not save would be
+   invoiced at non-member rates.
 3. When the requester accepts (or for a priced general request), click
    **Approve & send payment link** (general) or **Approve & invoice school**
    (school groups) to convert it into a booking. Use **Decline** with an
