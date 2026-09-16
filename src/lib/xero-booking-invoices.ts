@@ -695,9 +695,11 @@ export async function createXeroInvoiceForBooking(
       buildRequestPayload: (resolvedContactId) => ({
         invoices: [buildInvoice(resolvedContactId)],
         // Contact repair rewrites the stored operation request. Preserve the
-        // Stage 3 source verdict with the rebuilt invoice instead of erasing
-        // the evidence on the only retry that changes this payload.
+        // Stage 3 source verdict and Stage 4 reconciliation state with the
+        // rebuilt invoice instead of erasing evidence on the only retry that
+        // changes this payload.
         moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
+        moneyReconciliation,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
