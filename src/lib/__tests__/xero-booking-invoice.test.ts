@@ -1673,9 +1673,14 @@ describe("createXeroInvoiceForBooking", () => {
     });
 
     it("preserves Stage 4 reconciliation evidence when contact repair rebuilds the request", async () => {
-      mocks.prisma.booking.findUnique.mockResolvedValue(
-        bookingWithPromo({ code: "SUMMER25", xeroItemCode: "PROMO-DISC", xeroAccountCode: null })
-      );
+      const booking = bookingWithPromo({
+        code: "EXPIRED",
+        xeroItemCode: null,
+        xeroAccountCode: null,
+      });
+      booking.promoAdjustmentCents = 0;
+      booking.discountCents = 0;
+      mocks.prisma.booking.findUnique.mockResolvedValue(booking);
       let repairedPayload: unknown;
       mocks.retryXeroWriteWithContactRepair.mockImplementationOnce(
         async (options: {
@@ -1699,11 +1704,14 @@ describe("createXeroInvoiceForBooking", () => {
         expect.objectContaining({
           moneyBuildUp: expect.objectContaining({
             moneyBuildUpOperation: "XERO_PROMO_LINE",
-            moneyBuildUpSource: "STORED",
+            moneyBuildUpSource: "DERIVED_COMPATIBILITY_FALLBACK",
           }),
           moneyReconciliation: {
             state: "UNRECONCILED",
-            reasons: ["FINAL_PRICE_RELATION_MISMATCH"],
+            reasons: [
+              "PROMO_BUILD_UP_MISMATCH",
+              "FINAL_PRICE_RELATION_MISMATCH",
+            ],
           },
         }),
       );
