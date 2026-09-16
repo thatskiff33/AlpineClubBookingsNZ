@@ -391,6 +391,104 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
   });
 });
 
+describe("the rows an officer could put back (#3498, owner decision D2)", () => {
+  const DISMISSED_ROW = {
+    id: "task-dismissed",
+    bookingId: "booking-edit",
+    amountCents: null,
+    kind: "EDIT_FINANCIAL_REVIEW",
+    reason: "A change to this booking could not be priced from stored history.",
+    note: "Nothing owed either way.",
+    completedAt: new Date("2026-06-25T02:00:00.000Z"),
+    booking: {
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      deletedAt: null,
+      member: { firstName: "Ada", lastName: "Lovelace" },
+      organisation: null,
+    },
+  };
+
+  beforeEach(() => {
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValue([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([DISMISSED_ROW]);
+  });
+
+  it("asks only for dismissals an OFFICER took, inside the reopen window", async () => {
+    /*
+      THE FENCE IS IN THE QUERY, and it is the safety half rather than the tidy
+      half. `completedByMemberId: { not: null }` excludes the Stripe webhook's
+      own dismissals, which record a capture it had ALREADY refunded - offering
+      one a "put back on the queue" button would invite a second refund of money
+      that has gone back. The window excludes nothing but old rows, and the
+      reopen door itself refuses on neither age nor anything this query decides.
+    */
+    await GET();
+    const dismissedQuery = calls()[2];
+    expect(dismissedQuery.where).toMatchObject({
+      status: "DISMISSED",
+      completedByMemberId: { not: null },
+    });
+    expect(dismissedQuery.orderBy).toEqual({ completedAt: "desc" });
+  });
+
+  it("sends what the card needs to decide, and nothing it does not", async () => {
+    const body = (await (await GET()).json()) as {
+      dismissed: Array<Record<string, unknown>>;
+      dismissedUnavailable: boolean;
+    };
+    expect(body.dismissedUnavailable).toBe(false);
+    // The WHOLE object: no review evidence, no unpriced nights, and no
+    // identifier the card has no use for. This list offers one action, so it
+    // carries what is needed to decide on that action and stops.
+    expect(body.dismissed).toEqual([
+      {
+        id: "task-dismissed",
+        bookingId: "booking-edit",
+        amountCents: null,
+        kind: "EDIT_FINANCIAL_REVIEW",
+        reason:
+          "A change to this booking could not be priced from stored history.",
+        note: "Nothing owed either way.",
+        dismissedAt: "2026-06-25T02:00:00.000Z",
+        bookingDeleted: false,
+        memberName: "Ada Lovelace",
+        checkIn: CHECK_IN.toISOString(),
+        checkOut: CHECK_OUT.toISOString(),
+      },
+    ]);
+  });
+
+  it("degrades on its own rather than taking the money queue down with it", async () => {
+    // The same asymmetry #2750 drew for the notices beside it: losing a
+    // correction surface must never remove the list of money the club owes
+    // members by hand, and an empty list is a claim a failed read has not
+    // earned - hence the flag.
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValue([])
+      .mockResolvedValueOnce([OPEN_ROW])
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error("statement timeout"));
+
+    const response = await GET();
+    const body = (await response.json()) as {
+      tasks: { id: string }[];
+      dismissed: unknown[];
+      dismissedUnavailable: boolean;
+    };
+    expect(response.status).toBe(200);
+    expect(body.tasks.map((task) => task.id)).toEqual(["task-open"]);
+    expect(body.dismissed).toEqual([]);
+    expect(body.dismissedUnavailable).toBe(true);
+    expect(mocks.loggerError).toHaveBeenCalled();
+  });
+});
+
 describe("a failed notices read must not take the work queue with it (#2750 review)", () => {
   /*
     The second query is the informational one; the first is money the club still
