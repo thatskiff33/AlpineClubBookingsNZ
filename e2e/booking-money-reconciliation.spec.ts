@@ -13,7 +13,8 @@ test("an officer sees the complete derived booking-money warning on synthetic da
 }) => {
   await page.goto(`/bookings/${UNRECONCILED_BOOKING_ID}`);
 
-  const warning = page.getByTestId("booking-money-unreconciled");
+  const bookingDetail = page.getByTestId("booking-detail-content");
+  const warning = bookingDetail.getByTestId("booking-money-unreconciled");
   await expect(warning).toBeVisible();
   await expect(warning).toHaveAttribute("data-reconciliation-state", "UNRECONCILED");
   await expect(warning).toHaveAttribute(
@@ -25,7 +26,9 @@ test("an officer sees the complete derived booking-money warning on synthetic da
   );
   await expect(warning).toContainText("No amount has been changed automatically");
 
-  const historyState = page.getByTestId("booking-history-money-reconciliation");
+  const historyState = bookingDetail.getByTestId(
+    "booking-history-money-reconciliation",
+  );
   await expect(historyState).toBeVisible();
   await expect(historyState).toHaveAttribute(
     "data-reconciliation-reasons",
