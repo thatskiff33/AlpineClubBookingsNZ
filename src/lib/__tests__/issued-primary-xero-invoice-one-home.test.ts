@@ -137,25 +137,32 @@ const BOOKINGS_API_TREE = "src/app/api/bookings";
 const XERO_INVOICE_ID = /\bxeroInvoiceId\b/;
 
 /**
- * #3244: a READ of a payment status that decides something. Anchored to the
- * comparison rather than the bare word, so a route that selects the column, or
- * WRITES it (`status: "SUCCEEDED"` in an update), is not mistaken for a route
- * that re-derives "is this paid?" from it.
+ * #3244: a READ of an AGGREGATE `Payment.status` that decides something.
  *
- * The `PaymentStatus.X` alternation is not decoration: it is the spelling the
- * converged call site used before this issue, so a hand revert would have
- * evaded a ban written only against the string literal. Both reviews of #3244
- * found that independently.
+ * ANCHORED ON THE RECEIVER, and that anchor is the whole difficulty. An earlier
+ * draft matched any `status === "SUCCEEDED"`, which fired on a
+ * `paymentTransaction.status` read in a route under this tree — a DIFFERENT
+ * question. `booking-payment-state.ts` says in terms that the aggregate list and
+ * `isCapturedTransactionStatus` must not be merged, and a census that cannot
+ * tell them apart pushes whoever trips it toward exactly that merge. It did:
+ * the first round of this PR converged that route onto the wrong home, and
+ * review caught it. A guard that mis-identifies its subject is worse than no
+ * guard, because it hands out a confident wrong instruction.
+ *
+ * So this matches `payment.status` / `payment?.status` / `booking.payment.status`
+ * and the `PaymentStatus.X` spelling of the same, and deliberately does NOT
+ * match a bare `status ===` on an unknown receiver. The transaction-side copies
+ * are real and are filed as #3503; they are simply not this census's subject.
  *
  * WHAT IT CANNOT SEE, stated rather than implied (`INV-SSOT-004`): a loose
- * `==`, a status copied into a local first (`const s = p.status`), and a
+ * `==`, a status copied into a local first (`const s = payment.status`), and a
  * membership test against a list the caller builds itself
  * (`MY_STATUSES.includes(payment.status)`). None exists in the tree today —
- * that was measured, not assumed — and the failure message says so, because a
- * guard that claims more than it catches is the defect it exists to prevent.
+ * measured, not assumed — and the failure message says so, because a guard that
+ * claims more than it catches is the defect it exists to prevent.
  */
 const PAYMENT_STATUS_READ =
-  /payment(?:\?)?\.status\s*(?:===|!==)|\.status\s*(?:===|!==)\s*PaymentStatus\.(?:SUCCEEDED|PARTIALLY_REFUNDED|REFUNDED)|\bstatus\s*(?:===|!==)\s*"(?:SUCCEEDED|PARTIALLY_REFUNDED|REFUNDED)"/;
+  /\bpayment(?:\?)?\.status\s*(?:===|!==)\s*(?:"(?:SUCCEEDED|PARTIALLY_REFUNDED|REFUNDED)"|PaymentStatus\.(?:SUCCEEDED|PARTIALLY_REFUNDED|REFUNDED))/i;
 
 /**
  * Routes allowed to compare `Payment.status`, each with the reason it is not a

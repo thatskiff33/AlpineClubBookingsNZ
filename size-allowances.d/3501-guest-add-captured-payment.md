@@ -3,12 +3,11 @@
 One already-over-budget file grows, by twenty-nine lines, every one of them
 comment or import wrapping. The behavioural change is a single line.
 
-**Compression came first, and a split was taken where one existed.** The sibling
-route `confirm-modification-payment/route.ts` was converged in the same pull
-request and kept *inside* its budget, by routing it to
-`isCapturedTransactionStatus` — the home that answers the question it is
-actually asking — rather than to the aggregate list it was first pointed at. So
-the allowance below is what was left after doing that work, not instead of it.
+**Compression came first.** The docblock was written at twenty-three lines and
+cut twice; the import accounts for four of the remaining lines on its own, since
+it crosses the print width once a second name joins it. Nothing here is prose
+that could have been a shorter sentence — it is the reason one door differs from
+its three siblings, which is the single most deletable-looking thing in the file.
 
 **Why the figure grew during review, which is the honest part of this fragment.**
 It was opened at nineteen lines. Two adversarial reviews then found that the

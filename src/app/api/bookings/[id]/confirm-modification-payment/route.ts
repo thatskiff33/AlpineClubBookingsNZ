@@ -9,7 +9,6 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import {
   findPaymentTransactionByIntentId,
-  isCapturedTransactionStatus,
   markPaymentIntentTransactionSucceeded,
 } from "@/lib/payment-transactions";
 import {
@@ -87,12 +86,11 @@ export async function POST(
       return NextResponse.json({ error: "Payment transaction not found" }, { status: 404 });
     }
 
-    // #3244: this asks the question of ONE PaymentTransaction, so its home is
-    // `isCapturedTransactionStatus` (#3170) — NOT the aggregate
-    // `CAPTURED_PAYMENT_STATUS_LIST`, which `booking-payment-state.ts` says in
-    // terms must not be merged with it. They spell the same three values and
-    // answer different questions.
-    if (isCapturedTransactionStatus(paymentTransaction.status)) {
+    if (
+      paymentTransaction.status === "SUCCEEDED" ||
+      paymentTransaction.status === "PARTIALLY_REFUNDED" ||
+      paymentTransaction.status === "REFUNDED"
+    ) {
       const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
         paymentIntentId
       );
