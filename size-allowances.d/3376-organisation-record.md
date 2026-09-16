@@ -5,7 +5,7 @@ a declarative table plus the two-line comment saying why that row's key is what
 it is.
 
 file: src/lib/member-merge.ts
-lines: 2967
+lines: 3087
 reason: `GENERIC_KEYED_RESOLVERS` is the merge's declarative collision table,
   and the schema completeness test fails CI for any Member relation with no
   bucket — so the new `OrganisationContact.member` relation has to appear here
@@ -21,3 +21,10 @@ reason: `GENERIC_KEYED_RESOLVERS` is the merge's declarative collision table,
   the bucket, why `role` is not consulted, and why the classification arrives
   with the relation — is in `member-merge-relations.ts`, which is not over
   budget, so only the irreducible part is here.
+
+  RE-MEASURED by the tenth sync of `main` into this epic, which composed #3271's
+  parent/partner exclusivity. That work added its own handling to this same
+  module on `main`, so the figure above is the composed length rather than this
+  epic's alone; the reasoning below is unchanged by the merge. One file, one
+  allowance, so it is re-measured here rather than declared in a second fragment.
+
