@@ -19,11 +19,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { useClubTime } from "@/components/club-time-provider";
-import { DEFAULT_SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
+import {
+  DEFAULT_SCHOOL_GROUP_SOFT_CAP,
+  SCHOOL_CHILD_TIERS,
+} from "@/lib/school-booking-constants";
 
-// Schools request counts of children per age tier; teachers and parent helpers
-// are the named adults.
-const CHILD_TIERS: AgeTier[] = ["INFANT", "CHILD", "YOUTH"];
 
 interface TeacherInput {
   firstName: string;
@@ -137,7 +137,7 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
   const childTierLabel = (tier: AgeTier) =>
     ageTierOptions.find((option) => option.tier === tier)?.label ?? tier;
 
-  const totalChildren = CHILD_TIERS.reduce((sum, tier) => sum + (childCounts[tier] || 0), 0);
+  const totalChildren = SCHOOL_CHILD_TIERS.reduce((sum, tier) => sum + (childCounts[tier] || 0), 0);
   const validTeachers = teachers.filter((t) => t.firstName.trim() && t.lastName.trim());
   const totalGuests = validTeachers.length + totalChildren;
   const datesValid = Boolean(checkIn && checkOut && checkOut > checkIn);
@@ -468,7 +468,7 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
           <div className="space-y-3">
             <h3 className="text-sm font-semibold">Children attending</h3>
             <div className="grid gap-4 sm:grid-cols-3">
-              {CHILD_TIERS.map((tier) => (
+              {SCHOOL_CHILD_TIERS.map((tier) => (
                 <div key={tier} className="space-y-1">
                   <Label htmlFor={`count-${tier}`}>{childTierLabel(tier)}</Label>
                   <Input

@@ -29,6 +29,7 @@ import {
   parseBookingRequestGuests,
   parseBookingRequestLinkedGuestMembers,
   splitPriceAcrossGuests,
+  type BookingRequestGuest,
   type BookingRequestLinkedGuestMember,
 } from "@/lib/booking-request";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -61,7 +62,12 @@ import logger from "@/lib/logger";
 import { countActiveLodges, getDefaultLodgeId } from "@/lib/lodges";
 import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
-import { approveSchoolBookingRequest } from "@/lib/school-booking-request";
+import {
+  approveSchoolBookingRequest,
+  resolveSchoolGuestOverride,
+  schoolChildCountsSchema,
+  type SchoolChildCounts,
+} from "@/lib/school-booking-request";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { formatDateOnly } from "@/lib/date-only";
 
@@ -148,6 +154,16 @@ export const bookingRequestQuoteInputSchema = z.object({
       })
     )
     .optional(),
+  /**
+   * #3412 — the officer's adjusted bulk child counts on a SCHOOL request, in
+   * the SAME schema approval takes, because it is the same decision made
+   * earlier. Present only when the officer edited the group-number boxes.
+   * Saving the quote is where that edit becomes real: the guest list is
+   * regenerated and PERSISTED on the request in the quote's own transaction, so
+   * the price, the requester's breakdown, the guest count in the email, the
+   * send-time hold and the approval all read one list.
+   */
+  childCounts: schoolChildCountsSchema.optional(),
 });
 
 type BookingRequestQuoteInput = z.infer<
@@ -414,13 +430,20 @@ function normalizeQuoteOptions(input: {
     cateringPreference: SchoolCateringPreference | null;
     checkIn: Date;
     checkOut: Date;
-    guests: Prisma.JsonValue;
   };
+  /**
+   * The party being priced — #3412. Taken as a parameter rather than re-parsed
+   * from `request.guests`, because on a school request with an officer count
+   * adjustment the list being quoted is the REGENERATED one the same save is
+   * about to persist, and a second read of the stored column here would price
+   * the group that is being replaced.
+   */
+  guests: BookingRequestGuest[];
   pricingMode: BookingRequestPricingMode;
   options: BookingRequestQuoteInput["options"];
   linkedGuestMembers: BookingRequestLinkedGuestMember[];
 }): NormalizedQuoteOption[] {
-  const guests = parseBookingRequestGuests(input.request.guests);
+  const guests = input.guests;
   const nightCount = getNightCount(input.request.checkIn, input.request.checkOut);
   const linkedMembers = new Map(
     input.linkedGuestMembers.map((link) => [link.guestIndex, link.memberId])
@@ -535,6 +558,108 @@ function normalizeQuoteOptions(input: {
   });
 }
 
+/**
+ * #3412 — apply an officer's adjusted school group numbers to the quote about
+ * to be saved, or refuse the change.
+ *
+ * Returns null when the input carries no counts, in which case the stored guest
+ * list stands and nothing about the request's party is rewritten. Otherwise it
+ * returns the list to price, and whether saving must PERSIST it.
+ *
+ * The ONE refusal that lives here rather than in the shared resolver, because
+ * it is about the quote's surroundings rather than about the party itself:
+ *
+ * - **A live hold is not resized (409).** Sending a quote reserves the beds for
+ *   the whole quote lifecycle (`INV-ADDPAY-006`), and that hold is reused as-is
+ *   on re-send. Re-pricing under it would leave the requester a quote for one
+ *   headcount against beds reserved for another. Releasing is the shared
+ *   `cancelBooking` path with its own locks and notifications, and the officer
+ *   already has it as one button — so this refuses and says which button. It is
+ *   genuinely quote-path-only: approval CONSUMES the hold rather than having to
+ *   protect it.
+ *
+ * The refusal of a member link on a row the regeneration renumbers is NOT here.
+ * It lives in `resolveSchoolGuestOverride`, because approve applies its link map
+ * positionally against the regenerated list exactly as this does — so a copy
+ * here would have covered one of the two doors (#3412 review, B3).
+ */
+async function resolveSchoolCountAdjustment(input: {
+  request: {
+    id: string;
+    type: BookingRequestType;
+    teachers: Prisma.JsonValue;
+    guests: Prisma.JsonValue;
+    lodgeId: string | null;
+    heldBookingId: string | null;
+  };
+  childCounts: BookingRequestQuoteInput["childCounts"];
+  linkedGuestMembers: BookingRequestQuoteInput["linkedGuestMembers"];
+}): Promise<{
+  guests: BookingRequestGuest[];
+  /**
+   * How many people the request held BEFORE this save. Carried so the audit row
+   * records the party that was overwritten (#3412 review, F11): on the first
+   * adjusted save there is no superseded quote, so a mistyped 8 for 18 would
+   * otherwise leave nothing anywhere holding the number the school submitted.
+   */
+  storedGuestCount: number;
+  persist: boolean;
+} | null> {
+  if (input.childCounts === undefined) return null;
+  if (input.request.type !== BookingRequestType.SCHOOL) {
+    throw new BookingRequestQuoteError(
+      "Group numbers can only be adjusted on a school booking request",
+      422
+    );
+  }
+
+  const resolution = await resolveSchoolGuestOverride({
+    request: input.request,
+    childCounts: input.childCounts,
+    // The request's own lodge selector: a count change is refused below while a
+    // hold exists, so there is no held booking whose concrete lodge could
+    // differ from it here.
+    lodgeId: input.request.lodgeId,
+    // The POSTED links, because those are what this save is about to write over
+    // `linkedGuestMembers` and what every later reader will then apply
+    // positionally. The resolver refuses one that the regeneration would move.
+    linkedGuestIndexes: (input.linkedGuestMembers ?? []).map(
+      (link) => link.guestIndex
+    ),
+  });
+  if (!resolution.changed) {
+    // The officer re-sent the numbers already stored. Nothing to persist, and
+    // nothing to refuse — a re-save under a live hold must keep working.
+    return {
+      guests: resolution.guests,
+      storedGuestCount: resolution.storedGuests.length,
+      persist: false,
+    };
+  }
+
+  if (input.request.heldBookingId) {
+    const hold = await prisma.booking.findUnique({
+      where: { id: input.request.heldBookingId },
+      select: { status: true },
+    });
+    // Only a LIVE hold blocks. A pointer left behind by a cancelled booking is
+    // detached and replaced by `holdBookingRequestSlots` on the next send, so
+    // it reserves nothing and must not trap the officer.
+    if (hold?.status === BookingStatus.AWAITING_REVIEW) {
+      throw new BookingRequestQuoteError(
+        "Beds are already held for this request's current numbers. Release the hold first, then save and send the quote again.",
+        409
+      );
+    }
+  }
+
+  return {
+    guests: resolution.guests,
+    storedGuestCount: resolution.storedGuests.length,
+    persist: true,
+  };
+}
+
 function firstQuoteOption(options: NormalizedQuoteOption[], optionId?: string | null) {
   if (!optionId) return options[0];
   return options.find((option) => option.id === optionId) ?? null;
@@ -556,7 +681,6 @@ export async function createBookingRequestQuote(input: {
     throw new BookingRequestError("This booking request cannot be quoted", 409);
   }
 
-  const guests = parseBookingRequestGuests(request.guests);
   // #2342: the transaction below OVERWRITES request.linkedGuestMembers with
   // whatever the client posted, and the admin panel posts its DISPLAY list —
   // which is empty for a row whose stored link blob failed to parse, because
@@ -567,6 +691,21 @@ export async function createBookingRequestQuote(input: {
   // (Approval and hold already re-read the column strictly through
   // linkedGuestMemberMap; this closes the one path that WRITES it.)
   parseBookingRequestLinkedGuestMembers(request.linkedGuestMembers);
+  // #3412 — the officer's adjusted group numbers, resolved through the SAME
+  // helper approval uses, so the party priced here and the party converted
+  // later cannot diverge. It strict-reads the stored guests (#2342), preserves
+  // the named teachers, regenerates the bulk children and binds the lodge's bed
+  // count; `changed` is false when the officer typed the current numbers back,
+  // which the panel posts whenever they touched a box.
+  const schoolCountAdjustment = await resolveSchoolCountAdjustment({
+    request,
+    childCounts: input.quote.childCounts,
+    linkedGuestMembers: input.quote.linkedGuestMembers,
+  });
+  const guests = schoolCountAdjustment
+    ? schoolCountAdjustment.guests
+    : parseBookingRequestGuests(request.guests);
+  const persistGuests = schoolCountAdjustment?.persist ?? false;
   const linkedGuestMembers = normalizeLinkedGuestMembers(
     input.quote.linkedGuestMembers,
     guests.length
@@ -575,6 +714,7 @@ export async function createBookingRequestQuote(input: {
 
   const options = normalizeQuoteOptions({
     request,
+    guests,
     pricingMode: input.quote.pricingMode,
     options: input.quote.options,
     linkedGuestMembers,
@@ -593,8 +733,35 @@ export async function createBookingRequestQuote(input: {
     // BookingRequestQuote row (matching decline's claim-first order) so a
     // concurrent decline + quote-create on the same request cannot deadlock.
     // Pure statement reorder — same writes, same transaction.
-    await tx.bookingRequest.update({
-      where: { id: request.id },
+    //
+    // #3412: a CLAIM rather than the plain update this used to be, and the
+    // guard has three parts, each of which this save would otherwise silently
+    // overwrite:
+    //
+    //   - `version` — every writer of this row bumps it. Everything priced
+    //     above was computed from the row read before the transaction opened,
+    //     and on a school count adjustment this write REPLACES the party. A
+    //     second officer's save, an accept, a hold or a correction landing in
+    //     between must make this one 409 rather than re-price the row from a
+    //     list that has since been rewritten.
+    //   - `status` — the same #1504 resurrection hole `sendBookingRequestQuote`
+    //     closed, which create never had: a concurrent decline finalises the
+    //     request (releasing its hold) in the window after the status check
+    //     above, and a plain overwrite to QUOTED would resurrect it.
+    //   - `heldBookingId` — only when the party is being replaced. The 409
+    //     above refuses a count change while beds are held; this is the same
+    //     rule at write time, against a hold placed in between.
+    //
+    // Claim-first: the throw below rolls the whole transaction back before any
+    // quote row is touched, so a losing save leaves the request exactly as the
+    // winner left it.
+    const claimed = await tx.bookingRequest.updateMany({
+      where: {
+        id: request.id,
+        version: request.version,
+        status: { in: [...quoteableStatuses] },
+        ...(persistGuests ? { heldBookingId: request.heldBookingId } : {}),
+      },
       data: {
         status: BookingRequestStatus.QUOTED,
         priceCents:
@@ -602,11 +769,25 @@ export async function createBookingRequestQuote(input: {
         pricedByMemberId: input.adminMemberId,
         pricedAt: quotedAt,
         linkedGuestMembers: linkedGuestMembers as unknown as Prisma.InputJsonValue,
+        // #3412: the officer's adjusted numbers become the request's party
+        // HERE, in the same transaction that mints the quote pricing them — so
+        // the price, the requester's breakdown, the guest count in the email,
+        // the send-time hold and the approval all read one list. Written only
+        // when the counts actually changed the party.
+        ...(persistGuests
+          ? { guests: guests as unknown as Prisma.InputJsonValue }
+          : {}),
         responseMessage: null,
         responseMessageAt: null,
         version: { increment: 1 },
       },
     });
+    if (claimed.count === 0) {
+      throw new BookingRequestError(
+        "This booking request changed while the quote was being saved, so nothing was saved. Reload the queue and quote it again.",
+        409
+      );
+    }
 
     const latest = await tx.bookingRequestQuote.findFirst({
       where: { bookingRequestId: request.id },
@@ -660,6 +841,20 @@ export async function createBookingRequestQuote(input: {
       version: quote.version,
       pricingMode: input.quote.pricingMode,
       optionCount: options.length,
+      // #3412: a save that rewrote the school party is a different act from one
+      // that only re-priced it, and the guest count is what the money was
+      // computed over. Both belong in the record of who changed what.
+      guestCount: guests.length,
+      guestListRegenerated: persistGuests,
+      // #3412 (review, F11): the party this save REPLACED. The overwrite is
+      // the point of the fix, but on the first adjusted save no superseded
+      // quote exists yet, so without this the number the school actually
+      // submitted survives nowhere in the application — a mistyped 8 for 18
+      // would leave no record that it had ever been 29. Written only on a save
+      // that rewrote the list, so an ordinary re-price stays quiet.
+      ...(persistGuests
+        ? { previousGuestCount: schoolCountAdjustment?.storedGuestCount ?? null }
+        : {}),
       totals: options.map((option) => ({
         id: option.id,
         totalCents: option.totalCents,
@@ -683,6 +878,20 @@ export async function sendBookingRequestQuote(input: {
    * threaded here, not just at approval. Ignored once a hold already exists.
    */
   ownerContactMemberId?: string | null;
+  /**
+   * #3412 (review, B1) — the school group numbers currently showing in the
+   * officer's panel, when they are showing any.
+   *
+   * Sending a quote is the OTHER button that holds beds and emails the school,
+   * and it does both from the request's stored party. An officer who saves a
+   * quote, then edits the boxes, then presses Send would therefore reserve and
+   * quote the numbers they just replaced — which is #3412's defect exactly, one
+   * button over. The panel disables Send while an unsaved edit exists; this
+   * field is what lets the service refuse it too, because a disabled button is
+   * not a backstop. Undefined means the officer has typed nothing, which is
+   * unchanged from before this issue.
+   */
+  childCounts?: SchoolChildCounts;
 }) {
   const quote = await prisma.bookingRequestQuote.findFirst({
     where: {
@@ -703,6 +912,34 @@ export async function sendBookingRequestQuote(input: {
   // some future path must still never be sent one. The auto-hold inside the send
   // is guarded separately in holdBookingRequestSlots.
   assertNotMemberWholeLodgeRequest(quote.bookingRequest, "Sending a quote");
+
+  // #3412 (review, B1): refuse to hold beds and email the school for one party
+  // while the officer is looking at another. `changed` is the same question
+  // saving asks — false when they typed the stored numbers back — so a panel
+  // that posts the boxes on every send only ever blocks a real divergence.
+  if (input.childCounts !== undefined) {
+    if (quote.bookingRequest.type !== BookingRequestType.SCHOOL) {
+      throw new BookingRequestQuoteError(
+        "Group numbers can only be adjusted on a school booking request",
+        422
+      );
+    }
+    const pending = await resolveSchoolGuestOverride({
+      request: quote.bookingRequest,
+      childCounts: input.childCounts,
+      lodgeId: quote.bookingRequest.lodgeId,
+      // Nothing is written and nothing is renumbered here: this asks only
+      // whether the numbers on screen are the numbers on the row. The link
+      // refusal belongs to the save that actually rewrites the list.
+      linkedGuestIndexes: [],
+    });
+    if (pending.changed) {
+      throw new BookingRequestQuoteError(
+        "These group numbers have not been saved yet, so sending now would reserve beds and email the school for the numbers still on the request. Press Save quote first, then send.",
+        409
+      );
+    }
+  }
 
   // A sent quote must reserve the beds/guest-nights so they cannot disappear
   // before the requester accepts (issue #1254, owner decision (a)). Place the
@@ -733,7 +970,7 @@ export async function sendBookingRequestQuote(input: {
   const sentAt = new Date();
   const expiresAt = new Date(sentAt.getTime() + ttlMs);
 
-  const updated = await prisma.$transaction(async (tx) => {
+  const { updated, heldGuestCount } = await prisma.$transaction(async (tx) => {
     // #1423 lock-ordering invariant: lock the BookingRequest row BEFORE the
     // BookingRequestQuote row (matching decline's claim-first order) so a
     // concurrent decline + re-send on the same request cannot deadlock. Pure
@@ -768,8 +1005,32 @@ export async function sendBookingRequestQuote(input: {
       );
     }
 
-    const saved = await tx.bookingRequestQuote.update({
-      where: { id: quote.id },
+    /*
+      #3412 (review, B2): THE QUOTE ROW IS CLAIMED ON ITS STATUS, NOT OVERWRITTEN.
+
+      This used to be a plain `update` by id, and the quote it wrote was the one
+      read before the beds were held — a read that `holdBookingRequestSlots`
+      guarantees is stale, because it bumps the request's `version` twice, which
+      is also why a version fence on the request claim above cannot cover this.
+
+      The hole that leaves: A presses Send on quote v1 (priced for 29); B saves
+      new numbers, which SUPERSEDES v1 and mints v2 for 18; A's hold reserves
+      18 beds; A's plain update then flips the SUPERSEDED v1 back to SENT with a
+      live accept token, and A emails the school a quote for 29. The requester
+      can accept a party the club is not holding. Guarding on the two live
+      statuses makes A lose instead: count 0 throws before the email, and the
+      throw rolls the request claim back with it.
+    */
+    const claimedQuote = await tx.bookingRequestQuote.updateMany({
+      where: {
+        id: quote.id,
+        status: {
+          in: [
+            BookingRequestQuoteStatus.DRAFT,
+            BookingRequestQuoteStatus.SENT,
+          ],
+        },
+      },
       data: {
         status: BookingRequestQuoteStatus.SENT,
         responseTokenHash: tokenHash,
@@ -779,8 +1040,30 @@ export async function sendBookingRequestQuote(input: {
         createdByMemberId: quote.createdByMemberId ?? input.adminMemberId,
       },
     });
+    if (claimedQuote.count === 0) {
+      throw new BookingRequestQuoteError(
+        "This quote was replaced by a newer one while it was being sent, so nothing was sent. Reload the queue and send the current quote.",
+        409
+      );
+    }
 
-    return saved;
+    // Both rows are re-read INSIDE the claim, under the locks it took. The
+    // guest count is the one the email tells the school, and the party may have
+    // been rewritten by a save that landed between this send's first read and
+    // the hold — so reading it from that pre-hold snapshot is how the email
+    // ends up naming a headcount nobody is holding (#3412 review, B2).
+    const saved = await tx.bookingRequestQuote.findUniqueOrThrow({
+      where: { id: quote.id },
+    });
+    const claimedRequest = await tx.bookingRequest.findUniqueOrThrow({
+      where: { id: quote.bookingRequestId },
+      select: { guests: true },
+    });
+
+    return {
+      updated: saved,
+      heldGuestCount: parseBookingRequestGuests(claimedRequest.guests).length,
+    };
   });
 
   let emailDelivered = true;
@@ -795,7 +1078,8 @@ export async function sendBookingRequestQuote(input: {
       token,
       checkIn: quote.bookingRequest.checkIn,
       checkOut: quote.bookingRequest.checkOut,
-      guestCount: parseBookingRequestGuests(quote.bookingRequest.guests).length,
+      // Read inside the claim transaction above, not from the pre-hold snapshot.
+      guestCount: heldGuestCount,
       requestType: quote.bookingRequest.type,
       schoolName: quote.bookingRequest.schoolName,
       options,
