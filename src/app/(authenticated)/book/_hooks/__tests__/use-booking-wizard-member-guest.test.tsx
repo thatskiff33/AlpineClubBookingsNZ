@@ -108,6 +108,20 @@ function stubFetch(options: {
         lodges: [{ id: "lodge-1", name: "Alpine Lodge", active: true }],
       });
     }
+    // ANSWERED, since #2930. This stub used to have no arm for it, so every
+    // mount in this file fell through to the catch-all refusal — and the party
+    // ceiling then came from the club-identity seed, which is some OTHER lodge's
+    // bed count. A refusal now means the denominator is unknown for the lodge on
+    // screen and the client imposes no ceiling at all (settled contract point 3:
+    // party-size capacity is advisory, and the server refuses). So the tests
+    // below assert a ceiling that the selected lodge actually resolved.
+    if (u.includes("/api/availability/check")) {
+      return jsonResponse({
+        available: true,
+        nightDetails: [],
+        lodgeCapacity: 3,
+      });
+    }
     if (u.includes("/api/members/family")) {
       return options.familyOk === false
         ? jsonResponse({}, false, 500)
@@ -273,7 +287,8 @@ describe("addMemberGuest keeps the family path's two guards", () => {
         { firstName: "C", lastName: "Three", ageTier: "ADULT", isMember: false },
       ] as never);
     });
-    // Capacity is 3 (mocked club identity).
+    // Capacity is 3, as `/api/availability/check` resolved it for lodge-1 —
+    // not as the club-identity fallback guessed it (#2930).
     act(() => {
       result.current.addMemberGuest(STRANGER);
     });

@@ -8,6 +8,7 @@
 // payment specs skip too, via stripeTestModeConfigured()). Live keys are refused
 // outright — the E2E suite is test-mode only.
 import { setIntegrationCredential } from "../../src/lib/integration-credentials";
+import type { CredentialActor } from "../../src/lib/integration-credential-actor";
 import { STRIPE_CREDENTIAL_KEYS } from "../../src/lib/stripe-config";
 import { prisma } from "../../src/lib/prisma";
 
@@ -57,21 +58,32 @@ async function main() {
     return;
   }
 
+  // This seed is a named system actor like any other background writer
+  // (#2723), so its rows are distinguishable from an operator's in the very
+  // audit trail the staging stack produces.
+  const actor: CredentialActor = { kind: "system", actor: "e2e-stripe-seed" };
   await setIntegrationCredential({
     provider: "stripe",
     key: STRIPE_CREDENTIAL_KEYS.secretKey,
     value: secretKey,
+    actor,
+    // A fresh stack has no row; a re-run replaces whatever the last run left.
+    expect: { expect: "any" },
   });
   await setIntegrationCredential({
     provider: "stripe",
     key: STRIPE_CREDENTIAL_KEYS.publishableKey,
     value: publishableKey,
+    actor,
+    expect: { expect: "any" },
   });
   if (webhookSecret) {
     await setIntegrationCredential({
       provider: "stripe",
       key: STRIPE_CREDENTIAL_KEYS.webhookSecret,
       value: webhookSecret,
+      actor,
+      expect: { expect: "any" },
     });
   }
 

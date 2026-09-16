@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import {
@@ -159,6 +160,8 @@ export async function POST(
             wholeLodgeHoldAt: true,
             wholeLodgeHoldByMemberId: true,
             member: { select: { email: true, firstName: true } },
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
             payment: { select: { id: true } },
           },
         });
@@ -252,7 +255,7 @@ export async function POST(
             action: RETURN_TO_WAITLIST_AUDIT_ACTION,
             memberId: session.user.id,
             actorMemberId: session.user.id,
-            subjectMemberId: key.memberId,
+            subjectMemberId: bookingOwner(key).memberId,
             targetId: bookingId,
             entityType: "Booking",
             entityId: bookingId,
@@ -304,10 +307,10 @@ export async function POST(
 
         return {
           success: true as const,
-          memberId: key.memberId,
+          memberId: bookingOwner(key).memberId,
           lodgeId: key.lodgeId,
-          email: booking.member.email,
-          firstName: booking.member.firstName,
+          email: bookingOwner(booking).member.email,
+          firstName: bookingOwner(booking).member.firstName,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           waitlistPosition,
@@ -338,7 +341,7 @@ export async function POST(
     // `bookingOwnerEmailContext`, so the per-booking "No emails" switch
     // withholds it without this route branching on it.
     sendWaitlistPlaceRestoredEmail(
-      { bookingId, recipientMemberId: result.memberId },
+      { bookingId, recipientMemberId: bookingOwner(result).memberId },
       result.email,
       result.firstName,
       result.checkIn,

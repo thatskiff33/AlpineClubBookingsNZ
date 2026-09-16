@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import {
   buildBookingDeletedWhere,
@@ -150,6 +151,20 @@ export async function GET(request: NextRequest) {
               },
             },
           },
+          // #3369: a school's booking is owned by the school, so searching the
+          // member's name alone would never find one. An officer typing the
+          // school's name finds its bookings, which is what they were doing
+          // before this stage — the invented member carried that name.
+          {
+            organisation: {
+              is: {
+                OR: [
+                  { name: { contains: q, mode: "insensitive" } },
+                  { email: { contains: q, mode: "insensitive" } },
+                ],
+              },
+            },
+          },
         ],
       },
       select: {
@@ -166,6 +181,8 @@ export async function GET(request: NextRequest) {
             email: true,
           },
         },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         payment: {
           select: {
             id: true,
@@ -239,8 +256,8 @@ export async function GET(request: NextRequest) {
 
       return {
         id: booking.id,
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`.trim(),
-        memberEmail: booking.member.email,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim(),
+        memberEmail: bookingOwner(booking).member.email,
         checkIn: formatDateOnly(booking.checkIn),
         checkOut: formatDateOnly(booking.checkOut),
         status: booking.status,

@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   sessionUser: null as Record<string, unknown> | null,
   canManage: false,
   event: null as Record<string, unknown> | null,
-  buildMeetingJoinUrl: vi.fn((room: string) => `https://meet.example.org/join?room=${room}&token=jwt`),
+  buildMeetingJoinUrl: vi.fn(
+    async (room: string) =>
+      `https://meet.example.org/join?room=${room}&token=jwt`,
+  ),
   logAudit: vi.fn(),
   findUnique: vi.fn(async (..._args: unknown[]) => mocks.event),
 }));
@@ -29,7 +32,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { calendarEvent: { findUnique: (...args: unknown[]) => mocks.findUnique(...args) } },
 }));
 
-vi.mock("@/lib/calendar-events", () => ({
+// The link moved to `mirotalk-config` with #2940, where the club's own meeting
+// configuration is resolved before the environment is consulted.
+vi.mock("@/lib/mirotalk-config", () => ({
   buildMeetingJoinUrl: (room: string) => mocks.buildMeetingJoinUrl(room),
 }));
 
@@ -81,6 +86,32 @@ describe("POST /api/calendar/events/[id]/join", () => {
     expect(mocks.logAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "calendar.event.join", targetId: "evt-1" }),
     );
+  });
+
+  it("records WHICH meeting server the token was minted for, and not the token", async () => {
+    // Without this the row names only the event, so redirecting the address,
+    // waiting for a click and restoring it leaves no trace anywhere of where
+    // the token went. The ORIGIN, never the URL — the URL carries the token.
+    mocks.sessionUser = manager();
+    mocks.canManage = true;
+    mocks.event = {
+      id: "evt-1",
+      title: "Committee meeting",
+      isMeeting: true,
+      meetingRoom: "room-xyz",
+    };
+    mocks.buildMeetingJoinUrl.mockResolvedValueOnce(
+      "https://meet.elsewhere.example/join?room=room-xyz&token=super-secret-jwt",
+    );
+
+    await POST(req() as never, { params });
+
+    const row = mocks.logAudit.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(row.metadata).toMatchObject({
+      meetingHost: "https://meet.elsewhere.example",
+    });
+    expect(row.details).toContain("https://meet.elsewhere.example");
+    expect(JSON.stringify(row)).not.toContain("super-secret-jwt");
   });
 
   it("returns 400 for a manager on a non-meeting event", async () => {

@@ -214,7 +214,7 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
         {
           name: "Video meeting (MiroTalk)",
           description:
-            "Attaches a self-hosted MiroTalk room to the event; requires MIROTALK_URL to point at your MiroTalk instance.",
+            "Attaches a self-hosted MiroTalk room to the event; set the meeting server address on Admin -> Integrations -> Video meetings (or leave MIROTALK_URL doing it).",
         },
       ],
     ),

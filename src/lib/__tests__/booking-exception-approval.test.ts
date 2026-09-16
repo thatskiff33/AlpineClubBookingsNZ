@@ -113,6 +113,7 @@ import {
   proposalGuestToCreateInput,
   reauthorizeBookingOfficerFromDb,
   resolveNewBookingExecutionParams,
+  PolicyExceptionDependantIdentityUnresolvedError,
   PolicyExceptionExecutionCapacityError,
   PolicyExceptionUnverifiedExecutionError,
 } from "@/lib/booking-exception-approval";
@@ -220,7 +221,17 @@ const NEW_BOOKING_SNAPSHOT: NewBookingProposalSnapshot = {
 
 function makeTx(over: Record<string, unknown> = {}) {
   return {
-    member: { findUnique: vi.fn(async () => null) },
+    member: {
+      findUnique: vi.fn(async () => null),
+      // #2721: the requester's OWN recorded dependants, re-read at execution.
+      // NONE is the neutral default — no collision is possible, so every case
+      // written before this guard existed is judged exactly as it was.
+      findMany: vi.fn(
+        async (): Promise<
+          Array<{ id: string; firstName: string; lastName: string }>
+        > => [],
+      ),
+    },
     booking: {
       findUnique: vi.fn(async () => ({
         checkIn: new Date("2026-07-01T00:00:00.000Z"),
@@ -1022,6 +1033,144 @@ describe("executeApprovedProposal — new booking", () => {
     expect(
       createConfirmedBooking.mock.calls[0][0].adultMemberHostingReason,
     ).toBeUndefined();
+  });
+
+  /*
+    #2721 — THE GUARD RE-RUNS AT EXECUTION (`INV-GUEST-019`).
+
+    This is the moment the booking is actually created, and the submit-time
+    guard cannot cover the window between them: a dependant recorded or renamed
+    after the request was raised, and every request already in the queue from
+    before the guard existed. It is also NOT a moment the question can be
+    answered — the requester is not here, and the officer cannot answer it for
+    them — so it fails closed and sends the request back.
+  */
+  describe("own-dependant identity at execution (#2721)", () => {
+    /** A frozen party carrying the requester's own dependant as free text. */
+    const SNAPSHOT_WITH_FREE_TEXT_DEPENDANT: NewBookingProposalSnapshot = {
+      ...NEW_BOOKING_SNAPSHOT,
+      proposed: {
+        ...NEW_BOOKING_SNAPSHOT.proposed,
+        guests: [
+          ...NEW_BOOKING_SNAPSHOT.proposed.guests,
+          {
+            firstName: "Sam",
+            lastName: "Smith",
+            ageTier: "CHILD",
+            isMember: false,
+            memberId: null,
+            nights: ["2026-07-01", "2026-07-02"],
+          },
+        ],
+      },
+    };
+    const OWN_DEPENDANTS = [
+      { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+    ];
+    const DECLARATION = {
+      kind: "different_person_same_name",
+      dependantMemberId: "dep-sam",
+      normalizedName: "sam smith",
+    };
+
+    function txWithDependants(
+      dependants: Array<{ id: string; firstName: string; lastName: string }>,
+    ) {
+      return makeTx({
+        member: {
+          findUnique: vi.fn(async () => null),
+          findMany: vi.fn(async () => dependants),
+        },
+      });
+    }
+
+    it("REFUSES, and creates no booking, when the party names an own dependant", async () => {
+      const { hooks } = hooksFor();
+      await expect(
+        hooks.executeApprovedProposal({
+          tx: txWithDependants(OWN_DEPENDANTS),
+          request: loadedRequest({ bookingId: null, kind: null }),
+          snapshot: SNAPSHOT_WITH_FREE_TEXT_DEPENDANT,
+          override: MIN_STAY_OVERRIDE,
+        }),
+      ).rejects.toBeInstanceOf(
+        PolicyExceptionDependantIdentityUnresolvedError,
+      );
+      expect(createConfirmedBooking).not.toHaveBeenCalled();
+    });
+
+    it("catches the STALE window the submit-time guard cannot", async () => {
+      // The request was clean when it was made — nobody was recorded as a
+      // dependant then — and the child was recorded while it sat in the queue.
+      const { hooks } = hooksFor();
+      await expect(
+        hooks.executeApprovedProposal({
+          tx: txWithDependants(OWN_DEPENDANTS),
+          request: loadedRequest({ bookingId: null, kind: null }),
+          // No frozen declarations at all: this request predates the answer.
+          snapshot: SNAPSHOT_WITH_FREE_TEXT_DEPENDANT,
+          override: MIN_STAY_OVERRIDE,
+        }),
+      ).rejects.toBeInstanceOf(
+        PolicyExceptionDependantIdentityUnresolvedError,
+      );
+    });
+
+    it("executes when the frozen answer still matches the booker's records", async () => {
+      const { hooks } = hooksFor();
+      await hooks.executeApprovedProposal({
+        tx: txWithDependants(OWN_DEPENDANTS),
+        request: loadedRequest({ bookingId: null, kind: null }),
+        snapshot: {
+          ...SNAPSHOT_WITH_FREE_TEXT_DEPENDANT,
+          dependantIdentityDeclarations: [DECLARATION],
+        } as NewBookingProposalSnapshot,
+        override: MIN_STAY_OVERRIDE,
+      });
+      expect(createConfirmedBooking).toHaveBeenCalledTimes(1);
+    });
+
+    it("REFUSES a frozen answer the booker's records no longer support", async () => {
+      // The dependant was renamed after the request was answered, so the
+      // collision the booker resolved is not the one the party now has. The
+      // declaration is re-verified here rather than trusted, which is why it is
+      // safe for it to sit outside the hashed proposal.
+      const { hooks } = hooksFor();
+      await expect(
+        hooks.executeApprovedProposal({
+          tx: txWithDependants([
+            { id: "dep-sam", firstName: "Sam", lastName: "Smith-Ngata" },
+          ]),
+          request: loadedRequest({ bookingId: null, kind: null }),
+          snapshot: {
+            ...SNAPSHOT_WITH_FREE_TEXT_DEPENDANT,
+            dependantIdentityDeclarations: [DECLARATION],
+          } as NewBookingProposalSnapshot,
+          override: MIN_STAY_OVERRIDE,
+        }),
+      ).rejects.toBeInstanceOf(
+        PolicyExceptionDependantIdentityUnresolvedError,
+      );
+      expect(createConfirmedBooking).not.toHaveBeenCalled();
+    });
+
+    it("tells the OFFICER what they can do, not the member's sentence", async () => {
+      const { hooks } = hooksFor();
+      const error = await hooks
+        .executeApprovedProposal({
+          tx: txWithDependants(OWN_DEPENDANTS),
+          request: loadedRequest({ bookingId: null, kind: null }),
+          snapshot: SNAPSHOT_WITH_FREE_TEXT_DEPENDANT,
+          override: MIN_STAY_OVERRIDE,
+        })
+        .then(
+          () => null,
+          (caught: unknown) => caught as Error,
+        );
+      // The officer cannot answer "which person do you mean?" for somebody
+      // else, so the message names the action that is actually theirs.
+      expect(error?.message).toContain("Decline it and ask them to submit it again");
+    });
   });
 
   it("refuses to execute without resolved execution parameters", async () => {

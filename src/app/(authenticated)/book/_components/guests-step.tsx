@@ -17,6 +17,10 @@ import {
   describeMemberGuestWizardHelper,
   memberGuestConsentPreviewColumns,
 } from "./member-guest-preview";
+import { CapacityShortNotice } from "./capacity-short-notice";
+import { DependantIdentityResolution } from "./dependant-identity-resolution";
+import type { OwnDependantCollision } from "@/lib/booking-dependant-identity";
+import { normalizePersonFullName } from "@/lib/person-name-normalization";
 import {
   PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
   type FamilyMember,
@@ -31,7 +35,16 @@ interface GuestsStepProps {
   nights: number;
   familyMembers: FamilyMember[];
   guests: GuestData[];
-  lodgeCapacity: number;
+  /**
+   * The most guests this party may hold at the SELECTED lodge, or null for no
+   * ceiling (#2930). Null has two causes and one answer: the lodge has no
+   * configured capacity (0 beds by design, so a ceiling of zero would disable
+   * every control below at zero guests and strand a member the calendar has just
+   * invited onto the waitlist), or the availability check was refused and the
+   * denominator is simply unknown. Either way the server decides — the settled
+   * contract makes party-size capacity advisory rather than a client hard stop.
+   */
+  lodgeCapacity: number | null;
   addFamilyMemberAsGuest: (fm: FamilyMember) => void;
   showInviteFamilyGroupMembersLink: boolean;
   handleGuestsChange: (nextGuests: GuestData[]) => void;
@@ -54,6 +67,42 @@ interface GuestsStepProps {
   memberGuestOpenSearchEnabled: boolean;
   addMemberGuest: (candidate: MemberGuestCandidate) => void;
   memberGuestAddError: string | null;
+  /**
+   * Advisory per-night capacity for the party as it stands (#2930): the nights
+   * it will not fit on, and the sentence the member is shown about them.
+   *
+   * ADVISORY IS THE WHOLE POINT. This step used to REFUSE to continue when the
+   * range was full, which shut the only door to the waitlist: the offer arrives
+   * with the server's 409, and a party stopped here never sent the request that
+   * produces it. The step now says what to expect and lets the member go on.
+   *
+   * The wording is identical whether the lodge is full of bookings or held for
+   * one group — `/api/availability/check` reports a held night as a full lodge
+   * and sends no flag, so there is nothing here that could say otherwise
+   * (`INV-CAP-021`, ADR-001 decision 6).
+   */
+  capacityShortNights: string[];
+  capacityShortMessage: string | null;
+  /**
+   * #2721: every live exact collision between a typed guest name and one of the
+   * booker's OWN recorded dependants, with the two answers it can be given.
+   * Empty until `/api/members/family` has answered, and empty for every party
+   * that names nobody's dependant — which is nearly all of them.
+   */
+  dependantIdentityCollisions: OwnDependantCollision[];
+  declaredDependantMemberIds: string[];
+  bookCollidingGuestAsDependant: (
+    normalizedName: string,
+    familyMember: FamilyMember,
+  ) => void;
+  declareDependantDifferentPerson: (
+    collision: OwnDependantCollision,
+    dependantMemberId: string,
+  ) => void;
+  withdrawDependantDeclaration: (
+    collision: OwnDependantCollision,
+    dependantMemberId: string,
+  ) => void;
 }
 
 export function GuestsStep({
@@ -83,7 +132,16 @@ export function GuestsStep({
   memberGuestOpenSearchEnabled,
   addMemberGuest,
   memberGuestAddError,
+  capacityShortNights,
+  capacityShortMessage,
+  dependantIdentityCollisions,
+  declaredDependantMemberIds,
+  bookCollidingGuestAsDependant,
+  declareDependantDifferentPerson,
+  withdrawDependantDeclaration,
 }: GuestsStepProps) {
+  /** Derived once, so the three add-guest affordances cannot disagree. */
+  const atPartyCeiling = lodgeCapacity !== null && guests.length >= lodgeCapacity;
   // The find panel opens INLINE, underneath the Guests heading (owner sign-off
   // answer 3) — never a dialog.
   const [findPanelOpen, setFindPanelOpen] = useState(false);
@@ -149,24 +207,46 @@ export function GuestsStep({
   //      setting's whole purpose, the admin toggle says so in those words, and
   //      the rate limits and audit trail make it slow and recorded rather than
   //      impossible.
+  //
+  //   4. A NAME #2721 HAS A HARD QUESTION ABOUT IS NOT ALSO SOFT-SUGGESTED. An
+  //      own recorded dependant who is also in the booker's family group would
+  //      otherwise draw both affordances at once: an optional "add them as a
+  //      member guest instead" beside a block saying the booking cannot go on
+  //      until this exact name is resolved. Two controls for one decision, one
+  //      of them dismissable, is how a member ends up believing they answered.
+  //      The suggestion stands for every OTHER family match, unchanged.
+  const dependantCollisionNames = new Set(
+    dependantIdentityCollisions.map((collision) => collision.normalizedName),
+  );
+  //
+  // BOTH comparisons below go through `normalizePersonFullName` (#2721 review).
+  // The soft suggestion used to compare the two names by hand, four lines under
+  // the canonical call that suppresses it — and it worked only because the
+  // canonical rule happened to be LOOSER. Narrow or reshape that rule (fold a
+  // curly apostrophe, stop collapsing whitespace) and the hard question and the
+  // soft suggestion start answering different questions about the same two
+  // names, with nothing failing: a name could draw both affordances at once,
+  // which is exactly what rule 4 exists to prevent.
   const memberSwitchSuggestions = guests
-    .map((guest, index) => ({ guest, index }))
-    .filter(({ guest }) => {
+    .map((guest, index) => ({
+      guest,
+      index,
+      key: normalizePersonFullName(guest.firstName, guest.lastName),
+    }))
+    .filter(({ guest, key }) => {
       if (guest.isMember || guest.memberId) return false;
-      const first = guest.firstName.trim().toLowerCase();
-      const last = guest.lastName.trim().toLowerCase();
-      if (!first || !last) return false;
-      return true;
+      // `normalizePersonFullName` mints no key for a half-typed row, which is
+      // the same "not enough name to compare" test the two hand-written parts
+      // used to make separately.
+      if (!key) return false;
+      return !dependantCollisionNames.has(key);
     })
-    .map(({ guest, index }) => {
-      const first = guest.firstName.trim().toLowerCase();
-      const last = guest.lastName.trim().toLowerCase();
+    .map(({ guest, index, key }) => {
       const match = familyMembers.find(
         (fm) =>
           fm.canBeBooked !== false &&
           !guests.some((g) => g.memberId === fm.id) &&
-          fm.firstName.trim().toLowerCase() === first &&
-          fm.lastName.trim().toLowerCase() === last,
+          normalizePersonFullName(fm.firstName, fm.lastName) === key,
       );
       return match ? { index, guest, match } : null;
     })
@@ -242,7 +322,7 @@ export function GuestsStep({
                         type="button"
                         variant={alreadyAdded ? "secondary" : fm.relationship === "self" ? "default" : "outline"}
                         size="sm"
-                        disabled={alreadyAdded || guests.length >= lodgeCapacity || blocked}
+                        disabled={alreadyAdded || atPartyCeiling || blocked}
                         onClick={() => addFamilyMemberAsGuest(fm)}
                       >
                         {alreadyAdded ? "\u2713 " : "+ "}
@@ -302,7 +382,7 @@ export function GuestsStep({
                 type="button"
                 variant={findPanelOpen ? "secondary" : "outline"}
                 size="sm"
-                disabled={guests.length >= lodgeCapacity}
+                disabled={atPartyCeiling}
                 onClick={() => setFindPanelOpen((open) => !open)}
               >
                 + Add Member Guest
@@ -316,7 +396,7 @@ export function GuestsStep({
                 existingMemberIds={guests
                   .map((g) => g.memberId)
                   .filter((id): id is string => Boolean(id))}
-                atCapacity={guests.length >= lodgeCapacity}
+                atCapacity={atPartyCeiling}
                 addError={memberGuestAddError}
                 refusedCandidate={memberGuestAddError ? lastAddAttempt : null}
                 onAdd={(candidate) => {
@@ -375,6 +455,18 @@ export function GuestsStep({
             // night's price (#2801).
             return idx >= 0 ? (g.perNightCents[idx] ?? null) : null;
           }}
+        />
+        <DependantIdentityResolution
+          collisions={dependantIdentityCollisions}
+          declaredDependantMemberIds={declaredDependantMemberIds}
+          familyMembers={familyMembers}
+          partyMemberIds={guests
+            .map((guest) => guest.memberId)
+            .filter((memberId): memberId is string => Boolean(memberId))}
+          holdPolicy={holdPolicy}
+          onBookAsDependant={bookCollidingGuestAsDependant}
+          onDeclareDifferentPerson={declareDependantDifferentPerson}
+          onWithdrawDeclaration={withdrawDependantDeclaration}
         />
         {memberSwitchSuggestions.length > 0 && (
           <div className="space-y-2 rounded-md border border-cat3-6 bg-cat3-3/60 p-4">
@@ -445,12 +537,31 @@ export function GuestsStep({
             )}
           </div>
         )}
+        {capacityShortMessage ? (
+          <CapacityShortNotice
+            headline="These dates are full for a party this size."
+            message={capacityShortMessage}
+            shortNights={capacityShortNights}
+          >
+            Nothing is booked or charged by continuing, and no payment method is
+            needed for a waitlist place.
+          </CapacityShortNotice>
+        ) : null}
         <div className="flex justify-between pt-4">
           <Button variant="outline" onClick={() => setStep("dates")}>
             Back
           </Button>
+          {/*
+            Disabled only for an empty party or an in-flight quote (#2930). A
+            full range is NOT a reason to disable it — that block is what made
+            the waitlist unreachable.
+          */}
           <Button onClick={handleGuestsDone} disabled={priceLoading || guests.length === 0}>
-            {priceLoading ? "Calculating price..." : "Continue"}
+            {priceLoading
+              ? "Calculating price..."
+              : capacityShortMessage
+                ? "Continue to waitlist"
+                : "Continue"}
           </Button>
         </div>
       </CardContent>

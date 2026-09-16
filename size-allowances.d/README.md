@@ -109,6 +109,25 @@ One consequence worth knowing: after merging `main` into a long-lived branch,
 an allowance that came in with `main` may report as unused if your branch also
 shrank the file it named. Deleting it is the right fix and is safe.
 
+**"After merge" means merged into the ratchet's BASE REF, which is always
+`origin/main` — never merely into an epic branch.** A child of an epic measures
+its file sizes against `origin/main`, so an allowance that has landed on the
+epic is still part of that child's diff and is still live. The consequence is a
+cross-lane one, and it is the collision this directory exists to prevent
+reappearing one level up: if a second child of the same epic grows a file an
+earlier child already declared, "one file, one allowance" refuses a second entry
+naming that path, so the second lane has to **edit the first lane's fragment** —
+re-measuring the number and saying which issues the figure now covers — rather
+than adding one of its own. Two lanes editing one file is exactly what fragment
+directories remove, so expect it, and check the directory for the path you are
+about to declare before you write a new file. (#2940 hit this TWICE in one pull
+request — on `src/lib/admin-permissions.ts`, whose allowance #2937 had
+introduced, and again on `src/app/api/admin/integrations/credentials/route.ts`,
+whose allowance came from #2723. The second one is the instructive half: the
+lane had already re-measured the first, and then a later commit in its own fix
+round grew a different file that a different lane had declared. Checking once is
+not enough — check when the diff changes.)
+
 ## Where the rules live
 
 [`docs/MAINTENANCE.md`](../docs/MAINTENANCE.md) → "File-size budget ratchet" is

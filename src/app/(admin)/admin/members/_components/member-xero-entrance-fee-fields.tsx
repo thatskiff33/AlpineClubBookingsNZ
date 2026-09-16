@@ -1,6 +1,7 @@
 "use client"
 
 import { Input } from "@/components/ui/input"
+import { MONEY_INPUT_PROPS } from "@/lib/money-input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import type { UseXeroEntranceFeeDecisionResult } from "@/lib/admin-xero-entrance-fee"
@@ -67,10 +68,7 @@ export function MemberXeroEntranceFeeFields({
               <Label htmlFor={`${idPrefix}-amount`}>Invoice amount override</Label>
               <Input
                 id={`${idPrefix}-amount`}
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
+                {...MONEY_INPUT_PROPS}
                 placeholder="Use configured amount"
                 value={decision.xeroEntranceFeeAmount}
                 onChange={(event) => decision.setXeroEntranceFeeAmount(event.target.value)}

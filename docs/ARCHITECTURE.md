@@ -1081,6 +1081,32 @@ Stripe refund with no Xero credit note, waitlist offer whose email needs
 operator action) and feeds the amber "Provider state out of step" block on the
 booking detail Admin tools card — read-only detection mirroring the
 stuck-state queries.
+Since #3001 it also carries the booking's CURRENT `BOOKING_INVOICE` **create**
+operation state, read through `src/lib/booking-invoice-sync-status.ts` (a failed
+invoice UPDATE stays on the Xero operations screen). That module is the bounded
+server-side projection the React tree consumes instead of interpreting operation
+rows itself: it finds the row by the booking's own correlation key
+(`xero-booking-invoice-key.ts`) rather than through the payment the row is stored
+against, takes the newest create row so an old failure cannot outvote a later
+success, honours `manuallyResolvedAt`, treats a RUNNING row past the shared
+staleness threshold as an intervention state rather than as progress, and asks
+`getXeroOperationRetryMeta` whether a retry is even possible rather than
+re-deriving it — so the booking page and the Xero operations screen cannot
+describe one row differently. A deliberately withheld invoice email (#2258,
+#2929, #3035) is not a fault and raises nothing; only `invoiceEmailError` does,
+and the payload now records WHICH of its three causes it was. When it fires, the
+vaguer paid-with-no-invoice row is suppressed rather than stacked beneath it.
+
+Two shapes in that module exist because the obvious spelling was wrong. Whether
+the invoice reached Xero comes from `xero-booking-invoice-evidence.ts` — the
+payment's stored invoice id or the active `PRIMARY_INVOICE` link, the same pair
+the enqueue fence refuses a second mint on — and never from the operation's
+`xeroObjectId`, which `failXeroSyncOperation` does not write, so reading it there
+answers "no invoice exists" for every failure including the ones that happened
+after Xero accepted the invoice. And the offered affordance is ONE field
+(`BookingInvoiceSyncAction`), so a surface cannot print "do not repeat the
+action" beside a Retry: the sentence and the link label are read off the same
+decision.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; `AGENTS.md` → Change Discipline and its routing
@@ -1119,12 +1145,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **94 components render a banner, and
-298 of the 351 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **97 components render a banner, and
+308 of the 361 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 298 split by WHICH rule
-covers them: **264** pass the literal
+test currently pins, which is the only authority.) Those 308 split by WHICH rule
+covers them: **274** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **34**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the
@@ -1690,7 +1716,12 @@ GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
 copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
 maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Feedback rendering stays
 in the component, because booking-policy sections use `PolicyFeedback` while the
-security cards use `Alert`. A section whose snapshot is a LIST with per-row
+security cards use `Alert`. Where the admin's attention goes is not per-card
+either: the hook counts explicit Edit clicks in `editRequestKey`, and a section
+hands that to `useRevealAttention` (`src/hooks/use-scroll-to-feedback.ts`, the
+one home for failure / reveal / success positioning — #2934) so the card takes
+focus and comes into view when Edit unmounts the button that held focus, and
+never merely because it re-rendered. A section whose snapshot is a LIST with per-row
 edits is not out of scope, but the hook belongs one level down: the OPEN EDITOR
 gets its own instance, keyed on the row being edited AND on an instance counter
 bumped every time an editor is opened
@@ -1779,6 +1810,58 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
 - `SiteBanner` records: admin-managed plain-text notices with
   `URGENT`/`WARNING`/`NOTIFY` priority and an inclusive NZ date-only display
   window, rendered above the public and member site headers.
+- Organisations: `Organisation` and `OrganisationContact`, the records a
+  school's identity lives in. Added and linked but read by nothing yet — see
+  "Organisations, and the school that is currently a person" below.
+
+### Organisations, and the school that is currently a person
+
+**What happens today.** A school is not a thing in this system. When a school's
+booking request is approved, the code invents a member: first name holds the
+school's name, surname is blank, and the email is whoever sent the request. That
+invented person owns the booking, holds the Xero contact, receives the invoices
+and is the name on every audit row. The real teacher becomes a second invented
+member, attached as hut leader. Nothing records that the school is an
+organisation, so nothing can hold a school's identity across years, across
+bookings, or across a change of teacher — and Xero, which expects a person in a
+person contact, is handed a surnameless one it cannot match reliably.
+
+**What the records mean.** Programme #2912 moves that identity onto records of
+its own, and stage 1 (#3366) adds them:
+
+- **`Organisation`** is the body itself. It holds the name the club records, its
+  own contact details, an archive stamp, and — the point of the Xero half — its
+  **own** `xeroContactId`, unique the way `Member.xeroContactId` is. The link
+  living here rather than on a person is what makes the rule "a person's personal
+  Xero contact is never renamed or reused as the school" expressible at all.
+  `kind` is `SCHOOL` in this release; the model is organisation-capable so a
+  later scout-group or corporate booker is a value rather than a second model.
+- **`OrganisationContact`** joins a person to an organisation as its `TEACHER`
+  or its `CONTACT`. The person stays a plain `Member`: `Member.role` is never
+  overloaded as organisation identity, and `Role.SCHOOL` / `AccessRole.ORG` keep
+  exactly the meanings and writers they have today. One row per
+  (organisation, person), so "is this person attached to that school" has one
+  answer; member merge classifies the relation `resolve` and keeps the survivor's
+  association.
+- **`Booking.organisationId` and `BookingRequest.organisationId`** are the
+  optional links. `BookingRequest.schoolName` is unchanged and stays the free
+  text the public form captured — from stage 2 the organisation is what the club
+  resolves that text to.
+
+Both models are **club-wide, never lodge-scoped**: a school is a counterparty of
+the club rather than one of its buildings, and the stay's lodge already lives on
+the booking that points at the organisation. The reasoning is recorded in
+[`multi-lodge/lodge-scoping-contract.md`](multi-lodge/lodge-scoping-contract.md).
+
+**Nothing reads them yet, and that is deliberate.** Stage 1 creates the records
+and links them; no writer populates a link, no reader names a column, and the
+invented member is untouched, so no existing behaviour changes and no new value
+can be empty where something already looks. The stages after it make the
+organisation the invoiced and contacted party (#3367, where the Xero defect is
+fixed), give "who owns this booking" one home instead of 510 direct reads of
+`Booking.memberId` (#3368), and finally make that member link optional under a
+windowed migration with an owner-run classification census (#3369). Until #3369
+lands, `Booking.memberId` is required and means what it always meant.
 
 ### Reading a unique-constraint failure (P2002) — measured, not assumed
 
@@ -2958,7 +3041,14 @@ withholds every member-facing message for a booking, records each withhold as an
 `EmailLog` row with status `SKIPPED_NO_EMAILS`, never touches admin-audience or
 account/security mail, and fails closed if the switch cannot be read. The retry
 cron and the two Xero-sent invoice emails re-check the same switch because they
-bypass `sendEmail`. See `docs/DOMAIN_INVARIANTS.md` for the full contract.
+bypass `sendEmail`. The booking invoice email carries a SECOND, narrower
+withhold that is not the switch (#2929): an on-behalf create's "do not email
+the member" choice, persisted on the outbox operation
+(`XeroSyncOperation.invoiceEmailDelivery`) so a later retry still knows the
+email was withheld deliberately. It writes its own `SKIPPED_NO_EMAILS` row
+naming that reason, sets nothing persistent, and is reported on the sync
+operation under its own key so neither it, the switch, the environment-safety
+suppression nor a provider failure can be mistaken for another. See `docs/DOMAIN_INVARIANTS.md` for the full contract.
 For every live registered template in the booking-scoped suppression inventory,
 that same choke point may add the canonical encoded
 `/bookings/<booking-id>` detail URL (#2362). `booking-email-authority.ts`

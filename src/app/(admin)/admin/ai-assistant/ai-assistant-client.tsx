@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { AiSpendCurrencyCard } from "@/components/admin/ai-spend-currency-card";
 import { APP_CURRENCY } from "@/config/operational";
@@ -363,7 +364,7 @@ function BudgetCard() {
               <div className="flex items-center gap-2">
                 <Input
                   id="ai-budget"
-                  inputMode="decimal"
+                  {...MONEY_INPUT_PROPS}
                   value={dollars}
                   disabled={editingDisabled}
                   onChange={(event) => setDollars(event.target.value)}

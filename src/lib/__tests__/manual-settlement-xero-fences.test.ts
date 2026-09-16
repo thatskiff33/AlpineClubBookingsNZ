@@ -26,6 +26,13 @@ const mocks = vi.hoisted(() => ({
   seasonFindFirst: vi.fn(),
   xeroObjectLinkFindFirst: vi.fn(),
   xeroSyncOperationFindFirst: vi.fn(),
+  // #2929: the invoice path reads the creation-time email instruction off the
+  // operation a dispatcher claimed. These fences drive it WITH a syncOperationId,
+  // so the delegate has to exist; null is "no instruction was recorded", which
+  // is what every row a settle-fence scenario enqueues honestly carries.
+  xeroSyncOperationFindUnique: vi.fn().mockResolvedValue({
+    invoiceEmailDelivery: null,
+  }),
   xeroSyncOperationUpdate: vi.fn(),
   startXeroSyncOperation: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
@@ -46,6 +53,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncOperation: {
       findFirst: (...a: unknown[]) => mocks.xeroSyncOperationFindFirst(...a),
+      findUnique: (...a: unknown[]) => mocks.xeroSyncOperationFindUnique(...a),
       update: (...a: unknown[]) => mocks.xeroSyncOperationUpdate(...a),
     },
   },
@@ -75,7 +83,9 @@ describe("level 1 — the enqueueXeroBookingInvoiceOperation choke point", () =>
     const { enqueueXeroBookingInvoiceOperation } = await import(
       "@/lib/xero-operation-outbox"
     );
-    return enqueueXeroBookingInvoiceOperation("booking-1");
+    return enqueueXeroBookingInvoiceOperation("booking-1", {
+      invoiceEmailDelivery: null,
+    });
   }
 
   it("refuses to queue an invoice for a manually settled booking, and says so", async () => {

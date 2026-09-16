@@ -35,6 +35,7 @@ import {
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   aggregatePolicyExceptionViolations,
@@ -103,7 +104,6 @@ import {
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { resolveRequestBookingHoldUntil } from "@/lib/booking-request";
-import { formatDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
@@ -116,6 +116,7 @@ import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 
 // Organiser booking states that may host a group. The organiser must be
 // committed (their own beds already reserved) before opening the group to
@@ -260,7 +261,7 @@ export async function createGroupBooking(
   if (!booking || booking.deletedAt) {
     throw new GroupBookingError("Booking not found", 404);
   }
-  if (booking.memberId !== sessionUserId) {
+  if (bookingOwner(booking).memberId !== sessionUserId) {
     throw new GroupBookingError(
       "You can only open a group on your own booking",
       403
@@ -290,10 +291,21 @@ export async function createGroupBooking(
 
   for (let attempt = 1; attempt <= CODE_GENERATION_ATTEMPTS; attempt++) {
     try {
+      // #3369: a group booking is organised by a PERSON — they hand out the
+      // join code, and every joiner's booking hangs off their membership. An
+      // organisation is not one, and a school's party arrives as a school
+      // booking rather than as a group of individually-joining members, so the
+      // situation does not arise. Refused rather than left to a null column.
+      const organiserMemberId = bookingOwner(booking).memberId;
+      if (!organiserMemberId) {
+        throw new Error(
+          "This booking belongs to a school rather than to a member, so it cannot organise a group booking (#3369).",
+        );
+      }
       return await prisma.groupBooking.create({
         data: {
           organiserBookingId: booking.id,
-          organiserMemberId: booking.memberId,
+          organiserMemberId,
           joinCode: generateGroupBookingCode(),
           paymentMode: input.paymentMode,
           joinDeadline: input.joinDeadline ?? null,
@@ -1375,15 +1387,6 @@ export type VerifyNonMemberJoinResult =
 /** Internal sentinel: the join row was claimed by a concurrent verify. */
 const JOIN_ALREADY_CLAIMED = "GROUP_JOIN_ALREADY_CLAIMED_SENTINEL";
 const CAPACITY_EXCEEDED = "GROUP_JOIN_CAPACITY_EXCEEDED_SENTINEL";
-
-/** Full nights (date-only strings) where the capacity check went negative. */
-function getCapacityFullNights(
-  nightDetails: Array<{ date: Date; availableBeds: number }>
-): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => formatDateOnly(night.date));
-}
 
 // test seam
 /**

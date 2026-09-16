@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { HOSTING_COVERAGE_RETRY_CODE } from "@/lib/adult-member-hosting-queue-participants";
 import { auth } from "@/lib/auth";
@@ -195,6 +196,8 @@ export async function POST(
     where: { id: bookingId },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: { include: { nights: true } }, // per-night sets (issue #713)
       promoRedemption: { include: { promoCode: true } },
     },
@@ -409,7 +412,7 @@ export async function POST(
             err,
             releaseErr: release.cause,
             bookingId,
-            memberId: booking.memberId,
+            memberId: bookingOwner(booking).memberId,
             lodgeId: booking.lodgeId,
           },
           "Zero-dollar waitlist confirm is stranded in PAYMENT_PENDING: the consumed offer could not be released and needs operator recovery",
@@ -428,7 +431,7 @@ export async function POST(
           action: WAITLIST_CONFIRM_OFFER_RELEASE_FAILED_AUDIT_ACTION,
           memberId: session.user.id,
           targetId: bookingId,
-          subjectMemberId: booking.memberId,
+          subjectMemberId: bookingOwner(booking).memberId,
           entityType: "Booking",
           entityId: bookingId,
           category: "booking",
@@ -497,9 +500,9 @@ export async function POST(
     await settleHostingCoverageAfterCommit({ bookingId });
 
     sendBookingConfirmedEmail(
-      { bookingId: booking.id, recipientMemberId: booking.memberId },
-      booking.member.email,
-      booking.member.firstName,
+      { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+      bookingOwner(booking).member.email,
+      bookingOwner(booking).member.firstName,
       booking.checkIn,
       booking.checkOut,
       booking.guests.length,
@@ -516,7 +519,9 @@ export async function POST(
       }
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation email after waitlist confirm"));
 
-    void enqueueXeroBookingInvoiceOperation(bookingId)
+    void enqueueXeroBookingInvoiceOperation(bookingId, {
+      invoiceEmailDelivery: null,
+    })
       .then(async (queuedInvoice) => {
         if (!queuedInvoice.queueOperationId) {
           return;
@@ -544,9 +549,9 @@ export async function POST(
   // For PENDING bookings, send pending email
   if (result.newStatus === BookingStatus.PENDING && booking.nonMemberHoldUntil) {
     sendBookingPendingEmail(
-      { bookingId: booking.id, recipientMemberId: booking.memberId },
-      booking.member.email,
-      booking.member.firstName,
+      { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+      bookingOwner(booking).member.email,
+      bookingOwner(booking).member.firstName,
       booking.checkIn,
       booking.checkOut,
       booking.guests.length,

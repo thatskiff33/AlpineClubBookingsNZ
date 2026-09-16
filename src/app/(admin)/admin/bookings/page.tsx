@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { bookingOwner } from "@/lib/booking-owner";
 import { formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
 import { BookingsPagination } from "@/components/admin/bookings-pagination";
@@ -309,6 +310,8 @@ export default async function AdminBookingsPage({
               checkIn: true,
               checkOut: true,
               member: { select: { firstName: true, lastName: true } },
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
               lodge: { select: { name: true } },
             },
           },
@@ -451,8 +454,8 @@ export default async function AdminBookingsPage({
                   <div>
                     <p className="text-sm font-medium">
                       {formatBookingReference(incident.bookingId)} ·{" "}
-                      {incident.booking.member.firstName}{" "}
-                      {incident.booking.member.lastName}
+                      {bookingOwner(incident.booking).member.firstName}{" "}
+                      {bookingOwner(incident.booking).member.lastName}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {incident.booking.lodge?.name ?? "Lodge"} ·{" "}
@@ -641,22 +644,53 @@ export default async function AdminBookingsPage({
                 const outstandingAdditionalCents =
                   booking.operational.outstandingAdditionalCents;
                 const nights = nightsBetween(booking.checkIn, booking.checkOut);
+                // #3369/#3480: a school has no member page. The owner's `id` is
+                // `undefined` for an organisation, and a link built from it went
+                // to `/admin/members/undefined`; the school's name is plain text
+                // instead, as the change-requests panel already does.
+                const owner = bookingOwner(booking).member;
 
                 return (
                   <TableRow key={booking.id}>
                     <TableCell>
-                      <Link
-                        href={buildHrefWithReturnTo(`/admin/members/${booking.member.id}`, currentBookingsPath)}
-                        className="group inline-block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        <span className="block text-sm font-medium text-foreground group-hover:text-primary group-hover:underline">
-                          {booking.member.firstName} {booking.member.lastName}
+                      {owner.id ? (
+                        <Link
+                          href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentBookingsPath)}
+                          className="group inline-block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <span className="block text-sm font-medium text-foreground group-hover:text-primary group-hover:underline">
+                            {owner.firstName} {owner.lastName}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">{owner.email}</span>
+                        </Link>
+                      ) : (
+                        <span className="inline-block">
+                          <span className="block text-sm font-medium text-foreground">
+                            {owner.firstName} {owner.lastName}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">{owner.email}</span>
                         </span>
-                        <span className="block text-xs text-muted-foreground">{booking.member.email}</span>
-                      </Link>
-                      {formatMemberPhone(booking.member) ? (
+                      )}
+                      {/* #3369: a phone number is a MEMBER's contact detail. A
+                          school's own number lives on the organisation record and
+                          is not shown in this column, which is what a school row
+                          showed before too — the invented member never had one. */}
+                      {formatMemberPhone({
+                        phoneCountryCode:
+                          bookingOwner(booking).member.phoneCountryCode ?? null,
+                        phoneAreaCode:
+                          bookingOwner(booking).member.phoneAreaCode ?? null,
+                        phoneNumber: bookingOwner(booking).member.phoneNumber ?? null,
+                      }) ? (
                         <span className="block text-xs text-muted-foreground">
-                          {formatMemberPhone(booking.member)}
+                          {formatMemberPhone({
+                            phoneCountryCode:
+                              bookingOwner(booking).member.phoneCountryCode ?? null,
+                            phoneAreaCode:
+                              bookingOwner(booking).member.phoneAreaCode ?? null,
+                            phoneNumber:
+                              bookingOwner(booking).member.phoneNumber ?? null,
+                          })}
                         </span>
                       ) : null}
                     </TableCell>
@@ -723,7 +757,7 @@ export default async function AdminBookingsPage({
                             available to this admin. */}
                         <DiagnosticsRecordButton
                           recordId={booking.id}
-                          subject={`the booking for ${booking.member.firstName} ${booking.member.lastName} from ${formatClubDate(stayDay(booking.checkIn))}`}
+                          subject={`the booking for ${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} from ${formatClubDate(stayDay(booking.checkIn))}`}
                         />
                       </div>
                       {booking.requiresAdminReview && booking.adminReviewReason ? (

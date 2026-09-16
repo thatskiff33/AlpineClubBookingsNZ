@@ -109,6 +109,12 @@ const ROWS = [
     createdAt: new Date("2026-07-10T02:00:00.000Z"),
     member: { id: "m1", firstName: "Alice", lastName: "Alpha", email: "alice@example.com" },
     booking: {
+      // #3369: the row's party is the booking's OWNER, read through
+      // `bookingOwner()`, so the fixture carries both halves: a member
+      // here, and an empty organisation slot beside it.
+      memberId: "m1",
+      member: { firstName: "Alice", lastName: "Alpha", email: "alice@example.com" },
+      organisation: null,
       id: "bk-aaaaaa03",
       checkIn: new Date("2026-08-01T00:00:00.000Z"),
       checkOut: new Date("2026-08-04T00:00:00.000Z"),
@@ -137,6 +143,12 @@ const ROWS = [
     createdAt: new Date("2026-07-05T02:00:00.000Z"),
     member: { id: "m2", firstName: "Carol", lastName: "Gamma", email: "carol@example.com" },
     booking: {
+      // #3369: the row's party is the booking's OWNER, read through
+      // `bookingOwner()`, so the fixture carries both halves: a member
+      // here, and an empty organisation slot beside it.
+      memberId: "m2",
+      member: { firstName: "Carol", lastName: "Gamma", email: "carol@example.com" },
+      organisation: null,
       id: "bk-bbbbbb02",
       checkIn: new Date("2026-08-10T00:00:00.000Z"),
       checkOut: new Date("2026-08-12T00:00:00.000Z"),
@@ -159,6 +171,12 @@ const ROWS = [
     createdAt: new Date("2026-07-01T02:00:00.000Z"),
     member: { id: "m1", firstName: "Alice", lastName: "Alpha", email: "alice@example.com" },
     booking: {
+      // #3369: the row's party is the booking's OWNER, read through
+      // `bookingOwner()`, so the fixture carries both halves: a member
+      // here, and an empty organisation slot beside it.
+      memberId: "m1",
+      member: { firstName: "Alice", lastName: "Alpha", email: "alice@example.com" },
+      organisation: null,
       id: "bk-cccccc01",
       checkIn: new Date("2026-08-20T00:00:00.000Z"),
       checkOut: new Date("2026-08-21T00:00:00.000Z"),
@@ -570,6 +588,14 @@ describe("GET /api/admin/promo-codes/[id]/redemptions - export truncation (#2244
         email: `alice${index}@example.com`,
       },
       booking: {
+        // #3369: the row's party is the booking's OWNER.
+        memberId: `m${index}`,
+        member: {
+          firstName: "Alice",
+          lastName: `Alpha${index}`,
+          email: `alice${index}@example.com`,
+        },
+        organisation: null,
         id: `bk-${String(index).padStart(8, "0")}`,
         checkIn: new Date("2026-08-01T00:00:00.000Z"),
         checkOut: new Date("2026-08-02T00:00:00.000Z"),

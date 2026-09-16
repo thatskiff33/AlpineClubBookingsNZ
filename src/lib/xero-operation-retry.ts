@@ -13,6 +13,7 @@ import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysi
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
+import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { shouldRepairXeroContactNameOrder } from "@/lib/xero-contact-sync";
 import { parseXeroContactDateOfBirth } from "@/lib/xero-contact-date-of-birth";
@@ -408,16 +409,47 @@ function readStoredInvoiceTotalCents(
  * shape we do not recognise, keeps the pre-existing behaviour; the repair is
  * refused only when the payload positively says the payment was skipped or that
  * the fault was the invoice email.
+ *
+ * #3001: the six payload keys below are read through
+ * `readXeroInvoiceOperationOutcome`, which is now their one home, because the
+ * officer-facing warning on the booking became a second reader of the same six
+ * (`INV-SSOT`). The checks and THEIR ORDER are unchanged — the order is what
+ * decides the live cases, as the note inside spells out — and the shared reader
+ * deliberately does NOT collapse the three withhold reasons into one, so nothing
+ * new is refused here. A key renamed at the writer is now a compile error in one
+ * file instead of this fence silently starting to allow what it exists to refuse.
  */
 function partialInvoiceOperationHasPaymentFault(
   operation: Pick<RetryableOperation, "responsePayload">
 ): boolean {
-  const payload = asRecord(operation.responsePayload);
-  if (!payload) return true;
-  if (payload.paymentError != null) return true;
-  if (payload.paymentSkipped === true) return false;
-  if (payload.invoiceEmailError != null) return false;
-  if (payload.invoiceEmailWithheldByNoEmails === true) return false;
+  const outcome = readXeroInvoiceOperationOutcome(operation.responsePayload);
+  if (!outcome) return true;
+  if (outcome.paymentFailed) return true;
+  if (outcome.paymentSkipped) return false;
+  if (outcome.invoiceEmailFailed) return false;
+  if (outcome.invoiceEmailWithheldByNoEmails) return false;
+  // #2929: the creation-time "do not email the member" withhold is the SAME
+  // hazard as the switch above and is checked beside it. `paymentSkipped`
+  // normally catches an Internet Banking operation first -- but the
+  // no-emails line proves that is not something to rely on, because it is
+  // load-bearing on a payload that carries no `paymentSkipped` at all, and the
+  // cost of being wrong here is a bank payment recorded against an invoice the
+  // member has not paid.
+  //
+  // WHAT THIS LINE ACTUALLY GOVERNS, stated as strongly as it holds and no
+  // stronger. The ORDER above decides the live cases, not this line: a payload
+  // carrying `paymentSkipped: true` has already returned, and an
+  // `invoiceEmailError` has too, so this is reached only by a payload that
+  // carries a creation-choice withhold and NEITHER of those. That conjunction
+  // is impossible today in two independent ways -- a payment write error needs
+  // a captured CARD payment, while this withhold needs an INTERNET_BANKING
+  // one; and a creation-choice withhold is a complete, intended outcome that
+  // completes the operation SUCCEEDED rather than PARTIAL, so no PARTIAL
+  // payload ever carries it. The line therefore has no live traffic at all and
+  // is pure defence, exactly like the no-emails line beside it: it is here so
+  // that a future payload shape which DOES reach it cannot be repaired into a
+  // false settlement.
+  if (outcome.invoiceEmailWithheldByCreationChoice) return false;
   return true;
 }
 
@@ -671,13 +703,42 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
   }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "CREATE") {
+    /*
+      #3367: the ORGANISATION case is admitted, not refused.
+
+      Stage 2 made a school's Xero customer an operation with
+      `localModel: "Organisation"`, and every one of its failure paths — the
+      two-homes refusal above all — is recorded FAILED specifically so an
+      officer can replay it. Gating this screen on `localModel === "Member"`
+      would have answered "contact create retries require a member-local
+      record" for exactly those, which is both wrong and a direct contradiction
+      of the "stays replayable" claim the module and the officer guide make.
+
+      The retry is the same call the invoice path makes, and it is safe to
+      replay for the same reason: the organisation-scoped idempotency key means
+      a repeat converges on one Xero contact rather than minting a second.
+    */
+    if (operation.localModel === "Organisation" && operation.localId) {
+      return { supported: true, reason: null };
+    }
     return operation.localModel === "Member" && operation.localId
       ? { supported: true, reason: null }
-      : { supported: false, reason: "Contact create retries require a member-local record." };
+      : {
+          supported: false,
+          reason:
+            "Contact create retries require a member or organisation record.",
+        };
   }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "UPDATE") {
     if (operation.localModel === "Member" && operation.localId) {
+      return { supported: true, reason: null };
+    }
+    // A school's contact-person refresh and its organisation-shape correction
+    // are both CONTACT UPDATEs on an Organisation. Re-resolving the school's
+    // contact re-runs whichever of the two has not yet been recorded as done,
+    // so one replay covers both without a second handler.
+    if (operation.localModel === "Organisation" && operation.localId) {
       return { supported: true, reason: null };
     }
 
@@ -1003,11 +1064,34 @@ export async function retryXeroSyncOperation(
   }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "CREATE") {
+    if (operation.localModel === "Organisation" && operation.localId) {
+      // #3367. Same call the invoice path makes, and idempotent for the same
+      // reason: the organisation-scoped key converges a replay on one contact.
+      const { findOrCreateXeroContactForOrganisation } = await import(
+        "@/lib/organisation-xero-contacts"
+      );
+      await findOrCreateXeroContactForOrganisation(operation.localId, {
+        createdByMemberId,
+      });
+      return { message: "Retried Xero contact creation for the organisation." };
+    }
     await xero.findOrCreateXeroContact(operation.localId!, { createdByMemberId });
     return { message: "Retried Xero contact creation." };
   }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "UPDATE") {
+    if (operation.localModel === "Organisation" && operation.localId) {
+      // Re-resolving the school's contact re-runs the contact-person refresh
+      // and the organisation-shape correction, each of which is a no-op once
+      // its own marker is recorded. See the support gate above.
+      const { findOrCreateXeroContactForOrganisation } = await import(
+        "@/lib/organisation-xero-contacts"
+      );
+      await findOrCreateXeroContactForOrganisation(operation.localId, {
+        createdByMemberId,
+      });
+      return { message: "Retried the Xero contact update for the organisation." };
+    }
     const retryInput =
       operation.localModel === "Member" && operation.localId
         ? await buildCurrentMemberContactUpdateRetryInput(operation)

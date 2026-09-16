@@ -317,41 +317,41 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   overall, to `PromoRedemption.priceAdjustmentCents`. The one writer of an
   AMOUNT, `recordBookingNightAdjustments` in `night-adjustment-write.ts`
   (a member merge only moves or deletes rows and never invents one), enforces
-  it at write time and REFUSES BEFORE IT MUTATES — every read and every check
-  precedes its first write, so a refusal leaves the transaction as it found it
-  and the edit rolls back; the waitlist reprice, whose own catch degrades to
-  the stored snapshot instead of rolling back, therefore calls the recorder
-  outside that catch, where a refusal fails the sweep like any other error.
-  `amountCents = NULL` means NOT KNOWN and is written only where the engine
-  genuinely has no per-target figure — the per-member safety-cap rescale;
-  unknown rows are excluded from the sums they would make meaningless, and
+  it at write time and REFUSES BEFORE IT MUTATES — every read and check
+  precedes its first write, so a refusal rolls the edit back; the waitlist
+  reprice, whose own catch degrades to the stored snapshot instead of rolling
+  back, therefore calls the recorder outside that catch, where a refusal fails
+  the sweep like any other error. `amountCents = NULL` means NOT KNOWN and is
+  written only where the engine genuinely has no per-target figure — the
+  per-member safety-cap rescale; unknown rows are excluded from the sums, and
   `?? 0` on the column is prohibited exactly as it is on
   `BookingGuestNight.priceCents`. **A reader asks `deriveNightAdjustmentState`
   — the one home — and runs the same sum:** a booking with no redemption had
   nothing taken off (`NO_PROMOTION`); rows that reconcile are `KNOWN`; anything
-  else — rows missing, rows that do not sum, a NULL amount — is `NOT_KNOWN`. No
-  column stores that answer, because a flag could be left asserting a state a
-  draining colour or a rollback had since made false, and a sum cannot. So a
-  night an officer priced, an even split and a parked edit need no special
-  state: their bookings have no rows, or rows that no longer sum, and derive
-  as not known; when the settle re-base re-runs the promotion over an
-  officer-priced strand it records the engine's figure over those stored
-  prices and the booking derives as known again. Stated limit, accepted by the
-  owner: an old-colour officer price repair that changes a night's rate
-  without touching the promotion is not detected, and the row is arguably
-  still right in that case. A mechanical rewrite that moves no money (a
-  name-only correction, an in-progress extension, an admin date shift)
-  carries the recorded rows across by guest and stay date byte for byte, and
-  where it cannot, leaves the booking's rows absent rather than guess. A member
-  merge that drops a duplicate's colliding allocation deletes that duplicate's
-  rows on the same redemption in the same step, so each surviving allocation
-  still matches its rows per beneficiary — but the redemption total still
-  carries the dropped share, so that booking derives as not known until the
-  next engine run rewrites it, which is the honest answer. **Account credit is
-  not in this table**: it has
-  one home, the `MemberCredit` ledger entry with its booking link, and is
-  composed from there, never split across nights. Stage 2 added the record and
-  changed no reader or member-visible figure (D3), pinned by
+  else — rows missing, rows that do not sum, a NULL amount — is `NOT_KNOWN`.
+  No column stores that answer: a flag can be left asserting what a draining
+  colour or a rollback has since made false; a sum cannot. An officer-priced night, an even split
+  and a parked edit need no special state: their rows are absent or no longer
+  sum, so they derive as not known until the settle re-base re-runs the
+  promotion over the stored prices and records the engine's figure. Stated
+  limit (owner-accepted): an old-colour officer price repair that
+  changes a night's rate without touching the promotion is not detected. A
+  mechanical rewrite that moves no money (a name-only correction, an
+  in-progress extension, an admin date shift) carries the recorded rows across
+  by guest and stay date byte for byte, and where it cannot, leaves the
+  booking's rows absent rather than guess. A member merge that drops a
+  duplicate's colliding allocation deletes that duplicate's rows on the same
+  redemption in the same step, so each surviving allocation still matches its
+  rows per beneficiary — but the redemption total still carries the dropped
+  share, so it derives as not known until the next engine run
+  rewrites it. An allocation may name no member — a school's booker slot
+  (#3369), which decomposes no member's benefit; `memberBenefitAllocations`,
+  the one helper, excludes it from the per-member identity for writer and
+  reader alike, so a redemption carrying a non-zero member-less allocation
+  derives `NOT_KNOWN`, never `KNOWN`. **Account credit is not in this table**:
+  it has one home, the `MemberCredit` ledger entry with its booking link, and
+  is composed from there, never split across nights. Stage 2 added the record
+  and changed no reader or member-visible figure (D3), pinned by
   `promo-money-byte-identical.test.ts`.
 
 

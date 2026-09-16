@@ -8,11 +8,9 @@ import {
   Prisma,
 } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { recordBookingEvent } from "@/lib/booking-events";
-import {
-  editReviewSettlementPayment,
-  hasCapturedPayment,
-} from "@/lib/booking-payment-state";
+import { editReviewSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
@@ -393,7 +391,7 @@ export async function chooseEditReviewSettlementRoute({
     return chooseEditReviewChargeRoute({
       bookingModificationId,
       bookingPayment: task.booking.payment,
-      member: task.booking.member,
+      member: bookingOwner(task.booking).member,
       hasIssuedXeroInvoice,
       // #3170: the same transaction the claim runs in, because the charge route
       // asks whether this EDIT already has a request open to a further share and

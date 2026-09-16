@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 import { AdminReviewStatus, BookingStatus, type Prisma } from "@prisma/client";
@@ -41,7 +42,8 @@ async function loadPendingReviewUnderEligibilityLocks(
 
   const current = await tx.booking.findUnique({
     where: { id: bookingId },
-    include: { member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { member: true, organisation: { select: { name: true, email: true } } },
   });
   if (
     !current ||
@@ -78,7 +80,8 @@ export async function PATCH(
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { member: true, organisation: { select: { name: true, email: true } } },
   });
 
   if (!booking) {
@@ -153,13 +156,13 @@ export async function PATCH(
     // notify (default is notify; the suppression is audited below).
     if (parsed.data.notifyMember !== false) {
       sendBookingReviewApprovedEmail({
-        email: reviewedBooking.member.email,
-        firstName: reviewedBooking.member.firstName,
+        email: bookingOwner(reviewedBooking).member.email,
+        firstName: bookingOwner(reviewedBooking).member.firstName,
         checkIn: reviewedBooking.checkIn,
         checkOut: reviewedBooking.checkOut,
         adminNotes: parsed.data.adminNotes,
         bookingId,
-        recipientMemberId: reviewedBooking.memberId,
+        recipientMemberId: bookingOwner(reviewedBooking).memberId,
         lodgeId: reviewedBooking.lodgeId,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking review approved email"),
@@ -170,13 +173,23 @@ export async function PATCH(
       action: "booking.review.approve",
       memberId: session.user.id,
       targetId: bookingId,
-      subjectMemberId: reviewedBooking.memberId,
+      subjectMemberId: bookingOwner(reviewedBooking).memberId,
       entityType: "Booking",
       entityId: bookingId,
       category: "booking",
       outcome: "success",
       summary: "Admin approved booking awaiting review",
       details: parsed.data.adminNotes,
+      // #2695 (`INV-PRIV-018`) - member-facing, which PRESERVES what the member
+      // reads rather than widening it: `adminNotes` is stored as
+      // `adminReviewNotes` above and shown to them on their own booking page as the
+      // "Admin note". NOT because it was emailed — `notifyMember: false` suppresses
+      // that on this very route, so a reader who checked that reason and found it
+      // false could reasonably withdraw the declaration. `internalNotes` reaches no
+      // member surface and is not in this row at all.
+      memberDisclosure: parsed.data.adminNotes
+        ? { visibility: "member-facing", text: parsed.data.adminNotes }
+        : { visibility: "internal" },
       metadata: { decision: "APPROVED", ...notifyAuditFields },
       ipAddress,
     });
@@ -299,9 +312,9 @@ export async function PATCH(
   if (parsed.data.notifyMember !== false) {
     sendBookingReviewRejectedEmail({
       bookingId: reviewedBooking.id,
-      recipientMemberId: reviewedBooking.memberId,
-      email: reviewedBooking.member.email,
-      firstName: reviewedBooking.member.firstName,
+      recipientMemberId: bookingOwner(reviewedBooking).memberId,
+      email: bookingOwner(reviewedBooking).member.email,
+      firstName: bookingOwner(reviewedBooking).member.firstName,
       checkIn: reviewedBooking.checkIn,
       checkOut: reviewedBooking.checkOut,
       adminNotes: parsed.data.adminNotes,
@@ -315,13 +328,23 @@ export async function PATCH(
     action: "booking.review.reject",
     memberId: session.user.id,
     targetId: bookingId,
-    subjectMemberId: reviewedBooking.memberId,
+    subjectMemberId: bookingOwner(reviewedBooking).memberId,
     entityType: "Booking",
     entityId: bookingId,
     category: "booking",
     outcome: "success",
     summary: "Admin rejected booking awaiting review",
     details: parsed.data.adminNotes,
+    // #2695 (`INV-PRIV-018`) - member-facing, which PRESERVES what the member
+    // reads rather than widening it: `adminNotes` is stored as
+    // `adminReviewNotes` above and shown to them on their own booking page as the
+    // "Admin note". NOT because it was emailed — `notifyMember: false` suppresses
+    // that on this very route, so a reader who checked that reason and found it
+    // false could reasonably withdraw the declaration. `internalNotes` reaches no
+    // member surface and is not in this row at all.
+    memberDisclosure: parsed.data.adminNotes
+      ? { visibility: "member-facing", text: parsed.data.adminNotes }
+      : { visibility: "internal" },
     metadata: { decision: "REJECTED", ...notifyAuditFields },
     ipAddress,
   });

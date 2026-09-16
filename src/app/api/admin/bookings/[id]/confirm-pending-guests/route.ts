@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import { z } from "zod";
@@ -31,7 +32,7 @@ import {
   checkCapacityForGuestRanges,
   type NightAvailability,
 } from "@/lib/capacity";
-import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
+import { overCapacityNights, wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -43,7 +44,6 @@ import {
 import { bookingPromoEmailOptions } from "@/lib/booking-promo-email-options";
 import { createStructuredAuditLog, getAuditRequestContext } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { formatDateOnly } from "@/lib/date-only";
 import {
   savedPaymentMethodForBooking,
   savedPaymentMethodRowStamp,
@@ -58,11 +58,9 @@ const confirmPendingGuestsSchema = z.object({
   notifyMember: z.boolean().optional(),
 });
 
-function getOverbookedNightDates(nightDetails: NightAvailability[]): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => formatDateOnly(night.date));
-}
+/** This 409 carries dates alone; the ONE definition supplies them (#2930). */
+const getOverbookedNightDates = (nightDetails: NightAvailability[]): string[] =>
+  overCapacityNights({ nightDetails }).map((night) => night.date);
 
 /**
  * Admin override: "Confirm pending guests now".
@@ -108,6 +106,8 @@ export async function POST(
     where: { id: bookingId },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       // Per-night sets (issue #713) so the capacity re-check counts
       // non-contiguous stays on the nights they actually occupy.
       guests: { include: { nights: true } },
@@ -155,7 +155,7 @@ export async function POST(
     createStructuredAuditLog({
       action: "booking.confirm_pending_guests",
       actor: { memberId: session.user.id },
-      subject: { memberId: booking.memberId },
+      subject: { memberId: bookingOwner(booking).memberId },
       entity: { type: "booking", id: bookingId },
       category: "booking",
       severity: "important",
@@ -181,7 +181,9 @@ export async function POST(
 
   const queueXeroInvoice = async () => {
     try {
-      const queued = await enqueueXeroBookingInvoiceOperation(bookingId);
+      const queued = await enqueueXeroBookingInvoiceOperation(bookingId, {
+        invoiceEmailDelivery: null,
+      });
       if (queued.queueOperationId) {
         await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
       }
@@ -317,9 +319,9 @@ export async function POST(
       await audit("paid_zero", false);
       if (notifyMember !== false) {
         sendBookingConfirmedEmail(
-          { bookingId: booking.id, recipientMemberId: booking.memberId },
-          booking.member.email,
-          booking.member.firstName,
+          { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+          bookingOwner(booking).member.email,
+          bookingOwner(booking).member.firstName,
           booking.checkIn,
           booking.checkOut,
           booking.guests.length,
@@ -529,7 +531,7 @@ export async function POST(
           "Admin confirm-pending-guests: refused to charge (#3267)"
         );
         sendAdminPaymentFailureAlert({
-          memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+          memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           amountCents: booking.finalPriceCents,
@@ -655,7 +657,7 @@ export async function POST(
       paymentIntent = await chargeSavedCardAttempt({
         attempt: claim.attempt,
         bookingId,
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         amountCents: claim.amountCents,
         card: claim.card,
       });
@@ -675,7 +677,7 @@ export async function POST(
       // price that moved between the pre-lock read and the claim would
       // otherwise make this alert name a figure nobody was ever charged.
       sendAdminPaymentFailureAlert({
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         amountCents: claim.amountCents,
@@ -781,7 +783,7 @@ export async function POST(
         "Admin confirm-pending-guests: charge captured but reconciliation failed; leaving booking claimed"
       );
       sendAdminPaymentFailureAlert({
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         amountCents: paymentIntent.amount,
@@ -885,9 +887,9 @@ export async function POST(
     await audit("paid_charged", true);
     if (notifyMember !== false) {
       sendBookingConfirmedEmail(
-        { bookingId: booking.id, recipientMemberId: booking.memberId },
-        booking.member.email,
-        booking.member.firstName,
+        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+        bookingOwner(booking).member.email,
+        bookingOwner(booking).member.firstName,
         booking.checkIn,
         booking.checkOut,
         booking.guests.length,

@@ -22,6 +22,10 @@ import {
   providerNeedsReentry,
   setIntegrationCredential,
 } from "@/lib/integration-credentials";
+import type {
+  CredentialActor,
+  CredentialRequestContext,
+} from "@/lib/integration-credential-actor";
 
 export const STRIPE_PROVIDER = "stripe";
 
@@ -96,30 +100,101 @@ export async function getOperationalStripeWebhookSecret(): Promise<
 // ---------------------------------------------------------------------------
 
 /**
+ * THE FRESHNESS RULE, one home. A verified marker counts only while it is at
+ * least as new as the credential it attests to; a signing-secret swap makes the
+ * secret newer and the marker stops counting even before verify-reset physically
+ * removes it. `getStripeSetupState` reports it and `recordStripeWebhookVerified`
+ * decides whether there is anything to record, so it is written once.
+ */
+function markerIsFresh(
+  markerAt: Date | undefined,
+  attestedAt: Date | undefined,
+): boolean {
+  return Boolean(
+    markerAt && attestedAt && markerAt.getTime() >= attestedAt.getTime(),
+  );
+}
+
+/** The two `updatedAt`s the freshness rule needs, in one query. */
+async function readWebhookMarkerFreshness(): Promise<{
+  markerAt: Date | undefined;
+  secretAt: Date | undefined;
+}> {
+  const rows = await prisma.integrationCredential.findMany({
+    where: {
+      provider: STRIPE_PROVIDER,
+      key: {
+        in: [STRIPE_CREDENTIAL_KEYS.webhookSecret, STRIPE_WEBHOOK_VERIFIED_KEY],
+      },
+    },
+    select: { key: true, updatedAt: true },
+  });
+  const byKey = new Map(rows.map((row) => [row.key, row.updatedAt]));
+  return {
+    markerAt: byKey.get(STRIPE_WEBHOOK_VERIFIED_KEY),
+    secretAt: byKey.get(STRIPE_CREDENTIAL_KEYS.webhookSecret),
+  };
+}
+
+/**
  * Record that a Stripe TEST-MODE webhook event verified. Best-effort: a weak
  * auth secret (WeakAuthSecretError) or any store error must NEVER break webhook
- * processing, so this swallows failures. Freshness is guaranteed by the marker's
- * own `updatedAt` (compared against the webhook secret's `updatedAt` in
- * `getStripeSetupState`) plus the verify-reset that drops the marker on any
- * credential write.
+ * processing, so this swallows failures.
+ *
+ * IT WRITES ONLY WHEN THE ANSWER WOULD CHANGE (#2723). The webhook route calls
+ * this on EVERY signature-verified test-mode event, before idempotency handling,
+ * so a replay or a retry storm arrives here many times over. Since #2723 every
+ * credential mutation mints a `security`/`important` audit row, which is kept
+ * for seven years — and a row per delivery of a freshness timestamp buries the
+ * secret changes an operator actually came to the log for. This is the same
+ * reasoning that keeps a no-op delete out of the log.
+ *
+ * So the marker is stamped when it is missing or stale, and skipped when it is
+ * already fresh. Nothing observable changes: the only reader is the freshness
+ * rule above, which cannot tell "stamped once after the secret was written" from
+ * "re-stamped on every event since". Verify-reset deletes the marker on any
+ * credential write, so the next event after a swap re-stamps it — exactly one
+ * audit row per genuine verification, instead of one per delivery.
  */
 export async function recordStripeWebhookVerified(
   when: Date = new Date(),
 ): Promise<void> {
   try {
+    const { markerAt, secretAt } = await readWebhookMarkerFreshness();
+    if (markerIsFresh(markerAt, secretAt)) return;
     await setIntegrationCredential({
       provider: STRIPE_PROVIDER,
       key: STRIPE_WEBHOOK_VERIFIED_KEY,
       value: when.toISOString(),
+      actor: { kind: "system", actor: "stripe-webhook-verify" },
+      // Latest-wins by design, and this is the marker's only writer (#2723).
+      expect: { expect: "any" },
     });
   } catch {
     // Never let marker persistence affect the webhook response.
   }
 }
 
-/** Drop the webhook-verified marker (verify-reset on any Stripe credential write). */
-export async function clearStripeWebhookVerified(): Promise<void> {
-  await deleteIntegrationCredential(STRIPE_PROVIDER, STRIPE_WEBHOOK_VERIFIED_KEY);
+/**
+ * Drop the webhook-verified marker (verify-reset on any Stripe credential write).
+ *
+ * THE ACTOR IS THE CALLER'S, and required — see `clearGoogleVerified` for the
+ * reasoning. The one caller is the admin credential-write route, and this clear
+ * is part of that administrator's action, not a background job's.
+ */
+export async function clearStripeWebhookVerified(
+  actor: CredentialActor,
+  request?: CredentialRequestContext,
+): Promise<void> {
+  await deleteIntegrationCredential({
+    provider: STRIPE_PROVIDER,
+    key: STRIPE_WEBHOOK_VERIFIED_KEY,
+    actor,
+    // As for Google: the credential the marker attested to has changed, so a
+    // marker re-stamped meanwhile must go too.
+    expect: { expect: "any" },
+    request,
+  });
 }
 
 export interface StripeSetupState {
@@ -163,12 +238,9 @@ export async function getStripeSetupState(): Promise<StripeSetupState> {
   });
   const byKey = new Map(rows.map((row) => [row.key, row.updatedAt]));
 
-  const webhookSecretAt = byKey.get(STRIPE_CREDENTIAL_KEYS.webhookSecret);
-  const verifiedAt = byKey.get(STRIPE_WEBHOOK_VERIFIED_KEY);
-  const webhookVerified = Boolean(
-    verifiedAt &&
-      webhookSecretAt &&
-      verifiedAt.getTime() >= webhookSecretAt.getTime(),
+  const webhookVerified = markerIsFresh(
+    byKey.get(STRIPE_WEBHOOK_VERIFIED_KEY),
+    byKey.get(STRIPE_CREDENTIAL_KEYS.webhookSecret),
   );
 
   return {

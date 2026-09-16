@@ -86,25 +86,42 @@ year in one go).
    **If the club has no active lodge**, the board says that instead of loading,
    with a link to Lodge settings.
 
-   ![Bed Allocation board: the date controls, allocation preferences, the "Bookings approved, awaiting allocation" pool with Run Auto Allocation, and the room-by-night Allocation Board](../images/admin/admin-bed-allocation.png)
+   <!--
+     ALT TEXT DESCRIBES THIS CAPTURE, NOT THE PAGE. The image predates #2937 and
+     still shows the Allocation preferences EDITOR on the board, where the link
+     card now is; the alt text says so rather than describing the page as it is
+     today, because a wrong substitute is worse for a screen-reader user than an
+     old one. Re-run `npm run docs:screenshots` and, in the same change, replace
+     "the Allocation preferences editor" below with "the Allocation preferences
+     link card".
+   -->
+   ![Bed Allocation board: the date controls, the Allocation preferences editor, the "Bookings approved, awaiting allocation" pool with Run Auto Allocation, and the room-by-night Allocation Board](../images/admin/admin-bed-allocation.png)
 
-### Set this lodge's allocation preferences
+### Choose how dragging behaves
 
-1. Choose the lodge whose board you want to work on. Preferences never cross
-   lodge boundaries, including in a single-lodge club.
-2. In **Allocation preferences**, click **Edit**. Tick **Auto allocation
-   enabled** if the board and booking lifecycle should propose placements for
-   this lodge.
-3. Put the enabled preferences in the order you want them compared. Drag a row
-   or use its up/down buttons; **Disable** removes it from the comparison and
-   **Enable** adds it back at the bottom.
-4. Click **Save**. It is disabled until something changed. **Cancel** restores
-   the saved snapshot. A successful save reloads the board because its header
-   mode and suggestions may both have changed.
-5. In the separate **Board drag controls** card, optionally tick
-   **Single-night drag mode**. This remains browser-only and is not saved: when
-   on, dragging a guest allocates only the night you drop on; when off, dropping
-   allocates the guest's visible stay.
+In the **Board drag controls** card, optionally tick **Single-night drag mode**.
+This remains browser-only and is not saved: when on, dragging a guest allocates
+only the night you drop on; when off, dropping allocates the guest's visible
+stay.
+
+### Where this lodge's allocation preferences are set
+
+Auto allocation and the order the preferences are compared in are **not** edited
+on this board. They are configuration an operator revisits rarely, so they live
+beside the rooms and beds they order guests into: **Bookings Setup → Rooms &
+Beds** (`/admin/rooms-beds`), at the bottom of the page. The board carries a link
+to it, already pointed at the lodge you are looking at, and the step-by-step is
+in [Rooms & Beds](rooms-beds.md#set-this-lodges-allocation-preferences).
+
+The link drops the lodge in one case, and lands you on the page's own lodge
+chooser instead: a lodge that has been **deactivated** since the booking you are
+looking at was made. Rooms & Beds only lists active lodges, so a link naming a
+deactivated one would quietly put you on a different lodge's preferences.
+
+Changes made there apply to the next allocation run on this board. They never
+rearrange or re-approve allocations that already exist.
+
+### How the preferences are compared
 
 The shipped preference order is:
 
@@ -375,11 +392,9 @@ that booking, so the booking's own **Audit log** link finds it.
 | Date In / Date Out | The night range shown on the board | today to today + 7 | NZ date-only; window capped at 31 nights and refused (not shortened) if longer |
 | ‹ / › month steppers | Move the whole board window one calendar month | — | Window is trimmed back to 31 nights when a month change widens it, and says so |
 | Assign range… | Place one guest in one bed across a stay of any length | — | Up to 366 nights; all-or-nothing, then an explicit free-nights option; auto-approves the beds |
-| Auto allocation enabled | Let the board and booking lifecycle propose bed placements for the selected lodge | on | Saved per lodge; enables Run Auto Allocation |
-| Allocation preference order | Compare feasible layouts from top to bottom | booking cohesion → stay continuity → requested room → direct-family cohesion | Drag or use up/down while editing; each item can be disabled |
 | Single-night drag mode | Drag allocates one night vs the whole stay | off | Client-side only, not saved |
 | Move an existing chip | Review a bed change while preserving original nights | — | Choose this allocation night or every existing night for this person on the booking (including off-screen rows, up to 366); hovered date is ignored; changed approved rows become Manual drafts; all-noop confirmation is audit-free |
-| Edit / Save / Cancel | Stage, persist, or discard this lodge's allocation preferences | — | Needs bookings edit; Save is dirty-gated |
+| Allocation preferences link | Opens this lodge's auto-allocation switch and preference order in Bookings Setup → Rooms & Beds | — | Carries the board's lodge when that lodge is active; a plain link otherwise, including when the focused booking's lodge has been deactivated. Editing needs bookings edit ([Rooms & Beds](rooms-beds.md#set-this-lodges-allocation-preferences)) |
 | Run Auto Allocation | Apply suggested placements | — | Needs auto-allocation on, suggestions available, and a single lodge selected |
 | Approve Visible | Approve the visible draft allocations | — | Disabled when nothing is unapproved, or while All lodges is selected (#2701) |
 | Reset allocations… | Review removal of selected categories in this lodge's visible window | — | Requires a preview; never includes off-screen nights and never runs automatic allocation afterwards; needs a single lodge selected |
@@ -395,7 +410,11 @@ change capacity; a double bed-night can hold two occupants (declared partners).
 Bookings that hold an **exclusive whole-lodge hold** are not placed on
 individual beds — the whole lodge is taken for their nights, and for those
 nights every bed also counts as taken when anything else is placed
-automatically, so no other booking's guest is auto-allocated into one. Setting a hold on a
+automatically, so no other booking's guest is auto-allocated into one. **Every
+bed except a bed a custodian holds that night**: a hut-leader bed hold is not
+part of what the group has taken, so that one bed shows as the custodian's
+rather than as theirs. Nothing changes for placement — the bed is still out of
+reach for everyone else — and nothing changes about what the group is charged. Setting a hold on a
 booking therefore **removes the bed assignments it already has**, including any
 you placed by hand and any that were approved; the removed assignments are
 recorded in the audit log, so you can rebuild them if the hold turns out to be a
@@ -423,7 +442,7 @@ you place them yourself.
 | "Showing part of this stay" | You followed a link for a booking longer than the board window | Step forward with › to see the rest of the stay |
 | A range assign says "Nothing was written" | At least one night is blocked — held for a hut leader, bed taken, guest not booked, or a whole-lodge hold | Read the lists; fix the range, or use **Assign the N free nights** to take just the free ones (if any night is outside the guest's stay, you are asked to confirm that first). A hut-leader hold is cleared on the **Hut Leader Assignments** page, not here |
 | A range assign is refused on every night | This booking has an exclusive whole-lodge hold | Held bookings take the whole lodge and get no individual beds — remove the hold first if that is wrong |
-| Guests stay in the awaiting-allocation list on certain nights, and the beds look empty | Another booking holds the whole lodge for those nights, so every bed counts as taken for automatic placement. The grid does not mark held beds — look for the exclusive-hold banner above the board and the **Overlaps exclusive hold** warning on the booking's card | Decide who really sleeps there: clear the hold if it is wrong, move the overlapping booking's dates, or place the guest by hand if you have agreed it with the group. Auto-allocation will not make that call for you |
+| Guests stay in the awaiting-allocation list on certain nights, and the beds look empty | Another booking holds the whole lodge for those nights, so every bed except a custodian-held one counts as taken for automatic placement. The grid does not mark held beds — look for the exclusive-hold banner above the board and the **Overlaps exclusive hold** warning on the booking's card | Decide who really sleeps there: clear the hold if it is wrong, move the overlapping booking's dates, or place the guest by hand if you have agreed it with the group. Auto-allocation will not make that call for you |
 | Beds are refused as if held, but no exclusive-hold banner is shown | The banner only lists holds whose own guest rows fall inside the board window; a hold takes the lodge whether or not its guests have been entered yet | Widen the board dates, or open the held booking directly to confirm — then add its guests so it appears on the board like any other booking |
 | "That took too long to save" | The range was large enough for the save to time out; nothing was written | Split it into shorter ranges and assign them one after the other |
 | The member says they can no longer change their requested room | A range assign approved their beds | That is expected: confirming beds locks the room request. Removing every approved allocation re-opens it |

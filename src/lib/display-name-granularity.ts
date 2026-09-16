@@ -93,7 +93,14 @@ export function reduceName(
 interface OrganiserShape {
   firstName: string;
   lastName: string;
-  ageTier: AgeTier;
+  /**
+   * `undefined` since #3369, when the booking is owned by an `Organisation`:
+   * an organisation has no age tier. It is read exactly as `NOT_APPLICABLE`
+   * here, which is the value this module already reserves for an organiser who
+   * is not a person — the branch below shows a full name rather than a
+   * person's abbreviated one, and a school's name is not personal data.
+   */
+  ageTier: AgeTier | undefined;
 }
 
 /**
@@ -144,7 +151,7 @@ export function bookingLabel(
 ): string {
   const { granularity, containsMinors, guestCount } = options;
 
-  if (organiser.ageTier === "NOT_APPLICABLE") {
+  if (organiser.ageTier === undefined || organiser.ageTier === "NOT_APPLICABLE") {
     return [organiser.firstName.trim(), organiser.lastName.trim()]
       .filter(Boolean)
       .join(" ");

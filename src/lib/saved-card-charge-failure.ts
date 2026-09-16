@@ -32,6 +32,7 @@
  * idempotency chain (#3266) depends on the previous id staying put, and the
  * customer is still the member's customer.
  */
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import { detachPaymentMethod } from "./stripe";
@@ -333,12 +334,16 @@ export function describeTerminalSavedCardChargeFailure(
 /** The booking fields the terminal escalation reads — ids and dates, no more. */
 export interface TerminalSavedCardChargeBooking {
   id: string;
-  memberId: string;
+  /** The booking OWNER, null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   lodgeId: string | null;
   checkIn: Date;
   checkOut: Date;
   finalPriceCents: number;
-  member: { email: string; firstName: string; lastName: string };
+  /** Null for an organisation-owned booking; read through `bookingOwner()`. */
+  member: { email: string; firstName: string; lastName: string } | null;
+  /** #3369: the owner may be an Organisation; `bookingOwner()` reads both. */
+  organisation: { name: string; email: string | null } | null;
 }
 
 /**
@@ -395,9 +400,9 @@ export async function retireAndEscalateUnusableSavedCard(params: {
   try {
     await sendSavedCardChargeFailedEmail({
       bookingId: booking.id,
-      recipientMemberId: booking.memberId,
-      email: booking.member.email,
-      firstName: booking.member.firstName,
+      recipientMemberId: bookingOwner(booking).memberId,
+      email: bookingOwner(booking).member.email,
+      firstName: bookingOwner(booking).member.firstName,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       lodgeId: booking.lodgeId,
@@ -411,7 +416,7 @@ export async function retireAndEscalateUnusableSavedCard(params: {
 
   try {
     await sendAdminPaymentFailureAlert({
-      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       amountCents: booking.finalPriceCents,

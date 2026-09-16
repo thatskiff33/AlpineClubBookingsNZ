@@ -178,10 +178,12 @@ export async function sendQuoteExpiryReminders(): Promise<{
   const releasedExpiredCount = await releaseExpiredQuoteHolds(now);
 
   // Phase 3: release beds still held for requests the requester sent back into
-  // MODIFICATION_REQUESTED / QUERY_PENDING (their quote was superseded) once
-  // their last response window has lapsed and no fresh quote is outstanding
-  // (#1254 follow-up). Without this the hold would never auto-release — the
-  // expiry phase above only selects SENT quotes.
+  // MODIFICATION_REQUESTED / QUERY_PENDING (their quote was superseded), or
+  // that an officer corrected back to VERIFIED (#2936), once their last
+  // response window has lapsed and no fresh quote is outstanding (#1254
+  // follow-up). Without this the hold would never auto-release — the expiry
+  // phase above only selects SENT quotes, and both of those paths supersede the
+  // quote as they move the status.
   const releasedStaleModificationCount =
     await releaseStaleModificationHolds(now);
 
@@ -293,12 +295,41 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
 }
 
 /**
+ * The states in which a request can be holding beds behind a quote NOBODY is
+ * waiting on any more, so that this sweep owns the hold.
+ *
+ * The first two are the requester's bounce-backs (#1254 follow-up). `VERIFIED`
+ * is #2936's: correcting a request retires every DRAFT/SENT quote and drops it
+ * back to VERIFIED, and a catering-only correction deliberately KEEPS the beds
+ * — the one corrected field a hold is not built from. So a school request
+ * holding thirty beds, corrected only for its catering, left both sweeps behind
+ * at once: this one selected the statuses the correction had just left, and the
+ * expiry phase selects SENT quotes, which the correction had just superseded.
+ * The beds were then sterilised indefinitely with no cron recovery at all and
+ * nothing but an officer noticing the Release button. Every correction whose
+ * bed release FAILED leaves the same state.
+ *
+ * Adding `VERIFIED` newly sweeps nothing that existed before #2936. Before it,
+ * the only writers of `VERIFIED` were request creation and email confirmation,
+ * both of which precede any quote — and the deadline below refuses to release a
+ * hold on a request that never had a response window at all, which is what
+ * keeps an officer's deliberate "Hold slots" on an unquoted school request. A
+ * re-hold placed AFTER the lapsed window is kept by the `createdAt` rule, as
+ * before.
+ */
+const SWEEPABLE_HELD_STATUSES = [
+  BookingRequestStatus.MODIFICATION_REQUESTED,
+  BookingRequestStatus.QUERY_PENDING,
+  BookingRequestStatus.VERIFIED,
+] as const;
+
+/**
  * Free the AWAITING_REVIEW hold behind a request the requester bounced into
- * MODIFICATION_REQUESTED / QUERY_PENDING (its quote was superseded) once its
- * last response window has lapsed and no fresh quote is outstanding
- * (#1254 follow-up). The expiry phase only selects SENT quotes, so without
- * this a "please change X / I have a question" request would hold its bed
- * indefinitely.
+ * MODIFICATION_REQUESTED / QUERY_PENDING, or that an officer corrected back to
+ * VERIFIED (#2936), once its last response window has lapsed and no fresh quote
+ * is outstanding (#1254 follow-up). The expiry phase only selects SENT quotes,
+ * so without this a "please change X / I have a question" request — or a
+ * corrected one — would hold its bed indefinitely.
  *
  * The deadline mirrors the sent-quote window: we release only once the latest
  * response-token window across the request's quotes (`max(responseTokenExpiresAt)`)
@@ -322,12 +353,7 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
 async function releaseStaleModificationHolds(now: Date): Promise<number> {
   const candidates = await prisma.bookingRequest.findMany({
     where: {
-      status: {
-        in: [
-          BookingRequestStatus.MODIFICATION_REQUESTED,
-          BookingRequestStatus.QUERY_PENDING,
-        ],
-      },
+      status: { in: [...SWEEPABLE_HELD_STATUSES] },
       heldBookingId: { not: null },
       // No quote is currently outstanding — a live SENT quote means the ball is
       // back in the requester's court and the expiry phase owns that hold.
@@ -372,21 +398,20 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
     }
 
     try {
-      const released = await prisma.$transaction(async (tx) => {
+      // The STATUS it was released from, or `false` — the sweep now covers
+      // three states and the audit row records which one this was.
+      const releasedStatus = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
         // Re-read under the lock. Bail unless the request still points at this
-        // exact hold, is still in a modify/query state, still has no SENT quote,
+        // exact hold, is still in a sweepable state, still has no SENT quote,
         // and the hold is still an unaccepted AWAITING_REVIEW row.
         const current = await tx.bookingRequest.findUnique({
           where: { id: request.id },
           select: { heldBookingId: true, status: true },
         });
         if (current?.heldBookingId !== heldBookingId) return false;
-        if (
-          current.status !== BookingRequestStatus.MODIFICATION_REQUESTED &&
-          current.status !== BookingRequestStatus.QUERY_PENDING
-        ) {
+        if (!SWEEPABLE_HELD_STATUSES.includes(current.status as never)) {
           return false;
         }
 
@@ -424,12 +449,19 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
           where: { id: request.id },
           data: { heldBookingId: null, version: { increment: 1 } },
         });
-        return true;
+        return current.status;
       });
 
-      if (released) {
+      if (releasedStatus) {
         releasedHoldCount += 1;
         logAudit({
+          // The action name still says "modification", and is KEPT (#2936). It
+          // is this recovery's stable identity: rows written by it since #1254
+          // carry it, and splitting one sweep's history across two names to
+          // describe the third status it now covers would make "did the sweep
+          // run?" harder to answer than the field below makes it. What the name
+          // could no longer carry on its own is which state the request was
+          // actually in, so that is recorded rather than implied.
           action: "booking_request.quote_hold_released_stale_modification",
           targetId: request.id,
           entityType: "BookingRequest",
@@ -437,17 +469,20 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
           category: "booking",
           outcome: "success",
           summary:
-            "Released the bed held for a modification/query request after its last quote window lapsed with no outstanding quote",
+            "Released the bed held for a booking request after its last quote window lapsed with no outstanding quote",
           metadata: {
             releasedBookingId: heldBookingId,
             deadline: deadline.toISOString(),
+            // MODIFICATION_REQUESTED / QUERY_PENDING is the requester's
+            // bounce-back; VERIFIED is an officer's correction (#2936).
+            requestStatus: releasedStatus,
           },
         });
       }
     } catch (err) {
       logger.error(
         { err, bookingRequestId: request.id },
-        "Failed to release stale modification/query quote hold",
+        "Failed to release a stale booking-request quote hold",
       );
     }
   }

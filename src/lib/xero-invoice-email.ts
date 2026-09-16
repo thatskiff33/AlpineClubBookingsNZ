@@ -25,10 +25,14 @@
  *   `invoiceEmailError` that makes a sync operation `PARTIAL`, and it must not
  *   write a subscription charge to `EMAIL_FAILED`. Nothing failed: the invoice
  *   exists and we deliberately did not email it.
- * - **A safety suppression is not the club's "No emails" decision either.** It
- *   must not write a withheld-booking-email audit row, because that row means an
- *   administrator turned the switch on for that booking and it renders on the
- *   booking page as exactly that claim.
+ * - **A safety suppression is not one of the club's OWN decisions either.** It
+ *   must not write a withheld-booking-email audit row, because such a row means
+ *   an administrator decided this booking's member was not to be emailed — the
+ *   per-booking "No emails" switch (#2258), or the creation-time "do not email
+ *   the member" choice (#2929) — and it renders on the booking page as exactly
+ *   that claim. Both of those are asked BEFORE this boundary, and neither is
+ *   asked again once one of them has withheld, so one event never carries two
+ *   reasons (`INV-CONFIG-004`).
  * - **A copy with a declared capture mailbox is still a suppression here**, and
  *   that is the one place this boundary is stricter than `sendEmail`. A capture
  *   catches the mail this application sends itself; Xero emails an invoice from

@@ -36,6 +36,7 @@
  *   codes and statuses for both audiences.
  */
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 // hasIssuedPrimaryXeroInvoice is the same derivation applyPaymentAdjustments
 // feeds queueXeroBookingEditSettlement (#1729): settled-lifecycle status plus
@@ -525,7 +526,10 @@ export type XeroLockGuardDateEditDb = {
         memberId: true;
         payment: { select: { status: true; xeroInvoiceId: true } };
       };
-    }): Promise<(XeroLockGuardDateEditBooking & { memberId: string }) | null>;
+      // #3369: the booking OWNER's member id, null when it is owned by an
+      // `Organisation`. The guard reads it only to decide what an actor may be
+      // told, and an organisation is never the actor.
+    }): Promise<(XeroLockGuardDateEditBooking & { memberId: string | null }) | null>;
   };
 };
 
@@ -562,7 +566,7 @@ export async function readXeroLockGuardDateEditBooking(
   // own default (the override callers rely on it).
   if (
     (options?.audience ?? "admin") === "member" &&
-    booking.memberId !== options?.actorMemberId
+    bookingOwner(booking).memberId !== options?.actorMemberId
   ) {
     return null;
   }

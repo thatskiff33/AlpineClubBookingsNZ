@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  bookingOwner,
+  bookingOwnerProviderMetadata,
+} from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -114,6 +118,8 @@ export async function POST(request: NextRequest) {
       where: { id: bookingId },
       include: {
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         guests: true,
         payment: true,
       },
@@ -127,7 +133,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify the requesting user owns this booking or is admin
-    if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
+    if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -427,9 +433,9 @@ export async function POST(request: NextRequest) {
         include: { promoCode: true },
       });
       sendBookingConfirmedEmail(
-        { bookingId: booking.id, recipientMemberId: booking.memberId },
-        booking.member.email,
-        booking.member.firstName,
+        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+        bookingOwner(booking).member.email,
+        bookingOwner(booking).member.firstName,
         booking.checkIn,
         booking.checkOut,
         booking.guests.length,
@@ -514,7 +520,7 @@ export async function POST(request: NextRequest) {
     // flagged whole-party hold), which leaves the response non-split-shaped.
     const provisionalChild = await getProvisionalNonMemberChildSummary({
       id: booking.id,
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
     });
     const splitPaymentMeta = {
       isSplit: provisionalChild !== null,
@@ -660,10 +666,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Find or create Stripe customer
+    // #3369: the Stripe customer is keyed on WHO OWNS the booking. A school's
+    // is keyed on its organisation, which is what stops a second customer being
+    // minted for it on every payment. `memberId` here is the owning MEMBER's id
+    // and is null for a school, never the organisation's id wearing the wrong
+    // name.
     const customer = await findOrCreateCustomer({
-      email: booking.member.email,
-      name: `${booking.member.firstName} ${booking.member.lastName}`,
-      memberId: booking.member.id,
+      email: bookingOwner(booking).member.email,
+      name: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+      memberId: bookingOwner(booking).memberId,
+      organisationId: booking.organisationId,
     });
 
     // Create the PaymentIntent at the credit-reduced effective amount (#1641).
@@ -681,7 +693,9 @@ export async function POST(request: NextRequest) {
       customerId: customer.id,
       metadata: {
         bookingId: booking.id,
-        memberId: booking.memberId,
+        // #3369: a school's intent names its organisation. See
+        // `bookingOwnerProviderMetadata`.
+        ...bookingOwnerProviderMetadata(booking),
       },
       idempotencyKey: repaySupersededIntentId
         ? `pi_${booking.id}_repay_${repaySupersededIntentId}`

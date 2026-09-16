@@ -88,6 +88,24 @@ describe("validateCentralServerBaseUrl", () => {
     expect(result.reason).toMatch(/private, loopback or link-local/i);
   });
 
+  it.each([
+    ["loopback by name", "https://localhost."],
+    ["loopback by name, twice over", "https://localhost.."],
+    ["cloud metadata by name", "https://metadata.google.internal."],
+    ["mDNS", "https://nas.local."],
+  ])("refuses %s wearing the DNS root label", (_label, url) => {
+    // THE SHARPER OF THE TWO CONSUMERS. This base URL is fetched server-side
+    // with the stored API key in an `Authorization` header on every sync, so a
+    // private-zone name that gets past this rule is an authenticated request to
+    // an internal address — the exact thing the rule exists to refuse. A
+    // trailing dot is the DNS root label: resolvers accept it, the URL parser
+    // preserves it verbatim on a name, and before it was stripped every
+    // name-based rule below was one keystroke from being bypassed.
+    const result = validateCentralServerBaseUrl(url);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/private, loopback or link-local/i);
+  });
+
   it("refuses credentials embedded in the URL", () => {
     const result = validateCentralServerBaseUrl("https://user:pass@central.test");
     expect(result.ok).toBe(false);

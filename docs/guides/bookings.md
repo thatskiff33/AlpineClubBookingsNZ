@@ -358,6 +358,21 @@ red: the messages are still ones the member never received.
 Both turning it on and turning it off are written to the
 [Audit Log](audit-log.md), with who did it and when.
 
+### The banner can appear without the switch
+
+The withheld-emails banner lists messages the club **deliberately** held back,
+and the switch is not the only thing that holds one back. When an officer books
+on a member's behalf and chooses **Create without emailing**, that choice also
+withholds the Xero invoice email for that one booking (see
+[Book on Behalf](book.md)). So a booking whose **No emails** switch has never
+been on can still show an amber banner with a single Xero invoice email on it.
+
+Read the banner as what it says it is — these messages were not sent — rather
+than as evidence the switch was used. The remedy is on the line itself, and for
+an invoice email it is always the same: the invoice exists in Xero and is still
+owed, nothing here re-sends it, and there is nothing to relay in its place.
+Send that one invoice from Xero if the member should have it.
+
 ## Settings reference
 
 The bookings list is a working queue, not a settings page. The controls below
@@ -398,9 +413,20 @@ lives in [`STATE_MACHINES.md`](../STATE_MACHINES.md#booking-lifecycle).
 | **Resend payment request email** is refused for a silenced booking | The booking has the **No emails** switch on | Turn the switch off, or contact the member yourself |
 | The Beds filter is missing | The bed-allocation module is off | Enable it under **Admin → Setup → Modules** (`bedAllocation`) — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | **+ Create Booking** is greyed out | Your admin role can view bookings but not edit them | Ask a full admin to grant bookings edit access |
-| A member says they never got a confirmation, reminder, or cancellation notice | The booking may have the **No emails** switch on | Open the booking; if the withheld-emails banner is there — **red** while emails are off, **amber** once they are back on — it lists exactly what was held back. Relay it, and check **Admin → Email deliverability** too for messages that failed for other reasons |
+| A member says they never got a confirmation, reminder, or cancellation notice | The booking may have the **No emails** switch on — or, if it was booked on their behalf, the officer may have chosen **Create without emailing** | Open the booking; if the withheld-emails banner is there — **red** while emails are off, **amber** otherwise — it lists exactly what was held back and what to do about each one. Relay it, and check **Admin → Email deliverability** too for messages that failed for other reasons |
 | **Turn off all emails** is greyed out | Your admin role can view bookings but not edit them | Ask a full admin to grant bookings edit access |
 | A booking still shows the withheld-emails warning after emails were turned back on | Correct — turning the switch back on never re-sends anything | The banner is the record of what the member was never told; work through it with them |
+| The withheld-emails banner lists a **Xero invoice email** on a booking whose **No emails** switch was never on | The officer who created it chose **Create without emailing**, which also withholds that one invoice email (#2929) | The invoice exists in Xero and is still owed. Nothing here re-sends it and there is nothing to relay — send that one invoice from Xero if the member should have it |
+| The booking warns **No Xero invoice for this booking** | Raising the invoice in Xero failed, and the club has no invoice recorded against this booking, so nothing is asking the member to pay | The booking itself is fine — it has not been cancelled and no money has moved. Use the link on the warning to open this booking's Xero activity and retry the operation there. If the retry keeps failing, read the reason on the warning and fix what it names (most often a missing account or item mapping under **Xero Setup**) |
+| The booking warns **Check Xero: this booking's invoice was left mid-flight** | The operation stopped part-way and never reported what happened — usually a worker that died mid-invoice, or one an officer reset out of a stuck **Running** state. The club cannot tell from here whether Xero holds an invoice for this booking | **Look in Xero first**, for an invoice against this booking. An operation still stuck part-way has to be reset on **Admin → Xero → Operations** before it can be retried or resolved at all. If Xero already has an invoice, do not raise another — resolve the operation instead. Only if Xero has nothing should the invoice be raised again |
+| The booking warns **Xero has the invoice, but not the payment** | The invoice was raised, but recording the club's payment against it did not finish, so Xero shows it as awaiting payment for money the club already holds | **Do not raise a second invoice.** Open this booking's Xero activity from the warning and retry — the retry records the missing payment against the invoice that already exists, it does not create another |
+| The booking warns **Xero has the invoice, but the member was not sent it** | The invoice is in Xero and correct; Xero could not email it to the member | **Do not raise a second invoice**, and note that no **Retry** is offered here on purpose — retrying this one would record a payment against an invoice the member has not paid. Send the existing invoice from Xero, or contact the member yourself |
+| The booking warns **Xero has the invoice; whether to email it could not be decided** | The invoice is in Xero, but the booking's **No emails** switch could not be read, so nothing was sent and nobody decided that it should not be | **Check the switch before you send anything.** If **No emails** is on, the club has deliberately silenced this booking and the invoice must not be emailed — relay it by hand only if that is right for the member. If the switch is off, send that one invoice from Xero. Either way, do not raise a second invoice |
+| The booking warns **Xero has the invoice; this site is not cleared to email it** | The invoice is in Xero, but this installation's role is not confirmed, so nothing was transmitted to the member | Confirm the installation's role under environment safety (see [`CONFIGURATION.md`](../../CONFIGURATION.md)), then send that one invoice from Xero by hand. Do not raise a second invoice |
+| The booking warns **The Xero invoice completed only in part** | Something did reach Xero, but a later step of the same operation did not finish | *Do not repeat the action.* Check the invoice in Xero first, then resolve the operation from this booking's Xero activity — the same rule as everywhere else on the [Xero Sync](xero.md) page. No **Retry** is offered here, on purpose |
+| A **Xero invoice email** appears in the withheld-emails banner but the booking shows **no** Xero warning | Correct, and the distinction matters: the email was **withheld on purpose** — by the **No emails** switch, or by **Create without emailing**. Neither is a failure | Nothing is broken and there is nothing to retry. The invoice itself is in Xero. Relay it to the member by hand if they should have it. A warning only ever appears when something genuinely failed |
+| On a copy of the real site, an invoice email appears **nowhere** — no warning, and nothing in the withheld-emails banner either | Correct. A non-production installation never asks Xero to email an invoice, and that is not recorded as a withheld email: nobody decided to silence the member, and on a copy there is no member to relay anything to. Only the server log notes it | Nothing to do. On the real site the same booking would email the member normally |
+| A booking officer cannot see any of these warnings | The whole provider block on the Admin tools card is full-admin-only, and always has been | Ask a full admin to look, or grant full admin access |
 
 ## Related links
 

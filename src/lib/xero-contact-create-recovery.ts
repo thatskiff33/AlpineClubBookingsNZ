@@ -1,7 +1,12 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/placeholder-contact-email";
+import {
+  assertXeroContactHasNoOtherHome,
+  lockXeroContactHome,
+} from "@/lib/xero-contact-home";
 import { buildXeroContactUrl, stripXeroOrgShortCode } from "@/lib/xero-links";
+import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-stale-operations";
 import {
   completeXeroSyncOperation,
   upsertXeroObjectLink,
@@ -58,8 +63,11 @@ export const XERO_CONTACT_CREATE_PROVIDER_CREATED_PENDING_LINK_PHASE =
  */
 export const XERO_CONTACT_CREATE_LINK_COMPLETED_AFTER_RECOVERY_PHASE =
   "local_link_committed_after_provider_created_recovery";
+// #3001: one home for the string (`xero-stale-operations.ts`), which the reset
+// route writes and the booking page's invoice warning now reads. Kept exported
+// under this name because that is what this module's callers already import.
 export const XERO_CONTACT_CREATE_STALE_RUNNING_ERROR_CODE =
-  "ORPHANED_STALE_RUNNING";
+  XERO_ORPHANED_STALE_RUNNING_ERROR_CODE;
 export const XERO_CONTACT_CREATE_IN_PROGRESS_CODE =
   "XERO_CONTACT_CREATE_IN_PROGRESS";
 export const XERO_CONTACT_CREATE_IN_PROGRESS_MESSAGE =
@@ -266,6 +274,11 @@ async function lockMemberRowForXeroFence(
  * Account deletion takes the same row FOR UPDATE, so either it commits first
  * and this writer observes the canonical anonymisation marker, or this short
  * local-link transaction commits before deletion can continue.
+ *
+ * **A caller linking a Xero CONTACT id must already hold that contact's home
+ * key** (`lockXeroContactHome`), the OUTER lock relative to any `Member` row
+ * lock (`INV-LOCK-002`): the school transfer holds it while taking a row lock of
+ * its own. Deletion and merge, which link no contact, simply take the row.
  */
 export async function lockMemberForXeroContactLink(
   db: ContactLinkMemberFenceDb,
@@ -309,6 +322,27 @@ export async function completeMemberContactOperation(
  * predicates are re-evaluated under that lock so an inbound replay cannot
  * overwrite a newer local edit. The pointer and FK-less CONTACT ledger row are
  * committed together; callers must not write either one separately afterward.
+ *
+ * ## IT TAKES THE TWO-HOMES REFUSAL (#2939, `INV-INT-018`)
+ *
+ * `INV-INT-019` used to name this function, and the bulk member import above
+ * it, as the paths that did NOT. That was written when nobody had yet built
+ * anything that had to decide, and it left the sharpest case open rather than
+ * closed: a school's organisation contact carries the school's own contact
+ * address, so an inbound contact sync finding that address on a member would
+ * have linked the school's Xero customer onto a person — the very adoption
+ * `xero-contact-home.ts` calls reachable on purpose, arriving through a door
+ * that was not watching.
+ *
+ * The lock is taken FIRST, before the member row fence, because the
+ * contact-home key is the OUTER lock relative to any `Member` row lock
+ * (`INV-LOCK-002`); taking it after the fence is the deadlock that module's
+ * docblock describes. The refusal then runs only where a link is being
+ * CLAIMED. Where the member already holds this contact there is nothing to
+ * claim: a second home, if one exists, was made by some other writer and
+ * refusing a blank-field backfill would break an unrelated repair without
+ * unmaking it. Claiming is the only moment this function can give a contact a
+ * second home, so claiming is the moment it refuses.
  */
 export async function applyInboundMemberContactPatch(
   input: {
@@ -323,6 +357,9 @@ export async function applyInboundMemberContactPatch(
   linked: boolean;
 }> {
   return db.$transaction(async (tx) => {
+    // INV-INT-018 / INV-LOCK-002: the contact-home key before the member ROW
+    // fence, never after it. See the docblock.
+    await lockXeroContactHome(tx, input.xeroContactId);
     const lockedLink = await lockMemberForXeroContactLink(tx, input.memberId);
     if (
       lockedLink.xeroContactId &&
@@ -353,6 +390,13 @@ export async function applyInboundMemberContactPatch(
     const linked =
       input.setCanonicalLink !== false && current.xeroContactId === null;
     if (linked) {
+      // The refusal, under the key taken above. It reads the OTHER table and
+      // throws `XeroContactTwoHomesError` naming the holder rather than picking
+      // a winner — a school's Xero customer is never adopted by a person.
+      await assertXeroContactHasNoOtherHome(tx, {
+        xeroContactId: input.xeroContactId,
+        home: { kind: "MEMBER", id: input.memberId },
+      });
       data.xeroContactId = input.xeroContactId;
       appliedFields.push("xeroContactId");
     }
@@ -442,10 +486,19 @@ export async function applyInboundMemberContactPatch(
  * Fence a manual Xero link against an ambiguous provider create.
  *
  * Provider contact verification happens before the caller's short transaction.
- * Inside it, this exact target Member row is the first lock. The active create
+ * Inside it, this exact target Member row is locked and the active create
  * reservation is then re-read under that lock, so either the reservation wins
  * and manual linking refuses, or the manual link commits before a later create
  * reservation can re-read the authoritative `xeroContactId`.
+ *
+ * **THIS IS NOT THE TRANSACTION'S FIRST LOCK, AND MUST NOT BE MADE ONE
+ * (`INV-LOCK-002`, `INV-INT-020`).** The caller takes the contact-home key
+ * first, because the school transfer takes a `Member` ROW lock while holding
+ * it: a writer that took the row first and then waited for the key would close
+ * a deadlock cycle, which Postgres aborts as `40P01`. An earlier revision of
+ * this docblock called the target row the first lock — it was describing that
+ * deadlock. `docs/CONCURRENCY_AND_LOCKING.md` → "One Xero contact, one local
+ * home" has the order for all four linkers.
  */
 export async function lockMemberForManualXeroContactLink(
   db: ManualContactLinkFenceDb,

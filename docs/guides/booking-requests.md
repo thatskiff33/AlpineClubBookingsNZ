@@ -175,6 +175,90 @@ are listed on the booking for you to relay.
    (school groups) to convert it into a booking. Use **Decline** with an
    optional reason to turn it down.
 
+#### Correcting a request before you convert it
+
+A group emails to say the dates were wrong, two more children are coming, a
+teacher has changed, or the school's name was typed badly. You no longer have to
+decline the request and ask them to start again — which lost its history, its
+verification, its place in the queue and any beds held for it. Open the request
+and use **Correct this request**.
+
+You can correct the **dates**, the **party** (the guest list on a general
+request; the teachers and the number of children in each age group on a school
+one), the **catering preference**, and the **contact name, email and phone**. You
+must record **why** you are correcting it; that reason is for the club's own
+record and is never emailed to anybody.
+
+**Saving re-opens the request, always.** Every price and every quote on a request
+was worked out from the details you are changing, so the request drops back to
+**Verified**, the price is cleared, and any draft or sent quote is marked
+**Superseded** — which also stops the requester acting on the quote link they
+already have. Price it and quote it again from the corrected details. There is no
+edit small enough to skip this, deliberately: a quote that still showed
+yesterday's price for today's party is exactly what this is here to prevent.
+
+**Any beds being held are released.** A hold is built out of the request's dates,
+its party and its contact, so once any of those change the hold is for the wrong
+stay. Sending the corrected quote holds beds again automatically, or you can hold
+them yourself. The one exception is a correction that changes **only** the
+catering preference — a hold does not depend on it, so the beds stay put. Those
+kept beds are freed automatically once the request's last quote window lapses,
+the same way a hold behind a query or a change request is — **but only if a quote
+was ever sent on it.** A request you held beds for and never quoted has no such
+window, so nothing frees those beds for you: use **Release hold** when you no
+longer want them.
+
+**If you change who is in the group, the member links go with it.** When you
+have linked one of the guests to a club member, that link points at a PLACE in
+the list — "the second person" — not at a name. Change the group and the list
+shifts, so the second person is now somebody else. Rather than quietly hand one
+member's identity, member rates and night-conflict checks to another guest, a
+correction that changes the party clears every such link and tells you how many
+it cleared. Link the right people again before you price or quote it. A
+correction that only moves the dates, the contact details or the catering leaves
+the list exactly where it was, so it leaves the links alone.
+
+**Once the requester has accepted a quote you cannot correct it.** At that point
+you have an agreement, and changing it underneath them is a new offer rather than
+a correction. Decline that quote or issue a fresh one first, deliberately.
+
+You also cannot correct a request that has already become a booking (edit the
+booking instead), one that is closed, one that a member submitted through the
+whole-lodge door (approve it with the headcount you mean, or decline it), or one
+flagged **Saved details need attention** — see the last row of
+[Troubleshooting](#troubleshooting).
+
+**Correcting a school's name is not a spelling fix.** Approving a school request
+attaches it to the club's own record of that school, and that record owns the
+school's customer in Xero (see
+[What happens in Xero when you approve a school request](#what-happens-in-xero-when-you-approve-a-school-request)).
+So the name you save decides **which school the club is about to invoice**. The
+form asks the server as you type and tells you which of two things you are doing:
+
+- **"The club already has *[name]* on record"** — in the club's own spelling,
+  noting whether it already has an accounting customer and who its contacts are
+  today. The tick reads **"Yes, this is that school."** Approving will invoice
+  that school, on the customer and the invoice history it already has.
+- **"The club has no school on record called *[name]*"** — the tick reads
+  **"Yes, add it as a new school."** Approving will create a new school record
+  and a new accounting customer of its own, so check the spelling first if it is
+  a school you already deal with.
+
+**Save correction stays greyed out until you tick that box**, and retyping the
+name takes the tick back, so you cannot confirm one school and save another. If
+the club's record of the school changed while your form was open, the save is
+refused and names the school rather than guessing.
+
+**Correcting the teachers changes who the club is shown as the school's contact
+people.** Approving makes the booking's teachers the school's contact people,
+replacing whoever is there — so the teachers you leave on a corrected request are
+the ones a treasurer will see in Xero. Where the club already has the school on
+record, the form names its contacts today and says plainly that approving will
+replace them; the audit log records who they were.
+
+Nothing here creates or changes a school record on its own. A correction changes
+what approval will resolve, not what it has already resolved.
+
 #### Member whole-lodge requests
 
 A signed-in member can ask to book the **whole lodge** for their party. These
@@ -415,6 +499,84 @@ Notes and constraints:
 - If your admin role is view-only for bookings, a notice explains you can view
   but not approve, reject, price, hold, or convert requests.
 
+## What happens in Xero when you approve a school request
+
+A school is a thing in its own right, not a person. When you approve a school
+request, the club records the school itself — its name, and the contact details
+the request supplied — and the booking is attached to it. That school record is
+the party the invoice belongs to.
+
+In Xero the school appears as an **organisation**, with the school's name and no
+first or last name, and the teacher named underneath it as a **contact person**.
+So a treasurer opening the contact sees the school, and sees who to talk to,
+without leaving Xero.
+
+Two things follow that are worth knowing before you meet them.
+
+### If the teacher changes
+
+The teacher on the school's Xero contact is refreshed the next time the club
+raises anything against that school — which in practice means **the next
+approval**. Approving a booking for the school records that booking's teacher
+against the school and then raises the invoice, and raising the invoice is what
+pushes the current teacher to Xero. If nothing has changed, nothing is sent.
+
+So a school whose teacher left is corrected by its next booking, and needs no
+action from you. Approving a booking makes **that booking's teachers** the
+school's current contact people — the ones it names are replaced, not added to —
+which is what stops a school that has been coming for years from naming five
+people who have all moved on.
+
+**One case it does not cover, so you know where the edge is.** If a teacher
+leaves and the next request names *nobody* in their place, nothing is sent: the
+club will not tell Xero "this school has no contact person", because on a
+contact the club adopted rather than created that would wipe out anyone a
+treasurer had entered by hand. A departure with a replacement — the ordinary
+case — is corrected as described.
+
+If you need it corrected sooner than the next booking, edit the contact person
+in Xero directly; the club will not overwrite it again until the recorded
+teacher actually changes.
+
+The school's **name** is never rewritten in Xero. Xero requires contact names to
+be unique, and quietly renaming an existing contact is the one thing this club's
+accounting rules forbid. A school that has genuinely changed its name is an
+officer's decision: rename it in Xero, and tell support so the club's own record
+matches.
+
+### The teacher's name goes to Xero
+
+Approving a school booking sends the teacher's name and email address to Xero as
+part of the school's record. That is deliberate — it is what lets the treasurer
+see who to contact — but it is worth saying plainly, because it is information
+about a person leaving this system for an accounting provider. Nothing else
+about the teacher is sent.
+
+### A school that has booked before
+
+A school that booked before this change already has a contact in Xero, created
+under the old arrangement where a school was recorded as a person. The first time
+the club raises something against that school after the change, **the school's
+own record takes that same contact over**.
+
+Almost nothing happens in Xero when it does. It is the same contact, with the
+same history and the same invoices on it; all that changes is which of the
+club's own records says "this customer is mine". You will see it recorded in the
+audit log. A returning school's invoices therefore keep going to the customer you
+already know, and no second contact is created for it.
+
+The one visible change is that the contact **stops looking like a person**. It
+was created under the old arrangement with the school's name in the first-name
+box and the surname blank, and the club clears those so it reads as an
+organisation like every new school does. If that correction cannot be made for
+any reason, the invoice still goes out and the club tries again next time — so
+a contact that still looks like a person after a booking is worth mentioning to
+support, but it is not stopping anything.
+
+If a school does somehow end up with two contacts in Xero — an old one and a new
+one — **merge them in Xero**. Xero can merge two contacts and this application
+cannot, so that is an ordinary bit of tidying rather than something to report.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -433,7 +595,18 @@ Notes and constraints:
 | Approving a policy exception says the exceptions it needs are not the ones reviewed | What you would be overriding is not what was reviewed. Usually a rule was edited after the member asked, but the nights a rule trips on can also be re-derived, so the message no longer names a cause it cannot prove | Nothing was changed. Ask the member to submit again; you will then see the current situation |
 | Approve is greyed out on a policy exception | You have not ticked the confirmation, or an adult-member hosting override needs a written reason | Write the reason and tick the confirmation |
 | Cannot price/approve anything | Your role is view-only for bookings | Ask a full admin for bookings edit access |
-| A request says **Saved details need attention** and its buttons are greyed out | Some of its saved data could not be read back, so it cannot be quoted, priced, held, or approved | Confirm what the group wants with the requester, then **Decline** so they can submit again — or ask support to repair the stored row. There is no guest-edit screen |
+| A school's Xero contact names a teacher who has left | The teacher on the contact is refreshed when the club next raises something against that school | Approve the school's next booking and it corrects itself, or edit the contact person in Xero now |
+| A returning school's invoice went to the Xero contact it always used | Correct. The school's own record took that contact over; it is the same customer with the same history | Nothing to do. The hand-over is in the audit log if you want to see it |
+| A school has two contacts in Xero | Something created a second one — usually a name that was typed differently | Merge the two contacts in Xero. This application cannot merge them for you |
+| A request says **Saved details need attention** and its buttons are greyed out | Some of its saved data could not be read back, so it cannot be quoted, priced, held, or approved | Confirm what the group wants with the requester, then **Decline** so they can submit again — or ask support to repair the stored row. **Correct this request** is deliberately not offered here: your corrected list would silently become the whole truth about a party nobody can check it against |
+| The requester's dates or party were wrong | They told you after they submitted | **Correct this request**, then price and quote it again — the correction re-opens it and retires the old quote |
+| **Save correction** is greyed out | On a school request you have not yet ticked the box confirming which school the name refers to, or you have not written why you are correcting it | Read what the form says about the school, tick **"Yes, this is that school."** / **"Yes, add it as a new school."**, and record your reason. Retyping the name takes the tick back on purpose |
+| A correction is refused because the requester has already accepted a quote | You have an agreement at that price for those dates; changing it is a new offer, not a correction | Decline that quote or issue a fresh one, then correct the request |
+| A correction is refused because the request "changed while you were correcting it" | Somebody else priced, quoted, declined or accepted it since your screen loaded | Reload the queue, look at the request as it is now, and correct it again |
+| A correction is refused and names the school | The club's record of that school changed while your form was open, or you edited the name after ticking the confirmation | Re-open the correction, read which school it now says the name refers to, confirm that, and save |
+| A correction says it **saved** but something afterwards did not finish | The correction is real and committed; what failed came after it — usually the bed release, because the requester accepted the hold in the same moment | Do NOT correct it again: a second attempt is refused anyway, because the first one really did save. Open the request, check whether it is still holding beds, and use **Release hold** before you quote it again |
+| The correction form says it **could not check which school this is** | The lookup that decides which school record the name refers to did not answer | Press **Try again**. Saving stays blocked until it answers, on purpose — the name decides which school gets invoiced, and that is not a question to answer blind |
+| The **Adjust group numbers** boxes and the correction form's child counts disagree | They do different things: the correction form changes the REQUEST — what the school asked for — while **Adjust group numbers** changes only the booking you are about to quote or approve | Correct the request when the school's numbers changed; adjust the group numbers when you are recording something about this booking alone |
 
 ## Related links
 

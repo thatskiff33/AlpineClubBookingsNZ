@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   isMemberEligibleToBookLodge: vi.fn(),
   getDefaultLodgeId: vi.fn(),
   checkCapacity: vi.fn(),
+  getLodgeCapacity: vi.fn(),
   lodgeFindUnique: vi.fn(),
 }));
 
@@ -30,6 +31,7 @@ vi.mock("@/lib/lodges", () => ({
 }));
 vi.mock("@/lib/capacity", () => ({
   checkCapacity: h.checkCapacity,
+  getLodgeCapacity: h.getLodgeCapacity,
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -52,6 +54,7 @@ beforeEach(() => {
   h.requireActiveSessionUser.mockResolvedValue(null);
   h.isMemberEligibleToBookLodge.mockResolvedValue(true);
   h.getDefaultLodgeId.mockResolvedValue("lodge-a");
+  h.getLodgeCapacity.mockResolvedValue(TEST_LODGE_CAPACITY);
 });
 
 describe("GET /api/availability/check — held-night occupiedBeds pinning (issue #155)", () => {
@@ -81,6 +84,9 @@ describe("GET /api/availability/check — held-night occupiedBeds pinning (issue
     expect(body.nightDetails).toEqual([
       { date: "2026-08-10", occupiedBeds: TEST_LODGE_CAPACITY, availableBeds: 0 },
     ]);
+    // #2930: the lodge's own effective capacity is stated rather than left to be
+    // reconstructed from a night row that may not exist.
+    expect(body.lodgeCapacity).toBe(TEST_LODGE_CAPACITY);
     for (const night of body.nightDetails) {
       expect(night.occupiedBeds + night.availableBeds).toBe(TEST_LODGE_CAPACITY);
     }
@@ -114,6 +120,10 @@ describe("GET /api/availability/check — held-night occupiedBeds pinning (issue
     const [firstNight] = body.nightDetails;
     const resolvedCapacity = firstNight.occupiedBeds + firstNight.availableBeds;
     expect(resolvedCapacity).toBe(TEST_LODGE_CAPACITY);
+    // The reconstruction and the stated field must agree (#2930). They are two
+    // routes to one number, which is exactly why only one of them is now read
+    // by a client (`INV-SSOT-001`).
+    expect(body.lodgeCapacity).toBe(resolvedCapacity);
   });
 
   it("unheld nights: response is unchanged (real occupiedBeds passed through as-is)", async () => {
@@ -137,10 +147,75 @@ describe("GET /api/availability/check — held-night occupiedBeds pinning (issue
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual({
+      lodgeCapacity: TEST_LODGE_CAPACITY,
       minAvailable: TEST_LODGE_CAPACITY - 3,
       nightDetails: [
         { date: "2026-08-10", occupiedBeds: 3, availableBeds: TEST_LODGE_CAPACITY - 3 },
       ],
+    });
+  });
+
+  /**
+   * #2930 — hold privacy IN THE PAYLOAD SHAPE, not only in the numbers.
+   *
+   * The settled owner contract says a whole-lodge hold must be
+   * indistinguishable from ordinary fullness in member wording, in the night
+   * list AND in the payload. The first two are copy; this is the one a member
+   * can inspect directly with the network tab, and a privacy property that
+   * holds in the copy while leaking in the JSON has not held at all.
+   */
+  describe("hold privacy: a held night and a genuinely full night serialise identically", () => {
+    const heldNight = {
+      date: parseDateOnly("2026-08-10"),
+      occupiedBeds: TEST_LODGE_CAPACITY,
+      availableBeds: 0,
+      // The engine knows. The member must not find out.
+      wholeLodgeHeld: true,
+    };
+    const genuinelyFullNight = {
+      date: parseDateOnly("2026-08-10"),
+      occupiedBeds: TEST_LODGE_CAPACITY,
+      availableBeds: 0,
+      wholeLodgeHeld: false,
+    };
+
+    async function bodyFor(night: Record<string, unknown>) {
+      h.checkCapacity.mockResolvedValue({
+        available: false,
+        minAvailable: 0,
+        nightDetails: [night],
+      });
+      const res = await GET(
+        makeRequest({ checkIn: "2026-08-10", checkOut: "2026-08-11" }),
+      );
+      expect(res.status).toBe(200);
+      return res.json();
+    }
+
+    it("produces byte-identical JSON for the two cases", async () => {
+      const held = await bodyFor(heldNight);
+      const full = await bodyFor(genuinelyFullNight);
+      // Not `toEqual` on the parsed objects alone: serialising both and
+      // comparing the STRINGS also catches a key that is present-but-undefined
+      // on one side and absent on the other, which `toEqual` forgives and a
+      // reader of the raw response would not.
+      expect(JSON.stringify(held)).toBe(JSON.stringify(full));
+    });
+
+    it("never projects the hold flag under any name", async () => {
+      const held = await bodyFor(heldNight);
+      const serialised = JSON.stringify(held);
+      expect(serialised).not.toContain("wholeLodgeHeld");
+      expect(serialised.toLowerCase()).not.toContain("held");
+      expect(serialised.toLowerCase()).not.toContain("hold");
+      expect(serialised.toLowerCase()).not.toContain("exclusive");
+      for (const night of held.nightDetails) {
+        expect(Object.keys(night).sort()).toEqual([
+          "availableBeds",
+          "date",
+          "occupiedBeds",
+        ]);
+      }
     });
   });
 });

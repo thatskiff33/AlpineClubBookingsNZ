@@ -622,6 +622,90 @@ describe("redact-sensitive-json", () => {
         redactSensitiveJson({ tokenCount: 1200, tokensUsed: 34 })
       ).toEqual({ tokenCount: 1200, tokensUsed: 34 });
     });
+
+    // #2940. The credential routes post `{ key, value, version }`, so a signing
+    // key's plaintext arrives under the key `value` — which neither list here
+    // reached, because the fragments match key NAMES. Sentry captures a request
+    // body as `event.request.data` whenever an exception escapes before the
+    // route's own try/catch, and both MiroTalk gates (the permission read and
+    // the audited refusal's database write) sit outside one.
+    describe("the name/value pair", () => {
+      const SIGNING_KEY = "mirotalk-signing-key-plaintext-value";
+
+      it("redacts a credential body's value, whatever its key says", () => {
+        expect(
+          redactSensitiveJson({
+            key: "jwt_key",
+            value: SIGNING_KEY,
+            version: "v-17",
+          })
+        ).toEqual({
+          // The key survives: an operator still sees WHICH secret was being
+          // written, which is the whole diagnostic worth having here.
+          key: "jwt_key",
+          value: "[REDACTED]",
+          version: "v-17",
+        });
+      });
+
+      it("redacts it inside a body Sentry captured as a JSON string", () => {
+        // `event.request.data` arrives as text on some transports; the string
+        // path parses it and runs the same object walk.
+        const redacted = redactSensitiveJson(
+          JSON.stringify({ key: "meeting_password", value: SIGNING_KEY })
+        );
+        expect(String(redacted)).not.toContain(SIGNING_KEY);
+        expect(String(redacted)).toContain("[REDACTED]");
+      });
+
+      it("redacts it on an error that carried the body it choked on", () => {
+        const error = Object.assign(new Error("write failed"), {
+          key: "jwt_key",
+          value: SIGNING_KEY,
+        });
+        expect(JSON.stringify(redactSensitiveJson(error))).not.toContain(
+          SIGNING_KEY
+        );
+      });
+
+      it("leaves a value that is NOT half of a key/value pair alone", () => {
+        // The reason this is a pair rule rather than a `value` denylist entry:
+        // `{ label, value }` is how this codebase builds money lines, booking
+        // history rows and option lists, and blanking every one of them in
+        // every log line costs more diagnosis than it buys.
+        expect(
+          redactSensitiveJson({
+            rows: [
+              { label: "Total", value: "$120.00" },
+              { label: "Nights", value: "12 Jan 2026 - 14 Jan 2026" },
+            ],
+            value: "a standalone field keeps its meaning",
+          })
+        ).toEqual({
+          rows: [
+            { label: "Total", value: "$120.00" },
+            { label: "Nights", value: "12 Jan 2026 - 14 Jan 2026" },
+          ],
+          value: "a standalone field keeps its meaning",
+        });
+      });
+
+      it("catches the pair however either half is spelled", () => {
+        // Both halves are tested in the same normalised form every other key
+        // is, so a route that posts `Key`/`Value` is not a way around it.
+        expect(redactSensitiveJson({ Key: "jwt_key", Value: SIGNING_KEY })).toEqual(
+          { Key: "jwt_key", Value: "[REDACTED]" }
+        );
+      });
+
+      it("does not read `apiKey` as the pair's name half", () => {
+        // `apiKey` normalises to "apikey", not "key" — it is its own denylist
+        // entry, and it must not drag an unrelated sibling `value` down with it.
+        expect(
+          redactSensitiveJson({ apiKey: "sk-abc", value: "us-east-1" })
+        ).toEqual({ apiKey: "[REDACTED]", value: "us-east-1" });
+      });
+    });
   });
 
   it("redacts a request body carrying an imported member's password hash", () => {

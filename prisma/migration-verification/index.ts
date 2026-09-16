@@ -10,7 +10,9 @@ import narrowCalendarDateColumns from "./20260825010000_narrow_calendar_date_col
 import addBookingGuestNightPriceSource from "./20260911010000_add_booking_guest_night_price_source";
 import backfillBookingGuestNightPriceSource from "./20260911020000_backfill_booking_guest_night_price_source";
 import addBookingGuestNightAdjustment from "./20260913010000_add_booking_guest_night_adjustment";
+import addOrganisationRecord from "./20260928010000_add_organisation_record";
 import backfillHistoricalAuditCategories from "./20260923010000_backfill_historical_audit_categories";
+import backfillSchoolBookingsToOrganisations from "./20260928030000_backfill_school_bookings_to_organisations";
 import addMemberParentPartnerExclusion from "./20260929010000_add_member_parent_partner_exclusion";
 import repairLocalMidnightDatesOfBirth from "./20260814010000_repair_local_midnight_dates_of_birth";
 import updateStarterHomeGuestCopy from "./20260802150000_update_starter_home_guest_copy";
@@ -48,6 +50,8 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   addBookingGuestNightPriceSource,
   backfillBookingGuestNightPriceSource,
   addBookingGuestNightAdjustment,
+  addOrganisationRecord,
   backfillHistoricalAuditCategories,
+  backfillSchoolBookingsToOrganisations,
   addMemberParentPartnerExclusion,
 ];

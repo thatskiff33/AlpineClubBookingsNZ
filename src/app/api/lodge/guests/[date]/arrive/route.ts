@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { checkLodgeAuth, getLodgeAuthActorMemberId, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { findLodgeGuestForDate } from "@/lib/lodge-date-scoping";
 import { isGuestReturningOnDay } from "@/lib/booking-guest-stay-ranges";
@@ -130,7 +131,7 @@ export async function PUT(
         : "lodge.guest.arrival_cleared",
       memberId: actorMemberId,
       targetId: guest.id,
-      subjectMemberId: guest.memberId ?? guest.booking.memberId,
+      subjectMemberId: guest.memberId ?? bookingOwner(guest.booking).memberId,
       entityType: "BookingGuest",
       entityId: guest.id,
       category: "lodge",
@@ -148,7 +149,7 @@ export async function PUT(
         clearedEarlierDeparture: isReturn,
         bookingId: guest.bookingId,
         bookingGuestId: guest.id,
-        bookingMemberId: guest.booking.memberId,
+        bookingMemberId: bookingOwner(guest.booking).memberId,
         guestMemberId: guest.memberId,
         guestName: `${guest.firstName} ${guest.lastName}`,
       },

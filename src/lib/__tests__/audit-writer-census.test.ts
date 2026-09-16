@@ -57,6 +57,8 @@ import {
   LODGE_GATED_ADMIN_SUBSYSTEM_PREFIXES_2765,
   MEMBERSHIP_GATED_LOCKER_SITES_2765,
   MEMBER_RECORD_ACTION_LITERAL_FILES_2755,
+  APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695,
+  MEMBER_FACING_AUDIT_WRITERS_2695,
   MEMBER_RECORD_ADMIN_ACTIONS_2755,
   MEMBER_RECORD_ADMIN_CATEGORIES_2755,
   MEMBER_RECORD_ADMIN_SURFACES_2755,
@@ -1308,6 +1310,35 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // land unpinned. 470 sites MEASURED on this branch with
     // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
     // existing classification moved.
+    //
+    // 343 -> 345 (#2698): TWO new writers, for FOUR new actions.
+    // `recordHutLeaderAssignmentAudit` is one shared writer covering the
+    // hut-leader assignment create, update and delete — which recorded nothing
+    // at all before — under category `lodge`, the audit guide's roster row.
+    // `recordWholeLodgeHoldAmendment` records the officer's explicit acceptance
+    // that a custodian bed leaves an existing whole-lodge hold's represented
+    // set (INV-CAP-038), under `booking` to match the exclusive-hold writer it
+    // answers. Both are categorised at the site and named in none of the four
+    // per-site maps, so both land unpinned. 470 sites MEASURED with
+    // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
+    // existing classification moved. Both figures were RE-MEASURED, never
+    // incremented — the round before this one moved the assertion and left the
+    // arithmetic above it stale, which is the drift these bump lines exist to
+    // prevent and which a review caught here rather than CI.
+    // 343 -> 344 (#3367): one new writer,
+    // `xero.contact.moved_to_organisation` — the record that a Xero contact
+    // moved from a school's invented member record to the school's own record
+    // (INV-INT-018). Categorised `xero` at the site and named in none of the
+    // four per-site maps, so it lands unpinned like every other new feature's
+    // writer. Re-measured after the merge with the epic, which brought two
+    // writers of its own.
+    // 346 -> 347 (#3367 fix round): a second new writer,
+    // `organisation.contacts.teachers_reconciled` — the record that a school's
+    // contact people were REPLACED by the approved booking's teachers rather
+    // than added to. Categorised `xero` at the site, for the same subsystem
+    // reason as the row above, and named in none of the four per-site maps.
+    // 474 sites MEASURED with `npm run audit:census` minus 127 pinned;
+    // `pinned` is unchanged, so no existing classification moved.
     // 343 -> 344 (#3354): the AI spend currency-rate writer in
     // `/api/admin/ai-spend-currency`. Categorised `admin` at the site and named
     // in none of the four per-site maps, like the two sibling AI settings
@@ -1323,16 +1354,38 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // named in none of the four per-site maps, so it lands unpinned.
     // 472 sites MEASURED on this branch with `npm run audit:census` minus 127
     // pinned; `pinned` is unchanged, so no existing classification moved.
+    // 345/347 -> 349 (sync of `main` into `epic/2725-mad`): the two lanes'
+    // four new writers are disjoint and every one of them is categorised at the
+    // site and named in none of the four per-site maps, so all four land
+    // unpinned and `pinned` does not move. RE-MEASURED on the MERGED tree with
+    // `npm run audit:census`, never by adding the two branches' deltas together.
+    // 349 -> 350 (#2936): `booking_request.corrected`, categorised `booking` at
+    // the site and named in none of the four per-site maps, so it lands unpinned
+    // and `pinned` does not move.
+    // 350 -> 351 (#2939, merged with the epic): the missing-contact seeding
+    // summary row, categorised `xero` at the site and named in none of the four
+    // per-site maps, so it lands unpinned and `pinned` still does not move. The
+    // two branches' rows are disjoint writers, so the merged figure is 351 —
+    // 482 sites RE-MEASURED on this tree with
+    // `npm run audit:census` minus 127 pinned, never by adding the two deltas.
+    // 351 -> 352 (#2703, arriving on the seventh main-to-epic sync):
+    // `issue_report.screenshot_withheld`, categorised `privacy` at the site.
+    // 352 -> 355 (#2940): the three MiroTalk configuration writers. None of the
+    // four is named in a per-site map, so every one lands unpinned and `pinned`
+    // does not move. RE-MEASURED on the composed tree, which is the only place
+    // the figure is true: each branch alone reported a different one.
     //
-    // pinned 127 -> 128 (#2942), and `unpinned` does NOT move with it: the
+    // pinned 127 -> 128 (#2942, on the eighth sync), and `unpinned` does NOT move with it: the
     // member-roster name-detail writer is the first addition in a while that
     // lands INSIDE a per-site map rather than outside every one of them. It
     // sits under `/api/admin/lodges/`, whose writers `INV-PRIV-013` pins as
     // uniformly `admin`, so it had to be entered in
     // `LODGE_GATED_ADMIN_CATEGORIES_2765` to keep that premise measured rather
-    // than merely asserted. 473 sites MEASURED on this branch with
-    // `npm run audit:census` minus 128 pinned.
-    ).toEqual({ pinned: 128, unpinned: 345 });
+    // than merely asserted. the site total MEASURED on the MERGED
+    // tree with `npm run audit:census` minus the pinned union — the epic's
+    // unpinned additions and this pinned one are disjoint, so neither branch's
+    // pair survives the merge and only a run over the composed tree gives it.
+    ).toEqual({ pinned: 128, unpinned: 355 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
@@ -1539,6 +1592,92 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         "pass a literal, or add the site to APPROVED_FORWARDED_CATEGORY_SITES with " +
         "the reason its indirection cannot drop or invent a category.",
     ).toEqual(Object.keys(APPROVED_FORWARDED_CATEGORY_SITES).sort());
+  });
+
+  it("publishes free text to a member from exactly the pinned write sites (#2695)", () => {
+    // WHAT WOULD BREAK THIS. A second site declaring
+    // `memberDisclosure: { visibility: "member-facing", text }`. That is a
+    // WIDENING of member readership, which `INV-PRIV-012` reserves to the owner,
+    // and this is where it stops being invisible: the failure names the action
+    // whose words would start reaching the member it is about.
+    //
+    // The opposite direction is deliberately NOT gated. Deleting a declaration
+    // leaves the reader publishing nothing, because the reader is default-deny —
+    // so a removal can only narrow, and a narrowing needs no pin.
+    const measured = Object.fromEntries(
+      census()
+        .memberFacing.map((site) => [site.id, site.action])
+        .sort(([a], [b]) => String(a).localeCompare(String(b))),
+    );
+
+    expect(
+      measured,
+      "An audit write site publishes free text to the member it is about. That " +
+        "widens what a member reads about their own account, which is the " +
+        "owner's decision (INV-PRIV-012), not a lane's. Add it to " +
+        "MEMBER_FACING_AUDIT_WRITERS_2695 with its action once the decision " +
+        "exists — and check the declared text carries no internal id, no other " +
+        "person and no officer-private note.",
+    ).toEqual(MEMBER_FACING_AUDIT_WRITERS_2695);
+
+    expect(
+      census().memberFacing.length,
+      "The pinned member-facing COUNT and the pinned member-facing SITES " +
+        "disagree. A swap between two sites leaves the count unchanged, which " +
+        "is why both are pinned.",
+    ).toBe(AUDIT_CENSUS_TOTALS.memberFacingSites);
+  });
+
+  it("bounds what the disclosure census cannot see, rather than claiming it sees everything (#2695)", () => {
+    // An unreadable DISCLOSURE is not an unreadable CATEGORY. The safe answer to
+    // a category is the one that has to be supplied, so an unreadable one is a
+    // hazard; the safe answer to a disclosure is the ABSENT one, so a site the
+    // scanner cannot read still cannot leak — the reader publishes nothing
+    // unless it finds a declared sentence on the stored row. This list therefore
+    // records the boundary of the measurement instead of holding a gate shut,
+    // and that is exactly why it is still pinned: "one member-facing site" is
+    // only worth saying alongside "and seven the scanner cannot read".
+    expect(
+      ids(census().memberDisclosureForwarded),
+      "A write site's member-disclosure declaration is decided outside the call " +
+        "site. It cannot leak — the reader denies by default — but it is outside " +
+        "the census's sight, so record it in " +
+        "APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695 with the reason.",
+    ).toEqual(Object.keys(APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695).sort());
+
+    expect(census().memberDisclosureForwarded.length).toBe(
+      AUDIT_CENSUS_TOTALS.memberDisclosureForwarded,
+    );
+  });
+
+  it("declares member-facing text only where the row can actually reach that member (#2695)", () => {
+    // A `member-facing` declaration on a row a member never sees is not a leak,
+    // it is a lie in the source: it tells the next reader that the club decided
+    // to publish something it does not publish. The two levers are separate by
+    // design (INV-PRIV-012) and this is where they are checked against each
+    // other — the CATEGORY decides whether the row reaches the member's
+    // timeline at all, the DECLARATION decides what of it they read.
+    const memberVisible = new Set<string>(
+      MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS.map((option) => option.value).filter(
+        (value) => value !== "all",
+      ),
+    );
+
+    const stranded = census()
+      .memberFacing.filter(
+        (site) =>
+          site.category.kind !== "literal" ||
+          !memberVisible.has(site.category.value),
+      )
+      .map((site) => `${site.id} (${describeCategory(site.category)})`);
+
+    expect(
+      stranded,
+      "A write site declares member-facing text while its category keeps the " +
+        "row off every member timeline. Either the declaration is dead and " +
+        "should go, or the category is wrong — and moving a category across the " +
+        "member-visible boundary is the owner's decision (INV-OPS-012).",
+    ).toEqual([]);
   });
 
   it("has exactly the approved non-row-producing AuditLog statements", () => {

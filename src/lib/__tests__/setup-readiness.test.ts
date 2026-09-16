@@ -12,6 +12,7 @@ import {
   normalizeSetupProgress,
   renderSetupCheckReport,
   type SetupDatabaseSnapshot,
+  type SetupReadiness,
 } from "@/lib/setup-readiness";
 
 /**
@@ -203,6 +204,12 @@ function makeConfigDir(config: unknown = validClubConfig) {
   return dir;
 }
 
+function findStep(readiness: SetupReadiness, id: string) {
+  return readiness.categories
+    .flatMap((category) => category.checks)
+    .find((check) => check.id === id);
+}
+
 describe("setup-readiness", () => {
   afterEach(() => {
     for (const dir of tempDirs.splice(0)) {
@@ -230,6 +237,46 @@ describe("setup-readiness", () => {
     expect(report).toContain("accounting.reports.balancesheet.read");
     expect(report).toContain("accounting.reports.banksummary.read");
     expect(report).not.toContain("accounting.reports.read");
+  });
+
+  it("names a Xero mapping that is unset and falling back (#2717)", () => {
+    // The upgrading-club case the owner's decision is about. Every existing
+    // mapping is configured, so the row count says "configured" and would have
+    // reported the step complete — while goodwill quietly posted to the
+    // hut-fee-refund account and nothing anywhere invited an officer to choose.
+    // The panel notice cannot reach them: the mappings section is collapsed by
+    // default and only loads when it is opened.
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        xeroUnsetFallbackMappingLabels: ["Goodwill & Write-Offs"],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const step = findStep(readiness, "xero-mappings");
+    expect(step?.status).toBe("warning");
+    expect(step?.message).toContain("Goodwill & Write-Offs");
+    expect(step?.message).toContain("keep posting where they did before");
+    expect(step?.details?.join(" ")).toContain("using a fallback: Goodwill & Write-Offs");
+    // Non-required, so it informs rather than blocking anybody's upgrade.
+    expect(step?.required).toBe(false);
+    expect(readiness.summary.blocked).toBe(0);
+  });
+
+  it("reports the mappings step complete once every fallback key is chosen (#2717)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, xeroUnsetFallbackMappingLabels: [] },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const step = findStep(readiness, "xero-mappings");
+    expect(step?.status).toBe("complete");
+    expect(step?.details?.join(" ")).not.toContain("using a fallback");
   });
 
   it("drops the Seasons And Rates step to a warning when a membership type has rate gaps (#1930, E4)", () => {
@@ -390,79 +437,12 @@ describe("setup-readiness", () => {
     expect(ageCheck?.details).toContain("Expected age tiers: 4");
   });
 
-  it("scopes rate-gap coverage to the club's configured tier subset (#2009)", async () => {
-    const { computeMembershipTypeRateGaps } = await import("@/lib/setup-readiness");
-    const types = [{ id: "type-full", name: "Full Member", ageGroupsApply: true }];
-    const seasons = [{ id: "s-1", name: "Winter 2026" }];
-    // A CHILD + ADULT club that has priced BOTH its present tiers has no gap,
-    // even though INFANT and YOUTH have no rows (no guest ever classifies into
-    // them). Without the subset scoping this would falsely report a gap.
-    const rateRows = [
-      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "CHILD" },
-      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "ADULT" },
-    ];
-    expect(
-      computeMembershipTypeRateGaps({
-        types,
-        seasons,
-        rateRows,
-        bookableAgeTiers: ["CHILD", "ADULT"],
-      }),
-    ).toEqual([]);
-    // With the default full-four set it WOULD flag the absent tiers, proving the
-    // scoping is what suppresses the false positive.
-    expect(
-      computeMembershipTypeRateGaps({ types, seasons, rateRows }),
-    ).toEqual(["Full Member — Winter 2026 (missing INFANT, YOUTH)"]);
-  });
-
-  it("computes tier-aware membership-type rate gaps (#1930, E4 review F7)", async () => {
-    const { computeMembershipTypeRateGaps } = await import("@/lib/setup-readiness");
-    const types = [
-      { id: "type-full", name: "Full Member", ageGroupsApply: true },
-      { id: "type-club", name: "Club", ageGroupsApply: true },
-      { id: "type-flat-covered", name: "Flat Fallback", ageGroupsApply: true },
-      { id: "type-school", name: "School Group", ageGroupsApply: false },
-      { id: "type-school-bad", name: "School (misconfigured)", ageGroupsApply: false },
-    ];
-    const seasons = [{ id: "s-1", name: "Winter 2026" }];
-    const rateRows = [
-      // Full: complete per-tier coverage — no gap.
-      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "INFANT" },
-      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "CHILD" },
-      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "YOUTH" },
-      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "ADULT" },
-      // Club: PARTIAL tier coverage, no flat row — a booking for a missing
-      // tier hard-throws, so this is a gap (the pre-fix pair-existence check
-      // missed exactly this case).
-      { seasonId: "s-1", membershipTypeId: "type-club", ageTier: "ADULT" },
-      { seasonId: "s-1", membershipTypeId: "type-club", ageTier: "YOUTH" },
-      // Flat Fallback: age-keyed type covered entirely by its flat row (the
-      // engine falls back exact-tier -> flat) — no gap.
-      { seasonId: "s-1", membershipTypeId: "type-flat-covered", ageTier: null },
-      // School Group: flat type with its flat row — no gap.
-      { seasonId: "s-1", membershipTypeId: "type-school", ageTier: null },
-      // School (misconfigured): flat type with ONLY tier rows — shape anomaly,
-      // flagged as missing its flat rate.
-      { seasonId: "s-1", membershipTypeId: "type-school-bad", ageTier: "ADULT" },
-    ];
-
-    const gaps = computeMembershipTypeRateGaps({ types, seasons, rateRows });
-    expect(gaps).toEqual([
-      "Club — Winter 2026 (missing INFANT, CHILD)",
-      "School (misconfigured) — Winter 2026 (missing flat all-ages rate)",
-    ]);
-
-    // A type with NO rows at all for a season is a gap listing every tier.
-    const emptyGaps = computeMembershipTypeRateGaps({
-      types: [{ id: "type-new", name: "New Type", ageGroupsApply: true }],
-      seasons,
-      rateRows: [],
-    });
-    expect(emptyGaps).toEqual([
-      "New Type — Winter 2026 (missing INFANT, CHILD, YOUTH, ADULT)",
-    ]);
-  });
+  /*
+    The tier-aware gap computation itself moved to
+    `membership-type-rate-coverage.test.ts` with the rule it measures (#2933).
+    What stays here is what this file is about: how the Seasons And Rates step
+    REPORTS the gaps it is handed.
+  */
 
   it("surfaces missing first-boot inputs as blocked checks", () => {
     const readiness = buildSetupReadiness({

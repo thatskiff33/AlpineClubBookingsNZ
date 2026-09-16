@@ -247,12 +247,49 @@ function bookingRow(options: {
       address: SECRETS.address,
       dietary: SECRETS.dietary,
     },
+    // Absent, not null: the pre-#3369 shape every fixture in this file carried
+    // before the organisation select existed. `bookingOwner()` hands back the
+    // member row untouched when the organisation was not loaded.
     guests: options.guests,
     id: SECRETS.bookingId,
     notes: SECRETS.notes,
     totalCents: Number(SECRETS.price),
     status: "PAID",
     groupBooking: { joinCode: SECRETS.joinCode },
+  };
+}
+
+/**
+ * A booking OWNED BY AN ORGANISATION (#3369): `member` is null and the
+ * organisation is loaded beside it, which is what the roster select returns
+ * for every school booking once the classification backfill has run. The two
+ * "organisation" cases below that hand `bookingRow` an organiser with
+ * `ageTier: "NOT_APPLICABLE"` are the legacy invented-member shape; they cannot
+ * see how the builder reads `bookingOwner()`'s `undefined` age tier, which is
+ * what this shape exists to exercise. The private columns are still planted,
+ * on the organisation this time, so a builder that spread the row would be
+ * caught here too.
+ */
+function organisationBookingRow(options: {
+  lodgeId: string;
+  organisationName: string;
+  guests: ReturnType<typeof guest>[];
+  checkIn?: string;
+  checkOut?: string;
+}) {
+  return {
+    ...bookingRow({
+      ...options,
+      organiser: { firstName: "Never", lastName: "Read", ageTier: "ADULT" },
+    }),
+    member: null,
+    memberId: null,
+    organisationId: "organisation-id-must-not-appear",
+    organisation: {
+      name: options.organisationName,
+      email: SECRETS.email,
+      phone: SECRETS.phone,
+    },
   };
 }
 
@@ -294,11 +331,24 @@ describe("member lodge roster — what the select may name", () => {
       "guests",
       "lodgeId",
       "member",
+      "organisation",
       "wholeLodgeHold",
     ]);
     expect(
       Object.keys(MEMBER_ROSTER_BOOKING_SELECT.member.select).sort()
     ).toEqual(["ageTier", "firstName", "lastName"]);
+    // THE ARGUMENT FOR `organisation`, which this assertion exists to demand.
+    // #3369 made a booking's owner either a member or an `Organisation`, so
+    // `member` is nullable and `bookingOwner()` is the one accessor for both.
+    // The NAME is the only column, and it is what an organisation booking has
+    // always been labelled with on this surface — the invented school member
+    // carried it until stage 4 removed that member — so this preserves the
+    // roster's behaviour instead of widening it. An organisation reads as
+    // `NOT_APPLICABLE`, which `namesAllowedForBooking` refuses, so the name
+    // reaches the group label and no individual is ever named because of it.
+    expect(
+      Object.keys(MEMBER_ROSTER_BOOKING_SELECT.organisation.select).sort()
+    ).toEqual(["name"]);
     expect(
       Object.keys(MEMBER_ROSTER_BOOKING_SELECT.guests.select).sort()
     ).toEqual([
@@ -594,6 +644,44 @@ describe("member lodge roster — sole occupancy", () => {
     const roster = await buildMemberLodgeRoster("viewer-1");
     expect(roster.lodges[0]?.people).toEqual([]);
     expect(JSON.stringify(roster)).not.toContain("Teacher");
+  });
+
+  it("treats an organisation-OWNED booking (no member at all, #3369) as a group: its own name as the label, nobody in it named, at any size", async () => {
+    // The two organisation cases above still carry the invented school member.
+    // After the classification backfill a school booking has none, and the
+    // builder reads its age tier off `bookingOwner()` as `undefined`. This is
+    // the shape the lobby display mis-read on the same epic (#3391), and the
+    // roster and the display must answer it identically: an organisation is a
+    // group outright, so one teacher alone in the lodge is a labelled group
+    // rather than a named person.
+    mockPrisma.booking.findMany.mockResolvedValue([
+      organisationBookingRow({
+        lodgeId: "lodge-a",
+        organisationName: "Harakeke College",
+        guests: [guest("Teacher", "One", "ADULT", [TODAY])],
+      }),
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Ari", lastName: "Nikau", ageTier: "ADULT" },
+        guests: [guest("Ari", "Nikau", "ADULT", ["2026-07-03"])],
+      }),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    const serialized = JSON.stringify(roster);
+    expect(roster.lodges[0]?.groups.map((g) => g.label)).toEqual([
+      "Harakeke College",
+    ]);
+    expect(roster.lodges[0]?.groups[0]?.count).toBe(1);
+    // The unrelated member on a different night is still named; the school's
+    // teacher never is, and the invented organiser this fixture had to hand the
+    // base helper was never read at all.
+    expect(roster.lodges[0]?.people.map((p) => p.name)).toEqual(["Ari Nikau"]);
+    expect(serialized).not.toContain("Teacher");
+    expect(serialized).not.toContain("Never");
+    expect(serialized).not.toContain("organisation-id-must-not-appear");
+    expect(serialized).not.toContain(SECRETS.email);
+    expect(serialized).not.toContain(SECRETS.phone);
   });
 });
 

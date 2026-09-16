@@ -336,6 +336,15 @@ export async function recordWithheldBookingEmail(params: {
  *    none exists; the settlement cron re-mints and re-sends on its next run
  *    once the switch is off. Clearing the switch really is the whole remedy.
  *
+ *  - the two XERO invoice emails — a third shape again, and the one the
+ *    withheld invoice-email work (#2929) made worth stating. The invoice EXISTS
+ *    in Xero and is AUTHORISED; only the sending was withheld. Nothing in this
+ *    application re-sends it: a re-drive short-circuits on the payment's stored
+ *    invoice id and never reaches the email block, and the `emailInvoice`
+ *    idempotency key is per invoice, so even a forced re-drive would no-op.
+ *    Clearing the switch changes nothing, and there is no content an officer
+ *    can relay in its place. Xero is where that one invoice gets sent from.
+ *
  *  - `chore-roster` — NOT the same, and it was wrong to treat it as such.
  *    `admin-roster-service.ts` DELETES the guest's existing chore token, mints
  *    a fresh one, and only then sends. So a live 48-hour link does exist, the
@@ -350,12 +359,20 @@ export type WithheldEmailRemedy =
   /** Nothing was minted; a cron re-sends once the switch is off. */
   | "auto-regenerates"
   /** A link exists but was never delivered, and only a manual re-send fixes it. */
-  | "resend-roster";
+  | "resend-roster"
+  /**
+   * The invoice exists in Xero and was deliberately not emailed. Nothing here
+   * re-sends it and there is nothing to relay; it is sent from Xero or not at
+   * all (#2929).
+   */
+  | "resend-from-xero";
 
 const WITHHELD_EMAIL_REMEDIES: ReadonlyMap<string, WithheldEmailRemedy> =
   new Map([
     ["split-guest-payment-link", "auto-regenerates" as const],
     ["chore-roster", "resend-roster" as const],
+    [XERO_BOOKING_INVOICE_EMAIL_TEMPLATE, "resend-from-xero" as const],
+    [XERO_GROUP_SETTLEMENT_INVOICE_EMAIL_TEMPLATE, "resend-from-xero" as const],
   ]);
 
 /**

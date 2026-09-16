@@ -105,6 +105,12 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/member-credit", () => ({
   applyCreditToBooking: mocks.applyCreditToBooking,
   getMemberCreditBalance: mocks.getMemberCreditBalance,
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },

@@ -5,6 +5,7 @@
  * per-lodge advisory lock so at most one live token exists per booking. Token
  * resolution and the refusal vocabulary stay in `payment-link.ts`.
  */
+import { bookingOwner } from "@/lib/booking-owner";
 import { issueActionToken } from "@/lib/action-tokens";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -105,8 +106,8 @@ export async function reissuePaymentLinkForToken(
     !link.bookingRequestId;
 
   const emailParams = {
-    email: booking.member.email,
-    firstName: booking.member.firstName,
+    email: bookingOwner(booking).member.email,
+    firstName: bookingOwner(booking).member.firstName,
     lodgeId: booking.lodgeId ?? null,
     token: freshToken,
     checkIn: booking.checkIn,
@@ -118,7 +119,7 @@ export async function reissuePaymentLinkForToken(
     // The pay link is about this booking (#2258).
     bookingContext: {
       bookingId: booking.id,
-      recipientMemberId: booking.memberId,
+      recipientMemberId: bookingOwner(booking).memberId,
     } as const,
   };
   const emailOutcome = isSplitGuestLink

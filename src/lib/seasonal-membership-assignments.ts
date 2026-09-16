@@ -8,6 +8,7 @@ import type {
   Prisma,
   SubscriptionStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { capacityHoldingBookingFilter } from "@/lib/booking-status";
 import {
   formatDateOnly,
@@ -332,7 +333,7 @@ function summarizeLinkedGuestBookings(guests: LinkedGuestPreviewRecord[]) {
     list: guests.slice(0, BOOKING_SUMMARY_LIMIT).map((guest) => ({
       bookingGuestId: guest.id,
       bookingId: guest.bookingId,
-      ownerMemberId: guest.booking.memberId,
+      ownerMemberId: bookingOwner(guest.booking).memberId,
       checkIn: formatDateOnly(guest.booking.checkIn),
       checkOut: formatDateOnly(guest.booking.checkOut),
       stayStart: formatDateOnly(guest.stayStart),

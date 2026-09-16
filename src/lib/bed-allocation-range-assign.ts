@@ -17,6 +17,7 @@ import {
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import { bookingOwner } from "@/lib/booking-owner";
 import { promoteOrphanedSecondOccupantsBatch } from "@/lib/bed-allocation-lifecycle";
 import {
   bookingHoldsCapacity,
@@ -213,6 +214,8 @@ async function classifyBedTakenNights(input: {
               member: {
                 select: { firstName: true, lastName: true, email: true },
               },
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
             },
           },
         },
@@ -257,7 +260,7 @@ async function classifyBedTakenNights(input: {
       category: "BED_TAKEN",
       occupiedBy: {
         guestName: guestName(primary.bookingGuest),
-        memberName: memberName(primary.bookingGuest.booking.member),
+        memberName: memberName(bookingOwner(primary.bookingGuest.booking).member),
         bookingId: primary.bookingGuest.booking.id,
         holdsCapacity: bookingHoldsCapacity({
           status: primary.bookingGuest.booking.status,
@@ -346,6 +349,8 @@ async function runAssignBedRangeAttempt(input: {
       where: { id: guest.bookingId },
       select: {
         member: { select: { firstName: true, lastName: true, email: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     for (const stayDate of range.nights) {
@@ -355,7 +360,7 @@ async function runAssignBedRangeAttempt(input: {
         hold: {
           bookingId: guest.bookingId,
           memberName: ownBooking
-            ? memberName(ownBooking.member)
+            ? memberName(bookingOwner(ownBooking).member)
             : "Unknown member",
           ownBooking: true,
         },

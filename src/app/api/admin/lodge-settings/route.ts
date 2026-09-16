@@ -4,6 +4,10 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { CLUB_CONFIG_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import {
+  MAX_CONFIGURED_LODGE_CAPACITY,
+  MIN_CONFIGURED_LODGE_CAPACITY,
+} from "@/lib/lodge-effective-capacity";
+import {
   loadLodgeSettings,
   updateLodgeSettings,
 } from "@/lib/lodge-settings";
@@ -34,7 +38,15 @@ async function validateLodgeScope(lodgeId: string | null | undefined) {
 const settingsSchema = z
   .object({
     // Null clears the override and falls back to the club config bed total.
-    capacity: z.number().int().positive().max(100000).nullable(),
+    // The bounds are the shared ones (#2724, INV-SSOT-001), so the lodge
+    // configuration screen can tell an officer whether a typed figure will be
+    // accepted here without keeping its own copy of the limits.
+    capacity: z
+      .number()
+      .int()
+      .min(MIN_CONFIGURED_LODGE_CAPACITY)
+      .max(MAX_CONFIGURED_LODGE_CAPACITY)
+      .nullable(),
     hutLeaderLookaheadDays: z.number().int().min(1).max(365).optional(),
     // Per-lodge school-group soft cap; null clears it to the code default.
     schoolGroupSoftCap: z.number().int().positive().max(100000).nullable().optional(),

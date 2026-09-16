@@ -154,35 +154,80 @@ members and admins then see a **Join meeting** button when they open the event
 in a new tab; ordinary members do not (meetings are for the people running them).
 
 The app never embeds MiroTalk — it links out to it. Each meeting event stores an
-unguessable room slug, and the join URL is built server-side from `MIROTALK_URL`,
-so the same event resolves to the right host in each environment. Without JWT
-access it uses the shareable path form `…/join/<room>`; with JWT access it uses
-MiroTalk's token route `…/join?room=<room>&token=<jwt>` (the only route that
-reads the token — the path form ignores it).
+unguessable room slug, and the join URL is built server-side each time somebody
+clicks Join, so the same event resolves to the right host in each environment.
+Without JWT access it uses the shareable path form `…/join/<room>`; with JWT
+access it uses MiroTalk's token route `…/join?room=<room>&token=<jwt>` (the only
+route that reads the token — the path form ignores it).
+
+### Where each setting lives
+
+**Audience: operator.** Since #2940 the settings a club decides live on
+**Admin → Integrations → Video meetings**, and the settings the machine decides
+stay in the environment. Nothing was taken away: every environment variable
+below still works, and is what the page falls back to until somebody sets a
+value on it.
+
+| Setting | Where it lives | Falls back to |
+| --- | --- | --- |
+| Meeting server address | Admin → Integrations → Video meetings | `MIROTALK_URL`, then `https://meet.<your app domain>` |
+| Whoever opens a link is the host | the same page | `MIRO_MEETING_PRESENTER`, then on |
+| How long a join link lasts | the same page | `MIRO_JWT_EXP`, then `1h` |
+| Signing key | the same page, stored encrypted | `MIRO_JWT_KEY` |
+| Host username and password | the same page, stored encrypted | `MIRO_MEETING_USERNAME` / `MIRO_MEETING_PASSWORD` |
+| Which hostname the meeting server answers on | `MEET_HOST` (the Caddy `meet` block) | — |
+| How Caddy reaches MiroTalk | `MIROTALK_UPSTREAM` | — |
+
+Three rules are worth knowing before you touch either side.
+
+- **Each setting falls back on its own.** Setting the address on the page does
+  not strand the signing key in the environment, and vice versa. The page names
+  the variable each unset field is reading, so you can always see which half of
+  the configuration you are looking at.
+- **Nothing is copied from the environment into the club's settings**, ever. A
+  value is stored only when an administrator types it and saves, and clearing a
+  box hands that setting back to the environment.
+- **Moving the address clears the stored host sign-in.** Those three values only
+  mean anything to the server they were set for, so they go with it — see
+  "Secure, login-free join" below for what that does and does not protect. What
+  counts is the address actually **in force**, so typing the address you are
+  already using into an empty box, or clearing the box back onto the same
+  `MIROTALK_URL`, changes nothing and clears nothing.
+- **A value set on the page needs no restart**; it applies the next time
+  somebody opens a meeting. A value set in the environment still needs one,
+  because that is what changing an environment variable means.
+
+Only a **Full Admin** may change any of it. Any admin who can see the
+Integrations hub can read the page, which is the point of it saying where each
+value comes from.
 
 ### Installing MiroTalk
 
 MiroTalk is a **separate service** you self-host; it is not bundled with this
-app. Point the app at it with one environment variable:
+app. Point the app at it on **Admin → Integrations → Video meetings**, in the
+**Meeting server address** box — for example `https://meet.example.org`.
 
-| Variable       | What it is                         | Default                          |
-| -------------- | ---------------------------------- | -------------------------------- |
-| `MIROTALK_URL` | Base URL of your MiroTalk instance | `https://meet.<your app domain>` |
-
-- **`MIROTALK_URL` is a runtime setting.** The join link is built server-side,
-  so set it in the app's environment and restart — no rebuild required.
-- **When unset, the base is derived from your app's own domain** (`NEXTAUTH_URL`)
-  as `https://meet.<domain>` — so a production deploy that forgets to set it
-  points at a real, same-domain host you control (a broken `meet.` subdomain is
-  an obvious, fixable error) rather than silently sending members to
-  `http://localhost:3010` on **their own** machine. A leading `www.` is dropped;
-  if your app runs on another subdomain (e.g. `bookings.example.org`) the derived
-  host becomes `meet.bookings.example.org`, so set `MIROTALK_URL` explicitly in
-  that case. A **loopback** app host falls back to `http://localhost:3010` for
-  local dev.
-- **Include the scheme** — e.g. `https://meet.example.org`. A value with no
-  scheme is assumed to be `https://` (a bare host would otherwise produce a
-  broken relative link). Trailing slashes are ignored.
+- **An address saved on the page has to be a public `https://` one**, with no
+  username or password embedded in it, and it may not be a private, loopback or
+  link-local address. A join link carries a signed access token in the address
+  itself, and members open it from their own phones and home networks: a
+  `localhost` address would resolve on **whoever clicked it**.
+- **A bare host is assumed to be `https://`**, so `meet.example.org` is accepted
+  and stored as `https://meet.example.org`. Trailing slashes are dropped.
+- **`MIROTALK_URL` still works and is what the page falls back to.** It is a
+  runtime setting: set it in the app's environment and restart — no rebuild
+  required. It is deliberately NOT held to the rules above, so an installation
+  that works today keeps working; where its value would not be accepted on the
+  page, the page says so and carries on using it.
+- **When neither is set, the base is derived from your app's own domain**
+  (`NEXTAUTH_URL`) as `https://meet.<domain>` — so a production deploy that
+  configured neither points at a real, same-domain host you control (a broken
+  `meet.` subdomain is an obvious, fixable error) rather than silently sending
+  members to `http://localhost:3010` on **their own** machine. A leading `www.`
+  is dropped; if your app runs on another subdomain (e.g.
+  `bookings.example.org`) the derived host becomes `meet.bookings.example.org`,
+  so set the address explicitly in that case. A **loopback** app host falls back
+  to `http://localhost:3010` for local dev.
 
 **Local development (Windows/macOS/Linux with Docker):**
 
@@ -194,9 +239,10 @@ docker run -d --name mirotalk-p2p -p 3010:3000 \
 ```
 
 Open `http://localhost:3010` to confirm your camera and mic work (WebRTC is
-allowed on `localhost` without HTTPS). Leave `MIROTALK_URL` unset to use the
-`http://localhost:3010` default, then create a meeting event and click
-**Open meeting link**.
+allowed on `localhost` without HTTPS). Leave both the page and `MIROTALK_URL`
+unset to use the `http://localhost:3010` default — the page refuses a loopback
+address on purpose, so local development goes through the environment fallback —
+then create a meeting event and click **Open meeting link**.
 
 **Production (single VM behind Caddy):**
 
@@ -206,8 +252,9 @@ allowed on `localhost` without HTTPS). Leave `MIROTALK_URL` unset to use the
 2. Reverse-proxy the subdomain through Caddy so it gets a TLS certificate, and
    give that subdomain a `Permissions-Policy` that **allows** `camera` and
    `microphone` (the app's main site deliberately disables them).
-3. Set `MIROTALK_URL=https://meet.<yourdomain>` for the app (runtime env, then
-   restart — no rebuild).
+3. Tell the app where it is, on **Admin → Integrations → Video meetings**. (Or
+   set `MIROTALK_URL=https://meet.<yourdomain>` in the environment and restart,
+   which is what installations that predate that page already do.)
 4. For members joining from home, run a **TURN server** (MiroTalk bundles
    coturn) and open its ports on the VM firewall (3478 UDP/TCP, 5349), so
    participants behind restrictive networks can connect.
@@ -222,32 +269,67 @@ app only links to it, which keeps the licence boundary clean.
 ### Secure, login-free join (JWT tokens)
 
 If your MiroTalk is host-protected (`HOST_PROTECTED=true`, `HOST_USER_AUTH=true`
-with `HOST_USERS`), members would normally hit a login prompt. Set the variables
-below and the app appends a **short-lived signed `?token=`** to each meeting
-link, so committee members join straight in while unauthorised people (who never
-get the link, and could not forge a token) stay out. The token is minted fresh
-per page load and the signing key never reaches the browser.
+with `HOST_USERS`), members would normally hit a login prompt. Fill in the
+**Host sign-in** section of **Admin → Integrations → Video meetings** and the app
+appends a **short-lived signed `?token=`** to each meeting link, so committee
+members join straight in while unauthorised people (who never get the link, and
+could not forge a token) stay out. The token is minted fresh on each click and
+the signing key never reaches the browser.
 
-| Variable                                          | What it is                                                                                                                                      |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MIRO_JWT_KEY`                                    | Must equal MiroTalk's own `JWT_KEY`, and must be a generated secret of at least 32 characters — see "Choosing the signing key" below.            |
-| `MIRO_MEETING_USERNAME` / `MIRO_MEETING_PASSWORD` | Must match one entry in MiroTalk's `HOST_USERS` (MiroTalk re-checks these).                                                                     |
-| `MIRO_MEETING_PRESENTER`                          | `true` (default) = the clicker joins as host so the meeting starts immediately; `false` leaves joiners on MiroTalk's "waiting for host" screen. |
-| `MIRO_JWT_EXP`                                    | Token lifetime — `1h` (default), `30m`, `900` (seconds), etc. Minted fresh on each page load, so this only bounds a link left unopened.         |
+| Setting | Environment fallback | What it is |
+| --- | --- | --- |
+| Signing key | `MIRO_JWT_KEY` | Must equal MiroTalk's own `JWT_KEY`, and must be a generated secret of at least 32 characters — see "Choosing the signing key" below. |
+| Host username / Host password | `MIRO_MEETING_USERNAME` / `MIRO_MEETING_PASSWORD` | Must match one entry in MiroTalk's `HOST_USERS` (MiroTalk re-checks these). |
+| Whoever opens a link is the host | `MIRO_MEETING_PRESENTER` | On (default) = the clicker joins as host so the meeting starts immediately; off leaves joiners on MiroTalk's "waiting for host" screen. |
+| How long a join link lasts | `MIRO_JWT_EXP` | `1h` (default), `30m`, `900` (seconds). Minted fresh on each click, so this only bounds a link left unopened or forwarded. **The 30-second-to-one-day range is enforced on the page only** — see below. |
+
+**`MIRO_JWT_EXP` is not range-checked.** The page refuses anything outside 30
+seconds to one day, because a join link is a bearer token: anyone it is
+forwarded to can open the meeting as host until it expires. A value set in the
+environment is **used whatever it says**, because refusing one would break an
+installation that works today. The page still shows it, with a note saying it
+would not be accepted there — that note is the whole warning, so if you set this
+in the environment, set it to something you would have been allowed to type.
+(The one exception, and the only environment behaviour this page changed:
+`MIRO_JWT_EXP=0` used to mint a link that had already expired, and now falls
+back to `1h` with the reason shown.)
+
+The three sign-in values are stored **encrypted**, in the same place as the
+Xero, Stripe and Google credentials, and are never shown again once saved — the
+page tells you whether each is set and where it is coming from, never what it
+is. **Clear** removes a stored one and hands that setting back to its
+environment variable. If two administrators have the page open at once, the
+second to save is told somebody changed it first rather than quietly
+overwriting them.
 
 **On the MiroTalk side** nothing structural changes — you already have
 `JWT_KEY`, `HOST_PROTECTED`, `HOST_USER_AUTH`, and `HOST_USERS`. Just make sure
-the app's `MIRO_JWT_KEY` matches MiroTalk's `JWT_KEY`, and that
-`MIRO_MEETING_USERNAME`/`PASSWORD` equal one of your `HOST_USERS` entries. The
-app reproduces MiroTalk P2P's exact token format (an AES-encrypted
-username/password/presenter payload inside an HS256 JWT), so a matching key is
-all MiroTalk needs to accept it.
+the app's signing key matches MiroTalk's `JWT_KEY`, and that the host username
+and password equal one of your `HOST_USERS` entries. The app reproduces MiroTalk
+P2P's exact token format (an AES-encrypted username/password/presenter payload
+inside an HS256 JWT), so a matching key is all MiroTalk needs to accept it.
 
-Leave these unset to keep the plain link (MiroTalk shows its own login prompt).
+Leave all three unset, in both places, to keep the plain link (MiroTalk shows
+its own login prompt).
+
+One consequence worth stating plainly: **the key and the address are a pair.**
+The signing key only means anything to the MiroTalk instance that shares it, and
+the host username and password have to match one of that instance's `HOST_USERS`
+entries. So **changing the meeting server address clears all three stored
+values**, and the page tells you it has: they belonged to the old server, and
+nobody can read them back out to re-enter them anyway. Set the new server's
+values straight afterwards.
+
+If your installation still sets `MIRO_JWT_KEY`, `MIRO_MEETING_USERNAME` and
+`MIRO_MEETING_PASSWORD` in the environment, clearing the stored values falls
+back to those — which were also set for the old server — so on that installation
+the clearing changes little. Clear the environment variables too, or move those
+three onto this page, if you want the address and the sign-in to travel
+together.
 
 #### Choosing the signing key
 
-`MIRO_JWT_KEY` is the whole security of this feature, so it is worth thirty
+The signing key is the whole security of this feature, so it is worth thirty
 seconds of care. It does two jobs at once: it signs every join token, and it
 encrypts the host username and password that sit inside that token. Anyone who
 knows the key can therefore mint a token your MiroTalk accepts **as a host**,
@@ -270,10 +352,12 @@ openssl rand -base64 32
   minted per page load, so there is nothing cached to expire.
 
 If the key looks weak — too short, too repetitive, or recognisable as an example
-value — the app logs one warning per key on the server and **still issues working
-links**. That is deliberate: a meeting link that silently stopped working would
-be a worse failure for the club than a warning nobody has actioned yet. Grep the
-container logs for `MIRO_JWT_KEY` after a deploy to see whether yours tripped it.
+value — the app says so **on the page, to whoever just typed it**, and logs one
+warning per key on the server. It **still issues working links** either way.
+That is deliberate: a meeting link that silently stopped working would be a
+worse failure for the club than a warning nobody has actioned yet. For a key set
+in the environment, where there is nobody to tell, grep the container logs for
+`meeting signing key` after a deploy to see whether yours tripped it.
 
 ## Settings reference
 
@@ -287,12 +371,17 @@ container logs for `MIRO_JWT_KEY` after a deploy to see whether yours tripped it
 | Ends                         | When recurrence stops                  | Never           | Never (≈24 months / 366 cap), On date, or After N times |
 | Location                     | Free-text location                     | —               | Optional; up to 200 characters                          |
 | Details                      | Agenda / notes                         | —               | Optional; up to 5000 characters                         |
-| Video meeting (MiroTalk)     | Attaches a meeting link                | off             | Needs a MiroTalk instance (see above)                   |
+| Video meeting (MiroTalk)     | Attaches a meeting link                | off             | Needs a MiroTalk instance, configured on **Admin → Integrations → Video meetings** (see above) |
 
 ## Troubleshooting
 
 | Symptom                                               | Likely cause                                                                                    | Fix                                                                                                                               |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| A **Join meeting** link goes to the wrong server, or to `localhost` | Nothing is set on **Admin → Integrations → Video meetings** or in `MIROTALK_URL`, so the address is derived from your app's domain | Open that page: it names the source of every value in force. Set the meeting server address there |
+| An address saved on that page **is not being used** | It failed the page's own rules after it was stored (it is `http://`, carries a sign-in, or names a private address) | The page says which rule and what is being used instead; re-enter a public `https://` address |
+| A join link lands on MiroTalk's **login** prompt | One of the three host sign-in values is missing, so no token is minted | The page shows which are set and from where. All three are needed — a partial set mints nothing, because MiroTalk would reject it |
+| A join link is **rejected** by MiroTalk after it used to work | The signing key and the meeting server no longer match — usually one side was rotated alone | Set the app's signing key to that instance's `JWT_KEY`; they are a pair. Moving the address clears the stored sign-in for you, so after a move it is the three new values that are needed |
+| A secret shows **needs re-entering** | It is stored but no longer decrypts, because the app's encryption key changed | Type it again on that page. Until you do, links are unsigned rather than broken |
 | **Calendar** and the dashboard **Events** card have vanished for everyone | The **Events calendar** module was switched off | Turn it back on at **Admin → Modules**; your events are still there |
 | One person gets **Not Found** on `/calendar` while everyone else is fine | That account is an **organisation**, which never sees the calendar | Confirm with `npm run calendar:diagnose-access -- their@email` (it prints the module switch and the organisation check ahead of the write gates); working as designed, but if they should be a member, change their user type on **Admin → Members → [member]** |
 | A member sees **Save**/**Delete** on events           | That account is a lodge-edit admin (only admins can edit or delete; committee members see **New event** but not Save/Delete)      | Confirm with `npm run calendar:diagnose-access -- their@email`; if they should not edit, remove their lodge-edit role     |
@@ -300,7 +389,6 @@ container logs for `MIRO_JWT_KEY` after a deploy to see whether yours tripped it
 | A committee member cannot **edit or delete** an event  | Working as designed — committee members are create-only; only lodge-edit admins may edit/delete | Grant the member the lodge-edit admin role if they need to edit or delete events                                                 |
 | A repeating event shows on only one month             | The recurrence was not saved (older build)                                                      | Open the event, set **Repeat**, and **Save** (this converts it to a series), or delete and recreate; ensure the app is up to date |
 | Saving or deleting says the event was not found        | Someone else deleted that event (or the whole series) while your dialog was open                | Close the dialog and reload the calendar; the event is already gone, so nothing was lost                                          |
-| **Open meeting link** does nothing / wrong host       | `MIROTALK_URL` is unset or points at the wrong instance                                         | Set `MIROTALK_URL` to your MiroTalk base URL (with `https://`) and restart the app                                                |
 | Camera/mic blocked in the meeting                     | MiroTalk is served over plain HTTP (not localhost) or without a camera/mic `Permissions-Policy` | Serve MiroTalk over HTTPS on its own subdomain with camera/mic allowed                                                            |
 
 ## Related links

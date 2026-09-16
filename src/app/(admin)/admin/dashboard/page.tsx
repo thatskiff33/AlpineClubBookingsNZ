@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import {
   MemberLifecycleAction,
@@ -189,6 +190,8 @@ async function getStats() {
         finalPriceCents: true,
         createdAt: true,
         member: { select: { firstName: true, lastName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         _count: { select: { guests: true } },
       },
     }),
@@ -744,7 +747,7 @@ export default async function AdminDashboardPage() {
                   >
                     <div className="min-w-0">
                       <p className="font-medium text-sm truncate">
-                        {booking.member.firstName} {booking.member.lastName}
+                        {bookingOwner(booking).member.firstName} {bookingOwner(booking).member.lastName}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {formatClubDayMonth(

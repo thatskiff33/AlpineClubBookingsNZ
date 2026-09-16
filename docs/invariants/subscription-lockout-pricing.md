@@ -909,6 +909,14 @@ The rules are:
   retained body — so the booking page can list exactly what was held back
   (#2259), and the retry cron cannot replay it (its query requires a retained
   body, and the status is terminal).
+- **A `SKIPPED_NO_EMAILS` row means the club decided, not that the switch is
+  on** (#2929). The on-behalf create's "do not email the member" choice writes
+  one too, on a booking whose switch may never have been used, so the status
+  alone is not evidence of the switch. Which decision withheld it is recorded in
+  the row's `errorMessage`; no admin surface renders that today — the withheld-
+  emails banner groups by template and carries no reason, deliberately, because
+  the remedy is the same either way — so it is read from the database, and
+  nothing may present the banner as telling an officer which decision it was.
 
 ### INV-LOCKOUT-058
 
@@ -963,9 +971,10 @@ The rules are:
 
 ### INV-LOCKOUT-061
 
-- **Xero-sent invoice emails are gated too, which SUPERSEDES the #1705 carve-out
-  above for this switch only.** #1705 decided the Internet Banking invoice email
-  is outside the per-action `notifyMember` choice and always sent. D10 says the
+- **Xero-sent invoice emails are gated too, and this switch was the FIRST of two
+  things that supersede the #1705 carve-out above.** #1705 decided the Internet
+  Banking invoice email is outside the per-action `notifyMember` choice and
+  always sent. D10 says the
   per-booking switch "suppresses everything", so when it is on the
   `emailInvoice` call is skipped and a withheld audit row is written naming the
   invoice. **The invoice itself still exists in Xero and is unchanged** — only
@@ -978,8 +987,11 @@ The rules are:
   on an email-only PARTIAL: every one of them is an Internet Banking booking
   whose Xero payment is deliberately skipped, so recording a payment would
   falsely settle an unpaid invoice. That repair is refused for email-only
-  PARTIALs. The per-action `notifyMember` carve-out is untouched: with the switch
-  off, the invoice email is still always sent. The group settlement invoice is
+  PARTIALs. **#2929 supersedes the #1705 carve-out a SECOND time**: with this
+  switch off the invoice email is still always sent, EXCEPT on the create that
+  raised it where an on-behalf officer declined to email the member. Separate
+  mechanism, separate record, reported under its own key, nothing persistent
+  set; `INV-LOCKOUT-041` states it in full. The group settlement invoice is
   one combined bill addressed to and paid by the **organiser**, so it is gated on
   the organiser's own booking and on nothing else — a joiner's switch does not
   suppress the organiser's bill, and each joiner's own group emails are gated on
@@ -1210,8 +1222,19 @@ non-admin, 400 without `forMemberId`).
 The member confirmation / hold email is an **explicit per-create choice**
 (`notifyMember`, honoured only for on-behalf creates) recorded in the
 `booking.created_on_behalf` audit metadata alongside `allowPastDates`,
-`confirmOverCapacity`, and `capacityOverridden`; `sendAdminNewBookingAlert` and
-the Xero invoice email are unaffected by the choice.
+`confirmOverCapacity`, and `capacityOverridden`; `sendAdminNewBookingAlert` is
+unaffected by the choice.
+**The Xero invoice email raised by that same create is NOT** (#2929): declining
+withholds that one send. The invoice is still raised and AUTHORISED, the
+withhold is a `SKIPPED_NO_EMAILS` row naming this reason under its own sync-
+operation key, and nothing persistent moves. The instruction is **persisted** on
+`XeroSyncOperation.invoiceEmailDelivery`, written once at enqueue like
+`queueType` and never updated, so a retry still withholds deliberately. **Every
+booking-invoice enqueuer must state it** — required-and-nullable, so a new one
+cannot compile until its author answers — and a `null` **inherits** the last
+instruction under the same correlation key, so a re-mint cannot forget it. It
+does **not** reach a booking confirmed later from a non-member hold, where that
+confirmation emails the member anyway.
 
 ### INV-LOCKOUT-042
 

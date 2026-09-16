@@ -2191,6 +2191,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
     await Promise.resolve();
     expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("bk1", {
       createdByMemberId: "m1",
+      // #2929: an edit settlement has no creation-time email choice.
+      invoiceEmailDelivery: null,
     });
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
   });

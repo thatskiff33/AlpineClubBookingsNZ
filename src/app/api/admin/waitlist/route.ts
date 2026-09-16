@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { BookingStatus } from "@prisma/client";
@@ -90,6 +91,8 @@ export async function GET(request: NextRequest) {
       where,
       include: {
         member: { select: { id: true, firstName: true, lastName: true, email: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         guests: { select: { id: true, firstName: true, lastName: true, ageTier: true, isMember: true } },
       },
       orderBy: { createdAt: "asc" },
@@ -103,9 +106,12 @@ export async function GET(request: NextRequest) {
 
   const entries = bookings.map((b) => ({
     id: b.id,
-    memberName: `${b.member.firstName} ${b.member.lastName}`,
-    memberEmail: b.member.email,
-    memberId: b.member.id,
+    memberName: `${bookingOwner(b).member.firstName} ${bookingOwner(b).member.lastName}`,
+    memberEmail: bookingOwner(b).member.email,
+    // #3480: the owner's member id, `null` for an organisation. `member.id` is
+    // `undefined` there, which JSON drops, so the page could not tell "no member
+    // page" from a shape it did not expect; `memberId` says it in so many words.
+    memberId: bookingOwner(b).memberId,
     checkIn: formatDateOnly(b.checkIn),
     checkOut: formatDateOnly(b.checkOut),
     guestCount: b.guests.length,

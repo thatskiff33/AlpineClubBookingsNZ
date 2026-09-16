@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CapacityShortNotice } from "./capacity-short-notice";
 import { type LodgeOption } from "@/components/lodge-select";
 import { formatMissingPaidUpAdultRefusal } from "@/lib/policies/subscription-lockout-pricing";
 import { sumDeferredGuestPortionCents } from "@/lib/deferred-guest-portion";
@@ -117,6 +118,12 @@ export function ReviewStep({
   handleSaveAsDraft,
   handleSubmit,
   submitting,
+  waitlistOnly,
+  capacityShortMessage,
+  capacityShortNights,
+  waitlistAlternateLodges,
+  handleJoinWaitlist,
+  joiningWaitlist,
   savingDraft,
   memberGuestPendingHoldExpiryDays,
   exceptionOffer,
@@ -183,6 +190,33 @@ export function ReviewStep({
   handleSaveAsDraft: () => void | Promise<void>;
   handleSubmit: () => void | Promise<void>;
   submitting: boolean;
+  /**
+   * The stay cannot be confirmed as it stands, so the honest primary action is
+   * a waitlist place rather than a booking (#2930, settled contract point 5).
+   *
+   * When it is set, the payment-method chooser is already withheld upstream
+   * (`showPaymentMethodChoice` is false) and the confirm button is replaced by
+   * the waitlist join, which posts the same proposal and lets the SERVER decide:
+   * a booking if beds turned out to be free, a waitlist place otherwise. A
+   * waitlist place takes no money and stores no payment method, so asking for
+   * one here would be asking for something that cannot be used or kept.
+   *
+   * A held night reaches this exactly as a full one does and is described in
+   * the same words (`INV-CAP-021`, ADR-001 decision 6).
+   */
+  waitlistOnly: boolean;
+  capacityShortMessage: string | null;
+  capacityShortNights: string[];
+  /**
+   * The cross-lodge waitlist opt-in (ADR-004), built by the route shell and
+   * rendered here as well as in the 409 refusal prompt (#2930 fix round). It
+   * arrives as a node rather than as three props because the lodge list and the
+   * opt-in state belong to the wizard hook and this component is presentational.
+   * Without it the alternates were unreachable from this path entirely.
+   */
+  waitlistAlternateLodges: React.ReactNode;
+  handleJoinWaitlist: () => void | Promise<void>;
+  joiningWaitlist: boolean;
   savingDraft: boolean;
   /** D-4: the club's own configured hold length, for the explainer's sentence 1. */
   memberGuestPendingHoldExpiryDays: number;
@@ -539,11 +573,41 @@ export function ReviewStep({
                 />
                 Apply credit to this booking
               </label>
-              {useCredit && remainingToPay === 0 && (
+              {/*
+                #2930 second fix round: SAY WHICH BRANCH THE MEMBER IS ON.
+
+                The control above is offered whenever the member holds credit,
+                and that is right — `handleJoinWaitlist` posts the same proposal
+                `handleSubmit` does, `POST /api/bookings` tries the ordinary
+                create FIRST, and the applied credit travels with it, so a stay
+                that turns out to be confirmable is booked with the credit on it.
+                Withholding the control on this branch would zero the applied
+                credit and re-open exactly that hole.
+
+                What could not be said honestly was the sentence below it. On a
+                waitlist-only stay the totals can read "Remaining to pay $0" and
+                promise "no card payment needed", while the outcome the member is
+                actually about to get is a waitlist PLACE: `createWaitlistedBooking`
+                takes no `applyCreditCents` and stores no election, so a later
+                promotion prices the stay again and quotes the full amount. No
+                money is lost either way — the screen simply stated an outcome
+                this branch does not deliver.
+              */}
+              {waitlistOnly ? (
+                <p
+                  className="mt-2 text-sm text-success"
+                  data-testid="waitlist-credit-caveat"
+                >
+                  Your credit is applied only if we can confirm this stay now. A
+                  waitlist place holds no credit — if a bed opens up later
+                  we will price the stay again and you can apply your credit
+                  then.
+                </p>
+              ) : useCredit && remainingToPay === 0 ? (
                 <p className="mt-2 text-sm font-medium text-success">
                   Credit covers entire booking — no card payment needed
                 </p>
-              )}
+              ) : null}
             </div>
           )}
 
@@ -941,6 +1005,21 @@ export function ReviewStep({
         />
       ) : null}
 
+      {waitlistOnly ? (
+        <CapacityShortNotice
+          headline="This stay can only go on the waitlist."
+          message={capacityShortMessage ?? ""}
+          shortNights={capacityShortNights}
+        >
+          The price above is what your stay would cost and is held for you. No
+          bed is reserved and nothing is charged now, so we are not asking how
+          you want to pay yet &mdash; we will do that if a place opens up and we
+          can confirm your booking.
+        </CapacityShortNotice>
+      ) : null}
+
+      {waitlistOnly ? waitlistAlternateLodges : null}
+
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={() => setStep("guests")}>
           Back
@@ -949,25 +1028,36 @@ export function ReviewStep({
           <Button
             variant="outline"
             onClick={handleSaveAsDraft}
-            disabled={savingDraft || submitting}
+            disabled={savingDraft || submitting || joiningWaitlist}
             className="w-full sm:w-auto"
           >
             {savingDraft ? "Saving draft..." : "Save as Draft"}
           </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={submitting || savingDraft}
-            size="lg"
-            className="w-full sm:w-auto"
-          >
-            {submitting
-              ? "Creating booking..."
-              : requiresAdminReviewLocal
-                ? "Submit for Review"
-                : remainingToPay > 0
-                  ? "Continue to Payment"
-                  : "Confirm Booking"}
-          </Button>
+          {waitlistOnly ? (
+            <Button
+              onClick={handleJoinWaitlist}
+              disabled={submitting || savingDraft || joiningWaitlist}
+              size="lg"
+              className="w-full sm:w-auto"
+            >
+              {joiningWaitlist ? "Joining waitlist..." : "Join Waitlist"}
+            </Button>
+          ) : (
+            <Button
+              onClick={handleSubmit}
+              disabled={submitting || savingDraft}
+              size="lg"
+              className="w-full sm:w-auto"
+            >
+              {submitting
+                ? "Creating booking..."
+                : requiresAdminReviewLocal
+                  ? "Submit for Review"
+                  : remainingToPay > 0
+                    ? "Continue to Payment"
+                    : "Confirm Booking"}
+            </Button>
+          )}
         </div>
       </div>
     </div>

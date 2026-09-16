@@ -324,6 +324,28 @@ const SEASON_RATE_MAPPER_FILE =
  */
 const SEASON_RATE_MAPPING = /seasonId:\s*[A-Za-z_$][\w$]*\.id\b/g;
 
+/**
+ * Files that match the SHAPE above and are not season-rate mappings at all.
+ *
+ * The pattern keys on `seasonId: <something>.id`, which is also how any record
+ * keyed by season is built. Declaring the exceptions by name — rather than
+ * loosening the pattern, which would let a real second mapper back in — keeps
+ * the assertion an exact equality: a new file matching the shape fails until
+ * somebody classifies it as one or the other.
+ *
+ * Both entries arrived with #2933's missing-rate warning. Neither produces a
+ * `SeasonRateData`: they carry no `startDate`, no `endDate` and no season
+ * `type`, which is the field this census exists to protect, and neither is ever
+ * handed to pricing.
+ */
+const DECLARED_NON_MAPPINGS = [
+  // Keys an existing rate row by its season before asking which rates are
+  // missing. Reads `membershipTypeId` and `ageTier`, and no amount at all.
+  "src/app/(admin)/admin/fees/_components/hut-fees-section.tsx",
+  // The gap record itself: season id and NAME, for a warning to render.
+  "src/lib/membership-type-rate-coverage.ts",
+];
+
 describe("season rate data census (#2756)", () => {
   it("carries the season type through the one mapper", () => {
     const [mapped] = toSeasonRateData([
@@ -353,7 +375,9 @@ describe("season rate data census (#2756)", () => {
     // new loader needs season rates, call `toSeasonRateData` rather than mapping
     // the rows again — the type system cannot object, because the field is
     // optional.
-    expect(found).toEqual([SEASON_RATE_MAPPER_FILE]);
+    expect(found).toEqual(
+      [SEASON_RATE_MAPPER_FILE, ...DECLARED_NON_MAPPINGS].sort(),
+    );
   });
 });
 

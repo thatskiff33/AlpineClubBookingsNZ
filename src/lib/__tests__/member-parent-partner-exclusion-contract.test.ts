@@ -101,10 +101,22 @@ describe("parent/partner database backstop contract (#3292)", () => {
       "20260913030000_add_payment_transaction_carried_ask_cents/migration.sql",
       "20260923010000_backfill_historical_audit_categories/migration.sql",
       "20260927010000_add_member_lodge_roster/migration.sql",
+      // RE-MEASURED on the tenth main-to-epic sync. This list was twelve when
+      // #3292 wrote it, which was every pending migration then. Programme
+      // #2912 adds six, additive rows included, and a validator run naming
+      // twelve of eighteen exits 0 without having looked at six of them — so
+      // the list grows with the tree rather than pinning a figure that has
+      // stopped being true.
+      "20260928010000_add_organisation_record/migration.sql",
+      "20260928020000_booking_owner_optional_member/migration.sql",
+      "20260928030000_backfill_school_bookings_to_organisations/migration.sql",
+      "20260928040000_add_xero_sync_operation_invoice_email_delivery/migration.sql",
+      "20260928050000_add_mirotalk_settings/migration.sql",
+      "20260928060000_add_issue_report_screenshot_origin/migration.sql",
       "20260929010000_add_member_parent_partner_exclusion/migration.sql",
     ]);
     expect(runbook).toContain(
-      "#2543 + #2520 + #2596 + #3271 windowed maintenance window",
+      "#2543 + #2520 + #2596 + #3369 + #3271 windowed maintenance window",
     );
     expect(runbook).toContain("reversing this migration");
     expect(runbook).toContain(
@@ -112,10 +124,12 @@ describe("parent/partner database backstop contract (#3292)", () => {
     );
 
     const deployment = read("DEPLOYMENT.md");
-    expect(deployment).toContain("Pass all twelve pending migration files");
-    expect(deployment).toContain(
-      "`20260923010000`, `20260927010000` and `20260929010000`",
-    );
+    expect(deployment).toContain("Pass all eighteen pending migration files");
+    // The #3271 window is no longer the last one in the list, so what this pins
+    // is that #3271 is still NAMED and still last in order — not that it is the
+    // only thing after the audit backfill.
+    expect(deployment).toContain("`20260929010000`");
+    expect(deployment).toContain("`20260923010000` and `20260927010000`");
 
     const rollback = read(ROLLBACK);
     expect(rollback).toContain("every other windowed");
@@ -227,11 +241,32 @@ describe("parent/partner database backstop contract (#3292)", () => {
       "src/lib/__tests__/data-migration-verification.realdb.test.ts",
     );
     expect(runner).toContain("await caseClient.query(version)");
+    // Nothing in the runner may rewrite a migration before running it: the file
+    // under test has to be the committed one, or it was never tested (#3292,
+    // INV-SSOT-002). #3369's comment-aware envelope reader is what used to do
+    // this; it now lives in migration-sql-transaction-control.test.ts as a
+    // STATIC check that reads every committed script and executes none of them.
     expect(runner).not.toContain("sqlInsideVerificationTransaction");
+    expect(runner).not.toContain("TRANSACTION_CONTROL");
+    const envelopeCheck = read(
+      "src/lib/__tests__/migration-sql-transaction-control.test.ts",
+    );
+    expect(envelopeCheck).toContain("transactionControlBeyondOuterEnvelope");
+    expect(envelopeCheck).toContain("stripSqlComments");
     const fixture = read(
       "prisma/migration-verification/20260929010000_add_member_parent_partner_exclusion.ts",
     );
     expect(fixture).toContain('executionMode: "isolated_database"');
     expect(fixture).toContain("noDetailOrHint: true");
+    // Every fixture whose migration carries an envelope, not just this one.
+    for (const enveloped of [
+      "20260928010000_add_organisation_record",
+      "20260928030000_backfill_school_bookings_to_organisations",
+    ]) {
+      expect(
+        read(`prisma/migration-verification/${enveloped}.ts`),
+        `${enveloped} carries a BEGIN/COMMIT envelope, so it must run byte-for-byte`,
+      ).toContain('executionMode: "isolated_database"');
+    }
   });
 });

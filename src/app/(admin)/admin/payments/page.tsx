@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireInstant } from "@/lib/club-time";
 import { formatPayloadCalendarDay } from "../_lib/calendar-day";
 import { readAdminQueryErrorMessage } from "@/lib/admin-query-error";
@@ -26,6 +27,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { FieldHint, describedByFieldHint } from "@/components/ui/field-hint";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import {
   Select,
   SelectContent,
@@ -928,7 +930,7 @@ export default function PaymentsPage() {
                   <Label className="text-xs" htmlFor="payment-amount-exact">Gross amount exact</Label>
                   <Input
                     id="payment-amount-exact"
-                    inputMode="decimal"
+                    {...MONEY_INPUT_PROPS}
                     value={amountExact}
                     onChange={(event) => {
                       setAmountExact(event.target.value);
@@ -942,7 +944,7 @@ export default function PaymentsPage() {
                   <Label className="text-xs" htmlFor="payment-amount-min">Gross amount min</Label>
                   <Input
                     id="payment-amount-min"
-                    inputMode="decimal"
+                    {...MONEY_INPUT_PROPS}
                     value={amountMin}
                     onChange={(event) => {
                       setAmountMin(event.target.value);
@@ -956,7 +958,7 @@ export default function PaymentsPage() {
                   <Label className="text-xs" htmlFor="payment-amount-max">Gross amount max</Label>
                   <Input
                     id="payment-amount-max"
-                    inputMode="decimal"
+                    {...MONEY_INPUT_PROPS}
                     value={amountMax}
                     onChange={(event) => {
                       setAmountMax(event.target.value);
@@ -1099,6 +1101,9 @@ export default function PaymentsPage() {
                 p.booking.creditsFromCancellation
               );
               const xeroChip = xeroStateChip(p.xeroState);
+              // #3369/#3480: an organisation owner has no member page; its name
+              // renders as text rather than as a link to `/admin/members/undefined`.
+              const owner = bookingOwner(p.booking).member;
 
               return (
                 <TableRow key={p.id}>
@@ -1112,12 +1117,18 @@ export default function PaymentsPage() {
                   <TableCell className="text-sm">{clubTime.instantDate(requireInstant(p.lastUpdatedAt))}</TableCell>
                   <TableCell className="text-sm">{formatPayloadCalendarDay(p.booking.checkIn)}</TableCell>
                   <TableCell className="font-medium">
-                    <Link
-                      href={buildHrefWithReturnTo(`/admin/members/${p.booking.member.id}`, currentPaymentsPath)}
-                      className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {p.booking.member.lastName}, {p.booking.member.firstName}
-                    </Link>
+                    {owner.id ? (
+                      <Link
+                        href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentPaymentsPath)}
+                        className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {owner.lastName}, {owner.firstName}
+                      </Link>
+                    ) : (
+                      <span className="text-foreground">
+                        {owner.lastName}, {owner.firstName}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Link
@@ -1187,7 +1198,7 @@ export default function PaymentsPage() {
                           available to this admin. */}
                       <DiagnosticsRecordButton
                         recordId={p.id}
-                        subject={`the ${formatCents(p.amountCents - p.refundedAmountCents)} payment for ${p.booking.member.firstName} ${p.booking.member.lastName}`}
+                        subject={`the ${formatCents(p.amountCents - p.refundedAmountCents)} payment for ${bookingOwner(p.booking).member.firstName} ${bookingOwner(p.booking).member.lastName}`}
                       />
                     </div>
                   </TableCell>

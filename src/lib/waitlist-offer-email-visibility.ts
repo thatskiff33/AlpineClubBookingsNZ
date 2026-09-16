@@ -1,4 +1,5 @@
 import { EmailLogStatus, BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 
 const WAITLIST_OFFER_TEMPLATE_NAME = "waitlist-offer";
@@ -48,9 +49,12 @@ type WaitlistOfferBooking = {
   // problem — a held bed nobody was told about) from one whose offer has already
   // lapsed (nothing left to do).
   waitlistOfferExpiresAt: Date | null;
+  /** Null for an organisation-owned booking (#3369); the owner is read below. */
   member: {
     email: string;
-  };
+  } | null;
+  /** #3369: the owner may be an Organisation; `bookingOwner()` reads both. */
+  organisation: { name: string; email: string | null } | null;
 };
 
 type WaitlistOfferEmailLog = {
@@ -75,7 +79,7 @@ function emailLogMatchesBooking(
   booking: WaitlistOfferBooking,
 ) {
   return (
-    emailLog.to === booking.member.email &&
+    emailLog.to === bookingOwner(booking).member.email &&
     emailLog.createdAt >= getLookupStart(booking)
   );
 }
@@ -239,7 +243,7 @@ export async function getWaitlistOfferEmailDeliveries(
     return lookupStart < earliest ? lookupStart : earliest;
   }, getLookupStart(firstLookupBooking));
   const recipients = Array.from(
-    new Set(lookupBookings.map((booking) => booking.member.email)),
+    new Set(lookupBookings.map((booking) => bookingOwner(booking).member.email)),
   );
   const emailLogs = await prisma.emailLog.findMany({
     where: {

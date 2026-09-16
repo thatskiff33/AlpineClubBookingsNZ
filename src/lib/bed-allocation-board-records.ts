@@ -16,6 +16,7 @@ import {
   formatDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
+import { bookingOwner } from "@/lib/booking-owner";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
@@ -118,6 +119,8 @@ export async function loadBookingRecords(
           email: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: {
         where: {
           stayStart: { lt: range.to },
@@ -256,7 +259,7 @@ export function serializeBookings(
     createdAt: booking.createdAt.toISOString(),
     checkIn: formatDateOnly(booking.checkIn),
     checkOut: formatDateOnly(booking.checkOut),
-    memberName: memberName(booking.member),
+    memberName: memberName(bookingOwner(booking).member),
     guests: booking.guests.map((guest) => ({
       id: guest.id,
       bookingId: guest.bookingId,
@@ -356,7 +359,7 @@ export function buildGuestNightRows(
   const rows: PlannerGuestNight[] = [];
 
   for (const booking of bookings) {
-    const bookingMemberName = memberName(booking.member);
+    const bookingMemberName = memberName(bookingOwner(booking).member);
 
     for (const guest of booking.guests) {
       for (const night of guest.nights) {
