@@ -415,6 +415,16 @@ describe("#2550 never blocks a stay", () => {
     "src/lib/placeholder-guest-name-reminders.ts",
     "src/lib/general-cron-runner.ts",
     "src/lib/stuck-state-dashboard.ts",
+    /*
+     * #3412: the officer's queue previews the school guest list the save is
+     * about to regenerate, so it builds the SAME placeholder names the school
+     * generator does and reads the prefix from its one home rather than
+     * repeating the string. It imports the PREFIX only — never the detector —
+     * and the preview gates nothing: it decides which rate boxes to show and
+     * which member link the regeneration would move. No stay, check-in,
+     * confirmation or roster decision passes through it.
+     */
+    "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
   ]);
 
   function walk(dir: string, files: string[] = []): string[] {
