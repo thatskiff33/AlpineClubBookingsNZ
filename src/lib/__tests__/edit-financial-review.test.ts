@@ -39,12 +39,12 @@ import {
   assertNoPendingEditFinancialReview,
   findOpenEditFinancialReviewTask,
   raiseEditFinancialReviewTask,
-  raiseParkedEditFinancialReviewTask,
   EditFinancialReviewError,
   EditFinancialReviewPendingError,
   EDIT_FINANCIAL_REVIEW_PENDING_CODE,
   EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTask } from "@/lib/edit-financial-review-parked-raise";
 import {
   EDIT_FINANCIAL_REVIEW_CAUSES,
   parseEditFinancialReviewContext,

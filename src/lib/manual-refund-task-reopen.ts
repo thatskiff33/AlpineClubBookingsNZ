@@ -1,6 +1,6 @@
 import "server-only";
 
-import { ManualRefundTaskStatus, Prisma } from "@prisma/client";
+import { ManualRefundTaskStatus } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
@@ -222,6 +222,3 @@ export async function reopenManualRefundTask({
 }
 
 export { MANUAL_PAYMENT_NOTE_MAX };
-export type ReopenedManualRefundTask = Prisma.PromiseReturnType<
-  typeof reopenManualRefundTask
->;

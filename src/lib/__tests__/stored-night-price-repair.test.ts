@@ -19,9 +19,13 @@ import {
 import {
   applyStoredNightPriceRepair,
   applyStrandNightPriceReconcile,
+} from "@/lib/stored-night-price-repair-store";
+// #3498: which strands a settle MAY repair moved to its own module when one work
+// item started covering the whole parked edit; the writes stayed in the store.
+import {
   unpricedNightsSummaryForGuest,
   NIGHT_PRICE_REPAIR_RACED_MESSAGE,
-} from "@/lib/stored-night-price-repair-store";
+} from "@/lib/stored-night-price-repair-plan";
 
 /**
  * #3191 (epic #2797): the rules for filling in a night whose sold price is not

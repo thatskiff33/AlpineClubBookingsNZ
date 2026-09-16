@@ -7,7 +7,7 @@ import {
   GUEST_SELECT,
   reviewTaskGuestIds,
   unpricedNightsSummaryForGuest,
-} from "@/lib/stored-night-price-repair-store";
+} from "@/lib/stored-night-price-repair-plan";
 import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
 
 /**

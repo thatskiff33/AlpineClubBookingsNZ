@@ -33,10 +33,9 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import { manualRefundTaskSettlementRefusal } from "@/lib/manual-refund-task-settlement-rules";
 import type { RecordedNightPrice } from "@/lib/stored-night-price-repair";
-import {
-  planStoredNightPriceRepair,
-  recordReviewClosurePricing,
-} from "@/lib/stored-night-price-repair-store";
+// #3498: what a settle MAY repair is the plan module's; the writes are the store's.
+import { planStoredNightPriceRepair } from "@/lib/stored-night-price-repair-plan";
+import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-store";
 
 /**
  * B5 (#2262) guard 4, and since #3030 the completion door of epic #2797: closing
@@ -130,11 +129,8 @@ export type ManualRefundTaskResolution =
        * and settles exactly as this path did before #3191. REQUIRED rather than
        * optional for the reason the two fields above are. Why it is optional
        * rather than mandatory, and why a partial answer is refused rather than
-       * completed, is `stored-night-price-repair.ts` and `INV-MOD-028`.
-       *
-       * #3498: ONE ARRAY PER REPAIRABLE STRAND of this item, in the order the
-       * screen offered them. One item covers the whole parked edit now, so the
-       * blanks it can fill can belong to several guests.
+       * completed, is `stored-night-price-repair.ts` and `INV-MOD-028`. #3498:
+       * ONE ARRAY PER REPAIRABLE STRAND, in the order the screen offered them.
        */
       recordedNightPrices: RecordedNightPrice[][] | null;
     }
@@ -429,8 +425,7 @@ export async function resolveManualRefundTask(
       : null;
 
     // #3191/#3219 D2: the night prices, checked BEFORE the claim so a refusal
-    // leaves the task OPEN. The store owns the rules and the refusal.
-    // #3498: one plan per repairable strand of this item.
+    // leaves the task OPEN - one plan per repairable strand since #3498.
     const nightPriceRepairs = await planStoredNightPriceRepair({
       task,
       requested: input.recordedNightPrices,
@@ -614,10 +609,7 @@ export async function resolveManualRefundTask(
        * so the operator's receipt can say it happened. Zero when none were sent,
        * which is the ordinary case and is not a failure.
        */
-      recordedNightPriceCount: nightPriceRepairs.reduce(
-        (total, plan) => total + plan.entries.length,
-        0,
-      ),
+      recordedNightPriceCount: nightPriceRepairs.reduce((n, p) => n + p.entries.length, 0),
       /**
        * #3030: the refund this completion actually MADE, or null.
        *

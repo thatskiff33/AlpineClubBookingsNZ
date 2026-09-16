@@ -59,9 +59,9 @@ import {
 } from "@/lib/stored-sold-price-evidence";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTask,
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTask } from "@/lib/edit-financial-review-parked-raise";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   NO_ADDITIONAL_ASK,

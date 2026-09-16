@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import logger from "@/lib/logger";
 import {
   AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS,
   automaticallyRefundedManualRefundTaskFilter,
@@ -12,8 +11,11 @@ import {
   toDismissedManualRefundTaskPayload,
   toOpenManualRefundTaskPayload,
 } from "@/lib/manual-refund-task-queue-payload";
-import { REOPENABLE_DISMISSAL_WINDOW_DAYS } from "@/lib/manual-refund-task-reopen";
 import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair-queue";
+import {
+  readDismissedManualRefundTasks,
+  readOrDegrade,
+} from "@/lib/manual-refund-task-queue-reads";
 
 /**
  * GET /api/admin/payments/manual-refund-tasks
@@ -44,32 +46,6 @@ import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair
  * The flag matters as much as the fallback: an empty list means "no automatic
  * refunds", and a degraded read must not be allowed to say that.
  */
-/**
- * An informational list that degrades to "unavailable" rather than rejecting the
- * batch carrying the actionable queue beside it (#2750 review).
- *
- * Generic over the row so the empty fallback keeps the query's own type — a bare
- * `[]` in a `.catch` widens to `never[]` and makes the result unmappable — and
- * returning the flag beside the rows is what stops the caller forgetting it: an
- * empty list and a failed read look identical on screen, and on a refund notice
- * that difference is the entire point of the card.
- */
-function readOrDegrade<T>(
-  query: Promise<T[]>,
-  what: string,
-): Promise<{ rows: T[]; unavailable: boolean }> {
-  return query.then(
-    (rows) => ({ rows, unavailable: false }),
-    (err: unknown) => {
-      logger.error(
-        { err },
-        `Failed to read the ${what} for the finance queue; the hand-back queue is answered without them`,
-      );
-      return { rows: [], unavailable: true };
-    },
-  );
-}
-
 export async function GET() {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "view" },
@@ -152,18 +128,6 @@ export async function GET() {
     Date.now() - AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  /*
-    #3498 (owner decision D2): how far back the reopen card looks. A window
-    rather than the whole history, for the same reason the automatic-refund card
-    above has one - a card exists to be read, and an unbounded list of settled
-    rows is what makes an operator stop reading it. It bounds THIS CARD only:
-    `reopenManualRefundTask` refuses on status and on who closed the row, never
-    on age, so a mistake found later is still correctable.
-  */
-  const reopenableSince = new Date(
-    Date.now() - REOPENABLE_DISMISSAL_WINDOW_DAYS * 24 * 60 * 60 * 1000,
-  );
-
   const [tasks, autoRefundedRead, dismissedRead] = await Promise.all([
     prisma.manualRefundTask.findMany({
       where: { status: "OPEN" },
@@ -224,36 +188,13 @@ export async function GET() {
       }),
       "automatically refunded late-capture notices",
     ),
-    /*
-      #3498: recently dismissed rows an officer could put back. Degrades on its
-      own, exactly like the notices beside it: this is a correction surface, and
-      losing it must never take the OPEN queue - money the club owes members by
-      hand - off the screen with it.
-
-      `completedByMemberId: { not: null }` is the fence, applied here rather than
-      on the card: a machine-written dismissal records a refund Stripe already
-      made, and it must never be offered for reopening.
-    */
+    // #3498 (owner decision D2): recently dismissed rows an officer could put
+    // back. Degrades on its own, exactly like the notices beside it - losing a
+    // correction surface must never take the OPEN queue, which is money the
+    // club owes members by hand, off the screen with it. Both bounds on what it
+    // lists are argued where the query is.
     readOrDegrade(
-      prisma.manualRefundTask.findMany({
-        where: {
-          status: "DISMISSED",
-          completedByMemberId: { not: null },
-          completedAt: { gte: reopenableSince },
-        },
-        orderBy: { completedAt: "desc" },
-        take: 100,
-        select: {
-          id: true,
-          bookingId: true,
-          amountCents: true,
-          kind: true,
-          reason: true,
-          note: true,
-          completedAt: true,
-          booking: { select: autoRefundedBookingSummary },
-        },
-      }),
+      readDismissedManualRefundTasks(prisma, new Date()),
       "recently dismissed money tasks",
     ),
   ]);

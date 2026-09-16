@@ -138,6 +138,10 @@ const REPAIR_WRITER = "lib/stored-night-price-repair-store.ts";
 const FEATURE_FILES = [
   "lib/stored-night-price-repair.ts",
   "lib/stored-night-price-repair-store.ts",
+  // #3498: the reads and the checks moved here when one work item started
+  // covering the whole parked edit. It is where "which strands may be filled in"
+  // now lives, so it is exactly where a "work the rest out" branch would go.
+  "lib/stored-night-price-repair-plan.ts",
   "lib/stored-night-price-repair-queue.ts",
   "lib/stored-night-price-strand-reconcile.ts",
   "lib/booking-review-price-rebase.ts",

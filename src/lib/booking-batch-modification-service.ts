@@ -44,8 +44,8 @@ import {
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTask,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTask } from "@/lib/edit-financial-review-parked-raise";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";

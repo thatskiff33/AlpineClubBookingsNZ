@@ -68,14 +68,14 @@ import {
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTask,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTask } from "@/lib/edit-financial-review-parked-raise";
 import {
   counterpartStrandRecord,
   parkedEditOccurrence,
-  storedSoldPriceEvidenceForGuest,
   unpriceableStrandRecord,
-} from "@/lib/stored-sold-price-evidence";
+} from "@/lib/parked-edit-occurrence";
+import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 import {
   createBookingModificationCredit,
   requireMemberCreditRecipient,

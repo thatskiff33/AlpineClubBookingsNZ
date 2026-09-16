@@ -39,8 +39,8 @@ import {
 } from "@/lib/booking-modification-settlement";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTask,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTask } from "@/lib/edit-financial-review-parked-raise";
 import {
   preCheckInEditEvidence,
   preCheckInEditStrands,
