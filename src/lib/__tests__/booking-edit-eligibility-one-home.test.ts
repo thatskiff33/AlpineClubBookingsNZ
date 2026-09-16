@@ -41,12 +41,15 @@ import {
  * WHAT THIS CENSUS CANNOT SEE, stated because a guard that claims more than it
  * catches is itself the defect (`INV-SSOT-004`). It reads text, so it matches
  * two SHAPES: a bracketed literal naming two or more statuses, and a
- * parenthesised chain of two or more `status === "X"` comparisons. A list
- * expressed as a `switch` with fall-through cases, as an object map
- * (`{ PENDING: true, PAID: true }`), as a union TYPE, or as a literal with a
- * nested bracket inside it, is invisible to it — as is any door outside the
- * population below. The failure message says so too, so whoever trips it knows
- * what the guard is and is not promising.
+ * parenthesised chain of two or more `status === "X"` comparisons. Measured
+ * evasions, so this list is what was probed rather than what was assumed: a
+ * `switch` with fall-through cases; an object map (`{ PENDING: true }`); a
+ * union TYPE; a literal with a nested bracket inside it; a chain that is NOT
+ * parenthesised (`const editable = a === "X" || a === "Y";`); and a chain with
+ * a call inside it, whose innermost parentheses are the call's. Any door
+ * outside the population below is not seen at all. The failure message carries
+ * the same list, so whoever trips it knows what the guard is and is not
+ * promising.
  */
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
@@ -355,6 +358,15 @@ const population = (): string[] =>
  * exact single-line spelling, so re-wrapping a call — which Prettier does the
  * moment a line grows — failed with "no longer reaches the one home", which
  * would have been untrue.
+ *
+ * `actedOn` is the second half, and it exists because the FIRST half stopped
+ * being enough when the refusal moved to a `string | null` return. The pin it
+ * replaced matched `!canModifyBookingInActiveLifecycle(...)` — a negated
+ * boolean, nearly unwritable except as a condition. The shape now spans two
+ * statements, so matching only the call would let a later edit weaken the
+ * throw — `if (editRefusal && !someOverride)`, or moving it behind a branch —
+ * while every guard in this file stayed green. #3244 is stacked on one of these
+ * very doors, so that is a live hazard rather than a hypothetical one.
  */
 const EDIT_GATES = [
   {
@@ -364,27 +376,35 @@ const EDIT_GATES = [
     // admin lifecycle-skipping path, so DRAFT and the waitlist trio are
     // genuinely editable there. Already derived before #3245.
     derivation: /canModifyBookingStatusForRole\(\s*booking\.status,\s*role,?\s*\)/,
+    actedOn:
+      /if \(!canModifyBookingStatusForRole\([^)]*\)\)\s*\{\s*throw new ApiError\(/,
   },
   {
     name: "admin shift-dates override (adminShiftBookingDates)",
     gate: "src/lib/booking-date-modification-service.ts",
     derivation: /canModifyBookingStatusForRole\(\s*booking\.status,\s*"ADMIN",?\s*\)/,
+    actedOn:
+      /if \(!canModifyBookingStatusForRole\([^)]*\)\)\s*\{\s*throw new ApiError\(/,
   },
   {
     name: "date change (PUT /api/bookings/[id]/modify-dates)",
     gate: "src/lib/booking-date-modification-service.ts",
     derivation:
       /activeLifecycleEditRefusal\(\s*booking\.status,\s*actor\.role,\s*\{\s*includeFinishedStay:\s*adminOverride,?\s*\},?\s*\)/,
+    actedOn: /if \(editRefusal\) throw new ApiError\(\s*editRefusal,\s*400,?\s*\)/,
   },
   {
     name: "guest removal (DELETE /api/bookings/[id]/guests/[guestId])",
     gate: "src/lib/booking-guest-removal-service.ts",
     derivation: /activeLifecycleEditRefusal\(\s*booking\.status,\s*actorRole,?\s*\)/,
+    actedOn:
+      /if \(editRefusal\) throw new BookingGuestRemovalError\(\s*editRefusal,\s*400,?\s*\)/,
   },
   {
     name: "guest add (POST /api/bookings/[id]/guests)",
     gate: "src/app/api/bookings/[id]/guests/route.ts",
     derivation: /activeLifecycleEditRefusal\(\s*booking\.status,\s*actorRole,?\s*\)/,
+    actedOn: /if \(editRefusal\) throw new ApiError\(\s*editRefusal,\s*400,?\s*\)/,
   },
 ] as const;
 
@@ -543,9 +563,11 @@ describe("#3245: no edit door states the eligibility rule a second time", () => 
         `answers a DIFFERENT question, add the exact expression to ` +
         `PERMITTED_STATUS_SETS with that reason.\n` +
         `NOTE this census matches two shapes only — a bracketed literal, and ` +
-        `a parenthesised chain of === comparisons. A switch, an object map or ` +
-        `a union type is NOT caught, and a door outside the population is not ` +
-        `seen at all. Passing it is not proof there is no copy.`,
+        `a parenthesised chain of === comparisons. NOT caught, measured: a ` +
+        `switch, an object map, a union type, a literal with a nested ` +
+        `bracket, an unparenthesised chain, and a chain with a call inside ` +
+        `it. A door outside the population is not seen at all. Passing this ` +
+        `is not proof there is no copy.`,
     ).toEqual([]);
   });
 
@@ -626,8 +648,12 @@ describe("#3245: no edit door states the eligibility rule a second time", () => 
       policy,
       `activeLifecycleEditRefusalText is the sentence WITHOUT the status. ` +
         `Exporting it lets a caller state the options twice and get two ` +
-        `different answers (INV-SSOT-002).`,
-    ).not.toMatch(/export function activeLifecycleEditRefusalText/);
+        `different answers (INV-SSOT-002). All three spellings are refused — ` +
+        `a function, a const arrow, and a trailing export statement — because ` +
+        `an earlier draft pinned only the first and the other two evaded it.`,
+    ).not.toMatch(
+      /export\s+(?:function|const)\s+activeLifecycleEditRefusalText|export\s*\{[^}]*\bactiveLifecycleEditRefusalText\b/,
+    );
   });
 
   for (const gate of EDIT_GATES) {
@@ -638,6 +664,13 @@ describe("#3245: no edit door states the eligibility rule a second time", () => 
         `${gate.gate} no longer reaches the one home. If you moved the gate, ` +
           `move this pin with it; do not delete it.`,
       ).toMatch(gate.derivation);
+      expect(
+        source,
+        `${gate.gate} reaches the one home but no longer ACTS on its answer ` +
+          `unconditionally. Asking the rule and then not refusing on it is ` +
+          `the same defect as not asking: the refusal must throw whenever it ` +
+          `is non-null, with no extra condition in front of it.`,
+      ).toMatch(gate.actedOn);
       expect(source).toMatch(/from "@\/lib\/booking-edit-policy"/);
     });
   }

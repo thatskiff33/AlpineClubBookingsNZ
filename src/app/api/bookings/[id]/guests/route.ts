@@ -1056,6 +1056,8 @@ export async function POST(
             adminReviewReason,
           };
 
+      // #3500: this first arm is UNREACHABLE — the gate above refuses
+      // AWAITING_REVIEW. #3245 deleted the last record of what it is for.
       const newStatus =
         reviewCleared && booking.status === "AWAITING_REVIEW"
           ? "PAYMENT_PENDING"

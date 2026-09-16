@@ -57,6 +57,10 @@ export const IMMEDIATE_PAYMENT_BOOKING_STATUSES = [
 // lifecycle-status module, and blessed by a matrix test — saying the wrong
 // thing. A dead definition is not harmless when its name is the question
 // somebody is about to ask. Ask `canModifyBookingInActiveLifecycle`.
+//
+// The one thing its comment recorded that the edit policy does NOT capture —
+// why the guest-add route carries an unreachable AWAITING_REVIEW branch — is
+// filed as #3500 rather than lost with it.
 
 export const OPERATIONAL_STAY_BOOKING_STATUSES = [
   BookingStatus.PAID,
