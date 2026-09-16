@@ -33,10 +33,10 @@ const REVIEWED_WRITERS = [
   "src/lib/booking-request-quotes.ts|booking|create|finalPriceCents,totalPriceCents",
   "src/lib/booking-request.ts|booking|create,updateMany|finalPriceCents,totalPriceCents",
   "src/lib/booking-request.ts|bookingGuest|create,deleteMany,update|priceCents",
-  "src/lib/booking-request.ts|bookingGuestNight|deleteMany|",
+  "src/lib/booking-request.ts|bookingGuestNight|createMany,deleteMany|priceCents,priceSource",
   "src/lib/booking-review-price-rebase.ts|booking|updateMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/group-booking.ts|booking|create|finalPriceCents,totalPriceCents",
-  "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|deleteMany|",
+  "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|createMany,deleteMany|amountCents",
   "src/lib/promo.ts|promoRedemption|create,delete,update|discountCents,priceAdjustmentCents",
   "src/lib/promo.ts|promoRedemptionAllocation|createMany,deleteMany|discountCents,priceAdjustmentCents",
   "src/lib/school-booking-request.ts|booking|create,update|finalPriceCents,totalPriceCents",
@@ -45,7 +45,7 @@ const REVIEWED_WRITERS = [
   "src/lib/waitlist-cross-lodge.ts|booking|update,updateMany|finalPriceCents",
   "src/lib/waitlist.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/waitlist.ts|bookingGuest|update|priceCents",
-  "src/lib/waitlist.ts|bookingGuestNight|deleteMany|",
+  "src/lib/waitlist.ts|bookingGuestNight|createMany,deleteMany|priceCents,priceSource",
 ] as const;
 
 function writerKey(
@@ -89,6 +89,33 @@ describe("INV-MONEY-031 booking money writer census", () => {
         file: "src/lib/mutant.ts",
         delegate: "bookingGuestNightAdjustment",
         methods: ["rawSql"],
+        fields: ["amountCents"],
+      },
+    ]);
+  });
+
+  it("discovers variable-backed booking and adjustment mutation payloads", () => {
+    expect(
+      scanBookingMoneyWriterSites(
+        "src/lib/variable-backed-mutant.ts",
+        `async function mutant(tx) {
+          const data = { finalPriceCents: 1 };
+          await tx.booking.update({ data });
+          const rows = [{ amountCents: 1 }];
+          await tx.bookingGuestNightAdjustment.createMany({ data: rows });
+        }`,
+      ),
+    ).toEqual([
+      {
+        file: "src/lib/variable-backed-mutant.ts",
+        delegate: "booking",
+        methods: ["update"],
+        fields: ["finalPriceCents"],
+      },
+      {
+        file: "src/lib/variable-backed-mutant.ts",
+        delegate: "bookingGuestNightAdjustment",
+        methods: ["createMany"],
         fields: ["amountCents"],
       },
     ]);

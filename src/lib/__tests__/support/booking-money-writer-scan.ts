@@ -131,6 +131,7 @@ export function scanBookingMoneyWriterSites(
   file: string,
   code: string,
 ): BookingMoneyWriterSite[] {
+  const uncommented = stripComments(code);
   const source = ts.createSourceFile(
     file,
     code,
@@ -142,6 +143,84 @@ export function scanBookingMoneyWriterSites(
     keyof typeof TRACKED_FIELDS,
     { methods: Set<string>; fields: Set<string> }
   >();
+  const mutationDataExpressions = (call: ts.CallExpression): ts.Expression[] => {
+    const options = call.arguments[0];
+    if (!options || !ts.isObjectLiteralExpression(options)) return [];
+    const data = options.properties.find((property) => {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        return property.name.text === "data";
+      }
+      if (!ts.isPropertyAssignment(property)) return false;
+      return (
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        property.name.text === "data"
+      );
+    });
+    if (!data) return [];
+    if (ts.isShorthandPropertyAssignment(data)) return [data.name];
+    if (!ts.isPropertyAssignment(data)) return [];
+    if (!ts.isObjectLiteralExpression(data.initializer)) return [data.initializer];
+    return data.initializer.properties
+      .filter(ts.isSpreadAssignment)
+      .map((property) => property.expression);
+  };
+  const indirectMutationEvidence = (call: ts.CallExpression): string => {
+    const evidence: string[] = [];
+    const seen = new Set<string>();
+    const collectSpreads = (node: ts.Node) => {
+      const visitSpread = (child: ts.Node) => {
+        if (
+          (ts.isSpreadAssignment(child) || ts.isSpreadElement(child)) &&
+          ts.isIdentifier(child.expression)
+        ) {
+          collectIdentifier(child.expression.text);
+        }
+        ts.forEachChild(child, visitSpread);
+      };
+      visitSpread(node);
+    };
+    const collectIdentifier = (name: string) => {
+      if (seen.has(name)) return;
+      seen.add(name);
+      const visitBinding = (node: ts.Node) => {
+        let value: ts.Node | undefined;
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          node.name.text === name
+        ) {
+          value = node.initializer;
+        } else if (
+          ts.isBinaryExpression(node) &&
+          node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isIdentifier(node.left) &&
+          node.left.text === name
+        ) {
+          value = node.right;
+        } else if (
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          ts.isIdentifier(node.expression.expression) &&
+          node.expression.expression.text === name &&
+          ["push", "unshift", "splice"].includes(node.expression.name.text)
+        ) {
+          value = node;
+        }
+        if (value) {
+          evidence.push(value.getText(source));
+          collectSpreads(value);
+        }
+        ts.forEachChild(node, visitBinding);
+      };
+      visitBinding(source);
+    };
+    for (const expression of mutationDataExpressions(call)) {
+      evidence.push(expression.getText(source));
+      if (ts.isIdentifier(expression)) collectIdentifier(expression.text);
+      collectSpreads(expression);
+    }
+    return stripComments(evidence.join("\n"));
+  };
   const visit = (node: ts.Node) => {
     if (
       ts.isCallExpression(node) &&
@@ -154,8 +233,15 @@ export function scanBookingMoneyWriterSites(
         const tracked = TRACKED_FIELDS[delegate];
         if (tracked) {
           const text = node.getText(source);
+          // Prisma permits the mutation payload to be supplied by identifier
+          // (`update({ data })`, `createMany({ data: rows })`) or spread. In
+          // those shapes the field names are outside the call expression, so
+          // follow the local binding's initializer, assignments, and array
+          // construction. Spread bindings are followed recursively (the
+          // adjustment writer builds `rows` from a local `base` object).
+          const fieldEvidence = `${text}\n${indirectMutationEvidence(node)}`;
           const written = tracked.filter((field) =>
-            new RegExp(String.raw`\b${field}\b`).test(text),
+            new RegExp(String.raw`\b${field}\b`).test(fieldEvidence),
           );
           if (written.length > 0 || node.expression.name.text.startsWith("delete")) {
             const site = found.get(delegate) ?? {
@@ -173,7 +259,6 @@ export function scanBookingMoneyWriterSites(
   };
   visit(source);
 
-  const raw = stripComments(code);
   for (const [delegate, fields] of Object.entries(TRACKED_FIELDS) as Array<
     [keyof typeof TRACKED_FIELDS, readonly string[]]
   >) {
@@ -182,7 +267,7 @@ export function scanBookingMoneyWriterSites(
       new RegExp(
         String.raw`\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|DELETE\s+FROM)\s+["'\x60]${model}["'\x60]`,
         "i",
-      ).test(raw)
+      ).test(uncommented)
     ) {
       const site = found.get(delegate) ?? {
         methods: new Set<string>(),
@@ -190,7 +275,7 @@ export function scanBookingMoneyWriterSites(
       };
       site.methods.add("rawSql");
       fields
-        .filter((field) => new RegExp(String.raw`\b${field}\b`).test(raw))
+        .filter((field) => new RegExp(String.raw`\b${field}\b`).test(uncommented))
         .forEach((field) => site.fields.add(field));
       found.set(delegate, site);
     }
