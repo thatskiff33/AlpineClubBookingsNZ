@@ -1,4 +1,11 @@
 import type { Prisma } from "@prisma/client";
+import {
+  MEMBER_PARTNER_RELATIONSHIP_SELECT,
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  memberHasPartnerRelationshipWith,
+  notPartnerWithMemberWhere,
+  type MemberPartnerRelationshipFacts,
+} from "@/lib/member-parent-partner-exclusivity";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import {
   isOrganisationMember,
@@ -61,6 +68,7 @@ export const DEPENDENT_LINK_INELIGIBILITY_REASONS = [
   "ARCHIVED",
   "SELF",
   "ALREADY_LINKED_TO_PARENT",
+  "DIRECT_PARTNER",
   "TWO_PARENTS",
   "ANCESTOR_OF_PARENT",
   "EXCEEDS_GENERATION_LIMIT",
@@ -82,6 +90,7 @@ export const DEPENDENT_LINK_INELIGIBILITY_ERRORS: Record<
   ARCHIVED: "Archived members cannot be linked into family groups",
   SELF: "A member cannot be their own dependant",
   ALREADY_LINKED_TO_PARENT: "This member is already linked to that parent",
+  DIRECT_PARTNER: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
   TWO_PARENTS: "This member already has two parents linked",
   ANCESTOR_OF_PARENT: "Cannot link a parent or ancestor as a dependant",
   EXCEEDS_GENERATION_LIMIT: FAMILY_LINK_GENERATION_LIMIT_ERROR,
@@ -100,6 +109,7 @@ export const DEPENDENT_LINK_INELIGIBILITY_EXPLANATIONS: Record<
   ARCHIVED: "is archived",
   SELF: "is the member you are editing",
   ALREADY_LINKED_TO_PARENT: "is already linked to this member",
+  DIRECT_PARTNER: "is already this member's partner",
   TWO_PARENTS: "already has two parents recorded",
   ANCESTOR_OF_PARENT: "is already an ancestor of this member",
   EXCEEDS_GENERATION_LIMIT: FAMILY_LINK_GENERATION_LIMIT_EXPLANATION,
@@ -348,9 +358,10 @@ export const DEPENDENT_LINK_CANDIDATE_SELECT = {
   archivedAt: true,
   parentMemberId: true,
   secondaryParentId: true,
+  ...MEMBER_PARTNER_RELATIONSHIP_SELECT,
 } satisfies Prisma.MemberSelect;
 
-export type DependentLinkCandidate = {
+export type DependentLinkCandidate = MemberPartnerRelationshipFacts & {
   id: string;
   archivedAt: Date | null;
   parentMemberId: string | null;
@@ -402,6 +413,9 @@ export function dependentLinkBlockers(
     candidate.secondaryParentId === parentMemberId
   ) {
     blockers.push("ALREADY_LINKED_TO_PARENT");
+  }
+  if (memberHasPartnerRelationshipWith(candidate, parentMemberId)) {
+    blockers.push("DIRECT_PARTNER");
   }
   if (candidate.parentMemberId && candidate.secondaryParentId) {
     blockers.push("TWO_PARENTS");
@@ -468,6 +482,7 @@ export function dependentLinkCandidateWhere(
         { parentMemberId: { not: parentMemberId } },
       ],
     },
+    ...notPartnerWithMemberWhere(parentMemberId),
     {
       OR: [
         { secondaryParentId: null },

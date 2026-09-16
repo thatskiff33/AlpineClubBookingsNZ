@@ -192,7 +192,7 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/admin/family-groups/member-search?q=Bea&ageTierIn=INFANT,CHILD,YOUTH"
+      "/api/admin/family-groups/member-search?q=Bea&ageTierIn=INFANT,CHILD,YOUTH&prospectiveParentMemberId=parent-1"
     );
   });
 
@@ -296,6 +296,188 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
     );
   });
 
+  it("reports a sole direct-partner match as unavailable without selecting it", async () => {
+    stubFetch({
+      ok: true,
+      body: {
+        members: [
+          buildSearchRow({
+            ineligibleReason:
+              "Partners cannot also have a direct parent/dependent relationship.",
+          }),
+        ],
+      },
+    });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest()]}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("term-req-child"), {
+      target: { value: "Bea" },
+    });
+    fireEvent.click(screen.getByTestId("search-req-child"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("feedback-req-child").textContent).toBe(
+        "Found Bea Child, but this member is unavailable. Partners cannot also have a direct parent/dependent relationship.",
+      ),
+    );
+    expect(screen.getByTestId("selection-req-child").textContent).toBe("");
+    expect(screen.getByTestId("results-req-child").textContent).toBe("1");
+  });
+
+  it("clears a selected candidate that becomes unavailable on re-search and blocks approval with its reason", async () => {
+    const conflict =
+      "Partners cannot also have a direct parent/dependent relationship.";
+    const fetchMock = stubFetch({
+      ok: true,
+      body: {
+        members: [
+          buildSearchRow({ id: "child-1", ineligibleReason: conflict }),
+        ],
+      },
+    });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />,
+    );
+    expect(screen.getByTestId("selection-req-child").textContent).toBe(
+      "child-1",
+    );
+
+    fireEvent.change(screen.getByTestId("term-req-child"), {
+      target: { value: "Bea" },
+    });
+    fireEvent.click(screen.getByTestId("search-req-child"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selection-req-child").textContent).toBe(""),
+    );
+    fireEvent.click(screen.getByTestId("approve-req-child"));
+    expect(screen.getByTestId("error-req-child").textContent).toBe(conflict);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { label: "no replacement", members: [] },
+    {
+      label: "multiple different replacements",
+      members: [
+        buildSearchRow({ id: "child-3", firstName: "Cara" }),
+        buildSearchRow({ id: "child-4", firstName: "Dina" }),
+      ],
+    },
+  ])(
+    "clears a prior searched-member selection when a new search returns $label",
+    async ({ members }) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            members: [buildSearchRow({ id: "child-2" })],
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ members }),
+        });
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      render(
+        <FamilyGroupRequestReviewSection
+          requests={[buildChildRequest()]}
+          onReviewed={vi.fn()}
+          canEdit={true}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("term-req-child"), {
+        target: { value: "Bea" },
+      });
+      fireEvent.click(screen.getByTestId("search-req-child"));
+      await waitFor(() =>
+        expect(screen.getByTestId("selection-req-child").textContent).toBe(
+          "child-2",
+        ),
+      );
+
+      fireEvent.change(screen.getByTestId("term-req-child"), {
+        target: { value: "Different" },
+      });
+      fireEvent.click(screen.getByTestId("search-req-child"));
+      await waitFor(() =>
+        expect(screen.getByTestId("selection-req-child").textContent).toBe(""),
+      );
+
+      fireEvent.click(screen.getByTestId("approve-req-child"));
+      expect(screen.getByTestId("error-req-child").textContent).toContain(
+        "Choose the member record to link",
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("replaces a vanished searched-member selection with the sole eligible result", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          members: [buildSearchRow({ id: "child-2" })],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          members: [
+            buildSearchRow({
+              id: "child-3",
+              firstName: "Cara",
+              lastName: "Replacement",
+            }),
+          ],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest()]}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("term-req-child"), {
+      target: { value: "Bea" },
+    });
+    fireEvent.click(screen.getByTestId("search-req-child"));
+    await waitFor(() =>
+      expect(screen.getByTestId("selection-req-child").textContent).toBe(
+        "child-2",
+      ),
+    );
+
+    fireEvent.change(screen.getByTestId("term-req-child"), {
+      target: { value: "Cara" },
+    });
+    fireEvent.click(screen.getByTestId("search-req-child"));
+    await waitFor(() =>
+      expect(screen.getByTestId("selection-req-child").textContent).toBe(
+        "child-3",
+      ),
+    );
+    expect(screen.getByTestId("feedback-req-child").textContent).toBe(
+      "Found and selected Cara Replacement.",
+    );
+  });
+
   it("surfaces the API error on a failed search", async () => {
     stubFetch({ ok: false, body: { error: "Search blew up" } });
     render(
@@ -378,6 +560,57 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
         "Choose the member record to link, or create a new non-login adult where available."
       )
     );
+  });
+
+  it("blocks an unknown member id before opening the notification dialog", async () => {
+    const fetchMock = stubFetch({ ok: true, body: { success: true } });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />
+    );
+
+    fireEvent.change(screen.getByTestId("select-req-child"), {
+      target: { value: "hidden-member" },
+    });
+    fireEvent.click(screen.getByTestId("approve-req-child"));
+
+    expect(screen.getByTestId("error-req-child").textContent).toContain(
+      "Choose the member record to link",
+    );
+    expect(
+      screen.queryByText("Email the member about this approval?"),
+    ).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the selected member after the notification dialog opens", async () => {
+    const fetchMock = stubFetch({ ok: true, body: { success: true } });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("approve-req-child"));
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this approval?")).toBeTruthy()
+    );
+    fireEvent.change(screen.getByTestId("select-req-child"), {
+      target: { value: "hidden-member" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve and email member" })
+    );
+
+    expect(screen.getByTestId("error-req-child").textContent).toContain(
+      "Choose the member record to link",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("approves a CHILD_REQUEST with the linked member and inherited email; calls onReviewed once", async () => {

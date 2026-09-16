@@ -11,6 +11,7 @@ import addBookingGuestNightPriceSource from "./20260911010000_add_booking_guest_
 import backfillBookingGuestNightPriceSource from "./20260911020000_backfill_booking_guest_night_price_source";
 import addBookingGuestNightAdjustment from "./20260913010000_add_booking_guest_night_adjustment";
 import backfillHistoricalAuditCategories from "./20260923010000_backfill_historical_audit_categories";
+import addMemberParentPartnerExclusion from "./20260929010000_add_member_parent_partner_exclusion";
 import repairLocalMidnightDatesOfBirth from "./20260814010000_repair_local_midnight_dates_of_birth";
 import updateStarterHomeGuestCopy from "./20260802150000_update_starter_home_guest_copy";
 import type { DataMigrationVerification } from "./types";
@@ -48,4 +49,5 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   backfillBookingGuestNightPriceSource,
   addBookingGuestNightAdjustment,
   backfillHistoricalAuditCategories,
+  addMemberParentPartnerExclusion,
 ];
