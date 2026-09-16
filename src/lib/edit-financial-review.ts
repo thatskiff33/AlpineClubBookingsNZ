@@ -245,7 +245,7 @@ export async function raiseEditFinancialReviewTask({
    * `bookingModificationId` beside it gives: a caller that quietly inherited
    * `null` would have its refund silently re-routed to credit, and the failure
    * would surface only when an admin closed the task. Derive it through
-   * `editReviewSettlementPaymentId`; `raiseParkedEditFinancialReviewTasks` below
+   * `editReviewSettlementPaymentId`; `raiseParkedEditFinancialReviewTask` below
    * does that and is what every production caller uses.
    */
   paymentId: string | null;
@@ -395,6 +395,10 @@ export async function raiseEditFinancialReviewTask({
 /**
  * #3166: THE PARKED EDIT'S WHOLE RAISE, in one place, for all four doors.
  *
+ * #3498 (owner decision D1): and it raises ONE task, because a parked edit is
+ * one thing to price. The loop this used to run over a per-strand occurrence
+ * list is gone; the strands are all on the single occurrence it is handed.
+ *
  * Every parked path used to write this block out by hand: the same settlement
  * payment id, the same `memberIdByGuestId` map, the same loop with the same
  * constant arguments. Four copies of ONE fact — which captured payment a parked
@@ -417,14 +421,14 @@ export async function raiseEditFinancialReviewTask({
  * policed.
  *
  * Call it inside the caller's transaction, after the locks and after the
- * `BookingModification` row exists — the returned task ids are in occurrence
- * order.
+ * `BookingModification` row exists. It returns THE task id — one per parked
+ * edit since #3498, whatever the size of the party.
  */
-export async function raiseParkedEditFinancialReviewTasks({
+export async function raiseParkedEditFinancialReviewTask({
   booking,
   guests,
   addedGuests,
-  occurrences,
+  occurrence,
   bookingModificationId,
   store,
 }: {
@@ -451,7 +455,16 @@ export async function raiseParkedEditFinancialReviewTasks({
    * empty array and is recorded as null.
    */
   addedGuests: readonly { priceCents: number }[];
-  occurrences: readonly EditFinancialReviewOccurrence[];
+  /**
+   * THE parked edit's occurrence - one, since #3498 and owner decision D1.
+   *
+   * It was a LIST, and a list is what produced the fan-out this issue removes:
+   * one work item per guest strand, six of seven of them guests nobody touched.
+   * Singular here rather than a list this function is trusted to keep at length
+   * one, because "one parked edit raises exactly one item" is then a property of
+   * the signature (`INV-SSOT`: prefer unrepresentable over policed).
+   */
+  occurrence: EditFinancialReviewOccurrence;
   /**
    * Owner decision D-3032-1: THIS edit's own `BookingModification`, so the
    * credit or refund that eventually moves is keyed to the change that caused it
@@ -459,8 +472,7 @@ export async function raiseParkedEditFinancialReviewTasks({
    */
   bookingModificationId: string | null;
   store: Prisma.TransactionClient;
-}): Promise<string[]> {
-  if (occurrences.length === 0) return [];
+}): Promise<string> {
   const memberIdByGuestId = new Map(
     guests.map((guest) => [guest.id, guest.memberId ?? null]),
   );
@@ -482,22 +494,25 @@ export async function raiseParkedEditFinancialReviewTasks({
             ? addedTotalCents
             : null,
         };
-  const taskIds: string[] = [];
-  for (const occurrence of occurrences) {
-    const raised = await raiseEditFinancialReviewTask({
-      occurrence,
-      guestMemberId: memberIdByGuestId.get(occurrence.bookingGuestId) ?? null,
-      bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
-      bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
-      bookingModificationId,
-      guestsAddedByEdit,
-      paymentId,
-      raisedAmountCents: null,
-      store,
-    });
-    taskIds.push(raised.taskId);
-  }
-  return taskIds;
+  const raised = await raiseEditFinancialReviewTask({
+    occurrence,
+    /*
+      The LEAD strand's member, which is the strand the item leads with
+      (`parkedEditOccurrence` chooses it). It is not sent to any browser - the
+      queue projection has no field for it - so this is the "whose money is this
+      about" pointer the stored context has always carried, now pointing at the
+      strand the card is headed by rather than at one of seven.
+    */
+    guestMemberId: memberIdByGuestId.get(occurrence.bookingGuestId) ?? null,
+    bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
+    bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
+    bookingModificationId,
+    guestsAddedByEdit,
+    paymentId,
+    raisedAmountCents: null,
+    store,
+  });
+  return raised.taskId;
 }
 
 /**

@@ -2,7 +2,11 @@ import "server-only";
 
 import { ManualRefundTaskStatus, Prisma } from "@prisma/client";
 import { canonicalNights, stableDigest } from "@/lib/stable-digest";
-import type { EditFinancialReviewOccurrence } from "@/lib/edit-financial-review-context";
+import {
+  editFinancialReviewStrandRecords,
+  type EditFinancialReviewOccurrence,
+  type EditFinancialReviewStrandRecord,
+} from "@/lib/edit-financial-review-context";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
 /**
@@ -34,7 +38,18 @@ import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment
  * rows, and nothing collides. Never widen the material without bumping it.
  */
 const OCCURRENCE_KEY_NAMESPACE = "edit-financial-review";
-const OCCURRENCE_KEY_VERSION = "v1";
+/**
+ * `v2` since #3498, and the bump is the rule above being obeyed rather than an
+ * exception to it.
+ *
+ * Owner decision D1 moved the grain from the strand to the EDIT, so an
+ * occurrence now carries every strand the parked edit recorded and the material
+ * below hashes all of them. That is a widening, so the namespace moves: every
+ * `v1` key already on file keeps matching the row it was written for, the
+ * finance queue keeps rendering the items production is working by hand, and
+ * nothing collides.
+ */
+const OCCURRENCE_KEY_VERSION = "v2";
 
 /**
  * The identity of one unpriceable structural edit, as 64 lowercase hex
@@ -118,16 +133,45 @@ export function editFinancialReviewOccurrenceKey(
 ): string {
   const material = {
     bookingId: occurrence.bookingId,
-    bookingGuestId: occurrence.bookingGuestId,
-    cause: occurrence.cause,
-    surrenderedNightDates: canonicalNights(occurrence.surrenderedNightDates),
-    addedNightDates: canonicalNights(occurrence.addedNightDates),
+    ...strandMaterial(occurrence),
+    /*
+      #3498: EVERY OTHER STRAND THE PARKED EDIT RECORDED, and leaving them out
+      would be the hole point (4) above describes, one grain higher up. The lead
+      strand alone is no longer the edit: two different edits to one booking can
+      surrender the same nights from the same lead strand and destroy completely
+      different evidence elsewhere in the party, and on the lead's material alone
+      they would hash to one key - so the second would find the first's settled
+      row and never be reviewed.
+
+      SORTED BY STRAND, so the order the planner happened to walk the booking's
+      guests in cannot change the identity - the same rule the night prices below
+      already follow, and the reason `parkedEditOccurrence` sorts them is
+      presentation rather than identity. An ABSENT list and an EMPTY one hash
+      identically on purpose: they mean the same thing, and a parked edit with
+      one recorded strand must not depend on which spelling built it.
+    */
+    otherStrands: [...(occurrence.otherStrands ?? [])]
+      .map(strandMaterial)
+      .sort((left, right) =>
+        left.bookingGuestId < right.bookingGuestId ? -1 : 1,
+      ),
+  };
+  return `${OCCURRENCE_KEY_NAMESPACE}:${OCCURRENCE_KEY_VERSION}:${stableDigest(material)}`;
+}
+
+/** One strand's contribution to the identity - the lead's and each other's. */
+function strandMaterial(strand: EditFinancialReviewStrandRecord) {
+  return {
+    bookingGuestId: strand.bookingGuestId,
+    cause: strand.cause,
+    surrenderedNightDates: canonicalNights(strand.surrenderedNightDates),
+    addedNightDates: canonicalNights(strand.addedNightDates),
     storedEvidence: {
-      guestTotalCents: occurrence.storedEvidence.guestTotalCents,
+      guestTotalCents: strand.storedEvidence.guestTotalCents,
       // Sorted by date so the planner's read order cannot change the identity.
       // Two rows for one date would be evidence in their own right, so they are
       // NOT deduplicated here - only ordered.
-      nightPrices: [...occurrence.storedEvidence.nightPrices]
+      nightPrices: [...strand.storedEvidence.nightPrices]
         .map((night) => ({ date: night.date, priceCents: night.priceCents }))
         .sort((left, right) =>
           left.date === right.date
@@ -138,7 +182,6 @@ export function editFinancialReviewOccurrenceKey(
         ),
     },
   };
-  return `${OCCURRENCE_KEY_NAMESPACE}:${OCCURRENCE_KEY_VERSION}:${stableDigest(material)}`;
 }
 
 /**
@@ -315,7 +358,32 @@ export async function findFreeOccurrenceSlot(
 export function buildEditFinancialReviewReason(
   occurrence: EditFinancialReviewOccurrence,
 ): string {
-  const nights = canonicalNights(occurrence.surrenderedNightDates);
+  const strands = editFinancialReviewStrandRecords(occurrence);
+  /*
+    #3498: THE WHOLE EDIT'S NIGHTS, not the lead strand's.
+
+    One item now covers the whole parked edit, so a sentence naming only the
+    lead strand's nights would understate what an officer is being asked to
+    price - and on the shape that prompted this issue it understated it by six
+    guests. Deduplicated across strands, because two guests giving back the same
+    night is one night the booking gave back and printing it twice reads as two.
+  */
+  const nights = canonicalNights(
+    strands.flatMap((strand) => [...strand.surrenderedNightDates]),
+  );
+  const added = canonicalNights(
+    strands.flatMap((strand) => [...strand.addedNightDates]),
+  );
+  // Every strand whose own rows could not be read is what PARKED the edit; the
+  // rest are recorded because this edit destroys evidence they did have.
+  const strandsPhrase =
+    strands.length === 1
+      ? ""
+      : ` The change touched ${strands.length} guests on this booking and the stored evidence for all of them is on this item.`;
+  const addedPhrase =
+    added.length === 0
+      ? ""
+      : ` It also added ${added.length === 1 ? `the night of ${added[0]}` : `${added.length} nights: ${added.join(", ")}`}.`;
   // NOT "first to last". A night set need not be contiguous, and "3 nights
   // (2026-08-02 to 2026-08-20)" reads as a nineteen-night span for three actual
   // nights - in the sentence an admin reads WHILE PRICING REAL MONEY. The nights
@@ -333,11 +401,17 @@ export function buildEditFinancialReviewReason(
   // `COUNTERPART_STRAND_UNREADABLE` strand - its rows are complete and add up -
   // and an admin told otherwise about a task that carries real per-night prices
   // has been handed a contradiction while pricing real money.
-  const why =
-    occurrence.cause === "COUNTERPART_STRAND_UNREADABLE"
-      ? "This guest's own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read, so the booking's total could not be reworked automatically. Confirm the amount owed for the nights above before any money moves."
-      : "The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.";
-  return `Booking edit gave back ${nightsPhrase}. ${why}`.slice(
+  //
+  // #3498: asked of EVERY strand rather than of the lead alone. The item is the
+  // edit now, and an edit parks because at least one strand's own rows could not
+  // be read - so "complete and add up" is only honest when that is true of all
+  // of them, which on a one-strand item is exactly the sentence #3032 wrote.
+  const why = strands.every(
+    (strand) => strand.cause === "COUNTERPART_STRAND_UNREADABLE",
+  )
+    ? "These guests' own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read, so the booking's total could not be reworked automatically. Confirm the amount owed for the nights above before any money moves."
+    : "The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.";
+  return `Booking edit gave back ${nightsPhrase}.${addedPhrase}${strandsPhrase} ${why}`.slice(
     0,
     MANUAL_REFUND_TASK_REASON_MAX,
   );

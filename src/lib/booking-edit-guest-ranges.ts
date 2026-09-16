@@ -23,12 +23,14 @@ import {
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
 import type {
   EditFinancialReviewOccurrence,
+  EditFinancialReviewStrandRecord,
   FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
 import {
   classifyStoredSoldPriceEvidence,
-  counterpartStrandReviewOccurrence,
-  editFinancialReviewOccurrence,
+  counterpartStrandRecord,
+  parkedEditOccurrence,
+  unpriceableStrandRecord,
   unusableStoredSoldPriceEvidence,
   type HeldNightPrice,
 } from "@/lib/stored-sold-price-evidence";
@@ -1408,7 +1410,7 @@ export function buildInProgressGuestRangePlan(
   // that was never priceable should be reported as unpriceable rather than as a
   // missing rate. It also means an unpriceable edit costs no season lookup at
   // all.
-  const financialReviewOccurrences: EditFinancialReviewOccurrence[] = [];
+  const financialReviewStrands: EditFinancialReviewStrandRecord[] = [];
   /**
    * #3166: exact strands whose stored evidence THIS parked edit destroys.
    *
@@ -1417,7 +1419,7 @@ export function buildInProgressGuestRangePlan(
    * reason to stop. The pre-check-in twin (`preCheckInEditEvidence`) splits its
    * lists the same way and for the same reason.
    */
-  const destroyedButReadable: EditFinancialReviewOccurrence[] = [];
+  const destroyedButReadable: EditFinancialReviewStrandRecord[] = [];
   /**
    * Per existing guest, in booking order: what each night they hold was sold
    * for. Every value is a stored integer — this map is the ONLY source of a
@@ -1461,8 +1463,7 @@ export function buildInProgressGuestRangePlan(
        */
       if (surrendered.length > 0 || added.length > 0) {
         destroyedButReadable.push(
-          counterpartStrandReviewOccurrence({
-            bookingId: input.booking.id,
+          counterpartStrandRecord({
             bookingGuestId: entry.guest.id,
             evidence: verdict,
             guestTotalCents: entry.guest.priceCents,
@@ -1473,9 +1474,8 @@ export function buildInProgressGuestRangePlan(
       }
       continue;
     }
-    financialReviewOccurrences.push(
-      editFinancialReviewOccurrence({
-        bookingId: input.booking.id,
+    financialReviewStrands.push(
+      unpriceableStrandRecord({
         bookingGuestId: entry.guest.id,
         evidence: verdict,
         guestTotalCents: entry.guest.priceCents,
@@ -1510,21 +1510,42 @@ export function buildInProgressGuestRangePlan(
    * So they hash to two keys and raise TWO tasks for one guest. The unpriceable
    * occurrence wins, because it is the one that says why no money moved.
    */
-  const parkedOccurrences = (
-    unpriceable: readonly EditFinancialReviewOccurrence[]
-  ): EditFinancialReviewOccurrence[] => {
+  const parkedOccurrence = (
+    unpriceable: readonly EditFinancialReviewStrandRecord[]
+  ): EditFinancialReviewOccurrence => {
     const alreadyNamed = new Set(
-      unpriceable.map((occurrence) => occurrence.bookingGuestId)
+      unpriceable.map((strand) => strand.bookingGuestId)
     );
-    return [
-      ...unpriceable,
-      // Only when the edit parks — every caller is inside a parked exit. An
-      // exact strand losing or gaining nights is a record of destroyed
-      // evidence, never on its own a reason to withhold money.
-      ...destroyedButReadable.filter(
-        (occurrence) => !alreadyNamed.has(occurrence.bookingGuestId)
-      ),
-    ];
+    /*
+      #3498: ONE occurrence for the whole parked edit, composed through the
+      shared `parkedEditOccurrence` so this planner and the pre-check-in twin
+      pick the same lead strand and the same order (`INV-SSOT`). Which strands
+      are recorded is exactly what it was; only the grain of what they are
+      recorded ON has moved.
+
+      Non-null by construction: every caller is inside a parked exit, so
+      `unpriceable` is non-empty - and the `??` is what makes that a compile-time
+      fact rather than a comment, because the composer's honest answer for an
+      empty list is null.
+    */
+    const composed = parkedEditOccurrence({
+      bookingId: input.booking.id,
+      strands: [
+        ...unpriceable,
+        // Only when the edit parks. An exact strand losing or gaining nights is
+        // a record of destroyed evidence, never on its own a reason to withhold
+        // money.
+        ...destroyedButReadable.filter(
+          (strand) => !alreadyNamed.has(strand.bookingGuestId)
+        ),
+      ],
+    });
+    if (composed === null) {
+      throw new Error(
+        "A parked edit reached the review exit with no recorded strands."
+      );
+    }
+    return composed;
   };
 
   /**
@@ -1680,10 +1701,10 @@ export function buildInProgressGuestRangePlan(
       };
   };
 
-  if (financialReviewOccurrences.length > 0) {
+  if (financialReviewStrands.length > 0) {
     return {
       kind: "financial_review_required",
-      occurrences: parkedOccurrences(financialReviewOccurrences),
+      occurrence: parkedOccurrence(financialReviewStrands),
       parkedPlan: composeParkedPlan(),
     };
   }
@@ -1883,13 +1904,12 @@ export function buildInProgressGuestRangePlan(
     return {
       kind: "financial_review_required",
       parkedPlan: composeParkedPlan(),
-      // Through `parkedOccurrences`, so the exact strands this park destroys
+      // Through `parkedOccurrence`, so the exact strands this park destroys
       // the evidence of are recorded here exactly as they are at the gate
       // (#3166) — and a strand named in BOTH lists is recorded once.
-      occurrences: parkedOccurrences(
+      occurrence: parkedOccurrence(
         unreconciledStrands.map((entry) => {
-          return editFinancialReviewOccurrence({
-            bookingId: input.booking.id,
+          return unpriceableStrandRecord({
             bookingGuestId: entry.guest.id,
             evidence: unusableStoredSoldPriceEvidence(
               "STORED_TOTAL_MISMATCH",

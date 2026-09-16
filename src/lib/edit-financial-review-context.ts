@@ -107,26 +107,25 @@ export type StoredNightPriceEvidence = {
 };
 
 /**
- * The IDENTITY of one unpriceable structural edit — the material the occurrence
- * key is derived from, and nothing else. Anything an admin merely wants to LOOK
- * at belongs on `EditFinancialReviewContext` below instead: adding a display
- * field here would silently change the identity of every future occurrence.
+ * ONE GUEST STRAND'S RECORD inside a parked edit (#3498).
  *
- * `storedEvidence` is part of the identity on purpose, and the reasoning is in
- * `editFinancialReviewOccurrenceKey`.
+ * Exactly the fields a whole occurrence used to carry, because until #3498 one
+ * strand WAS one occurrence and one work item. The grain moved up; the record
+ * did not change, which is what makes "no stored figure is lost" checkable
+ * rather than asserted (`editFinancialReviewStrandRecords` enumerates them, and
+ * `edit-financial-review-strand-census.test.ts` pins every field).
  */
-export type EditFinancialReviewOccurrence = {
-  bookingId: string;
-  /** The guest strand whose nights were given back. */
+export type EditFinancialReviewStrandRecord = {
+  /** The guest strand this record is about. */
   bookingGuestId: string;
   cause: EditFinancialReviewCause;
   /** Nights leaving the occupancy set. Order-insensitive; the key sorts them. */
   surrenderedNightDates: readonly CalendarDate[];
   /**
-   * Nights the same edit ADDS. Priced normally under current policy, so they are
-   * not part of the unknown amount — but two edits that surrender the same
-   * nights and add different ones are two different edits, so they are part of
-   * the identity.
+   * Nights the same edit ADDS to this strand. Priced normally under current
+   * policy, so they are not part of the unknown amount — but two edits that
+   * surrender the same nights and add different ones are two different edits, so
+   * they are part of the identity.
    */
   addedNightDates: readonly CalendarDate[];
   /**
@@ -143,6 +142,86 @@ export type EditFinancialReviewOccurrence = {
 };
 
 /**
+ * The IDENTITY of one unpriceable structural edit — the material the occurrence
+ * key is derived from, and nothing else. Anything an admin merely wants to LOOK
+ * at belongs on `EditFinancialReviewContext` below instead: adding a display
+ * field here would silently change the identity of every future occurrence.
+ *
+ * `storedEvidence` is part of the identity on purpose, and the reasoning is in
+ * `editFinancialReviewOccurrenceKey`.
+ *
+ * ## THE GRAIN IS THE EDIT, NOT THE STRAND (#3498, owner decision D1)
+ *
+ * It used to be the strand, and one parked edit minted one of these PER GUEST.
+ * Measured on the live deployment on 17 September 2026: removing one guest from
+ * a seven-guest booking raised seven work items, six of them guests nobody
+ * touched, all seven carrying the same **Record the adjustment** button — and a
+ * dismissal was terminal, silent and unrecoverable. Every consumer was already
+ * per-edit (one `BookingModification` anchor, a whole-booking re-price on every
+ * closure), so the grain, not the consumers, was what was wrong.
+ *
+ * ## Why a LEAD strand plus `otherStrands`, rather than a bare list
+ *
+ * Two reasons, and neither is cosmetic.
+ *
+ * Rows already in production carry the lead fields at the top level with no
+ * `otherStrands`, and this shape reads them back EXACTLY as written — no
+ * migration, no versioned parser branch, no window in which the finance queue
+ * cannot render money it is holding. #3498 explicitly does not rewrite the items
+ * already raised; they are worked by hand, and they must stay readable while
+ * that happens.
+ *
+ * And a work item has to LEAD with something. An officer opens one card and the
+ * first thing on it should be the strand the money hangs on —
+ * `parkedEditOccurrence` in `stored-sold-price-evidence.ts` owns that choice and
+ * states the ranking. Every other strand is supporting detail, which is D1's own
+ * word for it.
+ *
+ * Nothing may read `otherStrands` directly to enumerate the edit's strands: call
+ * `editFinancialReviewStrandRecords`, which is the one place that list is
+ * assembled (`INV-SSOT`).
+ */
+export type EditFinancialReviewOccurrence = EditFinancialReviewStrandRecord & {
+  bookingId: string;
+  /**
+   * Every OTHER strand this parked edit recorded, in the canonical order
+   * `parkedEditOccurrence` sorts them into.
+   *
+   * ABSENT — not empty — on a row written before #3498, and on an edit whose
+   * only recorded strand is the lead. Optional because the parser is a
+   * whole-object `strict()` read that must keep accepting production rows that
+   * have no such field.
+   */
+  otherStrands?: readonly EditFinancialReviewStrandRecord[];
+};
+
+/**
+ * EVERY strand one parked edit recorded, lead first — the one place that list is
+ * assembled (`INV-SSOT`, #3498).
+ *
+ * A reader that spliced `[occurrence, ...occurrence.otherStrands ?? []]` for
+ * itself would be a second definition of "what strands does this item cover",
+ * and the two are free to drift on the order, on whether the lead is included,
+ * and on what an absent `otherStrands` means. There are four such readers (the
+ * queue projection, the night-price repair, the reason builder and the census),
+ * so it lives here.
+ */
+export function editFinancialReviewStrandRecords(
+  occurrence: EditFinancialReviewOccurrence,
+): readonly EditFinancialReviewStrandRecord[] {
+  return [
+    {
+      bookingGuestId: occurrence.bookingGuestId,
+      cause: occurrence.cause,
+      surrenderedNightDates: occurrence.surrenderedNightDates,
+      addedNightDates: occurrence.addedNightDates,
+      storedEvidence: occurrence.storedEvidence,
+    },
+    ...(occurrence.otherStrands ?? []),
+  ];
+}
+
+/**
  * THE ONE "we cannot price this" OUTCOME (`INV-SSOT`, #3031, epic #2797).
  *
  * Both the in-progress planner (`InProgressGuestRangePlanResult`) and the
@@ -154,7 +233,17 @@ export type EditFinancialReviewOccurrence = {
  */
 export type FinancialReviewRequired = {
   kind: "financial_review_required";
-  occurrences: EditFinancialReviewOccurrence[];
+  /**
+   * ONE occurrence, because a parked edit is one thing to price (#3498, owner
+   * decision D1). It was a LIST until then, and every fan-out the issue
+   * measured came out of that list.
+   *
+   * Singular rather than a list a caller is asked to keep at length one:
+   * `INV-SSOT`'s "prefer unrepresentable over policed", and the acceptance
+   * criterion "one parked edit raises exactly one item" is then a fact about the
+   * type instead of a rule somebody has to enforce at four call sites.
+   */
+  occurrence: EditFinancialReviewOccurrence;
 };
 
 /**
@@ -286,26 +375,43 @@ export function isNonNegativeIntegerCents(value: unknown): value is number {
  */
 const nonNegativeCentsOrNull = nonNegativeCentsSchema.nullable();
 
+const strandRecordShape = {
+  bookingGuestId: z.string().min(1),
+  cause: z.enum(EDIT_FINANCIAL_REVIEW_CAUSES),
+  surrenderedNightDates: z.array(calendarDateSchema),
+  addedNightDates: z.array(calendarDateSchema),
+  storedEvidence: z
+    .object({
+      guestTotalCents: nonNegativeCentsOrNull,
+      nightPrices: z.array(
+        z
+          .object({
+            date: calendarDateSchema,
+            priceCents: nonNegativeCentsOrNull,
+          })
+          .strict(),
+      ),
+    })
+    .strict(),
+} as const;
+
+const strandRecordSchema: z.ZodType<EditFinancialReviewStrandRecord> = z
+  .object(strandRecordShape)
+  .strict();
+
 const occurrenceSchema: z.ZodType<EditFinancialReviewOccurrence> = z
   .object({
     bookingId: z.string().min(1),
-    bookingGuestId: z.string().min(1),
-    cause: z.enum(EDIT_FINANCIAL_REVIEW_CAUSES),
-    surrenderedNightDates: z.array(calendarDateSchema),
-    addedNightDates: z.array(calendarDateSchema),
-    storedEvidence: z
-      .object({
-        guestTotalCents: nonNegativeCentsOrNull,
-        nightPrices: z.array(
-          z
-            .object({
-              date: calendarDateSchema,
-              priceCents: nonNegativeCentsOrNull,
-            })
-            .strict(),
-        ),
-      })
-      .strict(),
+    ...strandRecordShape,
+    /*
+      #3498: OPTIONAL, and that is what keeps every row raised before this issue
+      readable. A production row carries the lead fields above and no
+      `otherStrands` at all, and this is a whole-object `.strict()` parse, so an
+      absent field has to be legal rather than tolerated. Absent and empty are
+      not distinguished by any reader — `editFinancialReviewStrandRecords`
+      collapses both to "the lead strand and nothing else".
+    */
+    otherStrands: z.array(strandRecordSchema).optional(),
   })
   .strict();
 
@@ -394,7 +500,7 @@ export const EDIT_FINANCIAL_REVIEW_CAUSE_LABEL: Record<
  * guest total, and the booking's own stay window for the "which rates applied
  * then" question.
  */
-export type EditFinancialReviewEvidence = {
+export type EditFinancialReviewStrandEvidence = {
   cause: EditFinancialReviewCause;
   surrenderedNightDates: readonly CalendarDate[];
   addedNightDates: readonly CalendarDate[];
@@ -402,6 +508,24 @@ export type EditFinancialReviewEvidence = {
     guestTotalCents: number | null;
     nightPrices: readonly StoredNightPriceEvidence[];
   };
+};
+
+export type EditFinancialReviewEvidence = EditFinancialReviewStrandEvidence & {
+  /**
+   * #3498: the OTHER strands the same parked edit recorded, in the order the
+   * item stores them — supporting detail behind the lead strand above, which is
+   * owner decision D1's own description of them.
+   *
+   * WITHOUT THE GUEST-STRAND ID, exactly like the lead strand: this projection's
+   * whole job is that no admin payload can carry one, and a list of them would
+   * be the same leak in a loop. A card distinguishes them by position and by
+   * what their evidence says, which is what an officer pricing the edit is
+   * reading anyway.
+   *
+   * EMPTY on every row raised before #3498, which is the honest answer for one:
+   * those items each described a single strand.
+   */
+  otherStrands: readonly EditFinancialReviewStrandEvidence[];
   bookingCheckIn: CalendarDate;
   bookingCheckOut: CalendarDate;
   /**
@@ -434,6 +558,19 @@ export function toEditFinancialReviewEvidence(
       guestTotalCents: context.occurrence.storedEvidence.guestTotalCents,
       nightPrices: context.occurrence.storedEvidence.nightPrices,
     },
+    // #3498: the supporting strands, field by field for the same reason the lead
+    // strand is — a spread would carry `bookingGuestId` straight onto a
+    // `finance:view` payload, which is the one thing this function exists to
+    // make impossible.
+    otherStrands: (context.occurrence.otherStrands ?? []).map((strand) => ({
+      cause: strand.cause,
+      surrenderedNightDates: strand.surrenderedNightDates,
+      addedNightDates: strand.addedNightDates,
+      storedEvidence: {
+        guestTotalCents: strand.storedEvidence.guestTotalCents,
+        nightPrices: strand.storedEvidence.nightPrices,
+      },
+    })),
     bookingCheckIn: context.bookingCheckIn,
     bookingCheckOut: context.bookingCheckOut,
     guestsAddedByEdit: context.guestsAddedByEdit ?? null,

@@ -2,6 +2,7 @@ import {
   isNonNegativeIntegerCents,
   type EditFinancialReviewCause,
   type EditFinancialReviewOccurrence,
+  type EditFinancialReviewStrandRecord,
   type StoredNightPriceEvidence,
 } from "@/lib/edit-financial-review-context";
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
@@ -197,8 +198,13 @@ export function unusableStoredSoldPriceEvidence(
 }
 
 /**
- * THE ONE BUILDER for an `EditFinancialReviewOccurrence` (#3030), from an
- * unusable verdict and the two halves of the structural change (`INV-SSOT`).
+ * THE ONE BUILDER for an unreadable strand's record (#3030), from an unusable
+ * verdict and the two halves of the structural change (`INV-SSOT`).
+ *
+ * It built a whole `EditFinancialReviewOccurrence` until #3498, when owner
+ * decision D1 moved the grain to the edit. What it composes is byte-for-byte
+ * what it composed before; it is now one entry on a per-edit occurrence rather
+ * than an occurrence of its own, which is the whole of that change.
  *
  * Three call sites used to compose this literal by hand — the planner twice and
  * the single-guest removal once — and the identity they build is the material
@@ -210,16 +216,15 @@ export function unusableStoredSoldPriceEvidence(
  * total that cannot be represented is itself part of what the admin needs to
  * know.
  */
-export function editFinancialReviewOccurrence(args: {
-  bookingId: string;
+export function unpriceableStrandRecord(args: {
   bookingGuestId: string;
   evidence: Extract<StoredSoldPriceEvidence, { kind: "unusable" }>;
   /** `BookingGuest.priceCents` as stored. */
   guestTotalCents: number;
   surrenderedNightDates: readonly CalendarDate[];
   addedNightDates: readonly CalendarDate[];
-}): EditFinancialReviewOccurrence {
-  return composeOccurrence({
+}): EditFinancialReviewStrandRecord {
+  return composeStrandRecord({
     ...args,
     cause: args.evidence.cause,
     nightPrices: args.evidence.nightPrices,
@@ -279,34 +284,39 @@ export function editFinancialReviewOccurrence(args: {
  * a fact, which is the thing epic #2797 exists to stop. The rows are preserved;
  * the person decides.
  */
-export function counterpartStrandReviewOccurrence(args: {
-  bookingId: string;
+export function counterpartStrandRecord(args: {
   bookingGuestId: string;
   evidence: Extract<StoredSoldPriceEvidence, { kind: "exact" }>;
   /** `BookingGuest.priceCents` as stored. */
   guestTotalCents: number;
   surrenderedNightDates: readonly CalendarDate[];
   addedNightDates: readonly CalendarDate[];
-}): EditFinancialReviewOccurrence {
-  return composeOccurrence({
+}): EditFinancialReviewStrandRecord {
+  return composeStrandRecord({
     ...args,
     cause: "COUNTERPART_STRAND_UNREADABLE",
     nightPrices: args.evidence.nightPrices,
   });
 }
 
-/** The one body both builders above compose the identity through. */
-function composeOccurrence(args: {
-  bookingId: string;
+/**
+ * The one body both builders above compose a strand's record through.
+ *
+ * EVERY FIELD HERE IS EVIDENCE SOMEBODY LOSES IF IT STOPS BEING WRITTEN, which
+ * is why `edit-financial-review-strand-census.test.ts` enumerates them against
+ * this function's output rather than against a list written out by hand: a field
+ * dropped here fails that census by name (#3498, owner decision D1's "no
+ * evidence may be lost").
+ */
+function composeStrandRecord(args: {
   bookingGuestId: string;
   cause: EditFinancialReviewCause;
   guestTotalCents: number;
   surrenderedNightDates: readonly CalendarDate[];
   addedNightDates: readonly CalendarDate[];
   nightPrices: readonly { date: CalendarDate; priceCents: number | null }[];
-}): EditFinancialReviewOccurrence {
+}): EditFinancialReviewStrandRecord {
   return {
-    bookingId: args.bookingId,
     bookingGuestId: args.bookingGuestId,
     cause: args.cause,
     surrenderedNightDates: args.surrenderedNightDates,
@@ -321,6 +331,85 @@ function composeOccurrence(args: {
       })),
     },
   };
+}
+
+/**
+ * THE ONE PARKED EDIT'S OCCURRENCE, from every strand it recorded (#3498, owner
+ * decision D1).
+ *
+ * ## What it decides, and what it deliberately does not
+ *
+ * It decides which strand LEADS and in what order the rest are carried. It does
+ * NOT decide which strands are recorded, and it does not decide whether the edit
+ * parks at all - both of those are the caller's, unchanged: a single unreadable
+ * strand still parks the whole edit, and every strand the current code records
+ * is still recorded. Handed an empty list it answers `null`, which is the shape
+ * of an edit that prices normally.
+ *
+ * ## Why a lead has to be chosen at all
+ *
+ * A work item is one card with one **Record the adjustment** button, so
+ * something has to be at the top of it. Until #3498 there was one card per
+ * strand and the officer chose between them, which is precisely the near-miss
+ * this issue exists to remove: on the live shape that prompted it, seven cards
+ * carried the same evidence block and the only tell between them was one line
+ * reading `Nights given back:` with dates instead of `none`.
+ *
+ * ## THE RANKING, and why it is this way round
+ *
+ * Lower is more urgent:
+ *
+ *  0. a strand whose own stored rows could not be read AND whose night set this
+ *     edit moves. Money is owed on those nights and the system cannot say how
+ *     much - the case the whole epic exists for;
+ *  1. a strand whose night set this edit moves, whose own rows read perfectly
+ *     (`COUNTERPART_STRAND_UNREADABLE`). The departing guest of a removal is
+ *     this, and on the production booking it was the one item of seven that
+ *     carried the real $140.00;
+ *  2. a strand the edit does not move at all. It is recorded because
+ *     `applyGuestChanges` deletes and recreates its rows, and it is the
+ *     SUPPORTING DETAIL D1 names - six of the seven production items were this.
+ *
+ * Ties break on `bookingGuestId`, so the answer is a pure function of the strand
+ * set rather than of the order the planner happened to walk the booking's
+ * guests in. That matters beyond tidiness: `editFinancialReviewOccurrenceKey`
+ * hashes the lead's fields separately from the rest, so a lead that moved with
+ * the read order would make one edit hash two ways and a replay raise a second
+ * task.
+ *
+ * A PURE GUEST ADD RANKS EVERYTHING AT 2 and still produces an item - which is
+ * the case that rules out the tempting "filter to the strands the edit touched"
+ * fix, because no existing strand moves and that filter would raise nothing at
+ * all. What the add is worth rides on `EditFinancialReviewContext.guestsAddedByEdit`,
+ * exactly as it did before.
+ */
+export function parkedEditOccurrence(args: {
+  bookingId: string;
+  strands: readonly EditFinancialReviewStrandRecord[];
+}): EditFinancialReviewOccurrence | null {
+  const ordered = [...args.strands].sort((left, right) => {
+    const byRank = leadRank(left) - leadRank(right);
+    if (byRank !== 0) return byRank;
+    return left.bookingGuestId < right.bookingGuestId ? -1 : 1;
+  });
+  const [lead, ...otherStrands] = ordered;
+  if (lead === undefined) return null;
+  return {
+    bookingId: args.bookingId,
+    ...lead,
+    // Absent rather than empty for a one-strand edit, so the stored row is
+    // byte-identical to the shape every pre-#3498 reader already understands.
+    ...(otherStrands.length > 0 ? { otherStrands } : {}),
+  };
+}
+
+/** The ranking `parkedEditOccurrence` documents, and its only implementation. */
+function leadRank(strand: EditFinancialReviewStrandRecord): number {
+  const nightSetMoves =
+    strand.surrenderedNightDates.length > 0 ||
+    strand.addedNightDates.length > 0;
+  if (!nightSetMoves) return 2;
+  return strand.cause === "COUNTERPART_STRAND_UNREADABLE" ? 1 : 0;
 }
 
 /**
@@ -403,7 +492,7 @@ export function storedSoldPriceEvidenceForGuest(
  * A strand the edit REMOVES passes an empty list and sets `rowsDestroyed`, which
  * is what earns it a counterpart occurrence when some other strand parks the
  * edit — its rows are about to be deleted, so a number the system could have
- * known would otherwise be gone (`counterpartStrandReviewOccurrence`).
+ * known would otherwise be gone (`counterpartStrandRecord`).
  */
 export type PreCheckInEditStrand = {
   bookingGuestId: string;
@@ -456,11 +545,16 @@ export type PreCheckInEditStrand = {
  *
  * ## What it returns, and what it deliberately does not
  *
- * `occurrences` is EMPTY when every strand is exact — the edit prices normally.
+ * `occurrence` is NULL when every strand is exact — the edit prices normally.
  * A single unusable strand parks the whole edit, and then every OTHER strand
  * whose own rows were readable and whose evidence this edit destroys is recorded
  * too — removed, shortened or extended — so a parked edit never destroys a
  * number the system could have known. There is no amount anywhere in here.
+ *
+ * #3498: those records used to be returned as one occurrence EACH, which is what
+ * made a seven-guest booking raise seven work items for one edit. They are
+ * composed into one occurrence now, by `parkedEditOccurrence`, and nothing about
+ * which strands are recorded changed with it.
  *
  * `storedNightPriceByGuestId` carries, per strand, the stored integer and source against each
  * night it holds — usable rows only, from either verdict, so a PARTIAL strand
@@ -473,7 +567,12 @@ export function preCheckInEditEvidence(args: {
   booking: BookingStayRange;
   strands: readonly PreCheckInEditStrand[];
 }): {
-  occurrences: EditFinancialReviewOccurrence[];
+  /**
+   * The ONE occurrence a parked edit raises, or null when the edit prices
+   * normally (#3498). It was a list until owner decision D1 moved the grain to
+   * the edit; every strand that list held is on this one occurrence.
+   */
+  occurrence: EditFinancialReviewOccurrence | null;
   storedNightPriceByGuestId: Map<
     string,
     ReadonlyMap<
@@ -482,8 +581,8 @@ export function preCheckInEditEvidence(args: {
     >
   >;
 } {
-  const unusable: EditFinancialReviewOccurrence[] = [];
-  const destroyedButReadable: EditFinancialReviewOccurrence[] = [];
+  const unusable: EditFinancialReviewStrandRecord[] = [];
+  const destroyedButReadable: EditFinancialReviewStrandRecord[] = [];
   const storedNightPriceByGuestId = new Map<
     string,
     ReadonlyMap<
@@ -541,8 +640,7 @@ export function preCheckInEditEvidence(args: {
 
     if (evidence.kind === "unusable") {
       unusable.push(
-        editFinancialReviewOccurrence({
-          bookingId: args.bookingId,
+        unpriceableStrandRecord({
           bookingGuestId: strand.bookingGuestId,
           evidence,
           guestTotalCents: strand.guestTotalCents,
@@ -578,8 +676,7 @@ export function preCheckInEditEvidence(args: {
       addedNightDates.length > 0;
     if (evidenceDestroyed) {
       destroyedButReadable.push(
-        counterpartStrandReviewOccurrence({
-          bookingId: args.bookingId,
+        counterpartStrandRecord({
           bookingGuestId: strand.bookingGuestId,
           evidence,
           guestTotalCents: strand.guestTotalCents,
@@ -591,8 +688,17 @@ export function preCheckInEditEvidence(args: {
   }
 
   return {
-    occurrences:
-      unusable.length > 0 ? [...unusable, ...destroyedButReadable] : [],
+    // Unchanged from before #3498 in the only respect that decides money: a
+    // single unusable strand parks the whole edit, and nothing else does. What
+    // changed is that the recorded strands are composed into ONE occurrence
+    // instead of one each.
+    occurrence:
+      unusable.length > 0
+        ? parkedEditOccurrence({
+            bookingId: args.bookingId,
+            strands: [...unusable, ...destroyedButReadable],
+          })
+        : null,
     storedNightPriceByGuestId,
   };
 }

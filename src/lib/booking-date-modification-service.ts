@@ -39,7 +39,7 @@ import {
 } from "@/lib/booking-modification-settlement";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTasks,
+  raiseParkedEditFinancialReviewTask,
 } from "@/lib/edit-financial-review";
 import {
   preCheckInEditEvidence,
@@ -728,7 +728,7 @@ export async function modifyBookingDates({
      * because the booking's money genuinely did not move, NOT because 0 was
      * chosen as the adjustment.
      */
-    const parked = dateEditEvidence.occurrences.length > 0;
+    const parked = dateEditEvidence.occurrence !== null;
 
     const newTotalPriceCents = parked
       ? booking.totalPriceCents
@@ -1311,18 +1311,22 @@ export async function modifyBookingDates({
      * The raise ITSELF - the settlement payment id, the strand's member, the
      * null amount, and the booking's PRE-EDIT dates so the task describes the
      * stay the unreadable evidence belongs to - is
-     * `raiseParkedEditFinancialReviewTasks`, stated once there (#3166,
+     * `raiseParkedEditFinancialReviewTask`, stated once there (#3166,
      * `INV-SSOT`).
      */
-    await raiseParkedEditFinancialReviewTasks({
-      booking,
-      guests: booking.guests,
-      // A date change adds nobody.
-      addedGuests: [],
-      occurrences: dateEditEvidence.occurrences,
-      bookingModificationId: bookingModification.id,
-      store: tx,
-    });
+    if (dateEditEvidence.occurrence !== null) {
+      await raiseParkedEditFinancialReviewTask({
+        booking,
+        guests: booking.guests,
+        // A date change adds nobody.
+        addedGuests: [],
+        // #3498: ONE occurrence for the whole date change, carrying every
+        // strand whose evidence it moved or destroyed.
+        occurrence: dateEditEvidence.occurrence,
+        bookingModificationId: bookingModification.id,
+        store: tx,
+      });
+    }
 
     if (accountCreditAmountCents > 0) {
       await createBookingModificationCredit(

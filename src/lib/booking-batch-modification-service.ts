@@ -44,7 +44,7 @@ import {
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTasks,
+  raiseParkedEditFinancialReviewTask,
 } from "@/lib/edit-financial-review";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
@@ -1875,21 +1875,24 @@ export async function modifyBookingBatch({
      * hoped for.
      *
      * The raise ITSELF - the settlement payment id, the strand's member, the
-     * null amount - is `raiseParkedEditFinancialReviewTasks`, and is stated once
+     * null amount - is `raiseParkedEditFinancialReviewTask`, and is stated once
      * there rather than four times across the four parked doors (#3166,
      * `INV-SSOT`).
      */
-    await raiseParkedEditFinancialReviewTasks({
-      booking,
-      guests: booking.guests,
-      // A batch edit can add guests in the same request. They are priced and
-      // written normally while the booking's own total is frozen, so the money
-      // is owed and only their rows record it.
-      addedGuests: createdGuests,
-      occurrences: parked?.occurrences ?? [],
-      bookingModificationId: bookingModification.id,
-      store: tx,
-    });
+    if (parked) {
+      await raiseParkedEditFinancialReviewTask({
+        booking,
+        guests: booking.guests,
+        // A batch edit can add guests in the same request. They are priced and
+        // written normally while the booking's own total is frozen, so the money
+        // is owed and only their rows record it.
+        addedGuests: createdGuests,
+        // #3498: ONE occurrence for the whole edit, whatever the party size.
+        occurrence: parked.occurrence,
+        bookingModificationId: bookingModification.id,
+        store: tx,
+      });
+    }
 
     if (payments.accountCreditAmountCents > 0) {
       await createBookingModificationCredit(
