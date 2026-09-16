@@ -57,17 +57,82 @@ function delegateName(node: ts.Expression): keyof typeof TRACKED_FIELDS | null {
   return null;
 }
 
+function propertyName(name: ts.PropertyName): string | undefined {
+  return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+}
+
 function looksLikePrismaClientReceiver(
   node: ts.Expression,
   source: ts.SourceFile,
 ): boolean {
-  const receiver = ts.isPropertyAccessExpression(node)
+  const receiver = ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)
     ? node.expression
-    : ts.isElementAccessExpression(node)
-      ? node.expression
-      : node;
-  const text = receiver.getText(source);
-  return /(?:^|\.)(?:prisma|tx|store|client|db)$/i.test(text);
+    : node;
+  return /(?:^|\.)(?:prisma|tx|store|client|db)$/i.test(receiver.getText(source));
+}
+
+function enclosingScope(node: ts.Node): ts.Node | undefined {
+  for (let cursor: ts.Node | undefined = node.parent; cursor; cursor = cursor.parent) {
+    if (
+      ts.isSourceFile(cursor) ||
+      ts.isBlock(cursor) ||
+      ts.isModuleBlock(cursor) ||
+      ts.isCaseBlock(cursor) ||
+      ts.isForStatement(cursor) ||
+      ts.isForInStatement(cursor) ||
+      ts.isForOfStatement(cursor)
+    ) {
+      return cursor;
+    }
+  }
+  return undefined;
+}
+
+function isNestedScope(node: ts.Node): boolean {
+  return (
+    ts.isFunctionLike(node) ||
+    ts.isClassLike(node) ||
+    ts.isSourceFile(node) ||
+    ts.isBlock(node) ||
+    ts.isModuleBlock(node) ||
+    ts.isCaseBlock(node)
+  );
+}
+
+/**
+ * Resolve only a binding that is visible at `use`.  A whole-source same-name
+ * search makes an unrelated inner `data` object evidence for a writer, which
+ * is a census bypass rather than a conservative result.
+ */
+function resolveLocalBinding(
+  use: ts.Identifier,
+  source: ts.SourceFile,
+): ts.Expression | undefined {
+  const name = use.text;
+  for (
+    let scope = enclosingScope(use);
+    scope;
+    scope = enclosingScope(scope)
+  ) {
+    let winner: ts.VariableDeclaration | undefined;
+    const visit = (node: ts.Node) => {
+      if (node !== scope && isNestedScope(node)) return;
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text === name &&
+        node.initializer !== undefined &&
+        node.getStart(source) < use.getStart(source) &&
+        (!winner || winner.getStart(source) < node.getStart(source))
+      ) {
+        winner = node;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(scope);
+    if (winner?.initializer) return winner.initializer;
+  }
+  return undefined;
 }
 
 /** Delegate forwarding can hide a write from the direct call-site census. */
@@ -76,12 +141,10 @@ export function scanBookingMoneyWriterEscapes(file: string, code: string): strin
     file,
     code,
     ts.ScriptTarget.Latest,
-    false,
+    true,
     /[jt]sx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const escapes = new Set<string>();
-  const propertyName = (name: ts.PropertyName): string | undefined =>
-    ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
   const visit = (node: ts.Node, parent?: ts.Node, grandparent?: ts.Node) => {
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const delegate = delegateName(node);
@@ -136,16 +199,26 @@ export function scanBookingMoneyWriterSites(
     file,
     code,
     ts.ScriptTarget.Latest,
-    false,
+    true,
     /[jt]sx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const found = new Map<
     keyof typeof TRACKED_FIELDS,
     { methods: Set<string>; fields: Set<string> }
   >();
-  const mutationDataExpressions = (call: ts.CallExpression): ts.Expression[] => {
+  const record = (
+    delegate: keyof typeof TRACKED_FIELDS,
+    method: string,
+    fields: readonly string[],
+  ) => {
+    const site = found.get(delegate) ?? { methods: new Set<string>(), fields: new Set<string>() };
+    site.methods.add(method);
+    fields.forEach((field) => site.fields.add(field));
+    found.set(delegate, site);
+  };
+  const mutationData = (call: ts.CallExpression): ts.Expression | undefined => {
     const options = call.arguments[0];
-    if (!options || !ts.isObjectLiteralExpression(options)) return [];
+    if (!options || !ts.isObjectLiteralExpression(options)) return undefined;
     const data = options.properties.find((property) => {
       if (ts.isShorthandPropertyAssignment(property)) {
         return property.name.text === "data";
@@ -156,70 +229,76 @@ export function scanBookingMoneyWriterSites(
         property.name.text === "data"
       );
     });
-    if (!data) return [];
-    if (ts.isShorthandPropertyAssignment(data)) return [data.name];
-    if (!ts.isPropertyAssignment(data)) return [];
-    if (!ts.isObjectLiteralExpression(data.initializer)) return [data.initializer];
-    return data.initializer.properties
-      .filter(ts.isSpreadAssignment)
-      .map((property) => property.expression);
+    if (!data) return undefined;
+    if (ts.isShorthandPropertyAssignment(data)) return data.name;
+    return ts.isPropertyAssignment(data) ? data.initializer : undefined;
   };
-  const indirectMutationEvidence = (call: ts.CallExpression): string => {
-    const evidence: string[] = [];
-    const seen = new Set<string>();
-    const collectSpreads = (node: ts.Node) => {
-      const visitSpread = (child: ts.Node) => {
-        if (
-          (ts.isSpreadAssignment(child) || ts.isSpreadElement(child)) &&
-          ts.isIdentifier(child.expression)
-        ) {
-          collectIdentifier(child.expression.text);
-        }
-        ts.forEachChild(child, visitSpread);
-      };
-      visitSpread(node);
-    };
-    const collectIdentifier = (name: string) => {
-      if (seen.has(name)) return;
-      seen.add(name);
-      const visitBinding = (node: ts.Node) => {
-        let value: ts.Node | undefined;
-        if (
-          ts.isVariableDeclaration(node) &&
-          ts.isIdentifier(node.name) &&
-          node.name.text === name
-        ) {
-          value = node.initializer;
-        } else if (
-          ts.isBinaryExpression(node) &&
-          node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-          ts.isIdentifier(node.left) &&
-          node.left.text === name
-        ) {
-          value = node.right;
-        } else if (
-          ts.isCallExpression(node) &&
-          ts.isPropertyAccessExpression(node.expression) &&
-          ts.isIdentifier(node.expression.expression) &&
-          node.expression.expression.text === name &&
-          ["push", "unshift", "splice"].includes(node.expression.name.text)
-        ) {
-          value = node;
-        }
-        if (value) {
-          evidence.push(value.getText(source));
-          collectSpreads(value);
-        }
-        ts.forEachChild(node, visitBinding);
-      };
-      visitBinding(source);
-    };
-    for (const expression of mutationDataExpressions(call)) {
-      evidence.push(expression.getText(source));
-      if (ts.isIdentifier(expression)) collectIdentifier(expression.text);
-      collectSpreads(expression);
+  const inspectPayload = (
+    expression: ts.Expression,
+    delegate: keyof typeof TRACKED_FIELDS,
+    nested?: keyof typeof TRACKED_FIELDS,
+    seen = new Set<ts.Node>(),
+  ): { fields: Set<string>; opaque: boolean } => {
+    if (seen.has(expression)) return { fields: new Set(), opaque: true };
+    seen.add(expression);
+    if (ts.isIdentifier(expression)) {
+      const binding = resolveLocalBinding(expression, source);
+      return binding
+        ? inspectPayload(binding, delegate, nested, seen)
+        : { fields: new Set(), opaque: true };
     }
-    return stripComments(evidence.join("\n"));
+    if (ts.isArrayLiteralExpression(expression)) {
+      return expression.elements.reduce(
+        (result, element) => {
+          if (!ts.isExpression(element)) return { fields: result.fields, opaque: true };
+          const next = inspectPayload(element, delegate, nested, seen);
+          next.fields.forEach((field) => result.fields.add(field));
+          return { fields: result.fields, opaque: result.opaque || next.opaque };
+        },
+        { fields: new Set<string>(), opaque: false },
+      );
+    }
+    if (!ts.isObjectLiteralExpression(expression)) return { fields: new Set(), opaque: true };
+    const fields = new Set<string>();
+    let opaque = false;
+    for (const property of expression.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        const spread = inspectPayload(property.expression, delegate, nested, seen);
+        spread.fields.forEach((field) => fields.add(field));
+        opaque ||= spread.opaque;
+        continue;
+      }
+      if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
+        opaque = true;
+        continue;
+      }
+      const name = propertyName(property.name);
+      if (!name) {
+        opaque = true;
+        continue;
+      }
+      if (TRACKED_FIELDS[delegate].includes(name)) fields.add(name);
+      const value = ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer;
+      const relation =
+        delegate === "booking" && name === "guests" ? "bookingGuest" :
+        delegate === "bookingGuest" && name === "nights" ? "bookingGuestNight" : undefined;
+          if (relation && ts.isObjectLiteralExpression(value)) {
+        for (const entry of value.properties) {
+          if (ts.isPropertyAssignment(entry) && propertyName(entry.name) === "create") {
+            const child = inspectPayload(entry.initializer, relation, relation, seen);
+            record(relation, "create", [...child.fields]);
+            // A guest builder can conceal its nested night payload.  Keep the
+            // descendant visible too: otherwise a booking.create({ guests:
+            // { create: buildGuests() } }) would enumerate guests but silently
+            // lose the price-bearing nights the builder may create.
+            if (child.opaque && relation === "bookingGuest") {
+              record("bookingGuestNight", "opaquePayload", []);
+            }
+          }
+        }
+      }
+    }
+    return { fields, opaque };
   };
   const visit = (node: ts.Node) => {
     if (
@@ -228,30 +307,27 @@ export function scanBookingMoneyWriterSites(
       WRITE_METHODS.has(node.expression.name.text)
     ) {
       const receiver = node.expression.expression;
-      if (ts.isPropertyAccessExpression(receiver)) {
-        const delegate = receiver.name.text as keyof typeof TRACKED_FIELDS;
+      const delegate = delegateName(receiver);
+      if (delegate) {
         const tracked = TRACKED_FIELDS[delegate];
         if (tracked) {
-          const text = node.getText(source);
-          // Prisma permits the mutation payload to be supplied by identifier
-          // (`update({ data })`, `createMany({ data: rows })`) or spread. In
-          // those shapes the field names are outside the call expression, so
-          // follow the local binding's initializer, assignments, and array
-          // construction. Spread bindings are followed recursively (the
-          // adjustment writer builds `rows` from a local `base` object).
-          const fieldEvidence = `${text}\n${indirectMutationEvidence(node)}`;
-          const written = tracked.filter((field) =>
-            new RegExp(String.raw`\b${field}\b`).test(fieldEvidence),
-          );
+          const payload = mutationData(node);
+          const inspected = payload ? inspectPayload(payload, delegate) : undefined;
+          const written = inspected ? [...inspected.fields] : [];
           if (written.length > 0 || node.expression.name.text.startsWith("delete")) {
-            const site = found.get(delegate) ?? {
-              methods: new Set<string>(),
-              fields: new Set<string>(),
-            };
-            site.methods.add(node.expression.name.text);
-            written.forEach((field) => site.fields.add(field));
-            found.set(delegate, site);
+            record(delegate, node.expression.name.text, written);
           }
+          // A builder passed as the whole payload cannot be classified from
+          // this source file, so keep it visible to the reviewed manifest. An
+          // object payload is still useful evidence even if one of its ordinary
+          // (non-money) values is computed.
+          if (
+            inspected?.opaque &&
+            written.length === 0 &&
+            payload !== undefined &&
+            !ts.isObjectLiteralExpression(payload) &&
+            !ts.isArrayLiteralExpression(payload)
+          ) record(delegate, "opaquePayload", []);
         }
       }
     }
@@ -265,19 +341,15 @@ export function scanBookingMoneyWriterSites(
     const model = delegate[0]!.toUpperCase() + delegate.slice(1);
     if (
       new RegExp(
-        String.raw`\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|DELETE\s+FROM)\s+["'\x60]${model}["'\x60]`,
+        String.raw`\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|DELETE\s+FROM)\s+(?:(?:[A-Za-z_$][\w$]*|["'\x60][A-Za-z_$][\w$]*["'\x60])\s*\.\s*)?["'\x60]${model}["'\x60]`,
         "i",
       ).test(uncommented)
     ) {
-      const site = found.get(delegate) ?? {
-        methods: new Set<string>(),
-        fields: new Set<string>(),
-      };
-      site.methods.add("rawSql");
-      fields
-        .filter((field) => new RegExp(String.raw`\b${field}\b`).test(uncommented))
-        .forEach((field) => site.fields.add(field));
-      found.set(delegate, site);
+      record(
+        delegate,
+        "rawSql",
+        fields.filter((field) => new RegExp(String.raw`\b${field}\b`).test(uncommented)),
+      );
     }
   }
 

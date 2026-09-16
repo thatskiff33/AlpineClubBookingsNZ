@@ -16,36 +16,46 @@ const REVIEWED_WRITERS = [
   "prisma/demo-seed.ts|bookingGuestNight|create,deleteMany|priceCents,priceSource",
   "prisma/demo-seed.ts|promoRedemption|create,deleteMany|discountCents",
   "prisma/demo-seed.ts|promoRedemptionAllocation|deleteMany|",
-  "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts|booking|updateMany|finalPriceCents",
   "src/app/api/bookings/[id]/guests/route.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/app/api/bookings/[id]/guests/route.ts|bookingGuest|create|priceCents",
+  "src/app/api/bookings/[id]/guests/route.ts|bookingGuestNight|create|",
+  "src/app/api/lodge/guests/[date]/arrive/route.ts|bookingGuest|opaquePayload|",
   "src/instrumentation.node.ts|booking|deleteMany|",
   "src/lib/booking-batch-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/booking-create.ts|booking|create|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
+  "src/lib/booking-create.ts|bookingGuest|create|",
+  "src/lib/booking-create.ts|bookingGuestNight|opaquePayload|",
   "src/lib/booking-date-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/booking-date-modification-service.ts|bookingGuest|update|priceCents",
-  "src/lib/booking-date-modification-service.ts|bookingGuestNight|createMany,deleteMany|priceCents,priceSource",
+  "src/lib/booking-date-modification-service.ts|bookingGuestNight|deleteMany,opaquePayload|",
   "src/lib/booking-delete.ts|booking|delete|",
   "src/lib/booking-guest-removal-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/booking-guest-removal-service.ts|bookingGuest|delete,update|priceCents",
   "src/lib/booking-modify-plan.ts|bookingGuest|create,delete,update|priceCents",
-  "src/lib/booking-modify-plan.ts|bookingGuestNight|createMany,deleteMany|priceCents,priceSource",
+  "src/lib/booking-modify-plan.ts|bookingGuestNight|deleteMany,opaquePayload|",
+  "src/lib/booking-no-emails-service.ts|booking|opaquePayload|",
   "src/lib/booking-request-quotes.ts|booking|create|finalPriceCents,totalPriceCents",
+  "src/lib/booking-request-quotes.ts|bookingGuest|create|",
+  "src/lib/booking-request-quotes.ts|bookingGuestNight|opaquePayload|",
   "src/lib/booking-request.ts|booking|create,updateMany|finalPriceCents,totalPriceCents",
   "src/lib/booking-request.ts|bookingGuest|create,deleteMany,update|priceCents",
-  "src/lib/booking-request.ts|bookingGuestNight|createMany,deleteMany|priceCents,priceSource",
+  "src/lib/booking-request.ts|bookingGuestNight|deleteMany,opaquePayload|",
   "src/lib/booking-review-price-rebase.ts|booking|updateMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/group-booking.ts|booking|create|finalPriceCents,totalPriceCents",
-  "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|createMany,deleteMany|amountCents",
+  "src/lib/group-booking.ts|bookingGuest|create|",
+  "src/lib/group-booking.ts|bookingGuestNight|opaquePayload|",
+  "src/lib/member-guest-consent-service.ts|bookingGuest|opaquePayload|",
+  "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|deleteMany|",
   "src/lib/promo.ts|promoRedemption|create,delete,update|discountCents,priceAdjustmentCents",
-  "src/lib/promo.ts|promoRedemptionAllocation|createMany,deleteMany|discountCents,priceAdjustmentCents",
+  "src/lib/promo.ts|promoRedemptionAllocation|deleteMany,opaquePayload|",
   "src/lib/school-booking-request.ts|booking|create,update|finalPriceCents,totalPriceCents",
+  "src/lib/school-booking-request.ts|bookingGuest|create|",
+  "src/lib/school-booking-request.ts|bookingGuestNight|opaquePayload|",
   "src/lib/stored-night-price-repair-store.ts|bookingGuest|updateMany|priceCents",
   "src/lib/stored-night-price-repair-store.ts|bookingGuestNight|create,updateMany|priceCents,priceSource",
-  "src/lib/waitlist-cross-lodge.ts|booking|update,updateMany|finalPriceCents",
   "src/lib/waitlist.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/waitlist.ts|bookingGuest|update|priceCents",
-  "src/lib/waitlist.ts|bookingGuestNight|createMany,deleteMany|priceCents,priceSource",
+  "src/lib/waitlist.ts|bookingGuestNight|deleteMany,opaquePayload|",
 ] as const;
 
 function writerKey(
@@ -119,6 +129,37 @@ describe("INV-MONEY-031 booking money writer census", () => {
         fields: ["amountCents"],
       },
     ]);
+  });
+
+  it("mutation-proves bracket delegates, nested relation writes, lexical bindings, opaque builders, and schema-qualified SQL", () => {
+    expect(
+      scanBookingMoneyWriterSites(
+        "src/lib/mutation-forms.ts",
+        `async function mutant(tx) {
+          const base = { finalPriceCents: 1 };
+          const data = { ...base };
+          await tx["booking"].update({ data });
+          await tx.booking.create({ data: { guests: { create: [{ priceCents: 2, nights: { create: [{ priceCents: 3, priceSource: "SOLD" }] } }] } } });
+          await tx.booking.create({ data: { guests: { create: buildGuests() } } });
+          await tx.bookingGuest.create({ data: buildGuest() });
+          await tx.$executeRawUnsafe('UPDATE public."Booking" SET "finalPriceCents" = 4');
+        }`,
+      ),
+    ).toEqual([
+      { file: "src/lib/mutation-forms.ts", delegate: "booking", methods: ["rawSql", "update"], fields: ["finalPriceCents"] },
+      { file: "src/lib/mutation-forms.ts", delegate: "bookingGuest", methods: ["create", "opaquePayload"], fields: ["priceCents"] },
+      { file: "src/lib/mutation-forms.ts", delegate: "bookingGuestNight", methods: ["create", "opaquePayload"], fields: ["priceCents", "priceSource"] },
+    ]);
+    expect(
+      scanBookingMoneyWriterSites(
+        "src/lib/lexical-scope.ts",
+        `async function mutant(tx) {
+          const data = { status: "PENDING" };
+          { const data = { finalPriceCents: 99 }; void data; }
+          await tx.booking.update({ data });
+        }`,
+      ),
+    ).toEqual([]);
   });
 
   it("rejects delegate forwarding and mutation-proves the alias escape routes", () => {
