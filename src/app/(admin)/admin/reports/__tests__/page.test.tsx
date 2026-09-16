@@ -125,9 +125,12 @@ describe("ReportsPage quick ranges", () => {
     );
 
     render(<ReportsPage />);
-    expect(
-      await screen.findByTestId("reports-booking-money-unreconciled"),
-    ).toHaveTextContent("1 booking in this report has stored money");
+    const warning = await screen.findByTestId(
+      "reports-booking-money-unreconciled",
+    );
+    expect(warning).toHaveTextContent("1 booking in this report has stored money");
+    expect(warning).toHaveClass("reports-print-card", "text-foreground");
+    expect(warning).not.toHaveClass("text-danger-11");
   });
   it("wraps the full multi-lodge toolbar without changing its keyboard order", async () => {
     vi.stubGlobal(

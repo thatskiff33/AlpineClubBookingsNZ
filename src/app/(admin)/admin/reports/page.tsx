@@ -579,7 +579,7 @@ export default function ReportsPage() {
             <div
               role="alert"
               data-testid="reports-booking-money-unreconciled"
-              className="reports-print-card rounded-lg border border-danger-6 bg-danger-3 p-4 text-sm text-danger-11 print:border-danger-6"
+              className="reports-print-card rounded-lg border border-danger-6 bg-danger-3 p-4 text-sm text-foreground print:border-danger-6"
             >
               <p className="font-semibold">Booked Revenue needs reconciliation</p>
               <p className="mt-1">
