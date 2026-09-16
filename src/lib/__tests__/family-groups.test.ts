@@ -1267,6 +1267,8 @@ describe("Admin Family Group Join Requests", () => {
           active: true,
           dateOfBirth: new Date("2018-03-15T00:00:00.000Z"),
           familyGroupMemberships: [],
+          partnerLinksAsMemberA: [],
+          partnerLinksAsMemberB: [],
         },
       ] as any);
 
@@ -1424,16 +1426,32 @@ describe("Admin Family Group Join Requests", () => {
             // mailbox even while their pointer is momentarily NULL. The column
             // is part of `EMAIL_SOURCE_SELECT`, so a real row always carries it;
             // the fixture has to as well or the parent reads as unusable.
-            findUnique: vi.fn().mockResolvedValue({
-              id: "parent-1",
-              ageTier: "ADULT",
-              email: "parent@test.com",
-              archivedAt: null,
-              parentMemberId: null,
-              secondaryParentId: null,
-              inheritEmailFromId: null,
-              inheritEmailChoiceId: null,
-            }),
+              findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+                where.id === "child-1"
+                  ? {
+                      id: "child-1",
+                      active: true,
+                      ageTier: "INFANT",
+                      canLogin: false,
+                      archivedAt: null,
+                      parentMemberId: null,
+                      secondaryParentId: null,
+                      inheritEmailFromId: null,
+                      parent: null,
+                      secondaryParent: null,
+                    }
+                  : {
+                      id: "parent-1",
+                      active: true,
+                      ageTier: "ADULT",
+                      email: "parent@test.com",
+                      archivedAt: null,
+                      parentMemberId: null,
+                      secondaryParentId: null,
+                      inheritEmailFromId: null,
+                      inheritEmailChoiceId: null,
+                    },
+              ),
             // #2255: the approval still walks the family chain (depth cap +
             // cycle guard) through `member.findMany`. That walk is the LINK
             // depth cap, which #2716 left untouched.
@@ -1452,6 +1470,7 @@ describe("Admin Family Group Join Requests", () => {
             ),
             update: txMemberUpdate,
           },
+            memberPartnerLink: { findUnique: vi.fn().mockResolvedValue(null) },
           familyGroupMember: { upsert: txUpsert },
           familyGroupJoinRequest: { update: txUpdate },
         })
@@ -1540,7 +1559,33 @@ describe("Admin Family Group Join Requests", () => {
       mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
         callback({
           $executeRaw: vi.fn().mockResolvedValue(undefined),
-          member: { findMany, ...extra },
+            member: {
+              findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+                where.id === "parent-1"
+                  ? {
+                      id: "parent-1",
+                      active: true,
+                      archivedAt: null,
+                      ageTier: "ADULT",
+                      inheritEmailFromId: null,
+                    }
+                  : {
+                      id: "child-1",
+                      active: true,
+                      archivedAt: null,
+                      ageTier: "INFANT",
+                      canLogin: false,
+                      parentMemberId: null,
+                      secondaryParentId: null,
+                      inheritEmailFromId: null,
+                      parent: null,
+                      secondaryParent: null,
+                    },
+              ),
+              findMany,
+              ...extra,
+            },
+            memberPartnerLink: { findUnique: vi.fn().mockResolvedValue(null) },
           familyGroupMember: { upsert: vi.fn() },
           familyGroupJoinRequest: { update: vi.fn() },
         })
@@ -2072,16 +2117,33 @@ describe("Admin Family Group Join Requests", () => {
               // #2716: one `findUnique` on the chosen parent decides the
               // mailbox, and the usable-source test reads BOTH inheritance
               // columns — see the sibling fixture above.
-              findUnique: vi.fn().mockResolvedValue({
-                id: "parent-1",
-                ageTier: "ADULT",
-                email: "parent@test.com",
-                archivedAt: null,
-                parentMemberId: null,
-                secondaryParentId: null,
-                inheritEmailFromId: null,
-                inheritEmailChoiceId: null,
-              }),
+                findUnique: vi.fn(
+                  async ({ where }: { where: { id: string } }) =>
+                    where.id === "child-1"
+                      ? {
+                          id: "child-1",
+                          active: true,
+                          ageTier: "INFANT",
+                          canLogin: false,
+                          archivedAt: null,
+                          parentMemberId: null,
+                          secondaryParentId: null,
+                          inheritEmailFromId: null,
+                          parent: null,
+                          secondaryParent: null,
+                        }
+                      : {
+                          id: "parent-1",
+                          active: true,
+                          ageTier: "ADULT",
+                          email: "parent@test.com",
+                          archivedAt: null,
+                          parentMemberId: null,
+                          secondaryParentId: null,
+                          inheritEmailFromId: null,
+                          inheritEmailChoiceId: null,
+                        },
+                ),
               // #2255: family-chain depth/cycle walks (see the sibling fixture
               // above) — the LINK cap, which #2716 left unchanged.
               findMany: vi.fn().mockImplementation(async ({ where }: any) =>
@@ -2099,6 +2161,9 @@ describe("Admin Family Group Join Requests", () => {
               ),
               update: vi.fn(),
             },
+              memberPartnerLink: {
+                findUnique: vi.fn().mockResolvedValue(null),
+              },
             familyGroupMember: { upsert: vi.fn() },
             familyGroupJoinRequest: { update: txUpdate },
           })

@@ -78,15 +78,12 @@ function migrationSql(name: string): string {
   return readFileSync(path.join(MIGRATIONS_DIR, name, "migration.sql"), "utf8");
 }
 
-/**
- * A verification case already owns a rollback transaction. Remove only a
- * migration's complete outer transaction envelope before running it there;
- * replaying the committed migration chain still executes the real envelope.
- */
-function sqlInsideVerificationTransaction(sql: string): string {
-  const match = sql.match(/^\s*BEGIN\s*;([\s\S]*)COMMIT\s*;\s*$/i);
-  if (!match) return sql;
-  return match[1];
+function hasExplicitTransactionEnvelope(sql: string): boolean {
+  const statements = splitSqlStatements(sql).map((statement) => statement.trim());
+  return (
+    /(?:^|\n)\s*BEGIN\s*;?\s*$/i.test(statements[0] ?? "") &&
+    /^COMMIT\s*;?$/i.test(statements.at(-1) ?? "")
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +220,27 @@ describe("data-migration verification wiring (#2418)", () => {
       ).toBeGreaterThan(0);
 
       const sql = migrationSql(fixture.migration);
+      const hasTransactionEnvelope = hasExplicitTransactionEnvelope(sql);
+      if (hasTransactionEnvelope) {
+        expect(
+          fixture.executionMode,
+          `${fixture.migration}: an explicit BEGIN/COMMIT migration must run byte-for-byte in an isolated database`,
+        ).toBe("isolated_database");
+      }
+      if (fixture.executionMode === "isolated_database") {
+        expect(
+          hasTransactionEnvelope,
+          `${fixture.migration}: isolated_database is reserved for a committed top-level transaction envelope`,
+        ).toBe(true);
+      }
+      for (const testCase of fixture.cases) {
+        if (testCase.expectedError) {
+          expect(
+            fixture.executionMode,
+            `${fixture.migration} / ${testCase.name}: expected database failures require an isolated database so rollback artifacts can be inspected`,
+          ).toBe("isolated_database");
+        }
+      }
       for (const mutant of fixture.mutants) {
         const occurrences = sql.split(mutant.find).length - 1;
         expect(
@@ -243,9 +261,18 @@ describe("data-migration verification wiring (#2418)", () => {
 // The real thing.
 // ---------------------------------------------------------------------------
 
+type CapturedDatabaseError = {
+  message: string;
+  code: string | null;
+  constraint: string | null;
+  detail: string | null;
+  hint: string | null;
+  serialized: string;
+};
+
 /** One case, executed once: either it blew up, or here are the rows it read. */
 type CaseOutcome = {
-  error: string | null;
+  error: CapturedDatabaseError | null;
   readings: { claim: string; expected: unknown[]; actual: unknown[] }[];
 };
 
@@ -289,8 +316,62 @@ function outcomeMismatched(outcome: CaseOutcome): boolean {
  * nothing about what the transform writes, so callers that need that stronger
  * proof read `detectedByMismatch` (#2418, F3).
  */
-function outcomeDetected(outcome: CaseOutcome): boolean {
-  return outcome.error !== null || outcomeMismatched(outcome);
+function captureDatabaseError(error: unknown): CapturedDatabaseError {
+  const record =
+    typeof error === "object" && error !== null
+      ? (error as Record<string, unknown>)
+      : {};
+  const stringField = (name: string) =>
+    typeof record[name] === "string" ? (record[name] as string) : null;
+  const message =
+    error instanceof Error ? error.message : stringField("message") ?? String(error);
+  let json = "";
+  try {
+    json = JSON.stringify(error);
+  } catch {
+    json = "[unserializable error]";
+  }
+  const fields = [
+    message,
+    stringField("code"),
+    stringField("constraint"),
+    stringField("detail"),
+    stringField("hint"),
+    json,
+  ].filter((value): value is string => value !== null);
+  return {
+    message,
+    code: stringField("code"),
+    constraint: stringField("constraint"),
+    detail: stringField("detail"),
+    hint: stringField("hint"),
+    serialized: fields.join("\n"),
+  };
+}
+
+function expectedErrorMismatch(
+  testCase: DataMigrationCase,
+  error: CapturedDatabaseError | null,
+): boolean {
+  const expected = testCase.expectedError;
+  if (!expected) return error !== null;
+  if (!error) return true;
+  if (error.message !== expected.message) return true;
+  if (expected.code && error.code !== expected.code) return true;
+  if (expected.constraint && error.constraint !== expected.constraint) return true;
+  if (expected.noDetailOrHint && (error.detail !== null || error.hint !== null)) {
+    return true;
+  }
+  return (expected.absentText ?? []).some((value) =>
+    error.serialized.includes(value),
+  );
+}
+
+function outcomeDetected(
+  testCase: DataMigrationCase,
+  outcome: CaseOutcome,
+): boolean {
+  return expectedErrorMismatch(testCase, outcome.error) || outcomeMismatched(outcome);
 }
 
 const describeWithDatabase = databaseUrl ? describe : describe.skip;
@@ -316,18 +397,22 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
    * same block, so 20260528120000 (which adds BookingStatus.AWAITING_REVIEW and
    * then writes it) would fail on history that is live today.
    */
-  async function runScript(sql: string, label: string) {
+  async function runScriptOn(queryClient: Client, sql: string, label: string) {
     for (const statement of splitSqlStatements(sql)) {
       try {
         // Test fixture: this repository's own committed migration SQL, against a
         // disposable database; no user input.
-        await db().query(statement);
+        await queryClient.query(statement);
       } catch (error) {
         throw new Error(
           `${label} failed on: ${statement.trim().slice(0, 160)} -- ${(error as Error).message}`,
         );
       }
     }
+  }
+
+  async function runScript(sql: string, label: string) {
+    await runScriptOn(db(), sql, label);
   }
 
   async function applyThrough(exclusiveEnd: number) {
@@ -350,17 +435,40 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
   ): Promise<RunOutcome> {
     const outcomes = new Map<string, CaseOutcome>();
     for (const testCase of fixture.cases) {
-      outcomes.set(testCase.name, await runCase(testCase, versions));
+      outcomes.set(
+        testCase.name,
+        fixture.executionMode === "isolated_database"
+          ? await runCaseInIsolatedDatabase(testCase, versions)
+          : await runCaseInTransaction(testCase, versions),
+      );
     }
     const outcome: RunOutcome = {
       outcomes,
-      detected: [...outcomes.values()].some(outcomeDetected),
+      detected: fixture.cases.some((testCase) =>
+        outcomeDetected(testCase, outcomes.get(testCase.name) as CaseOutcome),
+      ),
       detectedByMismatch: [...outcomes.values()].some(outcomeMismatched),
     };
     return outcome;
   }
 
-  async function runCase(
+  async function readExpectations(
+    queryClient: Client,
+    testCase: DataMigrationCase,
+    readings: CaseOutcome["readings"],
+  ) {
+    for (const expectation of testCase.expectations) {
+      // Test fixture: the fixture's own read-only assertion query.
+        const result = await queryClient.query(expectation.sql);
+      readings.push({
+        claim: expectation.claim,
+        expected: expectation.rows,
+        actual: result.rows,
+      });
+    }
+  }
+
+  async function runCaseInTransaction(
     testCase: DataMigrationCase,
     versions: string[],
   ): Promise<CaseOutcome> {
@@ -372,13 +480,10 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
       }
       for (const version of versions) {
         // The migration under test, or a deliberately mutated copy of it,
-        // inside a transaction this case will roll back. A migration may carry
-        // its own production BEGIN/COMMIT envelope; do not let that commit the
-        // fixture's enclosing transaction.
-        await runScript(
-          sqlInsideVerificationTransaction(version),
-          `applying the migration for "${testCase.name}"`,
-        );
+        // inside a transaction this case will roll back. Explicit BEGIN/COMMIT
+        // migrations take the isolated-database path below instead of being
+        // rewritten into a second program (INV-SSOT-002).
+        await runScript(version, `applying the migration for "${testCase.name}"`);
       }
       if (testCase.afterMigration?.trim()) {
         await runScript(
@@ -386,20 +491,87 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
           `exercising the migrated shape for "${testCase.name}"`,
         );
       }
-      for (const expectation of testCase.expectations) {
-        // Test fixture: the fixture's own read-only assertion query.
-        const result = await db().query(expectation.sql);
-        readings.push({
-          claim: expectation.claim,
-          expected: expectation.rows,
-          actual: result.rows,
-        });
-      }
+      await readExpectations(db(), testCase, readings);
       return { error: null, readings };
     } catch (error) {
-      return { error: (error as Error).message, readings };
+      return { error: captureDatabaseError(error), readings };
     } finally {
       await db().query("ROLLBACK");
+    }
+  }
+
+  function scratchConnectionString(databaseName: string): string {
+    const url = new URL(databaseUrl as string);
+    url.pathname = `/${databaseName}`;
+    return url.toString();
+  }
+
+  async function runCaseInIsolatedDatabase(
+    testCase: DataMigrationCase,
+    versions: string[],
+  ): Promise<CaseOutcome> {
+    if (!adminClient) throw new Error("admin database connection not open");
+    if (client) {
+      throw new Error(
+        "isolated migration verification requires the template database connection to be closed",
+      );
+    }
+
+    const caseDatabase = `dmv_case_${randomUUID().replaceAll("-", "")}`;
+    // Both names are generated locally; no request or fixture value is used.
+      await adminClient.query(
+      `CREATE DATABASE "${caseDatabase}" TEMPLATE "${scratchDatabase}"`,
+    );
+    const caseClient = new Client({
+      connectionString: scratchConnectionString(caseDatabase),
+    });
+    const readings: CaseOutcome["readings"] = [];
+    let capturedError: CapturedDatabaseError | null = null;
+
+    try {
+      await caseClient.connect();
+      if (testCase.seed.trim()) {
+        await runScriptOn(
+          caseClient,
+          testCase.seed,
+          `seeding "${testCase.name}"`,
+        );
+      }
+      for (const version of versions) {
+        try {
+          // One query containing the exact committed bytes, including its
+          // top-level BEGIN/COMMIT envelope. The case database is disposable,
+          // so the committed result needs no enclosing rollback transaction.
+            await caseClient.query(version);
+        } catch (error) {
+          capturedError = captureDatabaseError(error);
+          // A failure inside the explicit transaction leaves the connection in
+          // aborted state because the remaining COMMIT was not reached. Clear
+          // it before proving that no schema artifact survived the rollback.
+            await caseClient.query("ROLLBACK");
+          break;
+        }
+      }
+      if (testCase.afterMigration?.trim()) {
+        await runScriptOn(
+          caseClient,
+          testCase.afterMigration,
+          `exercising the migrated shape for "${testCase.name}"`,
+        );
+      }
+      await readExpectations(caseClient, testCase, readings);
+      return { error: capturedError, readings };
+    } catch (error) {
+      return {
+        error: capturedError ?? captureDatabaseError(error),
+        readings,
+      };
+    } finally {
+      await caseClient.end().catch(() => {});
+      // Test fixture: drops the UUID-named disposable case database.
+        await adminClient
+        .query(`DROP DATABASE IF EXISTS "${caseDatabase}" WITH (FORCE)`)
+        .catch(() => {});
     }
   }
 
@@ -436,6 +608,10 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
       await applyThrough(index);
 
       const sql = migrationSql(fixture.migration);
+      if (fixture.executionMode === "isolated_database") {
+        await client?.end();
+        client = undefined;
+      }
 
       runs.set(realRunKey(fixture.migration), await runCases(fixture, [sql]));
       if (fixture.idempotentReRun) {
@@ -460,6 +636,12 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
       }
 
       // Advance past this migration so the next fixture replays from here.
+      if (fixture.executionMode === "isolated_database") {
+        client = new Client({
+          connectionString: scratchConnectionString(scratchDatabase),
+        });
+        await client.connect();
+      }
       await applyThrough(index + 1);
     }
   }, 900_000);
@@ -483,7 +665,27 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
             .get(realRunKey(fixture.migration))
             ?.outcomes.get(testCase.name);
           expect(outcome, "the setup did not run this case").toBeDefined();
-          expect(outcome?.error, `${testCase.name} raised`).toBeNull();
+          if (testCase.expectedError) {
+            expect(outcome?.error, `${testCase.name} did not raise`).not.toBeNull();
+            expect(outcome?.error?.message).toBe(testCase.expectedError.message);
+            if (testCase.expectedError.code) {
+              expect(outcome?.error?.code).toBe(testCase.expectedError.code);
+            }
+            if (testCase.expectedError.constraint) {
+              expect(outcome?.error?.constraint).toBe(
+                testCase.expectedError.constraint,
+              );
+            }
+            if (testCase.expectedError.noDetailOrHint) {
+              expect(outcome?.error?.detail).toBeNull();
+              expect(outcome?.error?.hint).toBeNull();
+            }
+            for (const absent of testCase.expectedError.absentText ?? []) {
+              expect(outcome?.error?.serialized).not.toContain(absent);
+            }
+          } else {
+            expect(outcome?.error, `${testCase.name} raised`).toBeNull();
+          }
           for (const reading of outcome?.readings ?? []) {
             expect(reading.actual, reading.claim).toEqual(reading.expected);
           }
