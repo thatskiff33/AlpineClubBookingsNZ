@@ -10,6 +10,37 @@ function hasPrismaErrorCode(
   );
 }
 
+/**
+ * Collect the stable database error text Prisma and adapter-pg may place at
+ * different wrapper depths. The walker is deliberately cycle-safe: adapter
+ * errors are foreign objects and tests have caught versions that retain their
+ * parent through `cause`. Only the named error-bearing fields are traversed so
+ * request data or arbitrary model values cannot accidentally become a match.
+ */
+export function collectPrismaErrorText(error: unknown): string {
+  const visited = new WeakSet<object>();
+
+  function collect(value: unknown, depth: number): string[] {
+    if (depth > 8 || value == null) return [];
+    if (typeof value === "string") return [value];
+    if (typeof value !== "object") return [];
+    if (visited.has(value)) return [];
+    visited.add(value);
+
+    const record = value as Record<string, unknown>;
+    const parts: string[] = [];
+    for (const key of ["message", "detail", "constraint", "originalMessage"]) {
+      if (typeof record[key] === "string") parts.push(record[key] as string);
+    }
+    for (const key of ["meta", "driverAdapterError", "cause"]) {
+      if (record[key] != null) parts.push(...collect(record[key], depth + 1));
+    }
+    return parts;
+  }
+
+  return collect(error, 0).join("\n");
+}
+
 export function isPrismaUniqueConstraintError(error: unknown) {
   return hasPrismaErrorCode(error, "P2002");
 }

@@ -8,12 +8,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // wanted it, so a weaker copy cannot drift in beside this one.
 import { jobBlock } from "./helpers/ci-workflow";
 import { DATA_MIGRATION_VERIFICATIONS } from "../../../prisma/migration-verification";
-import {
-  splitSqlStatements,
-  stripSqlComments,
-} from "../../../prisma/migration-verification/split-statements";
+import { splitSqlStatements } from "../../../prisma/migration-verification/split-statements";
 import type {
   DataMigrationCase,
+  DataMigrationExpectation,
   DataMigrationReverseRun,
   DataMigrationVerification,
 } from "../../../prisma/migration-verification/types";
@@ -93,63 +91,12 @@ function rollbackSql(name: string): string {
   return readFileSync(path.join(MIGRATIONS_DIR, name, "rollback.sql"), "utf8");
 }
 
-/**
- * Statements that would END the transaction a verification case owns, or start
- * a second one. `ROLLBACK TO <savepoint>` is deliberately not one of them: it
- * unwinds to a savepoint and leaves the transaction open.
- */
-const TRANSACTION_CONTROL =
-  /^\s*(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|ROLLBACK(?!\s+TO\b)|PREPARE\s+TRANSACTION)\b/i;
-
-/**
- * A verification case already owns a rollback transaction. Remove only a
- * migration's complete outer transaction envelope before running it there;
- * replaying the committed migration chain still executes the real envelope.
- *
- * COMMENT-AWARE, AND THAT IS THE WHOLE POINT (#3369). This used to anchor
- * `BEGIN;` at the first byte of the file. Every `migration.sql` in this
- * repository opens with `BEGIN;`, so every one of them was stripped correctly —
- * and every `rollback.sql` opens with its operator header, which is a block of
- * `--` comments, so not one of them matched. Each therefore ran its OWN
- * `BEGIN;`/`COMMIT;` INSIDE the case's transaction, and PostgreSQL answers the
- * nested `BEGIN` with a warning and then honours the `COMMIT`: it commits the
- * CASE, seed rows and all. The harness's later `ROLLBACK` then warns that there
- * is no transaction in progress and does nothing.
- *
- * Measured on a real PostgreSQL before the fix: after #3369's two reverse
- * scripts ran, the chain database — which every case is supposed to leave
- * untouched — still held the case's 4 bookings and 3 members, `Booking`'s
- * `memberId` was back to NOT NULL because `20260928020000/rollback.sql`'s
- * `SET NOT NULL` had committed, and replaying `20260928030000` then died on its
- * own section 4 with "null value in column memberId violates not-null
- * constraint". Nothing in the failure pointed at a rollback script.
- *
- * `stripSqlComments` blanks comments to spaces and keeps every newline, so its
- * result is the same LENGTH as the source and offsets found in it index
- * straight back into the verbatim bytes — which is what lets this locate the
- * envelope without ever executing a re-rendered copy of the SQL. One home for
- * comment-stripping (`INV-SSOT`): the audit-writer census and the backfill
- * contracts read migrations through that same function.
- */
-function sqlInsideVerificationTransaction(sql: string): string {
-  const bare = stripSqlComments(sql);
-  const open = bare.match(/^\s*BEGIN\s*;/i);
-  const close = bare.match(/\bCOMMIT\s*;\s*$/i);
-  const inner =
-    open && close
-      ? sql.slice(open[0].length, bare.length - close[0].length)
-      : sql;
-  const leaked = splitSqlStatements(inner)
-    .map((statement) => stripSqlComments(statement).trim())
-    .filter((statement) => TRANSACTION_CONTROL.test(statement));
-  if (leaked.length > 0) {
-    throw new Error(
-      `refusing to run SQL that steers the transaction a verification case owns: ${leaked
-        .map((statement) => JSON.stringify(statement.slice(0, 60)))
-        .join(", ")}. A case wraps its work in BEGIN/ROLLBACK, so a COMMIT reaching PostgreSQL here makes that work permanent in the chain database every later fixture replays into (#3369).`,
-    );
-  }
-  return inner;
+function hasExplicitTransactionEnvelope(sql: string): boolean {
+  const statements = splitSqlStatements(sql).map((statement) => statement.trim());
+  return (
+    /(?:^|\n)\s*BEGIN\s*;?\s*$/i.test(statements[0] ?? "") &&
+    /^COMMIT\s*;?$/i.test(statements.at(-1) ?? "")
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -224,35 +171,6 @@ describe("data-migration verification wiring (#2418)", () => {
 
   it("registers at least one fixture", () => {
     expect(DATA_MIGRATION_VERIFICATIONS.length).toBeGreaterThan(0);
-  });
-
-  it("can take the transaction envelope off every migration and every rollback script", () => {
-    // #3369. A case wraps its work in BEGIN/ROLLBACK so the chain database it
-    // replays into is left exactly as it was. A `COMMIT;` that survives into
-    // that transaction commits it instead: the case's seed rows and schema
-    // changes become PERMANENT, the harness's own ROLLBACK then warns that
-    // there is no transaction and does nothing, and the failure surfaces
-    // migrations later as a replay that cannot fail failing. That is what
-    // happened here — the envelope matcher was anchored at the first byte of
-    // the file, so it stripped every `migration.sql` and not one `rollback.sql`,
-    // because a rollback script opens with its operator header.
-    //
-    // This needs no database, so it fails in `verify` in seconds rather than in
-    // the slow job that stands PostgreSQL up — and it grades every committed
-    // script, not only the ones a fixture happens to run today.
-    const offenders: string[] = [];
-    for (const name of migrationNames()) {
-      for (const file of ["migration.sql", "rollback.sql"]) {
-        const full = path.join(MIGRATIONS_DIR, name, file);
-        if (!existsSync(full)) continue;
-        try {
-          sqlInsideVerificationTransaction(readFileSync(full, "utf8"));
-        } catch (error) {
-          offenders.push(`${name}/${file}: ${(error as Error).message}`);
-        }
-      }
-    }
-    expect(offenders, offenders.join("\n\n")).toEqual([]);
   });
 
   it("runs every fixture file in the directory — imported is not registered", () => {
@@ -362,6 +280,27 @@ describe("data-migration verification wiring (#2418)", () => {
       ).toBeGreaterThan(0);
 
       const sql = migrationSql(fixture.migration);
+      const hasTransactionEnvelope = hasExplicitTransactionEnvelope(sql);
+      if (hasTransactionEnvelope) {
+        expect(
+          fixture.executionMode,
+          `${fixture.migration}: an explicit BEGIN/COMMIT migration must run byte-for-byte in an isolated database`,
+        ).toBe("isolated_database");
+      }
+      if (fixture.executionMode === "isolated_database") {
+        expect(
+          hasTransactionEnvelope,
+          `${fixture.migration}: isolated_database is reserved for a committed top-level transaction envelope`,
+        ).toBe(true);
+      }
+      for (const testCase of fixture.cases) {
+        if (testCase.expectedError) {
+          expect(
+            fixture.executionMode,
+            `${fixture.migration} / ${testCase.name}: expected database failures require an isolated database so rollback artifacts can be inspected`,
+          ).toBe("isolated_database");
+        }
+      }
       for (const mutant of fixture.mutants) {
         const occurrences = sql.split(mutant.find).length - 1;
         expect(
@@ -382,9 +321,18 @@ describe("data-migration verification wiring (#2418)", () => {
 // The real thing.
 // ---------------------------------------------------------------------------
 
+type CapturedDatabaseError = {
+  message: string;
+  code: string | null;
+  constraint: string | null;
+  detail: string | null;
+  hint: string | null;
+  serialized: string;
+};
+
 /** One case, executed once: either it blew up, or here are the rows it read. */
 type CaseOutcome = {
-  error: string | null;
+  error: CapturedDatabaseError | null;
   readings: { claim: string; expected: unknown[]; actual: unknown[] }[];
 };
 
@@ -437,8 +385,62 @@ function outcomeMismatched(outcome: CaseOutcome): boolean {
  * nothing about what the transform writes, so callers that need that stronger
  * proof read `detectedByMismatch` (#2418, F3).
  */
-function outcomeDetected(outcome: CaseOutcome): boolean {
-  return outcome.error !== null || outcomeMismatched(outcome);
+function captureDatabaseError(error: unknown): CapturedDatabaseError {
+  const record =
+    typeof error === "object" && error !== null
+      ? (error as Record<string, unknown>)
+      : {};
+  const stringField = (name: string) =>
+    typeof record[name] === "string" ? (record[name] as string) : null;
+  const message =
+    error instanceof Error ? error.message : stringField("message") ?? String(error);
+  let json = "";
+  try {
+    json = JSON.stringify(error);
+  } catch {
+    json = "[unserializable error]";
+  }
+  const fields = [
+    message,
+    stringField("code"),
+    stringField("constraint"),
+    stringField("detail"),
+    stringField("hint"),
+    json,
+  ].filter((value): value is string => value !== null);
+  return {
+    message,
+    code: stringField("code"),
+    constraint: stringField("constraint"),
+    detail: stringField("detail"),
+    hint: stringField("hint"),
+    serialized: fields.join("\n"),
+  };
+}
+
+function expectedErrorMismatch(
+  testCase: DataMigrationCase,
+  error: CapturedDatabaseError | null,
+): boolean {
+  const expected = testCase.expectedError;
+  if (!expected) return error !== null;
+  if (!error) return true;
+  if (error.message !== expected.message) return true;
+  if (expected.code && error.code !== expected.code) return true;
+  if (expected.constraint && error.constraint !== expected.constraint) return true;
+  if (expected.noDetailOrHint && (error.detail !== null || error.hint !== null)) {
+    return true;
+  }
+  return (expected.absentText ?? []).some((value) =>
+    error.serialized.includes(value),
+  );
+}
+
+function outcomeDetected(
+  testCase: DataMigrationCase,
+  outcome: CaseOutcome,
+): boolean {
+  return expectedErrorMismatch(testCase, outcome.error) || outcomeMismatched(outcome);
 }
 
 const describeWithDatabase = databaseUrl ? describe : describe.skip;
@@ -464,18 +466,22 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
    * same block, so 20260528120000 (which adds BookingStatus.AWAITING_REVIEW and
    * then writes it) would fail on history that is live today.
    */
-  async function runScript(sql: string, label: string) {
+  async function runScriptOn(queryClient: Client, sql: string, label: string) {
     for (const statement of splitSqlStatements(sql)) {
       try {
         // Test fixture: this repository's own committed migration SQL, against a
         // disposable database; no user input.
-        await db().query(statement);
+        await queryClient.query(statement);
       } catch (error) {
         throw new Error(
           `${label} failed on: ${statement.trim().slice(0, 160)} -- ${(error as Error).message}`,
         );
       }
     }
+  }
+
+  async function runScript(sql: string, label: string) {
+    await runScriptOn(db(), sql, label);
   }
 
   async function applyThrough(exclusiveEnd: number) {
@@ -504,9 +510,11 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
    * Roll the case back — then PROVE the transaction just rolled back is the one
    * the case opened (#3369).
    *
-   * `sqlInsideVerificationTransaction` refuses SQL that steers the transaction,
-   * which is the fix; this is the guard that does not depend on RECOGNISING the
-   * SQL that would break it. A case that escaped its transaction has already
+   * Nothing rewrites SQL any more, and a migration carrying its own envelope
+   * runs in a disposable database instead (INV-SSOT-002, #3292), so the way a
+   * case used to escape is gone. This guard stays because it does not depend on
+   * RECOGNISING the SQL that would break it, and because the transaction path
+   * below is still how every envelope-free migration runs. A case that escaped its transaction has already
    * written its seed rows and its schema changes permanently into the chain
    * database, and every later fixture replays into that — so the symptom
    * surfaces migrations away from the cause, as a replay that cannot fail
@@ -556,11 +564,18 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
   ): Promise<RunOutcome> {
     const outcomes = new Map<string, CaseOutcome>();
     for (const testCase of fixture.cases) {
-      outcomes.set(testCase.name, await runCase(testCase, versions));
+      outcomes.set(
+        testCase.name,
+        fixture.executionMode === "isolated_database"
+          ? await runCaseInIsolatedDatabase(testCase, versions)
+          : await runCaseInTransaction(testCase, versions),
+      );
     }
     const outcome: RunOutcome = {
       outcomes,
-      detected: [...outcomes.values()].some(outcomeDetected),
+      detected: fixture.cases.some((testCase) =>
+        outcomeDetected(testCase, outcomes.get(testCase.name) as CaseOutcome),
+      ),
       detectedByMismatch: [...outcomes.values()].some(outcomeMismatched),
     };
     return outcome;
@@ -568,8 +583,22 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
 
   /**
    * One case, migrated, then REVERSED — the thing nothing executed before
-   * #3369. `overrides` lets a mutant replace one script's body; everything
-   * else runs verbatim from disk, exactly as an operator would paste it.
+   * #3369. `overrides` lets a mutant replace one script's body; everything else
+   * runs verbatim from disk, exactly as an operator would paste it.
+   *
+   * IN A DISPOSABLE DATABASE, BYTE-FOR-BYTE, like every other execution in this
+   * file since #3292 (INV-SSOT-002). This used to open a transaction here and
+   * strip each script's `BEGIN;`/`COMMIT;` so it would fit inside it, which is
+   * precisely what let a surviving `COMMIT` commit the case itself. Two things
+   * make that impossible now rather than merely guarded against: the scripts
+   * are never rewritten, so there is no envelope to get wrong; and a fixture
+   * whose migration carries an envelope runs `isolated_database`, where the
+   * shared chain connection is CLOSED for the duration — so there is no case
+   * transaction for a stray `COMMIT` to reach even in principle.
+   *
+   * What a reverse run proves is unchanged, and is now proved against the exact
+   * committed bytes: seed the case, apply the real migration, run the real
+   * `rollback.sql` files in the order an operator runs them, and read the rows.
    */
   async function runReverse(
     testCase: DataMigrationCase,
@@ -577,41 +606,79 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     run: DataMigrationReverseRun,
     overrides: Map<string, string>,
   ): Promise<CaseOutcome> {
-    const readings: CaseOutcome["readings"] = [];
-    const xid = await beginCase();
-    try {
-      if (testCase.seed.trim()) {
-        await runScript(testCase.seed, `seeding "${testCase.name}"`);
-      }
-      await runScript(
-        sqlInsideVerificationTransaction(migrationBody),
-        `applying the migration before reversing it for "${testCase.name}"`,
+    if (!adminClient) throw new Error("admin database connection not open");
+    if (client) {
+      throw new Error(
+        "reverse verification requires the template database connection to be closed",
       );
-      for (const script of run.scripts) {
-        const body = overrides.get(script) ?? rollbackSql(script);
-        await runScript(
-          sqlInsideVerificationTransaction(body),
-          `running ${script}/rollback.sql for "${run.name}"`,
-        );
+    }
+
+    const caseDatabase = `dmv_rev_${randomUUID().replaceAll("-", "")}`;
+    // Both names are generated locally; no request or fixture value is used.
+    await adminClient.query(
+      `CREATE DATABASE "${caseDatabase}" TEMPLATE "${scratchDatabase}"`,
+    );
+    const caseClient = new Client({
+      connectionString: scratchConnectionString(caseDatabase),
+    });
+    const readings: CaseOutcome["readings"] = [];
+    let capturedError: CapturedDatabaseError | null = null;
+
+    try {
+      await caseClient.connect();
+      if (testCase.seed.trim()) {
+        await runScriptOn(caseClient, testCase.seed, `seeding "${testCase.name}"`);
       }
-      for (const expectation of run.expectations ?? []) {
-        // Test fixture: the fixture's own read-only assertion query.
-        const result = await db().query(expectation.sql);
-        readings.push({
-          claim: expectation.claim,
-          expected: expectation.rows,
-          actual: result.rows,
-        });
+      const bodies = [
+        migrationBody,
+        ...run.scripts.map(
+          (script) => overrides.get(script) ?? rollbackSql(script),
+        ),
+      ];
+      for (const body of bodies) {
+        try {
+          // The exact committed bytes, envelope included.
+          await caseClient.query(body);
+        } catch (error) {
+          capturedError = captureDatabaseError(error);
+          // A failure inside an explicit transaction leaves the connection in
+          // aborted state because the closing COMMIT was never reached. Clear
+          // it so the expectations below can still be read — a run that must
+          // RAISE is scored on its refusal, not silenced by it.
+          await caseClient.query("ROLLBACK").catch(() => {});
+          break;
+        }
       }
-      return { error: null, readings };
+      await readExpectations(caseClient, run.expectations ?? [], readings);
+      return { error: capturedError, readings };
     } catch (error) {
-      return { error: (error as Error).message, readings };
+      return { error: capturedError ?? captureDatabaseError(error), readings };
     } finally {
-      await endCase(xid, `reverse "${run.name}" of "${testCase.name}"`);
+      await caseClient.end().catch(() => {});
+      // Test fixture: drops the UUID-named disposable case database.
+      await adminClient
+        .query(`DROP DATABASE IF EXISTS "${caseDatabase}" WITH (FORCE)`)
+        .catch(() => {});
     }
   }
 
-  async function runCase(
+  async function readExpectations(
+    queryClient: Client,
+    expectations: DataMigrationExpectation[],
+    readings: CaseOutcome["readings"],
+  ) {
+    for (const expectation of expectations) {
+      // Test fixture: the fixture's own read-only assertion query.
+        const result = await queryClient.query(expectation.sql);
+      readings.push({
+        claim: expectation.claim,
+        expected: expectation.rows,
+        actual: result.rows,
+      });
+    }
+  }
+
+  async function runCaseInTransaction(
     testCase: DataMigrationCase,
     versions: string[],
   ): Promise<CaseOutcome> {
@@ -623,13 +690,10 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
       }
       for (const version of versions) {
         // The migration under test, or a deliberately mutated copy of it,
-        // inside a transaction this case will roll back. A migration may carry
-        // its own production BEGIN/COMMIT envelope; do not let that commit the
-        // fixture's enclosing transaction.
-        await runScript(
-          sqlInsideVerificationTransaction(version),
-          `applying the migration for "${testCase.name}"`,
-        );
+        // inside a transaction this case will roll back. Explicit BEGIN/COMMIT
+        // migrations take the isolated-database path below instead of being
+        // rewritten into a second program (INV-SSOT-002).
+        await runScript(version, `applying the migration for "${testCase.name}"`);
       }
       if (testCase.afterMigration?.trim()) {
         await runScript(
@@ -637,20 +701,87 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
           `exercising the migrated shape for "${testCase.name}"`,
         );
       }
-      for (const expectation of testCase.expectations) {
-        // Test fixture: the fixture's own read-only assertion query.
-        const result = await db().query(expectation.sql);
-        readings.push({
-          claim: expectation.claim,
-          expected: expectation.rows,
-          actual: result.rows,
-        });
-      }
+      await readExpectations(db(), testCase.expectations, readings);
       return { error: null, readings };
     } catch (error) {
-      return { error: (error as Error).message, readings };
+      return { error: captureDatabaseError(error), readings };
     } finally {
       await endCase(xid, `case "${testCase.name}"`);
+    }
+  }
+
+  function scratchConnectionString(databaseName: string): string {
+    const url = new URL(databaseUrl as string);
+    url.pathname = `/${databaseName}`;
+    return url.toString();
+  }
+
+  async function runCaseInIsolatedDatabase(
+    testCase: DataMigrationCase,
+    versions: string[],
+  ): Promise<CaseOutcome> {
+    if (!adminClient) throw new Error("admin database connection not open");
+    if (client) {
+      throw new Error(
+        "isolated migration verification requires the template database connection to be closed",
+      );
+    }
+
+    const caseDatabase = `dmv_case_${randomUUID().replaceAll("-", "")}`;
+    // Both names are generated locally; no request or fixture value is used.
+      await adminClient.query(
+      `CREATE DATABASE "${caseDatabase}" TEMPLATE "${scratchDatabase}"`,
+    );
+    const caseClient = new Client({
+      connectionString: scratchConnectionString(caseDatabase),
+    });
+    const readings: CaseOutcome["readings"] = [];
+    let capturedError: CapturedDatabaseError | null = null;
+
+    try {
+      await caseClient.connect();
+      if (testCase.seed.trim()) {
+        await runScriptOn(
+          caseClient,
+          testCase.seed,
+          `seeding "${testCase.name}"`,
+        );
+      }
+      for (const version of versions) {
+        try {
+          // One query containing the exact committed bytes, including its
+          // top-level BEGIN/COMMIT envelope. The case database is disposable,
+          // so the committed result needs no enclosing rollback transaction.
+            await caseClient.query(version);
+        } catch (error) {
+          capturedError = captureDatabaseError(error);
+          // A failure inside the explicit transaction leaves the connection in
+          // aborted state because the remaining COMMIT was not reached. Clear
+          // it before proving that no schema artifact survived the rollback.
+            await caseClient.query("ROLLBACK");
+          break;
+        }
+      }
+      if (testCase.afterMigration?.trim()) {
+        await runScriptOn(
+          caseClient,
+          testCase.afterMigration,
+          `exercising the migrated shape for "${testCase.name}"`,
+        );
+      }
+      await readExpectations(caseClient, testCase.expectations, readings);
+      return { error: capturedError, readings };
+    } catch (error) {
+      return {
+        error: capturedError ?? captureDatabaseError(error),
+        readings,
+      };
+    } finally {
+      await caseClient.end().catch(() => {});
+      // Test fixture: drops the UUID-named disposable case database.
+        await adminClient
+        .query(`DROP DATABASE IF EXISTS "${caseDatabase}" WITH (FORCE)`)
+        .catch(() => {});
     }
   }
 
@@ -687,6 +818,10 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
       await applyThrough(index);
 
       const sql = migrationSql(fixture.migration);
+      if (fixture.executionMode === "isolated_database") {
+        await client?.end();
+        client = undefined;
+      }
 
       runs.set(realRunKey(fixture.migration), await runCases(fixture, [sql]));
       if (fixture.idempotentReRun) {
@@ -747,6 +882,12 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
       }
 
       // Advance past this migration so the next fixture replays from here.
+      if (fixture.executionMode === "isolated_database") {
+        client = new Client({
+          connectionString: scratchConnectionString(scratchDatabase),
+        });
+        await client.connect();
+      }
       await applyThrough(index + 1);
     }
   }, 900_000);
@@ -770,7 +911,27 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
             .get(realRunKey(fixture.migration))
             ?.outcomes.get(testCase.name);
           expect(outcome, "the setup did not run this case").toBeDefined();
-          expect(outcome?.error, `${testCase.name} raised`).toBeNull();
+          if (testCase.expectedError) {
+            expect(outcome?.error, `${testCase.name} did not raise`).not.toBeNull();
+            expect(outcome?.error?.message).toBe(testCase.expectedError.message);
+            if (testCase.expectedError.code) {
+              expect(outcome?.error?.code).toBe(testCase.expectedError.code);
+            }
+            if (testCase.expectedError.constraint) {
+              expect(outcome?.error?.constraint).toBe(
+                testCase.expectedError.constraint,
+              );
+            }
+            if (testCase.expectedError.noDetailOrHint) {
+              expect(outcome?.error?.detail).toBeNull();
+              expect(outcome?.error?.hint).toBeNull();
+            }
+            for (const absent of testCase.expectedError.absentText ?? []) {
+              expect(outcome?.error?.serialized).not.toContain(absent);
+            }
+          } else {
+            expect(outcome?.error, `${testCase.name} raised`).toBeNull();
+          }
           for (const reading of outcome?.readings ?? []) {
             expect(reading.actual, reading.claim).toEqual(reading.expected);
           }
@@ -810,7 +971,7 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
             expect(outcome, "the setup did not run this reverse").toBeDefined();
             if (run.raises) {
               expect(
-                outcome?.error ?? "",
+                outcome?.error?.message ?? "",
                 `${run.name} had to refuse with ${run.raises} and did not`,
               ).toContain(run.raises);
               return;
@@ -840,8 +1001,10 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
               if (!outcome) return false;
               // A run that must refuse is detected by no longer refusing for
               // the declared reason — a different error, or none at all.
-              if (run.raises) return !(outcome.error ?? "").includes(run.raises);
-              return outcomeDetected(outcome);
+              if (run.raises) {
+                return !(outcome.error?.message ?? "").includes(run.raises);
+              }
+              return outcomeDetected(testCase, outcome);
             });
             expect(
               detectedBy.length > 0,

@@ -34,6 +34,12 @@ import {
   dependentSubject,
   unreadableDateOfBirthRefusal,
 } from "@/lib/member-application-date-of-birth";
+import {
+  MEMBER_PARTNER_RELATIONSHIP_SELECT,
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  memberHasPartnerRelationshipWith,
+  type MemberPartnerRelationshipFacts,
+} from "@/lib/member-parent-partner-exclusivity";
 import { formatDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 
@@ -184,7 +190,7 @@ export type MappingApplicationInput = {
 
 type MappingReadClient = typeof prisma | Prisma.TransactionClient;
 
-export type MappingTargetRecord = {
+export type MappingTargetRecord = MemberPartnerRelationshipFacts & {
   id: string;
   email: string;
   firstName: string;
@@ -283,6 +289,7 @@ export async function loadApprovalMappingTargets(
       updatedAt: true,
       financeAccessLevel: true,
       accessRoles: { select: { role: true, roleDefinitionId: true } },
+      ...MEMBER_PARTNER_RELATIONSHIP_SELECT,
       familyGroupMemberships: { select: { familyGroupId: true } },
       subscriptions: { where: { seasonYear }, select: { id: true }, take: 1 },
       seasonalMembershipAssignments: {
@@ -542,6 +549,28 @@ export async function computeApprovalMappingOutcomes(params: {
     blockingErrors.push(
       `The same existing member (${memberId}) cannot be mapped to more than one person on this application.`,
     );
+  }
+
+  // When both sides map to existing records, the prospective direct-parent
+  // pair is already knowable in preview. Refuse any PENDING or CONFIRMED
+  // partner row here so preview, tokenised recompute, and the guarded write all
+  // tell the admin the same stable reason (INV-LIFE-024/041).
+  const applicantTargetId = persons.find(
+    (person) => person.ref.kind === "applicant",
+  )?.targetMemberId;
+  if (applicantTargetId) {
+    for (const person of persons) {
+      if (person.ref.kind !== "family" || !person.setParentLink) continue;
+      const target = person.targetMemberId
+        ? targetsById.get(person.targetMemberId)
+        : undefined;
+      const isPartner = target
+        ? memberHasPartnerRelationshipWith(target, applicantTargetId)
+        : false;
+      if (isPartner) {
+        person.errors.push(MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE);
+      }
+    }
   }
 
   return { persons, blockingErrors };
@@ -960,7 +989,11 @@ export function verifyApprovalMappingPreviewToken(
 
 async function suggestCandidates(
   db: MappingReadClient,
-  input: { email?: string | null; firstName: string; lastName: string },
+  input: {
+    email?: string | null;
+    firstName: string;
+    lastName: string;
+  },
 ): Promise<CandidateSuggestion[]> {
   const firstName = input.firstName.trim();
   const lastName = input.lastName.trim();
@@ -986,6 +1019,10 @@ async function suggestCandidates(
   }
 
   const rows = await db.member.findMany({
+    // Do not silently filter a direct partner here. Suggestions and live
+    // search must still show the existing record so the admin does not create
+    // a duplicate; selecting it recomputes the preview with the stable,
+    // blocking INV-LIFE-024 reason above.
     where: { archivedAt: null, OR: orClauses },
     select: {
       id: true,
