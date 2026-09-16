@@ -472,12 +472,12 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
 
     // ONE TASK PER UNREADABLE STRAND, and this fixture has two of them: it is a
     // whole booking predating `BookingGuestNight`, so NEITHER guest's rows can be
-    // read. That is the shape the raise commits to - the occurrence key is minted
-    // per strand, so per strand is what "exactly one" can mean idempotently, and
-    // a booking with one unreadable strand (the ordinary case) raises exactly one
-    // task. Asserted as the count it is rather than loosened to `toHaveBeenCalled`,
-    // because a change from two to one here would be a real change of behaviour.
-    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
+    // read. #3498 (owner decision D1) moved the shape the raise commits to: the
+    // occurrence key is minted over the whole EDIT, so ONE parked removal is one
+    // work item however many strands it records - and both strands' evidence is
+    // on it. Asserted as the count it is rather than loosened to
+    // `toHaveBeenCalled`, because a change here is a real change of behaviour.
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
     // Spelled out rather than inferred from the mock, whose `calls` are `any[]`:
     // an inferred row would make every assertion below vacuously true.
     type RaisedTaskRow = {
@@ -491,6 +491,10 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
         occurrence: {
           bookingGuestId: string;
           surrenderedNightDates: string[];
+          otherStrands?: Array<{
+            bookingGuestId: string;
+            surrenderedNightDates: string[];
+          }>;
         };
       };
     };
@@ -514,17 +518,21 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
         "bookingModificationId",
       );
     }
-    // Two strands, two DIFFERENT keys - not one occurrence written twice.
-    expect(new Set(raisedRows.map((row) => row.occurrenceKey)).size).toBe(2);
+    // #3498: both strands, ONE key - the identity is the edit's.
+    const occurrence = raisedRows[0].reviewContext.occurrence;
+    const strands = [occurrence, ...(occurrence.otherStrands ?? [])];
+    expect(strands.map((strand) => strand.bookingGuestId).sort()).toEqual([
+      "g-adult",
+      "g-child",
+    ]);
     // And exactly one of them is the guest who actually left: only their strand
-    // surrenders nights, which is the strand carrying the money.
-    const surrendering = raisedRows.filter(
-      (row) => row.reviewContext.occurrence.surrenderedNightDates.length > 0,
+    // surrenders nights, which is the strand carrying the money - so it is the
+    // one the item LEADS with, which is what an officer reads first.
+    const surrendering = strands.filter(
+      (strand) => strand.surrenderedNightDates.length > 0,
     );
     expect(surrendering).toHaveLength(1);
-    expect(surrendering[0].reviewContext.occurrence.bookingGuestId).toBe(
-      "g-child",
-    );
+    expect(occurrence.bookingGuestId).toBe("g-child");
 
     // AND NO MONEY MOVED. The settlement leg ran with a zero delta and no
     // options, so there is no refund, no credit and no Xero adjustment; the
@@ -609,9 +617,9 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
       params: Promise.resolve({ id: "b1", guestId: "g-child" }),
     });
     expect(res.status).toBe(200);
-    // The park really happened, so the assertion below is reading real rows
-    // rather than agreeing with an empty list.
-    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
+    // The park really happened, so the assertion below is reading a real row
+    // rather than agreeing with an empty list. ONE row since #3498.
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
     return (tx.manualRefundTask.create.mock.calls as unknown[][]).map(
       (call) => (call[0] as { data: { paymentId: string | null } }).data.paymentId,
     );
@@ -620,7 +628,7 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
   it("carries the captured payment id, so a confirmed amount can go back to the card", async () => {
     // A PAID booking with a SUCCEEDED capture: both halves of the gate are true.
     expect(await paymentIdsOnRaisedTasks({ payment: capturedPayment() })).toEqual(
-      ["pay_1", "pay_1"],
+      ["pay_1"],
     );
   });
 
@@ -633,7 +641,7 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
       await paymentIdsOnRaisedTasks({
         payment: capturedPayment({ status: "PENDING" }),
       }),
-    ).toEqual([null, null]);
+    ).toEqual([null]);
   });
 
   it("carries no payment id when the booking is not in a settled status", async () => {
@@ -645,7 +653,7 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
         status: BookingStatus.PENDING,
         payment: capturedPayment(),
       }),
-    ).toEqual([null, null]);
+    ).toEqual([null]);
   });
 
   it("hands the fence's own machine code back to the caller, not a bare 409", async () => {

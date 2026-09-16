@@ -4309,17 +4309,26 @@ describe("PUT /api/bookings/[id]/modify", () => {
       expect(tx.bookingGuest.delete).toHaveBeenCalledWith({ where: { id: "g2" } });
       expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
 
-      // TWO tasks: the unreadable strand, and the readable one whose evidence this
-      // edit is about to delete.
-      expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
-      const occurrences = tx.manualRefundTask.create.mock.calls.map((call) => {
-        const data = (call[0] as { data: { reviewContext: unknown } }).data;
-        const context = data.reviewContext as {
-          occurrence: { cause: string; bookingGuestId: string };
-        };
-        return context.occurrence;
-      });
-      expect(occurrences).toEqual(
+      // ONE task since #3498 (owner decision D1), carrying BOTH strands: the
+      // unreadable one, and the readable one whose evidence this edit is about
+      // to delete. Which strands are recorded is unchanged; how many things an
+      // officer is handed to price is what moved.
+      expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
+      const data = (
+        tx.manualRefundTask.create.mock.calls[0][0] as {
+          data: { reviewContext: unknown };
+        }
+      ).data;
+      const occurrence = (
+        data.reviewContext as {
+          occurrence: {
+            cause: string;
+            bookingGuestId: string;
+            otherStrands?: Array<{ cause: string; bookingGuestId: string }>;
+          };
+        }
+      ).occurrence;
+      expect([occurrence, ...(occurrence.otherStrands ?? [])]).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             bookingGuestId: "g1",
@@ -4331,6 +4340,10 @@ describe("PUT /api/bookings/[id]/modify", () => {
           }),
         ]),
       );
+      // And the item LEADS with the strand the edit actually moves - the guest
+      // who left, whose nights are the money - rather than with whichever strand
+      // the planner happened to walk first.
+      expect(occurrence.bookingGuestId).toBe("g2");
     });
 
     it("CONTROL: the identical edit on a readable booking still prices and settles", async () => {

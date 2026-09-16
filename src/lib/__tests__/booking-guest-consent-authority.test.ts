@@ -772,23 +772,23 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
     return booking;
   }
 
-  /** The one `manualRefundTask.create` call whose task is about `guestId`. */
-  function raisedFor(tx: ReturnType<typeof makeTx>, guestId: string) {
+  /**
+   * THE one `manualRefundTask.create` call this removal makes (#3498).
+   *
+   * It used to be one call per unpriceable strand, and this helper picked the
+   * one naming a guest. Owner decision D1 made a parked edit raise ONE item
+   * carrying every strand, so the helper now asserts that there is exactly one
+   * item and hands back the row.
+   */
+  function raisedTask(tx: ReturnType<typeof makeTx>) {
     const calls = tx.manualRefundTask.create.mock.calls as Array<
       [{ data: Record<string, never> }]
     >;
-    const match = calls
-      .map((call) => call[0].data as Record<string, never>)
-      .filter(
-        (data) =>
-          (
-            data.reviewContext as unknown as {
-              occurrence: { bookingGuestId: string };
-            }
-          ).occurrence.bookingGuestId === guestId,
-      );
-    expect(match, `expected exactly one task about ${guestId}`).toHaveLength(1);
-    return match[0] as unknown as {
+    expect(
+      calls,
+      "a parked removal raises exactly one work item (#3498 D1)",
+    ).toHaveLength(1);
+    return calls[0][0].data as unknown as {
       amountCents: number | null;
       raisedAmountCents: number | null;
       kind: string;
@@ -798,6 +798,7 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
       reviewContext: {
         bookingModificationId: string | null;
         occurrence: {
+          bookingId: string;
           bookingGuestId: string;
           cause: string;
           surrenderedNightDates: string[];
@@ -805,9 +806,37 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
             guestTotalCents: number | null;
             nightPrices: Array<{ date: string; priceCents: number | null }>;
           };
+          otherStrands?: Array<{
+            bookingGuestId: string;
+            cause: string;
+            surrenderedNightDates: string[];
+            storedEvidence: {
+              guestTotalCents: number | null;
+              nightPrices: Array<{ date: string; priceCents: number | null }>;
+            };
+          }>;
         };
       };
     };
+  }
+
+  /** That one item's record FOR one guest strand, wherever it sits on it. */
+  function strandFor(tx: ReturnType<typeof makeTx>, guestId: string) {
+    const occurrence = raisedTask(tx).reviewContext.occurrence;
+    const match = [
+      {
+        bookingGuestId: occurrence.bookingGuestId,
+        cause: occurrence.cause,
+        surrenderedNightDates: occurrence.surrenderedNightDates,
+        storedEvidence: occurrence.storedEvidence,
+      },
+      ...(occurrence.otherStrands ?? []),
+    ].filter((strand) => strand.bookingGuestId === guestId);
+    expect(
+      match,
+      `expected exactly one record about ${guestId}`,
+    ).toHaveLength(1);
+    return match[0]!;
   }
 
   it("takes a declining member off, and parks the money rather than settling it", async () => {
@@ -828,11 +857,9 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
 
     // The money half: parked, not settled and not invented.
     expect(result.financialReviewPending).toBe(true);
-    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
-    expect(result.financialReviewTaskIds).toEqual([
-      "task-raised",
-      "task-raised-2",
-    ]);
+    // #3498 D1: ONE item for the whole removal, however many strands it records.
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
+    expect(result.financialReviewTaskId).toBe("task-raised");
     expect(result.priceDiffCents).toBe(0);
     expect(result.refundAmountCents).toBe(0);
     expect(result.accountCreditAmountCents).toBe(0);
@@ -849,7 +876,7 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
 
     // The task is RAISED WITH NO AMOUNT. Null is "not yet known"; a zero here
     // would be a financial statement the club has not made (epic #2797).
-    const raised = raisedFor(tx, COMPANION_GUEST);
+    const raised = raisedTask(tx);
     expect(raised.amountCents).toBeNull();
     expect(raised.raisedAmountCents).toBeNull();
     expect(raised.kind).toBe("EDIT_FINANCIAL_REVIEW");
@@ -893,17 +920,18 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
       consentAuthority: authority("CONSENT_DECLINE"),
     });
 
-    const departing = raisedFor(tx, TARGET_GUEST);
+    const departing = strandFor(tx, TARGET_GUEST);
 
     // The nights that left the booking, and therefore the money.
-    expect(
-      departing.reviewContext.occurrence.surrenderedNightDates,
-    ).toEqual(["2026-11-02", "2026-11-03"]);
+    expect(departing.surrenderedNightDates).toEqual([
+      "2026-11-02",
+      "2026-11-03",
+    ]);
 
     // And the amount is recoverable from the row: the real per-night prices as
     // they stood, plus the stored guest total they add up to. This is the number
     // the delete was about to destroy.
-    expect(departing.reviewContext.occurrence.storedEvidence).toEqual({
+    expect(departing.storedEvidence).toEqual({
       guestTotalCents: 12000,
       nightPrices: [
         { date: "2026-11-02", priceCents: 6000 },
@@ -915,28 +943,48 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
     // the admin is confirming a figure the rows already show rather than
     // reconstructing one. The three "we cannot read this strand" causes would be
     // false of it.
-    expect(departing.reviewContext.occurrence.cause).toBe(
-      "COUNTERPART_STRAND_UNREADABLE",
-    );
+    expect(departing.cause).toBe("COUNTERPART_STRAND_UNREADABLE");
 
-    // The operator sentence matches the cause. "The exact sold price could not be
-    // read" is FALSE here and would contradict the priced rows printed beside it.
-    expect(departing.reason).toContain("2026-11-02");
-    expect(departing.reason).not.toContain(
-      "The exact sold price could not be read",
-    );
+    /*
+      THE ITEM LEADS WITH THE DEPARTING STRAND, which is the money (#3498).
+      `parkedEditOccurrence` ranks a strand whose night set the edit MOVES above
+      one it leaves alone, so the guest who left heads the card and the companion
+      who stayed is the supporting detail. Getting this the other way round is
+      exactly the production failure: seven cards, and the only tell between them
+      a line reading "Nights given back:" with dates instead of "none".
+    */
+    const task = raisedTask(tx);
+    expect(task.reviewContext.occurrence.bookingGuestId).toBe(TARGET_GUEST);
+
+    /*
+      The operator sentence carries the whole edit's nights, and its second
+      sentence is the one that is true of the whole edit. "The exact sold price
+      could not be read" is FALSE of the departing strand alone - but this item
+      also covers a companion whose rows genuinely cannot be read, and that is
+      why no money moved. On an edit where EVERY recorded strand reads cleanly
+      the sentence is #3032's, which the builder's own tests pin.
+    */
+    expect(task.reason).toContain("2026-11-02");
+    expect(task.reason).toContain("The exact sold price could not be read");
 
     // Still no amount: what goes back also depends on the cancellation tier and
     // the promo recalculation this parked path skipped, so the gross stored
     // figure is evidence for the admin, not a settlement the club may assert.
-    expect(departing.amountCents).toBeNull();
-    expect(departing.raisedAmountCents).toBeNull();
+    expect(task.amountCents).toBeNull();
+    expect(task.raisedAmountCents).toBeNull();
 
-    // Two occurrences, two identities. A shared key would mean one of the two
-    // strands silently reusing the other's task.
-    expect(departing.occurrenceKey).not.toBe(
-      raisedFor(tx, COMPANION_GUEST).occurrenceKey,
-    );
+    // And the companion's evidence rides on the SAME item rather than being
+    // lost with the second task that used to carry it.
+    // Its rows are the absence they always were: the strand holds two nights
+    // through its stay envelope and carries no usable price against either, so
+    // each is recorded as an absence rather than as a zero.
+    expect(strandFor(tx, COMPANION_GUEST).storedEvidence).toEqual({
+      guestTotalCents: 12000,
+      nightPrices: [
+        { date: "2026-11-02", priceCents: null },
+        { date: "2026-11-03", priceCents: null },
+      ],
+    });
   });
 
   it("lets the expiry sweep through on the same booking, parking it the same way", async () => {
@@ -952,11 +1000,12 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
 
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
     expect(result.financialReviewPending).toBe(true);
-    // Both strands: the unreadable companion, and the departing member whose own
-    // rows read cleanly and whose money the delete is about to destroy.
-    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
-    expect(raisedFor(tx, TARGET_GUEST).reviewContext.occurrence
-      .surrenderedNightDates).toHaveLength(2);
+    // ONE item (#3498 D1), carrying both strands: the unreadable companion, and
+    // the departing member whose own rows read cleanly and whose money the
+    // delete is about to destroy.
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
+    expect(strandFor(tx, TARGET_GUEST).surrenderedNightDates).toHaveLength(2);
+    expect(strandFor(tx, COMPANION_GUEST)).toBeDefined();
   });
 
   it("parks the SAME removal on the SAME booking when the OWNER asks for it", async () => {
@@ -983,10 +1032,10 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
     // the removal still completes rather than failing on a unique violation that
     // would roll the structural change back with it.
     const tx = makeTx(unpriceableCompanionBooking("DECLINED"));
-    // Keyed by the occurrence key the raise looks up, so this also proves the two
-    // strands are looked up under two DISTINCT identities: a single shared key
-    // would return one row twice and the second strand would silently inherit the
-    // first strand's task.
+    // Keyed by the occurrence key the raise looks up. #3498: there is ONE
+    // identity for the whole parked edit now, so the walk asks for exactly one
+    // key and finds exactly one row - which is what "a replay of one edit
+    // yields one item" means at this grain.
     const onFile = new Map<string, string>();
     tx.manualRefundTask.findUnique.mockImplementation(
       async ({ where }: { where: { occurrenceKey: string } }) => {
@@ -1008,11 +1057,8 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
 
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
-    expect(result.financialReviewTaskIds).toEqual([
-      "task-already-open-1",
-      "task-already-open-2",
-    ]);
-    expect(onFile.size).toBe(2);
+    expect(result.financialReviewTaskId).toBe("task-already-open-1");
+    expect(onFile.size).toBe(1);
     expect(result.financialReviewPending).toBe(true);
   });
 
@@ -1031,7 +1077,7 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
 
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
     expect(result.financialReviewPending).toBe(false);
-    expect(result.financialReviewTaskIds).toEqual([]);
+    expect(result.financialReviewTaskId).toBeNull();
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
     expect(result.priceDiffCents).toBeLessThan(0);
     expect(tx.booking.update.mock.calls[0][0].data.totalPriceCents).toBeLessThan(

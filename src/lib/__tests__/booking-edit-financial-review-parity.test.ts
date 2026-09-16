@@ -250,22 +250,23 @@ describe("#3031 quote and apply consume one discriminated result", () => {
     // Not "both parked" — the same park, in full. The occurrence is what
     // #3030 hashes into a task identity, so a preview and a save that produced
     // different material would raise two tasks for one edit.
-    expect(apply.occurrences).toEqual(quote.occurrences);
-    expect(quote.occurrences).toEqual([
-      {
-        bookingId: "bk-parity",
-        bookingGuestId: "g1",
-        cause: "NO_STORED_NIGHT_PRICES",
-        // The edit gives back nothing (the check-out only moves out), so the
-        // identity is the two nights it ADDS.
-        surrenderedNightDates: [],
-        addedNightDates: ["2026-08-23", "2026-08-24"],
-        storedEvidence: {
-          guestTotalCents: 3 * RATE,
-          nightPrices: HELD.map((date) => ({ date, priceCents: null })),
-        },
+    expect(apply.occurrence).toEqual(quote.occurrence);
+    // #3498: ONE occurrence for the whole edit, carrying its strands. This
+    // booking has one guest, so the record is byte-for-byte what it was - with
+    // `bookingId` now on the occurrence rather than repeated per strand.
+    expect(quote.occurrence).toEqual({
+      bookingId: "bk-parity",
+      bookingGuestId: "g1",
+      cause: "NO_STORED_NIGHT_PRICES",
+      // The edit gives back nothing (the check-out only moves out), so the
+      // identity is the two nights it ADDS.
+      surrenderedNightDates: [],
+      addedNightDates: ["2026-08-23", "2026-08-24"],
+      storedEvidence: {
+        guestTotalCents: 3 * RATE,
+        nightPrices: HELD.map((date) => ({ date, priceCents: null })),
       },
-    ]);
+    });
 
     // AND NEITHER BRANCH CARRIES AN AMOUNT AT ALL. `?? 0` has nothing to bite
     // on, which is what makes the magic zero unrepresentable rather than
@@ -277,7 +278,7 @@ describe("#3031 quote and apply consume one discriminated result", () => {
     // has to be argued for here, in front of this comment, instead of appearing.
     expect(Object.keys(quote).sort()).toEqual([
       "kind",
-      "occurrences",
+      "occurrence",
       "parkedPlan",
     ]);
     expect(Object.keys(apply).sort()).toEqual([
@@ -286,7 +287,7 @@ describe("#3031 quote and apply consume one discriminated result", () => {
       // priced one does.
       "capacityOverridden",
       "kind",
-      "occurrences",
+      "occurrence",
       // #3166: the guest ROWS the writer is handed — one entry per strand,
       // carrying that strand's own STORED total and a per-night vector whose
       // unknown nights are null. It is the same content `parkedPlan` already
@@ -329,7 +330,7 @@ describe("#3031 quote and apply consume one discriminated result", () => {
 
     const context: EditFinancialReviewContext = {
       version: 1,
-      occurrence: result.occurrences[0],
+      occurrence: result.occurrence,
       // #3032's D-3032-1 anchor: the ORIGINAL edit's BookingModification row, so
       // a confirmed amount settles against the same record the edit already used
       // for its credit and Stripe idempotency keys. Required, not defaulted -
