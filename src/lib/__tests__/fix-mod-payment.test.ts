@@ -1267,6 +1267,69 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
   });
 
   /**
+   * #3244: the case the first fixture could not reach, and the one that makes
+   * the changelog's "the figure can differ" sentence true rather than hopeful.
+   *
+   * A part-refunded booking that ALSO carries an unpaid amount from an earlier
+   * change. Before this issue, such a booking took the Xero arm and was billed
+   * the bare price difference on a supplementary invoice. Now it takes the
+   * Stripe arm, and the ask is sized by `sizeAdditionalAsk`, which carries the
+   * outstanding amount into the new request — so the member is asked once for
+   * both, and the intent that replaces the old one supersedes it rather than
+   * stacking beside it.
+   *
+   * That is the correct shape: two live asks against one payment is how a
+   * member ends up paying twice or paying neither. But it IS a different figure
+   * from the one the old arm produced, and a reviewer reading only the
+   * "collects the difference" summary would not expect it.
+   */
+  it("carries an earlier unpaid amount into the new card request (#3244)", async () => {
+    const booking = makeBooking({
+      totalPriceCents: 7500,
+      finalPriceCents: 7500,
+      payment: {
+        ...partlyRefundedPayment,
+        additionalPaymentIntentId: "pi_earlier_extra",
+        additionalAmountCents: 4000,
+        additionalPaymentStatus: "PENDING",
+      },
+    });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_guest_extra",
+      client_secret: "guest_extra_secret",
+    } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    // 12500 for this change, plus the 4000 still unpaid from the last one.
+    expect(data.additionalAmountCents).toBe(16500);
+    // And the earlier intent is retired rather than left live beside this one.
+    expect(mockQueueSupersededAdditionalIntentCancellations).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      paymentId: "p1",
+      newPaymentIntentId: "pi_guest_extra",
+    });
+  });
+
+  /**
    * #3244 REGRESSION GUARD, and the reason this door asks the STATUS half of
    * the captured question rather than the whole of `hasCapturedPayment`.
    *
