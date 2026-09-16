@@ -59,6 +59,27 @@ export type OpenManualRefundTaskRow = {
   };
 };
 
+/**
+ * A DISMISSED row an officer closed and could put back (#3498, owner decision
+ * D2).
+ *
+ * Officer-closed only, which is the same fence `reopenManualRefundTask` applies
+ * and is applied in the query rather than on the card: a machine-written
+ * dismissal is a record of a refund Stripe already made, and offering a
+ * **Put back on the queue** button beside one would invite a second refund of
+ * the same capture.
+ */
+export type DismissedManualRefundTaskRow = {
+  id: string;
+  bookingId: string;
+  amountCents: number | null;
+  kind: string | null;
+  reason: string;
+  note: string | null;
+  completedAt: Date | null;
+  booking: QueueBookingSummary & { deletedAt: Date | null };
+};
+
 /** A row the Stripe webhook already refunded and closed (#2750, #2760). */
 export type AutoRefundedManualRefundTaskRow = {
   id: string;
@@ -176,6 +197,32 @@ export function toOpenManualRefundTaskPayload(
     */
     reviewEvidenceUnreadable: task.reviewContext !== null && !reviewContext,
     unpricedNights,
+  };
+}
+
+/**
+ * One recently dismissed row, as the reopen card receives it.
+ *
+ * NO REVIEW EVIDENCE AND NO PRICE BOXES. This card offers exactly one action -
+ * put it back - and everything needed to decide that is the reason, the note the
+ * dismissing officer wrote and when. The evidence comes back with the row the
+ * moment it is on the queue again, where the screen that prices it can show it.
+ */
+export function toDismissedManualRefundTaskPayload(
+  task: DismissedManualRefundTaskRow,
+) {
+  return {
+    id: task.id,
+    bookingId: task.bookingId,
+    amountCents: task.amountCents,
+    kind: task.kind,
+    reason: task.reason,
+    note: task.note,
+    dismissedAt: task.completedAt ? task.completedAt.toISOString() : null,
+    bookingDeleted: task.booking.deletedAt !== null,
+    memberName: memberName(task.booking),
+    checkIn: task.booking.checkIn.toISOString(),
+    checkOut: task.booking.checkOut.toISOString(),
   };
 }
 

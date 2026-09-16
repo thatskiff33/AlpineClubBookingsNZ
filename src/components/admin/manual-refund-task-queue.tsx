@@ -56,6 +56,13 @@ import {
   parseNightInput,
   UnpricedNightPriceFields,
 } from "@/components/admin/unpriced-night-price-fields";
+// #3498 (owner decision D2): the reopen card is its own file. One card, one
+// action, everything by props - and this module already carries two cards, a
+// settle dialog and the whole settlement conversation.
+import {
+  ManualRefundTaskReopenCard,
+  type DismissedManualRefundTask,
+} from "@/components/admin/manual-refund-task-reopen-card";
 
 const NOTE_MAX_LENGTH = 500;
 
@@ -827,6 +834,9 @@ export function ManualRefundTaskQueue() {
    * them looking for a problem that is not there.
    */
   const [autoRefundedUnavailable, setAutoRefundedUnavailable] = useState(false);
+  // #3498: dismissals an officer could put back, and whether that read failed.
+  const [dismissed, setDismissed] = useState<DismissedManualRefundTask[]>([]);
+  const [dismissedUnavailable, setDismissedUnavailable] = useState(false);
   /**
    * #3033: whether this admin may open a booking at all.
    *
@@ -915,6 +925,8 @@ export function ManualRefundTaskQueue() {
         setTasks([]);
         setAutoRefunded([]);
         setAutoRefundedUnavailable(false);
+        setDismissed([]);
+        setDismissedUnavailable(false);
         setViewerCanViewBookings(false);
         setLoadFailed(true);
         return;
@@ -923,17 +935,23 @@ export function ManualRefundTaskQueue() {
         tasks: ManualRefundTask[];
         autoRefunded?: AutoRefundedNotice[];
         autoRefundedUnavailable?: boolean;
+        dismissed?: DismissedManualRefundTask[];
+        dismissedUnavailable?: boolean;
         viewerCanViewBookings?: boolean;
       };
       setTasks(data.tasks ?? []);
       setAutoRefunded(data.autoRefunded ?? []);
       setAutoRefundedUnavailable(Boolean(data.autoRefundedUnavailable));
+      setDismissed(data.dismissed ?? []);
+      setDismissedUnavailable(Boolean(data.dismissedUnavailable));
       setViewerCanViewBookings(data.viewerCanViewBookings === true);
       setLoadFailed(false);
     } catch {
       setTasks([]);
       setAutoRefunded([]);
       setAutoRefundedUnavailable(false);
+      setDismissed([]);
+      setDismissedUnavailable(false);
       setViewerCanViewBookings(false);
       setLoadFailed(true);
     }
@@ -1222,6 +1240,8 @@ export function ManualRefundTaskQueue() {
   if (
     !showQueue &&
     autoRefunded.length === 0 &&
+    dismissed.length === 0 &&
+    !dismissedUnavailable &&
     !loadFailed &&
     !autoRefundedUnavailable
   ) {
@@ -1804,6 +1824,24 @@ export function ManualRefundTaskQueue() {
           cannot say whether any payment was refunded automatically. The
           hand-back queue above is unaffected. Reload the page.
         </p>
+      ) : null}
+      {/*
+        #3498: the read failed, said in a line of its own rather than by showing
+        an empty card. "Nothing was dismissed lately" is a claim about money
+        decisions, and a failed query is not entitled to make it.
+      */}
+      {dismissedUnavailable ? (
+        <p
+          className="text-sm text-muted-foreground"
+          data-testid="dismissed-manual-refund-tasks-unavailable"
+        >
+          We could not read the money tasks that were closed recently, so they
+          are not listed. Reload the page to try again; nothing about them has
+          changed.
+        </p>
+      ) : null}
+      {dismissed.length > 0 ? (
+        <ManualRefundTaskReopenCard dismissed={dismissed} onReopened={load} />
       ) : null}
       {autoRefunded.length > 0 ? (
         <AutomaticRefundNoticesCard notices={autoRefunded} />

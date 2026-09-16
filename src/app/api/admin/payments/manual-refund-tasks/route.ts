@@ -9,8 +9,10 @@ import {
 } from "@/lib/deleted-booking-modification-payment";
 import {
   toAutoRefundedManualRefundTaskPayload,
+  toDismissedManualRefundTaskPayload,
   toOpenManualRefundTaskPayload,
 } from "@/lib/manual-refund-task-queue-payload";
+import { REOPENABLE_DISMISSAL_WINDOW_DAYS } from "@/lib/manual-refund-task-reopen";
 import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair-queue";
 
 /**
@@ -150,7 +152,19 @@ export async function GET() {
     Date.now() - AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  const [tasks, autoRefundedRead] = await Promise.all([
+  /*
+    #3498 (owner decision D2): how far back the reopen card looks. A window
+    rather than the whole history, for the same reason the automatic-refund card
+    above has one - a card exists to be read, and an unbounded list of settled
+    rows is what makes an operator stop reading it. It bounds THIS CARD only:
+    `reopenManualRefundTask` refuses on status and on who closed the row, never
+    on age, so a mistake found later is still correctable.
+  */
+  const reopenableSince = new Date(
+    Date.now() - REOPENABLE_DISMISSAL_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  const [tasks, autoRefundedRead, dismissedRead] = await Promise.all([
     prisma.manualRefundTask.findMany({
       where: { status: "OPEN" },
       orderBy: { createdAt: "asc" },
@@ -210,6 +224,38 @@ export async function GET() {
       }),
       "automatically refunded late-capture notices",
     ),
+    /*
+      #3498: recently dismissed rows an officer could put back. Degrades on its
+      own, exactly like the notices beside it: this is a correction surface, and
+      losing it must never take the OPEN queue - money the club owes members by
+      hand - off the screen with it.
+
+      `completedByMemberId: { not: null }` is the fence, applied here rather than
+      on the card: a machine-written dismissal records a refund Stripe already
+      made, and it must never be offered for reopening.
+    */
+    readOrDegrade(
+      prisma.manualRefundTask.findMany({
+        where: {
+          status: "DISMISSED",
+          completedByMemberId: { not: null },
+          completedAt: { gte: reopenableSince },
+        },
+        orderBy: { completedAt: "desc" },
+        take: 100,
+        select: {
+          id: true,
+          bookingId: true,
+          amountCents: true,
+          kind: true,
+          reason: true,
+          note: true,
+          completedAt: true,
+          booking: { select: autoRefundedBookingSummary },
+        },
+      }),
+      "recently dismissed money tasks",
+    ),
   ]);
 
   // #3191: which reviews have unpriced nights the settle screen can offer to fill
@@ -246,5 +292,10 @@ export async function GET() {
     autoRefunded: autoRefundedRead.rows.map(
       toAutoRefundedManualRefundTaskPayload,
     ),
+    // #3498: and the same honesty about a degraded read. "Nothing has been
+    // dismissed lately" is a claim about money decisions, and a failed query is
+    // not entitled to make it.
+    dismissedUnavailable: dismissedRead.unavailable,
+    dismissed: dismissedRead.rows.map(toDismissedManualRefundTaskPayload),
   });
 }
