@@ -312,6 +312,50 @@ describe("#3498 census: one item per parked edit loses no stored figure", () => 
     ).toEqual(editFinancialReviewStrandRecords(occurrence));
   });
 
+  it("RAISES AN ITEM ON A PURE GUEST ADD, where no existing strand moves at all", () => {
+    /*
+      THE CASE THAT RULES OUT THE SMALL FIX, and the acceptance criterion in its
+      own right. Adding guests surrenders no night and gains none on any strand
+      already on the booking, so "filter the fan-out down to the strands the edit
+      touched" raises NOTHING and the money owed for the new guests vanishes -
+      which is exactly why the grain moves UP instead.
+
+      Every strand here is untouched and unreadable, so `parkedEditOccurrence`
+      ranks them all equally and the lead is decided by guest id alone. What the
+      add is worth rides on `EditFinancialReviewContext.guestsAddedByEdit`, as
+      it has since #3166.
+    */
+    const { occurrence } = preCheckInEditEvidence({
+      bookingId: "booking-add",
+      booking: BOOKING,
+      strands: [
+        {
+          bookingGuestId: "b-existing",
+          guestTotalCents: 24_000,
+          nights: nightsHeld([null, null, null], "UNKNOWN"),
+          proposedNightDates: allNights,
+        },
+        {
+          bookingGuestId: "a-existing",
+          guestTotalCents: 24_000,
+          nights: nightsHeld([null, null, null], "UNKNOWN"),
+          proposedNightDates: allNights,
+        },
+      ],
+    });
+    expect(occurrence).not.toBeNull();
+    expect(
+      editFinancialReviewStrandRecords(occurrence!).map(
+        (strand) => strand.bookingGuestId,
+      ),
+    ).toEqual(["a-existing", "b-existing"]);
+    // And nothing anywhere on it claims a night moved, because none did.
+    for (const strand of editFinancialReviewStrandRecords(occurrence!)) {
+      expect(strand.surrenderedNightDates).toEqual([]);
+      expect(strand.addedNightDates).toEqual([]);
+    }
+  });
+
   it("still reads a row written BEFORE the grain moved, which production is holding", () => {
     /*
       #3498 does not migrate the items already raised - they are worked by hand -
