@@ -34,7 +34,6 @@ const REVIEWED_WRITERS = [
   "src/app/api/lodge/guests/[date]/arrive/route.ts|bookingGuest|opaquePayload|",
   "src/instrumentation.node.ts|booking|deleteMany|",
   "src/lib/booking-batch-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
-  "src/lib/booking-create.ts|booking|create,opaquePayload|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/booking-cancel.ts|booking|opaquePayload|",
   "src/lib/booking-create.ts|booking|create,opaquePayload|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/booking-create.ts|bookingGuest|create|",
