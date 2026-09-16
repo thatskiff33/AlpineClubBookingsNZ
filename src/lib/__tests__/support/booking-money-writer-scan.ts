@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import ts from "typescript";
 
 import {
@@ -37,6 +38,11 @@ export type BookingMoneyWriterSite = {
   methods: readonly string[];
   fields: readonly string[];
 };
+
+// Migrations before this Stage 4 boundary are immutable historical evidence,
+// not new writers for this census to reject. Every later migration is scanned:
+// a component-money data migration must be classified in the reviewed manifest.
+const MONEY_MIGRATION_CENSUS_START = "20260914000000";
 
 function delegateName(node: ts.Expression): keyof typeof TRACKED_FIELDS | null {
   if (ts.isPropertyAccessExpression(node)) {
@@ -133,6 +139,107 @@ function resolveLocalBinding(
     if (winner?.initializer) return winner.initializer;
   }
   return undefined;
+}
+
+function expressionUsesCanonicalFinalPrice(
+  expression: ts.Expression,
+  source: ts.SourceFile,
+  seen = new Set<ts.Node>(),
+): boolean {
+  if (seen.has(expression)) return false;
+  seen.add(expression);
+  if (
+    ts.isCallExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    (expression.expression.text === "bookingFinalPriceCents" ||
+      // Stage 3's verified build-up projector is the canonical evidence-aware
+      // equivalent after it has checked the relation against this helper.
+      expression.expression.text === "d3CompatibleBookingMoneyBuildUpCents")
+  ) return true;
+  if (ts.isIdentifier(expression)) {
+    const binding = resolveLocalBinding(expression, source);
+    return binding !== undefined && expressionUsesCanonicalFinalPrice(binding, source, seen);
+  }
+  // Parked edits deliberately preserve the stored value on one branch; the
+  // computed branch must still use the one canonical relation.
+  if (ts.isConditionalExpression(expression)) {
+    const branches = [expression.whenTrue, expression.whenFalse];
+    return branches.some((branch) => expressionUsesCanonicalFinalPrice(branch, source, seen)) &&
+      branches.some((branch) =>
+        (ts.isPropertyAccessExpression(branch) && branch.name.text === "finalPriceCents") ||
+        expressionUsesCanonicalFinalPrice(branch, source, seen),
+      );
+  }
+  return ts.isPropertyAccessExpression(expression) && expression.name.text === "finalPriceCents";
+}
+
+/**
+ * A field inventory cannot distinguish `total + 1` from the canonical final
+ * price. For complete headline payloads, require the final field to flow from
+ * the one arithmetic home (or the deliberate parked-value branch).
+ */
+export function scanBookingMoneyWriterEqualityEscapes(file: string, code: string): string[] {
+  const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
+  const escapes: string[] = [];
+  const objectFrom = (expression: ts.Expression | undefined): ts.ObjectLiteralExpression | undefined => {
+    if (!expression) return undefined;
+    if (ts.isObjectLiteralExpression(expression)) return expression;
+    if (ts.isIdentifier(expression)) {
+      const binding = resolveLocalBinding(expression, source);
+      return binding && ts.isObjectLiteralExpression(binding) ? binding : undefined;
+    }
+    return undefined;
+  };
+  const inspectPayload = (payload: ts.ObjectLiteralExpression) => {
+    const values = new Map<string, ts.Expression>();
+    for (const property of payload.properties) {
+      if (ts.isPropertyAssignment(property)) {
+        const name = propertyName(property.name);
+        if (name) values.set(name, property.initializer);
+      }
+    }
+    const finalPrice = values.get("finalPriceCents");
+    const isZeroPromo = values.get("promoAdjustmentCents")?.getText(source) === "0";
+    const finalEqualsTotal =
+      finalPrice?.getText(source) === values.get("totalPriceCents")?.getText(source);
+    if (
+      finalPrice &&
+      TRACKED_FIELDS.booking.every((field) => values.has(field)) &&
+      !finalEqualsTotal &&
+      !isZeroPromo &&
+      !expressionUsesCanonicalFinalPrice(finalPrice, source)
+    ) {
+      const line = source.getLineAndCharacterOfPosition(finalPrice.getStart(source)).line + 1;
+      escapes.push(`${file}:${line}|finalPriceCents`);
+    }
+  };
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      WRITE_METHODS.has(node.expression.name.text) &&
+      delegateName(node.expression.expression) === "booking"
+    ) {
+      const options = objectFrom(node.arguments[0]);
+      if (options) {
+        const payloadNames = node.expression.name.text === "upsert"
+          ? new Set(["create", "update"])
+          : new Set(["data"]);
+        for (const property of options.properties) {
+          if (
+            ts.isPropertyAssignment(property) &&
+            payloadNames.has(propertyName(property.name) ?? "")
+          ) {
+            const payload = objectFrom(property.initializer);
+            if (payload) inspectPayload(payload);
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return escapes.sort();
 }
 
 /** The mutating array methods are evidence only before the payload use. */
@@ -449,7 +556,20 @@ export function scanBookingMoneyWriterSites(
 }
 
 export function discoveredBookingMoneyWriterSites(): BookingMoneyWriterSite[] {
-  return sourceFiles()
+  const migrationFiles = readdirSync(join(process.cwd(), "prisma", "migrations"), {
+    withFileTypes: true,
+  })
+    .filter((entry) => entry.isDirectory() && entry.name >= MONEY_MIGRATION_CENSUS_START)
+    .map((entry) => join(process.cwd(), "prisma", "migrations", entry.name, "migration.sql"))
+    .filter((file) => {
+      try {
+        readFileSync(file, "utf8");
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  return [...sourceFiles(), ...migrationFiles]
     .flatMap((file) =>
       scanBookingMoneyWriterSites(relativeSource(file), readFileSync(file, "utf8")),
     )
@@ -462,6 +582,14 @@ export function discoveredBookingMoneyWriterEscapes(): string[] {
   return sourceFiles()
     .flatMap((file) =>
       scanBookingMoneyWriterEscapes(relativeSource(file), readFileSync(file, "utf8")),
+    )
+    .sort();
+}
+
+export function discoveredBookingMoneyWriterEqualityEscapes(): string[] {
+  return sourceFiles()
+    .flatMap((file) =>
+      scanBookingMoneyWriterEqualityEscapes(relativeSource(file), readFileSync(file, "utf8")),
     )
     .sort();
 }

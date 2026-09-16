@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   discoveredBookingMoneyWriterEscapes,
+  discoveredBookingMoneyWriterEqualityEscapes,
   discoveredBookingMoneyWriterSites,
+  scanBookingMoneyWriterEqualityEscapes,
   scanBookingMoneyWriterEscapes,
   scanBookingMoneyWriterSites,
 } from "@/lib/__tests__/support/booking-money-writer-scan";
@@ -16,6 +18,10 @@ const REVIEWED_WRITERS = [
   "prisma/demo-seed.ts|bookingGuestNight|create,deleteMany|priceCents,priceSource",
   "prisma/demo-seed.ts|promoRedemption|create,deleteMany|discountCents",
   "prisma/demo-seed.ts|promoRedemptionAllocation|deleteMany|",
+  "prisma/migrations/20260928020000_booking_owner_optional_member/migration.sql|promoRedemptionAllocation|rawSql|discountCents",
+  "prisma/migrations/20260928030000_backfill_school_bookings_to_organisations/migration.sql|booking|rawSql|discountCents",
+  "prisma/migrations/20260928030000_backfill_school_bookings_to_organisations/migration.sql|promoRedemption|rawSql|discountCents,priceAdjustmentCents",
+  "prisma/migrations/20260928030000_backfill_school_bookings_to_organisations/migration.sql|promoRedemptionAllocation|rawSql|discountCents,priceAdjustmentCents",
   "src/app/api/admin/bookings/[id]/capacity-hold/route.ts|booking|opaquePayload|",
   "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts|booking|opaquePayload|",
   "src/app/api/admin/bookings/[id]/force-confirm/route.ts|booking|opaquePayload|",
@@ -78,6 +84,7 @@ function writerKey(
 // matching the Stage 1/2 censuses that use the same source inventory.
 const DISCOVERED_WRITERS = discoveredBookingMoneyWriterSites();
 const DISCOVERED_ESCAPES = discoveredBookingMoneyWriterEscapes();
+const DISCOVERED_EQUALITY_ESCAPES = discoveredBookingMoneyWriterEqualityEscapes();
 
 describe("INV-MONEY-031 booking money writer census", () => {
   it("discovers direct and raw-SQL mutations, including a newly added writer", () => {
@@ -216,6 +223,32 @@ describe("INV-MONEY-031 booking money writer census", () => {
         "const { promoRedemption: redemption } = tx; await mutate(redemption);",
       ),
     ).toEqual(["src/lib/destructured-mutant.ts|promoRedemption"]);
+  });
+
+  it("mutation-proves that a complete headline writer derives its final price", () => {
+    const cleanWriter = `
+      const final = bookingFinalPriceCents({ totalPriceCents: total, promoAdjustmentCents: promo });
+      await tx.booking.update({ data: {
+        totalPriceCents: total,
+        discountCents: Math.max(0, -promo),
+        promoAdjustmentCents: promo,
+        finalPriceCents: final,
+      } });
+    `;
+    const brokenEquality = cleanWriter.replace("finalPriceCents: final", "finalPriceCents: total + 1");
+    expect(scanBookingMoneyWriterSites("src/lib/headline-mutant.ts", cleanWriter)).toEqual(
+      scanBookingMoneyWriterSites("src/lib/headline-mutant.ts", brokenEquality),
+    );
+    expect(
+      scanBookingMoneyWriterEqualityEscapes("src/lib/headline-mutant.ts", cleanWriter),
+    ).toEqual([]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes("src/lib/headline-mutant.ts", brokenEquality),
+    ).toEqual(["src/lib/headline-mutant.ts:7|finalPriceCents"]);
+    expect(
+      DISCOVERED_EQUALITY_ESCAPES,
+      "INV-MONEY-031: a complete Booking headline write must derive finalPriceCents through bookingFinalPriceCents (or preserve it only on the documented parked branch).",
+    ).toEqual([]);
   });
 
   it("matches the reviewed production writer manifest exactly", () => {
