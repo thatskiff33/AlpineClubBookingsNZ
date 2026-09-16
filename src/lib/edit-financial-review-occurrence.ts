@@ -380,22 +380,29 @@ export function buildEditFinancialReviewReason(
     strands.length === 1
       ? ""
       : ` The change touched ${strands.length} guests on this booking and the stored evidence for all of them is on this item.`;
-  const addedPhrase =
+  const addedPhrase = (listed: boolean) =>
     added.length === 0
       ? ""
-      : ` It also added ${added.length === 1 ? `the night of ${added[0]}` : `${added.length} nights: ${added.join(", ")}`}.`;
+      : ` It also added ${
+          added.length === 1
+            ? `the night of ${added[0]}`
+            : listed
+              ? `${added.length} nights: ${added.join(", ")}`
+              : `${added.length} nights`
+        }.`;
   // NOT "first to last". A night set need not be contiguous, and "3 nights
   // (2026-08-02 to 2026-08-20)" reads as a nineteen-night span for three actual
   // nights - in the sentence an admin reads WHILE PRICING REAL MONEY. The nights
-  // are listed instead, and the list is what gets truncated if the stay is long
-  // enough to overrun the column; `reviewContext` carries the full set either
-  // way, and #3033 renders it.
-  const nightsPhrase =
+  // are listed instead; `reviewContext` carries the full set either way, and
+  // #3033 renders it.
+  const nightsPhrase = (listed: boolean) =>
     nights.length === 0
       ? "no nights"
       : nights.length === 1
         ? `the night of ${nights[0]}`
-        : `${nights.length} nights: ${nights.join(", ")}`;
+        : listed
+          ? `${nights.length} nights: ${nights.join(", ")}`
+          : `${nights.length} nights`;
   // #3032: the second sentence has to match the cause, because the two are read
   // as instructions. "The exact sold price could not be read" is FALSE of a
   // `COUNTERPART_STRAND_UNREADABLE` strand - its rows are complete and add up -
@@ -411,8 +418,26 @@ export function buildEditFinancialReviewReason(
   )
     ? "These guests' own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read, so the booking's total could not be reworked automatically. Confirm the amount owed for the nights above before any money moves."
     : "The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.";
-  return `Booking edit gave back ${nightsPhrase}.${addedPhrase}${strandsPhrase} ${why}`.slice(
-    0,
-    MANUAL_REFUND_TASK_REASON_MAX,
-  );
+  const sentence = (listed: boolean) =>
+    `Booking edit gave back ${nightsPhrase(listed)}.${addedPhrase(listed)}${strandsPhrase} ${why}`;
+  /*
+    THE LIST IS WHAT GIVES WAY, NEVER THE REASON (#3498).
+
+    This used to end in a bare `.slice()`, on the argument that a stay long
+    enough to overrun the column would lose the tail of its night list and
+    `reviewContext` carries the whole set anyway. #3498 makes that argument
+    unsafe by making the list the WHOLE EDIT'S nights rather than one strand's:
+    a seven-guest booking over a fortnight can now run past 500 characters
+    before the sentence saying WHY no money moved has started, and that sentence
+    is an instruction an officer acts on.
+
+    So a reason that would overrun drops the dates and keeps the counts, which
+    is the same information one grain coarser and leaves every sentence intact.
+    The `.slice()` stays underneath as the column's own guarantee - `reason` is
+    `varchar(500)` and a writer that hands it 501 characters fails the insert.
+  */
+  const listed = sentence(true);
+  return (
+    listed.length <= MANUAL_REFUND_TASK_REASON_MAX ? listed : sentence(false)
+  ).slice(0, MANUAL_REFUND_TASK_REASON_MAX);
 }

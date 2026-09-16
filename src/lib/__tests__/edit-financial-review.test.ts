@@ -339,6 +339,52 @@ describe("#3030 occurrence key - the same structural edit is one occurrence", ()
     expect(reason).not.toContain("2026-08-02 to 2026-08-20");
   });
 
+  it("MUTATION: keeps the WHY sentence whole on a big party, and drops the dates instead", () => {
+    /*
+      #3498 made this sentence carry the WHOLE EDIT'S nights rather than one
+      strand's, which is right and which made the bare `.slice()` underneath it
+      unsafe: a large party over a long stay runs the list past the column's 500
+      characters before the sentence saying why no money moved has started - and
+      that sentence is an instruction an officer acts on while pricing.
+
+      So a reason that would overrun keeps the counts and drops the dates. The
+      full set is on `reviewContext` either way, which is what #3033 renders.
+      Delete the fallback and this fails on the truncated instruction, not on
+      the length - the `.slice()` keeps the column safe and says nothing about
+      whether the officer can read the row.
+    */
+    const longStay = Array.from({ length: 30 }, (_, index) =>
+      day(`2026-09-${String(index + 1).padStart(2, "0")}`),
+    );
+    const reason = buildEditFinancialReviewReason(
+      occurrence({
+        surrenderedNightDates: longStay,
+        otherStrands: Array.from({ length: 7 }, (_, index) => ({
+          bookingGuestId: `guest-${index}`,
+          cause: "NO_STORED_NIGHT_PRICES" as const,
+          surrenderedNightDates: longStay,
+          addedNightDates: [],
+          storedEvidence: { guestTotalCents: 24_000, nightPrices: [] },
+        })),
+      }),
+    );
+
+    expect(reason.length).toBeLessThanOrEqual(500);
+    expect(reason).toContain("30 nights.");
+    expect(reason).not.toContain("2026-09-01,");
+    expect(reason).toContain("before any money moves.");
+  });
+
+  it("CONTROL: a reason that FITS still lists its dates", () => {
+    // Without this the case above would pass against a builder that had stopped
+    // printing dates at all, which is the information it exists to keep.
+    expect(
+      buildEditFinancialReviewReason(
+        occurrence({ surrenderedNightDates: [day("2026-08-02")] }),
+      ),
+    ).toContain("the night of 2026-08-02");
+  });
+
   it("does not move when only the operator prose changes, because text is not the identity", () => {
     const key = editFinancialReviewOccurrenceKey(occurrence());
     const reason = buildEditFinancialReviewReason(occurrence());
