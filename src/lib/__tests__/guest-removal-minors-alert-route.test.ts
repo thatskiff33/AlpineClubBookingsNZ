@@ -51,10 +51,20 @@ vi.mock("@/lib/prisma", () => ({
     member: { findUnique: mocks.memberFindUnique },
   },
 }));
-vi.mock("@/lib/booking-edit-policy", () => ({
-  getBookingEditPolicy: () => ({ canModify: true, mode: "future", reason: null }),
-  usesActiveBookingEditLifecycle: () => true,
-}));
+// #3245: PARTIAL, through `importOriginal`. This used to replace the whole
+// module with two stubs, which meant the removal route's STATUS ELIGIBILITY was
+// never exercised here — and the day that gate started deriving its answer from
+// this module instead of restating it, the missing export made every case in
+// this file 400. The date-window policy is still stubbed, because that is what
+// these cases are neutralising; the eligibility rule is now the real one, and
+// both fixtures (PAID, PENDING) are statuses it genuinely admits.
+vi.mock("@/lib/booking-edit-policy", async (importActual) => {
+  const actual = (await importActual()) as typeof import("@/lib/booking-edit-policy");
+  return {
+    ...actual,
+    getBookingEditPolicy: () => ({ canModify: true, mode: "future", reason: null }),
+  };
+});
 vi.mock("@/lib/booking-modify", async (importActual) => {
   // #2543: `rateSnapshotUpdateForRepricedGuest` is a PURE decision about whether a
   // repriced guest keeps its stored rate snapshot, so the real one is pulled through

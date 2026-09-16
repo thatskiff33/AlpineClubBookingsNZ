@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { canModifyBookingInActiveLifecycle } from "@/lib/booking-edit-policy";
 import {
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
@@ -290,19 +291,25 @@ describe("no edit door states the rule a second time", () => {
     // The nit the xeroInvoiceId ban does not cover: the route now asks
     // `isSettledBookingStatus`, and nothing above would fail if a later edit
     // pasted ["PAYMENT_PENDING","CONFIRMED","PAID"] back in beside it — the
-    // same defect one predicate over. The ONE status literal this file may
-    // carry is its eligibility gate, pinned below.
-    const ELIGIBILITY_GATE = '["PENDING","PAYMENT_PENDING","CONFIRMED","PAID"]';
+    // same defect one predicate over.
+    //
+    // #3245 removed the one exception this pin used to carry. The route's
+    // eligibility gate WAS a status literal, allowed here because it was the
+    // rule's own statement of itself at that door; it is now derived from
+    // `canModifyBookingInActiveLifecycle`, so this file may hold NO status
+    // list at all and the allowance is gone rather than merely unused.
     const literals = (
       read(GUEST_ADD_ROUTE).match(/\[[^[\]]*"CONFIRMED"[^[\]]*\]/g) ?? []
     ).map((literal) => literal.replace(/\s+/g, ""));
     expect(
-      literals.filter((literal) => literal !== ELIGIBILITY_GATE),
+      literals,
       `The guest-add route states a booking-status list of its own. Which ` +
         `statuses count as "the payment lifecycle has been entered" is ` +
-        `isSettledBookingStatus in src/lib/booking-payment-state.ts ` +
-        `(INV-SSOT-001) — call it. #3200's bug was exactly this: a list ` +
-        `copied here from the eligibility gate, missing COMPLETED.`,
+        `isSettledBookingStatus in src/lib/booking-payment-state.ts, and which ` +
+        `statuses are editable at all is canModifyBookingInActiveLifecycle in ` +
+        `src/lib/booking-edit-policy.ts (INV-SSOT-001) — call them. #3200's ` +
+        `bug was exactly this: a list copied here from the eligibility gate, ` +
+        `missing COMPLETED. #3245 then removed the gate's own copy.`,
     ).toEqual([]);
   });
 
@@ -334,26 +341,40 @@ describe("no edit door states the rule a second time", () => {
 
 describe("why the guest-add correction changes no behaviour today", () => {
   it("the guest-add door refuses a COMPLETED booking before it settles anything", () => {
-    // #3200, and the reason this fix is safe rather than merely different: the
+    // #3200, and the reason that fix was safe rather than merely different: the
     // guest-add route's own eligibility gate admits no finished stay, so the
     // status the inline copy got wrong never reached it.
+    //
+    // RE-EXPRESSED at #3245, which is outcome (b) the previous version of this
+    // pin anticipated: the gate is no longer a literal in the route, it is a
+    // call to a derivation. The guard is the same guard — a finished stay must
+    // not reach this door's settlement — asserted in the two halves it now has.
     expect(
       read(GUEST_ADD_ROUTE),
-      `The guest-add route's eligibility gate is no longer the literal this ` +
-        `pin expects. TWO different changes land you here, and the fix is ` +
-        `NOT the same:\n` +
-        `  (a) You WIDENED the gate to admit COMPLETED. Expected signal, not ` +
-        `a bug. The settlement now answers COMPLETED as "invoice issued", ` +
-        `which is the correct answer — bill the difference as a supplementary ` +
-        `invoice. Update this test to say so.\n` +
-        `  (b) You converged this list onto the edit-policy module — #3245 ` +
-        `names this exact call site as one of three copies to route through ` +
-        `canModifyBookingStatusForRole. You widened NOTHING. Re-express this ` +
-        `pin against that derivation (assert the route calls it, and that the ` +
-        `derivation itself excludes COMPLETED). DO NOT DELETE IT: it is the ` +
-        `only guard keeping a finished stay out of this door's settlement.`,
+      `The guest-add route no longer derives its eligibility gate from the ` +
+        `edit policy. If you WIDENED the gate to admit COMPLETED, that is a ` +
+        `real change and an expected signal, not a bug: the settlement ` +
+        `answers COMPLETED as "invoice issued", which is the correct answer — ` +
+        `bill the difference as a supplementary invoice. Update this test to ` +
+        `say so. DO NOT DELETE IT: it is the only guard keeping a finished ` +
+        `stay out of this door's settlement.`,
     ).toMatch(
-      /!\["PENDING",\s*"PAYMENT_PENDING",\s*"CONFIRMED",\s*"PAID"\]\.includes\(booking\.status\)/,
+      /!canModifyBookingInActiveLifecycle\(booking\.status, actorRole\)/,
     );
+
+    // And the derivation itself excludes COMPLETED, which is the half that
+    // moved out of the route. Without this the pin above would pass on a
+    // derivation that had quietly started admitting a finished stay.
+    expect(canModifyBookingInActiveLifecycle("COMPLETED", "ADMIN")).toBe(false);
+    expect(canModifyBookingInActiveLifecycle("COMPLETED", "MEMBER")).toBe(false);
+    // The route passes no `includeFinishedStay`, so the override shape — which
+    // DOES admit it — is not reachable from here. Pinned so that flipping the
+    // default would fail rather than silently open the door.
+    expect(
+      canModifyBookingInActiveLifecycle("COMPLETED", "ADMIN", {
+        includeFinishedStay: true,
+      }),
+    ).toBe(true);
+    expect(read(GUEST_ADD_ROUTE)).not.toMatch(/includeFinishedStay/);
   });
 });

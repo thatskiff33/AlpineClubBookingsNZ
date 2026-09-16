@@ -52,6 +52,8 @@ import {
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
 import {
+  activeLifecycleEditRefusal,
+  canModifyBookingInActiveLifecycle,
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
@@ -487,14 +489,10 @@ export async function removeBookingGuestInTransaction({
     store: tx,
   });
 
-  if (
-    !isSelfRemoval &&
-    !["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)
-  ) {
-    throw new BookingGuestRemovalError(
-      "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-      400
-    );
+  // #3245: derived, not restated. A self-removal answers a different question
+  // and keeps its own named set (`SELF_REMOVABLE_GUEST_BOOKING_STATUSES`).
+  if (!isSelfRemoval && !canModifyBookingInActiveLifecycle(booking.status, actorRole)) {
+    throw new BookingGuestRemovalError(activeLifecycleEditRefusal(), 400);
   }
   if (
     isSelfRemoval &&

@@ -108,7 +108,11 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { nameField } from "@/lib/zod-helpers";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import {
+  activeLifecycleEditRefusal,
+  canModifyBookingInActiveLifecycle,
+  getBookingEditPolicy,
+} from "@/lib/booking-edit-policy";
 import { hasIssuedPrimaryXeroInvoice, isSettledBookingStatus } from "@/lib/booking-payment-state";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
@@ -325,14 +329,10 @@ export async function POST(
       // #3200: this door admits no finished stay, which is why the shared
       // invoice test further down — it answers COMPLETED as "invoice issued" —
       // has nothing new to handle here. Widening this gate is a real change.
-      // #3245 proposes routing this list through `canModifyBookingStatusForRole`
-      // rather than restating it; that is a convergence, not a widening, and the
-      // COMPLETED exclusion has to survive it either way.
-      if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
-        throw new ApiError(
-          "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-          400
-        );
+      // #3245: derived, not restated. `includeFinishedStay` stays off, so the
+      // COMPLETED exclusion survives the convergence unchanged.
+      if (!canModifyBookingInActiveLifecycle(booking.status, actorRole)) {
+        throw new ApiError(activeLifecycleEditRefusal(), 400);
       }
 
       const editPolicy = getBookingEditPolicy({
