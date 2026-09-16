@@ -165,12 +165,11 @@ function expressionUsesCanonicalFinalPrice(
   if (ts.isConditionalExpression(expression)) {
     const branches = [expression.whenTrue, expression.whenFalse];
     return branches.some((branch) => expressionUsesCanonicalFinalPrice(branch, source, seen)) &&
-      branches.some((branch) =>
-        (ts.isPropertyAccessExpression(branch) && branch.name.text === "finalPriceCents") ||
-        expressionUsesCanonicalFinalPrice(branch, source, seen),
+      branches.some(
+        (branch) => ts.isPropertyAccessExpression(branch) && branch.name.text === "finalPriceCents",
       );
   }
-  return ts.isPropertyAccessExpression(expression) && expression.name.text === "finalPriceCents";
+  return false;
 }
 
 /**
@@ -181,36 +180,58 @@ function expressionUsesCanonicalFinalPrice(
 export function scanBookingMoneyWriterEqualityEscapes(file: string, code: string): string[] {
   const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
   const escapes: string[] = [];
-  const objectFrom = (expression: ts.Expression | undefined): ts.ObjectLiteralExpression | undefined => {
-    if (!expression) return undefined;
-    if (ts.isObjectLiteralExpression(expression)) return expression;
+  type ResolvedObject = { values: Map<string, ts.Expression>; opaque: boolean };
+  const resolveObject = (
+    expression: ts.Expression | undefined,
+    seen = new Set<ts.Node>(),
+  ): ResolvedObject => {
+    if (!expression || seen.has(expression)) return { values: new Map(), opaque: true };
+    seen.add(expression);
     if (ts.isIdentifier(expression)) {
-      const binding = resolveLocalBinding(expression, source);
-      return binding && ts.isObjectLiteralExpression(binding) ? binding : undefined;
+      return resolveObject(resolveLocalBinding(expression, source), seen);
     }
-    return undefined;
-  };
-  const inspectPayload = (payload: ts.ObjectLiteralExpression) => {
+    if (!ts.isObjectLiteralExpression(expression)) return { values: new Map(), opaque: true };
     const values = new Map<string, ts.Expression>();
-    for (const property of payload.properties) {
-      if (ts.isPropertyAssignment(property)) {
+    let opaque = false;
+    for (const property of expression.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        const spread = resolveObject(property.expression, seen);
+        spread.values.forEach((value, name) => values.set(name, value));
+        opaque ||= spread.opaque;
+      } else if (ts.isPropertyAssignment(property)) {
         const name = propertyName(property.name);
         if (name) values.set(name, property.initializer);
+        else opaque = true;
+      } else {
+        opaque = true;
       }
     }
+    return { values, opaque };
+  };
+  const inspectPayload = (payload: ResolvedObject, location: ts.Node) => {
+    const { values } = payload;
     const finalPrice = values.get("finalPriceCents");
     const isZeroPromo = values.get("promoAdjustmentCents")?.getText(source) === "0";
     const finalEqualsTotal =
       finalPrice?.getText(source) === values.get("totalPriceCents")?.getText(source);
+    const hasCompleteHeadline = TRACKED_FIELDS.booking.every((field) => values.has(field));
+    const hasPotentiallyCompleteHeadline =
+      payload.opaque &&
+      ["totalPriceCents", "discountCents", "promoAdjustmentCents"].every((field) =>
+        values.has(field),
+      );
+    const line = source.getLineAndCharacterOfPosition(location.getStart(source)).line + 1;
+    if (hasPotentiallyCompleteHeadline && !hasCompleteHeadline) {
+      escapes.push(`${file}:${line}|opaqueCompleteHeadlinePayload`);
+    }
     if (
       finalPrice &&
-      TRACKED_FIELDS.booking.every((field) => values.has(field)) &&
-      !finalEqualsTotal &&
-      !isZeroPromo &&
+      hasCompleteHeadline &&
+      !(isZeroPromo && finalEqualsTotal) &&
       !expressionUsesCanonicalFinalPrice(finalPrice, source)
     ) {
-      const line = source.getLineAndCharacterOfPosition(finalPrice.getStart(source)).line + 1;
-      escapes.push(`${file}:${line}|finalPriceCents`);
+      const finalLine = source.getLineAndCharacterOfPosition(finalPrice.getStart(source)).line + 1;
+      escapes.push(`${file}:${finalLine}|finalPriceCents`);
     }
   };
   const visit = (node: ts.Node) => {
@@ -220,18 +241,14 @@ export function scanBookingMoneyWriterEqualityEscapes(file: string, code: string
       WRITE_METHODS.has(node.expression.name.text) &&
       delegateName(node.expression.expression) === "booking"
     ) {
-      const options = objectFrom(node.arguments[0]);
-      if (options) {
+      const options = resolveObject(node.arguments[0]);
+      if (!options.opaque || options.values.size > 0) {
         const payloadNames = node.expression.name.text === "upsert"
           ? new Set(["create", "update"])
           : new Set(["data"]);
-        for (const property of options.properties) {
-          if (
-            ts.isPropertyAssignment(property) &&
-            payloadNames.has(propertyName(property.name) ?? "")
-          ) {
-            const payload = objectFrom(property.initializer);
-            if (payload) inspectPayload(payload);
+        for (const [name, payloadExpression] of options.values) {
+          if (payloadNames.has(name)) {
+            inspectPayload(resolveObject(payloadExpression), payloadExpression);
           }
         }
       }
@@ -239,7 +256,7 @@ export function scanBookingMoneyWriterEqualityEscapes(file: string, code: string
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return escapes.sort();
+  return [...new Set(escapes)].sort();
 }
 
 /** The mutating array methods are evidence only before the payload use. */

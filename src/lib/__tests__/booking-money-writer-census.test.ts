@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import {
   discoveredBookingMoneyWriterEscapes,
   discoveredBookingMoneyWriterEqualityEscapes,
@@ -33,6 +34,7 @@ const REVIEWED_WRITERS = [
   "src/app/api/lodge/guests/[date]/arrive/route.ts|bookingGuest|opaquePayload|",
   "src/instrumentation.node.ts|booking|deleteMany|",
   "src/lib/booking-batch-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
+  "src/lib/booking-create.ts|booking|create,opaquePayload|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/booking-cancel.ts|booking|opaquePayload|",
   "src/lib/booking-create.ts|booking|create,opaquePayload|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
   "src/lib/booking-create.ts|bookingGuest|create|",
@@ -85,6 +87,39 @@ function writerKey(
 const DISCOVERED_WRITERS = discoveredBookingMoneyWriterSites();
 const DISCOVERED_ESCAPES = discoveredBookingMoneyWriterEscapes();
 const DISCOVERED_EQUALITY_ESCAPES = discoveredBookingMoneyWriterEqualityEscapes();
+
+const RECONCILIATION_WRITER_KEYS = [
+  "src/app/api/bookings/[id]/guests/route.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
+  "src/lib/booking-batch-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
+  "src/lib/booking-date-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
+  "src/lib/booking-guest-removal-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
+  "src/lib/booking-review-price-rebase.ts|booking|updateMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
+  "src/lib/waitlist.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
+] as const;
+
+const RECONCILED_FIXTURE = {
+  checkIn: new Date("2026-08-01T00:00:00.000Z"),
+  checkOut: new Date("2026-08-02T00:00:00.000Z"),
+  totalPriceCents: 10_000,
+  promoAdjustmentCents: -1_500,
+  discountCents: 1_500,
+  finalPriceCents: 8_500,
+  guests: [{
+    priceCents: 10_000,
+    stayStart: null,
+    stayEnd: null,
+    nights: [{
+      stayDate: new Date("2026-08-01T00:00:00.000Z"),
+      priceCents: 10_000,
+      priceSource: "SOLD" as const,
+    }],
+  }],
+  promoRedemption: {
+    priceAdjustmentCents: -1_500,
+    allocations: [{ memberId: "member-1", priceAdjustmentCents: -1_500 }],
+  },
+  nightAdjustments: [{ beneficiaryMemberId: "member-1", amountCents: -1_500 }],
+};
 
 describe("INV-MONEY-031 booking money writer census", () => {
   it("discovers direct and raw-SQL mutations, including a newly added writer", () => {
@@ -225,7 +260,7 @@ describe("INV-MONEY-031 booking money writer census", () => {
     ).toEqual(["src/lib/destructured-mutant.ts|promoRedemption"]);
   });
 
-  it("mutation-proves that a complete headline writer derives its final price", () => {
+  it("mutation-proves complete headline equality through direct, aliased, spread, bracket, and upsert writer forms", () => {
     const cleanWriter = `
       const final = bookingFinalPriceCents({ totalPriceCents: total, promoAdjustmentCents: promo });
       await tx.booking.update({ data: {
@@ -236,6 +271,22 @@ describe("INV-MONEY-031 booking money writer census", () => {
       } });
     `;
     const brokenEquality = cleanWriter.replace("finalPriceCents: final", "finalPriceCents: total + 1");
+    const zeroPromoMutation = cleanWriter
+      .replace("promoAdjustmentCents: promo", "promoAdjustmentCents: 0")
+      .replace("finalPriceCents: final", "finalPriceCents: total + 1");
+    const aliasesAndSpreads = `
+      const base = { totalPriceCents: total, discountCents: 0, promoAdjustmentCents: 0 };
+      const payload = { ...base, finalPriceCents: total + 1 };
+      const options = { data: payload };
+      await tx["booking"].update(options);
+      await tx["booking"].upsert({ where: { id: "b" }, create: payload, update: payload });
+    `;
+    const staleProperty = cleanWriter.replace("finalPriceCents: final", "finalPriceCents: staleBooking.finalPriceCents");
+    const opaqueCompleteHeadline = `
+      const payload = { ...buildHeadline(), totalPriceCents: total, discountCents: 0, promoAdjustmentCents: 0 };
+      const options = { data: payload };
+      await tx["booking"].update(options);
+    `;
     expect(scanBookingMoneyWriterSites("src/lib/headline-mutant.ts", cleanWriter)).toEqual(
       scanBookingMoneyWriterSites("src/lib/headline-mutant.ts", brokenEquality),
     );
@@ -246,9 +297,37 @@ describe("INV-MONEY-031 booking money writer census", () => {
       scanBookingMoneyWriterEqualityEscapes("src/lib/headline-mutant.ts", brokenEquality),
     ).toEqual(["src/lib/headline-mutant.ts:7|finalPriceCents"]);
     expect(
+      scanBookingMoneyWriterEqualityEscapes("src/lib/zero-promo-mutant.ts", zeroPromoMutation),
+    ).toEqual(["src/lib/zero-promo-mutant.ts:7|finalPriceCents"]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes("src/lib/alias-mutant.ts", aliasesAndSpreads),
+    ).toEqual(["src/lib/alias-mutant.ts:3|finalPriceCents"]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes("src/lib/stale-property-mutant.ts", staleProperty),
+    ).toEqual(["src/lib/stale-property-mutant.ts:7|finalPriceCents"]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes("src/lib/opaque-headline-mutant.ts", opaqueCompleteHeadline),
+    ).toEqual(["src/lib/opaque-headline-mutant.ts:3|opaqueCompleteHeadlinePayload"]);
+    expect(
       DISCOVERED_EQUALITY_ESCAPES,
       "INV-MONEY-031: a complete Booking headline write must derive finalPriceCents through bookingFinalPriceCents (or preserve it only on the documented parked branch).",
     ).toEqual([]);
+  });
+
+  it("binds every complete headline writer to real-shaped typed reconciliation mutations", () => {
+    expect(RECONCILIATION_WRITER_KEYS.every((key) => REVIEWED_WRITERS.includes(key))).toBe(true);
+    const mutations = [
+      ["HEADLINE_TOTAL_MISMATCH", { totalPriceCents: 9_999 }],
+      ["PROMO_BUILD_UP_MISMATCH", { promoAdjustmentCents: -1_499, finalPriceCents: 8_501 }],
+      ["DISCOUNT_COMPONENT_MISMATCH", { discountCents: 1_499 }],
+      ["FINAL_PRICE_RELATION_MISMATCH", { finalPriceCents: 8_501 }],
+    ] as const;
+    for (const [reason, headlineMutation] of mutations) {
+      expect(
+        reconcileBookingMoney({ ...RECONCILED_FIXTURE, ...headlineMutation }),
+        `${reason}: every reviewed complete-headline writer must leave a mismatch typed and visible, never silently trusted.`,
+      ).toMatchObject({ state: "UNRECONCILED", reasons: expect.arrayContaining([reason]) });
+    }
   });
 
   it("matches the reviewed production writer manifest exactly", () => {
