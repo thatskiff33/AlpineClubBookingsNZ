@@ -1537,8 +1537,18 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
 describe("recording per-night amounts while settling (#3191)", () => {
   // #3498: one array PER REPAIRABLE STRAND. These reviews name one strand, so
   // it is one array - which is what every case below already described.
+  /*
+    #3498 fix round: each entry NAMES the strand it is for by the item's own
+    ordinal, so a stale screen cannot bind one guest's figures to another's
+    nights when the two happen to hold the same blanks for the same total.
+  */
   const nightPrices = [
-    [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }],
+    {
+      strandIndex: 0,
+      nightPrices: [
+        { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+      ],
+    },
   ];
 
   it("writes the nights, re-bases the strand, and audits it as its own act", async () => {
@@ -1557,7 +1567,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
       // stored at $100.00, $45.00 of it is going back to the member, and $40.00
       // of it is already on the other night. $15.00.
       recordedNightPrices: [
-        [{ date: requireCalendarDate("2026-08-02"), priceCents: 1_500 }],
+        { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 1_500 }] },
       ],
     });
 
@@ -1634,7 +1644,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
         recordedNightPrices: [
-          [{ date: requireCalendarDate("2026-08-02"), priceCents: 5_999 }],
+          { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 5_999 }] },
         ],
       }),
     ).rejects.toMatchObject({ status: 400 });
@@ -1904,7 +1914,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       note: "Nothing owed either way; the nights were already paid for.",
       actingMemberId: "admin-1",
       recordedNightPrices: [
-        [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }],
+        { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
       ],
     });
 
@@ -1982,7 +1992,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       confirmedAmountCents: 4_500,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: [
-        [{ date: requireCalendarDate("2026-08-02"), priceCents: 1_500 }],
+        { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 1_500 }] },
       ],
     });
 
@@ -2046,7 +2056,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
         recordedNightPrices: [
-          [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }],
+          { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
         ],
       }),
     ).rejects.toMatchObject({ status: 409 });
@@ -2084,7 +2094,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
         recordedNightPrices: [
-          [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }],
+          { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
         ],
       }),
     ).rejects.toThrow(/not on this booking/);

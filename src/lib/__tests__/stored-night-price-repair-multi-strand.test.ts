@@ -154,10 +154,13 @@ describe("which strand the settled amount moves (#3498)", () => {
     const plans = await planStoredNightPriceRepair({
       task: task("lead", ["other-a"]),
       requested: [
-        [
-          { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
-          { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
-        ],
+        {
+          strandIndex: 1,
+          nightPrices: [
+            { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
+            { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
+          ],
+        },
       ],
       settled: { direction: "REFUND_TO_MEMBER", amountCents: 4_000 },
       store,
@@ -170,10 +173,13 @@ describe("which strand the settled amount moves (#3498)", () => {
       planStoredNightPriceRepair({
         task: task("lead", ["other-a"]),
         requested: [
-          [
-            { date: requireCalendarDate("2026-08-10"), priceCents: 5_000 },
-            { date: requireCalendarDate("2026-08-11"), priceCents: 5_000 },
-          ],
+          {
+            strandIndex: 1,
+            nightPrices: [
+              { date: requireCalendarDate("2026-08-10"), priceCents: 5_000 },
+              { date: requireCalendarDate("2026-08-11"), priceCents: 5_000 },
+            ],
+          },
         ],
         settled: { direction: "REFUND_TO_MEMBER", amountCents: 4_000 },
         store,
@@ -189,10 +195,13 @@ describe("which strand the settled amount moves (#3498)", () => {
     const plans = await planStoredNightPriceRepair({
       task: task("lead", []),
       requested: [
-        [
-          { date: requireCalendarDate("2026-08-10"), priceCents: 4_000 },
-          { date: requireCalendarDate("2026-08-11"), priceCents: 4_000 },
-        ],
+        {
+          strandIndex: 0,
+          nightPrices: [
+            { date: requireCalendarDate("2026-08-10"), priceCents: 4_000 },
+            { date: requireCalendarDate("2026-08-11"), priceCents: 4_000 },
+          ],
+        },
       ],
       settled: { direction: "REFUND_TO_MEMBER", amountCents: 4_000 },
       store,
@@ -212,15 +221,21 @@ describe("which strand the settled amount moves (#3498)", () => {
       task: task("lead", ["other-a"]),
       requested: [
         // The lead absorbs the $40.00 refund: $120.00 - $40.00.
-        [
-          { date: requireCalendarDate("2026-08-10"), priceCents: 4_000 },
-          { date: requireCalendarDate("2026-08-11"), priceCents: 4_000 },
-        ],
+        {
+          strandIndex: 0,
+          nightPrices: [
+            { date: requireCalendarDate("2026-08-10"), priceCents: 4_000 },
+            { date: requireCalendarDate("2026-08-11"), priceCents: 4_000 },
+          ],
+        },
         // The untouched guest comes to their own $140.00, unmoved.
-        [
-          { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
-          { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
-        ],
+        {
+          strandIndex: 1,
+          nightPrices: [
+            { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
+            { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
+          ],
+        },
       ],
       settled: { direction: "REFUND_TO_MEMBER", amountCents: 4_000 },
       store,
@@ -229,6 +244,50 @@ describe("which strand the settled amount moves (#3498)", () => {
       "lead",
       "other-a",
     ]);
+  });
+
+  it("MUTATION: refuses figures bound to a strand that is not the one offered", async () => {
+    /*
+      THE CASE A LENGTH CHECK CANNOT SEE (#3498 fix round, C4). One strand stops
+      being repairable while another starts, in the seconds the dialog is open:
+      the count is unchanged and every position shifts by one. The blank dates
+      and the stored total usually tell the two apart - and on a couple sharing
+      the same nights at the same rate they do not, so one guest's figures would
+      be written onto the other's nights. Same sum, different nights, and a
+      later part-refund is worked out from the nights.
+
+      So each entry names the strand it is for by the item's own ordinal, and a
+      set that does not match the offered strands exactly is refused as the race
+      it is, with nothing written.
+    */
+    mocks.findMany.mockResolvedValue([
+      guest("lead", 14_000, true),
+      guest("other-a", 14_000, true),
+    ]);
+    await expect(
+      planStoredNightPriceRepair({
+        task: task("lead", ["other-a"]),
+        requested: [
+          {
+            // The screen offered strands 0 and 1; this names 1 twice.
+            strandIndex: 1,
+            nightPrices: [
+              { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
+              { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
+            ],
+          },
+          {
+            strandIndex: 1,
+            nightPrices: [
+              { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
+              { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
+            ],
+          },
+        ],
+        settled: null,
+        store,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
   });
 
   it("MUTATION: refuses a stale screen rather than matching as far as it goes", async () => {
@@ -247,10 +306,13 @@ describe("which strand the settled amount moves (#3498)", () => {
       planStoredNightPriceRepair({
         task: task("lead", ["other-a"]),
         requested: [
-          [
-            { date: requireCalendarDate("2026-08-10"), priceCents: 4_000 },
-            { date: requireCalendarDate("2026-08-11"), priceCents: 4_000 },
-          ],
+          {
+            strandIndex: 1,
+            nightPrices: [
+              { date: requireCalendarDate("2026-08-10"), priceCents: 4_000 },
+              { date: requireCalendarDate("2026-08-11"), priceCents: 4_000 },
+            ],
+          },
         ],
         settled: { direction: "REFUND_TO_MEMBER", amountCents: 4_000 },
         store,
@@ -313,10 +375,13 @@ describe("a strand the edit never moved absorbs nothing (#3498 fix round)", () =
     const plans = await planStoredNightPriceRepair({
       task: taskOf([strandRecord("a-existing")]),
       requested: [
-        [
-          { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
-          { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
-        ],
+        {
+          strandIndex: 0,
+          nightPrices: [
+            { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
+            { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
+          ],
+        },
       ],
       // A CHARGE, which is the direction an add settles in.
       settled: { direction: "CHARGE_TO_MEMBER", amountCents: 64_000 },
@@ -330,10 +395,13 @@ describe("a strand the edit never moved absorbs nothing (#3498 fix round)", () =
       planStoredNightPriceRepair({
         task: taskOf([strandRecord("a-existing")]),
         requested: [
-          [
-            { date: requireCalendarDate("2026-08-10"), priceCents: 39_000 },
-            { date: requireCalendarDate("2026-08-11"), priceCents: 39_000 },
-          ],
+          {
+            strandIndex: 0,
+            nightPrices: [
+              { date: requireCalendarDate("2026-08-10"), priceCents: 39_000 },
+              { date: requireCalendarDate("2026-08-11"), priceCents: 39_000 },
+            ],
+          },
         ],
         settled: { direction: "CHARGE_TO_MEMBER", amountCents: 64_000 },
         store,
@@ -359,10 +427,13 @@ describe("a strand the edit never moved absorbs nothing (#3498 fix round)", () =
         strandRecord("extended", { added: ["2026-08-11"] }),
       ]),
       requested: [
-        [
-          { date: requireCalendarDate("2026-08-10"), priceCents: 10_000 },
-          { date: requireCalendarDate("2026-08-11"), priceCents: 10_000 },
-        ],
+        {
+          strandIndex: 0,
+          nightPrices: [
+            { date: requireCalendarDate("2026-08-10"), priceCents: 10_000 },
+            { date: requireCalendarDate("2026-08-11"), priceCents: 10_000 },
+          ],
+        },
       ],
       settled: { direction: "CHARGE_TO_MEMBER", amountCents: 6_000 },
       store,
@@ -437,10 +508,13 @@ describe("how many work items one parked edit raises (#3498 fix round)", () => {
     const mover = await planStoredNightPriceRepair({
       task: taskOf([strandRecord("mover-a", { surrendered: ["2026-08-10"] })]),
       requested: [
-        [
-          { date: requireCalendarDate("2026-08-10"), priceCents: 5_000 },
-          { date: requireCalendarDate("2026-08-11"), priceCents: 5_000 },
-        ],
+        {
+          strandIndex: 0,
+          nightPrices: [
+            { date: requireCalendarDate("2026-08-10"), priceCents: 5_000 },
+            { date: requireCalendarDate("2026-08-11"), priceCents: 5_000 },
+          ],
+        },
       ],
       settled: { direction: "REFUND_TO_MEMBER", amountCents: 4_000 },
       store,
@@ -452,10 +526,13 @@ describe("how many work items one parked edit raises (#3498 fix round)", () => {
     const stayer = await planStoredNightPriceRepair({
       task: taskOf([strandRecord("stayer")]),
       requested: [
-        [
-          { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
-          { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
-        ],
+        {
+          strandIndex: 0,
+          nightPrices: [
+            { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
+            { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
+          ],
+        },
       ],
       settled: { direction: "REFUND_TO_MEMBER", amountCents: 4_000 },
       store,

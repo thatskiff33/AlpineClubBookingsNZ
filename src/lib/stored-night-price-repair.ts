@@ -175,22 +175,46 @@ export const recordedNightPricesSchema = z
   .max(370);
 
 /**
- * The whole item's figures: ONE ARRAY PER REPAIRABLE STRAND, in the order the
- * screen was offered them (#3498).
+ * The whole item's figures: ONE ENTRY PER REPAIRABLE STRAND, each NAMING THE
+ * STRAND IT IS FOR by its position in the item (#3498).
  *
- * POSITIONAL, and deliberately carries no guest-strand id. The server re-derives
- * which strands are repairable from the task's own stored context inside the
- * settle transaction and matches these by index, refusing a length mismatch as a
- * race - so a stale screen cannot write one guest's figures onto another guest's
- * nights, and the browser still never names a strand
- * (see {@link UnpricedNightsSummary}).
+ * ## Why the position is carried rather than implied
+ *
+ * It was implied - a bare array of arrays, matched to the repairable strands by
+ * list index, with a length mismatch refused as a race. That binding is carried
+ * by a length check plus value checks that happen to discriminate, and it has a
+ * hole: if one strand stops being repairable while another starts, in the
+ * seconds the dialog is open, the length is unchanged and every position shifts
+ * by one. The blank dates and the stored total usually tell the two apart - and
+ * on a couple sharing the same nights at the same rate they do not, so one
+ * guest's figures are written silently onto the other's nights. Same sum,
+ * different nights, and a later part-refund is worked out from the nights.
+ *
+ * `strandIndex` is the item's OWN ordinal, which the server sets and sends
+ * (`RepairableStrand`), and the completion refuses anything whose indices are
+ * not exactly the repairable set's. It is a position inside one work item and
+ * names nothing outside it, so the browser STILL never names a guest strand -
+ * the property {@link UnpricedNightsSummary} protects.
  *
  * The outer cap is a BOUND on work an authenticated request can ask for, like
  * the inner one: a booking's party, not a rule about bookings.
  */
 export const recordedStrandNightPricesSchema = z
-  .array(recordedNightPricesSchema)
+  .array(
+    z
+      .object({
+        strandIndex: nonNegativeCentsSchema,
+        nightPrices: recordedNightPricesSchema,
+      })
+      .strict(),
+  )
   .max(60);
+
+/** One strand's figures on the wire, named by the item's own ordinal. */
+export type RecordedStrandNightPrices = {
+  strandIndex: number;
+  nightPrices: readonly RecordedNightPrice[];
+};
 
 /**
  * WHICH WAY the settled amount moves what this strand is worth.

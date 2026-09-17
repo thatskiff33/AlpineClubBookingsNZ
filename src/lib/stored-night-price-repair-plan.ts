@@ -18,6 +18,7 @@ import {
   NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
   NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE,
   type RecordedNightPrice,
+  type RecordedStrandNightPrices,
   type SettlementDirectionValue,
   type UnpricedNightsSummary,
 } from "@/lib/stored-night-price-repair";
@@ -328,11 +329,11 @@ export async function planStoredNightPriceRepair({
 }: {
   task: { kind: ManualRefundTaskKind | string | null; reviewContext: unknown };
   /**
-   * What the officer typed, ONE ARRAY PER REPAIRABLE STRAND, in the order the
-   * screen was offered them (#3498). `null` is "not recording those now" and is
-   * the body every client sent before #3191.
+   * What the officer typed, ONE ENTRY PER REPAIRABLE STRAND, each naming the
+   * strand it is for by the item's own ordinal (#3498). `null` is "not recording
+   * those now" and is the body every client sent before #3191.
    */
-  requested: readonly (readonly RecordedNightPrice[])[] | null;
+  requested: readonly RecordedStrandNightPrices[] | null;
   /** What this settle moves, or null on a dismissal, which moves nothing. */
   settled: { direction: SettlementDirectionValue; amountCents: number } | null;
   store: Prisma.TransactionClient;
@@ -397,14 +398,26 @@ export async function planStoredNightPriceRepair({
       409,
     );
   }
-  if (requested.length !== repairable.length) {
-    /*
-      The screen was built from a different set of repairable strands than the
-      booking now has - a guest repaired or removed in another tab, or an older
-      client posting the pre-#3498 flat body. Refused as a race rather than
-      matched up as far as it goes: a positional binding that is allowed to be
-      short would write one strand's figures onto another strand's nights.
-    */
+  /*
+    THE BINDING, CHECKED RATHER THAN ASSUMED (#3498 fix round).
+
+    The screen may have been built from a different set of repairable strands
+    than the booking now has - a guest repaired or removed in another tab, or an
+    older client posting the pre-#3498 body. A length check alone does not catch
+    the case where one strand stops being repairable while another starts: the
+    length is unchanged and every position shifts by one, and the value checks
+    that would usually discriminate cannot tell two strands apart when their
+    blank dates and stored totals match, which is an ordinary couple on the same
+    nights at the same rate. So each entry NAMES the strand it is for, by the
+    item's own ordinal, and the whole set has to match exactly - refused as a
+    race rather than matched up as far as it goes.
+  */
+  const offeredIndices = repairable.map((strand) => strand.strandIndex);
+  const requestedIndices = requested.map((entry) => entry.strandIndex);
+  if (
+    requestedIndices.length !== offeredIndices.length ||
+    requestedIndices.some((index, position) => index !== offeredIndices[position])
+  ) {
     throw new ManualBookingPaymentError(NIGHT_PRICE_REPAIR_RACED_MESSAGE, 409);
   }
 
@@ -412,7 +425,7 @@ export async function planStoredNightPriceRepair({
   return repairable.map(({ bookingGuestId, summary, absorbsSettlement }, index) => {
     const check = checkStoredNightPriceRepair({
       summary,
-      entries: requested[index] ?? [],
+      entries: requested[index]?.nightPrices ?? [],
       /*
         THE SETTLED AMOUNT MOVES AT MOST ONE STRAND'S WORTH, and never a strand
         it is not about. `absorbsSettlement` says which, and says FALSE for all

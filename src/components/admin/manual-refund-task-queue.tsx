@@ -50,6 +50,7 @@ import {
   settlementDeltaCents,
   unpricedNightTargetCents,
   type RecordedNightPrice,
+  type RecordedStrandNightPrices,
   type StoredNightPriceRepairCheck,
   type UnpricedNightsSummary,
 } from "@/lib/stored-night-price-repair";
@@ -1255,15 +1256,20 @@ export function ManualRefundTaskQueue() {
     (strand) => strand.check?.ok !== true,
   );
   /*
-    What goes on the wire: one array per strand, in the item's order, or null
-    when nothing is being recorded. Sent ONLY when every strand reconciles - a
-    partial answer is never posted, because the button is disabled behind it.
+    What goes on the wire: one entry per strand, each naming the strand it is
+    for, or null when nothing is being recorded. Sent ONLY when every strand
+    reconciles - a partial answer is never posted, because the button is
+    disabled behind it.
   */
-  const recordedNightPrices: RecordedNightPrice[][] | null =
+  const recordedNightPrices: RecordedStrandNightPrices[] | null =
     nightPriceStrands.length > 0 && !nightPricesBlocked
-      ? nightPriceStrands.map((strand) =>
-          strand.check?.ok ? [...strand.check.entries] : [],
-        )
+      ? nightPriceStrands.map((strand) => ({
+          // The ITEM's ordinal, so the server binds these figures to the strand
+          // they were typed for rather than to whatever now sits at this
+          // position in the list (#3498 fix round).
+          strandIndex: strand.strandIndex,
+          nightPrices: strand.check?.ok ? [...strand.check.entries] : [],
+        }))
       : null;
 
   async function submit() {

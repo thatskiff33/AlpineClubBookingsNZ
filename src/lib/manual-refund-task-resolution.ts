@@ -32,7 +32,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import { manualRefundTaskSettlementRefusal } from "@/lib/manual-refund-task-settlement-rules";
-import type { RecordedNightPrice } from "@/lib/stored-night-price-repair";
+import type { RecordedStrandNightPrices } from "@/lib/stored-night-price-repair";
 // #3498: what a settle MAY repair is the plan module's; the writes are the store's.
 import { planStoredNightPriceRepair } from "@/lib/stored-night-price-repair-plan";
 import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-store";
@@ -132,7 +132,7 @@ export type ManualRefundTaskResolution =
        * completed, is `stored-night-price-repair.ts` and `INV-MOD-028`. #3498:
        * ONE ARRAY PER REPAIRABLE STRAND, in the order the screen offered them.
        */
-      recordedNightPrices: RecordedNightPrice[][] | null;
+      recordedNightPrices: RecordedStrandNightPrices[] | null;
     }
   | {
       taskId: string;
@@ -147,7 +147,7 @@ export type ManualRefundTaskResolution =
        * nothing to settle would park forever. Nothing moves, so the figures must
        * come to the strand's stored total unchanged.
        */
-      recordedNightPrices: RecordedNightPrice[][] | null;
+      recordedNightPrices: RecordedStrandNightPrices[] | null;
       /**
        * A dismissal moves no money, so there is no direction to record and none
        * may be sent. The database says the same thing
