@@ -37,7 +37,9 @@ export function appendBookingMoneyReconciliationDashboardState({
   affectedMetrics: string;
   formatNumber: FormatNumber;
 }): FinanceDashboardStatusPanel {
-  const scopes: ReconciliationScope[] = [{ label: "Primary", summary: primary }];
+  const scopes: ReconciliationScope[] = [
+    { label: "Primary", summary: primary },
+  ];
   if (comparison) scopes.push({ label: "Comparison", summary: comparison });
 
   for (const { label, summary } of scopes) {
@@ -66,10 +68,11 @@ export function appendBookingMoneyReconciliationDashboardState({
       {
         label: `${label} unreconciled`,
         value: formatNumber(summary.byState.UNRECONCILED),
-        detail: Object.entries(summary.byReason)
-          .filter(([, count]) => count > 0)
-          .map(([reason, count]) => `${reason}: ${formatNumber(count)}`)
-          .join(", ") || "No unreconciled bookings.",
+        detail:
+          Object.entries(summary.byReason)
+            .filter(([, count]) => count > 0)
+            .map(([reason, count]) => `${reason}: ${formatNumber(count)}`)
+            .join(", ") || "No unreconciled bookings.",
       },
     ]),
   };
