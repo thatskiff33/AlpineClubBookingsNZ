@@ -280,7 +280,7 @@ describe("#3031 quote and apply consume one discriminated result", () => {
     // has to be argued for here, in front of this comment, instead of appearing.
     expect(Object.keys(quote).sort()).toEqual([
       "kind",
-      "occurrence",
+      "occurrences",
       "parkedPlan",
     ]);
     expect(Object.keys(apply).sort()).toEqual([
@@ -289,7 +289,7 @@ describe("#3031 quote and apply consume one discriminated result", () => {
       // priced one does.
       "capacityOverridden",
       "kind",
-      "occurrence",
+      "occurrences",
       // #3166: the guest ROWS the writer is handed — one entry per strand,
       // carrying that strand's own STORED total and a per-night vector whose
       // unknown nights are null. It is the same content `parkedPlan` already

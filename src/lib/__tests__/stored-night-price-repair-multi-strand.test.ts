@@ -17,13 +17,24 @@ import { ManualRefundTaskKind } from "@prisma/client";
  *     that gives a different — and wrong — answer on the commonest parked shape
  *     there is.
  *
- * MUTATION PROOF. Derive `absorbsSettlement` as "the first repairable strand"
+ * THE FIX ROUND ADDS THE THIRD (owner decision, 17 September 2026): a strand
+ * whose nights this edit never moved absorbs NOTHING, even when it leads. A pure
+ * guest add ranks every existing strand equally, so the lead is a guest nobody
+ * touched - and making their blanks come to their stored total PLUS the charge
+ * for two newly-added guests writes the new party's money onto an old strand's
+ * nights. Where two or more strands DO move, the edit fans out into one item
+ * each (`parkedEditWorkItems`) so no item ever has two claims on one amount.
+ *
+ * MUTATION PROOF. Derive `absorbsSettlement` as "the first repairable strand""
  * instead of "the lead strand, if it is repairable", and
  * "moves NO strand's worth when the strand the money is about has no blanks"
  * fails. Apply the delta to every strand and
  * "every other strand reconciles to its own stored total" fails. Drop the
  * length check and "refuses a stale screen rather than matching as far as it
- * goes" fails. All three were applied, all three failed this file, and all three
+ * goes" fails. Drop the `editFinancialReviewStrandMovesNights` condition and
+ * "a lead the edit never moved absorbs nothing" fails. Change the fan-out
+ * threshold from two movers to three and "two moving strands are two work
+ * items" fails. All five were applied, all five failed this file, and all five
  * were restored (`docs/TESTING.md`).
  */
 
@@ -37,6 +48,7 @@ import {
   reviewTaskStrands,
 } from "@/lib/stored-night-price-repair-plan";
 import { requireCalendarDate } from "@/lib/club-time";
+import { parkedEditWorkItems } from "@/lib/parked-edit-occurrence";
 
 const store = {
   bookingGuest: { findMany: (...a: unknown[]) => mocks.findMany(...a) },
@@ -244,5 +256,210 @@ describe("which strand the settled amount moves (#3498)", () => {
         store,
       }),
     ).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+/**
+ * One strand record, with the night movement stated rather than assumed - which
+ * is the whole question this block is about.
+ */
+function strandRecord(
+  bookingGuestId: string,
+  moves: { surrendered?: readonly string[]; added?: readonly string[] } = {},
+) {
+  return {
+    bookingGuestId,
+    cause: "NO_STORED_NIGHT_PRICES" as const,
+    surrenderedNightDates: (moves.surrendered ?? []).map(requireCalendarDate),
+    addedNightDates: (moves.added ?? []).map(requireCalendarDate),
+    storedEvidence: { guestTotalCents: 14_000, nightPrices: [] },
+  };
+}
+
+function taskOf(strands: readonly ReturnType<typeof strandRecord>[]) {
+  const [lead, ...otherStrands] = strands;
+  return {
+    kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
+    reviewContext: {
+      version: 1,
+      occurrence: {
+        bookingId: "booking-1",
+        ...lead!,
+        ...(otherStrands.length > 0 ? { otherStrands } : {}),
+      },
+      guestMemberId: null,
+      bookingCheckIn: "2026-08-10",
+      bookingCheckOut: "2026-08-12",
+      bookingModificationId: "mod-1",
+    },
+  };
+}
+
+describe("a strand the edit never moved absorbs nothing (#3498 fix round)", () => {
+  it("MUTATION: a PURE GUEST ADD leaves every existing strand at its own stored total", async () => {
+    /*
+      The shape the fix round closes, and the money is real. Adding two guests at
+      $320 each surrenders no night and gains none on any strand already on the
+      booking, so every existing strand ranks equally and the lead is decided by
+      guest id alone - a guest nobody touched.
+
+      `index === 0` alone made that guest ABSORB the charge: their two blank
+      nights would have had to come to their stored $140.00 plus the $640.00 owed
+      for two people who are not them. The club would have recorded the new
+      party's money against an old guest's stay, and the figure a later
+      part-refund is worked out from would have been wrong by $640.00.
+    */
+    mocks.findMany.mockResolvedValue([guest("a-existing", 14_000, true)]);
+    const plans = await planStoredNightPriceRepair({
+      task: taskOf([strandRecord("a-existing")]),
+      requested: [
+        [
+          { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
+          { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
+        ],
+      ],
+      // A CHARGE, which is the direction an add settles in.
+      settled: { direction: "CHARGE_TO_MEMBER", amountCents: 64_000 },
+      store,
+    });
+    expect(plans.map((plan) => plan.bookingGuestId)).toEqual(["a-existing"]);
+
+    // And the figure that WOULD reconcile if the charge had been absorbed here
+    // is refused, which is what makes the case above non-vacuous.
+    await expect(
+      planStoredNightPriceRepair({
+        task: taskOf([strandRecord("a-existing")]),
+        requested: [
+          [
+            { date: requireCalendarDate("2026-08-10"), priceCents: 39_000 },
+            { date: requireCalendarDate("2026-08-11"), priceCents: 39_000 },
+          ],
+        ],
+        settled: { direction: "CHARGE_TO_MEMBER", amountCents: 64_000 },
+        store,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("an EXTENSION absorbs it: nights ADDED move the strand's worth just as nights given back do", async () => {
+    /*
+      The added-night shape at settle time, which nothing exercised before. A
+      strand that GAINS nights against a frozen stored total stops reconciling -
+      every new night is written NULL - so it is unpriceable for good, real money
+      is owed on it, and the charge for those nights belongs to exactly this
+      strand. `editFinancialReviewStrandMovesNights` counts added nights for that
+      reason, and a rule written only about surrendered ones would have left the
+      extension recorded and unsettleable.
+
+      Stored $140.00 plus the $60.00 being charged is $200.00 across two nights.
+    */
+    mocks.findMany.mockResolvedValue([guest("extended", 14_000, true)]);
+    const plans = await planStoredNightPriceRepair({
+      task: taskOf([
+        strandRecord("extended", { added: ["2026-08-11"] }),
+      ]),
+      requested: [
+        [
+          { date: requireCalendarDate("2026-08-10"), priceCents: 10_000 },
+          { date: requireCalendarDate("2026-08-11"), priceCents: 10_000 },
+        ],
+      ],
+      settled: { direction: "CHARGE_TO_MEMBER", amountCents: 6_000 },
+      store,
+    });
+    expect(plans).toHaveLength(1);
+    expect(plans[0]!.entries.map((entry) => entry.priceCents)).toEqual([
+      10_000, 10_000,
+    ]);
+  });
+});
+
+describe("how many work items one parked edit raises (#3498 fix round)", () => {
+  it("keeps ONE item while at most one strand's nights move", () => {
+    // The shape the whole issue is about: removing one guest from a party moves
+    // that guest's nights and nobody else's, so the six guests the writer merely
+    // rewrote ride along as supporting detail on one card.
+    const items = parkedEditWorkItems({
+      bookingId: "booking-1",
+      strands: [
+        strandRecord("departing", { surrendered: ["2026-08-10"] }),
+        strandRecord("stayer-a"),
+        strandRecord("stayer-b"),
+      ],
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0].bookingGuestId).toBe("departing");
+    expect(items[0].otherStrands).toHaveLength(2);
+  });
+
+  it("MUTATION: two moving strands are two work items, each keeping its own amount", () => {
+    /*
+      The owner's 17 September decision. An item carries ONE `amountCents`, so
+      two strands whose night sets both move cannot share one: the lead would
+      absorb the whole settlement and the other would be handed
+      `stored + 0 - known` as the total its blanks must come to - which only
+      $0.00 satisfies, so closing the review would record sold nights as comped.
+      Where the settlement exceeds the lead's blanks that target goes NEGATIVE
+      and the review cannot be closed at all.
+
+      A fan-out item carries NO `otherStrands`: the boxes an item offers are the
+      blanks of every strand it names, so two items each naming both strands
+      would offer every blank twice and let them fight over one night.
+    */
+    const items = parkedEditWorkItems({
+      bookingId: "booking-1",
+      strands: [
+        strandRecord("mover-a", { surrendered: ["2026-08-10"] }),
+        strandRecord("mover-b", { added: ["2026-08-12"] }),
+        strandRecord("stayer"),
+      ],
+    });
+    expect(items).toHaveLength(3);
+    for (const item of items) {
+      expect(item.otherStrands).toBeUndefined();
+      expect(item.bookingId).toBe("booking-1");
+    }
+    expect(items.map((item) => item.bookingGuestId).sort()).toEqual([
+      "mover-a",
+      "mover-b",
+      "stayer",
+    ]);
+  });
+
+  it("and each fanned item settles only its own strand, absorbing only if that strand moved", async () => {
+    /*
+      The settle side of the same decision, which is where the money is. Each
+      item names ONE strand, so the officer is offered one column per card and
+      the amount they settle there moves that strand and no other - which is what
+      "each guest keeps their own amount" means in practice.
+    */
+    mocks.findMany.mockResolvedValue([guest("mover-a", 14_000, true)]);
+    const mover = await planStoredNightPriceRepair({
+      task: taskOf([strandRecord("mover-a", { surrendered: ["2026-08-10"] })]),
+      requested: [
+        [
+          { date: requireCalendarDate("2026-08-10"), priceCents: 5_000 },
+          { date: requireCalendarDate("2026-08-11"), priceCents: 5_000 },
+        ],
+      ],
+      settled: { direction: "REFUND_TO_MEMBER", amountCents: 4_000 },
+      store,
+    });
+    expect(mover.map((plan) => plan.bookingGuestId)).toEqual(["mover-a"]);
+
+    // The item led by the strand nobody moved comes to its stored total flat.
+    mocks.findMany.mockResolvedValue([guest("stayer", 14_000, true)]);
+    const stayer = await planStoredNightPriceRepair({
+      task: taskOf([strandRecord("stayer")]),
+      requested: [
+        [
+          { date: requireCalendarDate("2026-08-10"), priceCents: 7_000 },
+          { date: requireCalendarDate("2026-08-11"), priceCents: 7_000 },
+        ],
+      ],
+      settled: { direction: "REFUND_TO_MEMBER", amountCents: 4_000 },
+      store,
+    });
+    expect(stayer.map((plan) => plan.bookingGuestId)).toEqual(["stayer"]);
   });
 });

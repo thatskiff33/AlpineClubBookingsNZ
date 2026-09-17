@@ -209,33 +209,70 @@ function parkedEdit() {
   if (occurrences === null) {
     throw new Error("The fixture must park; it holds four unreadable strands.");
   }
-  /*
-    ONE item: the fixture's four strands include exactly one whose night set
-    this edit moves, so the grain stays the edit's (`parkedEditWorkItems`).
-    Asserted rather than assumed, because every field this census enumerates
-    lives on the item's strand list and a silent fan-out would spread them.
-  */
-  if (occurrences.length !== 1) {
-    throw new Error(
-      `The fixture must compose to ONE work item; got ${occurrences.length}.`,
-    );
-  }
-  return occurrences[0]!;
+  return occurrences;
+}
+
+/**
+ * EVERY strand this parked edit recorded, across every work item it composed
+ * into - which is the grain the "no stored figure is lost" property is really
+ * about (#3498 fix round).
+ *
+ * The census used to read one item's strand list, because the fixture composed
+ * to one item. It no longer does, and the reason is the owner's 17 September
+ * decision rather than an accident: this fixture moves FOUR strands' night sets
+ * (even-split, shortened, extended, removed), and an edit that moves two or more
+ * fans out into one item per recorded strand, because an item holds one amount.
+ *
+ * Reading across the items is the honest place for this census either way: the
+ * property D1 asked for is that no strand's stored figures are lost by the
+ * regrouping, and a census pinned to one item could only ever check one grain.
+ */
+function recordedStrands() {
+  return parkedEdit().flatMap((occurrence) =>
+    editFinancialReviewStrandRecords(occurrence),
+  );
 }
 
 describe("#3498 census: one item per parked edit loses no stored figure", () => {
-  it("raises exactly ONE occurrence for an edit touching eight strands", () => {
-    const occurrence = parkedEdit();
-    expect(occurrence.bookingId).toBe("booking-1");
-    // The acceptance criterion, as a fact about the value rather than a count of
-    // rows written: there is one identity, so there is one work item.
-    expect(editFinancialReviewStrandRecords(occurrence)).toHaveLength(
-      RECORDED_GUEST_IDS.length,
+  it("names the booking on every item, and records each strand exactly once", () => {
+    const items = parkedEdit();
+    for (const occurrence of items) {
+      expect(occurrence.bookingId).toBe("booking-1");
+    }
+    /*
+      NO STRAND IS RECORDED TWICE and none is dropped, whichever grain the edit
+      composed at. That is the acceptance criterion as a fact about the values
+      rather than a count of rows written - and it is what a regrouping is
+      allowed to change nothing about.
+    */
+    expect(recordedStrands()).toHaveLength(RECORDED_GUEST_IDS.length);
+  });
+
+  it("fans out to one item per strand, because this edit moves four of them", () => {
+    /*
+      The owner's 17 September decision, on the fixture that demonstrates it. An
+      item carries ONE `amountCents`; four strands whose night sets all move need
+      four, so the edit raises one item per recorded strand and each keeps its
+      own. The single-item grain is exercised by the pure-add case below, where
+      no existing strand moves at all.
+
+      A FAN-OUT ITEM CARRIES NO `otherStrands`, which is not tidiness: the price
+      boxes an item offers are the blanks of every strand it names, so items that
+      each named all seven would offer every blank seven times and let two items
+      fight over one night.
+    */
+    const items = parkedEdit();
+    expect(items).toHaveLength(RECORDED_GUEST_IDS.length);
+    for (const occurrence of items) {
+      expect(occurrence.otherStrands).toBeUndefined();
+    }
+    expect([...items.map((item) => item.bookingGuestId)].sort()).toEqual(
+      [...RECORDED_GUEST_IDS].sort(),
     );
   });
 
   it("records EVERY strand the per-strand rule recorded, and no other", () => {
-    const recorded = editFinancialReviewStrandRecords(parkedEdit());
+    const recorded = recordedStrands();
     expect([...recorded.map((strand) => strand.bookingGuestId)].sort()).toEqual(
       [...RECORDED_GUEST_IDS].sort(),
     );
@@ -244,7 +281,7 @@ describe("#3498 census: one item per parked edit loses no stored figure", () => 
   it.each(RECORDED_GUEST_IDS)(
     "carries every manifest field on the %s strand",
     (bookingGuestId) => {
-      const strand = editFinancialReviewStrandRecords(parkedEdit()).find(
+      const strand = recordedStrands().find(
         (candidate) => candidate.bookingGuestId === bookingGuestId,
       );
       expect(strand).toBeDefined();
@@ -256,7 +293,7 @@ describe("#3498 census: one item per parked edit loses no stored figure", () => 
   );
 
   it("records the real stored figures, not hollowed-out ones", () => {
-    const recorded = editFinancialReviewStrandRecords(parkedEdit());
+    const recorded = recordedStrands();
     for (const fixture of STRANDS) {
       const strand = recorded.find(
         (candidate) => candidate.bookingGuestId === fixture.bookingGuestId,
@@ -298,30 +335,37 @@ describe("#3498 census: one item per parked edit loses no stored figure", () => 
     }
   });
 
-  it("survives the WRITE: every strand round-trips through the stored-context schema", () => {
-    const occurrence = parkedEdit();
-    const context: EditFinancialReviewContext = {
-      version: 1,
-      occurrence,
-      guestMemberId: null,
-      bookingCheckIn: "2026-08-01" as never,
-      bookingCheckOut: "2026-08-04" as never,
-      guestsAddedByEdit: null,
-      bookingModificationId: "mod-1",
-    };
-    /*
+  it.each(RECORDED_GUEST_IDS)(
+    "survives the WRITE: the %s strand's item round-trips through the stored-context schema",
+    (bookingGuestId) => {
+      const occurrence = parkedEdit().find((item) =>
+        editFinancialReviewStrandRecords(item).some(
+          (strand) => strand.bookingGuestId === bookingGuestId,
+        ),
+      )!;
+      const context: EditFinancialReviewContext = {
+        version: 1,
+        occurrence,
+        guestMemberId: null,
+        bookingCheckIn: "2026-08-01" as never,
+        bookingCheckOut: "2026-08-04" as never,
+        guestsAddedByEdit: null,
+        bookingModificationId: "mod-1",
+      };
+      /*
       The raise refuses to write a context this parser cannot read back, so a
       schema that silently dropped `otherStrands` would not lose the evidence
       quietly - it would lose the whole item. Either way the figures are gone,
       which is why the census checks the round trip rather than the composition
       alone.
     */
-    const parsed = parseEditFinancialReviewContext(context);
-    expect(parsed).not.toBeNull();
-    expect(
-      editFinancialReviewStrandRecords(parsed!.occurrence),
-    ).toEqual(editFinancialReviewStrandRecords(occurrence));
-  });
+      const parsed = parseEditFinancialReviewContext(context);
+      expect(parsed).not.toBeNull();
+      expect(editFinancialReviewStrandRecords(parsed!.occurrence)).toEqual(
+        editFinancialReviewStrandRecords(occurrence),
+      );
+    },
+  );
 
   it("RAISES AN ITEM ON A PURE GUEST ADD, where no existing strand moves at all", () => {
     /*
