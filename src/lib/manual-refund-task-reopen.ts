@@ -31,14 +31,24 @@ import { prisma } from "@/lib/prisma";
  *
  * A dismissal is a DECISION - "reviewed, and this system moved no money for that
  * occurrence" - and a decision can be wrong. A completion is a MOVEMENT: the
- * money has gone, down one of three settlement routes, against an anchor that
- * enforces exactly-once. `MemberCredit.sourceBookingModificationId` is `@unique`
- * and the Stripe refund idempotency key is derived from the same
- * `bookingModificationId`, so a second settlement against the same anchor is
- * refused by the database rather than by this module - but it would be refused
- * AFTER an officer had priced it a second time, in front of a screen that had
- * invited them to. Reopening a completion is therefore refused here, by status,
- * before anything is claimed.
+ * money has gone, down one of three settlement routes.
+ *
+ * ONE of those routes has an anchor that enforces exactly-once against a REPLAY
+ * OF THE SAME TASK: `MemberCredit.sourceBookingModificationId` is `@unique`, so a
+ * second account-credit settlement of the same edit is refused by the database.
+ * The Stripe refund's idempotency key is NOT a second instance of that and must
+ * not be read as one - it is TASK-scoped
+ * (`buildEditFinancialReviewRefundStripeKeyPrefix(taskId)`), deliberately, because
+ * one edit can raise two review tasks and a modification-scoped prefix would make
+ * Stripe answer the second with the first's refund
+ * (`edit-financial-review-settlement.ts` argues it in full). Reopening a
+ * COMPLETED task would reuse that task's own id, so the key would match and
+ * Stripe would replay - which is not protection, it is a member told their money
+ * came back twice when it left once.
+ *
+ * Either way the refusal would arrive AFTER an officer had priced it a second
+ * time, in front of a screen that had invited them to. So reopening a completion
+ * is refused here, by status, before anything is claimed.
  *
  * ## AND ONLY A PERSON'S DISMISSAL
  *
@@ -59,11 +69,36 @@ import { prisma } from "@/lib/prisma";
  * reopen's reason goes in the audit entry, which is where "who undid what, and
  * why" belongs.
  *
- * It takes NO ADVISORY LOCK, matching the closure path it mirrors
- * (`manual-refund-task-resolution.ts`, and `docs/CONCURRENCY_AND_LOCKING.md`
- * records that as deliberate). The status-fenced `updateMany` is the whole
- * single-flight guarantee: two officers pressing at once means one claim lands
- * and the other is told the row moved.
+ * ## IT TAKES `pg_advisory_xact_lock(1)`, AND THE CLOSURE PATH'S REASONS FOR NOT
+ * TAKING ONE DO NOT TRANSFER
+ *
+ * `resolveManualRefundTask` holds no advisory key, and that is deliberate and
+ * documented: serialising it against the Stripe webhook would mean holding the
+ * global key across a provider round trip, which the bounded-exception rule in
+ * `docs/CONCURRENCY_AND_LOCKING.md` forbids outright. Reopening makes NO PROVIDER
+ * CALL at all, so that exception has nothing to apply to - and the two transitions
+ * are not mirror images in the way that phrasing suggests.
+ *
+ * A closure moves `OPEN -> terminal`, which only RELAXES
+ * `assertNoPendingEditFinancialReview`: an edit that read the fence and proceeded
+ * was entitled to. A reopen moves `DISMISSED -> OPEN`, which TIGHTENS the same
+ * fence RETROACTIVELY, against edits already in flight. Unlocked, this
+ * interleaves: a member's date change takes `lock(1)`, reads the fence (this task
+ * is DISMISSED, so it proceeds) and runs a long edit that issues a credit under
+ * its own modification M2; mid-window an officer reopens this task; both commit.
+ * The task is now OPEN on a booking whose edit has already settled, its context
+ * still points at M1, and the `MemberCredit.sourceBookingModificationId` anchor
+ * for M1 is free - so completing it credits the member a second time.
+ *
+ * Taking the global key first is what closes that: the reopen either lands before
+ * the edit reads the fence (and the edit is then refused, correctly) or after the
+ * edit has committed (and the officer is reopening against a booking whose state
+ * they can see). One tier, taken first, composing with nothing - `INV-LOCK-002`'s
+ * global -> lodge -> member order is satisfied trivially.
+ *
+ * The status-fenced `updateMany` stays, and still carries the two-officers case:
+ * the lock serialises them, and the fence is what tells the loser the row moved
+ * rather than writing over the winner.
  *
  * ## What reopening SETS IN MOTION, which is nothing sudden
  *
@@ -119,6 +154,15 @@ export async function reopenManualRefundTask({
   }
 
   return prisma.$transaction(async (tx) => {
+    /*
+      `INV-LOCK-001`/`INV-LOCK-002`: the global settlement cohort, taken FIRST and
+      before the read, because `DISMISSED -> OPEN` re-arms the pending-review fence
+      against money-affecting edits already in flight. The module docblock works
+      the interleaving through. No provider call happens inside this transaction,
+      so the bounded-exception rule that keeps the CLOSURE path lock-free has
+      nothing to apply to here.
+    */
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
       select: {

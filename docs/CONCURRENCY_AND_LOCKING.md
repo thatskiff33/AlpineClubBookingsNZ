@@ -3068,6 +3068,43 @@ refusal still prevents a second credit on the same `BookingModification`. The
 opposite ordering cannot arise: routing to the card at all requires the capture to
 have been visible already.
 
+**#3498 ADDS THE ONE TRANSITION ON THIS TABLE THAT DOES TAKE
+`pg_advisory_xact_lock(1)`, AND THE REASON IS THE DIRECTION IT MOVES THE FENCE.**
+An officer may now put a DISMISSED `EDIT_FINANCIAL_REVIEW` task back on the queue
+(`reopenManualRefundTask`, owner decision D2). Every paragraph above argues that a
+closure needs no advisory key; the reopen is not its mirror image and inherits
+none of that argument.
+
+A closure moves `OPEN -> terminal`, which only RELAXES
+`assertNoPendingEditFinancialReview`: an edit that read the fence and proceeded
+was entitled to proceed. The reopen moves `DISMISSED -> OPEN`, which TIGHTENS the
+same fence **retroactively**, against money-affecting edits already in flight.
+Without a key that interleaves, and the interleaving pays a member twice:
+
+1. a member's date change takes `lock(1)`, reads the fence — the task is
+   `DISMISSED`, so it proceeds — and runs a long edit that issues account credit
+   against its own `BookingModification` M2;
+2. mid-window an officer reopens the task, holding nothing;
+3. both commit. The task is now `OPEN` on a booking whose edit has already
+   settled, its `reviewContext` still points at the earlier modification M1, and
+   the `MemberCredit.sourceBookingModificationId` anchor for M1 is free — so
+   completing it credits the member a second time, and the `@unique` anchor that
+   would have refused a replay never sees one.
+
+So the reopen takes `pg_advisory_xact_lock(1)` as its first statement, before it
+reads the row. **The bounded-exception rule that keeps the closure path key-free
+has nothing to apply to here**: the reopen calls no provider, sends no email,
+writes no allocation and re-prices nothing — the transaction is one read, one
+status-fenced `updateMany` and one audit row, all local. Single-lock holder,
+composing with no narrower tier, so `INV-LOCK-002`'s global -> lodge -> member
+order is satisfied trivially and no cycle is reachable. Registered as
+`reopenManualRefundTask#1` in `advisory-lock-guard.test.ts`.
+
+The status-fenced `updateMany` stays and still carries the two-officers case: the
+key serialises them, and the fence is what tells the loser the row moved instead
+of writing over the winner. The window the key closes is the one no fence on this
+row could see, because the racing writer is not touching this row at all.
+
 **The Stripe key and the recovery key are scoped to the TASK, not to the
 `BookingModification`.** Owner decision D-3032-1 settles a review against the
 ORIGINAL edit's modification row, and one edit can raise TWO review tasks — two

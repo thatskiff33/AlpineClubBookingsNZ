@@ -13,8 +13,10 @@ import { ManualRefundTaskStatus } from "@prisma/client";
  *
  * MUTATION PROOF. Delete the DISMISSED-only refusal and "refuses a COMPLETED
  * task" fails. Delete the officer-dismissal fence and "refuses a dismissal the
- * webhook wrote" fails. Both mutations were applied, both failed this file, and
- * both were restored (`docs/TESTING.md`).
+ * webhook wrote" fails. Delete the `pg_advisory_xact_lock(1)` statement and
+ * "takes the global settlement key BEFORE it reads the row" fails. All three
+ * mutations were applied, each failed this file, and each was restored
+ * (`docs/TESTING.md`).
  */
 
 const mocks = vi.hoisted(() => ({
@@ -22,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   updateMany: vi.fn(),
   createAuditLog: vi.fn(),
+  executeRaw: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -41,10 +44,23 @@ import {
   reopenManualRefundTask,
 } from "@/lib/manual-refund-task-reopen";
 
+/** Every call the transaction makes, in order, so the LOCK's position is testable. */
+const calls: string[] = [];
+
 const tx = {
+  $executeRaw: (...a: unknown[]) => {
+    calls.push(`lock:${String((a[0] as { raw?: string[] })?.raw?.join("") ?? a[0])}`);
+    return mocks.executeRaw(...a);
+  },
   manualRefundTask: {
-    findUnique: (...a: unknown[]) => mocks.findUnique(...a),
-    updateMany: (...a: unknown[]) => mocks.updateMany(...a),
+    findUnique: (...a: unknown[]) => {
+      calls.push("findUnique");
+      return mocks.findUnique(...a);
+    },
+    updateMany: (...a: unknown[]) => {
+      calls.push("updateMany");
+      return mocks.updateMany(...a);
+    },
   },
 };
 
@@ -71,6 +87,8 @@ function reopen(note: string | null = "Closed by mistake.") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  calls.length = 0;
+  mocks.executeRaw.mockResolvedValue(1);
   mocks.transaction.mockImplementation(
     async (fn: (store: typeof tx) => Promise<unknown>) => fn(tx),
   );
@@ -216,6 +234,50 @@ describe("reopening a dismissed money task (#3498 D2)", () => {
     mocks.findUnique.mockResolvedValue(null);
 
     await expect(reopen()).rejects.toMatchObject({ status: 404 });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("the global settlement key the reopen takes (#3498 fix round, C1)", () => {
+  /*
+    The failure this is about is NOT two officers pressing at once - the
+    status-fenced claim already answers that one. It is a money-affecting EDIT
+    that read `assertNoPendingEditFinancialReview` while the task was
+    `DISMISSED`, proceeded, and settled a credit against its own
+    `BookingModification` while this transaction was putting the task back on
+    the queue. `DISMISSED -> OPEN` tightens that fence RETROACTIVELY, which is
+    the one direction the closure path it mirrors never moves it - so the
+    closure's documented reason for holding no advisory key does not transfer.
+
+    The lock has to come BEFORE the read as well as before the write: a reopen
+    that read the row first and then queued behind the edit would decide on a
+    snapshot the edit has already invalidated.
+  */
+  it("takes the global settlement key BEFORE it reads the row", async () => {
+    await reopen();
+
+    expect(calls[0]).toMatch(/^lock:/);
+    expect(calls[0]).toContain("pg_advisory_xact_lock(1)");
+    expect(calls.indexOf("findUnique")).toBeGreaterThan(0);
+    expect(calls.indexOf("updateMany")).toBeGreaterThan(
+      calls.indexOf("findUnique"),
+    );
+  });
+
+  /*
+    The key is taken inside the caller's transaction, which is what makes it
+    transaction-scoped: a `pg_advisory_lock` on a pooled connection would
+    outlive the rollback below and leak the key for the life of that connection.
+  */
+  it("holds it on the transaction, so a refusal releases it by rolling back", async () => {
+    mocks.findUnique.mockResolvedValue({
+      ...DISMISSED_BY_OFFICER,
+      status: ManualRefundTaskStatus.COMPLETED,
+    });
+
+    await expect(reopen()).rejects.toThrow(REOPEN_ONLY_DISMISSED_MESSAGE);
+
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
     expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 });
