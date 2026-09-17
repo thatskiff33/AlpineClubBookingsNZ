@@ -107,9 +107,12 @@ describe("a $0 completion reaches the layer that can explain it (#3195)", () => 
 });
 
 describe("per-night amounts on the way in (#3191)", () => {
-  // #3498: ONE ARRAY PER REPAIRABLE STRAND of the item, in the order the screen
-  // offered them. These cases describe a one-strand review, so it is one array.
-  const recordedNightPrices = [[{ date: "2026-08-02", priceCents: 1_500 }]];
+  // #3498: ONE ENTRY PER REPAIRABLE STRAND of the item, each naming the strand
+  // it is for by the item's own ordinal. These cases describe a one-strand
+  // review, so it is one entry, and its ordinal is 0.
+  const recordedNightPrices = [
+    { strandIndex: 0, nightPrices: [{ date: "2026-08-02", priceCents: 1_500 }] },
+  ];
 
   it("passes them to the library on a completion", async () => {
     await POST(
@@ -172,7 +175,9 @@ describe("per-night amounts on the way in (#3191)", () => {
           resolution: "dismissed",
           confirmed: true,
           note: "Nothing owed either way.",
-          recordedNightPrices: [[{ date: "2026-08-02", priceCents }]],
+          recordedNightPrices: [
+            { strandIndex: 0, nightPrices: [{ date: "2026-08-02", priceCents }] },
+          ],
         }),
         { params },
       );
@@ -187,7 +192,12 @@ describe("per-night amounts on the way in (#3191)", () => {
         resolution: "dismissed",
         confirmed: true,
         note: "Nothing owed either way.",
-        recordedNightPrices: [[{ date: "the second", priceCents: 100 }]],
+        recordedNightPrices: [
+          {
+            strandIndex: 0,
+            nightPrices: [{ date: "the second", priceCents: 100 }],
+          },
+        ],
       }),
       { params },
     );
@@ -202,7 +212,12 @@ describe("per-night amounts on the way in (#3191)", () => {
         confirmed: true,
         note: "Nothing owed either way.",
         recordedNightPrices: [
-          [{ date: "2026-08-02", priceCents: 100, splitRemainder: true }],
+          {
+            strandIndex: 0,
+            nightPrices: [
+              { date: "2026-08-02", priceCents: 100, splitRemainder: true },
+            ],
+          },
         ],
       }),
       { params },
@@ -228,10 +243,13 @@ describe("what the operator is told afterwards", () => {
         confirmed: true,
         note: "Nothing owed either way.",
         recordedNightPrices: [
-          [
-            { date: "2026-08-02", priceCents: 100 },
-            { date: "2026-08-03", priceCents: 100 },
-          ],
+          {
+            strandIndex: 0,
+            nightPrices: [
+              { date: "2026-08-02", priceCents: 100 },
+              { date: "2026-08-03", priceCents: 100 },
+            ],
+          },
         ],
       }),
       { params },

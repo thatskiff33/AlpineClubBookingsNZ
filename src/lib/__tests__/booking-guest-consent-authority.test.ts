@@ -952,14 +952,26 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
 
     /*
       The operator sentence carries the whole edit's nights, and its second
-      sentence is the one that is true of the whole edit. "The exact sold price
-      could not be read" is FALSE of the departing strand alone - but this item
-      also covers a companion whose rows genuinely cannot be read, and that is
-      why no money moved. On an edit where EVERY recorded strand reads cleanly
-      the sentence is #3032's, which the builder's own tests pin.
+      sentence DESCRIBES THE LEAD (#3498 fix round, S3). That is this row: the
+      departing guest, whose own stored prices are complete and add up, sitting
+      beside an evidence block that says so. Telling them "the exact sold price
+      could not be read" here is the contradiction #3032 wrote the counterpart
+      sentence to remove - and gating that sentence on EVERY recorded strand,
+      as #3498 briefly did, made it unreachable at all four raise doors, so the
+      one row holding the real money got the wrong half of it.
+
+      The companion's unreadable rows are still why no money moved, and they are
+      still on this item: the evidence block below says so, and the sentence's
+      own second clause names them.
     */
     expect(task.reason).toContain("2026-11-02");
-    expect(task.reason).toContain("The exact sold price could not be read");
+    expect(task.reason).toContain(
+      "This guest's own stored night prices are complete and add up",
+    );
+    expect(task.reason).toContain(
+      "another guest on the same booking has prices that cannot be read",
+    );
+    expect(task.reason).not.toContain("The exact sold price could not be read");
 
     // Still no amount: what goes back also depends on the cancellation tier and
     // the promo recalculation this parked path skipped, so the gross stored

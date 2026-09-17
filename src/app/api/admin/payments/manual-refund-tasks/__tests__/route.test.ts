@@ -839,6 +839,10 @@ describe("unpriced nights on a review row (#3191)", () => {
         // review names one strand and it leads, so it is this one - and the
         // browser reads the answer rather than guessing it from the position.
         absorbsSettlement: true,
+        // The ITEM's ordinal, which the card numbers both its evidence blocks
+        // and its price boxes from, and which the officer's figures come back
+        // naming - one ordinal, one binding (#3498 fix round).
+        strandIndex: 0,
       },
     ]);
   });

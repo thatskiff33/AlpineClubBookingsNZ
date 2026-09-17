@@ -105,6 +105,7 @@ const TWO_REPAIRABLE_STRANDS = {
       },
       // The strand the item leads with, and the one the settlement moves.
       absorbsSettlement: true,
+      strandIndex: 0,
     },
     {
       summary: {
@@ -113,6 +114,7 @@ const TWO_REPAIRABLE_STRANDS = {
         storedGuestTotalCents: 14000,
       },
       absorbsSettlement: false,
+      strandIndex: 1,
     },
   ],
 };
@@ -182,8 +184,17 @@ describe("one card per parked change (#3498 D1)", () => {
     );
     // The line that says there is ONE thing to record, not one per guest - which
     // is the whole of what changed for the officer.
+    /*
+      #3498 fix round (S4): "touched" was false of them, which is why this issue
+      exists - they are here because the change REWROTE their night rows, not
+      because anything of theirs moved, and each block below now says so in its
+      own words.
+    */
     expect(supporting).toHaveTextContent(
-      /also touched 2 other guests on this booking/i,
+      /rewrote the stored night rows of 2 other guests on this booking/i,
+    );
+    expect(supporting).toHaveTextContent(
+      /did not move this guest's nights/i,
     );
     expect(supporting).toHaveTextContent(/one adjustment to record/i);
     // And each of their stored figures really is there, rather than summarised
@@ -287,15 +298,26 @@ describe("the settle dialog asks each strand separately (#3498 D1)", () => {
     fireEvent.click(confirm);
 
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
+    /*
+      #3498 fix round (C4): each entry NAMES the strand it was typed for, by the
+      item's own ordinal, so a stale screen cannot bind one guest's figures to
+      another's nights when the two hold the same blanks for the same total.
+    */
     expect(lastPost(fetchMock).body.recordedNightPrices).toEqual([
-      [
-        { date: "2026-08-10", priceCents: 6000 },
-        { date: "2026-08-11", priceCents: 6000 },
-      ],
-      [
-        { date: "2026-08-10", priceCents: 7000 },
-        { date: "2026-08-11", priceCents: 7000 },
-      ],
+      {
+        strandIndex: 0,
+        nightPrices: [
+          { date: "2026-08-10", priceCents: 6000 },
+          { date: "2026-08-11", priceCents: 6000 },
+        ],
+      },
+      {
+        strandIndex: 1,
+        nightPrices: [
+          { date: "2026-08-10", priceCents: 7000 },
+          { date: "2026-08-11", priceCents: 7000 },
+        ],
+      },
     ]);
   });
 

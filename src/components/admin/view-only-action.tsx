@@ -86,7 +86,7 @@ interface ViewOnlyActionButtonProps extends ButtonProps {
    *    switch, the #2262 cash-payment and manual-refund-task controls, the
    *    non-member contact form), where
    *    nothing local proves an ancestor renders a banner. (`docs/ARCHITECTURE.md`
-   *    counts the controls in this bucket, which is the arithmetic remainder
+   *    counts 40 controls here, and that bucket is the arithmetic remainder
    *    rather than a pure shape: a few of them are the FIRST shape — dialog
    *    contents inside `page-content-panel.tsx` and `site-banners-panel.tsx`,
    *    which are themselves banner-bearing panels — and the rest of the
