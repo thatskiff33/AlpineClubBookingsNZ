@@ -10,9 +10,15 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_LOCALE } from "@/config/operational";
 
-vi.mock("@/components/club-identity-provider", () => ({
-  useClubIdentity: () => ({ lodgeCapacity: 20 }),
-}));
+/*
+  #2930: the calendar no longer reads the club-identity bed count. That figure is
+  ONE lodge's capacity used as the denominator for every lodge, so at a capped or
+  secondary lodge every free-bed count on this grid was computed against the
+  wrong ceiling. The selected lodge's own effective capacity now arrives with the
+  month's availability (`INV-CAP-001`, `INV-CAP-003`), which is why every stub
+  below states `lodgeCapacity` — and why a stub that omits it renders "availability
+  not loaded" rather than silently borrowing another lodge's number.
+*/
 
 import { BookingCalendar } from "@/components/booking-calendar";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
@@ -58,7 +64,7 @@ describe("BookingCalendar accessibility", () => {
       vi.fn(async () => ({
         ok: true,
         json: async () => ({
-          availability: { [targetIso]: 6 },
+          lodgeCapacity: 20, availability: { [targetIso]: 6 },
           seasons: {},
         }),
       })),

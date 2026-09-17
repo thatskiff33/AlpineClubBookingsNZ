@@ -80,6 +80,27 @@ export interface EffectiveBedAllocationSettings {
   updatedAt: string | null;
 }
 
+/**
+ * The PUT contract for `/api/admin/bed-allocation/settings`, in one place.
+ *
+ * The route's zod schema is `.strict()` and is checked against this type at
+ * compile time (`satisfies Record<keyof BedAllocationSettingsWriteBody, …>` in
+ * the route), so the accepted field set and the field set the editor builds
+ * cannot drift apart without failing `npm run typecheck`. It lives in this
+ * client-safe module rather than beside the schema because the editor is a
+ * client component and cannot import a route file.
+ *
+ * Deliberately NOT the same shape as {@link EffectiveBedAllocationSettings},
+ * which the GET answers with: that view carries six read-only provenance
+ * fields, and sending them back is exactly what made every save 400 (#2931).
+ */
+export interface BedAllocationSettingsWriteBody {
+  /** Settings editing is always scoped to exactly one lodge. */
+  lodgeId: string;
+  autoAllocationEnabled: boolean;
+  allocationPriorityOrder: BedAllocationPriority[];
+}
+
 interface BedAllocationSettingsReadDb {
   bedAllocationSettings: {
     findUnique: (args: {

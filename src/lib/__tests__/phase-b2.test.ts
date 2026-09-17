@@ -33,6 +33,9 @@ const mockPrisma = {
   lodgeSettings: {
     findUnique: vi.fn().mockResolvedValue(null),
   },
+  // #2698: the hut-leader write routes audit themselves now (category `lodge`),
+  // and the real `createAuditLog` runs against this double.
+  auditLog: { create: vi.fn(async () => ({ id: "audit-1" })) },
   lodge: {
     findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
     // The auto-assign cron iterates active lodges (#2915); a single-lodge club

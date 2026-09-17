@@ -1053,6 +1053,16 @@ jobs:
           DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
         run: npx vitest run src/lib/__tests__/data-migration-verification.realdb.test.ts
 
+      # #3369: the other half of the same proof. The fixture framework above can
+      # say what a migration DOES; it has no way to say that one must REFUSE, so
+      # the school backfill's fail-closed behaviour is proved by its own suite
+      # against the same database. One path per `vitest run`, deliberately: a
+      # multi-path invocation silently drops a path that matches nothing.
+      - name: Prove the school backfill refuses an unclassified row
+        env:
+          DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
+        run: npx vitest run src/lib/__tests__/school-organisation-backfill-fail-closed.realdb.test.ts
+
   # #2686: the CRITICAL half of this job is a REQUIRED status check, so the job
   # carries an explicit `name:` — the required context is
   # `Image security gate (Trivy CRITICAL)`, not the job id.

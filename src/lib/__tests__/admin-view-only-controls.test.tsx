@@ -11,6 +11,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 // useAdminAreaEditAccess reads the merged matrix off the session user; drive it
 // per-test so the panels see a content:edit vs content:view admin.
@@ -1316,6 +1317,21 @@ describe("AdminModulesPage view-only gating (#1940, support)", () => {
 
     expect(await screen.findByRole("checkbox")).toBeEnabled();
   });
+
+  it("focuses the failure when a save is rejected with 403 (#2934)", async () => {
+    sessionMatrix = matrix("view", { support: "edit" });
+    render(<AdminModulesPage />);
+    fireEvent.click(await screen.findByRole("checkbox"));
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 403 })),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    const failure = await screen.findByText(ADMIN_FORBIDDEN_SAVE_REASON);
+    await expectRecoveryAlertToHoldFocus(failure);
+  });
 });
 
 describe("XeroRecordActivityPanel view-only gating (#1940, finance)", () => {
@@ -1503,6 +1519,22 @@ describe("AdminMemberFieldsPage view-only gating (#1940, membership)", () => {
     const checkboxes = await screen.findAllByRole("checkbox");
     fireEvent.click(checkboxes[0]);
     expect(screen.getByRole("button", { name: /^Save$/i })).toBeEnabled();
+  });
+
+  it("focuses the failure when a save is rejected with 403 (#2934)", async () => {
+    sessionMatrix = matrix("view", { membership: "edit" });
+    render(<AdminMemberFieldsPage />);
+    const checkboxes = await screen.findAllByRole("checkbox");
+    fireEvent.click(checkboxes[0]);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 403 })),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    const failure = await screen.findByText(ADMIN_FORBIDDEN_SAVE_REASON);
+    await expectRecoveryAlertToHoldFocus(failure);
   });
 });
 

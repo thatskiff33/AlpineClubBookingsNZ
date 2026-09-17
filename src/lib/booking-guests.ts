@@ -248,10 +248,18 @@ function normalizeMemberIds(memberIds: Array<string | null | undefined>): string
  */
 export async function computeMemberGuestBoundary(
   db: BookingGuestLookupDb,
-  bookingMemberId: string,
+  /** The BOOKER, or null when the booking is owned by an Organisation (#3369). */
+  bookingMemberId: string | null,
   normalizedMemberIds: readonly string[],
 ): Promise<MemberGuestBoundaryState> {
-  const allowedMemberIds = await getAllowedGuestMemberIds(db, bookingMemberId);
+  // #3369: an organisation has no family, so every member guest on its booking
+  // is BEYOND_FAMILY. That is the same answer the invented school member gave —
+  // it belonged to no family group, so the allowed set was empty for it too —
+  // and it is the fail-closed direction: a guest is asked for consent rather
+  // than assumed to have given it.
+  const allowedMemberIds = bookingMemberId
+    ? await getAllowedGuestMemberIds(db, bookingMemberId)
+    : new Set<string>();
   const scopeByMemberId = new Map<string, MemberGuestBoundaryScope>();
   const beyondFamilyMemberIds: string[] = [];
 
@@ -314,7 +322,8 @@ export interface ResolvedLinkedBookingMembers {
  */
 export async function resolveLinkedBookingMembersWithBoundary(
   db: BookingGuestLookupDb,
-  bookingMemberId: string,
+  /** The BOOKER, or null when the booking is owned by an Organisation (#3369). */
+  bookingMemberId: string | null,
   memberIds: Array<string | null | undefined>,
   options?: {
     skipAuthorization?: boolean;
@@ -579,7 +588,8 @@ function getMemberDisplayName(member: LinkedBookingMember) {
 function getBlockedGuestAction(params: {
   member: LinkedBookingMember;
   status: MemberProfileCompletenessResult;
-  currentUserId: string;
+  /** The judging person, or null on an organisation-owned booking (#3369). */
+  currentUserId: string | null;
   canCurrentUserResolve: boolean;
 }): BookingGuestProfileAction {
   const { member, status, currentUserId, canCurrentUserResolve } = params;
@@ -606,7 +616,14 @@ function getBlockedGuestAction(params: {
 export async function assertLinkedBookingMembersCanBeBooked(
   db: BookingGuestLookupDb,
   linkedMembers: Map<string, LinkedBookingMember>,
-  currentUserId: string,
+  /**
+   * The person judged as vouching for the guests. Null since #3369, when the
+   * caller asked for member semantics on an organisation-owned booking: there
+   * is no booker, which the family checks below read as "shares a family group
+   * with nobody" — the fail-closed side, and the same answer the invented
+   * school member gave since it belonged to no group.
+   */
+  currentUserId: string | null,
   context?: LinkedBookingMemberProfileGateContext
 ) {
   if (skipsMemberProfileGateForAdminOnBehalf(context)) {
@@ -672,7 +689,12 @@ export async function assertLinkedBookingMembersCanBeBooked(
       continue;
     }
 
+    // #3369: with no booker there is nobody to confirm a delegated profile and
+    // nobody to share a family group with, so both halves are false — which is
+    // exactly what they were for the invented school member, which could not
+    // log in and belonged to no group.
     const canCurrentUserConfirmDelegatedDetails =
+      currentUserId !== null &&
       member.canLogin === false &&
       isActiveLoginAdult(currentUserId) &&
       sharesFamilyGroup(member.id, currentUserId);

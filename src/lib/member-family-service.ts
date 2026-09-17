@@ -11,6 +11,7 @@ import {
   buildParentLinks,
 } from "@/lib/member-parent-links";
 import type { BookingGuestProfileAction } from "@/lib/booking-guests";
+import { loadBookerDependants } from "@/lib/booking-dependant-identity";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
@@ -670,6 +671,7 @@ export async function getMemberFamily(memberId: string): Promise<JsonRouteResult
   const firstGroup = getFamilyGroupMemberships(currentMember)[0]?.familyGroup ?? null;
 
   return jsonResult({
+    ownDependants: await loadBookerDependants(prisma, currentMember.id),
     familyGroupId: firstGroup?.id ?? null,
     familyGroupName: firstGroup?.name ?? null,
     familyGroupIds: groupIds,

@@ -7,7 +7,10 @@ import {
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { sendEmail } from "./core";
-import { bookingOwnerEmailContext } from "@/lib/booking-email-contract";
+import {
+  bookingOwnerEmailContext,
+  type BookingOwnerEmailSource,
+} from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
@@ -16,7 +19,7 @@ import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-
 export async function sendWaitlistConfirmationEmail(
   // Waitlist entry's booking (#2258): a waitlist entry IS a booking row, so the
   // per-booking "No emails" switch must be able to withhold these too.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -55,7 +58,7 @@ export async function sendWaitlistConfirmationEmail(
 export async function sendWaitlistOfferEmail(
   // Waitlist entry's booking (#2258): a waitlist entry IS a booking row, so the
   // per-booking "No emails" switch must be able to withhold these too.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -124,7 +127,7 @@ export async function sendWaitlistOfferEmail(
 export async function sendWaitlistOfferExpiredEmail(
   // Waitlist entry's booking (#2258): a waitlist entry IS a booking row, so the
   // per-booking "No emails" switch must be able to withhold these too.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -165,7 +168,7 @@ export async function sendWaitlistOfferExpiredEmail(
 export async function sendWaitlistPlaceRestoredEmail(
   // Waitlist entry's booking (#2258): a waitlist entry IS a booking row, so the
   // per-booking "No emails" switch must be able to withhold these too.
-  bookingContext: { bookingId: string; recipientMemberId: string },
+  bookingContext: BookingOwnerEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,

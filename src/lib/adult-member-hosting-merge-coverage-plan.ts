@@ -7,11 +7,13 @@
  * calls back into here, so the import runs one way only.
  */
 import {
+  coverageParticipantsOf,
   loadAdultMemberHostingPolicy,
   loadHostingCoverageMemberFanoutCandidates,
   sourceParticipant,
   type AdultMemberHostingReviewDb,
   type CoverageOwnerFacts,
+  type CoverageOwnerRow,
 } from "@/lib/adult-member-hosting-review";
 import {
   enqueueHostingCoverageReevaluation,
@@ -22,6 +24,7 @@ import {
   type HostingCoverageQueueParticipantProof,
   type HostingCoverageSourceParticipant,
 } from "@/lib/adult-member-hosting-queue-participants";
+import { bookingOwner } from "@/lib/booking-owner";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import type { ResolvedAdultMemberHostingPolicy } from "@/lib/policies/adult-member-hosting";
 
@@ -63,7 +66,11 @@ export async function buildMemberMergeHostingCoveragePlan(
             checkIn: true,
             checkOut: true,
           },
-        }) as Promise<CoverageOwnerFacts[]>)
+          // #3480: the rows as fetched, then the participant decision. These
+          // were the loser's own bookings and have just been re-pointed at the
+          // master, so every one names a member and the narrowing drops nothing;
+          // it is what lets `sourceParticipant` below promise a string owner.
+        }) as Promise<CoverageOwnerRow[]>).then(coverageParticipantsOf)
       : Promise.resolve([]),
   ]);
   const candidatesById = new Map<string, CoverageOwnerFacts>();
@@ -84,7 +91,7 @@ export async function buildMemberMergeHostingCoveragePlan(
     (booking) => policyByLodge.get(booking.lodgeId)?.mode === "ENFORCED",
   );
   const items = included.map((booking) => ({
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
     lodgeId: booking.lodgeId,
     nights: eachDateOnlyInRange(booking.checkIn, booking.checkOut).map(
       formatDateOnly,
@@ -113,7 +120,7 @@ export async function buildMemberMergeHostingCoveragePlan(
               policyByLodge.get(booking.lodgeId)?.hostScopes.sameBookingOwner ===
               true,
           )
-          .map((booking) => booking.memberId),
+          .map((booking) => bookingOwner(booking).memberId),
       )].sort(),
     ),
   });

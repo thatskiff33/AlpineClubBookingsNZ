@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: mocks.getIntegrationCredentialValue,
+}));
+vi.mock("@/lib/integration-credential-generate", () => ({
   ensureGeneratedCredential: mocks.ensureGeneratedCredential,
 }));
 

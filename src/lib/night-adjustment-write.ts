@@ -83,6 +83,25 @@ function nightKey(bookingGuestId: string, stayDate: Date): string {
 }
 
 /**
+ * The allocations a night adjustment can decompose: those that name a member.
+ *
+ * #3369: an allocation with no member belongs to an organisation-owned
+ * booking's booker slot, and a night adjustment decomposes a MEMBER's benefit.
+ * There is none to decompose, so such a row is neither a target for the writer
+ * nor a term in the reader's reconciliation. Both call this, so the
+ * `INV-MONEY-029` identity the writer enforces and the reader re-runs is
+ * computed over the same rows — a second copy of the filter is how the two
+ * would come to disagree.
+ */
+export function memberBenefitAllocations<T extends { memberId: string | null }>(
+  allocations: ReadonlyArray<T>,
+): Array<T & { memberId: string }> {
+  return allocations.filter(
+    (allocation): allocation is T & { memberId: string } => allocation.memberId !== null,
+  );
+}
+
+/**
  * The pure half of the guard: do these rows reconcile to these recorded promo
  * totals? Per beneficiary to that member's allocation (an absent allocation row
  * means the member received nothing — `normalizeAllocations` drops a
@@ -157,7 +176,9 @@ function findReconciliationMismatch(params: {
  *   removal that deleted a guest without re-running the promotion, an
  *   old-colour promotion edit), or a NOT KNOWN amount somewhere in them.
  *
- * Stage 3 calls this and nothing else; it is the one home.
+ * Stage 3's reader calls this — over allocations narrowed by
+ * `memberBenefitAllocations`, as the writer does — and nothing else; it is the
+ * one home.
  */
 export type NightAdjustmentState = "KNOWN" | "NOT_KNOWN" | "NO_PROMOTION";
 
@@ -265,7 +286,7 @@ export async function recordBookingNightAdjustments(
   if (redemption) {
     reconcilePromoAdjustmentTargets({
       targets,
-      allocations: redemption.allocations,
+      allocations: memberBenefitAllocations(redemption.allocations),
       priceAdjustmentCents: redemption.priceAdjustmentCents,
       context: writer,
     });

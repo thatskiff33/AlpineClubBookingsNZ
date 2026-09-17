@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { computeMemberGuestBoundary } from "@/lib/booking-guests";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
@@ -57,7 +58,8 @@ function fullName(member: {
 export async function sendFamilyMemberBookingAddNotifications(params: {
   bookingId: string;
   /** The member whose family groups define "family scope" — the booking owner. */
-  bookerMemberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  bookerMemberId: string | null;
   /** Who performed the add (session user); never told about their own action. */
   actorMemberId: string;
   /** Every member id this operation added as a guest (self and beyond-family ok). */
@@ -120,7 +122,7 @@ export async function sendFamilyMemberBookingAddNotifications(params: {
     return result;
   }
 
-  const bookerName = fullName(booking.member ?? {}) || "A family member";
+  const bookerName = fullName(bookingOwner(booking).member ?? {}) || "A family member";
 
   const targetMembers = await db.member.findMany({
     where: { id: { in: familyTargetIds } },

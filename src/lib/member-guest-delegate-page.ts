@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
 import {
@@ -159,6 +160,8 @@ export async function resolveDelegateConsentPageState(params: {
           status: true,
           deletedAt: true,
           member: { select: { firstName: true, lastName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           // Names only — never prices. The party listing is MG2-D-a as ticked.
           guests: { select: { id: true, firstName: true, lastName: true } },
         },
@@ -232,8 +235,8 @@ export async function resolveDelegateConsentPageState(params: {
         ageYears: ageInYears(target?.dateOfBirth ?? null, todayInClub),
       },
       bookerName:
-        `${guest.booking.member.firstName} ${guest.booking.member.lastName}`.trim(),
-      bookerFirstName: guest.booking.member.firstName,
+        `${bookingOwner(guest.booking).member.firstName} ${bookingOwner(guest.booking).member.lastName}`.trim(),
+      bookerFirstName: bookingOwner(guest.booking).member.firstName,
       lodgeId: guest.booking.lodgeId,
       checkIn: guest.booking.checkIn,
       checkOut: guest.booking.checkOut,

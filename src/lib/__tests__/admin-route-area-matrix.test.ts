@@ -162,6 +162,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/booking-requests": "bookings",
   "/api/admin/booking-requests/[id]/approve": "bookings",
   "/api/admin/booking-requests/[id]/contacts": "bookings",
+  "/api/admin/booking-requests/[id]/correct": "bookings",
   "/api/admin/booking-requests/[id]/decline": "bookings",
   "/api/admin/booking-requests/[id]/hold": "bookings",
   // #2263: admin-only availability + conflict preview for a whole-lodge
@@ -174,6 +175,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/booking-requests/[id]/quote": "bookings",
   "/api/admin/booking-requests/[id]/release-hold": "bookings",
   "/api/admin/booking-requests/[id]/resend-attendee-confirmation": "bookings",
+  "/api/admin/booking-requests/[id]/school-record": "bookings",
   "/api/admin/booking-requests/[id]/send-quote": "bookings",
   "/api/admin/booking-requests/settings": "bookings",
   "/api/admin/booking-reviews": "bookings",
@@ -309,6 +311,12 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/integrations/credentials": "finance",
   "/api/admin/integrations/google/status": "finance",
   "/api/admin/integrations/google/verify/start": "finance",
+  // #2940: the club-editable MiroTalk settings and the three encrypted
+  // secrets. Finance, like every other Integrations-hub endpoint — reading
+  // the status is finance-area, and every WRITE additionally requires Full
+  // Admin, which this matrix does not model and each route enforces itself.
+  "/api/admin/integrations/mirotalk": "finance",
+  "/api/admin/integrations/mirotalk/credentials": "finance",
   "/api/admin/integrations/stripe/status": "finance",
   "/api/admin/integrations/wizard-progress": "finance",
   "/api/admin/internet-banking-settings": "finance",
@@ -452,6 +460,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/contact-link-mismatches": "finance",
   "/api/admin/xero/disconnect": "finance",
   "/api/admin/xero/duplicate-contacts": "finance",
+  // #3058: the erased-member Xero contact review. A GET and nothing else —
+  // the erasure performs no Xero mutation, so there is no write to gate.
+  "/api/admin/xero/erased-member-contacts": "finance",
   "/api/admin/xero/force-sync": "finance",
   "/api/admin/xero/health": "finance",
   "/api/admin/xero/import-member-contact": "finance",
@@ -465,6 +476,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // every other /api/admin/xero surface (the route guard itself narrows the
   // POST to finance:view with per-action finance:edit checks).
   "/api/admin/xero/member-grouping": "finance",
+  // #2939: the missing-contact census (GET, finance:view) and the bounded
+  // seeding run (POST, finance:edit). Both are finance.
+  "/api/admin/xero/missing-contacts": "finance",
   "/api/admin/xero/missing-invoices": "finance",
   "/api/admin/xero/operations": "finance",
   "/api/admin/xero/operations/[id]/mark-non-replayable": "finance",

@@ -263,10 +263,21 @@ describe("Xero contact/account-deletion lock topology mutation pins (#2597)", ()
       "export async function applyInboundMemberContactPatch(",
       "export async function lockMemberForManualXeroContactLink(",
     );
+    /*
+      #2939 added two of these lines, and the FIRST of them is ordered, not
+      merely present. `INV-LOCK-002` makes the contact-home key the OUTER lock
+      relative to any `Member` row lock: `takeXeroContactFromSchoolsOwnMember`
+      takes a member row while holding that key, so a writer taking the row
+      fence first and then waiting for the key closes a deadlock cycle Postgres
+      resolves with `40P01`. Putting `lockXeroContactHome` above
+      `lockMemberForXeroContactLink` in this list is what pins the direction.
+    */
     expectOrdered(recovery, [
       "db.$transaction",
+      "lockXeroContactHome(tx, input.xeroContactId)",
       "lockMemberForXeroContactLink(tx, input.memberId)",
       "tx.member.findUnique",
+      "assertXeroContactHasNoOtherHome(tx, {",
       "await tx.member.update",
       "upsertXeroObjectLink(",
       "{ store: tx }",

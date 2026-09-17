@@ -349,6 +349,7 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     await expect(
       enqueueXeroBookingInvoiceOperation("booking_1", {
         createdByMemberId: "admin_1",
+        invoiceEmailDelivery: null,
       })
     ).resolves.toEqual({
       queueOperationId: "op_booking_1",
@@ -384,13 +385,221 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     });
 
     await expect(
-      enqueueXeroBookingInvoiceOperation("booking_1")
+      enqueueXeroBookingInvoiceOperation("booking_1", {
+        invoiceEmailDelivery: null,
+      })
     ).resolves.toEqual({
       queueOperationId: null,
       message: "Xero booking invoice already linked for this booking.",
     });
 
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  /*
+    #2929 — the on-behalf "do not email the member" choice is persisted on the
+    operation at enqueue, and this is the seam where it becomes durable. Read
+    the reverse of these assertions as the failure they prevent: an enqueuer
+    that silently dropped the instruction would leave the dispatcher with
+    nothing to read, and a member would receive the invoice email the officer
+    chose to withhold.
+  */
+  it("persists the creation-time invoice-email instruction the create passed it (#2929)", async () => {
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      createdByMemberId: "admin_1",
+      invoiceEmailDelivery: "WITHHELD_AT_CREATION",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceEmailDelivery: "WITHHELD_AT_CREATION" }),
+    );
+    // NOT in the payload, and that is the whole design: the booking-invoice
+    // handler rewrites `requestPayload` wholesale before its first provider
+    // call, so an instruction kept there would survive the happy path and
+    // vanish on exactly the retry that needs it.
+    const [input] = mocks.startXeroSyncOperation.mock.calls[0];
+    expect(JSON.stringify(input.requestPayload)).not.toContain(
+      "WITHHELD_AT_CREATION",
+    );
+  });
+
+  it("records no instruction for the fifteen enqueuers with no choice to express, when nothing was recorded before (#2929)", async () => {
+    // THE ONE PLACE THE LIVE POPULATION IS COUNTED. Seventeen call sites reach
+    // this function; the two in `booking-create` carry the officer's answer and
+    // the other FIFTEEN pass an explicit null — confirm-draft, waitlist-confirm,
+    // charge-saved-method, switch-to-internet-banking, confirm-pending-guests,
+    // cron-confirm-pending, group settlement, the school-booking-request
+    // conversion (`approveSchoolBookingRequest`), the member whole-lodge request
+    // approval (`approveMemberWholeLodgeRequest`, a SECOND site in that same
+    // file and the one an earlier draft of this list missed), the booking-edit
+    // settlement, the admin payment-invoice service, the invoice queue, and the
+    // admin missing-invoices, force-sync and repair surfaces. They must keep
+    // behaving exactly as they did before this issue when no earlier operation
+    // for this same invoice expressed a choice.
+    //
+    // Recount with, and keep this list in step with:
+    //   grep -rn "invoiceEmailDelivery: null" --include=*.ts src/ | grep -v __tests__
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      createdByMemberId: "admin_1",
+      invoiceEmailDelivery: null,
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceEmailDelivery: null }),
+    );
+  });
+
+  /*
+    #2929 fix round — THE RE-MINT, which is the door the durable-instruction
+    mechanism did not originally close.
+
+    The dedup above short-circuits only on a PENDING or RUNNING row, and the
+    link check only on an invoice that was actually raised. A booking-invoice
+    operation that FAILED leaves neither, so the admin missing-invoices sweep,
+    force-sync and the repair pass each mint a FRESH operation — passing null,
+    because none of them has an officer in front of it. Without inheritance the
+    fresh row records nothing and Xero emails the member the invoice the officer
+    chose to withhold.
+
+    `mocks.findFirstOperation` serves both lookups here, so these tests
+    discriminate on the WHERE shape: the dedup asks for a status in
+    PENDING/RUNNING, the inheritance lookup asks for `invoiceEmailDelivery: {
+    not: null }`.
+  */
+  function priorOperationRecorded(invoiceEmailDelivery: string | null) {
+    mocks.findFirstOperation.mockImplementation(
+      async (args: { where?: Record<string, unknown> }) => {
+        if (args?.where?.invoiceEmailDelivery) {
+          return invoiceEmailDelivery === null
+            ? null
+            : { invoiceEmailDelivery };
+        }
+        // The dedup lookup: nothing pending or running.
+        return null;
+      },
+    );
+  }
+
+  it("inherits the withhold when a re-mint of the SAME invoice states no choice of its own (#2929)", async () => {
+    priorOperationRecorded("WITHHELD_AT_CREATION");
+
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      createdByMemberId: "admin_1",
+      invoiceEmailDelivery: null,
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        invoiceEmailDelivery: "WITHHELD_AT_CREATION",
+      }),
+    );
+  });
+
+  it("looks for the prior instruction under the SAME correlation key and payment, most recent first", async () => {
+    priorOperationRecorded("WITHHELD_AT_CREATION");
+
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      invoiceEmailDelivery: null,
+    });
+
+    const inheritanceCall = mocks.findFirstOperation.mock.calls.find(
+      (call) => call[0]?.where?.invoiceEmailDelivery,
+    );
+    expect(inheritanceCall, "the inheritance lookup must run").toBeDefined();
+    expect(inheritanceCall![0]).toMatchObject({
+      where: {
+        correlationKey: "booking:booking_1:invoice:v1",
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "payment_1",
+        invoiceEmailDelivery: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+  });
+
+  it("also carries a recorded SEND forward, so a re-mint cannot turn a stated choice into no choice", async () => {
+    priorOperationRecorded("SEND");
+
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      invoiceEmailDelivery: null,
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceEmailDelivery: "SEND" }),
+    );
+  });
+
+  it("does not copy forward a stored value this application does not recognise", async () => {
+    // Read back through `readXeroInvoiceEmailInstruction`, never raw: a corrupt
+    // value must become "no instruction", not be propagated into new rows.
+    priorOperationRecorded("withheld_at_creation");
+
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      invoiceEmailDelivery: null,
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceEmailDelivery: null }),
+    );
+  });
+
+  it("lets an explicit instruction win, and does not look for an earlier one at all", async () => {
+    priorOperationRecorded("WITHHELD_AT_CREATION");
+
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      invoiceEmailDelivery: "SEND",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceEmailDelivery: "SEND" }),
+    );
+    expect(
+      mocks.findFirstOperation.mock.calls.some(
+        (call) => call[0]?.where?.invoiceEmailDelivery,
+      ),
+      "an officer's stated choice must not cost a second query",
+    ).toBe(false);
+  });
+
+  it("does not reach the inheritance lookup when an operation is already queued", async () => {
+    // The dedup is unchanged by #2929: a PENDING row short-circuits before any
+    // of this, and the queued row keeps whatever it already recorded.
+    mocks.findFirstOperation.mockImplementation(
+      async (args: { where?: Record<string, unknown> }) =>
+        args?.where?.invoiceEmailDelivery ? { invoiceEmailDelivery: "SEND" } : { id: "op_queued" },
+    );
+
+    await expect(
+      enqueueXeroBookingInvoiceOperation("booking_1", {
+        invoiceEmailDelivery: null,
+      }),
+    ).resolves.toEqual({
+      queueOperationId: "op_queued",
+      message: "Xero booking invoice is already queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  /*
+    A TYPE-LEVEL PIN, not a runtime assertion (#2929 fix round). The option is
+    REQUIRED so that a NEW booking-invoice enqueuer is a compile error
+    until its author states its instruction — this repository prefers
+    unrepresentable over policed, and the module next door already requires a
+    typed context on every send for the same reason. `@ts-expect-error` reports
+    an error when the line it guards does NOT error, so making the field
+    optional again fails `npm run typecheck`.
+  */
+  it("keeps the instruction a REQUIRED option, so a new enqueuer cannot omit it", () => {
+    const omitsTheInstruction = () =>
+      // @ts-expect-error - invoiceEmailDelivery is required on every enqueuer
+      enqueueXeroBookingInvoiceOperation("booking_1", {
+        createdByMemberId: "admin_1",
+      });
+    expect(typeof omitsTheInstruction).toBe("function");
   });
 });
 

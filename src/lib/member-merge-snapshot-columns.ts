@@ -253,6 +253,18 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "MembershipCancellationSetting.updatedByMemberId",
   "MembershipLockoutSettings.updatedByMemberId",
   "MembershipNominationSettings.updatedByMemberId",
+  // Video meetings (MiroTalk) settings singleton (#2940): records WHO last set
+  // the club's meeting server address, presenter choice and join-link lifetime.
+  // The ordinary settings-audit column, identical in kind to
+  // ServerNzSettings' below and every other `*.updatedByMemberId` here, and a
+  // snapshot for the same reason: the answer to "who pointed our meetings at
+  // that server" is the administrator who did it at the time, not whoever later
+  // absorbed their record. The three MiroTalk SECRETS are not here and need no
+  // entry of their own — they are rows in IntegrationCredential, whose
+  // `updatedByUserId` is already documented in the hand-kept block above.
+  // (Detectable: `updatedByMemberId` is a Member FK column name elsewhere in
+  // the schema.)
+  "MirotalkSettings.updatedByMemberId",
   "NotificationDeliveryPolicy.updatedByMemberId",
   "PageContent.updatedByMemberId",
   "PublicContentSettings.updatedByMemberId",

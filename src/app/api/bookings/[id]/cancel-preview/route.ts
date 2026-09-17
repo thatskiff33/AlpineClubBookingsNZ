@@ -1,5 +1,6 @@
 import { CreditType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -45,7 +46,7 @@ export async function GET(
     // the cancel action, gated on the same bookings:edit predicate so a
     // read-only admin (bookings:view) still cannot preview a cancellation.
     if (
-      booking.memberId !== session.user.id &&
+      bookingOwner(booking).memberId !== session.user.id &&
       !hasAdminAccess(session.user) &&
       !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
     ) {

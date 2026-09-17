@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgeTier } from "@prisma/client";
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
@@ -35,6 +35,12 @@ import {
   type NonMemberOwner,
 } from "@/components/admin/non-member-contact-form";
 import { useClubTime } from "@/components/club-time-provider";
+import { AdminDependantIdentityResolution } from "./_components/dependant-identity-resolution";
+import { useAdminDependantIdentity } from "./_hooks/use-admin-dependant-identity";
+import {
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
+  type BookerDependant,
+} from "@/lib/booking-dependant-identity";
 import {
   countClubNights,
   formatClubDate,
@@ -157,6 +163,17 @@ export default function AdminBookPage() {
   const [checkIn, setCheckIn] = useState<string | null>(null);
   const [checkOut, setCheckOut] = useState<string | null>(null);
   const [guests, setGuests] = useState<GuestData[]>([]);
+  /**
+   * The SELECTED MEMBER's own recorded dependants (#2721, `INV-GUEST-019`),
+   * served by the on-behalf family picker from the same loader the create route
+   * re-runs. Never the officer's: the guard protects the bed of the person this
+   * booking is for, and reading the wrong family would both miss every real
+   * collision and put another family's names on this screen.
+   *
+   * Empty until the picker answers, and empty is the safe direction — the
+   * question simply is not drawn yet, and the server still refuses the create.
+   */
+  const [ownDependants, setOwnDependants] = useState<BookerDependant[]>([]);
   const [notes, setNotes] = useState("");
   const [memberReviewJustification, setMemberReviewJustification] = useState("");
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
@@ -173,6 +190,30 @@ export default function AdminBookPage() {
   // a pre-selection fallback — a capped or secondary lodge resolves lower, and
   // the create route hard-400s a party above the resolved value (#1767).
   const [resolvedCapacity, setResolvedCapacity] = useState(lodgeCapacity);
+  /**
+   * The party ceiling, or null for none — the member wizard's `partySizeCeiling`
+   * rule, applied to the surface that kept opting out of it (#2930).
+   *
+   * ZERO IS NOT A CEILING OF ZERO. An unconfigured lodge resolves to 0 beds by
+   * design (`getLodgeCapacityStatus`, source `unconfigured_lodge`) so it cannot
+   * be overbooked first. Read as a ceiling, that disabled every add-guest
+   * control at zero guests under a "Guests (0/0 max)" heading — the same dead
+   * end #2930 removed for members, on the one surface with no waitlist to fall
+   * through to. Withdrawn ONLY at zero: a positive capacity caps the party
+   * exactly as before, and over-capacity stays warn-and-confirm (#1695/#1767)
+   * with an exclusive hold still unbypassable.
+   *
+   * IT DOES NOT MAKE SUCH A LODGE BOOKABLE. `POST /api/bookings` refuses any
+   * party above the lodge's capacity before the waitlist fallback, so at zero
+   * the create still fails — with "a booking cannot exceed 0 guests", which at
+   * least names the cause. Whether such a lodge should be bookable at all is a
+   * product question this issue does not settle; the member path meets the same
+   * refusal.
+   */
+  const partySizeCeiling = resolvedCapacity > 0 ? resolvedCapacity : null;
+  /** Derived once, so the three add-guest affordances cannot disagree. */
+  const atPartySizeCeiling =
+    partySizeCeiling !== null && guests.length >= partySizeCeiling;
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
@@ -220,34 +261,75 @@ export default function AdminBookPage() {
   const isRetroactive =
     allowPastDates && checkIn !== null && checkIn < todayStr;
 
-  // Fetch family members for the selected member
-  useEffect(() => {
-    if (!selectedMember) {
-      return;
+  /**
+   * Fetch the on-behalf family picker and fold it into state, RESOLVING with the
+   * own-dependant list it carried — or `null` when the load failed.
+   *
+   * It returns the answer as well as setting it (#2721) because one caller needs
+   * it rather than the side effect: the server's own-dependant refusal sends the
+   * officer back to the guest step to answer a question that step draws from
+   * THIS list, and if the list is the stale one that caused the refusal the step
+   * draws nothing and the officer is told to answer something that is not on the
+   * screen. Pressing Continue would reproduce it exactly.
+   *
+   * Bookings-scoped picker gated on bookings:edit (not membership:view), so a
+   * Booking Officer without membership:view still gets the selected member's
+   * family and correct member pricing (#1376).
+   */
+  const selectedMemberId = selectedMember?.id ?? null;
+  /**
+   * MONOTONIC, because a superseded response must never write state. The effect
+   * below re-runs whenever the officer changes who the booking is for, and an
+   * earlier request landing last would put one member's family — and, since
+   * #2721, one family's DEPENDANT NAMES — on another member's booking. A
+   * `cancelled` flag scoped to the effect cannot cover it, because the refusal
+   * handler calls this outside any effect.
+   */
+  const familyLoadSeqRef = useRef(0);
+  const loadEligibleFamily = useCallback(async (): Promise<{
+    ownDependants: BookerDependant[];
+  } | null> => {
+    if (!selectedMemberId) return null;
+    const seq = (familyLoadSeqRef.current += 1);
+    try {
+      const res = await fetch(
+        `/api/admin/bookings/eligible-family?forMemberId=${selectedMemberId}`,
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      const dependants: BookerDependant[] = Array.isArray(data.ownDependants)
+        ? data.ownDependants
+        : [];
+      // A superseded response still REPORTS what it read — the caller uses that
+      // only to decide what to say about the request it just made — but it
+      // writes nothing.
+      if (seq === familyLoadSeqRef.current) {
+        setFamilyMembers(data.familyMembers || []);
+        setOwnDependants(dependants);
+      }
+      return { ownDependants: dependants };
+    } catch {
+      return null;
     }
+  }, [selectedMemberId]);
 
-    let cancelled = false;
-
-    // Bookings-scoped on-behalf picker gated on bookings:edit (not
-    // membership:view), so a Booking Officer without membership:view still
-    // gets the selected member's family and correct member pricing (#1376).
-    fetch(`/api/admin/bookings/eligible-family?forMemberId=${selectedMember.id}`)
-      .then((res) => (res.ok ? res.json() : { familyMembers: [] }))
-      .then((data) => {
-        if (!cancelled) {
-          setFamilyMembers(data.familyMembers || []);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setFamilyMembers([]);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedMember]);
+  // Fetch family members for the selected member.
+  useEffect(() => {
+    if (!selectedMemberId) return;
+    const seqAtStart = familyLoadSeqRef.current;
+    void loadEligibleFamily().then((loaded) => {
+      // A failed load leaves BOTH lists empty rather than half-populated: an
+      // empty family list is what this screen has always shown on failure, and
+      // an empty dependant list means the collision question is not drawn — the
+      // server still refuses, which is the direction that fails safe. Guarded by
+      // the same sequence, so a slow failure for a member the officer has since
+      // moved off does not blank the list they are looking at now.
+      if (!loaded && familyLoadSeqRef.current === seqAtStart + 1) {
+        setFamilyMembers([]);
+        setOwnDependants([]);
+      }
+    });
+  }, [selectedMemberId, loadEligibleFamily]);
 
   function invalidatePendingDateSelection(
     nextLodgeId = activeLodgeIdRef.current,
@@ -271,6 +353,7 @@ export default function AdminBookPage() {
     invalidatePendingQuote();
     setSelectedMember(member);
     setFamilyMembers([]);
+    setOwnDependants([]);
     setStep("dates");
     // Reset wizard state
     setCheckIn(null);
@@ -317,6 +400,7 @@ export default function AdminBookPage() {
     setUseCredit(false);
     setError("");
     setFamilyMembers([]);
+    setOwnDependants([]);
     setAllowPastDates(false);
     setOverCapacityNights(null);
     setAvailableBeds(lodgeCapacity);
@@ -327,8 +411,9 @@ export default function AdminBookPage() {
     if (guests.some((g) => g.memberId === fm.id)) return;
     // Admin creates may exceed the live availability (over-capacity is
     // warn-and-confirm at submit, #1695/#1767), so cap by the selected
-    // lodge's resolved capacity — the create route's hard party-size limit.
-    if (guests.length >= resolvedCapacity) return;
+    // lodge's resolved capacity — the create route's hard party-size limit —
+    // except at zero, which is "unconfigured" rather than a ceiling (#2930).
+    if (atPartySizeCeiling) return;
     setGuests([
       ...guests,
       {
@@ -340,6 +425,39 @@ export default function AdminBookPage() {
       },
     ]);
   }
+
+  /**
+   * OWN-DEPENDANT IDENTITY (#2721, `INV-GUEST-019`). An officer booking on a
+   * member's behalf is asked the same question the member is asked in their own
+   * wizard (owner decision on D1, 15 Sep 2026). Everything but the two
+   * page-level consequences — what a relink reprices, and where a refusal sends
+   * the officer — is in the hook and, below it, in the module the create route
+   * re-runs against authenticated data.
+   *
+   * The candidate set is the SELECTED MEMBER's dependants, never the officer's.
+   */
+  const dependantIdentity = useAdminDependantIdentity({
+    bookingForMemberId: selectedMemberId,
+    guests,
+    ownDependants,
+    setGuests,
+    // The relink changed the party in exactly the ways `addFamilyMemberAsGuest`
+    // invalidates for.
+    onPartyRepriced: () => {
+      setPriceQuote(null);
+      setAppliedPromo(null);
+      setUseCredit(false);
+    },
+    reloadFamily: loadEligibleFamily,
+    sendBackToGuestStep: () => {
+      setStep("guests");
+      // Panels raised by the previous submit belong to a party that is now back
+      // in the officer's hands.
+      setOverCapacityNights(null);
+      setHostingConfirmMessage(null);
+    },
+    setError,
+  });
 
   function handleLodgeChange(nextLodgeId: string | null) {
     if (nextLodgeId === lodgeId) return;
@@ -400,15 +518,15 @@ export default function AdminBookPage() {
         const data = await res.json();
         if (!ownsCurrentLodge()) return;
         setAvailableBeds(data.minAvailable);
-        const night = Array.isArray(data.nightDetails)
-          ? data.nightDetails[0]
-          : null;
-        if (
-          night &&
-          typeof night.occupiedBeds === "number" &&
-          typeof night.availableBeds === "number"
-        ) {
-          setResolvedCapacity(night.occupiedBeds + night.availableBeds);
+        // #2930: read the lodge's capacity from the field the route now states,
+        // rather than re-deriving it from the first night's
+        // `occupiedBeds + availableBeds`. The derivation was correct — the #155
+        // payload contract guarantees that sum on every night — but it was a
+        // SECOND way of answering "how many beds has this lodge", computed from
+        // a row that is absent whenever `nightDetails` is empty, which left the
+        // previous lodge's capacity standing (`INV-SSOT-001`).
+        if (typeof data.lodgeCapacity === "number") {
+          setResolvedCapacity(data.lodgeCapacity);
         }
       }
 
@@ -441,6 +559,20 @@ export default function AdminBookPage() {
         setError("All guests must have first and last names");
         return;
       }
+    }
+
+    /*
+      #2721: stop BEFORE the guest split, not after it.
+
+      A name matching one of the member's own recorded dependants is heading for
+      the non-member guest path — provisional, bumpable, invoiced separately at
+      non-member rates — and the whole point of the rule is that they never get
+      there. The panel on this step renders the choice; this refuses to leave the
+      step while any of it is unanswered, in the SAME words the server refuses in.
+    */
+    if (dependantIdentity.unresolvedCollisions.length > 0) {
+      setError(DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE);
+      return;
     }
 
     // Admin creates can exceed live availability — over-capacity becomes a
@@ -574,6 +706,9 @@ export default function AdminBookPage() {
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         lodgeId,
         forMemberId: selectedMember!.id,
+        // #2721: only the answers that still describe a live collision travel;
+        // see `declarationsPayload`.
+        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         paymentMethod:
           showPaymentMethodChoice && paymentMethod === "internet_banking"
             ? "internet_banking"
@@ -599,6 +734,13 @@ export default function AdminBookPage() {
     }
 
     const data = await res.json();
+    // #2721: an own-dependant refusal sends the officer back to the guest step,
+    // where the question is drawn, rather than into the error banner with
+    // nowhere to answer it.
+    if (dependantIdentity.handledRefusal(data)) {
+      setSubmitting(false);
+      return;
+    }
     // Over-capacity warn-and-confirm: show the shortfall and let the admin
     // resubmit with confirmOverCapacity, preserving the email choice.
     if (data.code === "OVER_CAPACITY_CONFIRM_REQUIRED") {
@@ -654,6 +796,10 @@ export default function AdminBookPage() {
         lodgeId,
         draft: true,
         forMemberId: selectedMember!.id,
+        // #2721: only the answers that still describe a live collision travel.
+        // A draft is a create door like any other — the guard runs before the
+        // draft/confirmed fork, exactly as the hosting check does.
+        dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         memberReviewJustification: requiresAdminReviewLocal
           ? memberReviewJustification.trim() || undefined
           : undefined,
@@ -670,6 +816,11 @@ export default function AdminBookPage() {
     }
 
     const data = await res.json();
+    // #2721, as on the confirm door above.
+    if (dependantIdentity.handledRefusal(data)) {
+      setSavingDraft(false);
+      return;
+    }
     // The hosting check runs before the draft/confirmed fork, so a draft trips
     // it on exactly the same parties a confirm does (#2364).
     if (data.code === "ADULT_MEMBER_HOSTING_CONFIRM_REQUIRED") {
@@ -700,6 +851,42 @@ export default function AdminBookPage() {
     : 0;
   const remainingToPay = finalPriceBeforeCredit - appliedCreditCents;
   const showPaymentMethodChoice = internetBankingEnabled && remainingToPay > 0;
+
+  /*
+    #2929 — whether THIS create will raise a Xero invoice at all, which is what
+    makes the email-choice dialog's invoice sentence true or false.
+
+    The same discriminator the POST below sends and the create service keys its
+    booking-invoice enqueue on: an invoice is raised only for an Internet
+    Banking payment. Three ordinary situations make it false, and the sentence
+    was a false promise in every one of them —
+
+      - the officer picked Card, so nothing is invoiced;
+      - the club has Internet Banking off, so the card above never renders and
+        EVERY create here is a card create. `/api/payments/options` enables that
+        module only when the Xero integration is on too, so this also covers a
+        club with Xero off entirely, where the create skips the enqueue;
+      - the booking is fully covered by credit (`remainingToPay === 0`), so
+        there is nothing to invoice and again no card renders.
+
+    Being wrong here is not a wording nit: the officer is promised an artefact
+    they can go and send from Xero, and there is none.
+  */
+  const createRaisesXeroInvoice =
+    showPaymentMethodChoice && paymentMethod === "internet_banking";
+
+  /**
+   * The invoice half of the email-choice dialog's explanation, shared by both
+   * of its wordings and rendered only when there is an invoice to describe.
+   */
+  const xeroInvoiceEmailNote = createRaisesXeroInvoice ? (
+    <>
+      {" "}
+      Choosing not to email also stops Xero emailing the Internet Banking
+      invoice for this booking. The invoice is still created, and you can send
+      it from Xero later.
+    </>
+  ) : null;
 
   /*
     #2160: the view-only explanation lives here, once, at the top of the page —
@@ -950,9 +1137,7 @@ export default function AdminBookPage() {
                               : "outline"
                         }
                         size="sm"
-                        disabled={
-                          alreadyAdded || guests.length >= resolvedCapacity
-                        }
+                        disabled={alreadyAdded || atPartySizeCeiling}
                         onClick={() => addFamilyMemberAsGuest(fm)}
                       >
                         {alreadyAdded ? "\u2713 " : "+ "}
@@ -991,7 +1176,23 @@ export default function AdminBookPage() {
             <GuestForm
               guests={guests}
               onGuestsChange={setGuests}
-              maxGuests={resolvedCapacity}
+              maxGuests={partySizeCeiling}
+            />
+            <AdminDependantIdentityResolution
+              collisions={dependantIdentity.collisions}
+              declaredDependantMemberIds={
+                dependantIdentity.declaredDependantMemberIds
+              }
+              bookingForFirstName={selectedMember.firstName}
+              familyMembers={familyMembers}
+              partyMemberIds={guests
+                .map((guest) => guest.memberId)
+                .filter((memberId): memberId is string => Boolean(memberId))}
+              onBookAsDependant={dependantIdentity.relinkToMember}
+              onDeclareDifferentPerson={
+                dependantIdentity.declareDifferentPerson
+              }
+              onWithdrawDeclaration={dependantIdentity.withdrawDeclaration}
             />
             <div className="flex justify-between pt-4">
               <Button
@@ -1437,16 +1638,16 @@ export default function AdminBookPage() {
                   created either way; by default they are <strong>not</strong>{" "}
                   emailed. Choose to send the standard confirmation / hold email
                   to {selectedMember?.firstName ?? "them"} only if you want to —
-                  your choice is recorded in the audit log. A Xero invoice email
-                  (Internet Banking) is still sent regardless of this choice.
+                  your choice is recorded in the audit log.
+                  {xeroInvoiceEmailNote}
                 </>
               ) : (
                 <>
                   The booking will be created either way. Choose whether{" "}
                   {selectedMember?.firstName ?? "the member"} receives the
                   standard confirmation / hold email — your choice is recorded in
-                  the audit log. A Xero invoice email (Internet Banking) is still
-                  sent regardless of this choice.
+                  the audit log.
+                  {xeroInvoiceEmailNote}
                 </>
               )}
             </DialogDescription>

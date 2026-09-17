@@ -11,6 +11,8 @@ import { DATA_MIGRATION_VERIFICATIONS } from "../../../prisma/migration-verifica
 import { splitSqlStatements } from "../../../prisma/migration-verification/split-statements";
 import type {
   DataMigrationCase,
+  DataMigrationExpectation,
+  DataMigrationReverseRun,
   DataMigrationVerification,
 } from "../../../prisma/migration-verification/types";
 
@@ -76,6 +78,17 @@ function migrationSql(name: string): string {
   // Test helper: joins the repo's own migrations directory with a name read
   // from that same directory listing; no user input.
   return readFileSync(path.join(MIGRATIONS_DIR, name, "migration.sql"), "utf8");
+}
+
+/**
+ * The reverse script a windowed migration ships beside itself.
+ *
+ * `scripts/validate-blue-green-migrations.sh` proves this file EXISTS. Only the
+ * runs below prove it does what its header says.
+ */
+function rollbackSql(name: string): string {
+  // Test helper: the repo's own migrations directory, same as above.
+  return readFileSync(path.join(MIGRATIONS_DIR, name, "rollback.sql"), "utf8");
 }
 
 function hasExplicitTransactionEnvelope(sql: string): boolean {
@@ -212,6 +225,53 @@ describe("data-migration verification wiring (#2418)", () => {
         }
       }
 
+      // A reverse run names scripts that exist, asserts something, and is
+      // proved by mutants of its own — a reverse nothing can break is a
+      // reverse nothing has checked (#3369).
+      for (const testCase of fixture.cases) {
+        const reverse = testCase.reverse;
+        if (!reverse) continue;
+        expect(
+          reverse.runs.length,
+          `${fixture.migration} / ${testCase.name}: a reverse block with no runs executes nothing`,
+        ).toBeGreaterThan(0);
+        for (const run of reverse.runs) {
+          expect(run.scripts.length).toBeGreaterThan(0);
+          for (const script of run.scripts) {
+            expect(
+              existsSync(path.join(MIGRATIONS_DIR, script, "rollback.sql")),
+              `${fixture.migration} / ${run.name}: ${script} ships no rollback.sql`,
+            ).toBe(true);
+          }
+          const asserts =
+            (run.expectations?.length ?? 0) > 0 || Boolean(run.raises);
+          expect(
+            asserts,
+            `${fixture.migration} / ${run.name}: a reverse run must either expect rows or expect a refusal`,
+          ).toBe(true);
+        }
+        // Mutants are what stop a reverse's row expectations passing against a
+        // reverse that did nothing. A case whose runs only assert a REFUSAL has
+        // no such expectations to make vacuous, and the refusal itself is the
+        // proof — so the requirement attaches to the runs that assert rows.
+        if (reverse.runs.some((run) => (run.expectations?.length ?? 0) > 0)) {
+          expect(
+            reverse.mutants.length,
+            `${fixture.migration} / ${testCase.name}: declare at least one reverse mutant, or the reverse expectations could be satisfied by a reverse that did nothing`,
+          ).toBeGreaterThan(0);
+        }
+        for (const mutant of reverse.mutants) {
+          const sql = rollbackSql(mutant.script);
+          const occurrences = sql.split(mutant.find).length - 1;
+          expect(
+            occurrences,
+            `${fixture.migration}: reverse mutant "${mutant.name}" must match ${mutant.script}/rollback.sql exactly once (found ${occurrences})`,
+          ).toBe(1);
+          expect(mutant.replace).not.toBe(mutant.find);
+          expect(mutant.harm.length).toBeGreaterThan(20);
+        }
+      }
+
       // The mutants are what give the assertions teeth; a fixture with none is
       // an unproven fixture.
       expect(
@@ -291,12 +351,21 @@ type RunOutcome = {
 };
 
 const runs = new Map<string, RunOutcome>();
+/**
+ * The reverse-script outcomes, keyed the same way. A separate map because a
+ * reverse run is ONE execution rather than a fixture's whole set of cases.
+ */
+const reverseRuns = new Map<string, CaseOutcome>();
 
 const realRunKey = (migration: string) => `${migration}::real`;
 const rerunKey = (migration: string) => `${migration}::rerun`;
 const noMigrationKey = (migration: string) => `${migration}::not-applied`;
 const mutantKey = (migration: string, mutant: string) =>
   `${migration}::mutant::${mutant}`;
+const reverseKey = (migration: string, run: string) =>
+  `${migration}::reverse::${run}`;
+const reverseMutantKey = (migration: string, run: string, mutant: string) =>
+  `${migration}::reverse::${run}::mutant::${mutant}`;
 
 /** True when a case read a row that did not match its expectation. */
 function outcomeMismatched(outcome: CaseOutcome): boolean {
@@ -423,6 +492,66 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
   }
 
   /**
+   * Open the transaction a case owns, and remember WHICH transaction it is.
+   * `pg_current_xact_id()` assigns a real id rather than reporting one only if
+   * something already wrote, so the identity below is always comparable.
+   */
+  async function beginCase(): Promise<string> {
+    await db().query("BEGIN");
+    const result = await db().query<{ xid: string }>(
+      "SELECT pg_current_xact_id()::text AS xid",
+    );
+    const xid = result.rows[0]?.xid;
+    if (!xid) throw new Error("BEGIN returned no transaction id");
+    return xid;
+  }
+
+  /**
+   * Roll the case back — then PROVE the transaction just rolled back is the one
+   * the case opened (#3369).
+   *
+   * Nothing rewrites SQL any more, and a migration carrying its own envelope
+   * runs in a disposable database instead (INV-SSOT-002, #3292), so the way a
+   * case used to escape is gone. This guard stays because it does not depend on
+   * RECOGNISING the SQL that would break it, and because the transaction path
+   * below is still how every envelope-free migration runs. A case that escaped its transaction has already
+   * written its seed rows and its schema changes permanently into the chain
+   * database, and every later fixture replays into that — so the symptom
+   * surfaces migrations away from the cause, as a replay that cannot fail
+   * failing.
+   *
+   * It raises from the `finally`, deliberately, where no `catch` above can
+   * demote it: `runCases` treats a raised error as DETECTION, so a leak
+   * recorded as an ordinary case error would read as a mutant caught and pass.
+   */
+  async function endCase(xid: string, label: string): Promise<void> {
+    let current: string | null;
+    try {
+      const result = await db().query<{ xid: string | null }>(
+        "SELECT pg_current_xact_id_if_assigned()::text AS xid",
+      );
+      current = result.rows[0]?.xid ?? null;
+    } catch (error) {
+      // `25P02 in_failed_sql_transaction` — "current transaction is aborted,
+      // commands ignored until end of transaction block". Most cases here are
+      // SUPPOSED to raise: every mutant run, every `raises` reverse run, and the
+      // run where the migration is not applied at all. A raise inside the
+      // transaction aborts it, and PostgreSQL then refuses this probe too. That
+      // refusal is not a problem to work around — it is proof of the very thing
+      // being checked, because only a transaction that is still open can be in
+      // a failed state. Anything else rethrows.
+      if ((error as { code?: string }).code !== "25P02") throw error;
+      current = xid;
+    }
+    await db().query("ROLLBACK");
+    if (current !== xid) {
+      throw new Error(
+        `${label} escaped its verification transaction: it opened ${xid} and ended in ${current ?? "no transaction at all"}. Something it ran issued COMMIT, so the ROLLBACK above changed nothing and this case's rows are now permanent in the chain database (#3369).`,
+      );
+    }
+  }
+
+  /**
    * Run every case of a fixture against one version of its migration, each case
    * inside its own transaction so nothing survives into the next case or the
    * ongoing replay. `versions` is the list of SQL bodies to apply after the
@@ -452,12 +581,93 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     return outcome;
   }
 
+  /**
+   * One case, migrated, then REVERSED — the thing nothing executed before
+   * #3369. `overrides` lets a mutant replace one script's body; everything else
+   * runs verbatim from disk, exactly as an operator would paste it.
+   *
+   * IN A DISPOSABLE DATABASE, BYTE-FOR-BYTE, like every other execution in this
+   * file since #3292 (INV-SSOT-002). This used to open a transaction here and
+   * strip each script's `BEGIN;`/`COMMIT;` so it would fit inside it, which is
+   * precisely what let a surviving `COMMIT` commit the case itself. Two things
+   * make that impossible now rather than merely guarded against: the scripts
+   * are never rewritten, so there is no envelope to get wrong; and a fixture
+   * whose migration carries an envelope runs `isolated_database`, where the
+   * shared chain connection is CLOSED for the duration — so there is no case
+   * transaction for a stray `COMMIT` to reach even in principle.
+   *
+   * What a reverse run proves is unchanged, and is now proved against the exact
+   * committed bytes: seed the case, apply the real migration, run the real
+   * `rollback.sql` files in the order an operator runs them, and read the rows.
+   */
+  async function runReverse(
+    testCase: DataMigrationCase,
+    migrationBody: string,
+    run: DataMigrationReverseRun,
+    overrides: Map<string, string>,
+  ): Promise<CaseOutcome> {
+    if (!adminClient) throw new Error("admin database connection not open");
+    if (client) {
+      throw new Error(
+        "reverse verification requires the template database connection to be closed",
+      );
+    }
+
+    const caseDatabase = `dmv_rev_${randomUUID().replaceAll("-", "")}`;
+    // Both names are generated locally; no request or fixture value is used.
+    await adminClient.query(
+      `CREATE DATABASE "${caseDatabase}" TEMPLATE "${scratchDatabase}"`,
+    );
+    const caseClient = new Client({
+      connectionString: scratchConnectionString(caseDatabase),
+    });
+    const readings: CaseOutcome["readings"] = [];
+    let capturedError: CapturedDatabaseError | null = null;
+
+    try {
+      await caseClient.connect();
+      if (testCase.seed.trim()) {
+        await runScriptOn(caseClient, testCase.seed, `seeding "${testCase.name}"`);
+      }
+      const bodies = [
+        migrationBody,
+        ...run.scripts.map(
+          (script) => overrides.get(script) ?? rollbackSql(script),
+        ),
+      ];
+      for (const body of bodies) {
+        try {
+          // The exact committed bytes, envelope included.
+          await caseClient.query(body);
+        } catch (error) {
+          capturedError = captureDatabaseError(error);
+          // A failure inside an explicit transaction leaves the connection in
+          // aborted state because the closing COMMIT was never reached. Clear
+          // it so the expectations below can still be read — a run that must
+          // RAISE is scored on its refusal, not silenced by it.
+          await caseClient.query("ROLLBACK").catch(() => {});
+          break;
+        }
+      }
+      await readExpectations(caseClient, run.expectations ?? [], readings);
+      return { error: capturedError, readings };
+    } catch (error) {
+      return { error: capturedError ?? captureDatabaseError(error), readings };
+    } finally {
+      await caseClient.end().catch(() => {});
+      // Test fixture: drops the UUID-named disposable case database.
+      await adminClient
+        .query(`DROP DATABASE IF EXISTS "${caseDatabase}" WITH (FORCE)`)
+        .catch(() => {});
+    }
+  }
+
   async function readExpectations(
     queryClient: Client,
-    testCase: DataMigrationCase,
+    expectations: DataMigrationExpectation[],
     readings: CaseOutcome["readings"],
   ) {
-    for (const expectation of testCase.expectations) {
+    for (const expectation of expectations) {
       // Test fixture: the fixture's own read-only assertion query.
         const result = await queryClient.query(expectation.sql);
       readings.push({
@@ -473,7 +683,7 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
     versions: string[],
   ): Promise<CaseOutcome> {
     const readings: CaseOutcome["readings"] = [];
-    await db().query("BEGIN");
+    const xid = await beginCase();
     try {
       if (testCase.seed.trim()) {
         await runScript(testCase.seed, `seeding "${testCase.name}"`);
@@ -491,12 +701,12 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
           `exercising the migrated shape for "${testCase.name}"`,
         );
       }
-      await readExpectations(db(), testCase, readings);
+      await readExpectations(db(), testCase.expectations, readings);
       return { error: null, readings };
     } catch (error) {
       return { error: captureDatabaseError(error), readings };
     } finally {
-      await db().query("ROLLBACK");
+      await endCase(xid, `case "${testCase.name}"`);
     }
   }
 
@@ -559,7 +769,7 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
           `exercising the migrated shape for "${testCase.name}"`,
         );
       }
-      await readExpectations(caseClient, testCase, readings);
+      await readExpectations(caseClient, testCase.expectations, readings);
       return { error: capturedError, readings };
     } catch (error) {
       return {
@@ -635,6 +845,42 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
         );
       }
 
+      // The REVERSE scripts, executed. Same pre-state, same real migration,
+      // then the rollback files exactly as an operator runs them (#3369).
+      for (const testCase of fixture.cases) {
+        const reverse = testCase.reverse;
+        if (!reverse) continue;
+        for (const run of reverse.runs) {
+          reverseRuns.set(
+            reverseKey(fixture.migration, run.name),
+            await runReverse(testCase, sql, run, new Map()),
+          );
+          // EVERY run, including one that must RAISE (#3369). The rule used to
+          // be that a mutant is only meaningful against a run that must
+          // succeed, because a raising run is "detected" whatever the mutant
+          // did. That is true only of detection-by-error; a raising run has a
+          // second, sharper signal — whether it still refuses for the reason it
+          // claims to. Scoring it that way is what gives the wrong-order guard
+          // any coverage at all, and that guard is the one thing standing
+          // between an operator and a half rollback reported as a success.
+          for (const mutant of reverse.mutants) {
+            const mutated = rollbackSql(mutant.script).replace(
+              mutant.find,
+              () => mutant.replace,
+            );
+            reverseRuns.set(
+              reverseMutantKey(fixture.migration, run.name, mutant.name),
+              await runReverse(
+                testCase,
+                sql,
+                run,
+                new Map([[mutant.script, mutated]]),
+              ),
+            );
+          }
+        }
+      }
+
       // Advance past this migration so the next fixture replays from here.
       if (fixture.executionMode === "isolated_database") {
         client = new Client({
@@ -705,6 +951,67 @@ describeWithDatabase("data migrations against a real PostgreSQL (#2418)", () => 
             }
           }
         });
+      }
+
+      // ------------------------------------------------------------------
+      // The REVERSE scripts, executed (#3369). Nothing ran these before: the
+      // windowed-migration validator checks only that the file exists, so the
+      // first cut of #3369's reverse shipped a map with one member per
+      // organisation and would have handed a twice-recorded school's second
+      // booking — and another school's Xero customer — to the wrong member.
+      // ------------------------------------------------------------------
+      for (const testCase of fixture.cases) {
+        const reverse = testCase.reverse;
+        if (!reverse) continue;
+        for (const run of reverse.runs) {
+          it(`reverse: ${run.name}`, () => {
+            const outcome = reverseRuns.get(
+              reverseKey(fixture.migration, run.name),
+            );
+            expect(outcome, "the setup did not run this reverse").toBeDefined();
+            if (run.raises) {
+              expect(
+                outcome?.error?.message ?? "",
+                `${run.name} had to refuse with ${run.raises} and did not`,
+              ).toContain(run.raises);
+              return;
+            }
+            expect(outcome?.error, `${run.name} raised`).toBeNull();
+            for (const reading of outcome?.readings ?? []) {
+              expect(reading.actual, reading.claim).toEqual(reading.expected);
+            }
+          });
+
+        }
+
+        for (const mutant of reverse.mutants) {
+          it(`reverse: catches a broken ${mutant.script} rollback — ${mutant.name}`, () => {
+            // AT LEAST ONE run, which is what this fixture type has always
+            // promised ("Each one must make at least one run fail") and not
+            // what the runner used to require. Demanding that EVERY run catch
+            // EVERY mutant is a different and wrong rule: the wrong-order guard
+            // is deliberately silent when the scripts run in the right order,
+            // so the run that proves the data comes back correctly can never
+            // notice the guard being removed. Only the run that exercises the
+            // wrong order can, and that run is scored on its refusal (#3369).
+            const detectedBy = reverse.runs.filter((run) => {
+              const outcome = reverseRuns.get(
+                reverseMutantKey(fixture.migration, run.name, mutant.name),
+              );
+              if (!outcome) return false;
+              // A run that must refuse is detected by no longer refusing for
+              // the declared reason — a different error, or none at all.
+              if (run.raises) {
+                return !(outcome.error?.message ?? "").includes(run.raises);
+              }
+              return outcomeDetected(testCase, outcome);
+            });
+            expect(
+              detectedBy.length > 0,
+              `${fixture.migration}: reverse mutant "${mutant.name}" went UNDETECTED by every run (${reverse.runs.map((run) => `"${run.name}"`).join(", ")}). ${mutant.harm} Sharpen an expectation, or add a run that exercises it, until this fails.`,
+            ).toBe(true);
+          });
+        }
       }
 
       // ------------------------------------------------------------------

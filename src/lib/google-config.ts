@@ -27,6 +27,10 @@ import {
   providerNeedsReentry,
   setIntegrationCredential,
 } from "@/lib/integration-credentials";
+import type {
+  CredentialActor,
+  CredentialRequestContext,
+} from "@/lib/integration-credential-actor";
 
 export const GOOGLE_PROVIDER = "google";
 
@@ -110,15 +114,41 @@ export async function recordGoogleVerified(
       provider: GOOGLE_PROVIDER,
       key: GOOGLE_VERIFIED_KEY,
       value: when.toISOString(),
+      actor: { kind: "system", actor: "google-verify-callback" },
+      // The marker's whole purpose is to record the LATEST successful
+      // round-trip, and this is its only writer, so there is nothing to be
+      // stale against (#2723).
+      expect: { expect: "any" },
     });
   } catch {
     // Never let marker persistence affect the verify round-trip response.
   }
 }
 
-/** Drop the verified marker (verify-reset on any Google credential write). */
-export async function clearGoogleVerified(): Promise<void> {
-  await deleteIntegrationCredential(GOOGLE_PROVIDER, GOOGLE_VERIFIED_KEY);
+/**
+ * Drop the verified marker (verify-reset on any Google credential write).
+ *
+ * THE ACTOR IS THE CALLER'S, and required (#2723). This used to name a
+ * `google-verify-reset` system actor, which was wrong about who did it: the one
+ * caller is the admin credential-write route, which holds the acting member and
+ * has already attributed the credential write itself to them. Hard-coding a
+ * system actor here turned one administrator's action into two audit rows, one
+ * naming the person and one naming a job with no member and no request context.
+ */
+export async function clearGoogleVerified(
+  actor: CredentialActor,
+  request?: CredentialRequestContext,
+): Promise<void> {
+  await deleteIntegrationCredential({
+    provider: GOOGLE_PROVIDER,
+    key: GOOGLE_VERIFIED_KEY,
+    actor,
+    // Verify-reset drops whatever marker is there; a concurrent re-verify that
+    // re-stamped it should also be dropped, because the credential it attested
+    // to has just changed.
+    expect: { expect: "any" },
+    request,
+  });
 }
 
 export interface GoogleSetupState {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { addDaysDateOnly, formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
@@ -183,12 +184,14 @@ export async function GET(req: NextRequest) {
           hutLeaderEligibleAt: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   });
 
   for (const b of bookings) {
-    if (!b.member.active || b.member.ageTier !== "ADULT") continue;
-    const ownerGuest = b.guests.find((guest) => guest.memberId === b.member.id);
+    if (!bookingOwner(b).member.active || bookingOwner(b).member.ageTier !== "ADULT") continue;
+    const ownerGuest = b.guests.find((guest) => guest.memberId === bookingOwner(b).member.id);
     const ownerStay: MemberStay = {
       checkIn: b.checkIn,
       checkOut: b.checkOut,
@@ -197,7 +200,12 @@ export async function GET(req: NextRequest) {
       nights: ownerGuest?.nights,
     };
     const ownerNightKey = getGuestBedNightKeys(ownerStay, ownerStay).join(",");
-    const existing = memberBookings.get(b.member.id);
+    // #3369: hut-leader eligibility is a MEMBER's, so a booking owned by an
+    // organisation contributes no candidate. Its teacher is a member in their
+    // own right and reaches this list through their own booking or assignment.
+    const ownerMemberId = bookingOwner(b).member.id;
+    if (!ownerMemberId) continue;
+    const existing = memberBookings.get(ownerMemberId);
     if (existing) {
       if (
         !existing.bookings.some(
@@ -208,13 +216,13 @@ export async function GET(req: NextRequest) {
         existing.bookings.push(ownerStay);
       }
     } else {
-      memberBookings.set(b.member.id, {
-        id: b.member.id,
-        firstName: b.member.firstName,
-        lastName: b.member.lastName,
-        email: b.member.email,
-        hutLeaderEligible: Boolean(b.member.hutLeaderEligible),
-        hutLeaderEligibleAt: b.member.hutLeaderEligibleAt ?? null,
+      memberBookings.set(ownerMemberId, {
+        id: ownerMemberId,
+        firstName: bookingOwner(b).member.firstName,
+        lastName: bookingOwner(b).member.lastName,
+        email: bookingOwner(b).member.email,
+        hutLeaderEligible: Boolean(bookingOwner(b).member.hutLeaderEligible),
+        hutLeaderEligibleAt: bookingOwner(b).member.hutLeaderEligibleAt ?? null,
         bookings: [ownerStay],
       });
     }

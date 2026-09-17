@@ -27,6 +27,7 @@ import {
   setIntegrationCredential,
   deleteIntegrationCredential,
 } from "@/lib/integration-credentials";
+import type { CredentialActor } from "@/lib/integration-credential-actor";
 
 export const SERVERNZ_PROVIDER = "servernz";
 
@@ -51,25 +52,38 @@ export async function getOperationalServerNzApiKey(): Promise<
   );
 }
 
-/** Store (or replace) the ServerNZ API key. Encrypted at rest. */
+/**
+ * Store (or replace) the ServerNZ API key. Encrypted at rest.
+ *
+ * The actor is the caller's to supply and is REQUIRED (#2723) — this used to
+ * take an optional `updatedByUserId`, which let an admin action reach the store
+ * attributed to nobody.
+ */
 export async function setServerNzApiKey(
   value: string,
-  updatedByUserId?: string,
+  actor: CredentialActor,
 ): Promise<void> {
   await setIntegrationCredential({
     provider: SERVERNZ_PROVIDER,
     key: SERVERNZ_CREDENTIAL_KEYS.apiKey,
     value,
-    updatedByUserId,
+    actor,
+    // The admin form posts the key it wants stored outright; there is no
+    // read-modify-write here to be stale against.
+    expect: { expect: "any" },
   });
 }
 
 /** Remove the stored ServerNZ API key (disconnect). */
-export async function clearServerNzApiKey(): Promise<void> {
-  await deleteIntegrationCredential(
-    SERVERNZ_PROVIDER,
-    SERVERNZ_CREDENTIAL_KEYS.apiKey,
-  );
+export async function clearServerNzApiKey(
+  actor: CredentialActor,
+): Promise<void> {
+  await deleteIntegrationCredential({
+    provider: SERVERNZ_PROVIDER,
+    key: SERVERNZ_CREDENTIAL_KEYS.apiKey,
+    actor,
+    expect: { expect: "any" },
+  });
 }
 
 export interface ServerNzSetupState {

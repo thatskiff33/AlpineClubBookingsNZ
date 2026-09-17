@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 import type { HostingCoverageReevaluationInput } from "@/lib/adult-member-hosting-coverage-queue";
 
@@ -21,6 +22,42 @@ export type HostingCoverageSourceParticipant = Readonly<{
   ownerMemberId: string;
   lodgeId: string;
 }>;
+
+/**
+ * WHAT A HOSTING-COVERAGE PARTICIPANT IS — the one home of the decision (#3369,
+ * settled in one place by #3480).
+ *
+ * A participant is a MEMBER holding nights that a qualifying adult must cover.
+ * The re-evaluation queue is keyed on that member, the fence below takes its
+ * `FOR KEY SHARE NOWAIT` on that member's row, and the coverage-owner advisory
+ * key is minted from that member's id. An organisation holds no member-nights,
+ * has no `Member` row to lock and no account the queue could name — so an
+ * organisation-owned booking (a school's, since stage 4 of #2912 made the
+ * member link optional) is NOT a participant, and this returns `null` for it.
+ *
+ * WHY THIS IS A FUNCTION AND NOT A COMMENT. Before #3480 the fence's own re-read
+ * below took this decision inline (`if (!ownerMemberId) return []`), while the
+ * producers in `adult-member-hosting-review.ts` never took it at all: they
+ * emitted a participant with `ownerMemberId: null` through a type that said
+ * `string`, and the fence's fingerprint of what it re-read (school dropped)
+ * could never equal the fingerprint of what it was handed (school present). The
+ * result was a `HostingCoverageParticipantRetryError` thrown deterministically —
+ * the same rows, the same answer, on every retry — from inside the transaction
+ * that records a member's manual subscription payment, deactivates them, or
+ * syncs their standing from Xero, whenever that member was a guest on a school
+ * booking at a lodge with the rule switched on. Two spellings of one decision
+ * disagreed, and the fence read the disagreement as contention. So there is
+ * one spelling, here, and every producer and the verifier both ask it
+ * (`INV-SSOT-001`).
+ *
+ * The answer is taken through `bookingOwner()` rather than off the column,
+ * because who owns a booking is that accessor's question (`INV-SSOT-005`).
+ */
+export function hostingCoverageParticipantOwnerId(booking: {
+  readonly memberId: string | null;
+}): string | null {
+  return bookingOwner(booking).memberId;
+}
 
 const issuedProofs = new WeakSet<object>();
 
@@ -285,11 +322,15 @@ export async function acquireHostingCoverageQueueParticipantProof(
     orderBy: { id: "asc" },
     select: { id: true, memberId: true, lodgeId: true },
   });
-  const refreshed = bookings.map((booking) => ({
-    bookingId: booking.id,
-    ownerMemberId: booking.memberId,
-    lodgeId: booking.lodgeId,
-  }));
+  // #3369: an organisation-owned booking is not a participant and is not part
+  // of the fingerprint the proof is taken over. THE SAME PREDICATE THE PRODUCERS
+  // USE, so what the fence re-reads and what it was handed cannot disagree about
+  // a school booking again (#3480) — see `hostingCoverageParticipantOwnerId`.
+  const refreshed = bookings.flatMap((booking) => {
+    const ownerMemberId = hostingCoverageParticipantOwnerId(booking);
+    if (ownerMemberId === null) return [];
+    return [{ bookingId: booking.id, ownerMemberId, lodgeId: booking.lodgeId }];
+  });
   if (sourceFingerprint(refreshed) !== sourceFingerprint(params.sources)) {
     throw new HostingCoverageParticipantRetryError();
   }

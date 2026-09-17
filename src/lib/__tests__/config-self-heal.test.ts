@@ -29,7 +29,6 @@ import {
   clubIdentitySelfHealStep,
   clubTimeZoneSelfHealStep,
   defineSelfHealStep,
-  isUniqueConstraintError,
   lodgeCapacitySelfHealStep,
   runConfigSelfHeal,
   SELF_HEAL_STEPS,
@@ -127,22 +126,6 @@ function makeIdentityDb(seedRow?: Record<string, unknown>) {
 
   return { rows, db: db as unknown as SelfHealDb };
 }
-
-describe("isUniqueConstraintError", () => {
-  it("detects a structural P2002 error", () => {
-    expect(isUniqueConstraintError({ code: "P2002" })).toBe(true);
-    expect(
-      isUniqueConstraintError(Object.assign(new Error("dup"), { code: "P2002" })),
-    ).toBe(true);
-  });
-
-  it("rejects other errors", () => {
-    expect(isUniqueConstraintError(new Error("boom"))).toBe(false);
-    expect(isUniqueConstraintError({ code: "P2003" })).toBe(false);
-    expect(isUniqueConstraintError(null)).toBe(false);
-    expect(isUniqueConstraintError(undefined)).toBe(false);
-  });
-});
 
 describe("runConfigSelfHeal — cold un-backfilled DB", () => {
   it("populates the identity row from the effective config on first run", async () => {

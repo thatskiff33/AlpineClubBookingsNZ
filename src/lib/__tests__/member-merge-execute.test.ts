@@ -112,11 +112,44 @@ function reconcileSubjectRows(ids: string[]) {
     }));
 }
 
+/**
+ * `member.findMany` as the merge transaction actually uses it — TWO queries,
+ * not one, and a mock that answers both the same way blocks every merge.
+ *
+ * The email-inheritance reconciler asks for the subject rows by id and reads
+ * five inheritance columns off them. The #3369 merge guard asks a NARROWER
+ * question against the same delegate: which of these two ids is school-SHAPED
+ * (`role: SCHOOL`, a blank surname, cannot sign in), for the rows the cutover
+ * census never reached. Answering that with the reconciler's row list says
+ * "both of them", and `evaluateMemberMergeGuards` then refuses every merge in
+ * this file with `organisation_row`.
+ *
+ * So the filter is honoured rather than ignored. Prisma would have; a mock that
+ * does not is not modelling the database, it is modelling one caller.
+ */
+function memberFindManyForTest(args: unknown) {
+  const where = (args as { where?: Record<string, unknown> }).where ?? {};
+  const ids = (where.id as { in?: string[] } | undefined)?.in;
+  if (!ids) return null;
+  const narrowing = ["role", "lastName", "canLogin", "active"].filter(
+    (key) => key in where,
+  );
+  if (narrowing.length === 0) return reconcileSubjectRows(ids);
+  const rows = [master, loser] as unknown as Array<Record<string, unknown>>;
+  return ids
+    .filter((id) => {
+      const row = rows.find((candidate) => candidate.id === id);
+      if (!row) return false;
+      return narrowing.every((key) => row[key] === where[key]);
+    })
+    .map((id) => ({ id }));
+}
+
 function makeClient(overrides: Record<string, unknown> = {}) {
   const memberDelegate = {
     ...defaultDelegate(),
-    findMany: vi.fn(({ where }: { where?: { id?: { in?: string[] } } }) =>
-      Promise.resolve(reconcileSubjectRows(where?.id?.in ?? [])),
+    findMany: vi.fn((args: unknown) =>
+      Promise.resolve(memberFindManyForTest(args) ?? []),
     ),
     findUnique: vi.fn(({ where }: { where: { id: string } }) =>
       Promise.resolve(where.id === MASTER_ID ? master : where.id === LOSER_ID ? loser : null),
@@ -141,12 +174,8 @@ function makeClient(overrides: Record<string, unknown> = {}) {
       ? {
           ...overriddenMember,
           findMany: vi.fn((args: unknown) => {
-            const ids = (
-              args as { where?: { id?: { in?: string[] } } }
-            ).where?.id?.in;
-            if (ids) {
-              return Promise.resolve(reconcileSubjectRows(ids));
-            }
+            const answered = memberFindManyForTest(args);
+            if (answered) return Promise.resolve(answered);
             return overriddenMember.findMany?.(args) ?? Promise.resolve([]);
           }),
         }

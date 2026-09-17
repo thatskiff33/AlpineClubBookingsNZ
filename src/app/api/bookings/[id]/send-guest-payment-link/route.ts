@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -62,7 +63,7 @@ export async function POST(
   // #2258: the caller may be the BOOKER, not an officer. Remember which, so a
   // withheld outcome discloses its cause to an admin and never to a member.
   const isAdmin = hasAdminAccess(session.user);
-  if (booking.memberId !== session.user.id && !isAdmin) {
+  if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   // #2674 (INV-ADDPAY-031): the deletion check sits AFTER the authorisation

@@ -9,6 +9,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import type Stripe from "stripe";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import {
   cancelPaymentIntentIfCancellableWithResult,
@@ -1110,7 +1111,8 @@ async function alertPaymentRecoveryFailure(
 ) {
   const booking = await prisma.booking.findUnique({
     where: { id: operation.bookingId },
-    include: { member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { member: true, organisation: { select: { name: true, email: true } } },
   });
 
   if (!booking) {
@@ -1122,7 +1124,7 @@ async function alertPaymentRecoveryFailure(
   }
 
   await sendAdminPaymentFailureAlert({
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     amountCents: operation.amountCents,
@@ -2342,6 +2344,8 @@ async function processCreateAdditionalPaymentIntentOperation(
         member: {
           select: { id: true, email: true, firstName: true, lastName: true },
         },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         // #3181: `status` joins the select because the deferred supplementary
         // invoice this replay now raises is classified partly from it (the
         // primary invoice's local paid/refunded state). Whether an invoice
@@ -2375,11 +2379,14 @@ async function processCreateAdditionalPaymentIntentOperation(
       bookingId: operation.bookingId,
       bookingModificationId,
       paymentId: operation.paymentId,
-      member: booking.member
+      // #3369: the edit-review charge request is raised against a PERSON's
+      // Stripe customer, so a booking with no member carries none. The sync
+      // already models an absent member, which is the branch a school takes.
+      member: bookingOwner(booking).member.id
         ? {
-            id: booking.member.id,
-            email: booking.member.email,
-            name: `${booking.member.firstName} ${booking.member.lastName}`,
+            id: bookingOwner(booking).member.id as string,
+            email: bookingOwner(booking).member.email,
+            name: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
             stripeCustomerId: booking.payment?.stripeCustomerId ?? null,
           }
         : null,
@@ -2487,7 +2494,7 @@ async function processCreateAdditionalPaymentIntentOperation(
              */
             reviewTaskId: null,
             shareCents: null,
-            memberId: booking.member?.id ?? null,
+            memberId: bookingOwner(booking).member?.id ?? null,
             totalCents: synced.totalCents,
           }).catch((err) =>
             logger.error(
@@ -2538,7 +2545,7 @@ async function processCreateAdditionalPaymentIntentOperation(
             secondAsk: null,
             bookingId: operation.bookingId,
             bookingModificationId,
-            memberId: booking.member?.id ?? null,
+            memberId: bookingOwner(booking).member?.id ?? null,
             derivedTotalCents: synced.totalCents,
             // No ask exists to be short of, so there is no figure to compare
             // against - the same refusal to invent one the shortfall record makes.
@@ -2591,7 +2598,8 @@ async function processCreateAdditionalPaymentIntentOperation(
     where: { id: operation.paymentId },
     include: {
       transactions: true,
-      booking: { include: { member: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      booking: { include: { member: true, organisation: { select: { name: true, email: true } } } },
     },
   });
 
@@ -2659,13 +2667,15 @@ async function processCreateAdditionalPaymentIntentOperation(
       })
     : null;
 
-  const member = payment.booking.member;
+  const member = bookingOwner(payment.booking).member;
   let customerId = payment.stripeCustomerId ?? undefined;
   if (!customerId) {
     const customer = await findOrCreateCustomer({
       email: member.email,
       name: `${member.firstName} ${member.lastName}`,
-      memberId: member.id,
+      // #3369: the OWNER — a member id, or the organisation beside it.
+      memberId: member.id ?? null,
+      organisationId: payment.booking.organisationId,
     });
     customerId = customer.id;
   }
@@ -2909,7 +2919,8 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
       createdAt: { lt: staleThreshold },
     },
     orderBy: { createdAt: "asc" },
-    include: { booking: { include: { member: true } } },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } },
   });
   if (!oldest) return;
 
@@ -2929,8 +2940,9 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
   // window (two instances reading between claim attempts) is bounded and this
   // is a noise-only alert.
   await sendAdminPaymentFailureAlert({
-    memberName: oldest.booking?.member
-      ? `${oldest.booking.member.firstName} ${oldest.booking.member.lastName}`
+    memberName:
+      oldest.booking && bookingOwner(oldest.booking).member
+      ? `${bookingOwner(oldest.booking).member.firstName} ${bookingOwner(oldest.booking).member.lastName}`
       : "Unknown member",
     checkIn: oldest.booking?.checkIn ?? null,
     checkOut: oldest.booking?.checkOut ?? null,

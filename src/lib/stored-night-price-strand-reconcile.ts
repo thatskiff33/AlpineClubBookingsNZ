@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { requireCalendarDate } from "@/lib/club-time";
 import {
@@ -268,7 +269,8 @@ export type StrandNightPriceReconcilePlan = {
   guestName: string;
   cause: EditFinancialReviewCause;
   /** The booking's own member, for the audit entry's subject. */
-  subjectMemberId: string;
+  /** The audit SUBJECT, null for an organisation-owned booking (#3369, `INV-PRIV-019`). */
+  subjectMemberId: string | null;
   summary: UnpricedNightsSummary;
   writes: readonly FencedNightWrite[];
 };
@@ -391,7 +393,7 @@ export async function planStrandNightPriceReconcile({
     bookingGuestId: guest.id,
     guestName: offer.guestName,
     cause: offer.cause,
-    subjectMemberId: booking.memberId,
+    subjectMemberId: bookingOwner(booking).memberId,
     summary: offer.summary,
     writes: check.entries.map((entry) => ({
       date: entry.date,

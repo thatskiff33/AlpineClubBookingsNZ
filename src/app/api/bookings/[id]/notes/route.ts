@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { htmlToPlainText } from "@/lib/email-text";
 import { prisma } from "@/lib/prisma";
@@ -43,7 +44,7 @@ export async function PUT(
   // Issue #1313 (option A2): owner, Full Admin, or Booking Officer
   // (bookings:edit) may edit the admin notes on any booking.
   if (
-    booking.memberId !== session.user.id &&
+    bookingOwner(booking).memberId !== session.user.id &&
     !isAdmin &&
     !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
   ) {

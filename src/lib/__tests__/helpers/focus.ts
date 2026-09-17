@@ -5,7 +5,9 @@
 // screen-reader user is not left on a control that has just been re-enabled while
 // the explanation appears somewhere else on the page. Sixteen of them use
 // `src/components/focused-action-error.tsx`; `policy-exception-requests-panel.tsx`
-// and `roster-editor.tsx` inline their own copy of the same alert.
+// and `roster-editor.tsx` call the same failure primitive through
+// `useActionAttention`. All of them focus through `src/hooks/use-scroll-to-feedback.ts`
+// (#2934), which is why one assertion fits every surface.
 //
 // The contract is that the alert HOLDS focus. Two obvious spellings of that are
 // both wrong, and this repo has now shipped both of them:
@@ -34,7 +36,7 @@
 // still there once every pending render and effect has settled — so it depends on
 // no ordering between React's flush and the test runner's drain.
 import { act, waitFor } from "@testing-library/react";
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
 
 // How many fully settled event-loop turns the alert must still hold focus for
 // after receiving it. Two, because the known way to lose it — a closing Radix
@@ -89,4 +91,75 @@ async function settlePendingReactWork(): Promise<void> {
       setTimeout(resolve, 0);
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// The reveal contract (#2934), as a fixture and one assertion.
+//
+// jsdom implements no layout, so `Element.prototype.scrollIntoView` does not
+// exist on it at all: a reveal test has to install a spy and take it away
+// again. Three files had written that same six-line fixture out verbatim, each
+// retyping `{ behavior: "smooth", block: "start" }` — which is the attention
+// module's OWN default, not a per-call-site choice. Retyped in every file, a
+// changed default goes unnoticed in all of them at once; stated here, it is one
+// line to change and every call site re-checks it (`INV-SSOT-001`).
+// ---------------------------------------------------------------------------
+
+export type ScrollIntoViewSpy = ReturnType<
+  typeof vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>
+>;
+
+/**
+ * What `revealEditor` / `scrollToError(…, block: "start")` ask the browser for
+ * when the platform states no motion preference. jsdom has no `matchMedia`, so
+ * `resolveScrollBehavior` treats it as no preference and returns `"smooth"`.
+ */
+const REVEAL_OPTIONS: ScrollIntoViewOptions = {
+  behavior: "smooth",
+  block: "start",
+};
+
+/**
+ * Install the `scrollIntoView` spy every reveal assertion reads. Call it from a
+ * `beforeEach`, and {@link removeScrollIntoViewSpy} from the matching
+ * `afterEach` — leaving the stub on the prototype would hand the next file a
+ * `scrollIntoView` that silently does nothing.
+ */
+export function installScrollIntoViewSpy(): ScrollIntoViewSpy {
+  const spy = vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>();
+  Element.prototype.scrollIntoView = spy;
+  return spy;
+}
+
+export function removeScrollIntoViewSpy(): void {
+  delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+}
+
+/**
+ * Assert that the shared attention primitive revealed `target`: it holds focus,
+ * it is what was scrolled, and it was scrolled exactly `times` times in total.
+ *
+ * The count is the half that discriminates. Asserting only that a reveal
+ * happened cannot tell a reveal driven by an explicit action from one that also
+ * fires on every re-render, which is the defect this rule exists to prevent.
+ */
+export function expectRevealed(
+  spy: ScrollIntoViewSpy,
+  target: Element | null | undefined,
+  { times = 1 }: { times?: number } = {},
+): void {
+  if (!target) {
+    throw new Error(
+      "expectRevealed: the reveal target element was not found — check what the " +
+        "surface renders before asserting the reveal on it.",
+    );
+  }
+  expect(
+    document.activeElement,
+    "the revealed region must hold focus, or a keyboard user gets a scroll and " +
+      "nothing else",
+  ).toBe(target);
+  expect(spy).toHaveBeenCalledTimes(times);
+  expect(spy.mock.instances[times - 1]).toBe(target);
+  expect(spy.mock.calls[times - 1]?.[0]).toEqual(REVEAL_OPTIONS);
 }

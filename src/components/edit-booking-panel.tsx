@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { bookingOwner } from "@/lib/booking-owner";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 // The create wizard's own prediction + column translation, imported rather than
 // re-implemented (MG4 #2309). The first cut of this panel wrote its own copy of
@@ -1627,11 +1628,11 @@ export function EditBookingPanel({
   // stale-quote apply 409 (saveOverCapacityNights).
   const overCapacityConfirmActive =
     Boolean(quote?.overCapacityConfirmRequired) || Boolean(saveOverCapacityNights);
-  const overCapacityNightList = (
-    quote?.overCapacityConfirmRequired
-      ? quote.nightDetails ?? []
-      : saveOverCapacityNights ?? []
-  ).filter((night) => night.availableBeds < 0);
+  // #2930: no client re-filter — both sources ARE `overCapacityNights()` output
+  // already, and that one home is what excludes held nights (`INV-SSOT-001`).
+  const overCapacityNightList = quote?.overCapacityConfirmRequired
+    ? quote.nightDetails ?? []
+    : saveOverCapacityNights ?? [];
   const capacityOk = quote
     ? overCapacityConfirmActive
       ? confirmOverCapacity
@@ -1780,7 +1781,7 @@ export function EditBookingPanel({
           getExistingGuestRange={getExistingGuestRange}
           quote={quote}
           forMemberId={
-            booking.viewerRole === "ADMIN" ? booking.memberId : undefined
+            booking.viewerRole === "ADMIN" ? bookingOwner(booking).memberId : undefined
           }
           lodgeId={booking.lodgeId}
           onRemovePromo={() => setPromoAction({ type: "remove" })}

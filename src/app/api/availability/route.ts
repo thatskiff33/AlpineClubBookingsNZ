@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
-import { getMonthAvailability } from "@/lib/capacity";
+import { getLodgeCapacity, getMonthAvailability } from "@/lib/capacity";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
@@ -83,8 +83,17 @@ export async function GET(request: NextRequest) {
   const startDate = getMonthStartDateOnly(year, month);
   const endDate = getNextMonthStartDateOnly(year, month);
 
-  const [occupancyMap, activeSeasons] = await Promise.all([
+  const [occupancyMap, lodgeCapacity, activeSeasons] = await Promise.all([
     getMonthAvailability(lodgeId, year, month),
+    // The SELECTED lodge's effective capacity (#2930, `INV-CAP-003`). The
+    // calendar used to divide this month's occupancy by the club-identity
+    // figure, which is ONE lodge's bed count applied to every lodge: at a
+    // capped or secondary lodge every "N of M beds free" label, every heat
+    // colour and the full/not-full decision itself were computed against the
+    // wrong denominator. `getMonthAvailability` already counts occupancy
+    // against this exact value, so sending it is what makes the two halves of
+    // the subtraction come from the same lodge.
+    getLodgeCapacity(lodgeId),
     prisma.season.findMany({
       where: {
         startDate: { lt: endDate },
@@ -126,5 +135,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ availability, seasons });
+  return NextResponse.json({ availability, seasons, lodgeCapacity });
 }

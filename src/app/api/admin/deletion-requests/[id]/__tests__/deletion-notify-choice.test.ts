@@ -1383,10 +1383,13 @@ describe("#2623 T1: the Xero fence is asked BEFORE anything irreversible", () =>
  * before. Nulling the Member column while leaving that copy behind would mean an
  * honoured erasure request still left the member's birthday on this server.
  *
- * Removing the value from XERO is deliberately NOT attempted here: it conflicts
- * with the standing rule that this app never blanks that field (it cannot tell a
- * birthday it wrote from a business number an administrator typed), and it is a
- * genuine owner question tracked as #2873.
+ * Removing the value from XERO is deliberately NOT attempted here, and that is
+ * now a settled decision rather than an open question: erasure makes no Xero
+ * mutation at all (#3058, `INV-INT-024`; #2873 closed `not planned`). It
+ * conflicts with the standing rule that this app never blanks that field — it
+ * cannot tell a birthday it wrote from a business number an administrator
+ * typed — and what a contact holds in the club's accounting system belongs to
+ * whoever administers it. What an erasure leaves behind is reported instead.
  */
 describe("POST /api/admin/deletion-requests/[id] clears the cached date of birth (#2859)", () => {
   beforeEach(() => {
@@ -1419,7 +1422,7 @@ describe("POST /api/admin/deletion-requests/[id] clears the cached date of birth
     // tidiness one. `buildXeroContactCompanyNumberPatch` reads a cache row that
     // EXISTS and holds `null` as "we looked, and Xero's NZBN field is empty" —
     // its permission to write. A null-ing erasure would manufacture exactly
-    // that permission about a field Xero still holds (#2873), so a later
+    // that permission about a field Xero still holds (#3058), so a later
     // namesake matched onto the same contact would have a real business number
     // overwritten by a birthday. It also leaves the erased member's cached
     // name, email, phone and address in the row.

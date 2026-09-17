@@ -320,12 +320,12 @@ in that class:
   DDL with a deliberately incompatible write protocol. The previous runtime can
   attempt an overlap that the new triggers reject and cannot decode the new safe
   database error. Its private repair and public deploy sequence are in
-  [§2.4.2](#242-3271-parentpartner-exclusivity-backstop).
+  [§2.4.3](#243-3271-parentpartner-exclusivity-backstop).
 
 **If several are pending, they share ONE window.** `prisma migrate deploy` applies
 them in the same command — you do not stop and start the application repeatedly. Work
 the checks in [§2.4.1](#241-2520-drop-familygroupmemberrole) as well as the ones
-here, plus [§2.4.2](#242-3271-parentpartner-exclusivity-backstop) when #3271 is
+here, plus [§2.4.3](#243-3271-parentpartner-exclusivity-backstop) when #3271 is
 pending, and name every pending windowed migration in the override reason.
 
 **Reverse every pending windowed migration in application order.** Stop all new
@@ -617,11 +617,15 @@ and nomination. There is no ordering that keeps both versions working.
    Prisma.
 
    9(a) **Validate.** Name every pending migration's `migration.sql`. For this
-   release the complete ordered set is twelve migrations; do not validate only the
-   windowed rows:
+   release the complete ordered set is eighteen migrations; do not validate only
+   the windowed rows. The list is the union of what each side of the tenth
+   main-to-epic sync held: `main` carried the first twelve, and programme #2912
+   adds the six `20260928*` rows, additive ones included. "Every pending
+   migration" means every one — a validator run that names twelve of eighteen
+   exits 0 without having looked at six of them:
     ```bash
     ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1 \
-    BLUE_GREEN_MIGRATION_OVERRIDE_REASON="#2543 + #2520 + #2596 + #3271 windowed maintenance window <DATE>: public traffic removed, web and all workers stopped, no old connections, fresh verified backup taken, private repair and zero-conflict census passed, pre-migration checks recorded" \
+    BLUE_GREEN_MIGRATION_OVERRIDE_REASON="#2543 + #2520 + #2596 + #3369 + #3271 windowed maintenance window <DATE>: public traffic removed, web and all workers stopped, no old connections, fresh verified backup taken, private repair and zero-conflict census passed, pre-migration checks recorded" \
     BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1 \
    ./scripts/validate-blue-green-migrations.sh \
      prisma/migrations/20260803010000_contract_subscription_lockout_drop_enabled/migration.sql \
@@ -635,6 +639,12 @@ and nomination. There is no ordering that keeps both versions working.
      prisma/migrations/20260913030000_add_payment_transaction_carried_ask_cents/migration.sql \
      prisma/migrations/20260923010000_backfill_historical_audit_categories/migration.sql \
      prisma/migrations/20260927010000_add_member_lodge_roster/migration.sql \
+     prisma/migrations/20260928010000_add_organisation_record/migration.sql \
+     prisma/migrations/20260928020000_booking_owner_optional_member/migration.sql \
+     prisma/migrations/20260928030000_backfill_school_bookings_to_organisations/migration.sql \
+     prisma/migrations/20260928040000_add_xero_sync_operation_invoice_email_delivery/migration.sql \
+     prisma/migrations/20260928050000_add_mirotalk_settings/migration.sql \
+     prisma/migrations/20260928060000_add_issue_report_screenshot_origin/migration.sql \
      prisma/migrations/20260929010000_add_member_parent_partner_exclusion/migration.sql
    ```
    Expect exit 0 with the override reason echoed back as a `WARNING:` line. It
@@ -827,7 +837,192 @@ the old version runs against the migrated schema.
 Both directions were rehearsed against a production-shaped database before merge
 ([§7.2](#72-windowed-migration-rehearsal-20260803030000_contract_drop_family_group_member_role)).
 
-#### 2.4.2 #3271: parent/partner exclusivity backstop
+
+#### 2.4.2 #3369: a school booking has an organisation, not an invented person
+
+`20260928020000_booking_owner_optional_member` and
+`20260928030000_backfill_school_bookings_to_organisations` are the FOURTH and
+FIFTH `windowed` migrations — the ledger held three before them, which
+[§4](#4-rollback-plan) and `DEPLOYMENT.md` both count — and **they are one
+window**. `prisma migrate
+deploy` applies both in the same command; nothing below is run twice, and the two
+are never applied apart.
+
+**What they do.** The first makes `Booking.memberId` optional, does the same for
+the two promo columns that follow a booking's owner, restores the uniqueness a
+NULL member would collapse in `PromoRedemptionAllocation` with two partial
+indexes, teaches the 20260527120000 allocation-sync trigger that a booker can be
+absent, and creates the empty table the classification is recorded in. It rewrites
+no stored value. The second moves every school's booking onto the school's
+`Organisation`, empties the member link on it, follows the promo rows, carries the
+school's Xero customer across, and adds the CHECK constraint that makes
+"exactly one owner" true.
+
+**Why the window.** The previous release's Prisma client reads
+`Booking.memberId` as required. The moment the backfill commits, the old colour
+raises on the first school booking it touches — a booking list, an invoice
+replay, a cron sweep. There is no ordering that keeps both runtimes working.
+
+**The precondition, and it is not a step inside the window.** The backfill
+**refuses, and writes nothing at all**, while any school-shaped member row that
+owns a booking is undecided. Classification is an operator task done days
+beforehand, with its own guide:
+[`guides/school-organisation-cutover.md`](guides/school-organisation-cutover.md).
+Do not open the window until the census prints `READY`.
+
+**Pre-migration checks (record the output in [§8](#8-production-execution-record)).**
+
+1. The census, run against the club's database after traffic is removed and the
+   old application and workers are stopped (§2.4 step 3):
+
+   ```bash
+   docker compose --profile migrate run --rm \
+     -e DATABASE_URL="$DATABASE_URL" migrate \
+     npm run db:school-classification-census
+   ```
+
+   It must end `READY: every candidate is recorded, so the backfill will run.`
+   Save the whole output. If it ends `NOT READY`, **stop** — an approval landed
+   after the last run, and somebody has to decide the new row. This is the one
+   check that can send you back out of the window.
+
+2. How many bookings are about to change hands, so the post-migration count has
+   something to be equal to:
+
+   ```sql
+   SELECT count(*) AS school_bookings
+   FROM "Booking" b
+   JOIN "SchoolMemberClassification" c ON c."memberId" = b."memberId"
+   WHERE c."classification" = 'ORGANISATION';
+   ```
+
+3. The schools that already have a record, so a name collision is visible before
+   rather than after:
+
+   ```sql
+   -- The fold is the migration's own: collapse, trim, cap, trim. `btrim` with
+   -- one argument strips only the SPACE character, so trimming before
+   -- collapsing would leave a tab in place for the collapse to turn into a
+   -- space — which is exactly the defect this order exists to avoid.
+   SELECT lower(btrim(left(btrim(regexp_replace("name", '\s+', ' ', 'g')), 200))) AS folded,
+          count(*)
+   FROM "Organisation" WHERE kind = 'SCHOOL'
+   GROUP BY 1 HAVING count(*) > 1;
+   ```
+
+   Rows here mean the club already holds two records for one school. The backfill
+   picks the live one, then the oldest, exactly as the runtime does — but an
+   officer should know.
+
+**Migrate.** As §2.4 step 6, with both files in the pending list, `20260928020000`
+first. The validator refuses without
+`ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a `BLUE_GREEN_MIGRATION_OVERRIDE_REASON`
+naming this window, and `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`.
+
+**If the backfill refuses inside the window.** The census in check 1 is the
+guard against this, and it is why check 1 runs after traffic is removed rather
+than the afternoon before. It can still happen: an approval landing between the
+census and the window is exactly the case the backfill's fail-closed check
+exists for. What follows is not obvious, and the obvious thing does not work.
+
+`prisma migrate deploy` writes each migration's `_prisma_migrations` row
+**before** applying it. `20260928030000` raising
+`school_member_classification_incomplete` rolls back its own transaction and
+writes nothing to the club's data — but the row stays, with a NULL
+`finished_at`. Every later `migrate deploy` then refuses with **P3009**, "found
+failed migrations in the target database", before it looks at the pending list
+at all. So recording the missing decisions and running the migration again — the
+natural reading of the refusal — meets a second refusal under a different name,
+in the window, with the club offline.
+
+The state you are in is `20260928020000` **applied** and `20260928030000`
+**failed**. It is safe to sit in: no booking has changed hands, and the only
+schema change in force is a `Booking.memberId` that is now optional, which
+nothing can exercise while every process is stopped. It is also the one state in
+which the two are legitimately apart, and the runbook's "never applied apart"
+above is about what reaches running traffic, not about this.
+
+Two ways out, and the first is usually right.
+
+1. **Finish the classification and go on.** Run the census again; it prints the
+   rows that need a decision. Record each one (steps 3–4 of the cutover guide).
+   Then clear the failed row and migrate again:
+
+   ```bash
+   docker compose --profile migrate run --rm      -e DATABASE_URL="$DATABASE_URL" migrate      npx prisma migrate resolve --rolled-back      20260928030000_backfill_school_bookings_to_organisations
+   ```
+
+   `--rolled-back` is the true statement here: the migration's transaction did
+   roll back, because it raised before its first write. Do not reach for
+   `--applied`, which would tell Prisma the backfill had run and leave every
+   school booking behind forever, invisibly.
+
+2. **Back out of the window.** If the decision needs a person who is not
+   available, run `20260928020000/rollback.sql` **on its own** — not the pair.
+   Its wrong-order guard looks for the `Booking_owner_exactly_one` constraint,
+   which only `20260928030000` adds and which therefore is not there; no NULL
+   member exists for its three `SET NOT NULL` statements to trip over; and
+   `SchoolMemberClassification` is kept, so the decisions already recorded
+   survive for the next attempt. Then `migrate resolve --rolled-back` **both**
+   names, restore the previous release, and re-open the window another day.
+
+Either way, record in [§8](#8-production-execution-record) that the refusal
+happened, which way out was taken, and what the census said the second time.
+
+**Verify the migrate step, before starting anything.**
+
+```sql
+-- No booking is owned by nobody. The CHECK makes this unrepresentable; run it
+-- anyway, because a constraint that was never exercised proves nothing.
+SELECT count(*) FROM "Booking"
+WHERE ("memberId" IS NULL) = ("organisationId" IS NULL);
+-- must be 0
+
+-- Every school booking changed hands.
+SELECT count(*) FROM "Booking" WHERE "organisationId" IS NOT NULL;
+-- must equal pre-migration check 2
+
+-- No promo row still names a member its booking no longer has.
+SELECT count(*) FROM "PromoRedemption" r
+JOIN "Booking" b ON b."id" = r."bookingId"
+WHERE b."memberId" IS NULL AND r."memberId" IS NOT NULL;
+-- must be 0
+
+-- Both migrations are recorded once each.
+SELECT migration_name, finished_at FROM _prisma_migrations
+WHERE migration_name IN ('20260928020000_booking_owner_optional_member',
+                         '20260928030000_backfill_school_bookings_to_organisations')
+ORDER BY migration_name;
+```
+
+**Rollback path.** Reverse order — `20260928030000/rollback.sql` first, then
+`20260928020000/rollback.sql`, each fed to `psql` inside the database container
+with `ON_ERROR_STOP=1`; the command-by-command form is in
+[`guides/school-organisation-cutover.md`](guides/school-organisation-cutover.md)
+→ "Rolling back". The second refuses with `school_reverse_wrong_order` if the
+first has not run, and that refusal reads the presence of the
+`Booking_owner_exactly_one` constraint rather than looking for null rows — so it
+holds for a club with no school bookings too. Once the new release has taken a
+booking, a payment or a refund, the reverse scripts are no longer a release
+rollback: the first will raise `school_backfill_rollback_unreconstructable` on a
+booking that never had a member, and the recovery is the verified backup with the
+owner leading. `SchoolMemberClassification` is deliberately kept by both
+reverses — it is an officer's recorded decisions, and the next attempt needs them.
+
+**Rolling forward after a rollback, and the trap it closes.** Neither reverse
+touches `_prisma_migrations`, exactly as the four earlier reverse scripts in this
+repository say of themselves. So afterwards `prisma migrate status` reports the
+schema up to date, `docker compose --profile migrate run --rm migrate` finds
+nothing pending, and `prisma migrate diff` sees no drift — all three truthfully,
+about a database that is back on the pre-epic model, because these reverses
+restore the shape as well as the data. **Re-apply the two `migration.sql` files
+by hand**, `20260928020000` first, through the same containerised `psql`. They
+are written to survive it: the classification table and its enum survive the
+rollback by design, so section 4 of the first migration guards its type, table,
+index and key rather than creating them bare. Deleting the two
+`_prisma_migrations` rows and migrating again is equivalent and edits migration
+history for no gain.
+#### 2.4.3 #3271: parent/partner exclusivity backstop
 
 Use this sequence when
 `20260929010000_add_member_parent_partner_exclusion` is pending. The migration is
@@ -860,8 +1055,8 @@ private repair, not merely before `prisma migrate deploy`.
    only when it returns zero. If the approved row changed or any additional pair
    appears, stop: return those rows privately for individual owner decisions. Do
    not widen or automate the repair.
-7. Run the exact eight-file `scripts/validate-blue-green-migrations.sh` command
-   in §2.4.1 step 9(a) with
+7. Run the exact eighteen-file `scripts/validate-blue-green-migrations.sh`
+   command in §2.4.1 step 9(a) with
    `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a non-empty
    `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` naming the #3271 window, and the stopped
    runtime acknowledgement. Then run the normal compose migration service. The
@@ -1145,8 +1340,9 @@ already broken, so the boundary moves back to **step 13 (migrate)** and the
 recovery paths are forward to cutover, the migration's own `rollback.sql`, or the
 verified backup.
 
-**The ledger now holds four real `windowed` rows**, and they are not the only
-migrations in that class. Check for all five:
+**The ledger now holds six real `windowed` rows** — the three long-standing ones,
+#3271's, and #3369's pair — and they are not the only migrations in that class.
+Check for all of them:
 
 - `20260803010000_contract_subscription_lockout_drop_enabled` (#2543 / #2561) is
   declared `old_code_compatible=windowed`. It drops `MembershipLockoutSettings.enabled`,
@@ -1154,6 +1350,15 @@ migrations in that class. Check for all five:
   moment migrate commits — which means every booking write path on the old colour,
   not just the admin panel. It ships a tested `rollback.sql` and requires the
   maintenance-window sequence in [§2.4](#24-windowed-migration-deploy-sequence).
+- `20260928020000_booking_owner_optional_member` and
+  `20260928030000_backfill_school_bookings_to_organisations` (#3369) are both
+  declared `old_code_compatible=windowed` and are **one window**. The first is
+  compatible on its own and says so; it is declared windowed because applying it
+  without the second leaves a database that would accept a booking nobody owns.
+  The second empties `Booking.memberId` on every school booking, which the
+  previous client reads as required. Both ship a `rollback.sql` and they reverse
+  in the OPPOSITE order to the one they were applied in — see
+  [§2.4.2](#242-3369-a-school-booking-has-an-organisation-not-an-invented-person).
 - `20260803030000_contract_drop_family_group_member_role` (#2520) is declared
   `old_code_compatible=windowed` too. It drops `FamilyGroupMember.role`, which the
   previous release's client names in ordinary projections, in insert column lists
@@ -1168,7 +1373,7 @@ migrations in that class. Check for all five:
   share **one** window.
 - `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292) is
   `windowed` because the previous runtime can attempt writes rejected by the new
-  trigger and cannot decode that safe refusal. Use [§2.4.2](#242-3271-parentpartner-exclusivity-backstop):
+  trigger and cannot decode that safe refusal. Use [§2.4.3](#243-3271-parentpartner-exclusivity-backstop):
   stop every old process before the private repair, preserve the quiet-point
   backup, and do not restart old code until this migration's `rollback.sql` has
   removed the trigger protocol or the backup has been restored.
@@ -1709,12 +1914,17 @@ Fill this in live during the production window.
 | Windowed migration: pre-migration check output (§2.4.1 step 8) | _<paste 8(a) row count, 8(b) distinct role values + counts, 8(c) column shape, 8(d) replacement-client scalars>_ |
 | Windowed migration: per-row role dump (§2.4.1 step 8(e), REQUIRED) | _<host filename + the durable location it was moved to, beside the backup>_ |
 | Windowed migration: override reason used (§2.4.1 step 9a) | _<the exact BLUE_GREEN_MIGRATION_OVERRIDE_REASON string>_ |
-| #3271 stopped-runtime connection proof (§2.4.2 step 3) | _<PASS + timestamp; no connection details or identifiers>_ |
-| #3271 private repair and repeated zero-conflict census (§2.4.2 steps 5-6) | _<PASS only; never paste identifiers or private SQL>_ |
-| #3271 exact migration / rollback / roll-forward rehearsal (§2.4.2 step 2) | _<PASS + transcript artifact reference>_ |
-| #3271 migration row and artifact counts (§2.4.2 step 8) | _<1 row; table present; 7 triggers; 4 functions>_ |
-| #3271 source-to-pair reconciliation (§2.4.2 step 8) | _<0 mismatched pairs; 0 overlapping pairs>_ |
-| #3271 sanitized rollback-wrapped conflict probe (§2.4.2 step 8) | _<PASS; stable contract and 0 surviving probe members>_ |
+| #3369 school cutover: census result (§2.4.2 check 1) | _<paste the whole census output; it must end READY>_ |
+| #3369 school cutover: rows decided by a person | _<how many CANNOT TELL rows were classified by hand, by whom, and where the evidence is>_ |
+| #3369 school cutover: school bookings to re-parent (§2.4.2 check 2) | _<count>_ |
+| #3369 school cutover: duplicate school names (§2.4.2 check 3) | _<none, or the folded names and what was done about them>_ |
+| #3369 school cutover: post-migrate verification (§2.4.2) | _<the four queries' results>_ |
+| #3271 stopped-runtime connection proof (§2.4.3 step 3) | _<PASS + timestamp; no connection details or identifiers>_ |
+| #3271 private repair and repeated zero-conflict census (§2.4.3 steps 5-6) | _<PASS only; never paste identifiers or private SQL>_ |
+| #3271 exact migration / rollback / roll-forward rehearsal (§2.4.3 step 2) | _<PASS + transcript artifact reference>_ |
+| #3271 migration row and artifact counts (§2.4.3 step 8) | _<1 row; table present; 7 triggers; 4 functions>_ |
+| #3271 source-to-pair reconciliation (§2.4.3 step 8) | _<0 mismatched pairs; 0 overlapping pairs>_ |
+| #3271 sanitized rollback-wrapped conflict probe (§2.4.3 step 8) | _<PASS; stable contract and 0 surviving probe members>_ |
 | #3271 rollback boundary acknowledged | _<roll forward, full shared-window reverse, or backup recovery; owner + time>_ |
 | AgeTier plan (quiet window / deferred backfill) | _<...>_ |
 | Cutover time (step 17) | _<HH:MM TZ>_ |

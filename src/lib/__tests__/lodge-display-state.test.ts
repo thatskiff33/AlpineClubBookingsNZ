@@ -175,6 +175,31 @@ function booking(
   };
 }
 
+/**
+ * A booking OWNED BY AN ORGANISATION (#3369): no member at all, and the
+ * organisation loaded beside it, which is the shape the display select returns
+ * for every school booking once the classification backfill has run. The
+ * "organisation" fixtures above this helper predate that stage and still carry
+ * the invented school member with `ageTier: "NOT_APPLICABLE"`; they are kept
+ * because that shape is still what a legacy row looks like, but they cannot
+ * see a defect in how `bookingOwner()`'s `undefined` age tier is read, which is
+ * what this one exists for.
+ */
+function organisationBooking(
+  id: string,
+  organisationName: string,
+  guests: ReturnType<typeof guest>[],
+  range = { checkIn: "2026-04-13", checkOut: "2026-04-15" }
+) {
+  return {
+    ...booking(id, ADULT_ORGANISER, guests, range),
+    member: null,
+    memberId: null,
+    organisationId: `org-${id}`,
+    organisation: { name: organisationName },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.lodge.findUnique.mockResolvedValue({ ...LODGE });
@@ -370,6 +395,64 @@ describe("buildDisplayState privacy matrix", () => {
     expect(orgRow.wholeLodge).toBe(true);
     const zoeRow = state!.bookings.find((row) => row.label !== "Harakeke College")!;
     expect(zoeRow.wholeLodge).toBe(false);
+  });
+
+  it("REGRESSION (#3369): an organisation-OWNED booking is a group outright, so a small school alone in the lodge is a whole-lodge blockout", async () => {
+    // Every "organisation" case above carries the invented school member with
+    // `ageTier: "NOT_APPLICABLE"`. Once the classification backfill has run a
+    // school booking has NO member — `bookingOwner()` projects its age tier as
+    // `undefined` — and a reading of `ageTier === "NOT_APPLICABLE"` is false
+    // for it. Five students are under WHOLE_LODGE_MIN_GUESTS, so under that
+    // reading the school fell back to the head-count rule and drew as an
+    // ordinary row where the same booking drew as a blockout the day before
+    // the backfill. This is the case that fails when the `??` is dropped.
+    mockPrisma.booking.findMany.mockResolvedValue([
+      organisationBooking(
+        "b1",
+        "Harakeke College",
+        Array.from({ length: 5 }, (_, i) =>
+          guest(`Student${i}`, "Roll", "ADULT", { start: "2026-04-13", end: "2026-04-15" })
+        )
+      ),
+    ]);
+    const { buildDisplayState } = await import("@/lib/lodge-display-state");
+    const state = await buildDisplayState("lodge-a");
+    expect(state!.bookings).toHaveLength(1);
+    const row = state!.bookings[0];
+    expect(row.wholeLodge).toBe(true);
+    expect(row.label).toBe("Harakeke College");
+    expect(row.guests).toBeNull();
+    expect(JSON.stringify(state)).not.toContain("Student");
+  });
+
+  it("an organisation-OWNED booking sharing the lodge is labelled by its name and never named, but is not a blockout", async () => {
+    // The other half of the rule above: a group is a blockout only when it is
+    // alone on every night it holds. Sharing with Zoe, the school keeps its
+    // organisation label and withholds its students, and Zoe is still named.
+    mockPrisma.booking.findMany.mockResolvedValue([
+      organisationBooking(
+        "b1",
+        "Harakeke College",
+        Array.from({ length: 5 }, (_, i) =>
+          guest(`Student${i}`, "Roll", "ADULT", { start: "2026-04-13", end: "2026-04-15" })
+        )
+      ),
+      booking(
+        "b2",
+        { firstName: "Zoe", lastName: "Zed", ageTier: "ADULT" },
+        [guest("Zoe", "Zed", "ADULT", { start: "2026-04-13", end: "2026-04-15" })]
+      ),
+    ]);
+    const { buildDisplayState } = await import("@/lib/lodge-display-state");
+    const state = await buildDisplayState("lodge-a");
+    const orgRow = state!.bookings.find((row) => row.label === "Harakeke College")!;
+    expect(orgRow).toBeDefined();
+    expect(orgRow.wholeLodge).toBe(false);
+    expect(orgRow.guests).toBeNull();
+    expect(JSON.stringify(state)).not.toContain("Student");
+    const zoeRow = state!.bookings.find((row) => row.label !== "Harakeke College")!;
+    expect(zoeRow.wholeLodge).toBe(false);
+    expect(zoeRow.guests).not.toBeNull();
   });
 
   it("PRIVACY: a sparse stay's gap morning is NOT a night, so an unrelated sole-night blockout holds (#2735)", async () => {

@@ -8,10 +8,12 @@ import { buildPathWithSearch } from "@/lib/internal-return-path"
 import {
   ConnectionStatusPanel,
   ContactSyncPanel,
+  ErasedMemberContactsPanel,
   GoToXeroButton,
   HealthAndDiagnosticsPanels,
   InboundEventsPanel,
   MembershipSyncPanel,
+  MissingContactsPanel,
   OperationsPanel,
   SyncResultsPanel,
   UsagePanel,
@@ -154,6 +156,21 @@ export default function XeroPage() {
             onMessage={publishMessage}
             onRefreshOperations={refreshOperations}
             onRefreshDiagnostics={refreshDiagnostics}
+          />
+          <MissingContactsPanel
+            connected={connected}
+            open={sectionOpen.missingContacts}
+            onToggle={setSectionState}
+            currentXeroPath={currentXeroPath}
+            shortCode={orgShortCode}
+            onMessage={publishMessage}
+            onRefreshOperations={refreshOperations}
+          />
+          <ErasedMemberContactsPanel
+            open={sectionOpen.erasedMemberContacts}
+            onToggle={setSectionState}
+            currentXeroPath={currentXeroPath}
+            shortCode={orgShortCode}
           />
           <MembershipSyncPanel
             connected={connected}

@@ -753,7 +753,13 @@ describe("spec bucket integrity", () => {
       if (s.selfRelation) expect(s.bucket).toBe("move");
     }
   });
-  it("cascade specs are the auth-identity / token models only", () => {
+  it("cascade specs are the rows that are ABOUT the loser and cannot move", () => {
+    // The auth-identity and token models, plus — since #3369 — one row that is
+    // neither but belongs to the same class for the same reason: it is a fact
+    // about THIS member row, its primary key IS `memberId`, and it can no more
+    // be re-pointed at another person than a password-reset token can. The
+    // bucket's own definition is "never moved; `member.delete(loser)`
+    // cascade-drops it", and that is exactly what this is.
     const cascadeModels = MEMBER_MERGE_RELATION_SPECS.filter(
       (s) => s.bucket === "cascade",
     ).map((s) => s.model);
@@ -767,6 +773,7 @@ describe("spec bucket integrity", () => {
         "TwoFactorRecoveryCode",
         "TwoFactorSessionChallenge",
         "PartnerInviteToken",
+        "SchoolMemberClassification",
       ]),
     );
   });

@@ -351,3 +351,163 @@ describe("open DeletionRequest blocker (M2)", () => {
     expect(deletionRequest.count).toHaveBeenCalledTimes(2); // master AND loser
   });
 });
+
+/**
+ * A SCHOOL IS NOT A PERSON, AND A MERGE SAYS TWO ROWS ARE ONE PERSON (#3369).
+ *
+ * Stage 4 of programme #2912 moves every school's booking onto its own
+ * `Organisation` and leaves the old school-shaped member row behind, holding
+ * nothing but history. Folding one of those into a person — in either direction
+ * — would put a school's past under a person's name, which is the
+ * school-as-person model this whole programme exists to end.
+ *
+ * TWO TESTS, and the second is why this covers the CLASS rather than the
+ * population the cutover census reached. The first is the RECORDED
+ * classification, which lets the refusal say which decision it is acting on.
+ * The second is the SHAPE — school name, blank surname, `role: SCHOOL`, no
+ * login — for a row nobody has recorded a decision about, because the school
+ * approval's hold-recovery path still mints one of those AFTER the census has
+ * run, and a guard reading the table alone would wave it straight through.
+ */
+function schoolClassification(
+  ...rows: { memberId: string; classification: "ORGANISATION" | "PERSON" }[]
+) {
+  return {
+    ...defaultDelegate(),
+    findMany: vi.fn(
+      ({ where }: { where: { memberId: { in: string[] } } }) =>
+        Promise.resolve(
+          rows.filter((row) => where.memberId.in.includes(row.memberId)),
+        ),
+    ),
+  };
+}
+
+const asOrganisation = (...ids: string[]) =>
+  schoolClassification(
+    ...ids.map((memberId) => ({ memberId, classification: "ORGANISATION" as const })),
+  );
+
+/** The `member.findMany` the shape test issues: which ids look like a school. */
+function schoolShapedMembers(...memberIds: string[]) {
+  return {
+    ...defaultDelegate(),
+    // The `member` delegate is shared: the family-link depth walk queries it
+    // with a different shape entirely, so answer only the id-set question and
+    // hand everything else an empty list.
+    findMany: vi.fn(({ where }: { where?: { id?: { in?: string[] } } }) =>
+      Promise.resolve(
+        (where?.id?.in ?? [])
+          .filter((id) => memberIds.includes(id))
+          .map((id) => ({ id })),
+      ),
+    ),
+  };
+}
+
+describe("#3369: member merge refuses a school's record", () => {
+  it("blocks when the DUPLICATE is a school, and names which side", async () => {
+    const blockers = await runGuards({
+      schoolMemberClassification: asOrganisation(LOSER_ID),
+    });
+
+    const blocker = blockers.find((b) => b.code === "organisation_row");
+    expect(blocker).toBeDefined();
+    expect(blocker?.label).toContain("duplicate record is a school");
+    expect(blocker?.label).toContain("merge the organisations instead");
+    expect(blocker?.count).toBe(1);
+  });
+
+  it("blocks when the MASTER is a school", async () => {
+    const blockers = await runGuards({
+      schoolMemberClassification: asOrganisation(MASTER_ID),
+    });
+
+    const blocker = blockers.find((b) => b.code === "organisation_row");
+    expect(blocker?.label).toContain("master record is a school");
+  });
+
+  it("says so plainly when BOTH are schools", async () => {
+    const blockers = await runGuards({
+      schoolMemberClassification: asOrganisation(MASTER_ID, LOSER_ID),
+    });
+
+    const blocker = blockers.find((b) => b.code === "organisation_row");
+    expect(blocker?.label).toBe(
+      "Both records are schools, not people. Merge the two organisation records instead.",
+    );
+    expect(blocker?.count).toBe(2);
+  });
+
+  it("does NOT block an ordinary merge of two people", async () => {
+    // The common case, and the one that must keep working: a real teacher
+    // recorded twice is a person recorded twice, and merges like anybody else.
+    const blockers = await runGuards();
+    expect(blockers.map((b) => b.code)).not.toContain("organisation_row");
+  });
+
+  it("lets a row an officer classified PERSON merge like anybody else", async () => {
+    // A real teacher, decided with evidence this guard cannot see. The recorded
+    // decision outranks the shape below — otherwise recording it would achieve
+    // nothing and the refusal would have no escape route at all.
+    const blockers = await runGuards({
+      schoolMemberClassification: schoolClassification({
+        memberId: LOSER_ID,
+        classification: "PERSON",
+      }),
+      member: schoolShapedMembers(LOSER_ID),
+    });
+    expect(blockers.map((b) => b.code)).not.toContain("organisation_row");
+  });
+
+  it("blocks an UNCLASSIFIED school-shaped row, which is the whole class", async () => {
+    // The gap the recorded-classification test alone left open. The cutover
+    // census only asks about members that OWN A BOOKING, and the school
+    // approval's hold-recovery path still mints a school-shaped contact AFTER
+    // the census has run — so a school minted last week carries no
+    // classification and would have merged into a person with no blocker.
+    const blockers = await runGuards({
+      member: schoolShapedMembers(LOSER_ID),
+    });
+
+    const blocker = blockers.find((b) => b.code === "organisation_row");
+    expect(blocker).toBeDefined();
+    expect(blocker?.label).toContain("duplicate record is a school");
+    // And it names the way out, because there is no classification to appeal to.
+    expect(blocker?.label).toContain("--as PERSON");
+  });
+
+  it("asks for the shape the invented school row actually has", async () => {
+    // Asserting the FILTER, not the result: a guard that queried every member
+    // and refused whatever came back would pass the test above while blocking
+    // ordinary merges. All three columns matter — a teacher who can sign in, or
+    // who has a surname, is a person by the census's own proof.
+    const findMany = vi.fn().mockResolvedValue([]);
+    await runGuards({ member: { ...defaultDelegate(), findMany } });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          role: "SCHOOL",
+          lastName: "",
+          canLogin: false,
+        }),
+      }),
+    );
+  });
+
+  it("reads both classifications rather than filtering to ORGANISATION", async () => {
+    // The query must return PERSON rows too: they are what lets a recorded
+    // decision outrank the shape. Filtering to ORGANISATION — which is what it
+    // used to do — would make every PERSON row look unclassified to the shape
+    // test and refuse the very merges the classification exists to allow.
+    const findMany = vi.fn().mockResolvedValue([]);
+    await runGuards({
+      schoolMemberClassification: { ...defaultDelegate(), findMany },
+    });
+
+    const where = findMany.mock.calls[0]?.[0]?.where as Record<string, unknown>;
+    expect(where).toHaveProperty("memberId");
+    expect(where).not.toHaveProperty("classification");
+  });
+});

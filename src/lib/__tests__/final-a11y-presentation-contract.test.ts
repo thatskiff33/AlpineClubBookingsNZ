@@ -71,7 +71,32 @@ describe("#1819 final accessibility presentation contract", () => {
     expect(review).toContain(
       'className="flex flex-col gap-3 sm:flex-row"',
     );
-    expect(review.match(/className="w-full sm:w-auto"/g)).toHaveLength(2);
+    /*
+      The stacked action group at the foot of the review step: Save as Draft,
+      plus the primary action. #2930 forked that primary into Join Waitlist and
+      Confirm Booking — mutually exclusive, only ever one of them rendered — so
+      the literal COUNT this assertion used to pin (2) went to 3 while the
+      behaviour it protects did not move at all. A count is the wrong shape of
+      claim here: it fails on a legitimate fork and passes a button added
+      WITHOUT the class as long as another loses it.
+
+      What has to hold is the property — every button in that group is full
+      width on a phone and auto width from `sm` up — so assert exactly that,
+      against however many buttons the group holds. The "Back" button sits
+      OUTSIDE the group, in the row above, and is deliberately not full width.
+    */
+    const actionGroupStart = review.indexOf(
+      'className="flex flex-col gap-3 sm:flex-row"',
+    );
+    // A -1 here would make `slice` return the file's last character, so every
+    // count below would read as "no buttons" rather than as "anchor not found".
+    expect(actionGroupStart).toBeGreaterThan(-1);
+    const actionGroup = review.slice(actionGroupStart);
+    const actionGroupButtons = actionGroup.match(/<Button/g) ?? [];
+    expect(actionGroupButtons.length).toBeGreaterThanOrEqual(2);
+    expect(actionGroup.match(/className="w-full sm:w-auto"/g) ?? []).toHaveLength(
+      actionGroupButtons.length,
+    );
     expect(family).not.toMatch(/className="grid grid-cols-2 gap-3"/);
     expect(family).not.toContain('className="flex gap-2"');
     expect(family).toContain("sm:grid-cols-2");

@@ -26,7 +26,7 @@ import {
 } from "@/lib/admin-family-group-ui-helpers";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatPayloadInstantDate } from "../_lib/payload-instant";
-import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useRevealAttention } from "@/hooks/use-scroll-to-feedback";
 
 type PartnerInvite = {
   id: string;
@@ -84,7 +84,6 @@ export default function FamilyGroupsPage() {
   // the create form) changes no state the effect depends on, so an admin who
   // scrolled back down to the table and clicked Edit again got nothing.
   const [formOpenNonce, setFormOpenNonce] = useState(0);
-  const { scrollToError } = useScrollToFeedback();
 
   // P3.1: Search and filter state
   const [filterQuery, setFilterQuery] = useState("");
@@ -269,11 +268,9 @@ export default function FamilyGroupsPage() {
   // edit, since both triggers can be screens away from where the form renders.
   // Keyed on the open nonce rather than on `showForm`/the group id, so
   // re-opening the same group, or the create form, re-anchors the viewport
-  // instead of silently doing nothing.
-  useEffect(() => {
-    if (!showForm) return;
-    scrollToError(editorAnchorRef);
-  }, [showForm, formOpenNonce, scrollToError]);
+  // instead of silently doing nothing. The nonce is the shared reveal
+  // primitive's explicit-action key (#2934).
+  useRevealAttention(editorAnchorRef, showForm ? formOpenNonce : null);
 
   function addMember(member: MemberIdentityOption) {
     if (!canEditMembership) return;

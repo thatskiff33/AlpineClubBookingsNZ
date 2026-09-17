@@ -4,6 +4,7 @@ import {
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog, logAudit } from "@/lib/audit";
 import { deleteDraftBookingDependents } from "@/lib/draft-booking-cleanup";
 import logger from "@/lib/logger";
@@ -66,7 +67,7 @@ export async function deleteBooking(input: {
 
   if (booking.status === BookingStatus.DRAFT) {
     if (
-      booking.memberId !== input.actor.memberId &&
+      bookingOwner(booking).memberId !== input.actor.memberId &&
       input.actor.role !== "ADMIN"
     ) {
       return { status: 403, error: "Forbidden" };
@@ -117,7 +118,7 @@ async function hardDeleteDraftBooking(
         error: "Only draft bookings can be hard-deleted",
       };
     }
-    if (booking.memberId !== actor.memberId && actor.role !== "ADMIN") {
+    if (bookingOwner(booking).memberId !== actor.memberId && actor.role !== "ADMIN") {
       return { status: 403, error: "Forbidden" };
     }
 
@@ -126,7 +127,7 @@ async function hardDeleteDraftBooking(
         action: "booking.delete.draft",
         memberId: actor.memberId,
         targetId: booking.id,
-        subjectMemberId: booking.memberId,
+        subjectMemberId: bookingOwner(booking).memberId,
         entityType: "Booking",
         entityId: booking.id,
         category: "booking",
@@ -366,7 +367,7 @@ async function softDeleteCancelledBookingInTransaction(
         action: "booking.delete.cancelled.soft",
         memberId: actor.memberId,
         targetId: booking.id,
-        subjectMemberId: booking.memberId,
+        subjectMemberId: bookingOwner(booking).memberId,
         entityType: "Booking",
         entityId: booking.id,
         category: "booking",
@@ -696,7 +697,7 @@ function hasXeroPaymentReference(payment: BookingForDelete["payment"]): boolean 
 function buildBookingSnapshot(booking: BookingForDelete) {
   return {
     id: booking.id,
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
     status: booking.status,
     checkIn: booking.checkIn.toISOString(),
     checkOut: booking.checkOut.toISOString(),

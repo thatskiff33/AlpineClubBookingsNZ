@@ -1,4 +1,8 @@
 import { prisma } from "@/lib/prisma";
+import {
+  loadBookerDependants,
+  type BookerDependant,
+} from "@/lib/booking-dependant-identity";
 
 type ResolvedFamilyRelationship = "self" | "partner" | "dependent";
 
@@ -15,6 +19,29 @@ export type ResolvedMemberFamily = {
   familyGroupName: string | null;
   familyGroupIds: string[];
   familyMembers: ResolvedFamilyMember[];
+  /**
+   * THIS MEMBER'S OWN RECORDED DEPENDANTS (#2721, `INV-GUEST-019`) — their
+   * parent links, which is a different column from family-group membership and
+   * routinely a different set of people.
+   *
+   * Here because an officer booking on this member's behalf is asked the same
+   * own-dependant question the member is (owner decision on #2721, 15 Sep 2026),
+   * and a question the screen cannot draw is a refusal with no way through. The
+   * candidate set is THIS member's, never the officer's: getting that backwards
+   * would both miss every real collision and show an officer another family's
+   * names.
+   *
+   * Served by the same `loadBookerDependants` the create route re-runs, so the
+   * question the screen asks and the question the server answers cannot drift.
+   * It is not identity proof and nothing server-side trusts it.
+   *
+   * DISCLOSURE, STATED: every route below already returns one named member's
+   * family for an actor who has selected that member, and this adds the
+   * dependants of that same one member to that same payload. It is not a
+   * directory, it is not widened by one clause, and `loadBookerDependants` is
+   * the only query that may answer it.
+   */
+  ownDependants: BookerDependant[];
 };
 
 /**
@@ -117,5 +144,6 @@ export async function resolveMemberFamily(
     familyGroupName: firstGroup?.name ?? null,
     familyGroupIds: groupIds,
     familyMembers,
+    ownDependants: await loadBookerDependants(prisma, member.id),
   };
 }

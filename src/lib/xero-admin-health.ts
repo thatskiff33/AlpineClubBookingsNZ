@@ -1,4 +1,5 @@
 import type { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 import { prisma } from "@/lib/prisma";
 import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
@@ -18,7 +19,8 @@ const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 interface MissingXeroInvoiceBooking {
   bookingId: string;
   paymentId: string;
-  memberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   memberName: string;
   memberEmail: string;
   status: "PAID";
@@ -122,7 +124,9 @@ function formatBookingSnapshot(input: {
     firstName: string;
     lastName: string;
     email: string;
-  };
+  } | null;
+  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+  organisation: { name: string; email: string | null } | null;
   payment: {
     id: string;
     xeroInvoiceId: string | null;
@@ -131,9 +135,9 @@ function formatBookingSnapshot(input: {
   return {
     bookingId: input.id,
     paymentId: input.payment.id,
-    memberId: input.member.id,
-    memberName: `${input.member.firstName} ${input.member.lastName}`,
-    memberEmail: input.member.email,
+    memberId: bookingOwner(input).member.id ?? null,
+    memberName: `${bookingOwner(input).member.firstName} ${bookingOwner(input).member.lastName}`,
+    memberEmail: bookingOwner(input).member.email,
     status: input.status as "PAID",
     checkIn: input.checkIn.toISOString(),
     checkOut: input.checkOut.toISOString(),
@@ -170,6 +174,8 @@ export async function getMissingXeroInvoiceBookings(options?: {
           email: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: {
         select: {
           id: true,
@@ -188,6 +194,28 @@ export async function getMissingXeroInvoiceBookings(options?: {
     return { count: 0, bookings: [] };
   }
 
+  /*
+    #3001 — WHY THIS KEEPS THE PAYMENT JOIN, AND WHY IT IS NOT THE BOOKING
+    PAGE'S RULE.
+
+    `booking-invoice-sync-status.ts` finds ONE booking's invoice operation by the
+    booking's own correlation key, and deliberately not through the payment: a
+    booking whose payment row does not exist yet would match nothing and the page
+    would report all-clear over a failed invoice. That argument does not carry
+    here, and the two are not two homes for one rule — they answer different
+    questions:
+
+     - there, "what is the state of THIS booking's invoice-create operation?";
+     - here, "which PAID bookings have no invoice in the club's accounts?", asked
+       in bulk, of a candidate set that is already selected BY having a payment.
+       A booking with no payment row is not a candidate at all.
+
+    The operation TYPE is left unfiltered for the same reason. A succeeded
+    invoice UPDATE is genuine evidence that an invoice exists — it can only run
+    against one — and narrowing this to CREATE would list a booking whose create
+    failed after Xero accepted the invoice, which is precisely the booking an
+    officer must not be invited to mint a second invoice for.
+  */
   const succeededInvoiceOperations = await prisma.xeroSyncOperation.findMany({
     where: {
       entityType: "INVOICE",
@@ -272,6 +300,8 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
           member: {
             select: { firstName: true, lastName: true, email: true },
           },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
       },
     },
@@ -293,10 +323,13 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
     formatted.push({
       paymentId: payment.id,
       bookingId: payment.bookingId,
-      memberName: payment.booking?.member
-        ? `${payment.booking.member.firstName} ${payment.booking.member.lastName}`
+      memberName:
+        payment.booking && bookingOwner(payment.booking).member
+        ? `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`
         : "Unknown",
-      memberEmail: payment.booking?.member?.email ?? "",
+      memberEmail: payment.booking
+        ? (bookingOwner(payment.booking).member?.email ?? "")
+        : "",
       refundedAmountCents: payment.refundedAmountCents,
       cashRefundedCents: evidence.cashRefundCents,
       uncoveredCents: evidence.cashRefundCents - coveredCents,

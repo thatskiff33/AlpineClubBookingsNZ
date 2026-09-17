@@ -9,6 +9,8 @@ import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-eviden
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
+import { findActivePrimaryInvoiceLink } from "@/lib/xero-booking-invoice-evidence";
 import {
   buildXeroSupplementaryInvoiceKey,
   type XeroSupplementaryInvoiceAnchorModel,
@@ -50,6 +52,10 @@ import {
   voidXeroInvoiceForCancelledGroupSettlement,
 } from "@/lib/xero-group-settlement-invoices";
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
+import {
+  readXeroInvoiceEmailInstruction,
+  type XeroInvoiceEmailInstruction,
+} from "@/lib/xero-invoice-email-instruction";
 import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,
@@ -324,9 +330,99 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   };
 }
 
+/**
+ * The creation-time instruction a PREVIOUS enqueue of THIS SAME invoice
+ * recorded (#2929).
+ *
+ * ## The hole this closes
+ *
+ * The dedup above short-circuits only on a `PENDING` or `RUNNING` row, and the
+ * `existingLink` check above it only on an invoice that was actually raised. A
+ * booking whose invoice operation `FAILED` — or finished `PARTIAL` without
+ * raising one — therefore has neither, and any surface that re-drives it mints a
+ * FRESH operation: the admin "queue missing invoices" sweep, force-sync, and the
+ * repair pass's primary-invoice queue. Each of those passes `null`, because none
+ * of them has an officer in front of it to ask. Without this, the fresh row
+ * records nothing, the dispatcher reads nothing, and Xero emails the member the
+ * invoice the officer chose to withhold — from a re-drive nobody watched. That
+ * is the same failure as the lost caller flag, arriving by a different door.
+ *
+ * ## Why inheriting is the right answer and not a widening
+ *
+ * The correlation key IS the invoice: `booking:<id>:invoice:v1`, one per
+ * booking, and only ever one PRIMARY invoice behind it. So a later operation
+ * under that key is not a new decision — it is the same invoice creation being
+ * attempted again. The instruction belongs to the invoice, not to the row that
+ * happened to carry it first, and re-minting a row must not forget it. This is
+ * exactly the "persist across retry/replay" the issue asks for; a re-mint is a
+ * replay that happens to need a new row.
+ *
+ * ## Why it cannot pick up a stranger's withhold
+ *
+ * Only the on-behalf booking create ever writes a non-null value, and it writes
+ * one only where it enqueues: the Internet Banking create, and the zero-dollar
+ * confirmed create. The card path enqueues no booking invoice at all, so it
+ * leaves no row to inherit from; and `switch-to-internet-banking`, the one route
+ * that could later raise a first invoice for a booking that had none, admits
+ * only a `PAYMENT_PENDING` booking, which a zero-dollar create never leaves
+ * behind (it is `CONFIRMED`). Rows written before #2929 are null and are skipped
+ * by the `not: null` filter, so an older null can never mask a newer choice.
+ *
+ * Returns `null` when no previous operation expressed a choice, which is every
+ * booking this feature never touched.
+ */
+async function inheritedBookingInvoiceEmailInstruction(params: {
+  correlationKey: string;
+  paymentId: string;
+}): Promise<XeroInvoiceEmailInstruction | null> {
+  const previous = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey: params.correlationKey,
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: params.paymentId,
+      invoiceEmailDelivery: { not: null },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { invoiceEmailDelivery: true },
+  });
+  // Through the reader, never the raw column: an unrecognised stored value must
+  // parse to "no instruction" rather than be copied forward as one.
+  return readXeroInvoiceEmailInstruction(previous?.invoiceEmailDelivery);
+}
+
 export async function enqueueXeroBookingInvoiceOperation(
   bookingId: string,
-  options?: { createdByMemberId?: string }
+  options: {
+    createdByMemberId?: string;
+    /**
+     * The creation-time Xero-invoice-email delivery instruction (#2929).
+     *
+     * REQUIRED, and nullable rather than optional, so that a new booking-invoice
+     * enqueuer is a COMPILE ERROR until its author says which it is. This
+     * repository's rule is that a required argument beats a lint rule
+     * (`INV-SSOT`), and the module next door already settled the identical
+     * question the same way: every send carries a required, typed context.
+     * Optional here, the next enqueuer added would omit the field, compile,
+     * and email the member the officer chose not to email. (No ordinal here on
+     * purpose: the live population is counted and enumerated in ONE place, the
+     * `xero-operation-outbox` census that names every null-passing caller, so a
+     * second count cannot drift out of step with it.)
+     *
+     * `null` means "this caller has no creation-time choice to express" — which
+     * is every enqueuer but the on-behalf booking create. It is not the same as
+     * `SEND`: see {@link inheritedBookingInvoiceEmailInstruction}, which lets a
+     * null-passing RE-MINT of the same invoice keep the instruction the original
+     * enqueue recorded.
+     *
+     * It is recorded on the operation row rather than carried in the call
+     * because the invoice is raised by a worker later, and possibly by an
+     * operator retry later still.
+     */
+    invoiceEmailDelivery: XeroInvoiceEmailInstruction | null;
+  }
 ) {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -397,16 +493,12 @@ export async function enqueueXeroBookingInvoiceOperation(
     };
   }
 
-  const existingLink = await prisma.xeroObjectLink.findFirst({
-    where: {
-      localModel: "Payment",
-      localId: booking.payment.id,
-      xeroObjectType: "INVOICE",
-      role: "PRIMARY_INVOICE",
-      active: true,
-    },
-    select: { id: true },
-  });
+  // #3001: the SAME predicate the booking page's warning asks, from its one
+  // home. Both are asking "does an invoice for this booking already exist in
+  // Xero?" — here to refuse a second mint, there to refuse to tell an officer
+  // that no invoice exists. Two spellings of one question is how those two
+  // answers drift apart.
+  const existingLink = await findActivePrimaryInvoiceLink(booking.payment.id);
 
   if (existingLink) {
     return {
@@ -415,12 +507,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     };
   }
 
-  const correlationKey = buildXeroIdempotencyKey(
-    "booking",
-    bookingId,
-    "invoice",
-    "v1"
-  );
+  const correlationKey = buildXeroBookingInvoiceCorrelationKey(bookingId);
 
   const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
     where: {
@@ -459,6 +546,12 @@ export async function enqueueXeroBookingInvoiceOperation(
       queueType: XERO_OUTBOX_BOOKING_INVOICE_TYPE,
       bookingId,
     },
+    invoiceEmailDelivery:
+      options.invoiceEmailDelivery ??
+      (await inheritedBookingInvoiceEmailInstruction({
+        correlationKey,
+        paymentId: booking.payment.id,
+      })),
     createdByMemberId: options?.createdByMemberId ?? null,
   });
 

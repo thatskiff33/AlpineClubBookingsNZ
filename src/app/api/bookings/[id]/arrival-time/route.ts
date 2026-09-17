@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -136,7 +137,7 @@ export async function PUT(
   // Issue #1313 (option A2): owner, Full Admin, or Booking Officer
   // (bookings:edit) may set/clear the expected arrival time on any booking.
   if (
-    booking.memberId !== session.user.id &&
+    bookingOwner(booking).memberId !== session.user.id &&
     !hasAdminAccess(session.user) &&
     !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
   ) {
@@ -233,7 +234,7 @@ export async function PUT(
     action: "booking.expected_arrival_time.set",
     memberId: session.user.id,
     targetId: id,
-    subjectMemberId: booking.memberId,
+    subjectMemberId: bookingOwner(booking).memberId,
     entityType: "Booking",
     entityId: id,
     category: "booking",
@@ -244,7 +245,7 @@ export async function PUT(
       bookingId: id,
       previousExpectedArrivalTime: previous,
       newExpectedArrivalTime: updated.expectedArrivalTime,
-      onBehalf: booking.memberId !== session.user.id,
+      onBehalf: bookingOwner(booking).memberId !== session.user.id,
     },
     ipAddress: getClientIp(req),
   });
@@ -294,7 +295,7 @@ export async function DELETE(
   // Issue #1313 (option A2): owner, Full Admin, or Booking Officer
   // (bookings:edit) may set/clear the expected arrival time on any booking.
   if (
-    booking.memberId !== session.user.id &&
+    bookingOwner(booking).memberId !== session.user.id &&
     !hasAdminAccess(session.user) &&
     !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
   ) {
@@ -352,7 +353,7 @@ export async function DELETE(
     action: "booking.expected_arrival_time.cleared",
     memberId: session.user.id,
     targetId: id,
-    subjectMemberId: booking.memberId,
+    subjectMemberId: bookingOwner(booking).memberId,
     entityType: "Booking",
     entityId: id,
     category: "booking",
@@ -363,7 +364,7 @@ export async function DELETE(
       bookingId: id,
       previousExpectedArrivalTime: previous,
       newExpectedArrivalTime: null,
-      onBehalf: booking.memberId !== session.user.id,
+      onBehalf: bookingOwner(booking).memberId !== session.user.id,
     },
     ipAddress: getClientIp(req),
   });

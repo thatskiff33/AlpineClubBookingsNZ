@@ -1,5 +1,6 @@
 import type { FeatureFlags } from "@/config/schema";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
+import { bookingOwner } from "@/lib/booking-owner";
 import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-coverage-incidents";
 import { formatDateOnly } from "@/lib/date-only";
 import { addCalendarDays } from "@/lib/club-time";
@@ -614,6 +615,8 @@ const WAITLIST_OFFER_BOOKING_SELECT = {
   // offer is still live, which the expiry decides.
   noEmails: true,
   member: { select: { email: true } },
+  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+  organisation: { select: { name: true, email: true } },
 } as const;
 
 async function addWaitlistItems(
@@ -1052,6 +1055,8 @@ export async function getStuckStateDashboard(input?: {
               checkIn: true,
               checkOut: true,
               member: { select: { firstName: true, lastName: true } },
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
               lodge: { select: { name: true } },
             },
           },
@@ -1080,7 +1085,7 @@ export async function getStuckStateDashboard(input?: {
         )
       : [];
     const ownerName =
-      `${incident.booking.member.firstName} ${incident.booking.member.lastName}`.trim();
+      `${bookingOwner(incident.booking).member.firstName} ${bookingOwner(incident.booking).member.lastName}`.trim();
     return {
       id: incident.id,
       title: `${formatBookingReference(incident.booking.id)} - ${ownerName}`,

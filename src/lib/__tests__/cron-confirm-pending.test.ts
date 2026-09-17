@@ -877,7 +877,10 @@ describe("Cron: Confirm Pending Bookings", () => {
         metadata: { bookingId: "child_1", memberId: "member_child_1" },
       })
     );
-    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("child_1");
+    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("child_1", {
+      // #2929: the cron has no creation-time email choice to express.
+      invoiceEmailDelivery: null,
+    });
     // #1967 FIX-6: the auto-charge claim revokes any outstanding /pay link
     // inside the claim transaction, so a link minted while no card was on
     // file can never race the saved-card charge into a double payment.
@@ -1380,7 +1383,9 @@ describe("Cron: Confirm Pending Bookings", () => {
     const result = await confirmPendingBookings();
 
     expect(result.confirmedBookingIds).toEqual(["b1"]);
-    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("b1");
+    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("b1", {
+      invoiceEmailDelivery: null,
+    });
   });
 
   it("does not revert or alert when local persistence fails after Stripe already succeeded", async () => {

@@ -11,6 +11,7 @@ import {
   formatConsentWeekdayDate,
 } from "@/lib/member-guest-consent-card";
 import type { BookingDetailRecord } from "../_lib/load-booking-detail";
+import { bookingOwner } from "@/lib/booking-owner";
 import type { BoundClubTime } from "@/lib/club-time";
 import type { BookingDetailConsent } from "../_lib/booking-detail-consent";
 
@@ -48,8 +49,8 @@ export function BookingConsentCards({
           <MemberGuestConsentCard
             bookingId={booking.id}
             guestId={consentCard.guestId}
-            bookerName={`${booking.member.firstName} ${booking.member.lastName}`.trim()}
-            bookerFirstName={booking.member.firstName}
+            bookerName={`${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim()}
+            bookerFirstName={bookingOwner(booking).member.firstName}
             lodgeName={consentLodgeName ?? ""}
             stayLabel={formatConsentStayLabel(booking.checkIn, booking.checkOut)}
             nightsLabel={formatConsentNightsLabel(viewerConsentNights)}
@@ -74,7 +75,7 @@ export function BookingConsentCards({
                 ? describeConsentDeclineRefusal({
                     blocker: consentCard.refusalBlocker,
                     voice: { kind: "TARGET" },
-                    bookerFirstName: booking.member.firstName,
+                    bookerFirstName: bookingOwner(booking).member.firstName,
                   })
                 : null
             }
@@ -92,7 +93,7 @@ export function BookingConsentCards({
               </Badge>
             </div>
             <CardTitle>
-              {`${booking.member.firstName} ${booking.member.lastName}`.trim()}{" "}
+              {`${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim()}{" "}
               added you to this booking
             </CardTitle>
           </CardHeader>
@@ -116,7 +117,7 @@ export function BookingConsentCards({
         <SelfRemoveFromBookingCard
           bookingId={booking.id}
           guestId={selfRemovalCard.guestId}
-          ownerFirstName={booking.member.firstName}
+          ownerFirstName={bookingOwner(booking).member.firstName}
           canSelfRemove={selfRemovalCard.canSelfRemove}
           blockedReason={selfRemovalCard.blockedReason}
         />

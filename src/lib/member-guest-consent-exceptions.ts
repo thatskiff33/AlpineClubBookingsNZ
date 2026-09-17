@@ -1,4 +1,5 @@
 import { BookingStatus, type Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
@@ -279,6 +280,8 @@ export async function listMemberGuestConsentExceptions(
           checkOut: true,
           lodge: { select: { name: true } },
           member: { select: { firstName: true, lastName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           guests: { select: { id: true } },
           // Only to tell a genuine settled-payment refusal from a row the
           // booking has moved past — see classifyLiveConsentExceptionReason.
@@ -316,7 +319,7 @@ export async function listMemberGuestConsentExceptions(
         checkIn: row.booking.checkIn,
         checkOut: row.booking.checkOut,
         bookerName:
-          `${row.booking.member.firstName} ${row.booking.member.lastName}`.trim(),
+          `${bookingOwner(row.booking).member.firstName} ${bookingOwner(row.booking).member.lastName}`.trim(),
         guestFirstName: row.firstName,
         guestLastName: row.lastName,
         status,

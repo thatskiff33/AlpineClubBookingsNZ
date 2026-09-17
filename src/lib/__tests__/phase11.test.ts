@@ -137,6 +137,9 @@ describe("GET /api/admin/xero/account-mappings", () => {
     expect(data.stripeFees).toEqual({ code: "490", itemCode: null });
     expect(data.subscriptionIncome).toEqual({ code: "205", itemCode: null });
     expect(data.membershipCancellationCredit).toEqual({ code: "206", itemCode: "CANCEL-CREDIT" });
+    // #2717: a key with no row at all comes back with a null code, which is
+    // what the setup screen asks isCodeExplicitlyConfigured about.
+    expect(data.goodwillWriteOffs).toEqual({ code: null, itemCode: null });
   });
 
   it("returns null for keys not in DB", async () => {
@@ -147,6 +150,7 @@ describe("GET /api/admin/xero/account-mappings", () => {
     const data = await res.json();
     expect(data.hutFeesIncome).toEqual({ code: "201", itemCode: null });
     expect(data.hutFeeRefunds).toEqual({ code: null, itemCode: null });
+    expect(data.goodwillWriteOffs).toEqual({ code: null, itemCode: null });
     expect(data.stripeBankAccount).toEqual({ code: null, itemCode: null });
     expect(data.stripeFees).toEqual({ code: null, itemCode: null });
     expect(data.subscriptionIncome).toEqual({ code: null, itemCode: null });
@@ -213,6 +217,71 @@ describe("PUT /api/admin/xero/account-mappings", () => {
         update: { code: null },
       })
     );
+  });
+
+  it("accepts the goodwillWriteOffs mapping (#2717)", async () => {
+    const req = makePutRequest({ goodwillWriteOffs: { code: "404" } });
+    const res = await putMappings(req);
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: "goodwillWriteOffs" },
+        update: { code: "404" },
+      })
+    );
+  });
+
+  it("refuses a BLANK code rather than storing one (#2717)", async () => {
+    // Stored blank, a code read as an explicit choice: the key's fallback
+    // disengaged and an empty accountCode went to Xero, which rejects it, so
+    // the outbox retried for ever. Clearing a mapping is null, not "".
+    const res = await putMappings(makePutRequest({ goodwillWriteOffs: { code: "" } }));
+    expect(res.status).toBe(400);
+    expect(mockPrisma.xeroAccountMapping.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a whitespace-only code the same way (#2717)", async () => {
+    const res = await putMappings(makePutRequest({ hutFeeRefunds: { code: "   " } }));
+    expect(res.status).toBe(400);
+    expect(mockPrisma.xeroAccountMapping.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses an ACCOUNT code on an item-only key (#2717)", async () => {
+    // hutFeeItem selects a Xero Item; a code stored here is never read, so
+    // accepting the write would report success for an edit that does nothing.
+    const res = await putMappings(makePutRequest({ hutFeeItem: { code: "200" } }));
+    expect(res.status).toBe(400);
+    expect(mockPrisma.xeroAccountMapping.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses an ITEM code on a key that does not carry one (#2717)", async () => {
+    // The goodwill key is the case that forced this: while its account code is
+    // unset the resolver returns the fallback's resolution WHOLE, so an item
+    // code set here is silently discarded.
+    const res = await putMappings(
+      makePutRequest({ goodwillWriteOffs: { itemCode: "REFUND-ITEM" } }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockPrisma.xeroAccountMapping.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still accepts an item code on a key that DOES carry one", async () => {
+    const res = await putMappings(
+      makePutRequest({ membershipCancellationCredit: { itemCode: "CANCEL-CREDIT" } }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { key: "membershipCancellationCredit" } }),
+    );
+  });
+
+  it("still accepts clearing either column with null", async () => {
+    // Clearing is null, and it must stay possible for every key — including the
+    // columns the refusals above cover, whose rows may already hold a value.
+    const res = await putMappings(
+      makePutRequest({ goodwillWriteOffs: { code: null, itemCode: null } }),
+    );
+    expect(res.status).toBe(200);
   });
 
   it("ignores unknown keys (they fail Zod schema)", async () => {

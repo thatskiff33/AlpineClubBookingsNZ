@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   txXeroOperationUpdateMany: vi.fn(),
   txExecuteRaw: vi.fn(),
   txQueryRaw: vi.fn(),
+  organisationFindFirst: vi.fn(),
   transaction: vi.fn(),
   getContacts: vi.fn(),
   createContacts: vi.fn(),
@@ -51,6 +52,11 @@ vi.mock("@/lib/prisma", () => ({
     member: {
       findUnique: mocks.memberFindUnique,
     },
+    // #3367 (INV-INT-018): phase 2 refuses to link a contact an ORGANISATION
+    // already holds — the two-homes rule. A missing delegate here is an
+    // undefined-property throw before the boundary this suite is about; `null`
+    // is the ordinary answer, which is "no organisation holds it".
+    organisation: { findFirst: mocks.organisationFindFirst },
     $transaction: mocks.transaction,
     // #3034/#3036: the funnel asks which installation this is before it does
     // anything. A MISSING delegate is an UNREADABLE override, which resolves
@@ -98,7 +104,10 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { findOrCreateXeroContact } from "@/lib/xero-contacts";
+import {
+  findOrCreateXeroContact,
+  XeroContactProviderAnswerUnavailableError,
+} from "@/lib/xero-contacts";
 import {
   declareEnvironmentRole,
   expectEnvironmentRolePremise,
@@ -115,9 +124,17 @@ const MEMBER = {
   xeroContactId: null,
 };
 
-describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+/**
+ * Every double this file's funnel calls need, in ONE place.
+ *
+ * It was a `beforeEach` body until #2939 added a second `describe` here. A
+ * sibling block does not inherit another's hook, so the setup has to be a
+ * function both call — otherwise the second block runs against whatever state
+ * the first block's last test happened to leave behind, which is a suite that
+ * passes or fails on test ORDER.
+ */
+function setUpFunnelDoubles(): void {
+  vi.clearAllMocks();
     // The club's LIVE site, where #3036's containment is a no-op — so this
     // suite still measures exactly the transaction boundary it always did.
     declareEnvironmentRole("production");
@@ -172,9 +189,16 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
             findMany: mocks.txXeroOperationFindMany,
             updateMany: mocks.txXeroOperationUpdateMany,
           },
+          // #3367 (INV-INT-018): phase 2 refuses a contact an ORGANISATION
+          // already holds, so the tx double needs the delegate or it throws
+          // before the boundary this suite is about.
+          organisation: { findFirst: mocks.organisationFindFirst },
         })
     );
-  });
+}
+
+describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
+  beforeEach(setUpFunnelDoubles);
 
   it("commits the reservation before create and keeps the provider outside both short transactions", async () => {
     await expectEnvironmentRolePremise("PRODUCTION");
@@ -264,6 +288,10 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
             findMany: mocks.txXeroOperationFindMany,
             updateMany: mocks.txXeroOperationUpdateMany,
           },
+          // #3367 (INV-INT-018): phase 2 refuses a contact an ORGANISATION
+          // already holds, so the tx double needs the delegate or it throws
+          // before the boundary this suite is about.
+          organisation: { findFirst: mocks.organisationFindFirst },
         }),
       )
       .mockRejectedValueOnce(new Error("transaction aborted"));
@@ -326,6 +354,10 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
             findMany: mocks.txXeroOperationFindMany,
             updateMany: mocks.txXeroOperationUpdateMany,
           },
+          // #3367 (INV-INT-018): phase 2 refuses a contact an ORGANISATION
+          // already holds, so the tx double needs the delegate or it throws
+          // before the boundary this suite is about.
+          organisation: { findFirst: mocks.organisationFindFirst },
         }),
       )
       .mockRejectedValueOnce(new Error("transaction aborted"));
@@ -388,5 +420,145 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
       expect.objectContaining({ xeroObjectId: "contact-existing" }),
       expect.objectContaining({ store: expect.anything() }),
     );
+  });
+});
+
+
+/**
+ * #2939 — `requireAuthoritativeMatch`, the option a BULK caller passes.
+ *
+ * The funnel's defaults are tuned for a document writer, where the expensive
+ * outcome is a blocked invoice: a failed search falls through to a create, and
+ * a create Xero refuses on its contact-name uniqueness rule is recovered by
+ * adopting the existing same-named contact — on the normalised NAME ALONE,
+ * with no email comparison. Both trades invert for a bulk seeding run: nothing
+ * is blocked, and a wrong contact is permanent in a ledger with no merge API.
+ *
+ * These pin both directions, because the default behaviour is load-bearing for
+ * every other caller and the option must change nothing for them.
+ */
+describe("requireAuthoritativeMatch (#2939)", () => {
+  const NAME_TAKEN = {
+    response: {
+      body: {
+        Elements: [
+          {
+            ValidationErrors: [
+              { Message: "The contact name Alice Example is already assigned to another contact" },
+            ],
+          },
+        ],
+      },
+    },
+  };
+
+  beforeEach(() => {
+    setUpFunnelDoubles();
+    /*
+      `vi.clearAllMocks()` clears CALLS, not queued `…Once` implementations, so
+      a rejection queued by one of these tests would otherwise be consumed by
+      the next. Reset the two provider doubles this block queues on, then let
+      the shared setup's defaults stand again.
+    */
+    mocks.getContacts.mockReset();
+    mocks.createContacts.mockReset();
+    mocks.getContacts.mockResolvedValue({ body: { contacts: [] } });
+    mocks.createContacts.mockResolvedValue({
+      body: { contacts: [{ contactID: "contact-new", name: "Alice Example" }] },
+    });
+  });
+
+  it("still falls through to a create on a failed search WITHOUT the option", async () => {
+    mocks.getContacts.mockRejectedValueOnce(new Error("socket hang up"));
+
+    await expect(findOrCreateXeroContact("member-1")).resolves.toBe(
+      "contact-new",
+    );
+    expect(mocks.createContacts).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses instead of creating when the search fails and the option is set", async () => {
+    mocks.getContacts.mockRejectedValueOnce(new Error("socket hang up"));
+
+    await expect(
+      findOrCreateXeroContact("member-1", { requireAuthoritativeMatch: true }),
+    ).rejects.toBeInstanceOf(XeroContactProviderAnswerUnavailableError);
+    // The point of the refusal: nothing was minted, so the member is exactly
+    // where they were and the next run picks them up unchanged.
+    expect(mocks.createContacts).not.toHaveBeenCalled();
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("names the phase, so a caller can tell the two refusals apart", async () => {
+    mocks.getContacts.mockRejectedValueOnce(new Error("socket hang up"));
+
+    await expect(
+      findOrCreateXeroContact("member-1", { requireAuthoritativeMatch: true }),
+    ).rejects.toMatchObject({ phase: "EMAIL_SEARCH", memberId: "member-1" });
+  });
+
+  it("still adopts a same-named contact WITHOUT the option", async () => {
+    // The default recovery: Xero refuses the create, the funnel searches by
+    // exact name and links what it finds.
+    mocks.createContacts.mockRejectedValueOnce(NAME_TAKEN);
+    mocks.getContacts
+      .mockResolvedValueOnce({ body: { contacts: [] } })
+      .mockResolvedValueOnce({
+        body: { contacts: [{ contactID: "contact-old", name: "Alice Example" }] },
+      });
+
+    await expect(findOrCreateXeroContact("member-1")).resolves.toBe(
+      "contact-old",
+    );
+  });
+
+  it("refuses the name-only adoption when the option is set", async () => {
+    /*
+      THE SILENT WRONG LINK this option exists to prevent: a new member called
+      Alice Example and a fifteen-year-old "Alice Example" at another address.
+      The default adopts; a bulk caller must not, because nothing compares the
+      two addresses and every future invoice would land on the old account.
+    */
+    mocks.createContacts.mockRejectedValueOnce(NAME_TAKEN);
+    mocks.getContacts
+      .mockResolvedValueOnce({ body: { contacts: [] } })
+      .mockResolvedValueOnce({
+        body: { contacts: [{ contactID: "contact-old", name: "Alice Example" }] },
+      });
+
+    await expect(
+      findOrCreateXeroContact("member-1", { requireAuthoritativeMatch: true }),
+    ).rejects.toMatchObject({ phase: "DUPLICATE_NAME_RECOVERY" });
+    // The name search is never even made: there is nothing an answer could
+    // change, so the refusal costs one provider call less than the recovery.
+    expect(mocks.getContacts).toHaveBeenCalledTimes(1);
+    // And the reserved operation is closed as failed rather than left RUNNING.
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
+      "op-1",
+      expect.any(XeroContactProviderAnswerUnavailableError),
+      expect.objectContaining({
+        refusedRecovery: "name_match_requires_operator_decision",
+      }),
+    );
+  });
+
+  it("changes nothing on the ordinary path", async () => {
+    // The option only ever turns a fallback into a refusal, so it can create or
+    // link nothing the default would not.
+    await expect(
+      findOrCreateXeroContact("member-1", { requireAuthoritativeMatch: true }),
+    ).resolves.toBe("contact-new");
+    expect(mocks.createContacts).toHaveBeenCalledTimes(1);
+  });
+
+  it("adopts an EMAIL match exactly as before", async () => {
+    mocks.getContacts.mockResolvedValueOnce({
+      body: { contacts: [{ contactID: "contact-existing", name: "Alice Example" }] },
+    });
+
+    await expect(
+      findOrCreateXeroContact("member-1", { requireAuthoritativeMatch: true }),
+    ).resolves.toBe("contact-existing");
+    expect(mocks.createContacts).not.toHaveBeenCalled();
   });
 });

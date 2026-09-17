@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
@@ -76,6 +77,8 @@ type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
     guests: true;
     member: true;
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    organisation: { select: { name: true; email: true } };
   };
 }>;
 
@@ -197,7 +200,7 @@ async function alertRefundFailure({
   const errorMessage = error instanceof Error ? error.message : String(error);
 
   sendAdminPaymentFailureAlert({
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     amountCents,
@@ -402,7 +405,14 @@ async function prepareManualSettlement(
   // Third lock tier. Credit writers serialise on a per-member key, not lock(1),
   // so the switch-to-internet-banking precedent deliberately refuses to rely on
   // other writers holding lock(1); this path does the same.
-  await lockMemberCreditLedger(booking.memberId, tx);
+  const creditLedgerMemberId = bookingOwner(booking).memberId;
+  // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+  // booking has none, so there is no key to take. Passing a null key would
+  // either throw inside the helper or degenerate to a shared advisory key,
+  // which is an `INV-LOCK` hazard that shows up only under concurrency.
+  if (creditLedgerMemberId) {
+    await lockMemberCreditLedger(creditLedgerMemberId, tx);
+  }
 
   if (booking.status === BookingStatus.PAID) {
     // Refusal, never the duplicate-adjudication branch: no manual money fact
@@ -846,6 +856,8 @@ async function settleBookingPaymentInTransaction(
       include: {
         guests: { include: { nights: true } }, // per-night sets (issue #713)
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
 
@@ -1366,7 +1378,14 @@ async function settleBookingPaymentInTransaction(
         },
       });
 
-      await restoreCreditFromBooking(booking.memberId, booking.id, tx);
+      const restoreMemberId = bookingOwner(booking).memberId;
+      // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+      // booking has none, so there is no key to take. Passing a null key would
+      // either throw inside the helper or degenerate to a shared advisory key,
+      // which is an `INV-LOCK` hazard that shows up only under concurrency.
+      if (restoreMemberId) {
+        await restoreCreditFromBooking(restoreMemberId, booking.id, tx);
+      }
 
       // Durable refund debt, ATOMIC with the cancel claim (mirrors the #1349
       // enqueue-then-execute pattern in booking-cancel): freeze the refund
@@ -1608,7 +1627,7 @@ async function settleBookingPaymentInTransaction(
           action: MANUAL_MARK_PAID_AUDIT_ACTION,
           memberId: settlement.actingAdminMemberId,
           actorMemberId: settlement.actingAdminMemberId,
-          subjectMemberId: booking.memberId,
+          subjectMemberId: bookingOwner(booking).memberId,
           targetId: booking.id,
           entityType: "Payment",
           entityId: payment.id,
@@ -1689,7 +1708,7 @@ async function settleBookingPaymentInTransaction(
             action: MANUAL_MARK_PAID_ADDITIONAL_AUDIT_ACTION,
             memberId: settlement.actingAdminMemberId,
             actorMemberId: settlement.actingAdminMemberId,
-            subjectMemberId: booking.memberId,
+            subjectMemberId: bookingOwner(booking).memberId,
             targetId: booking.id,
             entityType: "Payment",
             entityId: payment.id,
@@ -1786,9 +1805,9 @@ export async function markBookingPaymentSucceeded({
     // whether to refund the difference. Their balance is untouched either way.
     await reportUnappliedCreditElection({
       bookingId,
-      memberId: reconciliation.booking.memberId,
-      memberFirstName: reconciliation.booking.member.firstName,
-      memberLastName: reconciliation.booking.member.lastName,
+      memberId: bookingOwner(reconciliation.booking).memberId,
+      memberFirstName: bookingOwner(reconciliation.booking).member.firstName,
+      memberLastName: bookingOwner(reconciliation.booking).member.lastName,
       checkIn: reconciliation.booking.checkIn,
       checkOut: reconciliation.booking.checkOut,
       electionCents: reconciliation.staleCreditElectionCents,
@@ -1809,7 +1828,7 @@ export async function markBookingPaymentSucceeded({
       type: reconciliation.booking.parentBookingId
         ? BookingEventType.NON_MEMBER_CONFIRMED
         : BookingEventType.MEMBER_PAID,
-      actorMemberId: reconciliation.booking.memberId,
+      actorMemberId: bookingOwner(reconciliation.booking).memberId,
       amountCents,
     });
   }
@@ -1895,7 +1914,7 @@ export async function markBookingPaymentSucceeded({
       // to check how the double capture happened. Dedicated template (#2007)
       // whose success variant states the duplicate was refunded in full.
       sendAdminDuplicateCaptureRefundAlert({
-        memberName: `${reconciliation.booking.member.firstName} ${reconciliation.booking.member.lastName}`,
+        memberName: `${bookingOwner(reconciliation.booking).member.firstName} ${bookingOwner(reconciliation.booking).member.lastName}`,
         checkIn: reconciliation.booking.checkIn,
         checkOut: reconciliation.booking.checkOut,
         amountCents: plannedRefundCents,
@@ -1941,7 +1960,7 @@ export async function markBookingPaymentSucceeded({
         )
       );
       sendAdminDuplicateCaptureRefundAlert({
-        memberName: `${reconciliation.booking.member.firstName} ${reconciliation.booking.member.lastName}`,
+        memberName: `${bookingOwner(reconciliation.booking).member.firstName} ${bookingOwner(reconciliation.booking).member.lastName}`,
         checkIn: reconciliation.booking.checkIn,
         checkOut: reconciliation.booking.checkOut,
         amountCents: plannedRefundCents,
@@ -1981,7 +2000,7 @@ export async function markBookingPaymentSucceeded({
     await recordBookingEvent({
       bookingId,
       type: BookingEventType.CANCELLED,
-      actorMemberId: reconciliation.booking.memberId,
+      actorMemberId: bookingOwner(reconciliation.booking).memberId,
       amountCents,
       reason:
         "These dates filled up before payment could be secured, so the booking was cancelled and refunded.",
@@ -2056,7 +2075,7 @@ export async function markBookingPaymentSucceeded({
       await recordBookingEvent({
         bookingId,
         type: BookingEventType.REFUNDED,
-        actorMemberId: reconciliation.booking.memberId,
+        actorMemberId: bookingOwner(reconciliation.booking).memberId,
         amountCents,
         reason: "Automatic refund after lodge capacity was no longer available.",
       });
@@ -2319,9 +2338,9 @@ export async function markBookingPaymentManuallySettled({
   if (reconciliation.staleCreditElectionCents != null) {
     await reportUnappliedCreditElection({
       bookingId,
-      memberId: reconciliation.booking.memberId,
-      memberFirstName: reconciliation.booking.member.firstName,
-      memberLastName: reconciliation.booking.member.lastName,
+      memberId: bookingOwner(reconciliation.booking).memberId,
+      memberFirstName: bookingOwner(reconciliation.booking).member.firstName,
+      memberLastName: bookingOwner(reconciliation.booking).member.lastName,
       checkIn: reconciliation.booking.checkIn,
       checkOut: reconciliation.booking.checkOut,
       electionCents: reconciliation.staleCreditElectionCents,
@@ -2382,8 +2401,8 @@ export async function markBookingPaymentManuallySettled({
     settledAt: reconciliation.settledAt,
     outstandingIntentIds: reconciliation.outstandingIntentIds,
     staleCreditElectionCents: reconciliation.staleCreditElectionCents,
-    memberFirstName: reconciliation.booking.member.firstName,
-    memberEmail: reconciliation.booking.member.email ?? null,
+    memberFirstName: bookingOwner(reconciliation.booking).member.firstName,
+    memberEmail: bookingOwner(reconciliation.booking).member.email ?? null,
     amountOwingCents: reconciliation.amountOwingCents,
     outstandingAdditionalCents: reconciliation.outstandingAdditionalCents,
     sparedAdditionalPaymentIntentId:
@@ -2800,7 +2819,7 @@ export async function reverseManualBookingPayment({
         action: "booking-payment.manual-payment.mark-unpaid",
         memberId: actingAdminMemberId,
         actorMemberId: actingAdminMemberId,
-        subjectMemberId: booking.memberId,
+        subjectMemberId: bookingOwner(booking).memberId,
         targetId: booking.id,
         entityType: "Payment",
         entityId: payment.id,

@@ -6,6 +6,7 @@ import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
 import { fetchJson, postJson } from "./api"
 import { SectionCard, type ToggleSection } from "./shared"
+import { xeroSectionId } from "./types"
 import type { MembershipSyncMode, SyncResult, XeroHealthSnapshot } from "./types"
 
 export function MembershipSyncPanel({
@@ -70,7 +71,7 @@ export function MembershipSyncPanel({
 
   return (
     <SectionCard
-      id="xero-section-membershipSync"
+      id={xeroSectionId("membershipSync")}
       title="Membership Status Refresh"
       description="Check Xero invoices for active members and refresh the current season membership state."
       open={open}
