@@ -3,7 +3,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
-import type { EditFinancialReviewOccurrence } from "@/lib/edit-financial-review-context";
+import type { ParkedEditWorkItems } from "@/lib/parked-edit-occurrence";
 import { raiseEditFinancialReviewTask } from "@/lib/edit-financial-review";
 import {
   editReviewSettlementPaymentId,
@@ -26,8 +26,11 @@ import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 /**
  * #3166: THE PARKED EDIT'S WHOLE RAISE, in one place, for all four doors.
  *
- * #3498 (D1): and it raises ONE task - a parked edit is one thing to price, so
- * the per-strand loop is gone and every strand is on the one occurrence.
+ * #3498 (D1, as amended by the owner on 17 September 2026): and it raises one
+ * task PER WORK ITEM the edit composed into - one for the whole edit while at
+ * most one strand's nights moved, one per recorded strand once two or more did.
+ * `parkedEditWorkItems` is where that count is decided and argued; this module
+ * does not re-decide it, it spends it.
  * Every parked path used to write this block out by hand: the same settlement
  * payment id, the same `memberIdByGuestId` map, the same loop with the same
  * constant arguments. Four copies of ONE fact — which captured payment a parked
@@ -49,14 +52,15 @@ import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
  * beats policed.
  *
  * Call it inside the caller's transaction, after the locks and after the
- * `BookingModification` row exists. It returns THE task id — one per parked edit
- * since #3498, whatever the party size.
+ * `BookingModification` row exists. It returns the raised task ids IN THE WORK
+ * ITEMS' OWN ORDER, so the first is the item leading the edit - the one carrying
+ * the money on every shape that has one.
  */
-export async function raiseParkedEditFinancialReviewTask({
+export async function raiseParkedEditFinancialReviewTasks({
   booking,
   guests,
   addedGuests,
-  occurrence,
+  occurrences,
   bookingModificationId,
   store,
 }: {
@@ -84,11 +88,11 @@ export async function raiseParkedEditFinancialReviewTask({
    */
   addedGuests: readonly { priceCents: number }[];
   /**
-   * THE parked edit's occurrence - ONE since #3498 (D1), where it was a list and
-   * the list WAS the fan-out. Singular rather than policed at length one, so the
-   * criterion is a property of the signature (`INV-SSOT`).
+   * THE parked edit's work items, as `parkedEditWorkItems` composed them. A
+   * non-empty tuple, so a parked edit that asks nobody for the money cannot be
+   * expressed here at all (`INV-SSOT`: unrepresentable beats policed).
    */
-  occurrence: EditFinancialReviewOccurrence;
+  occurrences: ParkedEditWorkItems;
   /**
    * Owner decision D-3032-1: THIS edit's own `BookingModification`, so the
    * credit or refund that eventually moves is keyed to the change that caused it
@@ -96,7 +100,7 @@ export async function raiseParkedEditFinancialReviewTask({
    */
   bookingModificationId: string | null;
   store: Prisma.TransactionClient;
-}): Promise<string> {
+}): Promise<readonly [string, ...string[]]> {
   const memberIdByGuestId = new Map(
     guests.map((guest) => [guest.id, guest.memberId ?? null]),
   );
@@ -118,19 +122,30 @@ export async function raiseParkedEditFinancialReviewTask({
             ? addedTotalCents
             : null,
         };
-  const raised = await raiseEditFinancialReviewTask({
-    occurrence,
-    // The LEAD strand's member - no browser sees it (the queue projection has no
-    // field for it), so this is the context's long-standing "whose money"
-    // pointer, now aimed at the strand the card is headed by.
-    guestMemberId: memberIdByGuestId.get(occurrence.bookingGuestId) ?? null,
-    bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
-    bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
-    bookingModificationId,
-    guestsAddedByEdit,
-    paymentId,
-    raisedAmountCents: null,
-    store,
-  });
-  return raised.taskId;
+  /*
+    SEQUENTIALLY, not in parallel. Each raise walks `findFreeOccurrenceSlot`
+    with indexed unique lookups on the caller's ONE interactive transaction,
+    and a Prisma transaction client is not safe to fan queries out across.
+    The realistic count is one, and two on the fan-out shape.
+  */
+  const taskIds: string[] = [];
+  for (const occurrence of occurrences) {
+    const raised = await raiseEditFinancialReviewTask({
+      occurrence,
+      // The LEAD strand's member - no browser sees it (the queue projection has
+      // no field for it), so this is the context's long-standing "whose money"
+      // pointer, aimed at the strand this item is headed by.
+      guestMemberId: memberIdByGuestId.get(occurrence.bookingGuestId) ?? null,
+      bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
+      bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
+      bookingModificationId,
+      guestsAddedByEdit,
+      paymentId,
+      raisedAmountCents: null,
+      store,
+    });
+    taskIds.push(raised.taskId);
+  }
+  // Non-empty because `occurrences` is, which the type above states.
+  return taskIds as unknown as readonly [string, ...string[]];
 }

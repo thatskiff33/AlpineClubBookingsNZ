@@ -108,13 +108,13 @@ import {
 } from "@/lib/member-guest-add-policy";
 import {
   isNonNegativeIntegerCents,
-  type EditFinancialReviewOccurrence,
   type FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
 import {
   preCheckInEditEvidence,
   preCheckInEditStrands,
 } from "@/lib/stored-sold-price-evidence";
+import type { ParkedEditWorkItems } from "@/lib/parked-edit-occurrence";
 import {
   classifyNightPriceToWrite,
   preservedNightPriceWrites,
@@ -1681,7 +1681,7 @@ export async function calculateModifiedPricing(
   // #3170: the parked twin. Set instead of `inProgressPlan` when this booking's
   // own history cannot price the edit; it carries the beds and no amount.
   let parkedPlan: ParkedEditStructuralPlan | null = null;
-  let parkedOccurrence: EditFinancialReviewOccurrence | null = null;
+  let parkedOccurrences: ParkedEditWorkItems | null = null;
   if (isInProgressEdit && editableFrom) {
     // #2756: the same mapping the QUOTE route already applies around its own call
     // to this planner (`modify-quote/route.ts`, "Unable to price the requested
@@ -1740,7 +1740,7 @@ export async function calculateModifiedPricing(
       // falls through to the same capacity block, the same admin override and
       // the same whole-lodge-hold refusal as a priced one, and the review exit
       // is taken immediately after it.
-      parkedOccurrence = planResult.occurrence;
+      parkedOccurrences = planResult.occurrences;
       parkedPlan = planResult.parkedPlan;
     } else {
       inProgressPlan = planResult.plan;
@@ -1845,7 +1845,7 @@ export async function calculateModifiedPricing(
   // single cent is computed. Everything below prices the edit, and this booking's
   // history cannot support a price — that is the whole finding.
   if (parkedPlan) {
-    if (parkedOccurrence === null) {
+    if (parkedOccurrences === null) {
       // #3498: the two are set in the same statement above from one planner
       // answer, so this cannot fire - but the parked exit is a money path and
       // "cannot fire" is worth one line that says so loudly rather than a park
@@ -1856,7 +1856,7 @@ export async function calculateModifiedPricing(
     }
     return {
       kind: "financial_review_required",
-      occurrence: parkedOccurrence,
+      occurrences: parkedOccurrences,
       parkedPlan,
       parkedGuestRows: parkedPriceBreakdown(parkedPlan),
       capacityOverridden,
@@ -1967,10 +1967,10 @@ export async function calculateModifiedPricing(
         removeGuestIds,
       }),
     });
-    if (evidence.occurrence !== null) {
+    if (evidence.occurrences !== null) {
       return {
         kind: "financial_review_required",
-        occurrence: evidence.occurrence,
+        occurrences: evidence.occurrences,
         // NULL, and that is the writer selector: this edit commits through the
         // ordinary branch of `applyGuestChanges`, which is the branch that
         // knows about member links, consent columns, other-club flags and

@@ -28,8 +28,9 @@ import type {
 } from "@/lib/edit-financial-review-context";
 import {
   counterpartStrandRecord,
-  parkedEditOccurrence,
+  parkedEditWorkItems,
   unpriceableStrandRecord,
+  type ParkedEditWorkItems,
 } from "@/lib/parked-edit-occurrence";
 import {
   classifyStoredSoldPriceEvidence,
@@ -1512,28 +1513,32 @@ export function buildInProgressGuestRangePlan(
    * So they hash to two keys and raise TWO tasks for one guest. The unpriceable
    * occurrence wins, because it is the one that says why no money moved.
    */
-  const parkedOccurrence = (
-    unpriceable: readonly EditFinancialReviewStrandRecord[]
-  ): EditFinancialReviewOccurrence => {
+  const parkedOccurrences = (
+    unpriceable: readonly [
+      EditFinancialReviewStrandRecord,
+      ...EditFinancialReviewStrandRecord[],
+    ]
+  ): ParkedEditWorkItems => {
     const alreadyNamed = new Set(
       unpriceable.map((strand) => strand.bookingGuestId)
     );
     /*
-      #3498: ONE occurrence for the whole parked edit, composed through the
-      shared `parkedEditOccurrence` so this planner and the pre-check-in twin
-      pick the same lead strand and the same order (`INV-SSOT`). Which strands
-      are recorded is exactly what it was; only the grain of what they are
-      recorded ON has moved.
+      #3498: the parked edit's work items, composed through the shared
+      `parkedEditWorkItems` so this planner and the pre-check-in twin pick the
+      same lead strand, the same order and the same GRAIN (`INV-SSOT`). Which
+      strands are recorded is exactly what it was; only what they are recorded
+      ON has moved.
 
-      Non-null by construction: every caller is inside a parked exit, so
-      `unpriceable` is non-empty - and the `??` is what makes that a compile-time
-      fact rather than a comment, because the composer's honest answer for an
-      empty list is null.
+      The non-empty parameter type is what makes "a parked exit always records
+      at least one strand" a compile-time fact rather than a runtime throw with
+      a message nobody should ever read.
     */
-    const composed = parkedEditOccurrence({
+    const [leadUnpriceable, ...restUnpriceable] = unpriceable;
+    return parkedEditWorkItems({
       bookingId: input.booking.id,
       strands: [
-        ...unpriceable,
+        leadUnpriceable,
+        ...restUnpriceable,
         // Only when the edit parks. An exact strand losing or gaining nights is
         // a record of destroyed evidence, never on its own a reason to withhold
         // money.
@@ -1542,12 +1547,6 @@ export function buildInProgressGuestRangePlan(
         ),
       ],
     });
-    if (composed === null) {
-      throw new Error(
-        "A parked edit reached the review exit with no recorded strands."
-      );
-    }
-    return composed;
   };
 
   /**
@@ -1703,10 +1702,14 @@ export function buildInProgressGuestRangePlan(
       };
   };
 
-  if (financialReviewStrands.length > 0) {
+  const [leadReviewStrand, ...restReviewStrands] = financialReviewStrands;
+  if (leadReviewStrand) {
     return {
       kind: "financial_review_required",
-      occurrence: parkedOccurrence(financialReviewStrands),
+      occurrences: parkedOccurrences([
+        leadReviewStrand,
+        ...restReviewStrands,
+      ]),
       parkedPlan: composeParkedPlan(),
     };
   }
@@ -1895,7 +1898,28 @@ export function buildInProgressGuestRangePlan(
   },
   );
 
-  if (unreconciledStrands.length > 0) {
+  /*
+    One unreconciled strand's record, named so the exit below can hand
+    `parkedOccurrences` a list it can PROVE is non-empty: `[first, ...rest]` maps
+    to an array, and the compile-time guarantee the composer is built on is the
+    tuple, not a length check nothing re-reads.
+  */
+  const unreconciledStrandRecord = (
+    entry: (typeof unreconciledStrands)[number]
+  ): EditFinancialReviewStrandRecord =>
+    unpriceableStrandRecord({
+      bookingGuestId: entry.guest.id,
+      evidence: unusableStoredSoldPriceEvidence(
+        "STORED_TOTAL_MISMATCH",
+        heldNightPrices(entry.heldNightKeys, entry.storedNightDetailsByKey)
+      ),
+      guestTotalCents: entry.guest.priceCents,
+      surrenderedNightDates: surrenderedNightDatesOf(entry),
+      addedNightDates: addedNightDatesOf(entry),
+    });
+
+  const [leadUnreconciled, ...restUnreconciled] = unreconciledStrands;
+  if (leadUnreconciled) {
     // #3170: this exit parks too. A strand whose composed rows do not add up is
     // unpriceable for the same reason as one the gate caught — the difference is
     // only WHEN it was discovered — so the structural change commits and the
@@ -1906,23 +1930,13 @@ export function buildInProgressGuestRangePlan(
     return {
       kind: "financial_review_required",
       parkedPlan: composeParkedPlan(),
-      // Through `parkedOccurrence`, so the exact strands this park destroys
+      // Through `parkedOccurrences`, so the exact strands this park destroys
       // the evidence of are recorded here exactly as they are at the gate
       // (#3166) — and a strand named in BOTH lists is recorded once.
-      occurrence: parkedOccurrence(
-        unreconciledStrands.map((entry) => {
-          return unpriceableStrandRecord({
-            bookingGuestId: entry.guest.id,
-            evidence: unusableStoredSoldPriceEvidence(
-              "STORED_TOTAL_MISMATCH",
-              heldNightPrices(entry.heldNightKeys, entry.storedNightDetailsByKey)
-            ),
-            guestTotalCents: entry.guest.priceCents,
-            surrenderedNightDates: surrenderedNightDatesOf(entry),
-            addedNightDates: addedNightDatesOf(entry),
-          });
-        })
-      ),
+      occurrences: parkedOccurrences([
+        unreconciledStrandRecord(leadUnreconciled),
+        ...restUnreconciled.map(unreconciledStrandRecord),
+      ]),
     };
   }
 

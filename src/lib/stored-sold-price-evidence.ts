@@ -15,8 +15,9 @@ import type { BookingGuestNightPriceSource } from "@prisma/client";
 import { storedNightPriceDetailsByKey } from "@/lib/stored-night-price-write";
 import {
   counterpartStrandRecord,
-  parkedEditOccurrence,
+  parkedEditWorkItems,
   unpriceableStrandRecord,
+  type ParkedEditWorkItems,
 } from "@/lib/parked-edit-occurrence";
 
 /**
@@ -342,9 +343,10 @@ export type PreCheckInEditStrand = {
  * number the system could have known. There is no amount anywhere in here.
  *
  * #3498: those records used to be returned as one occurrence EACH, which is what
- * made a seven-guest booking raise seven work items for one edit. They are
- * composed into one occurrence now, by `parkedEditOccurrence`, and nothing about
- * which strands are recorded changed with it.
+ * made a seven-guest booking raise seven work items for one edit. How many work
+ * items they compose into is `parkedEditWorkItems`' rule now - one for the whole
+ * edit, or one per strand where two or more strands' nights moved - and nothing
+ * about which strands are RECORDED changed with either.
  *
  * `storedNightPriceByGuestId` carries, per strand, the stored integer and source against each
  * night it holds — usable rows only, from either verdict, so a PARTIAL strand
@@ -358,11 +360,14 @@ export function preCheckInEditEvidence(args: {
   strands: readonly PreCheckInEditStrand[];
 }): {
   /**
-   * The ONE occurrence a parked edit raises, or null when the edit prices
-   * normally (#3498). It was a list until owner decision D1 moved the grain to
-   * the edit; every strand that list held is on this one occurrence.
+   * The work items a parked edit raises, or null when the edit prices normally.
+   *
+   * ONE of them on an edit that moved at most one strand's nights, and one per
+   * recorded strand once two or more moved - `parkedEditWorkItems` owns that
+   * rule and states why. Never an EMPTY list: an edit that recorded no strand
+   * did not park, and that is what `null` says.
    */
-  occurrence: EditFinancialReviewOccurrence | null;
+  occurrences: ParkedEditWorkItems | null;
   storedNightPriceByGuestId: Map<
     string,
     ReadonlyMap<
@@ -477,18 +482,27 @@ export function preCheckInEditEvidence(args: {
     }
   }
 
+  const [leadUnusable, ...restUnusable] = unusable;
   return {
     // Unchanged from before #3498 in the only respect that decides money: a
     // single unusable strand parks the whole edit, and nothing else does. What
-    // changed is that the recorded strands are composed into ONE occurrence
-    // instead of one each.
-    occurrence:
-      unusable.length > 0
-        ? parkedEditOccurrence({
-            bookingId: args.bookingId,
-            strands: [...unusable, ...destroyedButReadable],
-          })
-        : null,
+    // changed is the GRAIN the recorded strands are composed onto.
+    /*
+      The park/do-not-park branch, and the ONE place this module makes it. A
+      single unusable strand parks the whole edit; `destroyedButReadable` alone
+      never does, which is why the destructure is over `unusable` and the rest
+      rides along behind it.
+    */
+    occurrences: leadUnusable
+      ? parkedEditWorkItems({
+          bookingId: args.bookingId,
+          strands: [
+            leadUnusable,
+            ...restUnusable,
+            ...destroyedButReadable,
+          ],
+        })
+      : null,
     storedNightPriceByGuestId,
   };
 }

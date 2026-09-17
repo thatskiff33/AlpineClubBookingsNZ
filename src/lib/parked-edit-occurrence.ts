@@ -1,4 +1,5 @@
 import {
+  editFinancialReviewStrandMovesNights,
   isNonNegativeIntegerCents,
   type EditFinancialReviewCause,
   type EditFinancialReviewOccurrence,
@@ -22,7 +23,8 @@ import type { StoredSoldPriceEvidence } from "@/lib/stored-sold-price-evidence";
  * idea what an edit is.
  *
  * This module answers a different one: given those verdicts, what does the edit
- * RECORD, and which of the strands it records does the officer see first. It is
+ * RECORD, how many work items do those records compose into, and which strand
+ * does the officer see first. It is
  * about the shape of a work item rather than about the readability of a row, it
  * moved here when #3498 doubled its size, and the seam is the one that module's
  * own docblock already draws - "this module classifies; it does not key".
@@ -168,17 +170,116 @@ function composeStrandRecord(args: {
 }
 
 /**
- * THE ONE PARKED EDIT'S OCCURRENCE, from every strand it recorded (#3498, owner
- * decision D1).
+ * At least one recorded strand. A parked edit that recorded none did not park,
+ * and the composer below has no honest answer for an empty list - so it cannot
+ * be handed one (`INV-SSOT`: prefer unrepresentable over policed).
  *
- * ## What it decides, and what it deliberately does not
+ * It replaces a `| null` return that three callers policed three different
+ * ways - two threw, with different messages, and the guest-removal path
+ * SILENTLY SKIPPED THE RAISE, which is one branch away from a parked edit that
+ * asks nobody for the money. There is now one branch per caller, at that
+ * caller's own park/do-not-park decision, which is where it belongs.
+ */
+export type ParkedEditStrands = readonly [
+  EditFinancialReviewStrandRecord,
+  ...EditFinancialReviewStrandRecord[],
+];
+
+/** The work items one parked edit raises. Never empty - see below for how many. */
+export type ParkedEditWorkItems = readonly [
+  EditFinancialReviewOccurrence,
+  ...EditFinancialReviewOccurrence[],
+];
+
+/**
+ * THE PARKED EDIT'S WORK ITEMS - how many, and what each carries (#3498, owner
+ * decision D1 as amended by the owner on 17 September 2026).
  *
- * It decides which strand LEADS and in what order the rest are carried. It does
- * NOT decide which strands are recorded, and it does not decide whether the edit
- * parks at all - both of those are the caller's, unchanged: a single unreadable
- * strand still parks the whole edit, and every strand the current code records
- * is still recorded. Handed an empty list it answers `null`, which is the shape
- * of an edit that prices normally.
+ * ## The two grains, and the one question that picks between them
+ *
+ * **HOW MANY STRANDS' NIGHTS DID THIS EDIT ACTUALLY MOVE?**
+ * (`editFinancialReviewStrandMovesNights`, the one definition of that.)
+ *
+ *  - **at most one** - ONE item for the whole edit. The strand that moved leads
+ *    it and every other strand rides along as supporting detail. This is D1 as
+ *    first built, and it is the shape of every case that prompted the issue:
+ *    removing one guest from a seven-guest booking moves one strand's nights
+ *    and raised seven indistinguishable cards, six of them about guests nobody
+ *    touched;
+ *  - **two or more** - ONE ITEM PER RECORDED STRAND, which is the pre-#3498
+ *    fan-out, returned deliberately.
+ *
+ * ## Why the fan-out has to come back for that case
+ *
+ * Because a work item carries ONE `amountCents`, and the settled amount moves
+ * at most one strand's stored worth. With two strands' night sets both moving,
+ * one item cannot hold two answers: the lead would absorb the whole settlement
+ * and every other mover would be handed `stored + 0 - known` as the total its
+ * blanks must come to - which only $0.00 satisfies, so closing the review would
+ * record sold nights as comped. Where the settlement exceeds the lead's blanks
+ * that target goes NEGATIVE and the review cannot be closed at all, ever.
+ *
+ * The owner weighed that against the fan-out's cost on 17 September 2026 and
+ * chose the fan-out: "Each guest keeps their own amount. No new allocation UI at
+ * all." The cost was accepted with it - two grains to understand and test, and
+ * the near-miss this issue exists to remove returning exactly where the money is
+ * most tangled. `manual-refund-task-queue.tsx` answers that second half by
+ * MARKING the rows whose strand actually moved nights, so the row carrying the
+ * money is no longer told apart from its neighbours by one line reading
+ * `Nights given back:`.
+ *
+ * ## What a fan-out item is, precisely
+ *
+ * A SINGLE-STRAND occurrence - the shape every row raised before #3498 carries,
+ * with no `otherStrands` at all. NOT the composed item with a rotated lead, and
+ * the difference is the settle screen: the price boxes an item offers are the
+ * blanks of every strand it names, so N items each naming all N strands would
+ * offer every blank N times over and let two items fight over one night.
+ *
+ * Nothing is lost by it. The set of items still records every strand's stored
+ * evidence exactly once, which is the property D1 asked for; and two items of
+ * one edit hash to two keys because the lead strand's material differs, so a
+ * replay still collapses onto them and never doubles them.
+ *
+ * ## Order
+ *
+ * Both grains use ONE ordering - the ranking below - so the lead of the single
+ * item and the first of the fanned items are the same strand, and the settle
+ * path's positional binding reads the same order whichever grain it is on.
+ */
+export function parkedEditWorkItems(args: {
+  bookingId: string;
+  strands: ParkedEditStrands;
+}): ParkedEditWorkItems {
+  const [lead, ...otherStrands] = orderedStrands(args.strands);
+  const movers = [lead, ...otherStrands].filter((strand) =>
+    editFinancialReviewStrandMovesNights(strand),
+  ).length;
+  if (movers >= 2) {
+    const fanned = [lead, ...otherStrands].map((strand) => ({
+      bookingId: args.bookingId,
+      ...strand,
+    }));
+    return fanned as unknown as ParkedEditWorkItems;
+  }
+  return [
+    {
+      bookingId: args.bookingId,
+      ...lead,
+      // Absent rather than empty for a one-strand edit, so the stored row is
+      // byte-identical to the shape every pre-#3498 reader already understands.
+      ...(otherStrands.length > 0 ? { otherStrands } : {}),
+    },
+  ];
+}
+
+/**
+ * WHICH STRAND LEADS a parked edit, and in what order the rest are carried.
+ *
+ * It does NOT decide which strands are recorded, and it does not decide whether
+ * the edit parks at all - both of those are the caller's, unchanged: a single
+ * unreadable strand still parks the whole edit, and every strand the current
+ * code records is still recorded.
  *
  * ## Why a lead has to be chosen at all
  *
@@ -214,34 +315,20 @@ function composeStrandRecord(args: {
  * A PURE GUEST ADD RANKS EVERYTHING AT 2 and still produces an item - which is
  * the case that rules out the tempting "filter to the strands the edit touched"
  * fix, because no existing strand moves and that filter would raise nothing at
- * all. What the add is worth rides on `EditFinancialReviewContext.guestsAddedByEdit`,
- * exactly as it did before.
+ * all. What the add is worth rides on
+ * `EditFinancialReviewContext.guestsAddedByEdit`, exactly as it did before.
  */
-export function parkedEditOccurrence(args: {
-  bookingId: string;
-  strands: readonly EditFinancialReviewStrandRecord[];
-}): EditFinancialReviewOccurrence | null {
-  const ordered = [...args.strands].sort((left, right) => {
+function orderedStrands(strands: ParkedEditStrands): ParkedEditStrands {
+  const ordered = [...strands].sort((left, right) => {
     const byRank = leadRank(left) - leadRank(right);
     if (byRank !== 0) return byRank;
     return left.bookingGuestId < right.bookingGuestId ? -1 : 1;
   });
-  const [lead, ...otherStrands] = ordered;
-  if (lead === undefined) return null;
-  return {
-    bookingId: args.bookingId,
-    ...lead,
-    // Absent rather than empty for a one-strand edit, so the stored row is
-    // byte-identical to the shape every pre-#3498 reader already understands.
-    ...(otherStrands.length > 0 ? { otherStrands } : {}),
-  };
+  return ordered as unknown as ParkedEditStrands;
 }
 
-/** The ranking `parkedEditOccurrence` documents, and its only implementation. */
+/** The ranking `orderedStrands` documents, and its only implementation. */
 function leadRank(strand: EditFinancialReviewStrandRecord): number {
-  const nightSetMoves =
-    strand.surrenderedNightDates.length > 0 ||
-    strand.addedNightDates.length > 0;
-  if (!nightSetMoves) return 2;
+  if (!editFinancialReviewStrandMovesNights(strand)) return 2;
   return strand.cause === "COUNTERPART_STRAND_UNREADABLE" ? 1 : 0;
 }

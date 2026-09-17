@@ -69,10 +69,10 @@ import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-clean
 import {
   assertNoPendingEditFinancialReview,
 } from "@/lib/edit-financial-review";
-import { raiseParkedEditFinancialReviewTask } from "@/lib/edit-financial-review-parked-raise";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import {
   counterpartStrandRecord,
-  parkedEditOccurrence,
+  parkedEditWorkItems,
   unpriceableStrandRecord,
 } from "@/lib/parked-edit-occurrence";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
@@ -166,7 +166,16 @@ export type RemoveBookingGuestResult = {
    * priced removal. ONE, since #3498 - see the raise itself for why a parked
    * removal is one work item however many strands it records.
    */
-  financialReviewTaskId: string | null;
+  /**
+   * The review tasks this removal raised, lead item first, or EMPTY when it
+   * priced normally.
+   *
+   * A list since the #3498 fix round, where `parkedEditWorkItems` gained a
+   * second grain. A removal moves exactly one strand's nights - the departing
+   * guest's - so in practice it raises one, and the first entry is that item;
+   * the list is what stops that practice being an assumption nothing checks.
+   */
+  financialReviewTaskIds: readonly string[];
   zeroDollarAutoPaid: boolean;
   supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[];
   // #1372: this removal newly dropped a paid (capacity-holding) booking into the
@@ -1183,23 +1192,23 @@ export async function removeBookingGuestInTransaction({
   // records is this service's rule (see `unpriceableStrands` above) while the
   // lead-strand ordering is the shared one. Null exactly when the removal priced
   // normally, which is when the raise below does not happen at all.
-  const parkedOccurrence = parkedEditOccurrence({
-    bookingId,
-    strands: unpriceableStrands,
-  });
-  const financialReviewTaskId = parkedOccurrence
-    ? await raiseParkedEditFinancialReviewTask({
+  const [leadUnpriceableStrand, ...restUnpriceableStrands] = unpriceableStrands;
+  const financialReviewTaskIds = leadUnpriceableStrand
+    ? await raiseParkedEditFinancialReviewTasks({
         booking,
         // The DEPARTING strand is raised for too, and its row is not in the
         // booking's remaining guest list - so it is named here explicitly.
         guests: [guestToRemove, ...booking.guests],
         // A removal adds nobody.
         addedGuests: [],
-        occurrence: parkedOccurrence,
+        occurrences: parkedEditWorkItems({
+          bookingId,
+          strands: [leadUnpriceableStrand, ...restUnpriceableStrands],
+        }),
         bookingModificationId: bookingModification.id,
         store: tx,
       })
-    : null;
+    : [];
 
   if (paymentImpact.accountCreditAmountCents > 0) {
     await createBookingModificationCredit(
@@ -1260,7 +1269,7 @@ export async function removeBookingGuestInTransaction({
     oldGuestCount: booking.guests.length,
     bookingModificationId: bookingModification.id,
     financialReviewPending: parkedFinancialReview,
-    financialReviewTaskId,
+    financialReviewTaskIds,
     zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
     supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
     minorsOnlyReviewNewlyFlagged,

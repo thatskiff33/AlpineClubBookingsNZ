@@ -222,6 +222,43 @@ export function editFinancialReviewStrandRecords(
 }
 
 /**
+ * DID THIS EDIT MOVE THIS STRAND'S NIGHTS? The one definition (`INV-SSOT`,
+ * #3498 fix round).
+ *
+ * Three separate money rules turn on this one question and each of them was
+ * asking it in its own words before this existed:
+ *
+ *  - which strand LEADS a parked edit's work item (`parkedEditOccurrence`);
+ *  - HOW MANY work items the edit raises at all (`parkedEditWorkItems`, the
+ *    owner's 17 September 2026 decision: one item per edit while at most one
+ *    strand moves, one item per strand once two or more do);
+ *  - whether the amount being settled moves THIS strand's stored worth
+ *    (`RepairableStrand.absorbsSettlement`).
+ *
+ * The third is money in the plainest sense — get it wrong and a settlement is
+ * absorbed into a stranger's stay — so the three cannot be allowed to answer
+ * differently, and they can only be kept from it by there being one answer.
+ *
+ * A REMOVED strand answers true through its surrendered nights, not through a
+ * flag: `preCheckInEditStrands` gives a strand being deleted an empty proposed
+ * night set, so every night it held is surrendered. `rowsDestroyed` exists
+ * upstream for the separate question of whether an EXACT strand is recorded at
+ * all, and it is deliberately not part of the strand record — the record is
+ * hashed into the occurrence key, so a field added to it re-identifies every
+ * future occurrence.
+ */
+export function editFinancialReviewStrandMovesNights(
+  strand: Pick<
+    EditFinancialReviewStrandRecord,
+    "surrenderedNightDates" | "addedNightDates"
+  >,
+): boolean {
+  return (
+    strand.surrenderedNightDates.length > 0 || strand.addedNightDates.length > 0
+  );
+}
+
+/**
  * THE ONE "we cannot price this" OUTCOME (`INV-SSOT`, #3031, epic #2797).
  *
  * Both the in-progress planner (`InProgressGuestRangePlanResult`) and the
@@ -234,16 +271,24 @@ export function editFinancialReviewStrandRecords(
 export type FinancialReviewRequired = {
   kind: "financial_review_required";
   /**
-   * ONE occurrence, because a parked edit is one thing to price (#3498, owner
-   * decision D1). It was a LIST until then, and every fan-out the issue
-   * measured came out of that list.
+   * THE WORK ITEMS this parked edit raises, lead item first and NEVER EMPTY
+   * (#3498, owner decision D1 as amended 17 September 2026).
    *
-   * Singular rather than a list a caller is asked to keep at length one:
-   * `INV-SSOT`'s "prefer unrepresentable over policed", and the acceptance
-   * criterion "one parked edit raises exactly one item" is then a fact about the
-   * type instead of a rule somebody has to enforce at four call sites.
+   * One of them on an edit that moved at most one strand's nights, which is the
+   * shape every case the issue measured has; one per recorded strand once two
+   * or more moved, because an item holds one `amountCents` and two moving
+   * strands need two. `parkedEditWorkItems` is the ONE place that count is
+   * decided and the only place the reasoning is written.
+   *
+   * A NON-EMPTY TUPLE rather than an array a caller is asked to keep populated:
+   * `INV-SSOT`'s "prefer unrepresentable over policed". A parked edit that
+   * raises nothing is a parked edit nobody is asked to price, and the type is
+   * what makes that unwritable rather than a rule enforced at four call sites.
    */
-  occurrence: EditFinancialReviewOccurrence;
+  occurrences: readonly [
+    EditFinancialReviewOccurrence,
+    ...EditFinancialReviewOccurrence[],
+  ];
 };
 
 /**
@@ -550,27 +595,35 @@ export type EditFinancialReviewEvidence = EditFinancialReviewStrandEvidence & {
 export function toEditFinancialReviewEvidence(
   context: EditFinancialReviewContext,
 ): EditFinancialReviewEvidence {
-  return {
-    cause: context.occurrence.cause,
-    surrenderedNightDates: context.occurrence.surrenderedNightDates,
-    addedNightDates: context.occurrence.addedNightDates,
+  /*
+    #3498 fix round: through `editFinancialReviewStrandRecords`, like every
+    other reader. This projection used to splice the lead and `otherStrands`
+    itself, which made it the one named reader bypassing the one home the type
+    docblock above forbids bypassing - and the drift that would buy is not
+    hypothetical, because "is the lead included, and in what order" is exactly
+    what this function has to agree with the settle path about: the officer's
+    figures come back matched by POSITION.
+  */
+  const [lead, ...otherStrands] = editFinancialReviewStrandRecords(
+    context.occurrence,
+  );
+  // Field by field rather than a spread, for the reason this function exists: a
+  // spread would carry `bookingGuestId` straight onto a `finance:view` payload.
+  const redact = (
+    strand: EditFinancialReviewStrandRecord,
+  ): EditFinancialReviewStrandEvidence => ({
+    cause: strand.cause,
+    surrenderedNightDates: strand.surrenderedNightDates,
+    addedNightDates: strand.addedNightDates,
     storedEvidence: {
-      guestTotalCents: context.occurrence.storedEvidence.guestTotalCents,
-      nightPrices: context.occurrence.storedEvidence.nightPrices,
+      guestTotalCents: strand.storedEvidence.guestTotalCents,
+      nightPrices: strand.storedEvidence.nightPrices,
     },
-    // #3498: the supporting strands, field by field for the same reason the lead
-    // strand is — a spread would carry `bookingGuestId` straight onto a
-    // `finance:view` payload, which is the one thing this function exists to
-    // make impossible.
-    otherStrands: (context.occurrence.otherStrands ?? []).map((strand) => ({
-      cause: strand.cause,
-      surrenderedNightDates: strand.surrenderedNightDates,
-      addedNightDates: strand.addedNightDates,
-      storedEvidence: {
-        guestTotalCents: strand.storedEvidence.guestTotalCents,
-        nightPrices: strand.storedEvidence.nightPrices,
-      },
-    })),
+  });
+  return {
+    // Non-null by construction: the helper always answers with the lead first.
+    ...redact(lead!),
+    otherStrands: otherStrands.map(redact),
     bookingCheckIn: context.bookingCheckIn,
     bookingCheckOut: context.bookingCheckOut,
     guestsAddedByEdit: context.guestsAddedByEdit ?? null,
