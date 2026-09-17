@@ -31,6 +31,7 @@ reason: reconciliation must use the exact contributing booking cohort and the
   same stable snapshot as the existing finance calculations.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1604
-reason: reconciliation evidence stays attached to both the initial operation
-  payload and its stale-contact repair without changing the provider invoice shape.
+lines: 1621
+reason: reconciliation evidence remains attached to the initial operation and
+  stale-contact repair, while the invoice owner can be an Organisation without
+  changing the provider invoice shape.

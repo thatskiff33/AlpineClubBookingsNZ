@@ -44,7 +44,13 @@ export type BookingMoneyWriterSite = {
 // a component-money data migration must be classified in the reviewed manifest.
 const MONEY_MIGRATION_CENSUS_START = "20260914000000";
 
-function delegateName(node: ts.Expression): keyof typeof TRACKED_FIELDS | null {
+function delegateName(
+  node: ts.Expression,
+  source?: ts.SourceFile,
+  seen = new Set<ts.Node>(),
+): keyof typeof TRACKED_FIELDS | null {
+  if (seen.has(node)) return null;
+  seen.add(node);
   if (ts.isPropertyAccessExpression(node)) {
     return Object.prototype.hasOwnProperty.call(TRACKED_FIELDS, node.name.text)
       ? (node.name.text as keyof typeof TRACKED_FIELDS)
@@ -60,21 +66,17 @@ function delegateName(node: ts.Expression): keyof typeof TRACKED_FIELDS | null {
   ) {
     return node.argumentExpression.text as keyof typeof TRACKED_FIELDS;
   }
+  // A delegate is a capability, not a spelling convention.  In particular,
+  // `const ledger = database.booking; ledger.update(...)` must remain visible.
+  if (source && ts.isIdentifier(node)) {
+    const binding = resolveLocalBinding(node, source);
+    return binding ? delegateName(binding, source, seen) : null;
+  }
   return null;
 }
 
 function propertyName(name: ts.PropertyName): string | undefined {
   return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
-}
-
-function looksLikePrismaClientReceiver(
-  node: ts.Expression,
-  source: ts.SourceFile,
-): boolean {
-  const receiver = ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)
-    ? node.expression
-    : node;
-  return /(?:^|\.)(?:prisma|tx|store|client|db)$/i.test(receiver.getText(source));
 }
 
 function enclosingScope(node: ts.Node): ts.Node | undefined {
@@ -239,7 +241,7 @@ export function scanBookingMoneyWriterEqualityEscapes(file: string, code: string
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
       WRITE_METHODS.has(node.expression.name.text) &&
-      delegateName(node.expression.expression) === "booking"
+      delegateName(node.expression.expression, source) === "booking"
     ) {
       const options = resolveObject(node.arguments[0]);
       if (!options.opaque || options.values.size > 0) {
@@ -330,8 +332,8 @@ export function scanBookingMoneyWriterEscapes(file: string, code: string): strin
   const escapes = new Set<string>();
   const visit = (node: ts.Node, parent?: ts.Node, grandparent?: ts.Node) => {
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-      const delegate = delegateName(node);
-      if (delegate && looksLikePrismaClientReceiver(node, source)) {
+      const delegate = delegateName(node, source);
+      if (delegate) {
         const method = parent;
         const call = grandparent;
         const isDirectCall =
@@ -341,30 +343,10 @@ export function scanBookingMoneyWriterEscapes(file: string, code: string): strin
           method.expression === node &&
           ts.isCallExpression(call) &&
           call.expression === method;
-        if (!isDirectCall) escapes.add(`${file}|${delegate}`);
-      }
-    }
-    if (ts.isBindingElement(node)) {
-      const name = node.propertyName
-        ? propertyName(node.propertyName)
-        : ts.isIdentifier(node.name)
-          ? node.name.text
-          : undefined;
-      const binding = parent;
-      const declaration = grandparent;
-      if (
-        name &&
-        Object.prototype.hasOwnProperty.call(TRACKED_FIELDS, name) &&
-        binding !== undefined &&
-        declaration !== undefined &&
-        ts.isObjectBindingPattern(binding) &&
-        ts.isVariableDeclaration(declaration) &&
-        declaration.initializer !== undefined &&
-        /(?:^|\.)(?:prisma|tx|store|client|db)$/i.test(
-          declaration.initializer.getText(source),
-        )
-      ) {
-        escapes.add(`${file}|${name}`);
+        const isEscapingCapability =
+          parent !== undefined &&
+          ts.isCallExpression(parent) && parent.arguments.includes(node);
+        if (!isDirectCall && isEscapingCapability) escapes.add(`${file}|${delegate}`);
       }
     }
     ts.forEachChild(node, (child) => visit(child, node, parent));
@@ -493,18 +475,40 @@ export function scanBookingMoneyWriterSites(
       const relation =
         delegate === "booking" && name === "guests" ? "bookingGuest" :
         delegate === "bookingGuest" && name === "nights" ? "bookingGuestNight" : undefined;
-          if (relation && ts.isObjectLiteralExpression(value)) {
+      if (relation && ts.isObjectLiteralExpression(value)) {
         for (const entry of value.properties) {
-          if (ts.isPropertyAssignment(entry) && propertyName(entry.name) === "create") {
-            const child = inspectPayload(entry.initializer, relation, relation, seen);
-            record(relation, "create", [...child.fields]);
-            // A guest builder can conceal its nested night payload.  Keep the
-            // descendant visible too: otherwise a booking.create({ guests:
-            // { create: buildGuests() } }) would enumerate guests but silently
-            // lose the price-bearing nights the builder may create.
-            if (child.opaque && relation === "bookingGuest") {
-              record("bookingGuestNight", "opaquePayload", []);
-            }
+          const method = ts.isPropertyAssignment(entry) && propertyName(entry.name);
+          if (!method || !WRITE_METHODS.has(method)) continue;
+          const nestedOptions = entry.initializer;
+          const nestedObject = ts.isObjectLiteralExpression(nestedOptions)
+            ? nestedOptions
+            : undefined;
+          const payloadNames = method === "upsert" ? ["create", "update"]
+            : method === "create" ? [] : ["data"];
+          const payloads = payloadNames.length === 0
+            ? [nestedOptions]
+            : nestedObject
+              ? nestedObject.properties.flatMap((property) =>
+                ts.isPropertyAssignment(property) && propertyName(property.name) &&
+                payloadNames.includes(propertyName(property.name)!)
+                  ? [property.initializer]
+                  : [],
+              )
+              : [];
+          const child = payloads.reduce<{ fields: Set<string>; opaque: boolean }>(
+            (result, payload) => {
+              const next = inspectPayload(payload, relation, undefined, seen);
+              next.fields.forEach((field) => result.fields.add(field));
+              return { fields: result.fields, opaque: result.opaque || next.opaque };
+            },
+            { fields: new Set<string>(), opaque: payloads.length === 0 },
+          );
+          record(relation, method, [...child.fields]);
+          // Recurse through every relation operation, not only `create`.
+          // `upsert` carries both branches, which inspectPayload sees as an
+          // object containing nested relations.
+          if (child.opaque && relation === "bookingGuest") {
+            record("bookingGuestNight", "opaquePayload", []);
           }
         }
       }
@@ -518,7 +522,7 @@ export function scanBookingMoneyWriterSites(
       WRITE_METHODS.has(node.expression.name.text)
     ) {
       const receiver = node.expression.expression;
-      const delegate = delegateName(receiver);
+      const delegate = delegateName(receiver, source);
       if (delegate) {
         const tracked = TRACKED_FIELDS[delegate];
         if (tracked) {
@@ -572,6 +576,39 @@ export function scanBookingMoneyWriterSites(
     .sort((left, right) => left.delegate.localeCompare(right.delegate));
 }
 
+/**
+ * SQL writes do not have TypeScript's object shape.  Read their real SET
+ * assignments after removing source and SQL comments; a field merely named in
+ * prose, a WHERE clause, or a copied old value is not reconciliation evidence.
+ */
+export function scanBookingMoneyRawSqlEscapes(file: string, code: string): string[] {
+  const sql = stripComments(code)
+    .replace(/--[^\r\n]*/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  const escapes: string[] = [];
+  const bookingUpdates = sql.matchAll(/UPDATE\s+(?:(?:[A-Za-z_$][\w$]*|["`][A-Za-z_$][\w$]*["`])\s*\.\s*)?["`]Booking["`][\s\S]*?\bSET\b([\s\S]*?)(?=\b(?:FROM|WHERE|RETURNING)\b|;|$)/gi);
+  for (const statement of bookingUpdates) {
+    const assignments = new Map<string, string>();
+    for (const assignment of statement[1]!.matchAll(/["`]?(totalPriceCents|discountCents|promoAdjustmentCents|finalPriceCents)["`]?\s*=\s*([^,;]+)(?:,|$)/gi)) {
+      assignments.set(assignment[1]!, assignment[2]!.trim());
+    }
+    const final = assignments.get("finalPriceCents");
+    if (final) {
+      if (/\bfinalPriceCents\b/i.test(final) ||
+        !(/\btotalPriceCents\b/i.test(final) && /\bpromoAdjustmentCents\b/i.test(final))) {
+        escapes.push(`${file}|rawSqlFinalPriceRelation`);
+      }
+    }
+    const discount = assignments.get("discountCents");
+    const promo = assignments.get("promoAdjustmentCents");
+    if (discount && promo &&
+      (!/\bpromoAdjustmentCents\b/i.test(discount) || !/-\s*["`]?promoAdjustmentCents/i.test(discount))) {
+      escapes.push(`${file}|rawSqlDiscountRelation`);
+    }
+  }
+  return [...new Set(escapes)].sort();
+}
+
 export function discoveredBookingMoneyWriterSites(): BookingMoneyWriterSite[] {
   const migrationFiles = readdirSync(join(process.cwd(), "prisma", "migrations"), {
     withFileTypes: true,
@@ -608,5 +645,17 @@ export function discoveredBookingMoneyWriterEqualityEscapes(): string[] {
     .flatMap((file) =>
       scanBookingMoneyWriterEqualityEscapes(relativeSource(file), readFileSync(file, "utf8")),
     )
+    .sort();
+}
+
+export function discoveredBookingMoneyRawSqlEscapes(): string[] {
+  const migrationRoot = join(process.cwd(), "prisma", "migrations");
+  return readdirSync(migrationRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name >= MONEY_MIGRATION_CENSUS_START)
+    .map((entry) => join(migrationRoot, entry.name, "migration.sql"))
+    .filter((file) => {
+      try { readFileSync(file, "utf8"); return true; } catch { return false; }
+    })
+    .flatMap((file) => scanBookingMoneyRawSqlEscapes(relativeSource(file), readFileSync(file, "utf8")))
     .sort();
 }
