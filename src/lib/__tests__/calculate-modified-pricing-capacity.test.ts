@@ -62,9 +62,8 @@ async function pricedPricing(
   const result = await calculateModifiedPricing(...args);
   if (result.kind !== "priced") {
     throw new Error(
-      `Expected a priced modification, got financial review: ${editFinancialReviewStrandRecords(
-        result.occurrence,
-      )
+      `Expected a priced modification, got financial review: ${result.occurrences
+        .flatMap((occurrence) => editFinancialReviewStrandRecords(occurrence))
         .map((strand) => strand.cause)
         .join(", ")}`,
     );
@@ -90,7 +89,9 @@ async function reviewPricing(
       "Expected financial review, got a priced modification - an amount was invented",
     );
   }
-  return editFinancialReviewStrandRecords(result.occurrence);
+  return result.occurrences.flatMap((occurrence) =>
+    editFinancialReviewStrandRecords(occurrence),
+  );
 }
 
 function baseArgs() {

@@ -28,9 +28,15 @@ import {
 } from "@/lib/booking-review-price-rebase";
 
 /**
- * #3191 (epic #2797): the READS and the WRITES behind recording what an unpriced
- * night sold for. The RULES are in `stored-night-price-repair.ts`, which is
- * client-safe because the settle screen applies them as the officer types.
+ * #3191 (epic #2797): the WRITES behind recording what an unpriced night sold
+ * for, and the audit of them.
+ *
+ * It was the reads AND the writes until #3498 split the reads into
+ * `stored-night-price-repair-plan.ts` - which strands a settle may fill in, and
+ * whether what the officer typed may be written - so everything here now runs
+ * AFTER the completion's status claim. The RULES are in
+ * `stored-night-price-repair.ts`, which is client-safe because the settle
+ * screen applies them as the officer types.
  *
  * ## The one place a blank may become a number
  *

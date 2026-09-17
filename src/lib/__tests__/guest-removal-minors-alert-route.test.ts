@@ -115,6 +115,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { DELETE } from "@/app/api/bookings/[id]/guests/[guestId]/route";
+import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
 
 const CHECK_IN = new Date("2027-07-15");
 const CHECK_OUT = new Date("2027-07-17");
@@ -519,8 +520,7 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
       );
     }
     // #3498: both strands, ONE key - the identity is the edit's.
-    const occurrence = raisedRows[0].reviewContext.occurrence;
-    const strands = [occurrence, ...(occurrence.otherStrands ?? [])];
+    const strands = raisedStrands(raisedRows[0].reviewContext);
     expect(strands.map((strand) => strand.bookingGuestId).sort()).toEqual([
       "g-adult",
       "g-child",
@@ -532,7 +532,7 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
       (strand) => strand.surrenderedNightDates.length > 0,
     );
     expect(surrendering).toHaveLength(1);
-    expect(occurrence.bookingGuestId).toBe("g-child");
+    expect(strands[0]!.bookingGuestId).toBe("g-child");
 
     // AND NO MONEY MOVED. The settlement leg ran with a zero delta and no
     // options, so there is no refund, no credit and no Xero adjustment; the

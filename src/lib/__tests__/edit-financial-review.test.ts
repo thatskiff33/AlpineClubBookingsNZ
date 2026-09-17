@@ -44,7 +44,7 @@ import {
   EDIT_FINANCIAL_REVIEW_PENDING_CODE,
   EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE,
 } from "@/lib/edit-financial-review";
-import { raiseParkedEditFinancialReviewTask } from "@/lib/edit-financial-review-parked-raise";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import {
   EDIT_FINANCIAL_REVIEW_CAUSES,
   parseEditFinancialReviewContext,
@@ -827,16 +827,16 @@ describe("#3166/#3194 parked raise - the payment id it stamps is the shared gate
   }
 
   async function stampedPaymentId(booking: ReturnType<typeof parkedBooking>) {
-    const taskId = await raiseParkedEditFinancialReviewTask({
+    const taskId = await raiseParkedEditFinancialReviewTasks({
       booking,
       guests: [{ id: "guest-1", memberId: "member-1" }],
       addedGuests: [],
-      // #3498: ONE occurrence for the whole parked edit, and ONE task id back.
-      occurrence: occurrence(),
+      // #3498: ONE work item for this parked edit, and ONE task id back.
+      occurrences: [occurrence()],
       bookingModificationId: "mod-1",
       store: store(),
     });
-    expect(taskId).toBe("task-new");
+    expect(taskId).toEqual(["task-new"]);
     expect(mocks.create).toHaveBeenCalledTimes(1);
     return mocks.create.mock.calls[0][0].data.paymentId;
   }

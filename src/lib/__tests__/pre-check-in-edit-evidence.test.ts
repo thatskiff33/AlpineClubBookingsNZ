@@ -75,15 +75,19 @@ function unreadableStrand(bookingGuestId: string): PreCheckInEditStrand {
  * is assembled, which is what stops this test growing a second answer.
  */
 function evidenceFor(strands: PreCheckInEditStrand[]) {
-  const { occurrence, storedNightPriceByGuestId } = preCheckInEditEvidence({
+  const { occurrences, storedNightPriceByGuestId } = preCheckInEditEvidence({
     bookingId: "booking-1",
     booking: BOOKING,
     strands,
   });
   return {
-    occurrence,
+    occurrences,
+    // The LEAD item, which is the whole edit wherever the grain stayed at one.
+    occurrence: occurrences?.[0] ?? null,
     storedNightPriceByGuestId,
-    recorded: occurrence ? editFinancialReviewStrandRecords(occurrence) : [],
+    recorded: (occurrences ?? []).flatMap((occurrence) =>
+      editFinancialReviewStrandRecords(occurrence),
+    ),
   };
 }
 

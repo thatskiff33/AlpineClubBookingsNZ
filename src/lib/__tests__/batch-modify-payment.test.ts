@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireCalendarDate } from "@/lib/club-time";
+import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -4319,16 +4320,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
           data: { reviewContext: unknown };
         }
       ).data;
-      const occurrence = (
-        data.reviewContext as {
-          occurrence: {
-            cause: string;
-            bookingGuestId: string;
-            otherStrands?: Array<{ cause: string; bookingGuestId: string }>;
-          };
-        }
-      ).occurrence;
-      expect([occurrence, ...(occurrence.otherStrands ?? [])]).toEqual(
+      const strands = raisedStrands(data.reviewContext);
+      expect(strands).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             bookingGuestId: "g1",
@@ -4343,7 +4336,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       // And the item LEADS with the strand the edit actually moves - the guest
       // who left, whose nights are the money - rather than with whichever strand
       // the planner happened to walk first.
-      expect(occurrence.bookingGuestId).toBe("g2");
+      expect(strands[0]!.bookingGuestId).toBe("g2");
     });
 
     it("CONTROL: the identical edit on a readable booking still prices and settles", async () => {

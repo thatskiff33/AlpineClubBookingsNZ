@@ -173,9 +173,9 @@ export type EditFinancialReviewStrandRecord = {
  *
  * And a work item has to LEAD with something. An officer opens one card and the
  * first thing on it should be the strand the money hangs on —
- * `parkedEditOccurrence` in `stored-sold-price-evidence.ts` owns that choice and
- * states the ranking. Every other strand is supporting detail, which is D1's own
- * word for it.
+ * `parkedEditWorkItems` in `parked-edit-occurrence.ts` owns that choice and
+ * states the ranking, along with how many items the edit raises at all. Every
+ * other strand is supporting detail, which is D1's own word for it.
  *
  * Nothing may read `otherStrands` directly to enumerate the edit's strands: call
  * `editFinancialReviewStrandRecords`, which is the one place that list is
@@ -185,7 +185,7 @@ export type EditFinancialReviewOccurrence = EditFinancialReviewStrandRecord & {
   bookingId: string;
   /**
    * Every OTHER strand this parked edit recorded, in the canonical order
-   * `parkedEditOccurrence` sorts them into.
+   * `parkedEditWorkItems` sorts them into.
    *
    * ABSENT — not empty — on a row written before #3498, and on an edit whose
    * only recorded strand is the lead. Optional because the parser is a
@@ -440,10 +440,37 @@ const strandRecordShape = {
     .strict(),
 } as const;
 
-const strandRecordSchema: z.ZodType<EditFinancialReviewStrandRecord> = z
-  .object(strandRecordShape)
-  .strict();
+/**
+ * #3498 fix round: UNKNOWN KEYS ARE IGNORED, on this schema and the occurrence
+ * schema below, and that is a deliberate reversal of `.strict()` here.
+ *
+ * The property that matters is not strictness about extras, it is that every
+ * KNOWN field is required and validated - which is what stops a partially-read
+ * context being treated as complete, and which is unchanged. What `.strict()`
+ * added on top was this: a colour that does not know about a field the shape
+ * has GAINED refuses the whole context and reads it as absent.
+ *
+ * That is not theoretical, it is what #3498 does. Adding `otherStrands` means a
+ * context written by the new colour cannot be parsed by the previous one at
+ * all - and the previous one does not fail loudly, it reads null, offers no
+ * price boxes, and lets a review close with the #3219-D2 mandatory night prices
+ * skipped. Blue/green runs the two colours side by side between migrate and
+ * cutover, so that window is real even though this release adds no migration
+ * and `docs/BLUE_GREEN_MIGRATION_POLICY.md` therefore binds nothing here; its
+ * runtime-release rule - "move reads and writes to the new shape while still
+ * TOLERATING the old one" - is the principle being applied.
+ *
+ * No edit to this file can rescue the colour that is ALREADY DEPLOYED, whose
+ * parser is compiled. What it does buy is that the NEXT field this shape gains
+ * degrades to "read what you understand" instead of "read nothing", which is
+ * the right failure for evidence about a member's money. Widening the shape
+ * still moves the occurrence key and still needs the namespace bump the key's
+ * own docblock demands; this changes only how a reader that is behind copes.
+ */
+const strandRecordSchema: z.ZodType<EditFinancialReviewStrandRecord> =
+  z.object(strandRecordShape);
 
+/** Unknown keys ignored, for the reason `strandRecordSchema` above sets out. */
 const occurrenceSchema: z.ZodType<EditFinancialReviewOccurrence> = z
   .object({
     bookingId: z.string().min(1),
@@ -457,8 +484,7 @@ const occurrenceSchema: z.ZodType<EditFinancialReviewOccurrence> = z
       collapses both to "the lead strand and nothing else".
     */
     otherStrands: z.array(strandRecordSchema).optional(),
-  })
-  .strict();
+  });
 
 const contextSchema: z.ZodType<EditFinancialReviewContext> = z
   .object({

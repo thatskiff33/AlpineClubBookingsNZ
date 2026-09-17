@@ -87,9 +87,8 @@ function pricedPlan(input: BuildInProgressGuestRangePlanInput) {
   const result = buildInProgressGuestRangePlan(input);
   if (result.kind !== "priced") {
     throw new Error(
-      `Expected a priced plan, got financial review: ${editFinancialReviewStrandRecords(
-        result.occurrence,
-      )
+      `Expected a priced plan, got financial review: ${result.occurrences
+        .flatMap((occurrence) => editFinancialReviewStrandRecords(occurrence))
         .map((strand) => strand.cause)
         .join(", ")}`,
     );

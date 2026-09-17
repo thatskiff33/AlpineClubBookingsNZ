@@ -250,11 +250,13 @@ describe("#3031 quote and apply consume one discriminated result", () => {
     // Not "both parked" — the same park, in full. The occurrence is what
     // #3030 hashes into a task identity, so a preview and a save that produced
     // different material would raise two tasks for one edit.
-    expect(apply.occurrence).toEqual(quote.occurrence);
-    // #3498: ONE occurrence for the whole edit, carrying its strands. This
+    expect(apply.occurrences).toEqual(quote.occurrences);
+    // #3498: ONE work item for the whole edit, carrying its strands. This
     // booking has one guest, so the record is byte-for-byte what it was - with
-    // `bookingId` now on the occurrence rather than repeated per strand.
-    expect(quote.occurrence).toEqual({
+    // `bookingId` now on the occurrence rather than repeated per strand - and
+    // one moving strand keeps the whole edit on one item.
+    expect(quote.occurrences).toHaveLength(1);
+    expect(quote.occurrences[0]).toEqual({
       bookingId: "bk-parity",
       bookingGuestId: "g1",
       cause: "NO_STORED_NIGHT_PRICES",
@@ -330,7 +332,7 @@ describe("#3031 quote and apply consume one discriminated result", () => {
 
     const context: EditFinancialReviewContext = {
       version: 1,
-      occurrence: result.occurrence,
+      occurrence: result.occurrences[0],
       // #3032's D-3032-1 anchor: the ORIGINAL edit's BookingModification row, so
       // a confirmed amount settles against the same record the edit already used
       // for its credit and Stripe idempotency keys. Required, not defaulted -

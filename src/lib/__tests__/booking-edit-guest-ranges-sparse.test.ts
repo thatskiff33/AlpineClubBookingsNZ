@@ -235,9 +235,8 @@ function pricedPlan(input: BuildInProgressGuestRangePlanInput) {
   const result = buildInProgressGuestRangePlan(input);
   if (result.kind !== "priced") {
     throw new Error(
-      `Expected a priced plan, got financial review: ${editFinancialReviewStrandRecords(
-        result.occurrence,
-      )
+      `Expected a priced plan, got financial review: ${result.occurrences
+        .flatMap((occurrence) => editFinancialReviewStrandRecords(occurrence))
         .map((strand) => `${strand.bookingGuestId}:${strand.cause}`)
         .join(", ")}`,
     );
@@ -260,7 +259,9 @@ function reviewOf(input: BuildInProgressGuestRangePlanInput) {
       "Expected financial review, got a priced plan — an amount was invented",
     );
   }
-  return editFinancialReviewStrandRecords(result.occurrence);
+  return result.occurrences.flatMap((occurrence) =>
+    editFinancialReviewStrandRecords(occurrence),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -746,7 +747,10 @@ describe("#2736/#2743 contiguous stays", () => {
         // including the one this edit does not touch, because the writer
         // rewrites every existing guest's night rows.
         expect(
-          editFinancialReviewStrandRecords(current.value.occurrence)
+          current.value.occurrences
+            .flatMap((occurrence) =>
+              editFinancialReviewStrandRecords(occurrence),
+            )
             .map((strand) => ({
               bookingGuestId: strand.bookingGuestId,
               cause: strand.cause,

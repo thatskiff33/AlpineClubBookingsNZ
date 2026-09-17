@@ -34,7 +34,7 @@ vi.mock("server-only", () => ({}));
 import {
   loadUnpricedNightsSummaries,
   planStoredNightPriceRepair,
-  reviewTaskGuestIds,
+  reviewTaskStrands,
 } from "@/lib/stored-night-price-repair-plan";
 import { requireCalendarDate } from "@/lib/club-time";
 
@@ -99,11 +99,11 @@ beforeEach(() => {
 
 describe("which strands one item offers, and in what order (#3498)", () => {
   it("names every strand the item records, lead first", () => {
-    expect(reviewTaskGuestIds(task("lead", ["other-a", "other-b"]))).toEqual([
-      "lead",
-      "other-a",
-      "other-b",
-    ]);
+    expect(
+      reviewTaskStrands(task("lead", ["other-a", "other-b"])).map(
+        (strand) => strand.bookingGuestId,
+      ),
+    ).toEqual(["lead", "other-a", "other-b"]);
   });
 
   it("offers only the repairable ones, keeping the item's order", async () => {
@@ -115,7 +115,7 @@ describe("which strands one item offers, and in what order (#3498)", () => {
       guest("other-b", 16_000, false),
     ]);
     const repairable = await loadUnpricedNightsSummaries({
-      bookingGuestIds: ["lead", "other-a", "other-b"],
+      strands: reviewTaskStrands(task("lead", ["other-a", "other-b"])),
       store,
     });
     expect(repairable.map((strand) => strand.bookingGuestId)).toEqual([

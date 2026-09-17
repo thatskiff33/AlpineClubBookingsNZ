@@ -201,15 +201,26 @@ const RECORDED_GUEST_IDS = [
 ] as const;
 
 function parkedEdit() {
-  const { occurrence } = preCheckInEditEvidence({
+  const { occurrences } = preCheckInEditEvidence({
     bookingId: "booking-1",
     booking: BOOKING,
     strands: STRANDS,
   });
-  if (occurrence === null) {
+  if (occurrences === null) {
     throw new Error("The fixture must park; it holds four unreadable strands.");
   }
-  return occurrence;
+  /*
+    ONE item: the fixture's four strands include exactly one whose night set
+    this edit moves, so the grain stays the edit's (`parkedEditWorkItems`).
+    Asserted rather than assumed, because every field this census enumerates
+    lives on the item's strand list and a silent fan-out would spread them.
+  */
+  if (occurrences.length !== 1) {
+    throw new Error(
+      `The fixture must compose to ONE work item; got ${occurrences.length}.`,
+    );
+  }
+  return occurrences[0]!;
 }
 
 describe("#3498 census: one item per parked edit loses no stored figure", () => {
@@ -320,12 +331,12 @@ describe("#3498 census: one item per parked edit loses no stored figure", () => 
       touched" raises NOTHING and the money owed for the new guests vanishes -
       which is exactly why the grain moves UP instead.
 
-      Every strand here is untouched and unreadable, so `parkedEditOccurrence`
+      Every strand here is untouched and unreadable, so `parkedEditWorkItems`
       ranks them all equally and the lead is decided by guest id alone. What the
       add is worth rides on `EditFinancialReviewContext.guestsAddedByEdit`, as
       it has since #3166.
     */
-    const { occurrence } = preCheckInEditEvidence({
+    const { occurrences } = preCheckInEditEvidence({
       bookingId: "booking-add",
       booking: BOOKING,
       strands: [
@@ -343,14 +354,19 @@ describe("#3498 census: one item per parked edit loses no stored figure", () => 
         },
       ],
     });
-    expect(occurrence).not.toBeNull();
+    expect(occurrences).not.toBeNull();
+    // ONE item, and that is the point of the case: a pure add moves NO existing
+    // strand's nights, so the fan-out grain cannot be reached by it however
+    // large the party (`parkedEditWorkItems`).
+    expect(occurrences).toHaveLength(1);
+    const occurrence = occurrences![0]!;
     expect(
-      editFinancialReviewStrandRecords(occurrence!).map(
+      editFinancialReviewStrandRecords(occurrence).map(
         (strand) => strand.bookingGuestId,
       ),
     ).toEqual(["a-existing", "b-existing"]);
     // And nothing anywhere on it claims a night moved, because none did.
-    for (const strand of editFinancialReviewStrandRecords(occurrence!)) {
+    for (const strand of editFinancialReviewStrandRecords(occurrence)) {
       expect(strand.surrenderedNightDates).toEqual([]);
       expect(strand.addedNightDates).toEqual([]);
     }

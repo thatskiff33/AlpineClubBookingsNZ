@@ -24,10 +24,11 @@ import {
  * second of them deliberately degrades rather than failing. Different job,
  * different reason to change.
  *
- * They still read through the store's own `GUEST_SELECT` and
- * `unpricedNightsSummaryForGuest`, so there is exactly one definition of what a
- * repairable strand looks like (`INV-SSOT-001`); this file holds no rule of its
- * own.
+ * They still read through `GUEST_SELECT` and `repairableStrands` - which moved
+ * to `stored-night-price-repair-plan.ts` with the rest of the reads in #3498 -
+ * so there is exactly one definition of what a repairable strand looks like,
+ * and one answer to which strand a settlement moves (`INV-SSOT-001`). This file
+ * holds no rule of its own.
  */
 
 /**

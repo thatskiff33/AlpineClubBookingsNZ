@@ -86,11 +86,15 @@ interface ViewOnlyActionButtonProps extends ButtonProps {
    *    switch, the #2262 cash-payment and manual-refund-task controls, the
    *    non-member contact form), where
    *    nothing local proves an ancestor renders a banner. (`docs/ARCHITECTURE.md`
-   *    counts 40 controls here, but that bucket is the arithmetic remainder,
-   *    not a pure shape: 3 of the 37 are the FIRST shape — dialog contents
-   *    inside `page-content-panel.tsx` and `site-banners-panel.tsx`, which are
-   *    themselves banner-bearing panels; and 9 are the #2324 SCOPE exceptions
-   *    below, sitting inside setup wizards that do render a banner); and
+   *    counts the controls in this bucket, which is the arithmetic remainder
+   *    rather than a pure shape: a few of them are the FIRST shape — dialog
+   *    contents inside `page-content-panel.tsx` and `site-banners-panel.tsx`,
+   *    which are themselves banner-bearing panels — and the rest of the
+   *    exceptions are the #2324 SCOPE ones below, sitting inside setup wizards
+   *    that do render a banner. NO HAND-DERIVED SUB-COUNT HERE: the two figures
+   *    that used to sit in this sentence were counted by hand at different
+   *    times, drifted apart, and nothing checks either of them, so the sentence
+   *    describes the shapes and leaves the counting to the census); and
    *
    *  - in an integration setup wizard step whose control needs a NARROWER
    *    permission than the wizard's banner states (#2324): the Xero, Stripe,

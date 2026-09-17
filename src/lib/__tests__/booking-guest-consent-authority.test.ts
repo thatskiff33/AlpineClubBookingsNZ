@@ -162,6 +162,7 @@ import {
   hostingMemberRow,
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
+import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
 
 const BOOKING = "bk-1";
 const OWNER = "m-owner";
@@ -822,16 +823,9 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
 
   /** That one item's record FOR one guest strand, wherever it sits on it. */
   function strandFor(tx: ReturnType<typeof makeTx>, guestId: string) {
-    const occurrence = raisedTask(tx).reviewContext.occurrence;
-    const match = [
-      {
-        bookingGuestId: occurrence.bookingGuestId,
-        cause: occurrence.cause,
-        surrenderedNightDates: occurrence.surrenderedNightDates,
-        storedEvidence: occurrence.storedEvidence,
-      },
-      ...(occurrence.otherStrands ?? []),
-    ].filter((strand) => strand.bookingGuestId === guestId);
+    const match = raisedStrands(raisedTask(tx).reviewContext).filter(
+      (strand) => strand.bookingGuestId === guestId,
+    );
     expect(
       match,
       `expected exactly one record about ${guestId}`,
@@ -859,7 +853,7 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
     expect(result.financialReviewPending).toBe(true);
     // #3498 D1: ONE item for the whole removal, however many strands it records.
     expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
-    expect(result.financialReviewTaskId).toBe("task-raised");
+    expect(result.financialReviewTaskIds).toEqual(["task-raised"]);
     expect(result.priceDiffCents).toBe(0);
     expect(result.refundAmountCents).toBe(0);
     expect(result.accountCreditAmountCents).toBe(0);
@@ -1057,7 +1051,7 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
 
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
-    expect(result.financialReviewTaskId).toBe("task-already-open-1");
+    expect(result.financialReviewTaskIds).toEqual(["task-already-open-1"]);
     expect(onFile.size).toBe(1);
     expect(result.financialReviewPending).toBe(true);
   });
@@ -1077,7 +1071,7 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
 
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
     expect(result.financialReviewPending).toBe(false);
-    expect(result.financialReviewTaskId).toBeNull();
+    expect(result.financialReviewTaskIds).toEqual([]);
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
     expect(result.priceDiffCents).toBeLessThan(0);
     expect(tx.booking.update.mock.calls[0][0].data.totalPriceCents).toBeLessThan(
