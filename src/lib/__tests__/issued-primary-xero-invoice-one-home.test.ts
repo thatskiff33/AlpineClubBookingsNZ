@@ -3,7 +3,9 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { canModifyBookingInActiveLifecycle } from "@/lib/booking-edit-policy";
 import {
+  hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
@@ -133,6 +135,63 @@ const SETTLEMENT_MODULE = "src/lib/booking-modify-settlement.ts";
 const BOOKINGS_API_TREE = "src/app/api/bookings";
 
 const XERO_INVOICE_ID = /\bxeroInvoiceId\b/;
+
+/**
+ * #3244: a READ of an AGGREGATE `Payment.status` that decides something.
+ *
+ * ANCHORED ON THE RECEIVER, and that anchor is the whole difficulty. An earlier
+ * draft matched any `status === "SUCCEEDED"`, which fired on a
+ * `paymentTransaction.status` read in a route under this tree — a DIFFERENT
+ * question. `booking-payment-state.ts` says in terms that the aggregate list and
+ * `isCapturedTransactionStatus` must not be merged, and a census that cannot
+ * tell them apart pushes whoever trips it toward exactly that merge. It did:
+ * the first round of this PR converged that route onto the wrong home, and
+ * review caught it. A guard that mis-identifies its subject is worse than no
+ * guard, because it hands out a confident wrong instruction.
+ *
+ * So this matches `payment.status` / `payment?.status` / `booking.payment.status`
+ * and the `PaymentStatus.X` spelling of the same, and deliberately does NOT
+ * match a bare `status ===` on an unknown receiver. The transaction-side copies
+ * are real and are filed as #3503; they are simply not this census's subject.
+ *
+ * WHAT IT CANNOT SEE, stated rather than implied (`INV-SSOT-004`): a loose
+ * `==`, a status copied into a local first (`const s = payment.status`), and a
+ * membership test against a list the caller builds itself
+ * (`MY_STATUSES.includes(payment.status)`). None exists in the tree today —
+ * measured, not assumed — and the failure message says so, because a guard that
+ * claims more than it catches is the defect it exists to prevent.
+ */
+const PAYMENT_STATUS_READ =
+  /\bpayment(?:\?)?\.status\s*(?:===|!==)\s*(?:"(?:SUCCEEDED|PARTIALLY_REFUNDED|REFUNDED)"|PaymentStatus\.(?:SUCCEEDED|PARTIALLY_REFUNDED|REFUNDED))/i;
+
+/**
+ * Routes allowed to compare `Payment.status`, each with the reason it is not a
+ * second answer to "has money already moved through this card?".
+ *
+ * THE STRUCTURAL OPTION THAT WAS REJECTED, which `INV-SSOT-001` requires to be
+ * named rather than left implied: making the column unreadable outside the
+ * payment-state module — a branded status type, or a row type that omits
+ * `status` at every query site. `hasIssuedPrimaryXeroInvoice` gets that for
+ * free because it takes `xeroInvoiceId` as a REQUIRED parameter, so a caller
+ * who has not loaded it fails to compile. `Payment.status` has no such lever:
+ * it is a plain Prisma enum column that legitimate readers below genuinely
+ * need, and branding it would touch every payment query in the tree. There is
+ * no compile-time remedy available here, which is why this is a census.
+ */
+const PAYMENT_STATUS_ALLOWED: Record<string, string> = {
+  "src/app/api/bookings/[id]/confirm-payment/route.ts":
+    "asks two different questions. `payment.status === \"SUCCEEDED\" && " +
+    "booking.status === \"PAID\"` is an IDEMPOTENCY short-circuit — this " +
+    "confirmation already landed, so just re-queue the invoice — not 'has " +
+    "money moved'. `refundedHistory` asks whether a refund has HAPPENED, " +
+    "which is the opposite reading of the same column: `hasCapturedPayment` " +
+    "answers true for a refunded payment, so calling it here would inv" +
+    "ert the meaning.",
+  "src/app/api/bookings/[id]/refund-request/route.ts":
+    "asks 'has this booking already been refunded IN FULL?', to refuse a " +
+    "second appeal. `hasCapturedPayment` answers true for a fully refunded " +
+    "payment, so it is not the predicate this door wants.",
+};
 
 /**
  * The only files under the bookings API tree allowed to name
@@ -290,20 +349,125 @@ describe("no edit door states the rule a second time", () => {
     // The nit the xeroInvoiceId ban does not cover: the route now asks
     // `isSettledBookingStatus`, and nothing above would fail if a later edit
     // pasted ["PAYMENT_PENDING","CONFIRMED","PAID"] back in beside it — the
-    // same defect one predicate over. The ONE status literal this file may
-    // carry is its eligibility gate, pinned below.
-    const ELIGIBILITY_GATE = '["PENDING","PAYMENT_PENDING","CONFIRMED","PAID"]';
+    // same defect one predicate over.
+    //
+    // #3245 removed the one exception this pin used to carry. The route's
+    // eligibility gate WAS a status literal, allowed here because it was the
+    // rule's own statement of itself at that door; it is now derived from
+    // `canModifyBookingInActiveLifecycle`, so this file may hold NO status
+    // list at all and the allowance is gone rather than merely unused.
     const literals = (
       read(GUEST_ADD_ROUTE).match(/\[[^[\]]*"CONFIRMED"[^[\]]*\]/g) ?? []
     ).map((literal) => literal.replace(/\s+/g, ""));
     expect(
-      literals.filter((literal) => literal !== ELIGIBILITY_GATE),
+      literals,
       `The guest-add route states a booking-status list of its own. Which ` +
         `statuses count as "the payment lifecycle has been entered" is ` +
-        `isSettledBookingStatus in src/lib/booking-payment-state.ts ` +
-        `(INV-SSOT-001) — call it. #3200's bug was exactly this: a list ` +
-        `copied here from the eligibility gate, missing COMPLETED.`,
+        `isSettledBookingStatus in src/lib/booking-payment-state.ts, and which ` +
+        `statuses are editable at all is canModifyBookingInActiveLifecycle in ` +
+        `src/lib/booking-edit-policy.ts (INV-SSOT-001) — call them. #3200's ` +
+        `bug was exactly this: a list copied here from the eligibility gate, ` +
+        `missing COMPLETED. #3245 then removed the gate's own copy.`,
     ).toEqual([]);
+  });
+
+  it("the one home answers a part-refunded card as PAID, at every door", () => {
+    // #3244's whole substance in one place. `hasCapturedPayment` is what the
+    // other three doors reach through `applyPaymentAdjustments`, and it admits
+    // the two refunded shapes because the money DID move through that card and
+    // it is still the right instrument to collect from.
+    const partRefunded = {
+      status: "PARTIALLY_REFUNDED",
+      amountCents: 10_000,
+      refundedAmountCents: 2_500,
+    };
+    expect(hasCapturedPayment(partRefunded)).toBe(true);
+    expect(hasCapturedPayment({ status: "REFUNDED", amountCents: 10_000 })).toBe(
+      true,
+    );
+    expect(hasCapturedPayment({ status: "SUCCEEDED", amountCents: 10_000 })).toBe(
+      true,
+    );
+    // And the guest-add door's own composite is the same shape the settlement
+    // module applies: settled booking status AND a captured card.
+    expect(
+      isSettledBookingStatus("CONFIRMED") && hasCapturedPayment(partRefunded),
+    ).toBe(true);
+    // The narrowing half: a zero-amount capture is not a card to collect from.
+    expect(hasCapturedPayment({ status: "SUCCEEDED", amountCents: 0 })).toBe(
+      false,
+    );
+  });
+
+  it("NO route under the bookings API reads Payment.status directly", () => {
+    // #3244 extends #3200's ban to the SECOND field read at this door, which is
+    // the acceptance criterion that issue carries. "Has money already moved
+    // through this card?" is `hasCapturedPayment` in
+    // `src/lib/booking-payment-state.ts`, and the guest-add door used to answer
+    // it with `booking.payment?.status === "SUCCEEDED"` — the same shape as the
+    // invoice defect #3200 fixed, one field over, and unlike that one it was
+    // REACHABLE: a partly-refunded booking was answered "never paid" here and
+    // "paid" at the other three doors, so the club collected nothing.
+    //
+    // Measured over the whole tree, not over the four doors by name
+    // (`INV-SSOT-004`).
+    const tree = sourceFilesUnder(BOOKINGS_API_TREE);
+    expect(tree).toEqual(
+      expect.arrayContaining(EDIT_DOORS.map((door) => door.route)),
+    );
+    const offenders = filesMentioning(
+      tree.filter((file) => !(file in PAYMENT_STATUS_ALLOWED)),
+      PAYMENT_STATUS_READ,
+    );
+    expect(
+      offenders,
+      `These routes decide something from Payment.status directly. "Has ` +
+        `money already moved through this card?" has one home — ` +
+        `hasCapturedPayment in src/lib/booking-payment-state.ts ` +
+        `(INV-SSOT-001), which admits SUCCEEDED, PARTIALLY_REFUNDED and ` +
+        `REFUNDED and requires a non-zero amount. Ask it. #3244's bug was ` +
+        `exactly this read: a partly-refunded booking collected nothing at ` +
+        `this door and the difference at the other three. If the route only ` +
+        `DISPLAYS the status or writes it, add it to PAYMENT_STATUS_ALLOWED ` +
+        `with its reason.\n` +
+        `NOTE this ban matches a COMPARISON only. A loose \`==\`, a status ` +
+        `copied into a local first, or a membership test against a list you ` +
+        `built yourself are NOT caught. Passing it is not proof there is no ` +
+        `second answer.`,
+    ).toEqual([]);
+  });
+
+  it("keeps the Payment.status allowlist honest", () => {
+    const stale = Object.keys(PAYMENT_STATUS_ALLOWED).filter(
+      (file) => !PAYMENT_STATUS_READ.test(read(file)),
+    );
+    expect(
+      stale,
+      `These files are exempted from the Payment.status ban but no longer ` +
+        `match it. Delete the entry rather than leaving a standing exemption ` +
+        `nothing needs.`,
+    ).toEqual([]);
+  });
+
+  it("the guest-add door reaches the captured-payment home directly", () => {
+    // It asks the STATUS half, `isCapturedPaymentStatus`, not the whole of
+    // `hasCapturedPayment` — deliberately, and this pin is where that is
+    // recorded. The full predicate also requires `amountCents > 0`, and a
+    // zero-dollar booking (credit, or a 100% promo) carries `amountCents: 0`
+    // with a SUCCEEDED status. Using it here would stop asking that member for
+    // an added guest's price, because the Xero arm cannot cover them when the
+    // integration is off — a NEW under-collection at the very door this issue
+    // exists to stop under-collecting at. Both #3244 reviews found it.
+    const source = read(GUEST_ADD_ROUTE);
+    expect(source).toMatch(
+      /import\s*\{[^}]*\bisCapturedPaymentStatus\b[^}]*\}\s*from\s*"@\/lib\/booking-payment-state"/,
+    );
+    expect(source).toMatch(/isCapturedPaymentStatus\(booking\.payment\?\.status/);
+    expect(
+      source,
+      `The guest-add door must not adopt the amount clause without a ` +
+        `decision: it silently stops collecting from zero-dollar bookings.`,
+    ).not.toMatch(/hasCapturedPayment\(/);
   });
 
   it("every file that reaches applyPaymentAdjustments is one of the doors above", () => {
@@ -334,26 +498,40 @@ describe("no edit door states the rule a second time", () => {
 
 describe("why the guest-add correction changes no behaviour today", () => {
   it("the guest-add door refuses a COMPLETED booking before it settles anything", () => {
-    // #3200, and the reason this fix is safe rather than merely different: the
+    // #3200, and the reason that fix was safe rather than merely different: the
     // guest-add route's own eligibility gate admits no finished stay, so the
     // status the inline copy got wrong never reached it.
+    //
+    // RE-EXPRESSED at #3245, which is outcome (b) the previous version of this
+    // pin anticipated: the gate is no longer a literal in the route, it is a
+    // call to a derivation. The guard is the same guard — a finished stay must
+    // not reach this door's settlement — asserted in the two halves it now has.
     expect(
       read(GUEST_ADD_ROUTE),
-      `The guest-add route's eligibility gate is no longer the literal this ` +
-        `pin expects. TWO different changes land you here, and the fix is ` +
-        `NOT the same:\n` +
-        `  (a) You WIDENED the gate to admit COMPLETED. Expected signal, not ` +
-        `a bug. The settlement now answers COMPLETED as "invoice issued", ` +
-        `which is the correct answer — bill the difference as a supplementary ` +
-        `invoice. Update this test to say so.\n` +
-        `  (b) You converged this list onto the edit-policy module — #3245 ` +
-        `names this exact call site as one of three copies to route through ` +
-        `canModifyBookingStatusForRole. You widened NOTHING. Re-express this ` +
-        `pin against that derivation (assert the route calls it, and that the ` +
-        `derivation itself excludes COMPLETED). DO NOT DELETE IT: it is the ` +
-        `only guard keeping a finished stay out of this door's settlement.`,
+      `The guest-add route no longer derives its eligibility gate from the ` +
+        `edit policy. If you WIDENED the gate to admit COMPLETED, that is a ` +
+        `real change and an expected signal, not a bug: the settlement ` +
+        `answers COMPLETED as "invoice issued", which is the correct answer — ` +
+        `bill the difference as a supplementary invoice. Update this test to ` +
+        `say so. DO NOT DELETE IT: it is the only guard keeping a finished ` +
+        `stay out of this door's settlement.`,
     ).toMatch(
-      /!\["PENDING",\s*"PAYMENT_PENDING",\s*"CONFIRMED",\s*"PAID"\]\.includes\(booking\.status\)/,
+      /activeLifecycleEditRefusal\(\s*booking\.status,\s*actorRole,?\s*\)/,
     );
+
+    // And the derivation itself excludes COMPLETED, which is the half that
+    // moved out of the route. Without this the pin above would pass on a
+    // derivation that had quietly started admitting a finished stay.
+    expect(canModifyBookingInActiveLifecycle("COMPLETED", "ADMIN")).toBe(false);
+    expect(canModifyBookingInActiveLifecycle("COMPLETED", "MEMBER")).toBe(false);
+    // The route passes no `includeFinishedStay`, so the override shape — which
+    // DOES admit it — is not reachable from here. Pinned so that flipping the
+    // default would fail rather than silently open the door.
+    expect(
+      canModifyBookingInActiveLifecycle("COMPLETED", "ADMIN", {
+        includeFinishedStay: true,
+      }),
+    ).toBe(true);
+    expect(read(GUEST_ADD_ROUTE)).not.toMatch(/includeFinishedStay/);
   });
 });

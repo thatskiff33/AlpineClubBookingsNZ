@@ -40,8 +40,8 @@ are permanent: never renumbered, never reused.
   forced single output that neither caller wanted. Routing everything through
   one shared helper is the usual remedy and not a universal one: a helper
   contorted to serve two shapes becomes the thing nobody may change, which is
-  the same failure at one remove. The question to ask is *where is this fact
-  DEFINED*, not *how many functions mention it*.
+  the same failure at one remove. The question to ask is _where is this fact
+  DEFINED_, not _how many functions mention it_.
 - **A per-site exclusion list is itself a source of truth, and it lives with the
   fact it excludes** — one list, in the module that owns the fact, not a copy in
   each guard that consults it. An exclusion list that shrinks is a ratchet;
@@ -82,9 +82,9 @@ are permanent: never renumbered, never reused.
   `guestNightRates[].bookingGuestId` on the modification path. The call was to
   **keep both and cross-reference them**, over two alternatives.
 
-  *Unifying through a key accessor* was rejected as the contortion this rule
+  _Unifying through a key accessor_ was rejected as the contortion this rule
   warns about: a helper reshaped to serve two callers becomes the thing nobody
-  may change. *Normalising the input at the call site* — mapping
+  may change. _Normalising the input at the call site_ — mapping
   `BookingGuest[]` into `{ bookingGuestId }` rows, an idiom already used at
   `waitlist.ts` and `booking-batch-modification-service.ts` — is **not** a
   contortion and was not rejected as one. It was judged not worth the churn: it
@@ -107,6 +107,7 @@ are permanent: never renumbered, never reused.
   proceed autonomously and record decisions for later review. There is no owner
   comment on #3163 to read at source. It stands until the owner overturns it,
   and anyone wanting to unify these later needs no further permission than that.
+
 - **An accepted exception is only accepted while its reason is alive, and
   retiring one needs a measurement rather than an argument.** #3030 split
   deterministic identity across two modules — canonicalisation in a client-safe
@@ -128,6 +129,7 @@ are permanent: never renumbered, never reused.
   (`src/lib/__tests__/stable-digest.test.ts`), against the two separate modules,
   and passed the collapse unchanged. **A convergence onto one home is a change
   to an identity, and an identity is proved rather than reasoned about.**
+
 - **Third worked example, and the one where the copy was written from the wrong
   neighbour.** "Has this booking's main Xero invoice already been raised?" decides
   whether an edit that raises the price is billed as a supplementary invoice or is
@@ -196,7 +198,7 @@ are permanent: never renumbered, never reused.
   container, and the counts are in the census test rather than here.
   `APP_LOCALE` is banned on a **forward-looking** argument instead, and it
   should be read as such: no persisted club locale exists, so `APP_LOCALE` is
-  listed *ahead of* its second source, on the grounds that it is a club-facing
+  listed _ahead of_ its second source, on the grounds that it is a club-facing
   presentation authority of the same kind whose live default population is zero
   — listing it costs nothing now and saves the migration later. Note that
   "nothing competes with it" would be too strong even so: fifteen non-test files
@@ -350,7 +352,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 85 test files, three test
+  `stripComments`, and since #3164 a lint rule enforces it.** 87 test files, three test
   helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
@@ -419,6 +421,7 @@ are permanent: never renumbered, never reused.
   is one census's policy about SQL, not a fact about JavaScript, and a helper
   reshaped to carry another caller's policy is the contortion `INV-SSOT-001`
   names — so the module gained a capability and not a rule.
+
 - **The ratchet's preamble claimed a property two of its five entries did not
   have, and that is the correction worth recording.** It said none produced
   reduced text and all reported original-text offsets. Measured, that was false

@@ -207,7 +207,14 @@ vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("@/lib/payment-transactions", () => ({
+// #3244: PARTIAL, through `importOriginal`. The whole-module form hid
+// `isCapturedTransactionStatus` — a PURE predicate the confirm-modification
+// route asks for its idempotency short-circuit — so every case in that describe
+// block 500'd the moment the route started calling it. Stubbing a pure
+// predicate would also make the idempotency test assert nothing, so the real
+// one is pulled through and only the I/O below stays mocked.
+vi.mock("@/lib/payment-transactions", async (importActual) => ({
+  ...((await importActual()) as typeof import("@/lib/payment-transactions")),
   PartialRefundError: class PartialRefundError extends Error {
     completedRefundCents = 0;
   },
@@ -1169,6 +1176,224 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
         waitForConfirmedAdditionalPayment: true,
         recordPayment: true,
       }
+    );
+  });
+
+  /**
+   * #3244: the same booking, part-refunded. Owner decision, 17 Sep 2026 — this
+   * door now asks the shared `hasCapturedPayment`, exactly as the batch edit,
+   * the date change and the guest removal already do through
+   * `applyPaymentAdjustments`.
+   *
+   * BEFORE this issue the door asked `payment.status === "SUCCEEDED"` inline,
+   * so a partly-refunded booking read as never paid HERE and as paid at the
+   * other three doors. It was reachable — `PARTIALLY_REFUNDED` is a payment
+   * status and the eligibility gate reads only the booking status — and the
+   * consequence was that the club collected NOTHING for the added guest.
+   */
+  const partlyRefundedPayment = {
+    id: "p1",
+    bookingId: "bk1",
+    // Ledger-balanced on purpose: a real partial refund accompanied a price
+    // REDUCTION, so `finalPriceCents` came down with it (10000 gross captured,
+    // 2500 returned, 7500 owed). An unbalanced fixture would have left a
+    // standing residual and made the assertions below prove less than they
+    // claim — the point is that the ask is the full delta, NOT net of the
+    // refund, and that only reads as evidence if the ledger balanced first.
+    amountCents: 10000,
+    source: "STRIPE",
+    status: "PARTIALLY_REFUNDED",
+    stripePaymentIntentId: "pi_original",
+    stripeCustomerId: "cus_123",
+    xeroInvoiceId: "inv_primary",
+    refundedAmountCents: 2500,
+    changeFeeCents: 0,
+    additionalPaymentIntentId: null,
+    additionalAmountCents: 0,
+    additionalPaymentStatus: null,
+  };
+
+  it("collects the difference on a PARTLY-REFUNDED booking (#3244)", async () => {
+    const booking = makeBooking({
+      payment: partlyRefundedPayment,
+      totalPriceCents: 7500,
+      finalPriceCents: 7500,
+    });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_guest_extra",
+      client_secret: "guest_extra_secret",
+    } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    // The whole point of #3244: before it, this was 0 and no intent was minted.
+    //
+    // 12500, not 10000: the booking now owes 7500 after the refund that
+    // accompanied its price reduction, and the new party prices at 20000. The
+    // ask is the full delta from what the booking currently says it costs, and
+    // is deliberately NOT reduced by the 2500 already returned — that refund
+    // went back with a price cut `finalPriceCents` already carries, so netting
+    // it off would under-collect by exactly the refund.
+    expect(data.additionalAmountCents).toBe(12500);
+    expect(data.additionalPaymentClientSecret).toBe("guest_extra_secret");
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 12500,
+        metadata: expect.objectContaining({
+          bookingId: "bk1",
+          type: "modification_additional",
+          reason: "guest_add_price_increase",
+        }),
+      })
+    );
+  });
+
+  /**
+   * #3244: the case the first fixture could not reach, and the one that makes
+   * the changelog's "the figure can differ" sentence true rather than hopeful.
+   *
+   * A part-refunded booking that ALSO carries an unpaid amount from an earlier
+   * change. Before this issue, such a booking took the Xero arm and was billed
+   * the bare price difference on a supplementary invoice. Now it takes the
+   * Stripe arm, and the ask is sized by `sizeAdditionalAsk`, which carries the
+   * outstanding amount into the new request — so the member is asked once for
+   * both, and the intent that replaces the old one supersedes it rather than
+   * stacking beside it.
+   *
+   * That is the correct shape: two live asks against one payment is how a
+   * member ends up paying twice or paying neither. But it IS a different figure
+   * from the one the old arm produced, and a reviewer reading only the
+   * "collects the difference" summary would not expect it.
+   */
+  it("carries an earlier unpaid amount into the new card request (#3244)", async () => {
+    const booking = makeBooking({
+      totalPriceCents: 7500,
+      finalPriceCents: 7500,
+      payment: {
+        ...partlyRefundedPayment,
+        additionalPaymentIntentId: "pi_earlier_extra",
+        additionalAmountCents: 4000,
+        additionalPaymentStatus: "PENDING",
+      },
+    });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_guest_extra",
+      client_secret: "guest_extra_secret",
+    } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    // 12500 for this change, plus the 4000 still unpaid from the last one.
+    expect(data.additionalAmountCents).toBe(16500);
+    // And the earlier intent is retired rather than left live beside this one.
+    expect(mockQueueSupersededAdditionalIntentCancellations).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      paymentId: "p1",
+      newPaymentIntentId: "pi_guest_extra",
+    });
+  });
+
+  /**
+   * #3244 REGRESSION GUARD, and the reason this door asks the STATUS half of
+   * the captured question rather than the whole of `hasCapturedPayment`.
+   *
+   * A zero-dollar booking — a stay fully covered by credit or a 100% promo —
+   * carries `{ amountCents: 0, status: SUCCEEDED }` with a null
+   * `stripePaymentIntentId` and `source` at its STRIPE default. The full
+   * predicate requires `amountCents > 0`, so using it here would have answered
+   * "not settled" and dropped this member into the Xero arm — which collects
+   * NOTHING at a club with the integration off, or in the window before the
+   * outbox has minted the primary invoice. That is a new silent under-
+   * collection at the very door this issue exists to stop under-collecting at.
+   *
+   * The money is collectable and always was: the mint creates a FRESH intent
+   * and only reuses the Stripe customer, so the null intent id is no obstacle.
+   * Two adversarial reviews caught this; the first version of this test
+   * asserted the loss and called it a fix.
+   */
+  it("still asks a ZERO-DOLLAR booking for the added guest's price (#3244)", async () => {
+    const booking = makeBooking({
+      totalPriceCents: 0,
+      finalPriceCents: 0,
+      payment: {
+        ...partlyRefundedPayment,
+        status: "SUCCEEDED",
+        amountCents: 0,
+        refundedAmountCents: 0,
+        stripePaymentIntentId: null,
+        // No primary invoice: the shape where the Xero arm cannot cover the
+        // member, so a card ask is the only way the club is paid.
+        xeroInvoiceId: null,
+      },
+    });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_guest_extra",
+      client_secret: "guest_extra_secret",
+    } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    // The club is still paid. Asserting the FIGURE, not merely that some
+    // intent was minted, is what tells "billed by card" from "billed by
+    // nobody" — the distinction the first version of this test could not make.
+    expect(data.additionalAmountCents).toBe(20000);
+    expect(data.additionalPaymentClientSecret).toBe("guest_extra_secret");
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 20000 }),
     );
   });
 });
