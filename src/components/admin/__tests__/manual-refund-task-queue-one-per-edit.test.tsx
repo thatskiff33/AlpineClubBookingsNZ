@@ -301,8 +301,16 @@ describe("the settle dialog asks each strand separately (#3498 D1)", () => {
     expect(evidence).toHaveTextContent(/Guest 1 of 3/);
     expect(evidence).toHaveTextContent(/Guest 2 of 3/);
     expect(evidence).toHaveTextContent(/Guest 3 of 3/);
-    // And no fourth denominator anywhere on the card.
-    expect(evidence).not.toHaveTextContent(/of 2/);
+    /*
+      And NO SECOND DENOMINATOR: the repairable subset here is two strands, so
+      the old derivation would have printed "Guest 1 of 2" beside boxes whose
+      evidence block called that guest "Guest 1 of 3". Matched on the ordinal
+      shape rather than on the bare digits, because the supporting-detail line
+      legitimately says "the stored night rows of 2 other guests".
+    */
+    for (const rendered of [...fieldsets, evidence]) {
+      expect(rendered).not.toHaveTextContent(/Guest ' + chr(92) + 'd+ of 2/);
+    }
   });
 
   it("MARKS the strand whose nights the change actually moved", async () => {
