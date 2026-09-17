@@ -18,6 +18,7 @@ import {
   type FinanceDashboardTrend,
   type FinanceDashboardViewModel,
 } from "@/lib/finance-dashboard-page/model";
+import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-dashboard-page/money-reconciliation";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 
 // Compact day+month export label ("14 Jun"), deliberately year-less: it labels
@@ -92,6 +93,15 @@ export async function buildBookingsDashboard(
       `Net collected cash may understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents)}: ${formatNumber(ledgerGapBookings)} booking${ledgerGapBookings === 1 ? "" : "s"} in this range record an extra payment as collected without a matching payment record behind it. Ask a developer to re-check those payments before reconciling this figure.`
     );
   }
+  const moneyReconciliationPanel =
+    appendBookingMoneyReconciliationDashboardState({
+      warnings,
+      primary: metrics.moneyReconciliation,
+      comparison: comparison?.moneyReconciliation ?? null,
+      affectedMetrics:
+        "Booked revenue, forward revenue, and comparison figures",
+      formatNumber,
+    });
 
   const realizedTotals = realized?.totals;
   const compareTotals = compareRealized?.totals;
@@ -217,7 +227,10 @@ export async function buildBookingsDashboard(
     });
   }
 
-  const statusPanels = buildBookingStatusPanels(metrics);
+  const statusPanels = [
+    moneyReconciliationPanel,
+    ...buildBookingStatusPanels(metrics),
+  ];
   return {
     cards,
     trends,

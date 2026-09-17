@@ -191,6 +191,19 @@ function bookingMetrics() {
   return {
     generatedAt: "2026-06-28T00:00:00.000Z",
     bookingCount: 2,
+    moneyReconciliation: {
+      totalBookings: 2,
+      byState: { RECONCILED: 2, UNRECONCILED: 0 },
+      byReason: {
+        NO_SURVIVING_STRANDS: 0,
+        STRAND_EVIDENCE_UNREADABLE: 0,
+        HEADLINE_TOTAL_MISMATCH: 0,
+        PROMO_BUILD_UP_NOT_KNOWN: 0,
+        PROMO_BUILD_UP_MISMATCH: 0,
+        DISCOUNT_COMPONENT_MISMATCH: 0,
+        FINAL_PRICE_RELATION_MISMATCH: 0,
+      },
+    },
     paymentSummary: {
       bookingCount: 2,
       bookingsWithPayment: 2,
@@ -307,6 +320,19 @@ function bookingMetrics() {
           },
         },
       ],
+    },
+  };
+}
+
+function unreconciledMoneySummary(
+  byReason: Partial<ReturnType<typeof bookingMetrics>["moneyReconciliation"]["byReason"]>,
+) {
+  return {
+    totalBookings: 3,
+    byState: { RECONCILED: 1, UNRECONCILED: 2 },
+    byReason: {
+      ...bookingMetrics().moneyReconciliation.byReason,
+      ...byReason,
     },
   };
 }
@@ -785,6 +811,120 @@ describe("finance dashboard page model", () => {
       model.cards.find((entry) => entry.title === "Net collected cash")
         ?.footnote,
     ).toBe("Cash is local payment-derived and separate from Xero revenue.");
+  });
+
+  it("warns and exports primary reconciliation reason counts for pricing sensitivity", async () => {
+    const metrics = bookingMetrics();
+    metrics.moneyReconciliation = unreconciledMoneySummary({
+      HEADLINE_TOTAL_MISMATCH: 2,
+      DISCOUNT_COMPONENT_MISMATCH: 1,
+    });
+    mockGetFinanceBookingMetrics.mockResolvedValue(metrics);
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "pricing-sensitivity" },
+    });
+
+    expect(
+      model.warnings.some((warning) =>
+        warning.includes("Primary booking money reconciliation needs review"),
+      ),
+    ).toBe(true);
+    const panel = model.statusPanels.find(
+      (entry) => entry.title === "Booking money reconciliation",
+    );
+    expect(panel?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Primary unreconciled", value: "2" }),
+      ]),
+    );
+    const exportSection = model.exportSections.find(
+      (entry) => entry.title === "Booking money reconciliation",
+    );
+    expect(exportSection?.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Label: "Primary unreconciled",
+          Detail: expect.stringContaining("HEADLINE_TOTAL_MISMATCH: 2"),
+        }),
+      ]),
+    );
+  });
+
+  it("warns when only the bookings comparison cohort is unreconciled", async () => {
+    const primary = bookingMetrics();
+    const comparison = bookingMetrics();
+    comparison.moneyReconciliation = unreconciledMoneySummary({
+      PROMO_BUILD_UP_MISMATCH: 2,
+    });
+    mockGetFinanceBookingMetrics.mockResolvedValueOnce(primary).mockResolvedValueOnce(comparison);
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "bookings", compare: "previous-period" },
+    });
+
+    expect(
+      model.warnings.some((warning) =>
+        warning.includes("Comparison booking money reconciliation needs review"),
+      ),
+    ).toBe(true);
+    expect(
+      model.warnings.some((warning) =>
+        warning.includes("Primary booking money reconciliation needs review"),
+      ),
+    ).toBe(false);
+    expect(model.exportSections.find((entry) => entry.title === "Forward status")?.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Panel: "Booking money reconciliation",
+          Label: "Comparison unreconciled",
+          Detail: expect.stringContaining("PROMO_BUILD_UP_MISMATCH: 2"),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps primary and comparison unreconciled reason counts separate", async () => {
+    const primary = bookingMetrics();
+    primary.moneyReconciliation = unreconciledMoneySummary({
+      HEADLINE_TOTAL_MISMATCH: 2,
+      FINAL_PRICE_RELATION_MISMATCH: 1,
+    });
+    const comparison = bookingMetrics();
+    comparison.moneyReconciliation = unreconciledMoneySummary({
+      STRAND_EVIDENCE_UNREADABLE: 2,
+      DISCOUNT_COMPONENT_MISMATCH: 1,
+    });
+    mockGetFinanceBookingMetrics.mockResolvedValueOnce(primary).mockResolvedValueOnce(comparison);
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "bookings", compare: "previous-period" },
+    });
+
+    expect(model.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("HEADLINE_TOTAL_MISMATCH: 2"),
+        expect.stringContaining("STRAND_EVIDENCE_UNREADABLE: 2"),
+      ]),
+    );
+    const panel = model.statusPanels.find(
+      (entry) => entry.title === "Booking money reconciliation",
+    );
+    expect(panel?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Primary unreconciled",
+          detail: expect.stringContaining("FINAL_PRICE_RELATION_MISMATCH: 1"),
+        }),
+        expect.objectContaining({
+          label: "Comparison unreconciled",
+          detail: expect.stringContaining("DISCOUNT_COMPONENT_MISMATCH: 1"),
+        }),
+      ]),
+    );
   });
 
   it("keeps the outstanding-payments panel off the dashboard when nothing is owing", async () => {

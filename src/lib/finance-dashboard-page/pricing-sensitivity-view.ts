@@ -17,6 +17,7 @@ import {
   cardRows,
   type FinanceDashboardKpiCard,
 } from "@/lib/finance-dashboard-page/model";
+import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-dashboard-page/money-reconciliation";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 
 export async function buildPricingSensitivityDashboard(
@@ -63,6 +64,16 @@ export async function buildPricingSensitivityDashboard(
         realizedRateCents === null ? 0 : impliedGuestNights * realizedRateCents,
     };
   });
+  const warnings = [...costs.warnings];
+  const moneyReconciliationPanel =
+    appendBookingMoneyReconciliationDashboardState({
+      warnings,
+      primary: metrics.moneyReconciliation,
+      comparison: null,
+      affectedMetrics:
+        "Realized rate, booked revenue less costs, and occupancy scenarios",
+      formatNumber,
+    });
   // Per-night rates keep cents: they are unit prices where cents are signal.
   const cards: FinanceDashboardKpiCard[] = [
     {
@@ -115,6 +126,7 @@ export async function buildPricingSensitivityDashboard(
     ],
     mix: null,
     statusPanels: [
+      moneyReconciliationPanel,
       {
         title: "Scenario assumptions",
         description: "Break-even rates are based on mapped selected-period costs.",
@@ -140,7 +152,15 @@ export async function buildPricingSensitivityDashboard(
     exportSections: [
       { title: "KPI cards", rows: cardRows(cards) },
       { title: "Scenarios", rows: scenarioData },
+      {
+        title: "Booking money reconciliation",
+        rows: moneyReconciliationPanel.items.map((item) => ({
+          Label: item.label,
+          Value: item.value,
+          Detail: item.detail ?? "",
+        })),
+      },
     ],
-    warnings: costs.warnings,
+    warnings,
   };
 }
