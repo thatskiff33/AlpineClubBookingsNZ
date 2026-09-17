@@ -343,6 +343,35 @@ describe("the settle dialog asks each strand separately (#3498 D1)", () => {
     );
   });
 
+  it("survives a cached bundle whose route sent the OLD shape", async () => {
+    /*
+      #3498 fix round (S7). This field changed shape in this release, and a
+      browser holding a cached bundle through a deploy receives the previous
+      route’s answer - which spelled it as an object. Mapping over one throws
+      inside render and takes the WHOLE finance queue down: a list of money the
+      club owes members, lost to a field that is merely the wrong shape. An
+      unrecognised shape offers no boxes, which is exactly how this screen
+      behaved before the boxes existed.
+    */
+    await renderQueue({
+      tasks: [
+        {
+          ...TWO_REPAIRABLE_STRANDS,
+          unpricedNights: { summary: {}, absorbsSettlement: true },
+        },
+      ],
+      viewerCanViewBookings: true,
+    });
+
+    // The row is still there, with its money work on it.
+    expect(screen.getByText(/Grace Hopper/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /No adjustment/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).queryAllByTestId("unpriced-night-price-fields"),
+    ).toHaveLength(0);
+  });
+
   it("posts one array per strand, in the item's own order", async () => {
     const fetchMock = await openNoAdjustment(TWO_REPAIRABLE_STRANDS);
     const fieldsets = screen.getAllByTestId("unpriced-night-price-fields");
