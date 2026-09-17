@@ -604,7 +604,7 @@ function stripSqlComments(code: string): string {
       index = code.indexOf("\n", index + 2);
       if (index < 0) break;
     } else if (code[index] === "/" && code[index + 1] === "*") {
-      const end = code.indexOf("*/", index + 2);
+      const end = code.indexOf(`${"*"}${"/"}`, index + 2);
       index = end < 0 ? code.length : end + 2;
     } else result += code[index++]!;
   }
