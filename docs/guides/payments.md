@@ -221,6 +221,12 @@ supporting detail. None of those figures is lost — they are on the one row ins
 of spread across several — and there is one adjustment to record, not one per
 guest.
 
+One exception: a change that moves **two or more** guests' nights still gets a
+row each, because a row carries one amount and two moved stays need two. Every
+row says in words whether the change moved that guest's nights or merely rewrote
+what was stored for them, so the row carrying the money is never the one you have
+to spot by squinting at a date list.
+
 The row appears in the same card, with **Awaiting pricing** where an amount would
 normally be, and carries the evidence recorded at the moment the change was made:
 

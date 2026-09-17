@@ -1811,7 +1811,10 @@ OPEN -> COMPLETED   (#3032: and the confirmed amount now MOVES, down whichever o
                      review tasks against one modification row - a consent
                      removal exempted from the pending-review fence raises its own
                      beside an open one. (Until #3498 one EDIT could raise
-                     several, one per guest strand; it now raises exactly one.) A Xero modification
+                     several, one per guest strand; since then it raises one
+                     per EDIT, except where the edit moved two or more guests'
+                     nights - then one per recorded strand again, because a row
+                     holds one amount. `INV-PAY-100`.) A Xero modification
                      credit note for the same amount is queued on the same anchor
                      after the commit, through `queueXeroBookingEditSettlement`.)
 OPEN -> DISMISSED   (#3030: for an `EDIT_FINANCIAL_REVIEW` task this means

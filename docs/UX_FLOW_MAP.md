@@ -581,6 +581,22 @@ the old rows and the new ones say the same thing about the same change. Nothing
 about WHICH changes park is different either — one guest whose stored prices
 cannot be read still parks the whole change, exactly as before.
 
+**With ONE exception, and it is where the money is most tangled (owner decision,
+17 September 2026).** A row carries one amount. Where a change moves the nights
+of **two or more** guests, two of them need two amounts — and putting both on one
+row would ask the second guest's unpriced nights to come to their stored total
+plus nothing, which only $0.00 satisfies, or to a negative figure no set of
+prices can reach, after which the review could never be closed at all. So a
+change that moves two or more guests' nights keeps a row per guest, each with its
+own amount. Everything else — a removal, a date change, a guest added — moves at
+most one guest's nights and gets the single row above.
+
+Because those rows can look alike again, **every row now says in words whether
+the change actually moved that guest's nights** or merely rewrote what was stored
+for them, in the evidence block and in the foreground colour on the row that
+carries the money. That is the tell that was missing when eleven near-identical
+rows sat on this card together.
+
 The rows already on the queue when this shipped are untouched and are worked by
 hand; they render exactly as they always did.
 
