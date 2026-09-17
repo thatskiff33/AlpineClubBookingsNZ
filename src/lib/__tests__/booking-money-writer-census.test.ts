@@ -87,14 +87,75 @@ const DISCOVERED_WRITERS = discoveredBookingMoneyWriterSites();
 const DISCOVERED_ESCAPES = discoveredBookingMoneyWriterEscapes();
 const DISCOVERED_EQUALITY_ESCAPES = discoveredBookingMoneyWriterEqualityEscapes();
 
-const RECONCILIATION_WRITER_KEYS = [
-  "src/app/api/bookings/[id]/guests/route.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
-  "src/lib/booking-batch-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
-  "src/lib/booking-date-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
-  "src/lib/booking-guest-removal-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
-  "src/lib/booking-review-price-rebase.ts|booking|updateMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
-  "src/lib/waitlist.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents",
-] as const;
+type WriterOutcome = "NO_RECORD" | "RECONCILED" | "ALL_HEADLINES" | "HEADLINE_TOTAL_MISMATCH" | "STRAND_EVIDENCE_UNREADABLE" | "PROMO_BUILD_UP_MISMATCH";
+
+// Each manifest entry has a reviewed post-write projection.  A deletion is
+// `NO_RECORD`; a surviving row must name the typed result its delegate/fields
+// can produce. New inventory entries are therefore unmodelled until reviewed.
+const WRITER_OUTCOMES: Record<(typeof REVIEWED_WRITERS)[number], WriterOutcome> = {
+  "e2e/setup/seed-second-lodge.ts|booking|create,deleteMany,update|finalPriceCents,totalPriceCents": "RECONCILED",
+  "e2e/setup/seed-second-lodge.ts|bookingGuest|create|priceCents": "HEADLINE_TOTAL_MISMATCH",
+  "e2e/setup/seed-second-lodge.ts|bookingGuestNight|create|priceCents,priceSource": "STRAND_EVIDENCE_UNREADABLE",
+  "prisma/demo-seed.ts|booking|create,deleteMany|finalPriceCents,promoAdjustmentCents,totalPriceCents": "RECONCILED",
+  "prisma/demo-seed.ts|bookingGuest|create,deleteMany|priceCents": "HEADLINE_TOTAL_MISMATCH",
+  "prisma/demo-seed.ts|bookingGuestNight|create,deleteMany|priceCents,priceSource": "STRAND_EVIDENCE_UNREADABLE",
+  "prisma/demo-seed.ts|promoRedemption|create,deleteMany|discountCents": "PROMO_BUILD_UP_MISMATCH",
+  "prisma/demo-seed.ts|promoRedemptionAllocation|deleteMany|": "PROMO_BUILD_UP_MISMATCH",
+  "prisma/migrations/20260928020000_booking_owner_optional_member/migration.sql|promoRedemptionAllocation|rawSql|discountCents": "PROMO_BUILD_UP_MISMATCH",
+  "prisma/migrations/20260928030000_backfill_school_bookings_to_organisations/migration.sql|booking|rawSql|discountCents": "RECONCILED",
+  "prisma/migrations/20260928030000_backfill_school_bookings_to_organisations/migration.sql|promoRedemption|rawSql|discountCents,priceAdjustmentCents": "PROMO_BUILD_UP_MISMATCH",
+  "prisma/migrations/20260928030000_backfill_school_bookings_to_organisations/migration.sql|promoRedemptionAllocation|rawSql|discountCents,priceAdjustmentCents": "PROMO_BUILD_UP_MISMATCH",
+  "src/app/api/admin/bookings/[id]/capacity-hold/route.ts|booking|opaquePayload|": "RECONCILED",
+  "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts|booking|opaquePayload|": "RECONCILED",
+  "src/app/api/admin/bookings/[id]/force-confirm/route.ts|booking|opaquePayload|": "RECONCILED",
+  "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts|booking|opaquePayload|": "RECONCILED",
+  "src/app/api/admin/bookings/[id]/review/route.ts|booking|opaquePayload|": "RECONCILED",
+  "src/app/api/bookings/[id]/guests/route.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents": "ALL_HEADLINES",
+  "src/app/api/bookings/[id]/guests/route.ts|bookingGuest|create|priceCents": "HEADLINE_TOTAL_MISMATCH",
+  "src/app/api/bookings/[id]/guests/route.ts|bookingGuestNight|create|": "STRAND_EVIDENCE_UNREADABLE",
+  "src/app/api/lodge/guests/[date]/arrive/route.ts|bookingGuest|opaquePayload|": "HEADLINE_TOTAL_MISMATCH",
+  "src/instrumentation.node.ts|booking|deleteMany|": "NO_RECORD",
+  "src/lib/booking-batch-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents": "ALL_HEADLINES",
+  "src/lib/booking-cancel.ts|booking|opaquePayload|": "RECONCILED",
+  "src/lib/booking-create.ts|booking|create,opaquePayload|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents": "ALL_HEADLINES",
+  "src/lib/booking-create.ts|bookingGuest|create|": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/booking-create.ts|bookingGuestNight|opaquePayload|": "STRAND_EVIDENCE_UNREADABLE",
+  "src/lib/booking-date-modification-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents": "ALL_HEADLINES",
+  "src/lib/booking-date-modification-service.ts|bookingGuest|update|priceCents": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/booking-date-modification-service.ts|bookingGuestNight|deleteMany,opaquePayload|": "STRAND_EVIDENCE_UNREADABLE",
+  "src/lib/booking-delete.ts|booking|delete|": "NO_RECORD",
+  "src/lib/booking-guest-removal-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents": "ALL_HEADLINES",
+  "src/lib/booking-guest-removal-service.ts|bookingGuest|delete,update|priceCents": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/booking-modify-plan.ts|bookingGuest|create,delete,update|priceCents": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/booking-modify-plan.ts|bookingGuestNight|deleteMany,opaquePayload|": "STRAND_EVIDENCE_UNREADABLE",
+  "src/lib/booking-no-emails-service.ts|booking|opaquePayload|": "RECONCILED",
+  "src/lib/booking-request-quotes.ts|booking|create|finalPriceCents,totalPriceCents": "RECONCILED",
+  "src/lib/booking-request-quotes.ts|bookingGuest|create|": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/booking-request-quotes.ts|bookingGuestNight|opaquePayload|": "STRAND_EVIDENCE_UNREADABLE",
+  "src/lib/booking-request.ts|booking|create,updateMany|finalPriceCents,totalPriceCents": "RECONCILED",
+  "src/lib/booking-request.ts|bookingGuest|create,deleteMany,update|priceCents": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/booking-request.ts|bookingGuestNight|deleteMany,opaquePayload|": "STRAND_EVIDENCE_UNREADABLE",
+  "src/lib/booking-review-price-rebase.ts|booking|updateMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents": "ALL_HEADLINES",
+  "src/lib/cron-group-settlement-reaper.ts|booking|opaquePayload|": "RECONCILED",
+  "src/lib/group-booking.ts|booking|create|finalPriceCents,totalPriceCents": "RECONCILED",
+  "src/lib/group-booking.ts|bookingGuest|create|": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/group-booking.ts|bookingGuestNight|opaquePayload|": "STRAND_EVIDENCE_UNREADABLE",
+  "src/lib/group-cancel.ts|booking|opaquePayload|": "RECONCILED",
+  "src/lib/internet-banking-payment-cron.ts|booking|opaquePayload|": "RECONCILED",
+  "src/lib/member-guest-consent-service.ts|bookingGuest|opaquePayload|": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|createMany,deleteMany,opaquePayload|amountCents": "PROMO_BUILD_UP_MISMATCH",
+  "src/lib/payment-reconciliation.ts|booking|opaquePayload|": "RECONCILED",
+  "src/lib/promo.ts|promoRedemption|create,delete,update|discountCents,priceAdjustmentCents": "PROMO_BUILD_UP_MISMATCH",
+  "src/lib/promo.ts|promoRedemptionAllocation|deleteMany,opaquePayload|": "PROMO_BUILD_UP_MISMATCH",
+  "src/lib/school-booking-request.ts|booking|create,update|finalPriceCents,totalPriceCents": "RECONCILED",
+  "src/lib/school-booking-request.ts|bookingGuest|create|": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/school-booking-request.ts|bookingGuestNight|opaquePayload|": "STRAND_EVIDENCE_UNREADABLE",
+  "src/lib/stored-night-price-repair-store.ts|bookingGuest|updateMany|priceCents": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/stored-night-price-repair-store.ts|bookingGuestNight|create,updateMany|priceCents,priceSource": "STRAND_EVIDENCE_UNREADABLE",
+  "src/lib/waitlist.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents": "ALL_HEADLINES",
+  "src/lib/waitlist.ts|bookingGuest|update|priceCents": "HEADLINE_TOTAL_MISMATCH",
+  "src/lib/waitlist.ts|bookingGuestNight|deleteMany,opaquePayload|": "STRAND_EVIDENCE_UNREADABLE",
+};
 
 const RECONCILED_FIXTURE = {
   checkIn: new Date("2026-08-01T00:00:00.000Z"),
@@ -313,19 +374,52 @@ describe("INV-MONEY-031 booking money writer census", () => {
     ).toEqual([]);
   });
 
-  it("binds every complete headline writer to real-shaped typed reconciliation mutations", () => {
-    expect(RECONCILIATION_WRITER_KEYS.every((key) => REVIEWED_WRITERS.includes(key))).toBe(true);
-    const mutations = [
+  it("models every discovered writer's reviewed post-write reconciliation outcome", () => {
+    const discoveredKeys = DISCOVERED_WRITERS.map(writerKey).sort();
+    expect(Object.keys(WRITER_OUTCOMES).sort()).toEqual(discoveredKeys);
+    const headlineMutations = [
       ["HEADLINE_TOTAL_MISMATCH", { totalPriceCents: 9_999 }],
       ["PROMO_BUILD_UP_MISMATCH", { promoAdjustmentCents: -1_499, finalPriceCents: 8_501 }],
       ["DISCOUNT_COMPONENT_MISMATCH", { discountCents: 1_499 }],
       ["FINAL_PRICE_RELATION_MISMATCH", { finalPriceCents: 8_501 }],
     ] as const;
-    for (const [reason, headlineMutation] of mutations) {
-      expect(
-        reconcileBookingMoney({ ...RECONCILED_FIXTURE, ...headlineMutation }),
-        `${reason}: every reviewed complete-headline writer must leave a mismatch typed and visible, never silently trusted.`,
-      ).toMatchObject({ state: "UNRECONCILED", reasons: expect.arrayContaining([reason]) });
+    for (const [key, outcome] of Object.entries(WRITER_OUTCOMES)) {
+      if (outcome === "NO_RECORD") {
+        expect({ kind: "NO_RECORD" }, `${key}: deletion has no booking projection to classify.`).toEqual({ kind: "NO_RECORD" });
+        continue;
+      }
+      if (outcome === "ALL_HEADLINES") {
+        for (const [reason, mutation] of headlineMutations) {
+          expect(reconcileBookingMoney({ ...RECONCILED_FIXTURE, ...mutation }), `${key}: ${reason}`).toMatchObject({
+            state: "UNRECONCILED",
+            reasons: expect.arrayContaining([reason]),
+          });
+        }
+        continue;
+      }
+      const projection = outcome === "HEADLINE_TOTAL_MISMATCH"
+        ? {
+            ...RECONCILED_FIXTURE,
+            guests: [{ ...RECONCILED_FIXTURE.guests[0]!, priceCents: 9_999, nights: [{ ...RECONCILED_FIXTURE.guests[0]!.nights[0]!, priceCents: 9_999 }] }],
+          }
+        : outcome === "STRAND_EVIDENCE_UNREADABLE"
+          ? {
+              ...RECONCILED_FIXTURE,
+              guests: [{ ...RECONCILED_FIXTURE.guests[0]!, nights: [{ ...RECONCILED_FIXTURE.guests[0]!.nights[0]!, priceCents: null, priceSource: "UNKNOWN" }] }],
+            }
+          : outcome === "PROMO_BUILD_UP_MISMATCH"
+            ? { ...RECONCILED_FIXTURE, promoAdjustmentCents: -1_499, discountCents: 1_499, finalPriceCents: 8_501 }
+            : RECONCILED_FIXTURE;
+      const result = reconcileBookingMoney(projection);
+      if (outcome === "RECONCILED") {
+        expect(result, key).toEqual({ state: "RECONCILED", reasons: [] });
+      } else {
+        const reason = outcome;
+        expect(result, key).toMatchObject({
+          state: "UNRECONCILED",
+          reasons: expect.arrayContaining([reason]),
+        });
+      }
     }
   });
 
