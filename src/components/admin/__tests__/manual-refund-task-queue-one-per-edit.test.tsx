@@ -274,6 +274,67 @@ describe("the settle dialog asks each strand separately (#3498 D1)", () => {
     expect((second as HTMLInputElement).value).toBe("");
   });
 
+  it("numbers the boxes and the evidence blocks from ONE ordinal", async () => {
+    /*
+      #3498 fix round (S2). There were two ordinals on this card, over two
+      different denominators: the evidence blocks counted over every strand the
+      item names, the price fieldsets over the REPAIRABLE subset. On the
+      canonical parked removal the lead is the departing guest, who has no
+      blanks at all, so every box column was off by one against the block
+      describing it and the two totals disagreed outright - on a screen whose
+      payload carries no guest id, where the ordinal IS the guest's identity.
+
+      This item names three strands and offers boxes for the first two, so the
+      two lists have to agree: "Guest 1 of 3" and "Guest 2 of 3" in both.
+    */
+    await openNoAdjustment(TWO_REPAIRABLE_STRANDS);
+
+    const fieldsets = screen.getAllByTestId("unpriced-night-price-fields");
+    expect(fieldsets[0]!).toHaveTextContent(/Guest 1 of 3/);
+    expect(fieldsets[1]!).toHaveTextContent(/Guest 2 of 3/);
+
+    const evidence = screen.getAllByTestId(
+      "manual-refund-task-review-evidence",
+    )[0]!;
+    // The LEAD gets a heading too. It had none, so "Guest 1" was never printed
+    // and its neighbours were numbered from two.
+    expect(evidence).toHaveTextContent(/Guest 1 of 3/);
+    expect(evidence).toHaveTextContent(/Guest 2 of 3/);
+    expect(evidence).toHaveTextContent(/Guest 3 of 3/);
+    // And no fourth denominator anywhere on the card.
+    expect(evidence).not.toHaveTextContent(/of 2/);
+  });
+
+  it("MARKS the strand whose nights the change actually moved", async () => {
+    /*
+      The companion the owner's 17 September decision requires. The fan-out comes
+      back for a change that moves two or more guests' nights, so an officer can
+      again face several rows for one change - and the near-miss this issue
+      exists to remove was that the only tell between seven rows was a line
+      reading "Nights given back:" with dates instead of "none". A reader
+      scanning for the money row was reading a punctuation difference.
+
+      So it is said in words, on its own line, on every strand - including a
+      single-strand item, which IS the fan-out shape and has no neighbouring
+      block to compare against.
+    */
+    await renderQueue({
+      tasks: [ONE_ITEM_PER_EDIT],
+      viewerCanViewBookings: true,
+    });
+
+    const moved = screen.getAllByTestId("manual-refund-task-strand-moved");
+    const unmoved = screen.getAllByTestId("manual-refund-task-strand-unmoved");
+    expect(moved).toHaveLength(1);
+    expect(unmoved).toHaveLength(2);
+    expect(moved[0]!).toHaveTextContent(
+      /moved this guest's nights, so money may be owed/i,
+    );
+    expect(unmoved[0]!).toHaveTextContent(
+      /did not move this guest's nights/i,
+    );
+  });
+
   it("posts one array per strand, in the item's own order", async () => {
     const fetchMock = await openNoAdjustment(TWO_REPAIRABLE_STRANDS);
     const fieldsets = screen.getAllByTestId("unpriced-night-price-fields");
@@ -413,6 +474,48 @@ describe("putting a dismissal back on the queue (#3498 D2)", () => {
     expect(
       within(card).getByRole("button", { name: /Put back on the queue/i }),
     ).toBeEnabled();
+  });
+
+  it("says the window and the cap it is showing, as a fact about the LIST", async () => {
+    /*
+      #3498 fix round (S5). The query is bounded at thirty days and a hundred
+      rows and the card said neither, so an officer who dismissed something five
+      weeks ago found nothing here and was told nothing about why - while the
+      automatic-refund card beside it publishes its own bound.
+
+      It has to read as a fact about what is LISTED, never about what may be
+      corrected: `reopenManualRefundTask` refuses on status and on who closed the
+      row, and never on age.
+    */
+    await renderQueue({
+      tasks: [],
+      dismissed: [DISMISSED_ROW],
+      viewerCanViewBookings: true,
+    });
+
+    const card = screen.getByTestId("dismissed-manual-refund-tasks");
+    expect(card).toHaveTextContent(/last 30 days/i);
+    expect(card).toHaveTextContent(/up to 100/i);
+    expect(card).toHaveTextContent(/An older one is not off limits/i);
+  });
+
+  it("says an unknown amount rather than leaving the row looking empty", async () => {
+    /*
+      #3498 fix round (S6). `amountCents` is null on EVERY parked-edit closure -
+      a parked edit's amount is precisely what nobody could work out - and the
+      row rendered the member's name and nothing else, which reads as a row with
+      nothing on it. Never a fabricated $0.00 either: zero is a real financial
+      statement this system has not made.
+    */
+    await renderQueue({
+      tasks: [],
+      dismissed: [{ ...DISMISSED_ROW, amountCents: null }],
+      viewerCanViewBookings: true,
+    });
+
+    const row = screen.getByTestId("dismissed-manual-refund-task");
+    expect(row).toHaveTextContent(/no amount was recorded/i);
+    expect(row).not.toHaveTextContent(/\$0\.00/);
   });
 
   it("offers nothing for a row the officer settled, because that money has moved", async () => {
