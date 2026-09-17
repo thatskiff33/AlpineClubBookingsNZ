@@ -1101,6 +1101,32 @@ one, check the other.
   for. **A parked edit never destroys a number
   the system could have known.**
 
+## INV-PAY-100
+
+- **One work item holds one amount, so the GRAIN follows how many strands' nights
+  the edit moved** (#3498; owner decision 17 September 2026). At most one mover,
+  one item for the whole edit; two or more, one item per recorded strand, each
+  single-strand and carrying no `otherStrands`.
+  `editFinancialReviewStrandMovesNights` is the one definition of "moved", and
+  the same one that picks the lead. No evidence is lost either way: the set of
+  items records every strand exactly once, and two items of one edit hash to two
+  keys because the lead material differs.
+- **The settled amount moves AT MOST ONE strand's stored worth: the strand the
+  item LEADS with, and only where the edit moved that strand's nights.**
+  `RepairableStrand.absorbsSettlement` is that answer, derived once on the server
+  and applied by the settle screen and the completion alike. Every other strand
+  must come to its own stored total exactly. **FALSE FOR EVERY STRAND is an
+  ordinary answer**: on a parked removal the departing guest leads and offers no
+  blanks, so the refund moves nothing, and treating "the first strand with boxes"
+  as the answer would move a stranger's stay by somebody else's money. A pure
+  guest add moves no existing strand, so its lead absorbs nothing either.
+  Spreading an amount across strands is an allocation nobody stated, which
+  `INV-MOD-028` forbids.
+- Why the fan-out rather than an allocation screen, and what it costs, is argued
+  on #3498; `parkedEditWorkItems` states the mechanism. Pinned by
+  `stored-night-price-repair-multi-strand.test.ts` and
+  `edit-financial-review-strand-census.test.ts`.
+
 ## INV-PAY-060
 
 - **A SETTLED occurrence does not suppress the next one of the same identity**

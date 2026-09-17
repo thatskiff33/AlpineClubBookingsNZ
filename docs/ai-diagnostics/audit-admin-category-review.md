@@ -643,6 +643,12 @@ booking's unpriced nights sold for, which rewrites what a stay is stored as
 having been worth and is therefore a money-affecting act in its own right. It is
 a SECOND entry beside the completion's rather than metadata on it, because it can
 also happen on a DISMISSAL, whose entry says in as many words that nothing moved.
+#3498 changed that entry's METADATA shape, and not additively: one closure can
+now repair several strands, so the four per-strand figures moved from flat keys
+into a `repairedStrands` array with one object each, still `null` rather than
+empty where nothing was recorded. Rows written before it keep the flat keys and
+nothing rewrites them - the one home for that statement is `INV-MOD-036` in
+`docs/invariants/booking-modifications.md`.
 That is the figure above, and it was taken from `npm run audit:census` on the
 merged tree rather than by adding one branch's delta to the other's total. The
 category values sum to 463 rather than 464 because one site forwards its category
