@@ -10,7 +10,6 @@ import {
   normaliseManualPaymentNote,
 } from "@/lib/manual-subscription-payment";
 import { prisma } from "@/lib/prisma";
-import { REOPENABLE_DISMISSAL_WINDOW_DAYS } from "@/lib/manual-refund-task-reopen-bounds";
 
 /**
  * #3498 (owner decision D2, epic #2797): put a DISMISSED money task back in the
@@ -125,12 +124,13 @@ export const REOPEN_RACED_MESSAGE =
   "This item changed while you were putting it back — refresh and try again.";
 
 /*
-  RE-EXPORTED from the one home. The bounds have to be readable by the CARD as
-  well as by the query, and this module is `server-only`, so they live in
-  `manual-refund-task-reopen-bounds.ts` and are named here for the callers that
-  already import them from this module.
+  THE BOUNDS ARE NOT HERE. A card has to SAY the window it is showing, and this
+  module is `server-only`, so both bounds live in
+  `manual-refund-task-reopen-bounds.ts` where the query and the card can each
+  read them - and neither is a rule about what may be reopened, which is why
+  they are not on this module at all. `reopenManualRefundTask` refuses on status
+  and on who closed the row, never on age.
 */
-export { REOPENABLE_DISMISSAL_WINDOW_DAYS };
 
 /**
  * Put one DISMISSED task back on the queue, audited, as the officer doing it.

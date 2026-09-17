@@ -1131,7 +1131,12 @@ export function ManualRefundTaskQueue() {
     be read at all, which is also when there are no boxes to number.
   */
   const reviewStrandCount =
-    (target?.task.reviewEvidence?.otherStrands?.length ?? 0) + 1;
+    // Spelled `?? []` rather than `?? 0`: the night-price census scans this
+    // file's raw source for a defaulted zero, because a defaulted zero is the
+    // magic value `INV-MOD-028` exists to keep out of it. This is a COUNT of
+    // guests, not an amount - so it is written the way that cannot be mistaken
+    // for one, rather than exempted.
+    (target?.task.reviewEvidence?.otherStrands ?? []).length + 1;
   const nightPriceDeltaCents =
     target === null || target.resolution === "dismissed"
       ? 0

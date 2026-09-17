@@ -517,7 +517,7 @@ describe("lenient locked-night reader census (#3031, E6)", () => {
     const repriceCall = /await priceBookingGuestsWithMembershipTypePolicy\s*\(/;
     const reprice = source.search(repriceCall);
     const raise = source.search(
-      /await raiseParkedEditFinancialReviewTask\s*\(/,
+      /await raiseParkedEditFinancialReviewTasks\s*\(/,
     );
 
     expect(
@@ -628,7 +628,7 @@ const PRE_CHECK_IN_GATE_SITES = [
       },
       {
         label: "its answer is kept, not discarded",
-        pattern: /const parked =\s*dateEditEvidence\.occurrence !== null/,
+        pattern: /const parked =\s*dateEditEvidence\.occurrences !== null/,
       },
       {
         label: "the night write uses PRESERVED stored prices when it parks",
@@ -636,7 +636,7 @@ const PRE_CHECK_IN_GATE_SITES = [
       },
       {
         label: "an unusable strand is PARKED, not merely noted",
-        pattern: /await raiseParkedEditFinancialReviewTask\s*\(/,
+        pattern: /await raiseParkedEditFinancialReviewTasks\s*\(/,
       },
     ],
   },
@@ -662,7 +662,7 @@ const PRE_CHECK_IN_GATE_SITES = [
       },
       {
         label: "an unusable strand is PARKED, not merely noted",
-        pattern: /await raiseParkedEditFinancialReviewTask\s*\(/,
+        pattern: /await raiseParkedEditFinancialReviewTasks\s*\(/,
       },
     ],
   },
@@ -676,7 +676,7 @@ const PRE_CHECK_IN_GATE_SITES = [
       },
       {
         label: "its answer is kept, not discarded",
-        pattern: /const parked = addEvidence\.occurrence !== null/,
+        pattern: /const parked = addEvidence\.occurrences !== null/,
       },
       {
         label: "the booking's total write-back is FENCED on that answer",
@@ -684,7 +684,7 @@ const PRE_CHECK_IN_GATE_SITES = [
       },
       {
         label: "an unusable strand is PARKED, not merely noted",
-        pattern: /await raiseParkedEditFinancialReviewTask\s*\(/,
+        pattern: /await raiseParkedEditFinancialReviewTasks\s*\(/,
       },
     ],
   },

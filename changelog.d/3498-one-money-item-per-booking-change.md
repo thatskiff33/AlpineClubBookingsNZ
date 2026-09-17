@@ -11,6 +11,19 @@
   guest whose stored prices cannot be read still holds the whole change's money
   for a person to price. Rows raised before this release are untouched and render
   exactly as they did.
+- **One exception, and it is where the money is most tangled: a change that moves
+  TWO OR MORE guests' nights still gets a row each.** A row carries one amount,
+  and two guests whose stays both moved need two - putting them on one row would
+  make the second guest's nights come to nothing, or to a figure no set of prices
+  can reach, and the review could then never be closed at all. So those changes
+  keep a row per guest, each with its own amount. To make the one that matters
+  obvious, every row now says in words whether the change actually moved that
+  guest's nights or merely rewrote what was stored for them - which is the tell
+  that was missing when seven near-identical rows sat on the queue together.
+- **The evidence block says what it means.** It used to read "the change touched
+  N guests on this booking", and for most of them that was not true: they are
+  listed because saving the change rewrote their stored night prices, not because
+  anything of theirs moved. It now says so.
 - **A money item closed with "No adjustment" can be put back on the queue.**
   Closing one used to be final in both directions, and the queue only ever showed
   open items — so a wrong click was silent and permanent, with no banner, no row
