@@ -3,6 +3,10 @@ import { join } from "node:path";
 import ts from "typescript";
 
 import {
+  splitSqlStatements,
+  stripSqlComments,
+} from "../../../../prisma/migration-verification/split-statements";
+import {
   relativeSource,
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
@@ -37,6 +41,7 @@ export type BookingMoneyWriterSite = {
   delegate: keyof typeof TRACKED_FIELDS;
   methods: readonly string[];
   fields: readonly string[];
+  siteCount: number;
 };
 
 // Migrations before this Stage 4 boundary are immutable historical evidence,
@@ -76,11 +81,17 @@ function delegateName(
 }
 
 function propertyName(name: ts.PropertyName): string | undefined {
-  return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+  return ts.isIdentifier(name) || ts.isStringLiteral(name)
+    ? name.text
+    : undefined;
 }
 
 function enclosingScope(node: ts.Node): ts.Node | undefined {
-  for (let cursor: ts.Node | undefined = node.parent; cursor; cursor = cursor.parent) {
+  for (
+    let cursor: ts.Node | undefined = node.parent;
+    cursor;
+    cursor = cursor.parent
+  ) {
     if (
       ts.isSourceFile(cursor) ||
       ts.isBlock(cursor) ||
@@ -117,11 +128,7 @@ function resolveLocalBinding(
   source: ts.SourceFile,
 ): ts.Expression | undefined {
   const name = use.text;
-  for (
-    let scope = enclosingScope(use);
-    scope;
-    scope = enclosingScope(scope)
-  ) {
+  for (let scope = enclosingScope(use); scope; scope = enclosingScope(scope)) {
     let winner: ts.VariableDeclaration | undefined;
     const visit = (node: ts.Node) => {
       if (node !== scope && isNestedScope(node)) return;
@@ -157,19 +164,29 @@ function expressionUsesCanonicalFinalPrice(
       // Stage 3's verified build-up projector is the canonical evidence-aware
       // equivalent after it has checked the relation against this helper.
       expression.expression.text === "d3CompatibleBookingMoneyBuildUpCents")
-  ) return true;
+  )
+    return true;
   if (ts.isIdentifier(expression)) {
     const binding = resolveLocalBinding(expression, source);
-    return binding !== undefined && expressionUsesCanonicalFinalPrice(binding, source, seen);
+    return (
+      binding !== undefined &&
+      expressionUsesCanonicalFinalPrice(binding, source, seen)
+    );
   }
   // Parked edits deliberately preserve the stored value on one branch; the
   // computed branch must still use the one canonical relation.
   if (ts.isConditionalExpression(expression)) {
     const branches = [expression.whenTrue, expression.whenFalse];
-    return branches.some((branch) => expressionUsesCanonicalFinalPrice(branch, source, seen)) &&
+    return (
+      branches.some((branch) =>
+        expressionUsesCanonicalFinalPrice(branch, source, seen),
+      ) &&
       branches.some(
-        (branch) => ts.isPropertyAccessExpression(branch) && branch.name.text === "finalPriceCents",
-      );
+        (branch) =>
+          ts.isPropertyAccessExpression(branch) &&
+          branch.name.text === "finalPriceCents",
+      )
+    );
   }
   return false;
 }
@@ -179,7 +196,10 @@ function expressionUsesCanonicalFinalPrice(
  * price. For complete headline payloads, require the final field to flow from
  * the one arithmetic home (or the deliberate parked-value branch).
  */
-export function scanBookingMoneyWriterEqualityEscapes(file: string, code: string): string[] {
+export function scanBookingMoneyWriterEqualityEscapes(
+  file: string,
+  code: string,
+): string[] {
   const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
   const escapes: string[] = [];
   type ResolvedObject = { values: Map<string, ts.Expression>; opaque: boolean };
@@ -187,12 +207,14 @@ export function scanBookingMoneyWriterEqualityEscapes(file: string, code: string
     expression: ts.Expression | undefined,
     seen = new Set<ts.Node>(),
   ): ResolvedObject => {
-    if (!expression || seen.has(expression)) return { values: new Map(), opaque: true };
+    if (!expression || seen.has(expression))
+      return { values: new Map(), opaque: true };
     seen.add(expression);
     if (ts.isIdentifier(expression)) {
       return resolveObject(resolveLocalBinding(expression, source), seen);
     }
-    if (!ts.isObjectLiteralExpression(expression)) return { values: new Map(), opaque: true };
+    if (!ts.isObjectLiteralExpression(expression))
+      return { values: new Map(), opaque: true };
     const values = new Map<string, ts.Expression>();
     let opaque = false;
     for (const property of expression.properties) {
@@ -213,16 +235,21 @@ export function scanBookingMoneyWriterEqualityEscapes(file: string, code: string
   const inspectPayload = (payload: ResolvedObject, location: ts.Node) => {
     const { values } = payload;
     const finalPrice = values.get("finalPriceCents");
-    const isZeroPromo = values.get("promoAdjustmentCents")?.getText(source) === "0";
+    const isZeroPromo =
+      values.get("promoAdjustmentCents")?.getText(source) === "0";
     const finalEqualsTotal =
-      finalPrice?.getText(source) === values.get("totalPriceCents")?.getText(source);
-    const hasCompleteHeadline = TRACKED_FIELDS.booking.every((field) => values.has(field));
+      finalPrice?.getText(source) ===
+      values.get("totalPriceCents")?.getText(source);
+    const hasCompleteHeadline = TRACKED_FIELDS.booking.every((field) =>
+      values.has(field),
+    );
     const hasPotentiallyCompleteHeadline =
       payload.opaque &&
-      ["totalPriceCents", "discountCents", "promoAdjustmentCents"].every((field) =>
-        values.has(field),
+      ["totalPriceCents", "discountCents", "promoAdjustmentCents"].every(
+        (field) => values.has(field),
       );
-    const line = source.getLineAndCharacterOfPosition(location.getStart(source)).line + 1;
+    const line =
+      source.getLineAndCharacterOfPosition(location.getStart(source)).line + 1;
     if (hasPotentiallyCompleteHeadline && !hasCompleteHeadline) {
       escapes.push(`${file}:${line}|opaqueCompleteHeadlinePayload`);
     }
@@ -232,7 +259,9 @@ export function scanBookingMoneyWriterEqualityEscapes(file: string, code: string
       !(isZeroPromo && finalEqualsTotal) &&
       !expressionUsesCanonicalFinalPrice(finalPrice, source)
     ) {
-      const finalLine = source.getLineAndCharacterOfPosition(finalPrice.getStart(source)).line + 1;
+      const finalLine =
+        source.getLineAndCharacterOfPosition(finalPrice.getStart(source)).line +
+        1;
       escapes.push(`${file}:${finalLine}|finalPriceCents`);
     }
   };
@@ -245,9 +274,10 @@ export function scanBookingMoneyWriterEqualityEscapes(file: string, code: string
     ) {
       const options = resolveObject(node.arguments[0]);
       if (!options.opaque || options.values.size > 0) {
-        const payloadNames = node.expression.name.text === "upsert"
-          ? new Set(["create", "update"])
-          : new Set(["data"]);
+        const payloadNames =
+          node.expression.name.text === "upsert"
+            ? new Set(["create", "update"])
+            : new Set(["data"]);
         for (const [name, payloadExpression] of options.values) {
           if (payloadNames.has(name)) {
             inspectPayload(resolveObject(payloadExpression), payloadExpression);
@@ -289,9 +319,12 @@ function localArrayMutations(
   const visit = (node: ts.Node) => {
     if (
       node !== scope &&
-      (ts.isFunctionLike(node) || ts.isClassLike(node) || ts.isSourceFile(node) ||
+      (ts.isFunctionLike(node) ||
+        ts.isClassLike(node) ||
+        ts.isSourceFile(node) ||
         (ts.isBlock(node) && declaresName(node)))
-    ) return;
+    )
+      return;
     if (node.getStart(source) >= use.getStart(source)) return;
     if (
       ts.isBinaryExpression(node) &&
@@ -321,7 +354,10 @@ function localArrayMutations(
 }
 
 /** Delegate forwarding can hide a write from the direct call-site census. */
-export function scanBookingMoneyWriterEscapes(file: string, code: string): string[] {
+export function scanBookingMoneyWriterEscapes(
+  file: string,
+  code: string,
+): string[] {
   const source = ts.createSourceFile(
     file,
     code,
@@ -330,40 +366,153 @@ export function scanBookingMoneyWriterEscapes(file: string, code: string): strin
     /[jt]sx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const escapes = new Set<string>();
-  const destructured = new Map<string, keyof typeof TRACKED_FIELDS>();
+  const destructured = new Map<
+    string,
+    { delegate: keyof typeof TRACKED_FIELDS; forwardsCapability: boolean }
+  >();
+  const aliases = new Map<
+    string,
+    { delegate: keyof typeof TRACKED_FIELDS; forwardsCapability: boolean }
+  >();
   const collect = (node: ts.Node) => {
-    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer && /(?:^|\.)(?:prisma|tx|store|client|db|database)$/i.test(node.initializer.getText(source))) {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer
+    ) {
+      const priorAlias = ts.isIdentifier(node.initializer)
+        ? aliases.get(node.initializer.text)
+        : undefined;
+      const delegate =
+        priorAlias?.delegate ??
+        (ts.isIdentifier(node.initializer)
+          ? null
+          : delegateName(node.initializer));
+      if (delegate) {
+        const receiver =
+          ts.isPropertyAccessExpression(node.initializer) ||
+          ts.isElementAccessExpression(node.initializer)
+            ? node.initializer.expression.getText(source)
+            : "";
+        aliases.set(node.name.text, {
+          delegate,
+          forwardsCapability:
+            priorAlias?.forwardsCapability ??
+            /(?:^|\.)(?:prisma|tx|store|client|db|database)$/i.test(receiver),
+        });
+      }
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer
+    ) {
       for (const element of node.name.elements) {
-        const key = element.propertyName ? propertyName(element.propertyName) : ts.isIdentifier(element.name) ? element.name.text : undefined;
-        if (key && ts.isIdentifier(element.name) && Object.prototype.hasOwnProperty.call(TRACKED_FIELDS, key)) destructured.set(element.name.text, key as keyof typeof TRACKED_FIELDS);
+        const key = element.propertyName
+          ? propertyName(element.propertyName)
+          : ts.isIdentifier(element.name)
+            ? element.name.text
+            : undefined;
+        if (
+          key &&
+          ts.isIdentifier(element.name) &&
+          Object.prototype.hasOwnProperty.call(TRACKED_FIELDS, key)
+        ) {
+          destructured.set(element.name.text, {
+            delegate: key as keyof typeof TRACKED_FIELDS,
+            forwardsCapability:
+              /(?:^|\.)(?:prisma|tx|store|client|db|database)$/i.test(
+                node.initializer.getText(source),
+              ),
+          });
+        }
       }
     }
     ts.forEachChild(node, collect);
   };
   collect(source);
+
+  const isDirectCall = (
+    node: ts.Expression,
+    parent: ts.Node | undefined,
+    grandparent: ts.Node | undefined,
+  ) =>
+    parent !== undefined &&
+    grandparent !== undefined &&
+    (ts.isPropertyAccessExpression(parent) ||
+      ts.isElementAccessExpression(parent)) &&
+    parent.expression === node &&
+    ts.isCallExpression(grandparent) &&
+    grandparent.expression === parent;
+
+  const isLocalAliasInitializer = (
+    node: ts.Expression,
+    parent: ts.Node | undefined,
+  ) =>
+    parent !== undefined &&
+    ts.isVariableDeclaration(parent) &&
+    ts.isIdentifier(parent.name) &&
+    parent.initializer === node;
+
+  const isEscapingUse = (node: ts.Expression, parent: ts.Node | undefined) =>
+    parent !== undefined &&
+    ((ts.isCallExpression(parent) && parent.arguments.includes(node)) ||
+      (ts.isReturnStatement(parent) && parent.expression === node) ||
+      (ts.isBinaryExpression(parent) && parent.right === node) ||
+      (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
+      ts.isArrayLiteralExpression(parent));
+
   const visit = (node: ts.Node, parent?: ts.Node, grandparent?: ts.Node) => {
-    if (ts.isIdentifier(node) && parent && ts.isCallExpression(parent) && parent.arguments.includes(node)) {
-      const delegate = destructured.get(node.text);
-      if (delegate) escapes.add(`${file}|${delegate}`);
+    if (
+      ts.isIdentifier(node) &&
+      destructured.has(node.text) &&
+      !(parent && ts.isBindingElement(parent))
+    ) {
+      const binding = destructured.get(node.text)!;
+      const directWrite =
+        isDirectCall(node, parent, grandparent) &&
+        parent !== undefined &&
+        (ts.isPropertyAccessExpression(parent) ||
+          ts.isElementAccessExpression(parent)) &&
+        ((ts.isPropertyAccessExpression(parent) &&
+          WRITE_METHODS.has(parent.name.text)) ||
+          (ts.isElementAccessExpression(parent) &&
+            ts.isStringLiteral(parent.argumentExpression) &&
+            WRITE_METHODS.has(parent.argumentExpression.text)));
+      if (
+        directWrite ||
+        (binding.forwardsCapability && isEscapingUse(node, parent))
+      ) {
+        escapes.add(`${file}|${binding.delegate}`);
+      }
     }
-    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-      const delegate = delegateName(node, source);
-      const receiver = node.expression.getText(source);
-      const plausibleClient = ts.isIdentifier(node) || /(?:^|\.)(?:prisma|tx|store|client|db|database)$/i.test(receiver);
-      if (delegate && plausibleClient) {
-        const method = parent;
-        const call = grandparent;
-        const isDirectCall =
-          method !== undefined &&
-          call !== undefined &&
-          ts.isPropertyAccessExpression(method) &&
-          method.expression === node &&
-          ts.isCallExpression(call) &&
-          call.expression === method;
-        const isEscapingCapability =
-          parent !== undefined &&
-          ts.isCallExpression(parent) && parent.arguments.includes(node);
-        if (!isDirectCall && isEscapingCapability) escapes.add(`${file}|${delegate}`);
+    const candidateIdentifier =
+      ts.isIdentifier(node) &&
+      (isDirectCall(node, parent, grandparent) || isEscapingUse(node, parent));
+    if (
+      candidateIdentifier ||
+      ts.isPropertyAccessExpression(node) ||
+      ts.isElementAccessExpression(node)
+    ) {
+      const alias = ts.isIdentifier(node) ? aliases.get(node.text) : undefined;
+      const delegate = ts.isIdentifier(node)
+        ? (alias?.delegate ?? null)
+        : delegateName(node);
+      const receiverLooksLikeClient =
+        ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node)
+          ? /(?:^|\.)(?:prisma|tx|store|client|db|database)$/i.test(
+              node.expression.getText(source),
+            )
+          : (alias?.forwardsCapability ?? false);
+      if (
+        delegate &&
+        !isDirectCall(node, parent, grandparent) &&
+        !isLocalAliasInitializer(node, parent) &&
+        isEscapingUse(node, parent) &&
+        receiverLooksLikeClient
+      ) {
+        escapes.add(`${file}|${delegate}`);
       }
     }
     ts.forEachChild(node, (child) => visit(child, node, parent));
@@ -376,7 +525,9 @@ export function scanBookingMoneyWriterSites(
   file: string,
   code: string,
 ): BookingMoneyWriterSite[] {
-  const uncommented = stripComments(code);
+  const uncommented = file.endsWith(".sql")
+    ? stripSqlComments(code)
+    : stripComments(code);
   const source = ts.createSourceFile(
     file,
     code,
@@ -386,19 +537,26 @@ export function scanBookingMoneyWriterSites(
   );
   const found = new Map<
     keyof typeof TRACKED_FIELDS,
-    { methods: Set<string>; fields: Set<string> }
+    { methods: Set<string>; fields: Set<string>; siteCount: number }
   >();
   const record = (
     delegate: keyof typeof TRACKED_FIELDS,
     method: string,
     fields: readonly string[],
   ) => {
-    const site = found.get(delegate) ?? { methods: new Set<string>(), fields: new Set<string>() };
+    const site = found.get(delegate) ?? {
+      methods: new Set<string>(),
+      fields: new Set<string>(),
+      siteCount: 0,
+    };
+    site.siteCount += 1;
     site.methods.add(method);
     fields.forEach((field) => site.fields.add(field));
     found.set(delegate, site);
   };
-  const mutationPayloads = (call: ts.CallExpression): {
+  const mutationPayloads = (
+    call: ts.CallExpression,
+  ): {
     payloads: ts.Expression[];
     opaqueOptions: boolean;
   } => {
@@ -410,7 +568,8 @@ export function scanBookingMoneyWriterSites(
       return { payloads: [], opaqueOptions: true };
     }
     const names =
-      ts.isPropertyAccessExpression(call.expression) && call.expression.name.text === "upsert"
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === "upsert"
         ? ["create", "update"]
         : ["data"];
     const payloads: ts.Expression[] = [];
@@ -458,27 +617,43 @@ export function scanBookingMoneyWriterSites(
       return result;
     }
     if (ts.isArrayLiteralExpression(expression)) {
-      return expression.elements.reduce<{ fields: Set<string>; opaque: boolean }>(
+      return expression.elements.reduce<{
+        fields: Set<string>;
+        opaque: boolean;
+      }>(
         (result, element) => {
-          if (!ts.isExpression(element)) return { fields: result.fields, opaque: true };
+          if (!ts.isExpression(element))
+            return { fields: result.fields, opaque: true };
           const next = inspectPayload(element, delegate, nested, seen);
           next.fields.forEach((field) => result.fields.add(field));
-          return { fields: result.fields, opaque: result.opaque || next.opaque };
+          return {
+            fields: result.fields,
+            opaque: result.opaque || next.opaque,
+          };
         },
         { fields: new Set<string>(), opaque: false },
       );
     }
-    if (!ts.isObjectLiteralExpression(expression)) return { fields: new Set(), opaque: true };
+    if (!ts.isObjectLiteralExpression(expression))
+      return { fields: new Set(), opaque: true };
     const fields = new Set<string>();
     let opaque = false;
     for (const property of expression.properties) {
       if (ts.isSpreadAssignment(property)) {
-        const spread = inspectPayload(property.expression, delegate, nested, seen);
+        const spread = inspectPayload(
+          property.expression,
+          delegate,
+          nested,
+          seen,
+        );
         spread.fields.forEach((field) => fields.add(field));
         opaque ||= spread.opaque;
         continue;
       }
-      if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
+      if (
+        !ts.isPropertyAssignment(property) &&
+        !ts.isShorthandPropertyAssignment(property)
+      ) {
         opaque = true;
         continue;
       }
@@ -488,35 +663,53 @@ export function scanBookingMoneyWriterSites(
         continue;
       }
       if (TRACKED_FIELDS[delegate].includes(name)) fields.add(name);
-      const value = ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer;
+      const value = ts.isShorthandPropertyAssignment(property)
+        ? property.name
+        : property.initializer;
       const relation =
-        delegate === "booking" && name === "guests" ? "bookingGuest" :
-        delegate === "bookingGuest" && name === "nights" ? "bookingGuestNight" : undefined;
+        delegate === "booking" && name === "guests"
+          ? "bookingGuest"
+          : delegate === "bookingGuest" && name === "nights"
+            ? "bookingGuestNight"
+            : undefined;
       if (relation && ts.isObjectLiteralExpression(value)) {
         for (const entry of value.properties) {
-          const method = ts.isPropertyAssignment(entry) && propertyName(entry.name);
+          const method =
+            ts.isPropertyAssignment(entry) && propertyName(entry.name);
           if (!method || !WRITE_METHODS.has(method)) continue;
           const nestedOptions = entry.initializer;
           const nestedObject = ts.isObjectLiteralExpression(nestedOptions)
             ? nestedOptions
             : undefined;
-          const payloadNames = method === "upsert" ? ["create", "update"]
-            : method === "create" ? [] : ["data"];
-          const payloads = payloadNames.length === 0
-            ? [nestedOptions]
-            : nestedObject
-              ? nestedObject.properties.flatMap((property) =>
-                ts.isPropertyAssignment(property) && propertyName(property.name) &&
-                payloadNames.includes(propertyName(property.name)!)
-                  ? [property.initializer]
-                  : [],
-              )
-              : [];
-          const child = payloads.reduce<{ fields: Set<string>; opaque: boolean }>(
+          const payloadNames =
+            method === "upsert"
+              ? ["create", "update"]
+              : method === "create"
+                ? []
+                : ["data"];
+          const payloads =
+            payloadNames.length === 0
+              ? [nestedOptions]
+              : nestedObject
+                ? nestedObject.properties.flatMap((property) =>
+                    ts.isPropertyAssignment(property) &&
+                    propertyName(property.name) &&
+                    payloadNames.includes(propertyName(property.name)!)
+                      ? [property.initializer]
+                      : [],
+                  )
+                : [];
+          const child = payloads.reduce<{
+            fields: Set<string>;
+            opaque: boolean;
+          }>(
             (result, payload) => {
               const next = inspectPayload(payload, relation, undefined, seen);
               next.fields.forEach((field) => result.fields.add(field));
-              return { fields: result.fields, opaque: result.opaque || next.opaque };
+              return {
+                fields: result.fields,
+                opaque: result.opaque || next.opaque,
+              };
             },
             { fields: new Set<string>(), opaque: payloads.length === 0 },
           );
@@ -524,7 +717,12 @@ export function scanBookingMoneyWriterSites(
           // Recurse through every relation operation, not only `create`.
           // `upsert` carries both branches, which inspectPayload sees as an
           // object containing nested relations.
-          if (child.opaque && relation === "bookingGuest") {
+          if (
+            child.opaque &&
+            relation === "bookingGuest" &&
+            method !== "delete" &&
+            method !== "deleteMany"
+          ) {
             record("bookingGuestNight", "opaquePayload", []);
           }
         }
@@ -544,9 +742,16 @@ export function scanBookingMoneyWriterSites(
         const tracked = TRACKED_FIELDS[delegate];
         if (tracked) {
           const payload = mutationPayloads(node);
-          const inspected = payload.payloads.map((entry) => inspectPayload(entry, delegate));
-          const written = [...new Set(inspected.flatMap((entry) => [...entry.fields]))];
-          if (written.length > 0 || node.expression.name.text.startsWith("delete")) {
+          const inspected = payload.payloads.map((entry) =>
+            inspectPayload(entry, delegate),
+          );
+          const written = [
+            ...new Set(inspected.flatMap((entry) => [...entry.fields])),
+          ];
+          if (
+            written.length > 0 ||
+            node.expression.name.text.startsWith("delete")
+          ) {
             record(delegate, node.expression.name.text, written);
           }
           // A builder passed as the whole payload cannot be classified from
@@ -554,10 +759,12 @@ export function scanBookingMoneyWriterSites(
           // object payload is still useful evidence even if one of its ordinary
           // (non-money) values is computed.
           if (
-            (payload.opaqueOptions || inspected.some((entry) => entry.opaque)) &&
+            (payload.opaqueOptions ||
+              inspected.some((entry) => entry.opaque)) &&
             written.length === 0 &&
             !node.expression.name.text.startsWith("delete")
-          ) record(delegate, "opaquePayload", []);
+          )
+            record(delegate, "opaquePayload", []);
         }
       }
     }
@@ -565,7 +772,7 @@ export function scanBookingMoneyWriterSites(
   };
   visit(source);
 
-  for (const rawSite of rawSqlWriterSites(uncommented)) {
+  for (const rawSite of rawSqlWriterSites(uncommented, file.endsWith(".sql"))) {
     record(rawSite.delegate, "rawSql", rawSite.fields);
   }
 
@@ -575,40 +782,157 @@ export function scanBookingMoneyWriterSites(
       delegate,
       methods: [...site.methods].sort(),
       fields: [...site.fields].sort(),
+      siteCount: site.siteCount,
     }))
     .sort((left, right) => left.delegate.localeCompare(right.delegate));
 }
 
-function rawSqlWriterSites(code: string): Array<{
+function rawSqlWriterSites(
+  code: string,
+  isSqlFile: boolean,
+): Array<{
   delegate: keyof typeof TRACKED_FIELDS;
   fields: string[];
 }> {
-  const sql = stripSqlComments(code);
-  const sites: Array<{ delegate: keyof typeof TRACKED_FIELDS; fields: string[] }> = [];
-  for (const [delegate, tracked] of Object.entries(TRACKED_FIELDS) as Array<[keyof typeof TRACKED_FIELDS, readonly string[]]>) {
+  const sites: Array<{
+    delegate: keyof typeof TRACKED_FIELDS;
+    fields: string[];
+  }> = [];
+  for (const [delegate, tracked] of Object.entries(TRACKED_FIELDS) as Array<
+    [keyof typeof TRACKED_FIELDS, readonly string[]]
+  >) {
     const model = delegate[0]!.toUpperCase() + delegate.slice(1);
-    const statements = sql.matchAll(new RegExp(String.raw`\b(?:UPDATE\s+(?:\w+\.)?["\x60]${model}["\x60][\s\S]*?\bSET\b|INSERT\s+INTO\s+(?:\w+\.)?["\x60]${model}["\x60]\s*\()([\s\S]*?)(?=;|$)`, "gi"));
+    const table = String.raw`(?:(?:[A-Za-z_$][\w$]*|["\x60][A-Za-z_$][\w$]*["\x60])\s*\.\s*)?["\x60]${model}["\x60]`;
+    const statements = isSqlFile ? splitSqlStatements(code) : [code];
     for (const statement of statements) {
-      const segment = statement[1]!;
-      const written = tracked.filter((field) => new RegExp(String.raw`["\x60]${field}["\x60]\s*(?:=|[,\)])`, "i").test(segment));
-      if (written.length > 0 || /\bDELETE\b/i.test(statement[0]!)) sites.push({ delegate, fields: [...written] });
+      const executable = isSqlFile ? stripSqlComments(statement) : statement;
+      const update = new RegExp(
+        String.raw`\bUPDATE\s+${table}[\s\S]*?\bSET\b([\s\S]*?)(?=\b(?:FROM|WHERE|RETURNING)\b|;|$)`,
+        "i",
+      ).exec(executable);
+      const insert = new RegExp(
+        String.raw`\bINSERT\s+INTO\s+${table}\s*\(([\s\S]*?)\)\s*(?:VALUES|SELECT)\b`,
+        "i",
+      ).exec(executable);
+      const deleted = new RegExp(
+        String.raw`\bDELETE\s+FROM\s+${table}\b`,
+        "i",
+      ).test(executable);
+      const written = tracked.filter((field) => {
+        const name = new RegExp(String.raw`["\x60]?${field}["\x60]?`, "i");
+        return (
+          (update &&
+            new RegExp(String.raw`${name.source}\s*=`, "i").test(update[1]!)) ||
+          (insert &&
+            new RegExp(
+              String.raw`(?:^|,)\s*${name.source}\s*(?:,|$)`,
+              "i",
+            ).test(insert[1]!))
+        );
+      });
+      if (written.length > 0 || deleted) {
+        sites.push({ delegate, fields: [...written] });
+      }
     }
   }
   return sites;
 }
 
-function stripSqlComments(code: string): string {
-  let result = "";
-  for (let index = 0; index < code.length;) {
-    if (code[index] === "-" && code[index + 1] === "-") {
-      index = code.indexOf("\n", index + 2);
-      if (index < 0) break;
-    } else if (code[index] === "/" && code[index + 1] === "*") {
-      const end = code.indexOf(`${"*"}${"/"}`, index + 2);
-      index = end < 0 ? code.length : end + 2;
-    } else result += code[index++]!;
+function splitTopLevelSqlList(value: string): string[] {
+  const entries: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quote: "'" | '"' | null = null;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote) {
+      if (character === quote) {
+        if (value[index + 1] === quote) index += 1;
+        else quote = null;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (character === "(") depth += 1;
+    else if (character === ")") depth -= 1;
+    else if (character === "," && depth === 0) {
+      entries.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
   }
-  return result;
+  entries.push(value.slice(start).trim());
+  return entries.filter(Boolean);
+}
+
+function parenthesizedSql(
+  value: string,
+  openIndex: number,
+): { body: string; end: number } | null {
+  if (value[openIndex] !== "(") return null;
+  let depth = 1;
+  let quote: "'" | '"' | null = null;
+  for (let index = openIndex + 1; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote) {
+      if (character === quote) {
+        if (value[index + 1] === quote) index += 1;
+        else quote = null;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (character === "(") depth += 1;
+    else if (character === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return { body: value.slice(openIndex + 1, index), end: index + 1 };
+      }
+    }
+  }
+  return null;
+}
+
+function normalizeSqlExpression(expression: string): string {
+  return expression
+    .replace(/::[A-Za-z_][\w.]*/g, "")
+    .replace(/["`\s]/g, "")
+    .toLowerCase();
+}
+
+function isSameColumnCopy(expression: string, field: string): boolean {
+  const normalized = normalizeSqlExpression(expression);
+  const lowerField = field.toLowerCase();
+  return (
+    normalized === lowerField ||
+    normalized === `new.${lowerField}` ||
+    normalized === `excluded.${lowerField}`
+  );
+}
+
+function isCanonicalRawSqlMoneyExpression(
+  delegate: keyof typeof TRACKED_FIELDS,
+  field: string,
+  expression: string,
+): boolean {
+  if (isSameColumnCopy(expression, field)) return true;
+  if (delegate !== "booking") return false;
+  const normalized = normalizeSqlExpression(expression).replace(
+    /\b[A-Za-z_][\w$]*\./g,
+    "",
+  );
+  if (field === "finalPriceCents") {
+    return normalized === "totalpricecents+promoadjustmentcents";
+  }
+  if (field === "discountCents") {
+    return normalized === "greatest(0,-promoadjustmentcents)";
+  }
+  return false;
 }
 
 /**
@@ -616,38 +940,97 @@ function stripSqlComments(code: string): string {
  * assignments after removing source and SQL comments; a field merely named in
  * prose, a WHERE clause, or a copied old value is not reconciliation evidence.
  */
-export function scanBookingMoneyRawSqlEscapes(file: string, code: string): string[] {
-  const sql = stripSqlComments(stripComments(code));
+export function scanBookingMoneyRawSqlEscapes(
+  file: string,
+  code: string,
+): string[] {
+  const sql = stripSqlComments(code);
   const escapes: string[] = [];
-  const bookingUpdates = sql.matchAll(/UPDATE\s+(?:(?:[A-Za-z_$][\w$]*|["`][A-Za-z_$][\w$]*["`])\s*\.\s*)?["`]Booking["`][\s\S]*?\bSET\b([\s\S]*?)(?=\b(?:FROM|WHERE|RETURNING)\b|;|$)/gi);
-  for (const statement of bookingUpdates) {
-    const assignments = new Map<string, string>();
-    for (const assignment of statement[1]!.matchAll(/["`]?(totalPriceCents|discountCents|promoAdjustmentCents|finalPriceCents)["`]?\s*=\s*([^,;]+)(?:,|$)/gi)) {
-      assignments.set(assignment[1]!, assignment[2]!.trim());
+  const recordExpression = (
+    delegate: keyof typeof TRACKED_FIELDS,
+    field: string,
+    expression: string,
+  ) => {
+    if (!isCanonicalRawSqlMoneyExpression(delegate, field, expression)) {
+      escapes.push(`${file}|rawSql:${delegate}.${field}`);
     }
-    const final = assignments.get("finalPriceCents");
-    if (final) {
-      const canonical = final.replace(/["`\s]/g, "").toLowerCase();
-      if (canonical !== "totalpricecents+promoadjustmentcents") {
-        escapes.push(`${file}|rawSqlFinalPriceRelation`);
+  };
+
+  for (const [delegate, fields] of Object.entries(TRACKED_FIELDS) as Array<
+    [keyof typeof TRACKED_FIELDS, readonly string[]]
+  >) {
+    const model = delegate[0]!.toUpperCase() + delegate.slice(1);
+    const table = String.raw`(?:(?:[A-Za-z_$][\w$]*|["\x60][A-Za-z_$][\w$]*["\x60])\s*\.\s*)?["\x60]${model}["\x60]`;
+
+    for (const statement of splitSqlStatements(sql)) {
+      const updatePattern = new RegExp(
+        String.raw`\bUPDATE\s+${table}[\s\S]*?\bSET\b([\s\S]*?)(?=\b(?:FROM|WHERE|RETURNING)\b|;|$)`,
+        "gi",
+      );
+      for (const update of statement.matchAll(updatePattern)) {
+        for (const assignment of splitTopLevelSqlList(update[1]!)) {
+          const match = /^["`]?(\w+)["`]?\s*=\s*([\s\S]+)$/.exec(assignment);
+          if (match && fields.includes(match[1]!)) {
+            recordExpression(delegate, match[1]!, match[2]!);
+          }
+        }
       }
-    }
-    const discount = assignments.get("discountCents");
-    const promo = assignments.get("promoAdjustmentCents");
-    if (discount && promo &&
-      discount.replace(/["`\s]/g, "").toLowerCase() !== "-promoadjustmentcents") {
-      escapes.push(`${file}|rawSqlDiscountRelation`);
+
+      const insertPattern = new RegExp(
+        String.raw`\bINSERT\s+INTO\s+${table}\s*\(`,
+        "gi",
+      );
+      for (const insert of statement.matchAll(insertPattern)) {
+        const columnsOpen = insert.index + insert[0].lastIndexOf("(");
+        const columns = parenthesizedSql(statement, columnsOpen);
+        if (!columns) continue;
+        const valuesMatch = /\bVALUES\s*\(/gi;
+        valuesMatch.lastIndex = columns.end;
+        const valuesToken = valuesMatch.exec(statement);
+        if (!valuesToken) continue;
+        const valuesOpen = valuesToken.index + valuesToken[0].lastIndexOf("(");
+        const values = parenthesizedSql(statement, valuesOpen);
+        if (!values) continue;
+        const names = splitTopLevelSqlList(columns.body).map((name) =>
+          name.replace(/["`\s]/g, ""),
+        );
+        const expressions = splitTopLevelSqlList(values.body);
+        names.forEach((name, index) => {
+          if (fields.includes(name) && expressions[index]) {
+            recordExpression(delegate, name, expressions[index]!);
+          }
+        });
+      }
+
+      const conflictPattern =
+        /\bON\s+CONFLICT[\s\S]*?\bDO\s+UPDATE\s+SET\b([\s\S]*?)(?=\bRETURN(?:ING)?\b|;|$)/gi;
+      for (const conflict of statement.matchAll(conflictPattern)) {
+        for (const assignment of splitTopLevelSqlList(conflict[1]!)) {
+          const match = /^["`]?(\w+)["`]?\s*=\s*([\s\S]+)$/.exec(assignment);
+          if (match && fields.includes(match[1]!)) {
+            recordExpression(delegate, match[1]!, match[2]!);
+          }
+        }
+      }
     }
   }
   return [...new Set(escapes)].sort();
 }
 
 export function discoveredBookingMoneyWriterSites(): BookingMoneyWriterSite[] {
-  const migrationFiles = readdirSync(join(process.cwd(), "prisma", "migrations"), {
-    withFileTypes: true,
-  })
-    .filter((entry) => entry.isDirectory() && entry.name >= MONEY_MIGRATION_CENSUS_START)
-    .map((entry) => join(process.cwd(), "prisma", "migrations", entry.name, "migration.sql"))
+  const migrationFiles = readdirSync(
+    join(process.cwd(), "prisma", "migrations"),
+    {
+      withFileTypes: true,
+    },
+  )
+    .filter(
+      (entry) =>
+        entry.isDirectory() && entry.name >= MONEY_MIGRATION_CENSUS_START,
+    )
+    .map((entry) =>
+      join(process.cwd(), "prisma", "migrations", entry.name, "migration.sql"),
+    )
     .filter((file) => {
       try {
         readFileSync(file, "utf8");
@@ -658,17 +1041,25 @@ export function discoveredBookingMoneyWriterSites(): BookingMoneyWriterSite[] {
     });
   return [...sourceFiles(), ...migrationFiles]
     .flatMap((file) =>
-      scanBookingMoneyWriterSites(relativeSource(file), readFileSync(file, "utf8")),
+      scanBookingMoneyWriterSites(
+        relativeSource(file),
+        readFileSync(file, "utf8"),
+      ),
     )
     .sort((left, right) =>
-      `${left.file}|${left.delegate}`.localeCompare(`${right.file}|${right.delegate}`),
+      `${left.file}|${left.delegate}`.localeCompare(
+        `${right.file}|${right.delegate}`,
+      ),
     );
 }
 
 export function discoveredBookingMoneyWriterEscapes(): string[] {
   return sourceFiles()
     .flatMap((file) =>
-      scanBookingMoneyWriterEscapes(relativeSource(file), readFileSync(file, "utf8")),
+      scanBookingMoneyWriterEscapes(
+        relativeSource(file),
+        readFileSync(file, "utf8"),
+      ),
     )
     .sort();
 }
@@ -676,7 +1067,10 @@ export function discoveredBookingMoneyWriterEscapes(): string[] {
 export function discoveredBookingMoneyWriterEqualityEscapes(): string[] {
   return sourceFiles()
     .flatMap((file) =>
-      scanBookingMoneyWriterEqualityEscapes(relativeSource(file), readFileSync(file, "utf8")),
+      scanBookingMoneyWriterEqualityEscapes(
+        relativeSource(file),
+        readFileSync(file, "utf8"),
+      ),
     )
     .sort();
 }
@@ -684,11 +1078,24 @@ export function discoveredBookingMoneyWriterEqualityEscapes(): string[] {
 export function discoveredBookingMoneyRawSqlEscapes(): string[] {
   const migrationRoot = join(process.cwd(), "prisma", "migrations");
   return readdirSync(migrationRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name >= MONEY_MIGRATION_CENSUS_START)
+    .filter(
+      (entry) =>
+        entry.isDirectory() && entry.name >= MONEY_MIGRATION_CENSUS_START,
+    )
     .map((entry) => join(migrationRoot, entry.name, "migration.sql"))
     .filter((file) => {
-      try { readFileSync(file, "utf8"); return true; } catch { return false; }
+      try {
+        readFileSync(file, "utf8");
+        return true;
+      } catch {
+        return false;
+      }
     })
-    .flatMap((file) => scanBookingMoneyRawSqlEscapes(relativeSource(file), readFileSync(file, "utf8")))
+    .flatMap((file) =>
+      scanBookingMoneyRawSqlEscapes(
+        relativeSource(file),
+        readFileSync(file, "utf8"),
+      ),
+    )
     .sort();
 }
