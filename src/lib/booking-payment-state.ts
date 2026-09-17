@@ -111,10 +111,29 @@ export interface BookingPaymentState {
   refundedAmountCents?: number | null;
 }
 
+/**
+ * #3244: the STATUS half, named, because it is a question in its own right and
+ * two callers want it without the amount clause below.
+ *
+ * `hasCapturedPayment` folds two facts together — a captured status AND money
+ * actually held — and most callers want the conjunction. A caller that wants
+ * only "is this one of the states money has moved through?" used to have no way
+ * to say so except by rebuilding the list, which is how a hand-written triple
+ * came to sit in four modules. Now it asks this.
+ *
+ * Still the AGGREGATE `Payment` question. Not `isCapturedTransactionStatus` in
+ * `payment-transactions.ts`, which asks it of one `PaymentTransaction`; the two
+ * spell the same three values and answer different questions, and the docblock
+ * at the top of this file is the standing warning against merging them.
+ */
+export function isCapturedPaymentStatus(status: string): boolean {
+  return CAPTURED_PAYMENT_STATUSES.has(status);
+}
+
 export function hasCapturedPayment(
   payment: BookingPaymentState | null | undefined
 ): boolean {
-  if (!payment || !CAPTURED_PAYMENT_STATUSES.has(payment.status)) {
+  if (!payment || !isCapturedPaymentStatus(payment.status)) {
     return false;
   }
 

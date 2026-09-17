@@ -219,3 +219,134 @@ const ACTIVE_BOOKING_EDIT_LIFECYCLE_STATUSES = new Set<string>([
 export function usesActiveBookingEditLifecycle(status: string): boolean {
   return ACTIVE_BOOKING_EDIT_LIFECYCLE_STATUSES.has(status);
 }
+
+/**
+ * #3245 (epic #2797): "IS THIS BOOKING STILL EDITABLE AT ALL?" HAS ONE HOME.
+ *
+ * Three doors — the guest add, the guest removal and the date change — do not
+ * admit the whole of {@link canModifyBookingStatusForRole}. They settle money
+ * and move capacity the moment they are taken, with no lifecycle-skipping admin
+ * path, so they want the intersection of "editable for this role" with "this
+ * edit runs the real lifecycle" ({@link usesActiveBookingEditLifecycle}), and a
+ * finished stay excluded.
+ *
+ * Until this issue each of the three wrote that intersection out as its own
+ * `["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"]`. The lists agreed, but
+ * agreement by coincidence is not one home: a change to the rule had to be made
+ * in four places and would have been made in three, and the next door written
+ * had three hardcoded examples to copy and one derivation. #3200's defect was
+ * exactly that copy, one predicate over.
+ *
+ * This is a NAMED DERIVATION, not a second definition — the discipline
+ * `INV-SSOT-001` asks for when a door genuinely needs a narrower set than the
+ * one home gives it. Nothing here restates a status; every status it admits or
+ * refuses comes from the two sets above.
+ *
+ * It is role-independent TODAY and still takes the role, because that is the
+ * shape of the question rather than an accident: the two statuses `role` moves
+ * (`DRAFT` for everyone since #2266, the waitlist trio for an admin) are all
+ * outside the active-lifecycle set, so the intersection collapses to the same
+ * four either way. `booking-edit-eligibility-one-home.test.ts` pins that for
+ * every role and every status, so a status added to one of the role sets shows
+ * up as a diff rather than as a silently widened edit door.
+ *
+ * `includeFinishedStay` is the admin date override (#1668), the one caller that
+ * wants `COMPLETED` in: it moves a fully-past booking's dates, and the date
+ * window locks that would otherwise refuse it are lifted in
+ * {@link getBookingEditPolicy}. It is the caller's flag, not a role test — the
+ * override is already role-gated where it is read.
+ */
+export interface ActiveLifecycleEditOptions {
+  /** #1668 admin date override: admit a finished stay (`COMPLETED`). */
+  includeFinishedStay?: boolean;
+}
+
+export function canModifyBookingInActiveLifecycle(
+  status: string,
+  role: string,
+  options: ActiveLifecycleEditOptions = {},
+): boolean {
+  if (!canModifyBookingStatusForRole(status, role)) return false;
+  if (!usesActiveBookingEditLifecycle(status)) return false;
+  if (status === BookingStatus.COMPLETED) {
+    return options.includeFinishedStay === true;
+  }
+  return true;
+}
+
+/**
+ * The same answer as a list, in the schema's own `BookingStatus` order, for the
+ * refusal sentence and for tests. Enumerated from the enum rather than written
+ * down: a status added to `BookingStatus` is considered by this function the day
+ * it exists, and no caller can hold a stale copy of the answer.
+ */
+export function activeLifecycleEditableStatuses(
+  role: string,
+  options: ActiveLifecycleEditOptions = {},
+): string[] {
+  return Object.values(BookingStatus).filter((status) =>
+    canModifyBookingInActiveLifecycle(status, role, options),
+  );
+}
+
+/**
+ * The refusal, with one home too (#3245) — and it takes the STATUS, not just
+ * the options, deliberately. `null` means "no refusal", so a caller gets its
+ * answer and its sentence from ONE call and cannot state the options twice.
+ *
+ * The earlier shape exported the predicate and a separate options-taking
+ * sentence, and a door was free to ask the predicate with
+ * `{ includeFinishedStay: true }` and then print a sentence built without it.
+ * That is precisely the defect this issue exists to remove, one level up — the
+ * rule and the words about the rule disagreeing — and no census can see it,
+ * because both calls are correct on their own. `INV-SSOT-002`: both sides of a
+ * comparison come from one helper. This is the structural remedy `INV-SSOT-001`
+ * prefers over a guard, and it is why `activeLifecycleEditRefusalText` below is
+ * NOT exported.
+ *
+ * The structural option that was REJECTED, since the rule asks for that to be
+ * named: making a door unable to express a status list at all — branding
+ * `BookingStatus` so a bare array cannot be compared against it, or funnelling
+ * all four doors through one required-argument gatekeeper. The first touches
+ * every status comparison in the tree; the second is a redesign of four
+ * independent services. Both are far larger than this issue, so the remaining
+ * gap — a door hand-writing a fresh list — is covered by a census rather than
+ * by the type system, and `booking-edit-eligibility-one-home.test.ts` states
+ * what that census can and cannot see.
+ */
+export function activeLifecycleEditRefusal(
+  status: string,
+  role: string,
+  options: ActiveLifecycleEditOptions = {},
+): string | null {
+  return canModifyBookingInActiveLifecycle(status, role, options)
+    ? null
+    : activeLifecycleEditRefusalText(options);
+}
+
+/**
+ * The sentence itself, GENERATED from the set above rather than typed out, so a
+ * change to the rule cannot leave three doors telling a member something that is
+ * no longer true.
+ *
+ * Role-independent for the same reason the predicate is, so it takes no role:
+ * the wording a member sees and the wording an admin sees are the same sentence
+ * about the same four statuses. It enumerates against `ADMIN` — the WIDEST role,
+ * whose editable set contains every other role's — so that if the two ever did
+ * diverge the sentence would name a superset rather than hide a status somebody
+ * is in fact allowed. The pin asserts they do not diverge, and the exact text is
+ * pinned by `booking-edit-eligibility-one-home.test.ts`.
+ */
+function activeLifecycleEditRefusalText(
+  options: ActiveLifecycleEditOptions = {},
+): string {
+  const statuses = activeLifecycleEditableStatuses("ADMIN", options);
+  const last = statuses.at(-1);
+  const listed =
+    last === undefined
+      ? "no"
+      : statuses.length > 1
+        ? `${statuses.slice(0, -1).join(", ")}, or ${last}`
+        : last;
+  return `Only ${listed} bookings can be modified`;
+}

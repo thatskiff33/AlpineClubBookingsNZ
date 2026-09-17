@@ -17,6 +17,7 @@ import {
   queueSupersededPrimaryIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
 import {
+  activeLifecycleEditRefusal,
   canModifyBookingStatusForRole,
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
@@ -395,15 +396,12 @@ export async function modifyBookingDates({
 
     // Under an admin override the fully-past COMPLETED status is editable too
     // (issue #1668); the standard path keeps the active-lifecycle allowlist.
-    const allowedStatuses = adminOverride
-      ? ["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED"]
-      : ["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"];
-    if (!allowedStatuses.includes(booking.status)) {
-      throw new ApiError(
-        "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-        400,
-      );
-    }
+    // #3245: both sets are derived rather than written out, and the refusal now
+    // names whichever one was applied instead of the standard four in both.
+    const editRefusal = activeLifecycleEditRefusal(booking.status, actor.role, {
+      includeFinishedStay: adminOverride,
+    });
+    if (editRefusal) throw new ApiError(editRefusal, 400);
 
     const editPolicy = getBookingEditPolicy({
       status: booking.status,

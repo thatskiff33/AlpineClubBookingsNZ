@@ -108,8 +108,15 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { nameField } from "@/lib/zod-helpers";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
-import { hasIssuedPrimaryXeroInvoice, isSettledBookingStatus } from "@/lib/booking-payment-state";
+import {
+  activeLifecycleEditRefusal,
+  getBookingEditPolicy,
+} from "@/lib/booking-edit-policy";
+import {
+  hasIssuedPrimaryXeroInvoice,
+  isCapturedPaymentStatus,
+  isSettledBookingStatus,
+} from "@/lib/booking-payment-state";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
@@ -325,15 +332,10 @@ export async function POST(
       // #3200: this door admits no finished stay, which is why the shared
       // invoice test further down — it answers COMPLETED as "invoice issued" —
       // has nothing new to handle here. Widening this gate is a real change.
-      // #3245 proposes routing this list through `canModifyBookingStatusForRole`
-      // rather than restating it; that is a convergence, not a widening, and the
-      // COMPLETED exclusion has to survive it either way.
-      if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
-        throw new ApiError(
-          "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-          400
-        );
-      }
+      // #3245: derived, not restated. `includeFinishedStay` stays off, so the
+      // COMPLETED exclusion survives the convergence unchanged.
+      const editRefusal = activeLifecycleEditRefusal(booking.status, actorRole);
+      if (editRefusal) throw new ApiError(editRefusal, 400);
 
       const editPolicy = getBookingEditPolicy({
         status: booking.status,
@@ -985,14 +987,39 @@ export async function POST(
        * took its status list from the eligibility gate above instead, omitting
        * COMPLETED. Worked example in `docs/invariants/single-source-of-truth.md`.
        *
-       * The SUCCEEDED-only test below is deliberately left alone rather than
-       * folded into `hasCapturedPayment`: that would newly treat a refunded
-       * payment as settled and charge a card, which is a money decision this
-       * issue does not make.
+       * #3244 finished the job #3200 left: the SUCCEEDED-only test that used to
+       * sit here is now `hasCapturedPayment`, the same predicate the other three
+       * doors reach through `applyPaymentAdjustments`
+       * (`booking-modify-settlement.ts`). All four now answer "has money
+       * already moved through this card?" identically. Owner decision, 17 Sep
+       * 2026, on #3244 — the alternative of treating a fully-refunded booking
+       * as unpaid was rejected because it would have replaced one divergence
+       * with another.
+       *
+       * It WIDENS and does not narrow. `PARTIALLY_REFUNDED` and `REFUNDED` now
+       * count as paid, so the difference is charged instead of collected from
+       * nobody — the reachable defect this issue was filed for.
+       *
+       * It asks `isCapturedPaymentStatus`, the STATUS half, rather than the
+       * full `hasCapturedPayment` the other three doors use. That is deliberate
+       * and it is the one place this door differs from them. The full predicate
+       * also requires `amountCents > 0`, and a ZERO-DOLLAR booking — a stay
+       * fully covered by credit or a 100% promo — carries
+       * `{ amountCents: 0, status: SUCCEEDED }`. Using it here would have made
+       * this door stop asking that member for the added guest's price, because
+       * the Xero arm below cannot cover them at a club with the integration off.
+       * That is a NEW under-collection, at the very door this issue exists to
+       * stop under-collecting at, and it was never put to the owner.
+       *
+       * The money IS collectable: the additional-payment mint creates a FRESH
+       * intent and only reuses the Stripe customer (`findOrCreateCustomer` when
+       * there is none), so a null `stripePaymentIntentId` on the zero-dollar row
+       * is no obstacle. The other three doors share that hole; converging onto
+       * it would have been converging onto a defect. Filed separately.
        */
       const hasSettledPayment =
         isSettledBookingStatus(booking.status) &&
-        booking.payment?.status === "SUCCEEDED";
+        isCapturedPaymentStatus(booking.payment?.status ?? "");
       const hasSucceededPayment =
         hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
       const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
@@ -1058,6 +1085,8 @@ export async function POST(
             adminReviewReason,
           };
 
+      // #3500: this first arm is UNREACHABLE — the gate above refuses
+      // AWAITING_REVIEW. #3245 deleted the last record of what it is for.
       const newStatus =
         reviewCleared && booking.status === "AWAITING_REVIEW"
           ? "PAYMENT_PENDING"
