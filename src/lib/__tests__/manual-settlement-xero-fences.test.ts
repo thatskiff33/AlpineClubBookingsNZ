@@ -88,6 +88,9 @@ describe("level 1 — the enqueueXeroBookingInvoiceOperation choke point", () =>
     });
   }
 
+  // Each case resets and cold-imports the deliberately broad Xero outbox graph.
+  // Keep the larger budget local to these two integration-shaped assertions;
+  // the repository-wide five-second unit-test budget remains unchanged.
   it("refuses to queue an invoice for a manually settled booking, and says so", async () => {
     mocks.bookingFindUnique.mockResolvedValue({
       id: "booking-1",
@@ -113,7 +116,7 @@ describe("level 1 — the enqueueXeroBookingInvoiceOperation choke point", () =>
       expect.objectContaining({ bookingId: "booking-1", paymentId: "payment-1" }),
       expect.stringContaining("manually marked-paid"),
     );
-  });
+  }, 30_000);
 
   it("still queues normally for a booking with no manual provenance", async () => {
     mocks.bookingFindUnique.mockResolvedValue({
@@ -131,7 +134,7 @@ describe("level 1 — the enqueueXeroBookingInvoiceOperation choke point", () =>
     const result = await enqueue();
 
     expect(result.queueOperationId).toBe("op-1");
-  });
+  }, 30_000);
 });
 
 describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
