@@ -3,10 +3,12 @@ import { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
 import {
+  editFinancialReviewStrandMovesNights,
   editFinancialReviewStrandRecords,
   isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,
 } from "@/lib/edit-financial-review-context";
+import type { EditFinancialReviewStrandRecord } from "@/lib/edit-financial-review-context";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
@@ -134,20 +136,24 @@ export function unpricedNightsSummaryForGuest(
  * strands' repair away, and with it the booking's chance of ever reconciling
  * again.
  *
+ * THE RECORDS, not the ids, since the fix round: whether the settled amount may
+ * move a strand's stored worth depends on whether the edit MOVED that strand's
+ * nights, and the ids cannot answer that. Reading the field off the record the
+ * item already stores is what keeps the browser, the settle path and the raise
+ * on one answer (`INV-SSOT`).
+ *
  * ORDER IS THE OCCURRENCE'S OWN and is what the settle path binds the officer's
  * figures to positionally, so it must not be re-sorted here.
  * `editFinancialReviewStrandRecords` is the one place that order is decided.
  */
-export function reviewTaskGuestIds(task: {
+export function reviewTaskStrands(task: {
   kind: ManualRefundTaskKind | string | null;
   reviewContext: unknown;
-}): string[] {
+}): readonly EditFinancialReviewStrandRecord[] {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) return [];
   const context = parseEditFinancialReviewContext(task.reviewContext);
   if (!context) return [];
-  return editFinancialReviewStrandRecords(context.occurrence).map(
-    (strand) => strand.bookingGuestId,
-  );
+  return editFinancialReviewStrandRecords(context.occurrence);
 }
 
 /**
@@ -158,19 +164,21 @@ export function reviewTaskGuestIds(task: {
  * re-derived here and the officer's entries are checked against THESE dates.
  */
 export async function loadUnpricedNightsSummaries({
-  bookingGuestIds,
+  strands,
   store,
 }: {
-  bookingGuestIds: readonly string[];
+  strands: readonly EditFinancialReviewStrandRecord[];
   store: Prisma.TransactionClient;
 }): Promise<RepairableStrand[]> {
-  if (bookingGuestIds.length === 0) return [];
+  if (strands.length === 0) return [];
   const guests = await store.bookingGuest.findMany({
-    where: { id: { in: [...new Set(bookingGuestIds)] } },
+    where: {
+      id: { in: [...new Set(strands.map((s) => s.bookingGuestId))] },
+    },
     select: GUEST_SELECT,
   });
   return repairableStrands(
-    bookingGuestIds,
+    strands,
     new Map(guests.map((guest) => [guest.id, guest])),
   );
 }
@@ -194,19 +202,38 @@ export async function loadUnpricedNightsSummaries({
  * button the server refuses, or refuses one it would have taken.
  */
 export function repairableStrands(
-  bookingGuestIds: readonly string[],
+  strands: readonly EditFinancialReviewStrandRecord[],
   guestById: ReadonlyMap<string, RepairableGuest>,
 ): RepairableStrand[] {
-  return bookingGuestIds.flatMap((bookingGuestId, index) => {
-    const guest = guestById.get(bookingGuestId);
+  return strands.flatMap((strand, index) => {
+    const guest = guestById.get(strand.bookingGuestId);
     if (!guest) return [];
     const summary = unpricedNightsSummaryForGuest(guest);
-    // `index === 0` is the LEAD strand of the occurrence, which is the strand
-    // the item is about — see `RepairableStrand.absorbsSettlement` for why that
-    // is not the same as the first strand with blanks, and what it costs.
-    return summary
-      ? [{ bookingGuestId, summary, absorbsSettlement: index === 0 }]
-      : [];
+    if (!summary) return [];
+    return [
+      {
+        bookingGuestId: strand.bookingGuestId,
+        summary,
+        /*
+          TWO CONDITIONS, AND BOTH ARE MONEY.
+
+          `index === 0` is the LEAD strand of the occurrence - the strand the
+          item is about - and is not the same as the first strand with blanks;
+          `RepairableStrand.absorbsSettlement` sets out the removal shape where
+          the difference moves a stranger's stay by somebody else's money.
+
+          The second condition is the one the fix round added, and it is what
+          keeps a PURE GUEST ADD honest. Such an edit moves no existing strand's
+          nights at all: it ranks every strand at 2, so the lead is an untouched
+          guest who may perfectly well have blanks - and making THOSE blanks come
+          to their stored total plus the charge for two newly-added guests would
+          write the new party's money onto an old strand's nights. A strand the
+          edit never moved is worth exactly what it was worth.
+        */
+        absorbsSettlement:
+          index === 0 && editFinancialReviewStrandMovesNights(strand),
+      },
+    ];
   });
 }
 
@@ -217,10 +244,15 @@ export type RepairableStrand = {
   /**
    * Whether the amount being SETTLED moves what this strand is worth (#3498).
    *
-   * True for at most one strand of an item, and only ever the one the item
-   * leads with — the strand the money is about. Everything else must come to
-   * its own stored total exactly, which is #3214's arithmetic with both
-   * variable parts at zero.
+   * True for at most one strand of an item: the one the item LEADS with, and
+   * only when this edit actually MOVED that strand's nights. Everything else
+   * must come to its own stored total exactly, which is #3214's arithmetic
+   * with both variable parts at zero.
+   *
+   * "At most one" is a property of the GRAIN rather than a rule policed here:
+   * `parkedEditWorkItems` fans an edit out into one item per strand the moment
+   * two strands' night sets move, precisely so that one item never has two
+   * strands with a claim on one settled amount.
    *
    * IT IS NOT "the first strand with blanks", and the difference is money. The
    * shape that separates them is the ordinary parked removal: the departing
@@ -296,7 +328,7 @@ export async function planStoredNightPriceRepair({
     `UnpricedNightsSummary`'s own docblock protects.
   */
   const repairable = await loadUnpricedNightsSummaries({
-    bookingGuestIds: reviewTaskGuestIds(task),
+    strands: reviewTaskStrands(task),
     store,
   });
 
@@ -333,7 +365,7 @@ export async function planStoredNightPriceRepair({
     // all, while one that names strands with nothing blank on them has figures
     // arriving for work that is already done.
     throw new ManualBookingPaymentError(
-      reviewTaskGuestIds(task).length === 0
+      reviewTaskStrands(task).length === 0
         ? NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE
         : NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
       409,

@@ -61,7 +61,7 @@ import {
   assertNoPendingEditFinancialReview,
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
-import { raiseParkedEditFinancialReviewTask } from "@/lib/edit-financial-review-parked-raise";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   NO_ADDITIONAL_ASK,
@@ -688,7 +688,7 @@ export async function POST(
        * is known. What does not happen is a reprice of the booking, a promotion
        * recalculation, or an additional charge.
        */
-      const parked = addEvidence.occurrence !== null;
+      const parked = addEvidence.occurrences !== null;
 
       /**
        * The breakdown row for one position of the party pass.
@@ -1152,12 +1152,15 @@ export async function POST(
        * settlement by one route rather than four.
        *
        * The raise ITSELF - the settlement payment id, the strand's member, the
-       * null amount - is `raiseParkedEditFinancialReviewTask`, stated once
+       * null amount - is `raiseParkedEditFinancialReviewTasks`, stated once
        * there rather than four times across the four parked doors (`INV-SSOT`).
        * Skipped entirely when this add priced normally.
+       *
+       * A PURE ADD moves no existing strand's nights, so it always composes to
+       * ONE item however large the party (`parkedEditWorkItems`).
        */
-      if (addEvidence.occurrence !== null) {
-        await raiseParkedEditFinancialReviewTask({
+      if (addEvidence.occurrences !== null) {
+        await raiseParkedEditFinancialReviewTasks({
           booking,
           guests: booking.guests,
           // The whole point of this door: the guests just added, priced at what
@@ -1167,7 +1170,7 @@ export async function POST(
           // night, so the item is raised on strands the edit did not touch and
           // this figure is the only thing on it naming the money (#3498).
           addedGuests: createdGuests,
-          occurrence: addEvidence.occurrence,
+          occurrences: addEvidence.occurrences,
           bookingModificationId: bookingModification.id,
           store: tx,
         });

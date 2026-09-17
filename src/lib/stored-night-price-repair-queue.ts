@@ -3,10 +3,11 @@ import "server-only";
 import type { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
 import logger from "@/lib/logger";
+import type { EditFinancialReviewStrandRecord } from "@/lib/edit-financial-review-context";
 import {
   GUEST_SELECT,
   repairableStrands,
-  reviewTaskGuestIds,
+  reviewTaskStrands,
   type RepairableStrand,
 } from "@/lib/stored-night-price-repair-plan";
 
@@ -61,27 +62,38 @@ export async function unpricedNightsSummariesByTaskId({
   // parked edit and each of them may have blanks to fill. The order is the
   // task's own strand order, which is what the settle path binds the officer's
   // figures to positionally - so it must survive this read unchanged.
-  const guestIdsByTaskId = new Map<string, string[]>();
+  const strandsByTaskId = new Map<
+    string,
+    readonly EditFinancialReviewStrandRecord[]
+  >();
   for (const task of tasks) {
-    const guestIds = reviewTaskGuestIds(task);
-    if (guestIds.length > 0) guestIdsByTaskId.set(task.id, guestIds);
+    const strands = reviewTaskStrands(task);
+    if (strands.length > 0) strandsByTaskId.set(task.id, strands);
   }
   const summaries = new Map<string, QueueRepairableStrand[]>();
-  if (guestIdsByTaskId.size === 0) return summaries;
+  if (strandsByTaskId.size === 0) return summaries;
 
   const guests = await store.bookingGuest.findMany({
     where: {
-      id: { in: [...new Set([...guestIdsByTaskId.values()].flat())] },
+      id: {
+        in: [
+          ...new Set(
+            [...strandsByTaskId.values()]
+              .flat()
+              .map((strand) => strand.bookingGuestId),
+          ),
+        ],
+      },
     },
     select: GUEST_SELECT,
   });
   const byGuestId = new Map(guests.map((guest) => [guest.id, guest]));
-  for (const [taskId, guestIds] of guestIdsByTaskId) {
+  for (const [taskId, strands] of strandsByTaskId) {
     // Through the SAME function the settle path uses, so the answer the browser
     // is given and the answer the server will check against are one definition
     // rather than two that agree today (`INV-SSOT`). The guest id is dropped
     // here and nowhere else: the browser never names a strand.
-    const forTask = repairableStrands(guestIds, byGuestId).map(
+    const forTask = repairableStrands(strands, byGuestId).map(
       ({ summary, absorbsSettlement }) => ({ summary, absorbsSettlement }),
     );
     if (forTask.length > 0) summaries.set(taskId, forTask);

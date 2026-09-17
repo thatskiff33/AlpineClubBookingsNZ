@@ -1765,11 +1765,14 @@ export async function POST(
   // "no beds" before they are told "an officer will confirm the amount".
   if (parkedPlan) {
     return parkedQuoteResponse(
-      // #3498: the causes of EVERY strand the one occurrence records - the
-      // preview said the same thing before, one occurrence per strand.
+      // #3498: the causes of EVERY strand this park records, across every work
+      // item it composes into - the preview said the same thing before, when it
+      // was one occurrence per strand.
       planResult?.kind === "financial_review_required"
-        ? editFinancialReviewStrandRecords(planResult.occurrence).map(
-            (strand) => strand.cause,
+        ? planResult.occurrences.flatMap((occurrence) =>
+            editFinancialReviewStrandRecords(occurrence).map(
+              (strand) => strand.cause,
+            ),
           )
         : [],
     );
@@ -1856,10 +1859,12 @@ export async function POST(
         removeGuestIds: removeSet,
       }),
     });
-    if (previewEvidence.occurrence !== null) {
+    if (previewEvidence.occurrences !== null) {
       return parkedQuoteResponse(
-        editFinancialReviewStrandRecords(previewEvidence.occurrence).map(
-          (strand) => strand.cause,
+        previewEvidence.occurrences.flatMap((occurrence) =>
+          editFinancialReviewStrandRecords(occurrence).map(
+            (strand) => strand.cause,
+          ),
         ),
       );
     }

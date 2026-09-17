@@ -40,7 +40,7 @@ import {
 import {
   assertNoPendingEditFinancialReview,
 } from "@/lib/edit-financial-review";
-import { raiseParkedEditFinancialReviewTask } from "@/lib/edit-financial-review-parked-raise";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import {
   preCheckInEditEvidence,
   preCheckInEditStrands,
@@ -728,7 +728,7 @@ export async function modifyBookingDates({
      * because the booking's money genuinely did not move, NOT because 0 was
      * chosen as the adjustment.
      */
-    const parked = dateEditEvidence.occurrence !== null;
+    const parked = dateEditEvidence.occurrences !== null;
 
     const newTotalPriceCents = parked
       ? booking.totalPriceCents
@@ -1311,18 +1311,20 @@ export async function modifyBookingDates({
      * The raise ITSELF - the settlement payment id, the strand's member, the
      * null amount, and the booking's PRE-EDIT dates so the task describes the
      * stay the unreadable evidence belongs to - is
-     * `raiseParkedEditFinancialReviewTask`, stated once there (#3166,
+     * `raiseParkedEditFinancialReviewTasks`, stated once there (#3166,
      * `INV-SSOT`).
      */
-    if (dateEditEvidence.occurrence !== null) {
-      await raiseParkedEditFinancialReviewTask({
+    if (dateEditEvidence.occurrences !== null) {
+      await raiseParkedEditFinancialReviewTasks({
         booking,
         guests: booking.guests,
         // A date change adds nobody.
         addedGuests: [],
-        // #3498: ONE occurrence for the whole date change, carrying every
-        // strand whose evidence it moved or destroyed.
-        occurrence: dateEditEvidence.occurrence,
+        // #3498: the whole date change's work items. ONE where at most one
+        // strand's nights moved; one per recorded strand where a date change
+        // moved several guests' nights at once, which is the shape that needs
+        // an amount each (`parkedEditWorkItems`).
+        occurrences: dateEditEvidence.occurrences,
         bookingModificationId: bookingModification.id,
         store: tx,
       });

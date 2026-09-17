@@ -22,7 +22,6 @@ import {
 } from "@/lib/booking-guest-stay-ranges";
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
 import type {
-  EditFinancialReviewOccurrence,
   EditFinancialReviewStrandRecord,
   FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
