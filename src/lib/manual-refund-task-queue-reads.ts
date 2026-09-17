@@ -3,7 +3,10 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import logger from "@/lib/logger";
-import { REOPENABLE_DISMISSAL_WINDOW_DAYS } from "@/lib/manual-refund-task-reopen";
+import {
+  REOPENABLE_DISMISSAL_LIST_MAX,
+  REOPENABLE_DISMISSAL_WINDOW_DAYS,
+} from "@/lib/manual-refund-task-reopen-bounds";
 import type { DismissedManualRefundTaskRow } from "@/lib/manual-refund-task-queue-payload";
 
 /**
@@ -81,7 +84,9 @@ export function readDismissedManualRefundTasks(
       },
     },
     orderBy: { completedAt: "desc" },
-    take: 100,
+    // The card PUBLISHES this figure, so it is shared rather than a literal
+    // here and a sentence there (`INV-SSOT`).
+    take: REOPENABLE_DISMISSAL_LIST_MAX,
     select: {
       id: true,
       bookingId: true,

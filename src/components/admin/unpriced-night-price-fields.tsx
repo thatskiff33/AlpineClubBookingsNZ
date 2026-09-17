@@ -12,7 +12,6 @@ import {
 import { formatCents } from "@/lib/utils";
 import { formatClubDate, type CalendarDate } from "@/lib/club-time";
 import {
-  unpricedNightsExplanation,
   type StoredNightPriceRepairCheck,
   type UnpricedNightsSummary,
 } from "@/lib/stored-night-price-repair";
@@ -70,18 +69,22 @@ export function UnpricedNightPriceFields({
   /** The shared verdict, or null while nothing has been typed. */
   check: StoredNightPriceRepairCheck | null;
   /**
-   * The paragraph above the boxes, when this fieldset is asked for by an act
-   * other than settling a review (#3214).
+   * The paragraph above the boxes.
    *
-   * A STRING RATHER THAN A FLAG, and the copy itself still lives in the rule
-   * module beside the refusals it belongs with (`INV-SSOT`): this component is
-   * the one thing on the screen that knows nothing about which act it serves,
-   * and a caller passing a mode name would put that knowledge back in.
+   * A STRING RATHER THAN A FLAG, and the copy itself lives in the rule module
+   * beside the refusals it belongs with (`INV-SSOT`): this component is the one
+   * thing on the screen that knows nothing about which act it serves, and a
+   * caller passing a mode name would put that knowledge back in.
    *
-   * Defaults to the settle screen's own paragraph, so #3191's call site is
-   * unchanged byte for byte.
+   * REQUIRED since the #3498 fix round, where it stopped being knowable here.
+   * The settle screen's paragraph now has to say whether the other guests this
+   * change touched are on THIS review or on their own, which depends on the
+   * grain the item was raised at - something a fieldset rendering one strand's
+   * boxes cannot see. A default that could be wrong about that is worse than no
+   * default: it would tell an officer somebody else is being asked about nights
+   * nobody is being asked about.
    */
-  explanation?: string;
+  explanation: string;
   /**
    * The fieldset's heading. The default is the settle screen's, whose "these
    * nights" means the review's blanks; the reconcile path asks about every night
@@ -154,7 +157,7 @@ export function UnpricedNightPriceFields({
     <fieldset className="space-y-3" data-testid="unpriced-night-price-fields">
       <legend className="text-sm font-medium">{legend}</legend>
       <p className="text-xs text-muted-foreground">
-        {explanation ?? unpricedNightsExplanation(summary)}
+        {explanation}
       </p>
       <div className="space-y-2">
         {summary.dates.map((date) => (

@@ -10,6 +10,7 @@ import {
   normaliseManualPaymentNote,
 } from "@/lib/manual-subscription-payment";
 import { prisma } from "@/lib/prisma";
+import { REOPENABLE_DISMISSAL_WINDOW_DAYS } from "@/lib/manual-refund-task-reopen-bounds";
 
 /**
  * #3498 (owner decision D2, epic #2797): put a DISMISSED money task back in the
@@ -123,8 +124,13 @@ export const REOPEN_ALREADY_OPEN_MESSAGE =
 export const REOPEN_RACED_MESSAGE =
   "This item changed while you were putting it back — refresh and try again.";
 
-/** How far back the finance queue offers a dismissal for reopening. */
-export const REOPENABLE_DISMISSAL_WINDOW_DAYS = 30;
+/*
+  RE-EXPORTED from the one home. The bounds have to be readable by the CARD as
+  well as by the query, and this module is `server-only`, so they live in
+  `manual-refund-task-reopen-bounds.ts` and are named here for the callers that
+  already import them from this module.
+*/
+export { REOPENABLE_DISMISSAL_WINDOW_DAYS };
 
 /**
  * Put one DISMISSED task back on the queue, audited, as the officer doing it.

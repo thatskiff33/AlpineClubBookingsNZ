@@ -209,9 +209,32 @@ export function toOpenManualRefundTaskPayload(
  * dismissing officer wrote and when. The evidence comes back with the row the
  * moment it is on the queue again, where the screen that prices it can show it.
  */
+/**
+ * One dismissed row as the reopen card receives it.
+ *
+ * EXPORTED so the card imports it instead of respelling it (`INV-SSOT`,
+ * #3498 fix round). The two spellings had already drifted: `bookingDeleted` is
+ * written unconditionally here and was optional on the card, so a field lost in
+ * transit read as "not deleted" on a card whose whole job is judging whether a
+ * closure was right.
+ */
+export type DismissedManualRefundTaskPayload = {
+  id: string;
+  bookingId: string;
+  amountCents: number | null;
+  kind: string | null;
+  reason: string;
+  note: string | null;
+  dismissedAt: string | null;
+  bookingDeleted: boolean;
+  memberName: string;
+  checkIn: string;
+  checkOut: string;
+};
+
 export function toDismissedManualRefundTaskPayload(
   task: DismissedManualRefundTaskRow,
-) {
+): DismissedManualRefundTaskPayload {
   return {
     id: task.id,
     bookingId: task.bookingId,

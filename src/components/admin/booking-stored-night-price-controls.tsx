@@ -31,12 +31,11 @@ import {
   type StrandNightPriceOffer,
 } from "@/lib/stored-night-price-repair";
 
-// Mirrors MANUAL_PAYMENT_NOTE_MAX in src/lib/manual-subscription-payment.ts,
-// which cannot be imported here: that module is `server-only`. The same mirror
-// the three sibling note fields on this card and the refund queue carry, and
-// the route enforces the real cap — without it the officer can type past a
+import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+
+// The route enforces the real cap - without this the officer can type past a
 // limit the screen never mentions and gets back a generic refusal.
-const NOTE_MAX_LENGTH = 500;
+const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
 /**
  * #3214 (epic #2797): the officer's control for recording what one guest's

@@ -44,6 +44,7 @@ import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import { manualRefundTaskKindAllowsSettlement } from "@/lib/manual-refund-task-settlement-rules";
 import {
   checkStoredNightPriceRepair,
+  unpricedNightsExplanation,
   nightPriceRepairUnreadableMessage,
   type NonEmptyDates,
   settlementDeltaCents,
@@ -64,7 +65,9 @@ import {
   type DismissedManualRefundTask,
 } from "@/components/admin/manual-refund-task-reopen-card";
 
-const NOTE_MAX_LENGTH = 500;
+import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+
+const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
 interface ManualRefundTask {
   id: string;
@@ -119,10 +122,21 @@ interface ManualRefundTask {
    * `absorbsSettlement` says which entry the settled amount moves the stored
    * worth of — at most one, and on the ordinary parked removal none at all.
    */
-  unpricedNights?: readonly {
-    summary: UnpricedNightsSummary;
-    absorbsSettlement?: boolean;
-  }[] | null;
+  unpricedNights?:
+    | readonly {
+        summary: UnpricedNightsSummary;
+        /**
+         * REQUIRED, because `false` is an ordinary answer and an absent field
+         * would collapse into it (`INV-SSOT`). The server declares it required
+         * and re-derives it before accepting anything, so a missing field here
+         * buys a screen that enables a button the server refuses - which is the
+         * exact failure the shared answer exists to prevent.
+         */
+        absorbsSettlement: boolean;
+        /** Which strand of the ITEM this is. The card's one ordinal - see below. */
+        strandIndex: number;
+      }[]
+    | null;
   /**
    * #3033: this row's booking belongs to the person looking at it, and still
    * exists — so they may open it as its member even without admin bookings
@@ -223,6 +237,51 @@ function formatNightList(dates: readonly CalendarDate[]): string {
 }
 
 /**
+ * THE ONE ORDINAL on this card (#3498 fix round).
+ *
+ * The evidence blocks and the price fieldsets are two lists of the same guests,
+ * and they used to be numbered by two different derivations over two different
+ * denominators - blocks over every strand the item names, boxes over the
+ * repairable subset. On the canonical parked removal the lead is the departing
+ * guest, who has no blanks at all, so every box column was off by one against
+ * the block above it and the two totals disagreed (6 against 7). The payload
+ * carries no guest id at all (`toEditFinancialReviewEvidence`), so the ordinal
+ * IS the guest's identity here and two of them is two identities.
+ *
+ * So both callers pass the SAME `strandIndex`, which the server counts over the
+ * item's own strands, and the same denominator.
+ *
+ * Null for a one-strand item, where "Guest 1 of 1" is noise.
+ */
+function strandOrdinal(strandIndex: number, strandCount: number): string | null {
+  return strandCount > 1 ? `Guest ${strandIndex + 1} of ${strandCount}` : null;
+}
+
+/**
+ * Whether this change MOVED this guest's nights, in a sentence (#3498, the
+ * owner's 17 September 2026 decision).
+ *
+ * ## Why it is on every strand, and why it is not a subtle cue
+ *
+ * The decision brings the fan-out back for an edit that moves two or more
+ * guests' nights, so an officer can again face several cards for one change -
+ * and the near-miss this whole issue exists to remove was that on the live
+ * booking the only tell between seven cards was one line reading
+ * `Nights given back:` with dates instead of `none`. A reader scanning for the
+ * money row was reading a punctuation difference.
+ *
+ * So it is said in words, on its own line, and the row that carries the money
+ * says so in the foreground colour. It is also said on a SINGLE-strand item,
+ * where it matters most: that is exactly the fan-out shape, and the card has no
+ * neighbouring block to compare against.
+ */
+function strandMovedNights(strand: EditFinancialReviewStrandEvidence): boolean {
+  return (
+    strand.surrenderedNightDates.length > 0 || strand.addedNightDates.length > 0
+  );
+}
+
+/**
  * The evidence owner decision D3 asks for, and only that.
  *
  * D3 is "a reason string plus a LINK to the booking's payment and rate history",
@@ -244,12 +303,27 @@ function EditFinancialReviewStrandBlock({
 }: {
   strand: EditFinancialReviewStrandEvidence;
   /** What this strand is called on the card. No name and no id - see below. */
-  heading?: string;
+  heading?: string | null;
   testId?: string;
 }) {
+  const moved = strandMovedNights(strand);
   return (
     <div className="space-y-1" data-testid={testId}>
       {heading ? <p className="font-medium text-foreground">{heading}</p> : null}
+      <p
+        className={
+          moved ? "font-medium text-foreground" : "text-muted-foreground"
+        }
+        data-testid={
+          moved
+            ? "manual-refund-task-strand-moved"
+            : "manual-refund-task-strand-unmoved"
+        }
+      >
+        {moved
+          ? "This change moved this guest's nights, so money may be owed on them."
+          : "This change did not move this guest's nights. What was stored for them is recorded here because the change rewrote their night rows."}
+      </p>
       <p className="font-medium text-foreground">
         {EDIT_FINANCIAL_REVIEW_CAUSE_LABEL[strand.cause]}
       </p>
@@ -293,12 +367,22 @@ function EditFinancialReviewEvidenceBlock({
     mean the same thing here: this item describes one strand.
   */
   const otherStrands = evidence.otherStrands ?? [];
+  const strandCount = otherStrands.length + 1;
   return (
     <div
       className="space-y-1 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
       data-testid="manual-refund-task-review-evidence"
     >
-      <EditFinancialReviewStrandBlock strand={evidence} />
+      {/*
+        #3498 fix round: the LEAD gets a heading too. It had none, so on a
+        multi-strand item "Guest 1" was never printed at all while its
+        neighbours were numbered from two - the reader had to infer that the
+        unlabelled block at the top was the missing one.
+      */}
+      <EditFinancialReviewStrandBlock
+        strand={evidence}
+        heading={strandOrdinal(0, strandCount)}
+      />
       <p>
         Booked stay: {formatClubDate(evidence.bookingCheckIn)} to{" "}
         {formatClubDate(evidence.bookingCheckOut)}
@@ -323,19 +407,28 @@ function EditFinancialReviewEvidenceBlock({
           className="space-y-2 border-t border-border pt-2"
           data-testid="manual-refund-task-review-other-strands"
         >
+          {/*
+            #3498 fix round: "touched" was false of most of them, and this issue
+            exists because it was. A guest whose nights this change did not move
+            is here because the change deleted and recreated their night rows,
+            not because anything of theirs moved - and saying otherwise is the
+            same overstatement the seven cards were. Each block below says which
+            it is, in its own words.
+          */}
           <p className="font-medium text-foreground">
-            The same change also touched {otherStrands.length}{" "}
-            {otherStrands.length === 1 ? "other guest" : "other guests"}{" "}
-            on this booking. What was stored for{" "}
-            {otherStrands.length === 1 ? "them" : "each of them"} is
-            below. It is here so nothing is lost; there is one adjustment to
-            record for this change, not one per guest.
+            This change also rewrote the stored night rows of{" "}
+            {otherStrands.length}{" "}
+            {otherStrands.length === 1 ? "other guest" : "other guests"} on this
+            booking. What was stored for{" "}
+            {otherStrands.length === 1 ? "them" : "each of them"} is below, so
+            nothing is lost. There is one adjustment to record for this change,
+            not one per guest.
           </p>
           {otherStrands.map((strand, index) => (
             <EditFinancialReviewStrandBlock
               key={index}
               strand={strand}
-              heading={`Guest ${index + 2} of ${otherStrands.length + 1}`}
+              heading={strandOrdinal(index + 1, strandCount)}
             />
           ))}
         </div>
@@ -1013,10 +1106,31 @@ export function ManualRefundTaskQueue() {
    * (`INV-SSOT`): a screen with its own arithmetic would enable a button the
    * server then refuses, or the reverse.
    */
-  const unpricedNights =
-    target !== null && target.task.unpricedNights
-      ? target.task.unpricedNights
-      : [];
+  /*
+    #3498 fix round: ARRAY-CHECKED, for the reason the sibling field two hundred
+    lines up already states. This arrives over the wire, the route that sent it
+    changed shape in this release, and a browser holding a cached bundle through
+    a deploy can receive the OLD route's answer - which spelled this as an
+    object. `.map()` on one throws inside render and takes the whole finance
+    queue down: a list of money the club owes members, lost to a field that is
+    merely the wrong shape. An unrecognised shape offers no boxes, which is
+    exactly how this screen behaved before #3191.
+  */
+  const unpricedNights = Array.isArray(target?.task.unpricedNights)
+    ? target.task.unpricedNights
+    : [];
+  /*
+    HOW MANY GUEST STRANDS THIS ITEM NAMES - the denominator every ordinal on
+    this dialog is counted against, and the thing that tells the paragraph above
+    the boxes whether the other guests are on THIS review or on their own.
+
+    Read off the captured evidence rather than off the repairable subset: a
+    guest with nothing blank is still one of the item's strands, and on the
+    ordinary parked removal that guest is the lead. One when the evidence cannot
+    be read at all, which is also when there are no boxes to number.
+  */
+  const reviewStrandCount =
+    (target?.task.reviewEvidence?.otherStrands?.length ?? 0) + 1;
   const nightPriceDeltaCents =
     target === null || target.resolution === "dismissed"
       ? 0
@@ -1106,7 +1220,17 @@ export function ManualRefundTaskQueue() {
               entries,
               deltaCents,
             });
-    return { summary, index, values, check, targetKnown: deltaCents !== null };
+    return {
+      summary,
+      index,
+      // The ITEM's ordinal, which is not this list's index: this list is the
+      // repairable SUBSET. `strandOrdinal` is the one derivation both it and
+      // the evidence blocks are numbered from.
+      strandIndex: strand.strandIndex,
+      values,
+      check,
+      targetKnown: deltaCents !== null,
+    };
   });
   /*
     REQUIRED SINCE #3219 D2, where it used to be merely "blocked once you start".
@@ -1709,16 +1833,42 @@ export function ManualRefundTaskQueue() {
                     `toEditFinancialReviewEvidence` performs would be worth
                     nothing if the boxes beside it printed a name.
                   */}
-                  {nightPriceStrands.map((strand) => (
+                  {nightPriceStrands.map((strand) => {
+                    const ordinal = strandOrdinal(
+                      strand.strandIndex,
+                      reviewStrandCount,
+                    );
+                    return (
                     <UnpricedNightPriceFields
                       key={strand.index}
                       summary={strand.summary}
                       fieldIdPrefix={`unpriced-night-${strand.index}`}
+                      /*
+                        ONE DERIVATION with the evidence blocks above
+                        (`strandOrdinal`). It used to count over the repairable
+                        subset while the blocks counted over every strand, so on
+                        the ordinary parked removal - where the lead is the
+                        departing guest and has no blanks - every column was off
+                        by one against the block describing it, and the two
+                        totals disagreed outright.
+                      */
                       legend={
-                        nightPriceStrands.length === 1
+                        ordinal === null
                           ? "What did these nights sell for?"
-                          : `Guest ${strand.index + 1} of ${nightPriceStrands.length}: what did these nights sell for?`
+                          : `${ordinal}: what did these nights sell for?`
                       }
+                      /*
+                        The paragraph follows the GRAIN the item was raised at:
+                        whether the other guests this change touched are on this
+                        same review, or on their own. The fieldset cannot see
+                        that, so it is passed in rather than defaulted.
+                      */
+                      explanation={unpricedNightsExplanation(strand.summary, {
+                        otherStrandsOnThisItem: Math.max(
+                          reviewStrandCount - 1,
+                          0,
+                        ),
+                      })}
                       values={strand.values}
                       onChange={(date, value) =>
                         setNightPriceInputs((current) => ({
@@ -1733,7 +1883,8 @@ export function ManualRefundTaskQueue() {
                       check={strand.check}
                       disabled={submitting || unverified !== null}
                     />
-                  ))}
+                    );
+                  })}
                   <div className="space-y-2">
                     <Label htmlFor="manual-refund-task-note">
                       Note{target.resolution === "dismissed" ? " (required)" : " (optional)"}

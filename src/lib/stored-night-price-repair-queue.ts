@@ -94,7 +94,11 @@ export async function unpricedNightsSummariesByTaskId({
     // rather than two that agree today (`INV-SSOT`). The guest id is dropped
     // here and nowhere else: the browser never names a strand.
     const forTask = repairableStrands(strands, byGuestId).map(
-      ({ summary, absorbsSettlement }) => ({ summary, absorbsSettlement }),
+      ({ summary, absorbsSettlement, strandIndex }) => ({
+        summary,
+        absorbsSettlement,
+        strandIndex,
+      }),
     );
     if (forTask.length > 0) summaries.set(taskId, forTask);
   }

@@ -3,6 +3,7 @@ import "server-only";
 import { ManualRefundTaskStatus, Prisma } from "@prisma/client";
 import { canonicalNights, stableDigest } from "@/lib/stable-digest";
 import {
+  editFinancialReviewStrandMovesNights,
   editFinancialReviewStrandRecords,
   type EditFinancialReviewOccurrence,
   type EditFinancialReviewStrandRecord,
@@ -359,6 +360,8 @@ export function buildEditFinancialReviewReason(
   occurrence: EditFinancialReviewOccurrence,
 ): string {
   const strands = editFinancialReviewStrandRecords(occurrence);
+  // Non-null by construction: the helper always answers lead-first.
+  const lead = strands[0]!;
   /*
     #3498: THE WHOLE EDIT'S NIGHTS, not the lead strand's.
 
@@ -374,12 +377,29 @@ export function buildEditFinancialReviewReason(
   const added = canonicalNights(
     strands.flatMap((strand) => [...strand.addedNightDates]),
   );
-  // Every strand whose own rows could not be read is what PARKED the edit; the
-  // rest are recorded because this edit destroys evidence they did have.
+  /*
+    #3498 fix round: "touched" was FALSE, and this issue exists because it was.
+
+    Every strand the edit records is on the item, but most of them are guests
+    the edit never moved a night of - they are recorded because
+    `applyGuestChanges` deletes and recreates their rows, which destroys
+    evidence they did have. On the booking that prompted this, six of the seven
+    were exactly that, and a sentence saying the change touched seven guests is
+    the same overstatement the seven cards were.
+
+    So the sentence separates the two. `editFinancialReviewStrandMovesNights` is
+    the one definition of which is which, and the same one that decided how many
+    items this edit raised at all.
+  */
+  const moved = strands.filter((strand) =>
+    editFinancialReviewStrandMovesNights(strand),
+  ).length;
   const strandsPhrase =
     strands.length === 1
       ? ""
-      : ` The change touched ${strands.length} guests on this booking and the stored evidence for all of them is on this item.`;
+      : moved === 0
+        ? ` It moved no existing guest's nights, but it rewrote the stored night rows of all ${strands.length} guests on this booking, so what was stored for each of them is on this item.`
+        : ` It moved the nights of ${moved === 1 ? "one" : moved} of the ${strands.length} guests on this booking; what was stored for all ${strands.length} is on this item.`;
   const addedPhrase = (listed: boolean) =>
     added.length === 0
       ? ""
@@ -403,21 +423,26 @@ export function buildEditFinancialReviewReason(
         : listed
           ? `${nights.length} nights: ${nights.join(", ")}`
           : `${nights.length} nights`;
-  // #3032: the second sentence has to match the cause, because the two are read
-  // as instructions. "The exact sold price could not be read" is FALSE of a
-  // `COUNTERPART_STRAND_UNREADABLE` strand - its rows are complete and add up -
-  // and an admin told otherwise about a task that carries real per-night prices
-  // has been handed a contradiction while pricing real money.
-  //
-  // #3498: asked of EVERY strand rather than of the lead alone. The item is the
-  // edit now, and an edit parks because at least one strand's own rows could not
-  // be read - so "complete and add up" is only honest when that is true of all
-  // of them, which on a one-strand item is exactly the sentence #3032 wrote.
-  const why = strands.every(
-    (strand) => strand.cause === "COUNTERPART_STRAND_UNREADABLE",
-  )
-    ? "These guests' own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read, so the booking's total could not be reworked automatically. Confirm the amount owed for the nights above before any money moves."
-    : "The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.";
+  /*
+    #3032: the second sentence has to match the cause, because the two are read
+    as instructions. "The exact sold price could not be read" is FALSE of a
+    `COUNTERPART_STRAND_UNREADABLE` strand - its rows are complete and add up -
+    and an admin told otherwise about a task that carries real per-night prices
+    has been handed a contradiction while pricing real money.
+
+    #3498 fix round: asked of the LEAD strand, which is the strand the card is
+    headed by and the strand this sentence is about. #3498 briefly asked it of
+    EVERY strand, which made the branch DEAD at all four raise doors: an edit
+    parks because at least one strand is unreadable, and that strand is recorded
+    too, so `every` is false on every item there is. The row that held the real
+    money in production - the departing guest, whose own rows read perfectly -
+    was therefore told "the exact sold price could not be read" beside an
+    evidence block saying its prices are complete and add up.
+  */
+  const why =
+    lead.cause === "COUNTERPART_STRAND_UNREADABLE"
+      ? "This guest's own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read, so the booking's total could not be reworked automatically. Confirm the amount owed for the nights above before any money moves."
+      : "The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.";
   const sentence = (listed: boolean) =>
     `Booking edit gave back ${nightsPhrase(listed)}.${addedPhrase(listed)}${strandsPhrase} ${why}`;
   /*

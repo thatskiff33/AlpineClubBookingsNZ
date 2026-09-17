@@ -213,6 +213,7 @@ export function repairableStrands(
     return [
       {
         bookingGuestId: strand.bookingGuestId,
+        strandIndex: index,
         summary,
         /*
           TWO CONDITIONS, AND BOTH ARE MONEY.
@@ -240,6 +241,22 @@ export function repairableStrands(
 /** One strand of a review whose blanks this screen can offer to fill in. */
 export type RepairableStrand = {
   bookingGuestId: string;
+  /**
+   * WHICH strand of the item this is, counted over every strand the item names
+   * rather than over the repairable subset (#3498 fix round).
+   *
+   * It is the ONE ordinal on this screen, and it has to be: the card heads its
+   * evidence blocks by position over ALL strands, and legends its price boxes by
+   * position over the REPAIRABLE ones. Two index spaces on one card is how
+   * "Guest 3 of 6" appeared above boxes belonging to the guest the evidence
+   * block called "Guest 4 of 7" - and on the canonical parked removal the lead
+   * is the departing guest, who has no blanks at all, so every column was off by
+   * one. The payload carries no guest id (`toEditFinancialReviewEvidence`), so
+   * the ordinal IS the guest's identity here.
+   *
+   * A POSITION, not an identifier: it names nothing outside this one item.
+   */
+  strandIndex: number;
   summary: UnpricedNightsSummary;
   /**
    * Whether the amount being SETTLED moves what this strand is worth (#3498).
@@ -353,7 +370,16 @@ export async function planStoredNightPriceRepair({
     const offered = repairable[0];
     if (offered === undefined) return [];
     throw new ManualBookingPaymentError(
-      unpricedNightsExplanation(offered.summary),
+      unpricedNightsExplanation(offered.summary, {
+        // The item's OWN strand count, not the repairable subset's: the
+        // sentence is about whether the other guests this change touched are on
+        // this review or on their own, and a guest with nothing blank is still
+        // on this review.
+        otherStrandsOnThisItem: Math.max(
+          reviewTaskStrands(task).length - 1,
+          0,
+        ),
+      }),
       400,
     );
   }
