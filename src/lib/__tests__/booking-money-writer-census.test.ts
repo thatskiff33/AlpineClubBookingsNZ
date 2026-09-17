@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import {
   discoveredBookingMoneyRawSqlEscapes,
+  discoveredBookingMoneyWriterEscapes,
   discoveredBookingMoneyWriterEqualityEscapes,
   discoveredBookingMoneyWriterSites,
   scanBookingMoneyRawSqlEscapes,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/__tests__/support/booking-money-writer-scan";
 
 const DISCOVERED_WRITERS = discoveredBookingMoneyWriterSites();
+const DISCOVERED_ESCAPES = discoveredBookingMoneyWriterEscapes();
 const FIXTURE = {
   checkIn: new Date("2026-08-01T00:00:00.000Z"), checkOut: new Date("2026-08-02T00:00:00.000Z"),
   totalPriceCents: 10_000, promoAdjustmentCents: -1_500, discountCents: 1_500, finalPriceCents: 8_500,
@@ -39,6 +41,9 @@ describe("INV-MONEY-031 booking money writer census", () => {
     const code = "const ledger = database.booking; await ledger.update({ data: { finalPriceCents: 1 } });";
     expect(scanBookingMoneyWriterSites("alias.ts", code)).toEqual([{ file: "alias.ts", delegate: "booking", methods: ["update"], fields: ["finalPriceCents"] }]);
     expect(scanBookingMoneyWriterEscapes("alias.ts", code)).toEqual([]);
+    expect(scanBookingMoneyWriterEscapes("forward.ts", "mutate(database.booking);")).toEqual(["forward.ts|booking"]);
+    expect(scanBookingMoneyWriterEscapes("destructure.ts", "const { booking } = database; mutate(booking);")).toEqual(["destructure.ts|booking"]);
+    expect(DISCOVERED_ESCAPES).toEqual([]);
   });
 
   it("recursively discovers nested relation mutation methods", () => {

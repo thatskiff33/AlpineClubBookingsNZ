@@ -330,10 +330,27 @@ export function scanBookingMoneyWriterEscapes(file: string, code: string): strin
     /[jt]sx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const escapes = new Set<string>();
+  const destructured = new Map<string, keyof typeof TRACKED_FIELDS>();
+  const collect = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer && /(?:^|\.)(?:prisma|tx|store|client|db|database)$/i.test(node.initializer.getText(source))) {
+      for (const element of node.name.elements) {
+        const key = element.propertyName ? propertyName(element.propertyName) : ts.isIdentifier(element.name) ? element.name.text : undefined;
+        if (key && ts.isIdentifier(element.name) && Object.prototype.hasOwnProperty.call(TRACKED_FIELDS, key)) destructured.set(element.name.text, key as keyof typeof TRACKED_FIELDS);
+      }
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(source);
   const visit = (node: ts.Node, parent?: ts.Node, grandparent?: ts.Node) => {
+    if (ts.isIdentifier(node) && parent && ts.isCallExpression(parent) && parent.arguments.includes(node)) {
+      const delegate = destructured.get(node.text);
+      if (delegate) escapes.add(`${file}|${delegate}`);
+    }
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const delegate = delegateName(node, source);
-      if (delegate) {
+      const receiver = node.expression.getText(source);
+      const plausibleClient = ts.isIdentifier(node) || /(?:^|\.)(?:prisma|tx|store|client|db|database)$/i.test(receiver);
+      if (delegate && plausibleClient) {
         const method = parent;
         const call = grandparent;
         const isDirectCall =
@@ -548,22 +565,8 @@ export function scanBookingMoneyWriterSites(
   };
   visit(source);
 
-  for (const [delegate, fields] of Object.entries(TRACKED_FIELDS) as Array<
-    [keyof typeof TRACKED_FIELDS, readonly string[]]
-  >) {
-    const model = delegate[0]!.toUpperCase() + delegate.slice(1);
-    if (
-      new RegExp(
-        String.raw`\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|DELETE\s+FROM)\s+(?:(?:[A-Za-z_$][\w$]*|["'\x60][A-Za-z_$][\w$]*["'\x60])\s*\.\s*)?["'\x60]${model}["'\x60]`,
-        "i",
-      ).test(uncommented)
-    ) {
-      record(
-        delegate,
-        "rawSql",
-        fields.filter((field) => new RegExp(String.raw`\b${field}\b`).test(uncommented)),
-      );
-    }
+  for (const rawSite of rawSqlWriterSites(uncommented)) {
+    record(rawSite.delegate, "rawSql", rawSite.fields);
   }
 
   return [...found.entries()]
@@ -576,15 +579,45 @@ export function scanBookingMoneyWriterSites(
     .sort((left, right) => left.delegate.localeCompare(right.delegate));
 }
 
+function rawSqlWriterSites(code: string): Array<{
+  delegate: keyof typeof TRACKED_FIELDS;
+  fields: string[];
+}> {
+  const sql = stripSqlComments(code);
+  const sites: Array<{ delegate: keyof typeof TRACKED_FIELDS; fields: string[] }> = [];
+  for (const [delegate, tracked] of Object.entries(TRACKED_FIELDS) as Array<[keyof typeof TRACKED_FIELDS, readonly string[]]>) {
+    const model = delegate[0]!.toUpperCase() + delegate.slice(1);
+    const statements = sql.matchAll(new RegExp(String.raw`\b(?:UPDATE\s+(?:\w+\.)?["\x60]${model}["\x60][\s\S]*?\bSET\b|INSERT\s+INTO\s+(?:\w+\.)?["\x60]${model}["\x60]\s*\()([\s\S]*?)(?=;|$)`, "gi"));
+    for (const statement of statements) {
+      const segment = statement[1]!;
+      const written = tracked.filter((field) => new RegExp(String.raw`["\x60]${field}["\x60]\s*(?:=|[,\)])`, "i").test(segment));
+      if (written.length > 0 || /\bDELETE\b/i.test(statement[0]!)) sites.push({ delegate, fields: [...written] });
+    }
+  }
+  return sites;
+}
+
+function stripSqlComments(code: string): string {
+  let result = "";
+  for (let index = 0; index < code.length;) {
+    if (code[index] === "-" && code[index + 1] === "-") {
+      index = code.indexOf("\n", index + 2);
+      if (index < 0) break;
+    } else if (code[index] === "/" && code[index + 1] === "*") {
+      const end = code.indexOf("*/", index + 2);
+      index = end < 0 ? code.length : end + 2;
+    } else result += code[index++]!;
+  }
+  return result;
+}
+
 /**
  * SQL writes do not have TypeScript's object shape.  Read their real SET
  * assignments after removing source and SQL comments; a field merely named in
  * prose, a WHERE clause, or a copied old value is not reconciliation evidence.
  */
 export function scanBookingMoneyRawSqlEscapes(file: string, code: string): string[] {
-  const sql = stripComments(code)
-    .replace(/--[^\r\n]*/g, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "");
+  const sql = stripSqlComments(stripComments(code));
   const escapes: string[] = [];
   const bookingUpdates = sql.matchAll(/UPDATE\s+(?:(?:[A-Za-z_$][\w$]*|["`][A-Za-z_$][\w$]*["`])\s*\.\s*)?["`]Booking["`][\s\S]*?\bSET\b([\s\S]*?)(?=\b(?:FROM|WHERE|RETURNING)\b|;|$)/gi);
   for (const statement of bookingUpdates) {
@@ -594,15 +627,15 @@ export function scanBookingMoneyRawSqlEscapes(file: string, code: string): strin
     }
     const final = assignments.get("finalPriceCents");
     if (final) {
-      if (/\bfinalPriceCents\b/i.test(final) ||
-        !(/\btotalPriceCents\b/i.test(final) && /\bpromoAdjustmentCents\b/i.test(final))) {
+      const canonical = final.replace(/["`\s]/g, "").toLowerCase();
+      if (canonical !== "totalpricecents+promoadjustmentcents") {
         escapes.push(`${file}|rawSqlFinalPriceRelation`);
       }
     }
     const discount = assignments.get("discountCents");
     const promo = assignments.get("promoAdjustmentCents");
     if (discount && promo &&
-      (!/\bpromoAdjustmentCents\b/i.test(discount) || !/-\s*["`]?promoAdjustmentCents/i.test(discount))) {
+      discount.replace(/["`\s]/g, "").toLowerCase() !== "-promoadjustmentcents") {
       escapes.push(`${file}|rawSqlDiscountRelation`);
     }
   }
