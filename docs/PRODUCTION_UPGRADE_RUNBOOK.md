@@ -297,6 +297,40 @@ window, the documented fallback is to defer only
 fully drained onto the new runtime, then run that single migration late — it is
 idempotent and safe to run once the new code is serving all traffic.
 
+### 2.2a #3498: parked booking-edit reviews — deploy in a quiet window
+
+This release changes the shape of the evidence a **parked booking edit** stores
+on its finance-queue item (`ManualRefundTask.reviewContext`): it now records
+every guest strand the edit touched, not one item per strand. No migration is
+involved — the column is JSON and nothing is rewritten — so the migrate step is
+unaffected and nothing here blocks it.
+
+The window is between **migrate and cutover**, and it runs the other way from
+§2.2's: the NEW colour writes a shape the OLD colour cannot read. A pre-#3498
+parser rejects the unknown field outright and reads the whole context as
+**absent** rather than as partial. From this release on the parser tolerates a
+field it does not know, so this is the last deploy that can hit it — but the
+colour currently serving is already compiled and no change in this release can
+reach it.
+
+What that costs, precisely, if it happens: a review **raised** on the new colour
+and then **closed** on the old one closes with the per-night prices skipped that
+`#3219` D2 makes mandatory. No money moves wrongly and nothing is lost — the
+booking simply keeps unpriced nights, which the next edit parks on again. On a
+**rollback** after cutover, any item raised in between reads as "evidence
+unreadable" on the restored image until you roll forward.
+
+The owner ratified the deploy strategy (owner decision, 18 September 2026, on
+issue #3498): ship as one release, deploy in a quiet window, and accept the
+window rather than splitting the change across two releases.
+
+**Operator action:** schedule at **low member-admin traffic**, minimise the gap
+between step 13 (migrate) and step 17 (cutover), and **do not work the finance
+queue's "Money waiting for review" items during the changeover** — that is the
+one action that closes this window completely, because both halves of the
+failure have to land inside it. Deferring is not an option here and is not
+needed: there is no migration to defer.
+
 ### 2.3 Verify the migrate step
 
 Step 13 runs `verify_prisma_migration_status`; confirm the engine reports the

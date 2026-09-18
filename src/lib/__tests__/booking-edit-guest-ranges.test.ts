@@ -17,6 +17,7 @@ import {
 } from "@/lib/booking-edit-guest-ranges";
 import type { SeasonRateData } from "@/lib/pricing";
 import { eachDateOnlyInRange } from "@/lib/date-only";
+import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
 
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
@@ -87,7 +88,8 @@ function pricedPlan(input: BuildInProgressGuestRangePlanInput) {
   if (result.kind !== "priced") {
     throw new Error(
       `Expected a priced plan, got financial review: ${result.occurrences
-        .map((occurrence) => occurrence.cause)
+        .flatMap((occurrence) => editFinancialReviewStrandRecords(occurrence))
+        .map((strand) => strand.cause)
         .join(", ")}`,
     );
   }

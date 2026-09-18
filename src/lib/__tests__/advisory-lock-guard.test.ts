@@ -821,6 +821,15 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
       "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime is never emailed.",
     invariant: "INV-LOCK-001",
   },
+
+  // ── Putting a dismissed money task back on the queue ──────────────────
+  {
+    site: "reopenManualRefundTask#1",
+    tier: "GLOBAL",
+    reason:
+      "DISMISSED -> OPEN re-arms assertNoPendingEditFinancialReview RETROACTIVELY, against money-affecting edits already in flight - unlike the closure it mirrors, which only relaxes that fence. Unlocked, an edit that read the fence while the task was dismissed can settle a credit under its own modification while the reopen commits, leaving an OPEN task whose context still points at the earlier anchor and whose completion credits the member twice. It makes no provider call, so the bounded exception that keeps resolveManualRefundTask lock-free does not apply.",
+    invariant: "INV-LOCK-001",
+  },
 ];
 
 const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {

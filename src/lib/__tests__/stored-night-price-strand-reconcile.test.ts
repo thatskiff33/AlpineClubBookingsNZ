@@ -27,7 +27,7 @@ import {
   STRAND_RECONCILE_WRONG_BOOKING_MESSAGE,
   type RecordedNightPrice,
 } from "@/lib/stored-night-price-repair";
-import { NIGHT_PRICE_REPAIR_RACED_MESSAGE } from "@/lib/stored-night-price-repair-store";
+import { NIGHT_PRICE_REPAIR_RACED_MESSAGE } from "@/lib/stored-night-price-repair-plan";
 import {
   planStrandNightPriceReconcile,
   recordStrandNightPriceReconcile,

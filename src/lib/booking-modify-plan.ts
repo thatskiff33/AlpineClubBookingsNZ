@@ -108,13 +108,13 @@ import {
 } from "@/lib/member-guest-add-policy";
 import {
   isNonNegativeIntegerCents,
-  type EditFinancialReviewOccurrence,
   type FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
 import {
   preCheckInEditEvidence,
   preCheckInEditStrands,
 } from "@/lib/stored-sold-price-evidence";
+import type { ParkedEditWorkItems } from "@/lib/parked-edit-occurrence";
 import {
   classifyNightPriceToWrite,
   preservedNightPriceWrites,
@@ -1357,7 +1357,7 @@ export type PricedModification = {
  * no `newTotalPriceCents`, no `priceBreakdown` and no `inProgressPlan`, so there
  * is no ADJUSTMENT a caller could default to zero — the epic prohibits a magic
  * zero, and the cheapest enforcement is a shape in which one cannot be written.
- * What it does carry is `occurrences[].storedEvidence`: the stored history as it
+ * What it does carry is the occurrence's per-strand `storedEvidence`: the stored history as it
  * stands, which is evidence for a person and never an amount to move. See
  * `InProgressGuestRangePlanResult` for why that distinction is worth stating.
  * Quote and apply consume this same type, which is the issue's own parity
@@ -1681,7 +1681,7 @@ export async function calculateModifiedPricing(
   // #3170: the parked twin. Set instead of `inProgressPlan` when this booking's
   // own history cannot price the edit; it carries the beds and no amount.
   let parkedPlan: ParkedEditStructuralPlan | null = null;
-  let parkedOccurrences: EditFinancialReviewOccurrence[] = [];
+  let parkedOccurrences: ParkedEditWorkItems | null = null;
   if (isInProgressEdit && editableFrom) {
     // #2756: the same mapping the QUOTE route already applies around its own call
     // to this planner (`modify-quote/route.ts`, "Unable to price the requested
@@ -1845,6 +1845,15 @@ export async function calculateModifiedPricing(
   // single cent is computed. Everything below prices the edit, and this booking's
   // history cannot support a price — that is the whole finding.
   if (parkedPlan) {
+    if (parkedOccurrences === null) {
+      // #3498: the two are set in the same statement above from one planner
+      // answer, so this cannot fire - but the parked exit is a money path and
+      // "cannot fire" is worth one line that says so loudly rather than a park
+      // that raises no review at all.
+      throw new Error(
+        "An in-progress edit parked with no financial-review occurrence (#3498).",
+      );
+    }
     return {
       kind: "financial_review_required",
       occurrences: parkedOccurrences,
@@ -1958,7 +1967,7 @@ export async function calculateModifiedPricing(
         removeGuestIds,
       }),
     });
-    if (evidence.occurrences.length > 0) {
+    if (evidence.occurrences !== null) {
       return {
         kind: "financial_review_required",
         occurrences: evidence.occurrences,

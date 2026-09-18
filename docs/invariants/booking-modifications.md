@@ -1279,6 +1279,9 @@ for, under four conditions, none of which is optional:
   (`booking-payment.stored-night-price.record`, category `payment`) rather than
   as metadata on the settlement beside it - it can also happen on a DISMISSAL,
   whose entry says in as many words that nothing moved.
+ #3498
+  moved its four per-strand figures into a `repairedStrands` array, one object
+  per strand - breaking, still `null` not empty, older rows left flat.
 
 ## INV-MOD-037
 

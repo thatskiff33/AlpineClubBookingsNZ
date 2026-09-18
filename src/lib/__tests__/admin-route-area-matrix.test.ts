@@ -414,6 +414,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // SPECIAL_ROUTE_AREA_PATTERNS entry is needed for this one.
   "/api/admin/payments/manual-refund-tasks": "finance",
   "/api/admin/payments/manual-refund-tasks/[id]": "finance",
+  // #3498 (owner decision D2): putting a dismissed money task back on the queue
+  // is gated exactly as closing one is - undoing a money decision is not a
+  // lesser act than taking it.
+  "/api/admin/payments/manual-refund-tasks/[id]/reopen": "finance",
   "/api/admin/pending-counts": "overview",
   "/api/admin/promo-codes": "bookings",
   "/api/admin/promo-codes/[id]": "bookings",

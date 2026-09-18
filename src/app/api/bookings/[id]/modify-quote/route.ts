@@ -54,6 +54,7 @@ import {
   preCheckInEditEvidence,
   preCheckInEditStrands,
 } from "@/lib/stored-sold-price-evidence";
+import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import {
   assertCheckInClearsXeroLockDate,
@@ -1764,8 +1765,15 @@ export async function POST(
   // "no beds" before they are told "an officer will confirm the amount".
   if (parkedPlan) {
     return parkedQuoteResponse(
+      // #3498: the causes of EVERY strand this park records, across every work
+      // item it composes into - the preview said the same thing before, when it
+      // was one occurrence per strand.
       planResult?.kind === "financial_review_required"
-        ? planResult.occurrences.map((occurrence) => occurrence.cause)
+        ? planResult.occurrences.flatMap((occurrence) =>
+            editFinancialReviewStrandRecords(occurrence).map(
+              (strand) => strand.cause,
+            ),
+          )
         : [],
     );
   }
@@ -1851,9 +1859,13 @@ export async function POST(
         removeGuestIds: removeSet,
       }),
     });
-    if (previewEvidence.occurrences.length > 0) {
+    if (previewEvidence.occurrences !== null) {
       return parkedQuoteResponse(
-        previewEvidence.occurrences.map((occurrence) => occurrence.cause),
+        previewEvidence.occurrences.flatMap((occurrence) =>
+          editFinancialReviewStrandRecords(occurrence).map(
+            (strand) => strand.cause,
+          ),
+        ),
       );
     }
   }

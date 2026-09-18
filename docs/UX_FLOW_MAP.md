@@ -558,6 +558,68 @@ reads as an uncollected amount dealt with, with no money moved and the officer's
 note as the only record of what the invoices showed and what was billed. Every
 other kind's wording is unchanged, word for word.
 
+**One row per parked change, not one per guest (#3498, owner decision D1).**
+Until this release a booking change whose money could not be worked out raised a
+separate row for **every guest on the booking**, because the writer rewrites every
+guest's night prices whether or not the change touched them. Taking one guest off
+a seven-guest booking put seven rows on this card: six of them guests nobody
+touched, against whom no money could change hands, and one of them the guest who
+actually left — all seven with the same evidence block and the same
+**Record the adjustment** button, and the only thing telling them apart a line
+reading **Nights given back:** with dates on it instead of **none**. Measured on
+the live deployment on 17 September 2026, two booking changes had produced eleven
+rows, ten of them noise, and an officer working them stopped one row short of
+closing the row that carried a real $140.00 adjustment.
+
+A parked change now raises **one** row. It leads with the guest the money hangs
+on — the one whose nights actually moved — and carries, underneath, what was
+stored for every other guest the change touched, under a line saying how many
+there are and that there is one adjustment to record rather than one per guest.
+Nothing that used to be written down has stopped being written down: the same
+figures are on the one row instead of spread across several, which is what makes
+the old rows and the new ones say the same thing about the same change. Nothing
+about WHICH changes park is different either — one guest whose stored prices
+cannot be read still parks the whole change, exactly as before.
+
+**With ONE exception, and it is where the money is most tangled (owner decision,
+17 September 2026).** A row carries one amount. Where a change moves the nights
+of **two or more** guests, two of them need two amounts — and putting both on one
+row would ask the second guest's unpriced nights to come to their stored total
+plus nothing, which only $0.00 satisfies, or to a negative figure no set of
+prices can reach, after which the review could never be closed at all. So a
+change that moves two or more guests' nights keeps a row per guest, each with its
+own amount. Everything else — a removal, a date change, a guest added — moves at
+most one guest's nights and gets the single row above.
+
+Because those rows can look alike again, **every row now says in words whether
+the change actually moved that guest's nights** or merely rewrote what was stored
+for them, in the evidence block and in the foreground colour on the row that
+carries the money. That is the tell that was missing when eleven near-identical
+rows sat on this card together.
+
+The rows already on the queue when this shipped are untouched and are worked by
+hand; they render exactly as they always did.
+
+**A row closed with no adjustment can be put back (#3498, owner decision D2).**
+Closing a row used to be final in both directions, and the queue only ever showed
+open rows — so a row closed by mistake was silent, permanent, and invisible to
+everybody afterwards: no banner, no row, and the booking's stored total not
+corrected either. A third card, **"Closed with no adjustment, lately"**, now lists
+what was closed that way in the last thirty days, with the reason it was raised,
+the note the officer wrote and when — and one control, **Put back on the queue**.
+Putting a row back makes it an open money question again: it returns to the
+settle queue, the member sees that the club is still working the change out, and a
+further price change to that booking is held until it is settled. Nothing is paid,
+charged or credited by it, and the note saying why it was closed is kept.
+
+A row that was **completed** is never offered, and cannot be put back even by
+posting to the endpoint directly: its money has moved, down a settlement route
+that can only ever pay out once, so inviting an officer to price it a second time
+would mean doing the work and then being refused. A row the system closed itself —
+a late capture Stripe had already refunded — is not offered either, for the same
+reason in the other direction: it is a record of money that went back, not a
+decision anybody took. Both refusals say which case it is.
+
 **The settle box asks a second question when the booking has unpriced nights
 (#3191).** A financial-review row whose guest strand holds nights with no stored
 price carries a list of those nights inside the settle dialog, one money box each,

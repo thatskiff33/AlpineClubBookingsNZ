@@ -222,6 +222,13 @@ const tx = {
   // exactly the one this suite was written against.
   bookingGuest: {
     findUnique: (...a: unknown[]) => mocks.bookingGuestFindUnique(...a),
+    // #3498: the settle path reads every strand the item names, as a list.
+    // Answered from the same fixture, so these cases keep describing the
+    // single-strand review they were written for.
+    findMany: async () => {
+      const guest = await mocks.bookingGuestFindUnique();
+      return guest ? [guest] : [];
+    },
   },
   // #3257: and EVERY edit-review closure now re-prices the booking from its
   // strands, whether or not it recorded a night price - so these fixtures reach

@@ -513,11 +513,21 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
  */
 const REVIEW_WITH_BLANKS = {
   ...REVIEW_TASK,
-  unpricedNights: {
-    dates: ["2026-08-11", "2026-08-12"],
-    knownNightTotalCents: 6000,
-    storedGuestTotalCents: 12000,
-  },
+  // #3498: ONE ENTRY PER REPAIRABLE STRAND of the item. This review names one
+  // strand, and it IS the strand the settlement moves - so `absorbsSettlement`
+  // is true and every case below reconciles against the target it always did.
+  unpricedNights: [
+    {
+      summary: {
+        dates: ["2026-08-11", "2026-08-12"],
+        knownNightTotalCents: 6000,
+        storedGuestTotalCents: 12000,
+      },
+      absorbsSettlement: true,
+      // The ITEM's own ordinal, which the officer's figures come back naming.
+      strandIndex: 0,
+    },
+  ],
 };
 
 function nightBox(date: string) {
@@ -707,8 +717,13 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
 
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
     expect(postBody(fetchMock).recordedNightPrices).toEqual([
-      { date: "2026-08-11", priceCents: 6000 },
-      { date: "2026-08-12", priceCents: 0 },
+      {
+        strandIndex: 0,
+        nightPrices: [
+          { date: "2026-08-11", priceCents: 6000 },
+          { date: "2026-08-12", priceCents: 0 },
+        ],
+      },
     ]);
   });
 
@@ -832,8 +847,13 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
       expect(fetchMock.mock.calls.length).toBeGreaterThan(1),
     );
     expect(postBody(fetchMock).recordedNightPrices).toEqual([
-      { date: "2026-08-11", priceCents: 3500 },
-      { date: "2026-08-12", priceCents: 2500 },
+      {
+        strandIndex: 0,
+        nightPrices: [
+          { date: "2026-08-11", priceCents: 3500 },
+          { date: "2026-08-12", priceCents: 2500 },
+        ],
+      },
     ]);
   });
 

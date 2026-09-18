@@ -628,7 +628,7 @@ const PRE_CHECK_IN_GATE_SITES = [
       },
       {
         label: "its answer is kept, not discarded",
-        pattern: /const parked =\s*dateEditEvidence\.occurrences\.length > 0/,
+        pattern: /const parked =\s*dateEditEvidence\.occurrences !== null/,
       },
       {
         label: "the night write uses PRESERVED stored prices when it parks",
@@ -676,7 +676,7 @@ const PRE_CHECK_IN_GATE_SITES = [
       },
       {
         label: "its answer is kept, not discarded",
-        pattern: /const parked = addEvidence\.occurrences\.length > 0/,
+        pattern: /const parked = addEvidence\.occurrences !== null/,
       },
       {
         label: "the booking's total write-back is FENCED on that answer",

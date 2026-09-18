@@ -138,6 +138,10 @@ const REPAIR_WRITER = "lib/stored-night-price-repair-store.ts";
 const FEATURE_FILES = [
   "lib/stored-night-price-repair.ts",
   "lib/stored-night-price-repair-store.ts",
+  // #3498: the reads and the checks moved here when one work item started
+  // covering the whole parked edit. It is where "which strands may be filled in"
+  // now lives, so it is exactly where a "work the rest out" branch would go.
+  "lib/stored-night-price-repair-plan.ts",
   "lib/stored-night-price-repair-queue.ts",
   "lib/stored-night-price-strand-reconcile.ts",
   "lib/booking-review-price-rebase.ts",
@@ -400,7 +404,11 @@ describe("nothing in this feature can derive an amount", () => {
     */
     const raw = readFileSync(join(SRC, SCOPED_FILE), "utf8");
     const { code, exemptLines } = scannedSource(raw);
-    expect(code).toContain("nightPriceEntries");
+    // #3498 renamed the per-night derivation as it moved to one column of boxes
+    // PER STRAND. Same code, same scan: `nightPriceStrands` is what
+    // `nightPriceEntries` became, and each strand's own entries are built inside
+    // it, so this anchor still lands on the arithmetic this census is aimed at.
+    expect(code).toContain("nightPriceStrands");
     expect(code).toContain("nightPricesBlocked");
     // Rendered six hundred lines below the night-price code, on the file's last
     // element: if the scan stops early, this is what says so. An identifier

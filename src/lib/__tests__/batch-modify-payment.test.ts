@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireCalendarDate } from "@/lib/club-time";
+import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -4309,17 +4310,18 @@ describe("PUT /api/bookings/[id]/modify", () => {
       expect(tx.bookingGuest.delete).toHaveBeenCalledWith({ where: { id: "g2" } });
       expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
 
-      // TWO tasks: the unreadable strand, and the readable one whose evidence this
-      // edit is about to delete.
-      expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
-      const occurrences = tx.manualRefundTask.create.mock.calls.map((call) => {
-        const data = (call[0] as { data: { reviewContext: unknown } }).data;
-        const context = data.reviewContext as {
-          occurrence: { cause: string; bookingGuestId: string };
-        };
-        return context.occurrence;
-      });
-      expect(occurrences).toEqual(
+      // ONE task since #3498 (owner decision D1), carrying BOTH strands: the
+      // unreadable one, and the readable one whose evidence this edit is about
+      // to delete. Which strands are recorded is unchanged; how many things an
+      // officer is handed to price is what moved.
+      expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
+      const data = (
+        tx.manualRefundTask.create.mock.calls[0][0] as {
+          data: { reviewContext: unknown };
+        }
+      ).data;
+      const strands = raisedStrands(data.reviewContext);
+      expect(strands).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             bookingGuestId: "g1",
@@ -4331,6 +4333,10 @@ describe("PUT /api/bookings/[id]/modify", () => {
           }),
         ]),
       );
+      // And the item LEADS with the strand the edit actually moves - the guest
+      // who left, whose nights are the money - rather than with whichever strand
+      // the planner happened to walk first.
+      expect(strands[0]!.bookingGuestId).toBe("g2");
     });
 
     it("CONTROL: the identical edit on a readable booking still prices and settles", async () => {
