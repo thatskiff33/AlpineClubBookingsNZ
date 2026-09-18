@@ -251,21 +251,24 @@ describe("#3031 quote and apply consume one discriminated result", () => {
     // #3030 hashes into a task identity, so a preview and a save that produced
     // different material would raise two tasks for one edit.
     expect(apply.occurrences).toEqual(quote.occurrences);
-    expect(quote.occurrences).toEqual([
-      {
-        bookingId: "bk-parity",
-        bookingGuestId: "g1",
-        cause: "NO_STORED_NIGHT_PRICES",
-        // The edit gives back nothing (the check-out only moves out), so the
-        // identity is the two nights it ADDS.
-        surrenderedNightDates: [],
-        addedNightDates: ["2026-08-23", "2026-08-24"],
-        storedEvidence: {
-          guestTotalCents: 3 * RATE,
-          nightPrices: HELD.map((date) => ({ date, priceCents: null })),
-        },
+    // #3498: ONE work item for the whole edit, carrying its strands. This
+    // booking has one guest, so the record is byte-for-byte what it was - with
+    // `bookingId` now on the occurrence rather than repeated per strand - and
+    // one moving strand keeps the whole edit on one item.
+    expect(quote.occurrences).toHaveLength(1);
+    expect(quote.occurrences[0]).toEqual({
+      bookingId: "bk-parity",
+      bookingGuestId: "g1",
+      cause: "NO_STORED_NIGHT_PRICES",
+      // The edit gives back nothing (the check-out only moves out), so the
+      // identity is the two nights it ADDS.
+      surrenderedNightDates: [],
+      addedNightDates: ["2026-08-23", "2026-08-24"],
+      storedEvidence: {
+        guestTotalCents: 3 * RATE,
+        nightPrices: HELD.map((date) => ({ date, priceCents: null })),
       },
-    ]);
+    });
 
     // AND NEITHER BRANCH CARRIES AN AMOUNT AT ALL. `?? 0` has nothing to bite
     // on, which is what makes the magic zero unrepresentable rather than

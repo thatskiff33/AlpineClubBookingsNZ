@@ -2,7 +2,12 @@ import "server-only";
 
 import { ManualRefundTaskStatus, Prisma } from "@prisma/client";
 import { canonicalNights, stableDigest } from "@/lib/stable-digest";
-import type { EditFinancialReviewOccurrence } from "@/lib/edit-financial-review-context";
+import {
+  editFinancialReviewStrandMovesNights,
+  editFinancialReviewStrandRecords,
+  type EditFinancialReviewOccurrence,
+  type EditFinancialReviewStrandRecord,
+} from "@/lib/edit-financial-review-context";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
 /**
@@ -34,7 +39,18 @@ import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment
  * rows, and nothing collides. Never widen the material without bumping it.
  */
 const OCCURRENCE_KEY_NAMESPACE = "edit-financial-review";
-const OCCURRENCE_KEY_VERSION = "v1";
+/**
+ * `v2` since #3498, and the bump is the rule above being obeyed rather than an
+ * exception to it.
+ *
+ * Owner decision D1 moved the grain from the strand to the EDIT, so an
+ * occurrence now carries every strand the parked edit recorded and the material
+ * below hashes all of them. That is a widening, so the namespace moves: every
+ * `v1` key already on file keeps matching the row it was written for, the
+ * finance queue keeps rendering the items production is working by hand, and
+ * nothing collides.
+ */
+const OCCURRENCE_KEY_VERSION = "v2";
 
 /**
  * The identity of one unpriceable structural edit, as 64 lowercase hex
@@ -118,16 +134,45 @@ export function editFinancialReviewOccurrenceKey(
 ): string {
   const material = {
     bookingId: occurrence.bookingId,
-    bookingGuestId: occurrence.bookingGuestId,
-    cause: occurrence.cause,
-    surrenderedNightDates: canonicalNights(occurrence.surrenderedNightDates),
-    addedNightDates: canonicalNights(occurrence.addedNightDates),
+    ...strandMaterial(occurrence),
+    /*
+      #3498: EVERY OTHER STRAND THE PARKED EDIT RECORDED, and leaving them out
+      would be the hole point (4) above describes, one grain higher up. The lead
+      strand alone is no longer the edit: two different edits to one booking can
+      surrender the same nights from the same lead strand and destroy completely
+      different evidence elsewhere in the party, and on the lead's material alone
+      they would hash to one key - so the second would find the first's settled
+      row and never be reviewed.
+
+      SORTED BY STRAND, so the order the planner happened to walk the booking's
+      guests in cannot change the identity - the same rule the night prices below
+      already follow, and the reason `parkedEditOccurrence` sorts them is
+      presentation rather than identity. An ABSENT list and an EMPTY one hash
+      identically on purpose: they mean the same thing, and a parked edit with
+      one recorded strand must not depend on which spelling built it.
+    */
+    otherStrands: [...(occurrence.otherStrands ?? [])]
+      .map(strandMaterial)
+      .sort((left, right) =>
+        left.bookingGuestId < right.bookingGuestId ? -1 : 1,
+      ),
+  };
+  return `${OCCURRENCE_KEY_NAMESPACE}:${OCCURRENCE_KEY_VERSION}:${stableDigest(material)}`;
+}
+
+/** One strand's contribution to the identity - the lead's and each other's. */
+function strandMaterial(strand: EditFinancialReviewStrandRecord) {
+  return {
+    bookingGuestId: strand.bookingGuestId,
+    cause: strand.cause,
+    surrenderedNightDates: canonicalNights(strand.surrenderedNightDates),
+    addedNightDates: canonicalNights(strand.addedNightDates),
     storedEvidence: {
-      guestTotalCents: occurrence.storedEvidence.guestTotalCents,
+      guestTotalCents: strand.storedEvidence.guestTotalCents,
       // Sorted by date so the planner's read order cannot change the identity.
       // Two rows for one date would be evidence in their own right, so they are
       // NOT deduplicated here - only ordered.
-      nightPrices: [...occurrence.storedEvidence.nightPrices]
+      nightPrices: [...strand.storedEvidence.nightPrices]
         .map((night) => ({ date: night.date, priceCents: night.priceCents }))
         .sort((left, right) =>
           left.date === right.date
@@ -138,7 +183,6 @@ export function editFinancialReviewOccurrenceKey(
         ),
     },
   };
-  return `${OCCURRENCE_KEY_NAMESPACE}:${OCCURRENCE_KEY_VERSION}:${stableDigest(material)}`;
 }
 
 /**
@@ -315,30 +359,110 @@ export async function findFreeOccurrenceSlot(
 export function buildEditFinancialReviewReason(
   occurrence: EditFinancialReviewOccurrence,
 ): string {
-  const nights = canonicalNights(occurrence.surrenderedNightDates);
+  const strands = editFinancialReviewStrandRecords(occurrence);
+  // Non-null by construction: the helper always answers lead-first.
+  const lead = strands[0]!;
+  /*
+    #3498: THE WHOLE EDIT'S NIGHTS, not the lead strand's.
+
+    One item now covers the whole parked edit, so a sentence naming only the
+    lead strand's nights would understate what an officer is being asked to
+    price - and on the shape that prompted this issue it understated it by six
+    guests. Deduplicated across strands, because two guests giving back the same
+    night is one night the booking gave back and printing it twice reads as two.
+  */
+  const nights = canonicalNights(
+    strands.flatMap((strand) => [...strand.surrenderedNightDates]),
+  );
+  const added = canonicalNights(
+    strands.flatMap((strand) => [...strand.addedNightDates]),
+  );
+  /*
+    #3498 fix round: "touched" was FALSE, and this issue exists because it was.
+
+    Every strand the edit records is on the item, but most of them are guests
+    the edit never moved a night of - they are recorded because
+    `applyGuestChanges` deletes and recreates their rows, which destroys
+    evidence they did have. On the booking that prompted this, six of the seven
+    were exactly that, and a sentence saying the change touched seven guests is
+    the same overstatement the seven cards were.
+
+    So the sentence separates the two. `editFinancialReviewStrandMovesNights` is
+    the one definition of which is which, and the same one that decided how many
+    items this edit raised at all.
+  */
+  const moved = strands.filter((strand) =>
+    editFinancialReviewStrandMovesNights(strand),
+  ).length;
+  const strandsPhrase =
+    strands.length === 1
+      ? ""
+      : moved === 0
+        ? ` It moved no existing guest's nights, but it rewrote the stored night rows of all ${strands.length} guests on this booking, so what was stored for each of them is on this item.`
+        : ` It moved the nights of ${moved === 1 ? "one" : moved} of the ${strands.length} guests on this booking; what was stored for all ${strands.length} is on this item.`;
+  const addedPhrase = (listed: boolean) =>
+    added.length === 0
+      ? ""
+      : ` It also added ${
+          added.length === 1
+            ? `the night of ${added[0]}`
+            : listed
+              ? `${added.length} nights: ${added.join(", ")}`
+              : `${added.length} nights`
+        }.`;
   // NOT "first to last". A night set need not be contiguous, and "3 nights
   // (2026-08-02 to 2026-08-20)" reads as a nineteen-night span for three actual
   // nights - in the sentence an admin reads WHILE PRICING REAL MONEY. The nights
-  // are listed instead, and the list is what gets truncated if the stay is long
-  // enough to overrun the column; `reviewContext` carries the full set either
-  // way, and #3033 renders it.
-  const nightsPhrase =
+  // are listed instead; `reviewContext` carries the full set either way, and
+  // #3033 renders it.
+  const nightsPhrase = (listed: boolean) =>
     nights.length === 0
       ? "no nights"
       : nights.length === 1
         ? `the night of ${nights[0]}`
-        : `${nights.length} nights: ${nights.join(", ")}`;
-  // #3032: the second sentence has to match the cause, because the two are read
-  // as instructions. "The exact sold price could not be read" is FALSE of a
-  // `COUNTERPART_STRAND_UNREADABLE` strand - its rows are complete and add up -
-  // and an admin told otherwise about a task that carries real per-night prices
-  // has been handed a contradiction while pricing real money.
+        : listed
+          ? `${nights.length} nights: ${nights.join(", ")}`
+          : `${nights.length} nights`;
+  /*
+    #3032: the second sentence has to match the cause, because the two are read
+    as instructions. "The exact sold price could not be read" is FALSE of a
+    `COUNTERPART_STRAND_UNREADABLE` strand - its rows are complete and add up -
+    and an admin told otherwise about a task that carries real per-night prices
+    has been handed a contradiction while pricing real money.
+
+    #3498 fix round: asked of the LEAD strand, which is the strand the card is
+    headed by and the strand this sentence is about. #3498 briefly asked it of
+    EVERY strand, which made the branch DEAD at all four raise doors: an edit
+    parks because at least one strand is unreadable, and that strand is recorded
+    too, so `every` is false on every item there is. The row that held the real
+    money in production - the departing guest, whose own rows read perfectly -
+    was therefore told "the exact sold price could not be read" beside an
+    evidence block saying its prices are complete and add up.
+  */
   const why =
-    occurrence.cause === "COUNTERPART_STRAND_UNREADABLE"
+    lead.cause === "COUNTERPART_STRAND_UNREADABLE"
       ? "This guest's own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read, so the booking's total could not be reworked automatically. Confirm the amount owed for the nights above before any money moves."
       : "The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.";
-  return `Booking edit gave back ${nightsPhrase}. ${why}`.slice(
-    0,
-    MANUAL_REFUND_TASK_REASON_MAX,
-  );
+  const sentence = (listed: boolean) =>
+    `Booking edit gave back ${nightsPhrase(listed)}.${addedPhrase(listed)}${strandsPhrase} ${why}`;
+  /*
+    THE LIST IS WHAT GIVES WAY, NEVER THE REASON (#3498).
+
+    This used to end in a bare `.slice()`, on the argument that a stay long
+    enough to overrun the column would lose the tail of its night list and
+    `reviewContext` carries the whole set anyway. #3498 makes that argument
+    unsafe by making the list the WHOLE EDIT'S nights rather than one strand's:
+    a seven-guest booking over a fortnight can now run past 500 characters
+    before the sentence saying WHY no money moved has started, and that sentence
+    is an instruction an officer acts on.
+
+    So a reason that would overrun drops the dates and keeps the counts, which
+    is the same information one grain coarser and leaves every sentence intact.
+    The `.slice()` stays underneath as the column's own guarantee - `reason` is
+    `varchar(500)` and a writer that hands it 501 characters fails the insert.
+  */
+  const listed = sentence(true);
+  return (
+    listed.length <= MANUAL_REFUND_TASK_REASON_MAX ? listed : sentence(false)
+  ).slice(0, MANUAL_REFUND_TASK_REASON_MAX);
 }

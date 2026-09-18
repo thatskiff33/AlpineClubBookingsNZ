@@ -82,8 +82,9 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  * left to correct it.
  *
  * So the trigger is now "a parked review closed and this booking's strands can
- * be reconciled", and `repairedStrand` is OPTIONAL: null says this closure
- * repaired nothing, which is an ordinary answer rather than a missing input.
+ * be reconciled", and `repairedStrands` is OPTIONAL: an empty list says this
+ * closure repaired nothing, which is an ordinary answer rather than a missing
+ * input.
  *
  * ## THE DECLINE IS WHAT MAKES RE-PRICING ON ANY CLOSE SAFE
  *
@@ -375,21 +376,24 @@ function readStrandNightPrices(
  */
 export async function rebaseBookingPriceFromStrands({
   bookingId,
-  repairedStrand,
+  repairedStrands,
   todayAtClub,
   store,
 }: {
   bookingId: string;
   /**
-   * The strand this closure just repaired and what the repair wrote to it, or
-   * NULL where the review offered no price boxes and nothing was repaired -
+   * The strands this closure just repaired and what the repair wrote to each, or
+   * EMPTY where the review offered no price boxes and nothing was repaired -
    * which since #3257 is a closure this writer still runs on.
+   *
+   * A LIST SINCE #3498: one work item covers the whole parked edit, so one
+   * closure can repair several strands of it.
    *
    * The id and the value travel together because neither is a guard on its own:
    * checking the id alone would sum a pre-repair figure, and checking the value
    * alone would check somebody else's strand.
    */
-  repairedStrand: { bookingGuestId: string; totalCents: number } | null;
+  repairedStrands: readonly { bookingGuestId: string; totalCents: number }[];
   /**
    * The club's own calendar day (`INV-CONFIG-002`, `INV-LOCK-004`), resolved by
    * the caller BEFORE it opened this transaction. Required: it decides the
@@ -409,7 +413,7 @@ export async function rebaseBookingPriceFromStrands({
   // The strand this settle just repaired has to be one of THESE strands, at the
   // value it was just written to. That is what makes the sum below the sum of
   // the booking's own nights rather than of somebody else's.
-  if (repairedStrand !== null) {
+  for (const repairedStrand of repairedStrands) {
     const repaired = booking.guests.find(
       (guest) => guest.id === repairedStrand.bookingGuestId,
     );

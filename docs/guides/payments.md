@@ -208,6 +208,25 @@ rule: exact stored evidence, or a person decides.
 The member is told their change saved and that the club is working the amount
 out. They are not shown a figure, and they are not told anything about why.
 
+**One change, one row.** It did not always work that way. Because saving a change
+rewrites the night prices of *every* guest on the booking — whether or not the
+change touched them — the club used to get one row per guest: taking one guest off
+a seven-guest booking put seven rows in this card, six of them guests nobody
+touched and against whom no money could change hands. They all looked the same,
+and the only thing separating the one that mattered was a line reading
+**Nights given back:** with dates on it rather than **none**. A parked change now
+raises a single row, headed by the guest whose nights actually moved, with what
+was stored for every other guest the change touched shown underneath it as
+supporting detail. None of those figures is lost — they are on the one row instead
+of spread across several — and there is one adjustment to record, not one per
+guest.
+
+One exception: a change that moves **two or more** guests' nights still gets a
+row each, because a row carries one amount and two moved stays need two. Every
+row says in words whether the change moved that guest's nights or merely rewrote
+what was stored for them, so the row carrying the money is never the one you have
+to spot by squinting at a date list.
+
 The row appears in the same card, with **Awaiting pricing** where an amount would
 normally be, and carries the evidence recorded at the moment the change was made:
 
@@ -239,7 +258,27 @@ statements, and once one is recorded as a zero nobody reading it later can tell
 which was meant — so the second one has its own button. If you have decided the
 answer really is nothing, use **No adjustment**.
 
-Every amount, note and status change is written to the booking's audit log.
+**If you close one by mistake, you can put it back.** A row closed with
+**No adjustment** appears for the next thirty days in a third card,
+**Closed with no adjustment, lately**, with the note that was written on it and
+one button: **Put back on the queue**. Putting it back makes it an open question
+again — it returns to the settle queue, the member is told again that the club is
+still working the change out, and further price changes to that booking are held
+until it is settled. Nothing is paid, charged or credited by pressing it, and the
+note saying why it was closed is kept. Say why you are putting it back; that note
+is required, and it is the record of the correction.
+
+**A row you have already settled is not on that card and cannot be put back.**
+The money has moved, by refund, credit or a charge to the member, and each of
+those can only happen once against a change — so re-opening it would mean pricing
+it a second time and being refused afterwards. If a settled amount turns out to be
+wrong, correct it on the booking rather than here. Rows the system closed itself —
+a late payment Stripe had already refunded — are not on that card either: they
+record money that has already gone back, so there is no decision to undo.
+
+Every amount, note and status change is written to the booking's audit log,
+including putting a row back — that entry keeps who closed it, when, and what
+they said, because the row itself stops carrying them once it is open again.
 
 #### Say what the unpriced nights sold for, so the booking stops coming back
 

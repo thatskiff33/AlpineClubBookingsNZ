@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   // #3191: the guest strand the per-night repair reads and writes, on the same
   // transaction as the claim.
   bookingGuestFindUnique: vi.fn(),
+  bookingGuestFindMany: vi.fn(),
   bookingGuestUpdateMany: vi.fn(),
   bookingGuestNightUpdateMany: vi.fn(),
   // #3219: the booking's own headline totals, re-based from those strands in the
@@ -159,6 +160,11 @@ const tx = {
   // #3191: the strand whose blank nights a settle may fill in.
   bookingGuest: {
     findUnique: (...a: unknown[]) => mocks.bookingGuestFindUnique(...a),
+    // #3498: the settle path reads EVERY strand the item names, so it reads the
+    // list rather than one guest. The default below answers from the same
+    // fixture `bookingGuestFindUnique` does, so every existing case here keeps
+    // describing the single-strand review it was written for.
+    findMany: (...a: unknown[]) => mocks.bookingGuestFindMany(...a),
     updateMany: (...a: unknown[]) => mocks.bookingGuestUpdateMany(...a),
   },
   bookingGuestNight: {
@@ -346,6 +352,10 @@ beforeEach(() => {
       { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
       { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 6_000 },
     ],
+  });
+  mocks.bookingGuestFindMany.mockImplementation(async () => {
+    const guest = await mocks.bookingGuestFindUnique();
+    return guest ? [guest] : [];
   });
   mocks.bookingGuestUpdateMany.mockResolvedValue({ count: 1 });
   mocks.bookingGuestNightUpdateMany.mockResolvedValue({ count: 1 });
@@ -1525,8 +1535,20 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
  * it, so a lost claim writes nothing.
  */
 describe("recording per-night amounts while settling (#3191)", () => {
+  // #3498: one array PER REPAIRABLE STRAND. These reviews name one strand, so
+  // it is one array - which is what every case below already described.
+  /*
+    #3498 fix round: each entry NAMES the strand it is for by the item's own
+    ordinal, so a stale screen cannot bind one guest's figures to another's
+    nights when the two happen to hold the same blanks for the same total.
+  */
   const nightPrices = [
-    { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+    {
+      strandIndex: 0,
+      nightPrices: [
+        { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+      ],
+    },
   ];
 
   it("writes the nights, re-bases the strand, and audits it as its own act", async () => {
@@ -1545,7 +1567,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
       // stored at $100.00, $45.00 of it is going back to the member, and $40.00
       // of it is already on the other night. $15.00.
       recordedNightPrices: [
-        { date: requireCalendarDate("2026-08-02"), priceCents: 1_500 },
+        { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 1_500 }] },
       ],
     });
 
@@ -1569,9 +1591,15 @@ describe("recording per-night amounts while settling (#3191)", () => {
         entityType: "BookingGuest",
         entityId: "guest-1",
         metadata: expect.objectContaining({
-          previousGuestTotalCents: 10_000,
-          newGuestTotalCents: 5_500,
-          nightPrices: [{ date: "2026-08-02", priceCents: 1_500 }],
+          // #3498: per strand, because one closure can repair several.
+          repairedStrands: [
+            {
+              previousGuestTotalCents: 10_000,
+              newGuestTotalCents: 5_500,
+              knownNightTotalCents: 4_000,
+              nightPrices: [{ date: "2026-08-02", priceCents: 1_500 }],
+            },
+          ],
         }),
       }),
       tx,
@@ -1616,7 +1644,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
         recordedNightPrices: [
-          { date: requireCalendarDate("2026-08-02"), priceCents: 5_999 },
+          { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 5_999 }] },
         ],
       }),
     ).rejects.toMatchObject({ status: 400 });
@@ -1701,8 +1729,10 @@ describe("recording per-night amounts while settling (#3191)", () => {
         entityType: "Booking",
         entityId: "booking-1",
         metadata: expect.objectContaining({
-          nightPrices: null,
-          newGuestTotalCents: null,
+          // #3498: null rather than an empty list, so "the officer priced
+          // nothing" stays distinguishable from "the officer priced these at
+          // zero".
+          repairedStrands: null,
           bookingRebased: true,
           bookingPriceMoved: true,
         }),
@@ -1884,7 +1914,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       note: "Nothing owed either way; the nights were already paid for.",
       actingMemberId: "admin-1",
       recordedNightPrices: [
-        { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+        { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
       ],
     });
 
@@ -1962,7 +1992,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       confirmedAmountCents: 4_500,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: [
-        { date: requireCalendarDate("2026-08-02"), priceCents: 1_500 },
+        { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 1_500 }] },
       ],
     });
 
@@ -2026,7 +2056,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
         recordedNightPrices: [
-          { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+          { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
         ],
       }),
     ).rejects.toMatchObject({ status: 409 });
@@ -2064,7 +2094,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
         recordedNightPrices: [
-          { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+          { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
         ],
       }),
     ).rejects.toThrow(/not on this booking/);

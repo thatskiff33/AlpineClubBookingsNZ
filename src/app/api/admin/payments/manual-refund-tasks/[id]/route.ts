@@ -6,7 +6,7 @@ import { requireAdmin } from "@/lib/session-guards";
 // `INV-SSOT` (#3030): the one non-negative-integer-cents rule, not a fourth
 // inline `.number().int().nonnegative()`.
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
-import { recordedNightPricesSchema } from "@/lib/stored-night-price-repair";
+import { recordedStrandNightPricesSchema } from "@/lib/stored-night-price-repair";
 import {
   completionMessage,
   dismissalMessage,
@@ -80,8 +80,14 @@ const bodySchema = z.discriminatedUnion("resolution", [
        * for. Optional over HTTP and defaulted to null, which means "not
        * recording those now" and is the body every client sent before this
        * issue.
+       *
+       * #3498: an array PER REPAIRABLE STRAND, since one item now covers the
+       * whole parked edit. A pre-#3498 client posting the old flat array is
+       * refused by this schema rather than half-understood.
        */
-      recordedNightPrices: recordedNightPricesSchema.optional().nullable(),
+      recordedNightPrices: recordedStrandNightPricesSchema
+        .optional()
+        .nullable(),
     })
     .strict(),
   z
@@ -96,7 +102,9 @@ const bodySchema = z.discriminatedUnion("resolution", [
        * fill the blanks in, exactly those bookings would park forever, which is
        * the defect this issue exists to remove.
        */
-      recordedNightPrices: recordedNightPricesSchema.optional().nullable(),
+      recordedNightPrices: recordedStrandNightPricesSchema
+        .optional()
+        .nullable(),
     })
     .strict(),
 ]);

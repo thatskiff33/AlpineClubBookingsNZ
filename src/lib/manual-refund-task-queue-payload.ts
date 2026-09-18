@@ -4,7 +4,7 @@ import {
   type EditFinancialReviewEvidence,
 } from "@/lib/edit-financial-review-context";
 import { bookingOwner } from "@/lib/booking-owner";
-import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
+import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
 /**
  * What the finance settlement queue's loader sends to the browser, and the one
@@ -59,6 +59,27 @@ export type OpenManualRefundTaskRow = {
   };
 };
 
+/**
+ * A DISMISSED row an officer closed and could put back (#3498, owner decision
+ * D2).
+ *
+ * Officer-closed only, which is the same fence `reopenManualRefundTask` applies
+ * and is applied in the query rather than on the card: a machine-written
+ * dismissal is a record of a refund Stripe already made, and offering a
+ * **Put back on the queue** button beside one would invite a second refund of
+ * the same capture.
+ */
+export type DismissedManualRefundTaskRow = {
+  id: string;
+  bookingId: string;
+  amountCents: number | null;
+  kind: string | null;
+  reason: string;
+  note: string | null;
+  completedAt: Date | null;
+  booking: QueueBookingSummary & { deletedAt: Date | null };
+};
+
 /** A row the Stripe webhook already refunded and closed (#2750, #2760). */
 export type AutoRefundedManualRefundTaskRow = {
   id: string;
@@ -85,9 +106,16 @@ export type OpenManualRefundTaskPayload = {
   reviewEvidence: EditFinancialReviewEvidence | null;
   reviewEvidenceUnreadable: boolean;
   /**
-   * #3191: the nights on this review's guest whose stored price is blank, and
-   * the two totals the officer's figures have to reconcile against. NULL when
-   * there is nothing this screen can repair, which is most rows.
+   * #3191: the nights whose stored price is blank, and the two totals the
+   * officer's figures have to reconcile against. EMPTY when there is nothing
+   * this screen can repair, which is most rows.
+   *
+   * #3498: ONE ENTRY PER REPAIRABLE STRAND of this item, in the item's own
+   * strand order, because one item now covers the whole parked edit. The order
+   * is load-bearing: the officer's figures come back as a parallel array and the
+   * server matches them by position, which is how no payload here has to carry a
+   * guest-strand id. `absorbsSettlement` says which entry — at most one, and
+   * sometimes none — the settled amount moves the stored worth of.
    *
    * READ LIVE by the route rather than taken from the stored context, and the
    * difference matters: the context records the evidence as it stood BEFORE the
@@ -95,7 +123,7 @@ export type OpenManualRefundTaskPayload = {
    * if it were the second would ask an officer to price nights that are no
    * longer there.
    */
-  unpricedNights: UnpricedNightsSummary | null;
+  unpricedNights: readonly QueueRepairableStrand[];
 };
 
 function memberName(booking: QueueBookingSummary): string {
@@ -125,7 +153,7 @@ function memberName(booking: QueueBookingSummary): string {
 export function toOpenManualRefundTaskPayload(
   task: OpenManualRefundTaskRow,
   viewerMemberId: string | null | undefined,
-  unpricedNights: UnpricedNightsSummary | null,
+  unpricedNights: readonly QueueRepairableStrand[],
 ): OpenManualRefundTaskPayload {
   const reviewContext = parseEditFinancialReviewContext(task.reviewContext);
 
@@ -170,6 +198,55 @@ export function toOpenManualRefundTaskPayload(
     */
     reviewEvidenceUnreadable: task.reviewContext !== null && !reviewContext,
     unpricedNights,
+  };
+}
+
+/**
+ * One recently dismissed row, as the reopen card receives it.
+ *
+ * NO REVIEW EVIDENCE AND NO PRICE BOXES. This card offers exactly one action -
+ * put it back - and everything needed to decide that is the reason, the note the
+ * dismissing officer wrote and when. The evidence comes back with the row the
+ * moment it is on the queue again, where the screen that prices it can show it.
+ */
+/**
+ * One dismissed row as the reopen card receives it.
+ *
+ * EXPORTED so the card imports it instead of respelling it (`INV-SSOT`,
+ * #3498 fix round). The two spellings had already drifted: `bookingDeleted` is
+ * written unconditionally here and was optional on the card, so a field lost in
+ * transit read as "not deleted" on a card whose whole job is judging whether a
+ * closure was right.
+ */
+export type DismissedManualRefundTaskPayload = {
+  id: string;
+  bookingId: string;
+  amountCents: number | null;
+  kind: string | null;
+  reason: string;
+  note: string | null;
+  dismissedAt: string | null;
+  bookingDeleted: boolean;
+  memberName: string;
+  checkIn: string;
+  checkOut: string;
+};
+
+export function toDismissedManualRefundTaskPayload(
+  task: DismissedManualRefundTaskRow,
+): DismissedManualRefundTaskPayload {
+  return {
+    id: task.id,
+    bookingId: task.bookingId,
+    amountCents: task.amountCents,
+    kind: task.kind,
+    reason: task.reason,
+    note: task.note,
+    dismissedAt: task.completedAt ? task.completedAt.toISOString() : null,
+    bookingDeleted: task.booking.deletedAt !== null,
+    memberName: memberName(task.booking),
+    checkIn: task.booking.checkIn.toISOString(),
+    checkOut: task.booking.checkOut.toISOString(),
   };
 }
 

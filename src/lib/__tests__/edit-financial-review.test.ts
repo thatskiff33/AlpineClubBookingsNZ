@@ -39,12 +39,12 @@ import {
   assertNoPendingEditFinancialReview,
   findOpenEditFinancialReviewTask,
   raiseEditFinancialReviewTask,
-  raiseParkedEditFinancialReviewTasks,
   EditFinancialReviewError,
   EditFinancialReviewPendingError,
   EDIT_FINANCIAL_REVIEW_PENDING_CODE,
   EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import {
   EDIT_FINANCIAL_REVIEW_CAUSES,
   parseEditFinancialReviewContext,
@@ -152,10 +152,10 @@ describe("#3030 occurrence key - the same structural edit is one occurrence", ()
 
   it("carries its namespace and version in the clear, and 64 hex characters of digest", () => {
     const key = editFinancialReviewOccurrenceKey(occurrence());
-    expect(key).toMatch(/^edit-financial-review:v1:[0-9a-f]{64}$/);
+    expect(key).toMatch(/^edit-financial-review:v2:[0-9a-f]{64}$/);
   });
 
-  it("MUTATION: PINS the digest for a fixed occurrence, so widening the hashed material without bumping v1 fails loudly", () => {
+  it("MUTATION: PINS the digest for a fixed occurrence, so widening the hashed material without bumping the version fails loudly", () => {
     // Every OTHER test in this describe recomputes the key on both sides -
     // key(a) === key(a), key(shuffled) === key(base), the discrimination cases -
     // so all of them would still pass if the canonicalisation, the field set or
@@ -172,8 +172,15 @@ describe("#3030 occurrence key - the same structural edit is one occurrence", ()
     // If you are here because this failed: do NOT re-pin it. Either you changed
     // the material and must bump the namespace version (and then re-pin), or you
     // changed the canonicalisation and must not have.
+    //
+    // RE-PINNED ONCE, at `v2` (#3498). Owner decision D1 moved the grain of a
+    // work item from the guest strand to the EDIT, so the material widened to
+    // every strand the parked edit records - which is exactly the change this
+    // pin exists to make deliberate. The namespace moved with it, so every `v1`
+    // key on file still matches its own row and nothing collides. The old pin
+    // was `edit-financial-review:v1:3d3fcd8e9b0b3de5bab1fee6a9e794146bb7747c19633cef428bce52e1667eca`.
     expect(editFinancialReviewOccurrenceKey(occurrence())).toBe(
-      "edit-financial-review:v1:3d3fcd8e9b0b3de5bab1fee6a9e794146bb7747c19633cef428bce52e1667eca",
+      "edit-financial-review:v2:bcfe9c7f6f3e1a56aab8d86d354ac2e851d73c71ac034f46cc530e5175c10505",
     );
   });
 
@@ -188,6 +195,86 @@ describe("#3030 occurrence key - the same structural edit is one occurrence", ()
     ["nights the edit also adds", { addedNightDates: [day("2026-08-09")] }],
   ])("is a different occurrence for %s", (_label, overrides) => {
     expect(editFinancialReviewOccurrenceKey(occurrence(overrides))).not.toBe(
+      editFinancialReviewOccurrenceKey(occurrence()),
+    );
+  });
+
+  /**
+   * #3498: THE OTHER STRANDS ARE IDENTITY MATERIAL TOO, and leaving them out is
+   * the hole point (4) describes one grain higher up.
+   *
+   * Owner decision D1 made one work item cover the whole parked edit, so two
+   * genuinely different edits to one booking can present the SAME lead strand -
+   * same guest, same cause, same nights, same stored rows - and destroy
+   * completely different evidence elsewhere in the party. On the lead's material
+   * alone they hash to one key, and `findFreeOccurrenceSlot` would then find the
+   * first edit's settled row, create nothing, and the second adjustment would
+   * never be reviewed by anybody. That is the exact failure the key's own
+   * docblock names, with the strand list as the thing that has changed.
+   *
+   * MUTATION PROOF, and it is the reason these cases exist rather than the
+   * key-material comment: dropping `otherStrands` from the hashed material
+   * leaves every other test in this file passing, including the pinned digest,
+   * because they all describe one-strand edits.
+   */
+  const otherStrand = (bookingGuestId: string, priceCents: number | null) => ({
+    bookingGuestId,
+    cause: "COUNTERPART_STRAND_UNREADABLE" as const,
+    surrenderedNightDates: [day("2026-08-02")],
+    addedNightDates: [],
+    storedEvidence: {
+      guestTotalCents: 9000,
+      nightPrices: [{ date: day("2026-08-02"), priceCents }],
+    },
+  });
+
+  it("MUTATION: is a different occurrence when the SAME lead strand sits beside a different party (#3498)", () => {
+    const withOne = occurrence({ otherStrands: [otherStrand("guest-2", 4500)] });
+    const withTwo = occurrence({
+      otherStrands: [otherStrand("guest-2", 4500), otherStrand("guest-3", 4500)],
+    });
+    expect(editFinancialReviewOccurrenceKey(withOne)).not.toBe(
+      editFinancialReviewOccurrenceKey(occurrence()),
+    );
+    expect(editFinancialReviewOccurrenceKey(withTwo)).not.toBe(
+      editFinancialReviewOccurrenceKey(withOne),
+    );
+  });
+
+  it("MUTATION: is a different occurrence when another strand's STORED EVIDENCE differs (#3498)", () => {
+    // The sequence the evidence fingerprint exists for, now reachable through a
+    // strand the lead knows nothing about: settle, edit again, and the second
+    // edit finds different rows on a guest nobody has touched.
+    expect(
+      editFinancialReviewOccurrenceKey(
+        occurrence({ otherStrands: [otherStrand("guest-2", 4500)] }),
+      ),
+    ).not.toBe(
+      editFinancialReviewOccurrenceKey(
+        occurrence({ otherStrands: [otherStrand("guest-2", null)] }),
+      ),
+    );
+  });
+
+  it("does not depend on the order the other strands were recorded in", () => {
+    // The same reason the night prices are sorted: the planner's read order is
+    // not a fact about the edit, and a key that shifted with it would make a
+    // replay raise a second task.
+    const ordered = occurrence({
+      otherStrands: [otherStrand("guest-2", 4500), otherStrand("guest-3", null)],
+    });
+    const reversed = occurrence({
+      otherStrands: [otherStrand("guest-3", null), otherStrand("guest-2", 4500)],
+    });
+    expect(editFinancialReviewOccurrenceKey(reversed)).toBe(
+      editFinancialReviewOccurrenceKey(ordered),
+    );
+  });
+
+  it("hashes an ABSENT strand list and an EMPTY one identically, because they mean the same thing", () => {
+    // A one-strand edit is stored without the field at all, and a caller that
+    // spells it `[]` must not mint a second identity for the same edit.
+    expect(editFinancialReviewOccurrenceKey(occurrence({ otherStrands: [] }))).toBe(
       editFinancialReviewOccurrenceKey(occurrence()),
     );
   });
@@ -250,6 +337,52 @@ describe("#3030 occurrence key - the same structural edit is one occurrence", ()
     );
     expect(reason).toContain("3 nights: 2026-08-02, 2026-08-03, 2026-08-20");
     expect(reason).not.toContain("2026-08-02 to 2026-08-20");
+  });
+
+  it("MUTATION: keeps the WHY sentence whole on a big party, and drops the dates instead", () => {
+    /*
+      #3498 made this sentence carry the WHOLE EDIT'S nights rather than one
+      strand's, which is right and which made the bare `.slice()` underneath it
+      unsafe: a large party over a long stay runs the list past the column's 500
+      characters before the sentence saying why no money moved has started - and
+      that sentence is an instruction an officer acts on while pricing.
+
+      So a reason that would overrun keeps the counts and drops the dates. The
+      full set is on `reviewContext` either way, which is what #3033 renders.
+      Delete the fallback and this fails on the truncated instruction, not on
+      the length - the `.slice()` keeps the column safe and says nothing about
+      whether the officer can read the row.
+    */
+    const longStay = Array.from({ length: 30 }, (_, index) =>
+      day(`2026-09-${String(index + 1).padStart(2, "0")}`),
+    );
+    const reason = buildEditFinancialReviewReason(
+      occurrence({
+        surrenderedNightDates: longStay,
+        otherStrands: Array.from({ length: 7 }, (_, index) => ({
+          bookingGuestId: `guest-${index}`,
+          cause: "NO_STORED_NIGHT_PRICES" as const,
+          surrenderedNightDates: longStay,
+          addedNightDates: [],
+          storedEvidence: { guestTotalCents: 24_000, nightPrices: [] },
+        })),
+      }),
+    );
+
+    expect(reason.length).toBeLessThanOrEqual(500);
+    expect(reason).toContain("30 nights.");
+    expect(reason).not.toContain("2026-09-01,");
+    expect(reason).toContain("before any money moves.");
+  });
+
+  it("CONTROL: a reason that FITS still lists its dates", () => {
+    // Without this the case above would pass against a builder that had stopped
+    // printing dates at all, which is the information it exists to keep.
+    expect(
+      buildEditFinancialReviewReason(
+        occurrence({ surrenderedNightDates: [day("2026-08-02")] }),
+      ),
+    ).toContain("the night of 2026-08-02");
   });
 
   it("does not move when only the operator prose changes, because text is not the identity", () => {
@@ -694,15 +827,16 @@ describe("#3166/#3194 parked raise - the payment id it stamps is the shared gate
   }
 
   async function stampedPaymentId(booking: ReturnType<typeof parkedBooking>) {
-    const taskIds = await raiseParkedEditFinancialReviewTasks({
+    const taskId = await raiseParkedEditFinancialReviewTasks({
       booking,
       guests: [{ id: "guest-1", memberId: "member-1" }],
       addedGuests: [],
+      // #3498: ONE work item for this parked edit, and ONE task id back.
       occurrences: [occurrence()],
       bookingModificationId: "mod-1",
       store: store(),
     });
-    expect(taskIds).toEqual(["task-new"]);
+    expect(taskId).toEqual(["task-new"]);
     expect(mocks.create).toHaveBeenCalledTimes(1);
     return mocks.create.mock.calls[0][0].data.paymentId;
   }

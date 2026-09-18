@@ -175,6 +175,48 @@ export const recordedNightPricesSchema = z
   .max(370);
 
 /**
+ * The whole item's figures: ONE ENTRY PER REPAIRABLE STRAND, each NAMING THE
+ * STRAND IT IS FOR by its position in the item (#3498).
+ *
+ * ## Why the position is carried rather than implied
+ *
+ * It was implied - a bare array of arrays, matched to the repairable strands by
+ * list index, with a length mismatch refused as a race. That binding is carried
+ * by a length check plus value checks that happen to discriminate, and it has a
+ * hole: if one strand stops being repairable while another starts, in the
+ * seconds the dialog is open, the length is unchanged and every position shifts
+ * by one. The blank dates and the stored total usually tell the two apart - and
+ * on a couple sharing the same nights at the same rate they do not, so one
+ * guest's figures are written silently onto the other's nights. Same sum,
+ * different nights, and a later part-refund is worked out from the nights.
+ *
+ * `strandIndex` is the item's OWN ordinal, which the server sets and sends
+ * (`RepairableStrand`), and the completion refuses anything whose indices are
+ * not exactly the repairable set's. It is a position inside one work item and
+ * names nothing outside it, so the browser STILL never names a guest strand -
+ * the property {@link UnpricedNightsSummary} protects.
+ *
+ * The outer cap is a BOUND on work an authenticated request can ask for, like
+ * the inner one: a booking's party, not a rule about bookings.
+ */
+export const recordedStrandNightPricesSchema = z
+  .array(
+    z
+      .object({
+        strandIndex: nonNegativeCentsSchema,
+        nightPrices: recordedNightPricesSchema,
+      })
+      .strict(),
+  )
+  .max(60);
+
+/** One strand's figures on the wire, named by the item's own ordinal. */
+export type RecordedStrandNightPrices = {
+  strandIndex: number;
+  nightPrices: readonly RecordedNightPrice[];
+};
+
+/**
  * WHICH WAY the settled amount moves what this strand is worth.
  *
  * The same two strings as `ManualRefundTaskDirection`, spelled as a union so
@@ -504,12 +546,19 @@ export function checkStoredNightPriceRepair({
  * that same rule. A screen and a server describing one behaviour in two places
  * drift (`INV-SSOT`).
  *
- * IT PROMISES ONLY WHAT THIS TASK CAN DELIVER. One edit raises one review task
- * per unreadable guest strand, so a booking with two of them gets two tasks and
- * these boxes cover ONE of them. "The booking stops coming back here" would
- * therefore be a false receipt on exactly the booking whose second strand parks
- * it again the next morning - and a promise this epic exists to keep is the
- * worst one to overstate.
+ * IT PROMISES ONLY WHAT THIS TASK CAN DELIVER, and since #3498 what that is
+ * DEPENDS ON THE GRAIN THE ITEM WAS RAISED AT. A parked edit that moved at most
+ * one guest's nights raises ONE item covering every strand it recorded, so the
+ * other guests' blanks are in the next column of this same screen. An edit that
+ * moved two or more raises one item per strand, so they are genuinely on their
+ * own reviews. `otherStrandsOnThisItem` is how the sentence is told which, and
+ * it is an argument rather than a guess because saying the wrong one sends an
+ * officer looking for a screen that does not exist - or lets them leave blanks
+ * they were told somebody else would be asked about.
+ *
+ * "The booking stops coming back here" is said in neither case: a strand this
+ * item does not name can still park the booking again the next morning, and a
+ * promise this epic exists to keep is the worst one to overstate.
  */
 /**
  * #3219 D2 (owner, 5 September 2026): THIS SENTENCE IS ALSO THE REFUSAL.
@@ -528,9 +577,23 @@ export function checkStoredNightPriceRepair({
  */
 export function unpricedNightsExplanation(
   summary: UnpricedNightsSummary,
+  {
+    otherStrandsOnThisItem,
+  }: {
+    /**
+     * How many OTHER guest strands this same work item names. Zero on a
+     * single-strand item - a genuinely one-guest edit, or one of the items a
+     * multi-mover edit fans out into.
+     */
+    otherStrandsOnThisItem: number;
+  },
 ): string {
   const count = summary.dates.length;
-  return `${count === 1 ? "One night" : `${count} nights`} on this guest's stay ${count === 1 ? "has" : "have"} no stored price, which is why this change could not be worked out automatically. Say what each one sold for: this review cannot be closed - settled or dismissed - until they are recorded, because without them this booking's own price cannot be brought back into line with its nights. If another guest on the same booking also has unpriced nights, they are asked about separately, on their own review. Nothing is filled in for you - an amount nobody decided is exactly what this review exists to avoid.`;
+  const elsewhere =
+    otherStrandsOnThisItem > 0
+      ? `The ${otherStrandsOnThisItem === 1 ? "other guest" : "other guests"} this change touched ${otherStrandsOnThisItem === 1 ? "is" : "are"} on this same review: any unpriced nights of theirs are asked about beside these, and all of it is recorded together.`
+      : "If another guest on the same booking also has unpriced nights, they are asked about separately, on their own review.";
+  return `${count === 1 ? "One night" : `${count} nights`} on this guest's stay ${count === 1 ? "has" : "have"} no stored price, which is why this change could not be worked out automatically. Say what each one sold for: this review cannot be closed - settled or dismissed - until they are recorded, because without them this booking's own price cannot be brought back into line with its nights. ${elsewhere} Nothing is filled in for you - an amount nobody decided is exactly what this review exists to avoid.`;
 }
 
 /**
@@ -546,9 +609,13 @@ export function unpricedNightsExplanation(
  * figures have to come to what is already on file could believe they were
  * setting a new price for the stay.
  *
- * IT PROMISES ONLY WHAT THIS STRAND CAN DELIVER, exactly as its sibling does: a
- * booking with two unreadable strands is two of these, and recording one of them
- * does not stop the other sending the booking back for review.
+ * IT PROMISES ONLY WHAT THIS STRAND CAN DELIVER, and its closing sentence -
+ * "another guest on the same booking is asked about separately" - is STILL TRUE
+ * after #3498, which is why it is unchanged while its sibling's had to become
+ * conditional. This act is per-strand by construction: an officer reconciles ONE
+ * guest strand from the booking's own page, outside any review, and the screen
+ * offers one of these per unreadable strand. There is no grain here for the
+ * sentence to follow.
  *
  * Here rather than in the component for the reason the whole module exists: the
  * screen and the server describe one rule, so there is one place it is written
