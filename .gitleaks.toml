@@ -119,6 +119,10 @@ regexes = ['''^utf16-secret-material$''']
 description = "The synthetic 64-hex action token the #2827 attribute-oracle tests share, written in source as four hand-typed 16-hex fragments joined with `+` — a shape no credential generator emits, so it is plainly a source constant. The suites (`family-invite-login-link`, `group-join-verify-pay-token-not-rendered`, `family-invite-return-address`, `family-invite-return-cookie-proxy`) assert this token NEVER appears in a rendered HTML attribute and use a short prefix of it as an `^=` CSS oracle probe, so it has to LOOK like a real action token — high entropy, no repeating run — for the absence to prove anything. `issueActionToken` mints these from randomness and persists only their hash; this fixed constant authorises nothing in any deployment. `generic-api-key` matches only the first 16-hex fragment, forgiven here as an exact literal and nothing else."
 regexes = ['''^e7c1b93a5d0f4826$''']
 
+[[allowlists]]
+description = "The pinned SHA-256 of one proposal snapshot in the #3252 migration-verification fixture (`prisma/migration-verification/20260912010000_relocale_proof_exception_request_identities.ts`, `ESCAPING_HASH`). It is `computeProposalHash` of a fixture party whose first name contains a double quote and a backslash, written down so the SQL re-implementation of the hash can be pinned against the application's value. A digest of public fixture data authorises nothing; only this exact literal is forgiven, and the other pinned digests in the same file did not trip the scanner."
+regexes = ['''^bbbd2b447299d6f849655b881b1c8978b9904a229223e00ae25c6964f5c062cb$''']
+
 # ---------------------------------------------------------------------------
 # Repository-owned rules
 # ---------------------------------------------------------------------------
