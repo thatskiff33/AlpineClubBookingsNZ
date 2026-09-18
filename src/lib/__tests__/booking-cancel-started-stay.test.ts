@@ -189,3 +189,47 @@ describe("cancelBooking — #2029 started-stay self-service block", () => {
     expect(errorOf(result)).toBe(STATUS_MSG);
   });
 });
+
+describe("cancelBooking — #3497 member-door status guard (enforceMemberCancelDoor)", () => {
+  const REVIEW_MSG =
+    "This booking is with the club for review, so it cannot be cancelled from here. If you no longer want it, contact the club and the reviewing officer will withdraw it.";
+
+  it("refuses a member cancelling a booking under review, with the sentence that says what to do instead", async () => {
+    setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30" }); // future
+    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", "card", {
+      enforceStartedStayBlock: true,
+      enforceMemberCancelDoor: true,
+    });
+    expect(result.status).toBe(400);
+    expect(errorOf(result)).toBe(REVIEW_MSG);
+  });
+
+  it("does not exempt a Full Admin on the member route — their door is the review Reject", async () => {
+    setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30" });
+    const result = await cancelBooking("b1", "admin-1", "ADMIN", "127.0.0.1", "card", {
+      enforceStartedStayBlock: true,
+      enforceMemberCancelDoor: true,
+    });
+    expect(result.status).toBe(400);
+    expect(errorOf(result)).toBe(REVIEW_MSG);
+  });
+
+  it("runs AFTER authorization, so a stranger learns nothing about the booking's status", async () => {
+    setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30", memberId: OWNER });
+    const result = await cancelBooking("b1", "stranger-7", "USER", "127.0.0.1", "card", {
+      enforceMemberCancelDoor: true,
+    });
+    expect(result.status).toBe(403);
+    expect(errorOf(result)).not.toBe(REVIEW_MSG);
+  });
+
+  it("leaves every internal/officer caller on the service's full set when the flag is off", async () => {
+    setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30" });
+    // Only the guard is under test: whatever the no-payment cancel path does
+    // with this mocked tx, it must not have been the member-door refusal.
+    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", "card").catch(
+      (error: unknown) => ({ status: -1, error: String(error) }),
+    );
+    expect(result.status === 400 && errorOf(result as never) === REVIEW_MSG).toBe(false);
+  });
+});
