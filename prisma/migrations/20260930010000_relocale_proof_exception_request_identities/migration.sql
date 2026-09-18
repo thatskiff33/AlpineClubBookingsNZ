@@ -64,7 +64,7 @@
 -- #2269 annotation-strip migration, which restates a pattern list in SQL and has
 -- a test read the SQL back to prove parity. Here the parity proof is the
 -- data-migration verification fixture
--- (`prisma/migration-verification/20260912010000_relocale_proof_exception_request_identities.ts`):
+-- (`prisma/migration-verification/20260930010000_relocale_proof_exception_request_identities.ts`):
 -- it seeds a party whose two surnames order OPPOSITELY under the two
 -- comparators, runs this real SQL, and asserts the resulting hash equals the
 -- literal that `computeProposalHash` produces in TypeScript for the same party.

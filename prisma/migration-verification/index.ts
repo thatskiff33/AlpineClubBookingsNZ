@@ -16,7 +16,7 @@ import backfillSchoolBookingsToOrganisations from "./20260928030000_backfill_sch
 import addMemberParentPartnerExclusion from "./20260929010000_add_member_parent_partner_exclusion";
 import repairLocalMidnightDatesOfBirth from "./20260814010000_repair_local_midnight_dates_of_birth";
 import updateStarterHomeGuestCopy from "./20260802150000_update_starter_home_guest_copy";
-import relocaleProofExceptionRequestIdentities from "./20260912010000_relocale_proof_exception_request_identities";
+import relocaleProofExceptionRequestIdentities from "./20260930010000_relocale_proof_exception_request_identities";
 import type { DataMigrationVerification } from "./types";
 
 /**

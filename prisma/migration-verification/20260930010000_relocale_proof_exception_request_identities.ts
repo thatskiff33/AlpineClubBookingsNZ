@@ -192,7 +192,7 @@ const ESCAPING_SNAPSHOT = {
 };
 
 /** `computeProposalHash(ESCAPING_SNAPSHOT)`, measured in TypeScript. */
-const ESCAPING_HASH =
+const ESCAPED_PARTY_HASH =
   "bbbd2b447299d6f849655b881b1c8978b9904a229223e00ae25c6964f5c062cb";
 
 /**
@@ -287,7 +287,7 @@ function newBookingRequest(options: {
 }
 
 const verification: DataMigrationVerification = {
-  migration: "20260912010000_relocale_proof_exception_request_identities",
+  migration: "20260930010000_relocale_proof_exception_request_identities",
   intent:
     "Re-derive `proposalHash` on both request tables, the `nbpe:` `openStateKey` that embeds it, and the sorted `uncovered` array inside `frozenEvidence`, for REQUESTED rows only — under the code-unit comparator that ships in the same release — so that no request already waiting is refused at approval as tampered with. Every value must equal, byte for byte, what the application's own `computeProposalHash` produces for the same stored snapshot. No row in any other status is touched, and a NULL `proposalHash` stays NULL.",
   idempotentReRun: true,
@@ -433,7 +433,7 @@ const verification: DataMigrationVerification = {
             "the SQL escapes a member's real name exactly as `JSON.stringify` does. This is the one thing a hand-built serialiser is most likely to get subtly wrong, and it is measured here rather than reasoned about",
           sql: `SELECT "proposalHash" FROM "NewBookingPolicyExceptionRequest"
                  WHERE "id" = 'nbpe-escaping'`,
-          rows: [{ proposalHash: ESCAPING_HASH }],
+          rows: [{ proposalHash: ESCAPED_PARTY_HASH }],
         },
         {
           claim:

@@ -534,7 +534,7 @@ invariants hold in addition to every #2365/#2524/#2525 invariant above:
   differently under the two comparators.
 
   **Recorded one-off exception:**
-  `20260912010000_relocale_proof_exception_request_identities` re-derived the
+  `20260930010000_relocale_proof_exception_request_identities` re-derived the
   stored values of `REQUESTED` rows — both tables' `proposalHash`, the `nbpe:`
   `openStateKey` that embeds it (the duplicate-open-request cap), and the sorted
   `uncovered` array — a column this file and both schema comments otherwise call

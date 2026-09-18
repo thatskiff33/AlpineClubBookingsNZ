@@ -60,6 +60,7 @@ import {
   countClubNights,
   type CalendarDate,
 } from "@/lib/club-time";
+import { compareOrdinal } from "@/lib/ordinal-order";
 
 /** One season as the timeline reads it. Both edges are calendar days. */
 export interface TimelineSeason {
@@ -111,8 +112,8 @@ export function orderSeasonsChronologically<T extends TimelineSeason>(
     (left, right) =>
       compareCalendarDates(left.startDate, right.startDate) ||
       compareCalendarDates(left.endDate, right.endDate) ||
-      (left.name < right.name ? -1 : left.name > right.name ? 1 : 0) ||
-      (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+      compareOrdinal(left.name, right.name) ||
+      compareOrdinal(left.id, right.id),
   );
 }
 

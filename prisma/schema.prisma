@@ -5845,7 +5845,7 @@ model BookingChangeRequest {
   // byte-for-byte what was reviewed (proposal drift).
   // ONE MIGRATION HAS REWRITTEN `proposalHash` AND `frozenEvidence`, and that is
   // recorded rather than hidden. #3252's comparator fix changed the derivation,
-  // so 20260912010000 re-derived the stored values for REQUESTED rows only —
+  // so 20260930010000 re-derived the stored values for REQUESTED rows only —
   // otherwise a waiting member request would have been refused at approval as
   // tampered with. A DERIVATION of the frozen proposal moved; the proposal
   // itself never has. See INV-EXCEPT-036; do not read that as a licence.
@@ -5997,7 +5997,7 @@ model NewBookingPolicyExceptionRequest {
   // reviewed.
   // ONE MIGRATION HAS REWRITTEN `proposalHash` AND `frozenEvidence`, and that is
   // recorded rather than hidden. #3252's comparator fix changed the derivation,
-  // so 20260912010000 re-derived the stored values for REQUESTED rows only —
+  // so 20260930010000 re-derived the stored values for REQUESTED rows only —
   // otherwise a waiting member request would have been refused at approval as
   // tampered with. A DERIVATION of the frozen proposal moved; the proposal
   // itself never has. See INV-EXCEPT-036; do not read that as a licence.

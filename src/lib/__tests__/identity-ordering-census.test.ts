@@ -76,7 +76,12 @@ const IDENTITY_MODULES = [
   // Xero member grouping: a stored dry-run digest, and the resume CURSOR, where
   // two chunks ordering differently would skip or reprocess members.
   "src/lib/xero-member-grouping-resync.ts",
+  // Partner pairs: the stored memberAId/memberBId order and the order two row
+  // locks are taken in (main added these after #3252 branched).
+  "src/lib/member-partner-link-shared.ts",
+  "src/lib/member-partner-lock.ts",
   // Cross-request confirm tokens and plan digests.
+  "src/lib/xero-missing-contact-seeding.ts",
   "src/lib/membership-subscription-billing.ts",
   "src/lib/induction-baseline.ts",
   "src/lib/admin-roster-service.ts",
