@@ -70,17 +70,12 @@ import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 
-// Statuses a booking may be cancelled from. Shared by the outer validation
-// guard and the tx1 single-flight re-check so the two can never drift (#1160).
-const CANCELLABLE_BOOKING_STATUSES: readonly string[] = [
-  "PENDING",
-  "PAYMENT_PENDING",
-  "CONFIRMED",
-  "PAID",
-  "WAITLISTED",
-  "WAITLIST_OFFERED",
-  "AWAITING_REVIEW",
-];
+// #3497: the cancellable sets live in `booking-cancel-eligibility.ts`, a leaf
+// module the member-facing doors also read — one home, no copy.
+import {
+  isCancellableBookingStatus,
+  memberCancelRefusal,
+} from "@/lib/booking-cancel-eligibility";
 
 // The no-payment / holding statuses the shared cancel path may flip straight to
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
@@ -198,6 +193,13 @@ export async function cancelBooking(
     // cancel route opts in; every internal/admin caller leaves it false, so
     // their behaviour is unchanged. See the guard in performBookingCancellation.
     enforceStartedStayBlock?: boolean;
+    // #3497: when true, refuse the statuses a MEMBER-FACING door may not cancel
+    // from (`MEMBER_CANCELLABLE_BOOKING_STATUSES`, today the service set minus
+    // AWAITING_REVIEW). Only the member-facing cancel route opts in, exactly as
+    // it does for enforceStartedStayBlock; every internal/officer caller keeps
+    // the full CANCELLABLE_BOOKING_STATUSES. Not exempted for a Full Admin: the
+    // page hides the button from them too, and their door is the review Reject.
+    enforceMemberCancelDoor?: boolean;
     /**
      * #2576 §7: the officer's explicit confirmation and mandatory reason for
      * overriding a same-owner coverage refusal. Honoured only for an officer-type
@@ -226,7 +228,8 @@ export async function cancelBooking(
     options.requireRequestHold ?? false,
     notifyMember,
     options.enforceStartedStayBlock ?? false,
-    options.hostingCoverageOverride ?? null
+    options.hostingCoverageOverride ?? null,
+    options.enforceMemberCancelDoor ?? false
   );
 
   if (result.status === 200) {
@@ -432,7 +435,10 @@ async function performBookingCancellation(
   // #2576 §7: the officer's explicit confirmation and reason, or null. Null on
   // every internal caller, which is correct: they are §8 system changes and are
   // never asked to confirm anything.
-  hostingCoverageOverride: HostingCoverageOverrideInput | null = null
+  hostingCoverageOverride: HostingCoverageOverrideInput | null = null,
+  // #3497: the member-door status guard (see the guard below). Default false so
+  // every internal/officer caller is unaffected.
+  enforceMemberCancelDoor = false
 ): Promise<CancelBookingResponse> {
   // Issue #1705 (#1698 pattern): a suppressed admin cancel records the choice in
   // the audit metadata — notifyMember is false only when an authorized admin
@@ -518,7 +524,20 @@ async function performBookingCancellation(
     };
   }
 
-  if (!CANCELLABLE_BOOKING_STATUSES.includes(booking.status)) {
+  // ── #3497: member-door status guard ──────────────────────────────────────
+  //
+  // The member-facing cancel route opts in, and only it. It runs AFTER the
+  // authorization gate above, so a caller who may not cancel this booking learns
+  // nothing about its status from the refusal, and BEFORE the service-wide set
+  // below, so a booking under review is refused with the sentence that tells
+  // the member what to do instead. Why AWAITING_REVIEW is excluded is recorded
+  // on MEMBER_CANCELLABLE_BOOKING_STATUSES, its one home.
+  if (enforceMemberCancelDoor) {
+    const refusal = memberCancelRefusal(booking.status);
+    if (refusal) return { status: 400, error: refusal };
+  }
+
+  if (!isCancellableBookingStatus(booking.status)) {
     return {
       status: 400,
       error: "Only PENDING, PAYMENT_PENDING, CONFIRMED, PAID, WAITLISTED, WAITLIST_OFFERED, or AWAITING_REVIEW bookings can be cancelled",
@@ -1374,7 +1393,7 @@ async function performBookingCancellation(
     // Single-flight gate: the race loser / a retry lands here.
     if (
       !fresh ||
-      !CANCELLABLE_BOOKING_STATUSES.includes(fresh.status) ||
+      !isCancellableBookingStatus(fresh.status) ||
       !fresh.payment
     ) {
       return { claimed: false as const };
