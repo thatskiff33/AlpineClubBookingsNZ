@@ -12,6 +12,10 @@ import {
 } from "@/lib/servernz-api";
 import { getServerNzSetupState } from "@/lib/servernz-config";
 import {
+  advancedDownloadCursor,
+  overlappedRequestCursor,
+} from "@/lib/servernz-cursor-overlap";
+import {
   getIntegrationCredentialValue,
   setIntegrationCredential,
 } from "@/lib/integration-credentials";
@@ -29,6 +33,15 @@ import {
  * DRIVEN TWO WAYS, ONE WRITER. The push webhook and the polling cron both end
  * up here, and the single-flight claim on `commsSyncStartedAt` is what stops a
  * push arriving mid-poll from running two ingest passes over the same cursor.
+ *
+ * THE FIRST REQUEST OF EVERY PASS LOOKS A LITTLE WAY BEHIND THE STORED
+ * POSITION (#3449) — the same bounded overlap the Other Clubs pull applies, from
+ * the same home, `@/lib/servernz-cursor-overlap`, which records why. Paging by
+ * timestamp AND id protects a page boundary where rows share a timestamp; it
+ * does nothing for a row that was not yet committed when the reader stepped
+ * past its timestamp, and that row was skipped forever. The repeat is harmless
+ * here because {@link upsertMirror} recognises an identical re-delivery and
+ * writes nothing — evidence this sync owes on its own, and its tests carry it.
  */
 
 /** Provider key the push-verification secret is stored under, beside the API key. */
@@ -44,11 +57,40 @@ const MAX_PAGES_PER_PASS = 10;
 /** Images fetched per mirrored post. Matches the local per-post cap. */
 const MAX_MIRROR_IMAGES = 6;
 
+/** How the inert-overlap log line names this pull — see `overlappedRequestCursor`. */
+const OVERLAP_SYNC_LABEL = "shared-post mirror";
+
 export interface MirrorSyncResult {
   skipped?: "not-configured" | "busy";
+  /** Visible changes that created or altered a mirror row. */
   upserted: number;
+  /**
+   * Visible changes whose post was already mirrored exactly as delivered —
+   * the rows the cursor overlap deliberately re-asks for (#3449). Counted
+   * apart so a repeat never reads as a change, and so an overlap that is
+   * working is visible as such.
+   */
+  unchanged: number;
   removed: number;
   pages: number;
+}
+
+/** What {@link upsertMirror} did with one visible change. */
+type MirrorUpsertOutcome = "created" | "updated" | "unchanged" | "skipped";
+
+/**
+ * A mirrored body with its local image ids blanked, so two renderings of the
+ * same server post — whose images were stored under different local ids on
+ * different passes — compare equal when, and only when, the words and the
+ * pictures are the same. The pictures themselves are compared by SHA-256.
+ */
+function bodyShape(bodyHtml: string | null): string | null {
+  return (
+    bodyHtml?.replace(
+      /\/api\/club-posts\/images\/[0-9a-f]{32}/g,
+      "/api/club-posts/images/#",
+    ) ?? null
+  );
 }
 
 /**
@@ -89,19 +131,22 @@ function serverImageId(url: string): string | null {
  * server on every render; and the board must keep working when the central
  * server is down — which is the whole reason mirrors exist.
  */
-async function upsertMirror(post: SyncPost): Promise<void> {
+async function upsertMirror(post: SyncPost): Promise<MirrorUpsertOutcome> {
   const existing = await prisma.clubPost.findUnique({
     where: { serverPostId: post.id },
     select: {
       id: true,
       originClubCode: true,
+      originClubName: true,
+      content: true,
+      bodyHtml: true,
       images: { select: { publicId: true, storageKey: true, sha256: true } },
     },
   });
 
   // Our own post coming back around the loop. This install is authoritative
   // for it; the server's copy is derived, so nothing here may overwrite it.
-  if (existing && existing.originClubCode === null) return;
+  if (existing && existing.originClubCode === null) return "skipped";
 
   // Download this post's images and build the URL mapping. Bounded, and a
   // failed image never fails the post — the words still arrive.
@@ -194,10 +239,34 @@ async function upsertMirror(post: SyncPost): Promise<void> {
       { serverPostId: post.id, createdAt: post.createdAt },
       "Mirrored post carries an unreadable createdAt; skipping it",
     );
-    return;
+    return "skipped";
   }
 
   if (existing) {
+    // THE REPEAT THE CURSOR OVERLAP RE-DELIVERS (#3449). A post already
+    // mirrored exactly as it arrives — same words, same origin name, same
+    // pictures byte for byte — is written nowhere: no row touched, no files
+    // swapped, and it is not counted as a change. Without this, the overlap
+    // would churn every post in its window on every pass and every pass would
+    // report activity on a board where nothing happened. The freshly written
+    // duplicate files are the one cost, and they are removed here rather than
+    // left for the orphan sweep.
+    const sameImages =
+      storedImages.length === existing.images.length &&
+      storedImages.every(
+        (image, index) => image.sha256 === existing.images[index]?.sha256,
+      );
+    if (
+      sameImages &&
+      existing.content === content &&
+      existing.originClubName === post.club.name &&
+      bodyShape(existing.bodyHtml) === bodyShape(bodyHtml)
+    ) {
+      for (const duplicate of storedImages) {
+        await deletePostImage(duplicate.storageKey);
+      }
+      return "unchanged";
+    }
     // Replace images wholesale: the server's list is authoritative for a
     // mirror, and diffing it against local rows buys nothing but edge cases.
     // Rows first, then files — the failure order that leaves orphaned files
@@ -217,7 +286,7 @@ async function upsertMirror(post: SyncPost): Promise<void> {
     for (const old of existing.images) {
       await deletePostImage(old.storageKey);
     }
-    return;
+    return "updated";
   }
 
   await prisma.clubPost.create({
@@ -236,6 +305,7 @@ async function upsertMirror(post: SyncPost): Promise<void> {
       images: { create: storedImages },
     },
   });
+  return "created";
 }
 
 /** Apply one tombstone. */
@@ -328,6 +398,35 @@ export async function ensurePushRegistration(): Promise<void> {
 }
 
 /**
+ * The cursor the FIRST page of a pass asks with: one overlap before the stored
+ * position when that position is an instant, the stored pair untouched
+ * otherwise, and nothing at all when there is no stored position — so an
+ * initial full sync is unchanged.
+ *
+ * THE TIEBREAK ID IS DROPPED WHEN THE TIMESTAMP IS STEPPED. `sinceId` orders
+ * rows that share the stored `since` exactly; paired with a different, earlier
+ * instant it would exclude whichever rows at that instant sort at or before it
+ * — a sliver, but a wrong one. Asking with the stepped instant alone asks for
+ * everything from that instant on, which is the whole of the window.
+ *
+ * ONLY THE FIRST PAGE. Later pages in the same pass continue from the cursor
+ * the server just returned, which is a position inside this pass's own read
+ * and not a watermark left by an earlier one. Stepping every page back would
+ * re-fetch the tail of each page on the next, and a page whose two hundred
+ * changes all fall inside one window would be re-served identically until the
+ * page cap — a pass that never progresses.
+ */
+function overlappedMirrorCursor(
+  since: string | null | undefined,
+  sinceId: string | null | undefined,
+): { since: string | null; sinceId: string | null } {
+  const stored = since ?? null;
+  const requested = overlappedRequestCursor(stored, OVERLAP_SYNC_LABEL);
+  if (requested === stored) return { since: stored, sinceId: sinceId ?? null };
+  return { since: requested, sinceId: null };
+}
+
+/**
  * Pull the mirror up to date. The one writer both the webhook and the cron use.
  */
 export async function runMirrorSync(
@@ -335,7 +434,13 @@ export async function runMirrorSync(
 ): Promise<MirrorSyncResult> {
   const setup = await getServerNzSetupState();
   if (!setup.apiKeySet) {
-    return { skipped: "not-configured", upserted: 0, removed: 0, pages: 0 };
+    return {
+      skipped: "not-configured",
+      upserted: 0,
+      unchanged: 0,
+      removed: 0,
+      pages: 0,
+    };
   }
 
   // The single-flight claim, same pattern as every other sync in this repo: a
@@ -358,10 +463,15 @@ export async function runMirrorSync(
     data: { commsSyncStartedAt: now },
   });
   if (claim.count === 0) {
-    return { skipped: "busy", upserted: 0, removed: 0, pages: 0 };
+    return { skipped: "busy", upserted: 0, unchanged: 0, removed: 0, pages: 0 };
   }
 
-  const result: MirrorSyncResult = { upserted: 0, removed: 0, pages: 0 };
+  const result: MirrorSyncResult = {
+    upserted: 0,
+    unchanged: 0,
+    removed: 0,
+    pages: 0,
+  };
   try {
     await ensurePushRegistration();
 
@@ -378,18 +488,20 @@ export async function runMirrorSync(
     let poisonCount = cursor?.commsPoisonCount ?? 0;
 
     for (let page = 0; page < MAX_PAGES_PER_PASS; page++) {
-      const envelope = await pullSharedPostSync({
-        since: cursor?.commsCursorSince,
-        sinceId: cursor?.commsCursorSinceId,
-      });
+      const envelope = await pullSharedPostSync(
+        page === 0
+          ? overlappedMirrorCursor(cursor?.commsCursorSince, cursor?.commsCursorSinceId)
+          : { since: cursor?.commsCursorSince, sinceId: cursor?.commsCursorSinceId },
+      );
       result.pages += 1;
 
       for (const change of envelope.changes) {
         const changeKey = change.state === "visible" ? change.post.id : change.id;
         try {
           if (change.state === "visible") {
-            await upsertMirror(change.post);
-            result.upserted += 1;
+            const outcome = await upsertMirror(change.post);
+            if (outcome === "unchanged") result.unchanged += 1;
+            else if (outcome !== "skipped") result.upserted += 1;
           } else {
             if (await applyRemoval(change.id)) result.removed += 1;
           }
@@ -443,17 +555,32 @@ export async function runMirrorSync(
       // Advance the cursor AFTER the page is applied, never before: a crash
       // mid-page replays the page, and every write above is an idempotent
       // upsert or delete, so replay converges instead of losing posts.
+      //
+      // AND NEVER BACKWARDS (#3449). The first request looked one overlap
+      // behind the stored position, and a server that echoes `since` on an
+      // empty page would hand that overlapped value straight back; storing it
+      // would rewind the durable position a minute per quiet pass. The pair is
+      // kept whole: the server's `sinceId` belongs with the server's `since`,
+      // so a refused step keeps BOTH stored halves.
       if (envelope.cursor) {
+        const since = advancedDownloadCursor(
+          cursor?.commsCursorSince ?? null,
+          envelope.cursor.since,
+        );
+        const next =
+          since === envelope.cursor.since
+            ? envelope.cursor
+            : {
+                since: cursor?.commsCursorSince ?? null,
+                sinceId: cursor?.commsCursorSinceId ?? null,
+              };
         await prisma.serverNzSettings.update({
           where: { id: "default" },
-          data: {
-            commsCursorSince: envelope.cursor.since,
-            commsCursorSinceId: envelope.cursor.sinceId,
-          },
+          data: { commsCursorSince: next.since, commsCursorSinceId: next.sinceId },
         });
         cursor = {
-          commsCursorSince: envelope.cursor.since,
-          commsCursorSinceId: envelope.cursor.sinceId,
+          commsCursorSince: next.since,
+          commsCursorSinceId: next.sinceId,
           commsPoisonChangeId: poisonId,
           commsPoisonCount: poisonCount,
         };
