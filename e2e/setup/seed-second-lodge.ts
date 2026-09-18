@@ -336,6 +336,8 @@ async function main() {
         waitlistOfferedLodgeId: lodgeBId,
         waitlistOfferedPriceCents: quote.finalPriceCents,
         totalPriceCents: quote.finalPriceCents,
+        discountCents: 0,
+        promoAdjustmentCents: 0,
         finalPriceCents: quote.finalPriceCents,
       },
     });

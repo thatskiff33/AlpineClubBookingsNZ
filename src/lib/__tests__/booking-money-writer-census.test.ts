@@ -22,10 +22,10 @@ import {
 } from "@/lib/booking-money-reconciliation";
 
 const REVIEWED_WRITERS = [
-  "e2e/setup/seed-second-lodge.ts|booking|create,deleteMany,update|finalPriceCents,totalPriceCents|3",
+  "e2e/setup/seed-second-lodge.ts|booking|create,deleteMany,update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|3",
   "e2e/setup/seed-second-lodge.ts|bookingGuest|create|priceCents|1",
   "e2e/setup/seed-second-lodge.ts|bookingGuestNight|create|priceCents,priceSource|1",
-  "prisma/demo-seed.ts|booking|create,deleteMany|finalPriceCents,promoAdjustmentCents,totalPriceCents|11",
+  "prisma/demo-seed.ts|booking|create,deleteMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|11",
   "prisma/demo-seed.ts|bookingGuest|create,deleteMany|priceCents|2",
   "prisma/demo-seed.ts|bookingGuestNight|create,deleteMany|priceCents,priceSource|2",
   "prisma/demo-seed.ts|promoRedemption|create,deleteMany|discountCents|2",
@@ -58,7 +58,7 @@ const REVIEWED_WRITERS = [
   "src/lib/booking-request-quotes.ts|booking|create|finalPriceCents,totalPriceCents|1",
   "src/lib/booking-request-quotes.ts|bookingGuest|create||1",
   "src/lib/booking-request-quotes.ts|bookingGuestNight|opaquePayload||1",
-  "src/lib/booking-request.ts|booking|create,updateMany|finalPriceCents,totalPriceCents|2",
+  "src/lib/booking-request.ts|booking|create,updateMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|2",
   "src/lib/booking-request.ts|bookingGuest|create,deleteMany,update|priceCents|4",
   "src/lib/booking-request.ts|bookingGuestNight|deleteMany,opaquePayload||4",
   "src/lib/booking-review-price-rebase.ts|booking|updateMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|1",
@@ -73,7 +73,7 @@ const REVIEWED_WRITERS = [
   "src/lib/payment-reconciliation.ts|booking|opaquePayload||1",
   "src/lib/promo.ts|promoRedemption|create,delete,update|discountCents,priceAdjustmentCents|3",
   "src/lib/promo.ts|promoRedemptionAllocation|deleteMany,opaquePayload||4",
-  "src/lib/school-booking-request.ts|booking|create,update|finalPriceCents,totalPriceCents|3",
+  "src/lib/school-booking-request.ts|booking|create,update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|3",
   "src/lib/school-booking-request.ts|bookingGuest|create||2",
   "src/lib/school-booking-request.ts|bookingGuestNight|opaquePayload||2",
   "src/lib/stored-night-price-repair-store.ts|bookingGuest|updateMany|priceCents|1",
@@ -435,6 +435,46 @@ describe("INV-MONEY-031 booking money writer census", () => {
     ]);
   });
 
+  it("resolves local nested relation payloads and fails closed when one cannot be read", () => {
+    const localRelations = `
+      const nights = { create: { priceCents: 1, priceSource: "SOLD" } };
+      const guests = { create: { priceCents: 1, nights } };
+      await database.booking.update({ data: { guests } });
+    `;
+    expect(
+      scanBookingMoneyWriterSites("local-relations.ts", localRelations),
+    ).toEqual([
+      {
+        file: "local-relations.ts",
+        delegate: "bookingGuest",
+        methods: ["create"],
+        fields: ["priceCents"],
+        siteCount: 1,
+      },
+      {
+        file: "local-relations.ts",
+        delegate: "bookingGuestNight",
+        methods: ["create"],
+        fields: ["priceCents", "priceSource"],
+        siteCount: 1,
+      },
+    ]);
+    expect(
+      scanBookingMoneyWriterSites(
+        "unknown-relations.ts",
+        "await database.booking.update({ data: { guests: buildGuests() } });",
+      ),
+    ).toEqual([
+      {
+        file: "unknown-relations.ts",
+        delegate: "bookingGuest",
+        methods: ["opaquePayload"],
+        fields: [],
+        siteCount: 1,
+      },
+    ]);
+  });
+
   it("rejects forwarded delegates without relying on the receiver variable name", () => {
     const directAlias = `const ledger = anything.booking; await ledger.update({ data: { finalPriceCents: 1 } });`;
     expect(scanBookingMoneyWriterSites("direct-alias.ts", directAlias)).toEqual(
@@ -457,6 +497,24 @@ describe("INV-MONEY-031 booking money writer census", () => {
         "await mutate(database.bookingGuestNight);",
       ),
     ).toEqual(["forwarded.ts|bookingGuestNight"]);
+    expect(
+      scanBookingMoneyWriterEscapes(
+        "renamed-forwarded.ts",
+        "await mutate(connection.bookingGuestNight);",
+      ),
+    ).toEqual(["renamed-forwarded.ts|bookingGuestNight"]);
+    expect(
+      scanBookingMoneyWriterEscapes(
+        "typed-forwarded.ts",
+        "async function write(connection: PrismaClient) { await mutate(connection.bookingGuestNight); }",
+      ),
+    ).toEqual(["typed-forwarded.ts|bookingGuestNight"]);
+    expect(
+      scanBookingMoneyWriterEscapes(
+        "ordinary-data.ts",
+        "const model = { booking: bookingDomainObject }; await inspect(model.booking);",
+      ),
+    ).toEqual([]);
     expect(
       scanBookingMoneyWriterEscapes(
         "destructured.ts",
@@ -506,6 +564,47 @@ describe("INV-MONEY-031 booking money writer census", () => {
       "opaque.ts:1|opaqueCompleteHeadlinePayload",
     ]);
     expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "partial-final.ts",
+        "await database.booking.update({ data: { finalPriceCents: total + 1 } });",
+      ),
+    ).toEqual(["partial-final.ts:1|finalPriceCents"]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "bad-discount.ts",
+        "await database.booking.update({ data: { promoAdjustmentCents: promo, discountCents: Math.max(0, -promo) + 1 } });",
+      ),
+    ).toEqual(["bad-discount.ts:1|discountCents"]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "partial-discount.ts",
+        "await database.booking.update({ data: { discountCents: 999 } });",
+      ),
+    ).toEqual(["partial-discount.ts:1|discountCents"]);
+    const mutablePair = `
+      let discountCents = 0;
+      let promoAdjustmentCents = 0;
+      if (applyPromo) {
+        const resolved = resolvePromo();
+        discountCents = resolved.discountCents;
+        promoAdjustmentCents = resolved.promoAdjustmentCents;
+      }
+      const finalPriceCents = bookingFinalPriceCents({ totalPriceCents, promoAdjustmentCents });
+      await database.booking.update({ data: { totalPriceCents, discountCents, promoAdjustmentCents, finalPriceCents } });
+    `;
+    expect(
+      scanBookingMoneyWriterEqualityEscapes("mutable-pair.ts", mutablePair),
+    ).toEqual([]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "broken-mutable-pair.ts",
+        mutablePair.replace(
+          "discountCents = resolved.discountCents",
+          "discountCents = 999",
+        ),
+      ),
+    ).toEqual(["broken-mutable-pair.ts:10|discountCents"]);
+    expect(
       DISCOVERED_EQUALITY_ESCAPES,
       "INV-MONEY-031: a complete Booking headline write bypasses the canonical final-price relation.",
     ).toEqual([]);
@@ -534,6 +633,24 @@ describe("INV-MONEY-031 booking money writer census", () => {
         ),
       ),
     ).toEqual(["broken-discount.sql|rawSql:booking.discountCents"]);
+    expect(
+      scanBookingMoneyRawSqlEscapes(
+        "update-only.sql",
+        'UPDATE ONLY "Booking" SET "finalPriceCents" = "totalPriceCents" + "promoAdjustmentCents";',
+      ),
+    ).toEqual([]);
+    expect(
+      scanBookingMoneyRawSqlEscapes(
+        "insert-select.sql",
+        'INSERT INTO "Booking" ("finalPriceCents") SELECT price FROM source;',
+      ),
+    ).toEqual(["insert-select.sql|rawSql:booking.finalPriceCents"]);
+    expect(
+      scanBookingMoneyRawSqlEscapes(
+        "merge.sql",
+        'MERGE INTO "Booking" AS target USING source ON true WHEN MATCHED THEN UPDATE SET "finalPriceCents" = 1;',
+      ),
+    ).toEqual(["merge.sql|rawSql:booking.unsupportedMutation"]);
     const cleanCopy = `CREATE FUNCTION copy_discount() RETURNS trigger AS $function$ BEGIN INSERT INTO "PromoRedemptionAllocation" ("discountCents") VALUES (NEW."discountCents") ON CONFLICT ("promoRedemptionId", "memberId") DO UPDATE SET "discountCents" = EXCLUDED."discountCents"; RETURN NEW; END; $function$ LANGUAGE plpgsql;`;
     expect(scanBookingMoneyRawSqlEscapes("copy.sql", cleanCopy)).toEqual([]);
     expect(

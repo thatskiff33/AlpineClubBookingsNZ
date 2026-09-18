@@ -2355,6 +2355,8 @@ export async function approveBookingRequest(input: {
             // #737). The bed is reserved until payment, expiry, or cancel.
             status: BookingStatus.PENDING,
             totalPriceCents: priceCents,
+            discountCents: 0,
+            promoAdjustmentCents: 0,
             finalPriceCents: priceCents,
             hasNonMembers: true,
             nonMemberHoldUntil,

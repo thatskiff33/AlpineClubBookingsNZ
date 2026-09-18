@@ -123,10 +123,10 @@ function isNestedScope(node: ts.Node): boolean {
  * search makes an unrelated inner `data` object evidence for a writer, which
  * is a census bypass rather than a conservative result.
  */
-function resolveLocalBinding(
+function resolveLocalVariableDeclaration(
   use: ts.Identifier,
   source: ts.SourceFile,
-): ts.Expression | undefined {
+): ts.VariableDeclaration | undefined {
   const name = use.text;
   for (let scope = enclosingScope(use); scope; scope = enclosingScope(scope)) {
     let winner: ts.VariableDeclaration | undefined;
@@ -145,9 +145,16 @@ function resolveLocalBinding(
       ts.forEachChild(node, visit);
     };
     visit(scope);
-    if (winner?.initializer) return winner.initializer;
+    if (winner) return winner;
   }
   return undefined;
+}
+
+function resolveLocalBinding(
+  use: ts.Identifier,
+  source: ts.SourceFile,
+): ts.Expression | undefined {
+  return resolveLocalVariableDeclaration(use, source)?.initializer;
 }
 
 function expressionUsesCanonicalFinalPrice(
@@ -191,10 +198,175 @@ function expressionUsesCanonicalFinalPrice(
   return false;
 }
 
+function expressionUsesCanonicalDiscount(
+  expression: ts.Expression,
+  promo: ts.Expression | undefined,
+  source: ts.SourceFile,
+  seen = new Set<ts.Node>(),
+): boolean {
+  if (seen.has(expression)) return false;
+  seen.add(expression);
+  if (ts.isIdentifier(expression)) {
+    const binding = resolveLocalBinding(expression, source);
+    return (
+      binding !== undefined &&
+      expressionUsesCanonicalDiscount(binding, promo, source, seen)
+    );
+  }
+  if (
+    ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    ts.isIdentifier(expression.expression.expression) &&
+    expression.expression.expression.text === "Math" &&
+    expression.expression.name.text === "max" &&
+    expression.arguments.length === 2 &&
+    expression.arguments[0]!.getText(source) === "0"
+  ) {
+    const negated = expression.arguments[1]!;
+    return (
+      ts.isPrefixUnaryExpression(negated) &&
+      negated.operator === ts.SyntaxKind.MinusToken &&
+      promo !== undefined &&
+      negated.operand.getText(source) === promo.getText(source)
+    );
+  }
+  return false;
+}
+
+function isPairedPromoResult(
+  discount: ts.Expression,
+  promo: ts.Expression | undefined,
+): boolean {
+  return (
+    promo !== undefined &&
+    ts.isPropertyAccessExpression(discount) &&
+    ts.isPropertyAccessExpression(promo) &&
+    discount.name.text === "newDiscountCents" &&
+    promo.name.text === "newPromoAdjustmentCents" &&
+    discount.expression.getText() === promo.expression.getText()
+  );
+}
+
+function isPairedPromoVariables(
+  discount: ts.Expression,
+  promo: ts.Expression | undefined,
+  source: ts.SourceFile,
+): boolean {
+  if (!ts.isIdentifier(discount) || !promo || !ts.isIdentifier(promo)) {
+    return false;
+  }
+
+  const discountDeclaration = resolveLocalVariableDeclaration(discount, source);
+  const promoDeclaration = resolveLocalVariableDeclaration(promo, source);
+  if (!discountDeclaration || !promoDeclaration) return false;
+  if (
+    discountDeclaration.initializer?.getText(source) !== "0" ||
+    promoDeclaration.initializer?.getText(source) !== "0"
+  ) {
+    return false;
+  }
+
+  type Assignment = { value: ts.Expression; scope: ts.Node; position: number };
+  const assignmentsBefore = (
+    use: ts.Identifier,
+    declaration: ts.VariableDeclaration,
+  ): Assignment[] => {
+    const scope = enclosingScope(declaration);
+    if (!scope) return [];
+    const assignments: Assignment[] = [];
+    const declaresShadow = (block: ts.Block): boolean => {
+      let shadow = false;
+      const inspect = (node: ts.Node) => {
+        if (shadow || (node !== block && isNestedScope(node))) return;
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          node.name.text === use.text &&
+          node !== declaration
+        ) {
+          shadow = true;
+          return;
+        }
+        ts.forEachChild(node, inspect);
+      };
+      ts.forEachChild(block, inspect);
+      return shadow;
+    };
+    const visit = (node: ts.Node) => {
+      if (node.getStart(source) >= use.getStart(source)) return;
+      if (
+        node !== scope &&
+        (ts.isFunctionLike(node) ||
+          ts.isClassLike(node) ||
+          ts.isSourceFile(node) ||
+          (ts.isBlock(node) && declaresShadow(node)))
+      ) {
+        return;
+      }
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left) &&
+        node.left.text === use.text &&
+        node.getStart(source) > declaration.getStart(source)
+      ) {
+        assignments.push({
+          value: node.right,
+          scope: enclosingScope(node) ?? scope,
+          position: node.getStart(source),
+        });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(scope);
+    return assignments.sort((left, right) => left.position - right.position);
+  };
+
+  const discountAssignments = assignmentsBefore(discount, discountDeclaration);
+  const promoAssignments = assignmentsBefore(promo, promoDeclaration);
+  if (discountAssignments.length !== promoAssignments.length) return false;
+
+  const propertyPair = (
+    discountValue: ts.Expression,
+    promoValue: ts.Expression,
+  ): boolean => {
+    if (
+      !ts.isPropertyAccessExpression(discountValue) ||
+      !ts.isPropertyAccessExpression(promoValue) ||
+      discountValue.expression.getText(source) !==
+        promoValue.expression.getText(source)
+    ) {
+      return false;
+    }
+    return (
+      ["discountCents", "newDiscountCents"].includes(discountValue.name.text) &&
+      [
+        "promoAdjustmentCents",
+        "newPromoAdjustmentCents",
+        "priceAdjustmentCents",
+      ].includes(promoValue.name.text)
+    );
+  };
+
+  return discountAssignments.every((assignment, index) => {
+    const promoAssignment = promoAssignments[index];
+    return (
+      promoAssignment !== undefined &&
+      assignment.scope === promoAssignment.scope &&
+      (propertyPair(assignment.value, promoAssignment.value) ||
+        expressionUsesCanonicalDiscount(
+          assignment.value,
+          promoAssignment.value,
+          source,
+        ))
+    );
+  });
+}
+
 /**
- * A field inventory cannot distinguish `total + 1` from the canonical final
- * price. For complete headline payloads, require the final field to flow from
- * the one arithmetic home (or the deliberate parked-value branch).
+ * A field inventory cannot distinguish a canonical relation from a nearby
+ * arithmetic expression. Every written derived headline field is therefore
+ * checked at its concrete payload, including partial writes.
  */
 export function scanBookingMoneyWriterEqualityEscapes(
   file: string,
@@ -226,13 +398,19 @@ export function scanBookingMoneyWriterEqualityEscapes(
         const name = propertyName(property.name);
         if (name) values.set(name, property.initializer);
         else opaque = true;
+      } else if (ts.isShorthandPropertyAssignment(property)) {
+        values.set(property.name.text, property.name);
       } else {
         opaque = true;
       }
     }
     return { values, opaque };
   };
-  const inspectPayload = (payload: ResolvedObject, location: ts.Node) => {
+  const inspectPayload = (
+    payload: ResolvedObject,
+    location: ts.Node,
+    createsNewBooking: boolean,
+  ) => {
     const { values } = payload;
     const finalPrice = values.get("finalPriceCents");
     const isZeroPromo =
@@ -255,14 +433,42 @@ export function scanBookingMoneyWriterEqualityEscapes(
     }
     if (
       finalPrice &&
-      hasCompleteHeadline &&
       !(isZeroPromo && finalEqualsTotal) &&
+      !(
+        createsNewBooking &&
+        finalEqualsTotal &&
+        !values.has("promoAdjustmentCents")
+      ) &&
       !expressionUsesCanonicalFinalPrice(finalPrice, source)
     ) {
       const finalLine =
         source.getLineAndCharacterOfPosition(finalPrice.getStart(source)).line +
         1;
       escapes.push(`${file}:${finalLine}|finalPriceCents`);
+    }
+    const discount = values.get("discountCents");
+    if (
+      discount &&
+      !expressionUsesCanonicalDiscount(
+        discount,
+        values.get("promoAdjustmentCents"),
+        source,
+      ) &&
+      !isPairedPromoResult(discount, values.get("promoAdjustmentCents")) &&
+      !isPairedPromoVariables(
+        discount,
+        values.get("promoAdjustmentCents"),
+        source,
+      ) &&
+      !(
+        discount.getText(source) === "0" &&
+        values.get("promoAdjustmentCents")?.getText(source) === "0"
+      )
+    ) {
+      const discountLine =
+        source.getLineAndCharacterOfPosition(discount.getStart(source)).line +
+        1;
+      escapes.push(`${file}:${discountLine}|discountCents`);
     }
   };
   const visit = (node: ts.Node) => {
@@ -280,7 +486,11 @@ export function scanBookingMoneyWriterEqualityEscapes(
             : new Set(["data"]);
         for (const [name, payloadExpression] of options.values) {
           if (payloadNames.has(name)) {
-            inspectPayload(resolveObject(payloadExpression), payloadExpression);
+            inspectPayload(
+              resolveObject(payloadExpression),
+              payloadExpression,
+              node.expression.name.text === "create" || name === "create",
+            );
           }
         }
       }
@@ -389,16 +599,11 @@ export function scanBookingMoneyWriterEscapes(
           ? null
           : delegateName(node.initializer));
       if (delegate) {
-        const receiver =
-          ts.isPropertyAccessExpression(node.initializer) ||
-          ts.isElementAccessExpression(node.initializer)
-            ? node.initializer.expression.getText(source)
-            : "";
         aliases.set(node.name.text, {
           delegate,
-          forwardsCapability:
-            priorAlias?.forwardsCapability ??
-            /(?:^|\.)(?:prisma|tx|store|client|db|database)$/i.test(receiver),
+          // Once a local is assigned a tracked delegate, its spelling carries
+          // no authority.  The capability itself is what may escape.
+          forwardsCapability: priorAlias?.forwardsCapability ?? true,
         });
       }
     }
@@ -420,10 +625,7 @@ export function scanBookingMoneyWriterEscapes(
         ) {
           destructured.set(element.name.text, {
             delegate: key as keyof typeof TRACKED_FIELDS,
-            forwardsCapability:
-              /(?:^|\.)(?:prisma|tx|store|client|db|database)$/i.test(
-                node.initializer.getText(source),
-              ),
+            forwardsCapability: true,
           });
         }
       }
@@ -462,6 +664,92 @@ export function scanBookingMoneyWriterEscapes(
       (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
       ts.isArrayLiteralExpression(parent));
 
+  // An inline/local object literal is ordinary data, not a Prisma capability.
+  // Unknown receivers fail closed; the census must not let a renamed client
+  // evade it merely because it is not called `db` or `tx`.
+  const isOrdinaryObjectProperty = (node: ts.Expression): boolean => {
+    if (
+      !ts.isPropertyAccessExpression(node) &&
+      !ts.isElementAccessExpression(node)
+    )
+      return false;
+    const receiver = node.expression;
+    if (ts.isObjectLiteralExpression(receiver)) return true;
+    if (!ts.isIdentifier(receiver)) return false;
+    const binding = resolveLocalBinding(receiver, source);
+    return binding !== undefined && ts.isObjectLiteralExpression(binding);
+  };
+
+  const parameterFor = (
+    identifier: ts.Identifier,
+  ): ts.ParameterDeclaration | undefined => {
+    for (
+      let cursor: ts.Node | undefined = identifier.parent;
+      cursor;
+      cursor = cursor.parent
+    ) {
+      if (!ts.isFunctionLike(cursor)) continue;
+      const parameter = cursor.parameters.find(
+        (parameter) =>
+          ts.isIdentifier(parameter.name) &&
+          parameter.name.text === identifier.text,
+      );
+      if (parameter) return parameter;
+    }
+    return undefined;
+  };
+
+  const hasLocalDeclaration = (identifier: ts.Identifier): boolean => {
+    let declared = false;
+    const bindingContains = (name: ts.BindingName): boolean => {
+      if (ts.isIdentifier(name)) return name.text === identifier.text;
+      return name.elements.some(
+        (element) =>
+          ts.isBindingElement(element) && bindingContains(element.name),
+      );
+    };
+    const visitDeclaration = (node: ts.Node) => {
+      if (declared) return;
+      if (
+        (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+        bindingContains(node.name)
+      ) {
+        declared = true;
+        return;
+      }
+      if (ts.isImportSpecifier(node) && node.name.text === identifier.text) {
+        declared = true;
+        return;
+      }
+      ts.forEachChild(node, visitDeclaration);
+    };
+    visitDeclaration(source);
+    return declared;
+  };
+
+  const receiverCouldHoldDelegate = (node: ts.Expression): boolean => {
+    if (
+      !ts.isPropertyAccessExpression(node) &&
+      !ts.isElementAccessExpression(node)
+    )
+      return false;
+    if (!ts.isIdentifier(node.expression)) return false;
+
+    const receiver = node.expression;
+    const binding = resolveLocalBinding(receiver, source);
+    if (binding !== undefined) return false;
+
+    const parameter = parameterFor(receiver);
+    if (parameter) {
+      if (!parameter.type) return false;
+      const type = parameter.type.getText(source);
+      return /(?:^|\W)(?:any|PrismaClient|TransactionClient)(?:\W|$)/.test(
+        type,
+      );
+    }
+    return !hasLocalDeclaration(receiver);
+  };
+
   const visit = (node: ts.Node, parent?: ts.Node, grandparent?: ts.Node) => {
     if (
       ts.isIdentifier(node) &&
@@ -479,16 +767,15 @@ export function scanBookingMoneyWriterEscapes(
           (ts.isElementAccessExpression(parent) &&
             ts.isStringLiteral(parent.argumentExpression) &&
             WRITE_METHODS.has(parent.argumentExpression.text)));
-      if (
-        directWrite ||
-        (binding.forwardsCapability && isEscapingUse(node, parent))
-      ) {
+      // A destructured property becomes proven delegate capability only when
+      // it is invoked as one. Bare `const { booking } = pageData` is an
+      // ordinary domain projection and must not become a false escape.
+      if (directWrite) {
         escapes.add(`${file}|${binding.delegate}`);
       }
     }
     const candidateIdentifier =
-      ts.isIdentifier(node) &&
-      (isDirectCall(node, parent, grandparent) || isEscapingUse(node, parent));
+      ts.isIdentifier(node) && isDirectCall(node, parent, grandparent);
     if (
       candidateIdentifier ||
       ts.isPropertyAccessExpression(node) ||
@@ -498,19 +785,14 @@ export function scanBookingMoneyWriterEscapes(
       const delegate = ts.isIdentifier(node)
         ? (alias?.delegate ?? null)
         : delegateName(node);
-      const receiverLooksLikeClient =
-        ts.isPropertyAccessExpression(node) ||
-        ts.isElementAccessExpression(node)
-          ? /(?:^|\.)(?:prisma|tx|store|client|db|database)$/i.test(
-              node.expression.getText(source),
-            )
-          : (alias?.forwardsCapability ?? false);
       if (
         delegate &&
         !isDirectCall(node, parent, grandparent) &&
         !isLocalAliasInitializer(node, parent) &&
         isEscapingUse(node, parent) &&
-        receiverLooksLikeClient
+        !isOrdinaryObjectProperty(node) &&
+        receiverCouldHoldDelegate(node) &&
+        (ts.isIdentifier(node) ? (alias?.forwardsCapability ?? false) : true)
       ) {
         escapes.add(`${file}|${delegate}`);
       }
@@ -672,15 +954,33 @@ export function scanBookingMoneyWriterSites(
           : delegate === "bookingGuest" && name === "nights"
             ? "bookingGuestNight"
             : undefined;
-      if (relation && ts.isObjectLiteralExpression(value)) {
-        for (const entry of value.properties) {
+      if (relation) {
+        const relationPayload = inspectPayload(
+          value,
+          relation,
+          undefined,
+          new Set(),
+        );
+        const relationValue = ts.isIdentifier(value)
+          ? resolveLocalBinding(value, source)
+          : value;
+        if (!relationValue || !ts.isObjectLiteralExpression(relationValue)) {
+          record(relation, "opaquePayload", []);
+          continue;
+        }
+        for (const entry of relationValue.properties) {
           const method =
             ts.isPropertyAssignment(entry) && propertyName(entry.name);
           if (!method || !WRITE_METHODS.has(method)) continue;
           const nestedOptions = entry.initializer;
-          const nestedObject = ts.isObjectLiteralExpression(nestedOptions)
-            ? nestedOptions
-            : undefined;
+          const resolvedNestedOptions = ts.isIdentifier(nestedOptions)
+            ? resolveLocalBinding(nestedOptions, source)
+            : nestedOptions;
+          const nestedObject =
+            resolvedNestedOptions &&
+            ts.isObjectLiteralExpression(resolvedNestedOptions)
+              ? resolvedNestedOptions
+              : undefined;
           const payloadNames =
             method === "upsert"
               ? ["create", "update"]
@@ -711,7 +1011,10 @@ export function scanBookingMoneyWriterSites(
                 opaque: result.opaque || next.opaque,
               };
             },
-            { fields: new Set<string>(), opaque: payloads.length === 0 },
+            {
+              fields: new Set<string>(relationPayload.fields),
+              opaque: relationPayload.opaque || payloads.length === 0,
+            },
           );
           record(relation, method, [...child.fields]);
           // Recurse through every relation operation, not only `create`.
@@ -803,11 +1106,12 @@ function rawSqlWriterSites(
   >) {
     const model = delegate[0]!.toUpperCase() + delegate.slice(1);
     const table = String.raw`(?:(?:[A-Za-z_$][\w$]*|["\x60][A-Za-z_$][\w$]*["\x60])\s*\.\s*)?["\x60]${model}["\x60]`;
-    const statements = isSqlFile ? splitSqlStatements(code) : [code];
+    const splitStatements = isSqlFile ? splitSqlStatements(code) : [];
+    const statements = splitStatements.length > 0 ? splitStatements : [code];
     for (const statement of statements) {
       const executable = isSqlFile ? stripSqlComments(statement) : statement;
       const update = new RegExp(
-        String.raw`\bUPDATE\s+${table}[\s\S]*?\bSET\b([\s\S]*?)(?=\b(?:FROM|WHERE|RETURNING)\b|;|$)`,
+        String.raw`\bUPDATE\s+(?:ONLY\s+)?${table}[\s\S]*?\bSET\b([\s\S]*?)(?=\b(?:FROM|WHERE|RETURNING)\b|;|$)`,
         "i",
       ).exec(executable);
       const insert = new RegExp(
@@ -816,6 +1120,10 @@ function rawSqlWriterSites(
       ).exec(executable);
       const deleted = new RegExp(
         String.raw`\bDELETE\s+FROM\s+${table}\b`,
+        "i",
+      ).test(executable);
+      const merged = new RegExp(
+        String.raw`\bMERGE\s+INTO\s+${table}\b`,
         "i",
       ).test(executable);
       const written = tracked.filter((field) => {
@@ -830,7 +1138,7 @@ function rawSqlWriterSites(
             ).test(insert[1]!))
         );
       });
-      if (written.length > 0 || deleted) {
+      if (written.length > 0 || deleted || merged) {
         sites.push({ delegate, fields: [...written] });
       }
     }
@@ -962,9 +1270,18 @@ export function scanBookingMoneyRawSqlEscapes(
     const model = delegate[0]!.toUpperCase() + delegate.slice(1);
     const table = String.raw`(?:(?:[A-Za-z_$][\w$]*|["\x60][A-Za-z_$][\w$]*["\x60])\s*\.\s*)?["\x60]${model}["\x60]`;
 
-    for (const statement of splitSqlStatements(sql)) {
+    const splitStatements = splitSqlStatements(sql);
+    const statements = splitStatements.length > 0 ? splitStatements : [sql];
+    const mergePattern = new RegExp(
+      String.raw`\bMERGE\s+INTO\s+${table}(?=\s|$)`,
+      "i",
+    );
+    if (mergePattern.test(sql)) {
+      escapes.push(`${file}|rawSql:${delegate}.unsupportedMutation`);
+    }
+    for (const statement of statements) {
       const updatePattern = new RegExp(
-        String.raw`\bUPDATE\s+${table}[\s\S]*?\bSET\b([\s\S]*?)(?=\b(?:FROM|WHERE|RETURNING)\b|;|$)`,
+        String.raw`\bUPDATE\s+(?:ONLY\s+)?${table}[\s\S]*?\bSET\b([\s\S]*?)(?=\b(?:FROM|WHERE|RETURNING)\b|;|$)`,
         "gi",
       );
       for (const update of statement.matchAll(updatePattern)) {
@@ -987,7 +1304,22 @@ export function scanBookingMoneyRawSqlEscapes(
         const valuesMatch = /\bVALUES\s*\(/gi;
         valuesMatch.lastIndex = columns.end;
         const valuesToken = valuesMatch.exec(statement);
-        if (!valuesToken) continue;
+        if (!valuesToken) {
+          // An INSERT ... SELECT has no positional VALUES tuple we can prove
+          // against. A tracked column is a post-boundary mutation and must be
+          // reviewed rather than silently treated as reconciled.
+          const afterColumns = statement.slice(columns.end);
+          if (/^\s*SELECT\b/i.test(afterColumns)) {
+            for (const name of splitTopLevelSqlList(columns.body).map((name) =>
+              name.replace(/["`\s]/g, ""),
+            )) {
+              if (fields.includes(name)) {
+                escapes.push(`${file}|rawSql:${delegate}.${name}`);
+              }
+            }
+          }
+          continue;
+        }
         const valuesOpen = valuesToken.index + valuesToken[0].lastIndexOf("(");
         const values = parenthesizedSql(statement, valuesOpen);
         if (!values) continue;
@@ -1011,6 +1343,13 @@ export function scanBookingMoneyRawSqlEscapes(
             recordExpression(delegate, match[1]!, match[2]!);
           }
         }
+      }
+
+      // MERGE can contain both INSERT and UPDATE branches; this lightweight
+      // census deliberately has no SQL evaluator, so reject every tracked
+      // target until a reviewed shape is added here.
+      if (mergePattern.test(statement)) {
+        escapes.push(`${file}|rawSql:${delegate}.unsupportedMutation`);
       }
     }
   }

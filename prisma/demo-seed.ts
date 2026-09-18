@@ -22,6 +22,7 @@ import { createHash } from "node:crypto";
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
+import { bookingFinalPriceCents } from "../src/lib/booking-final-price";
 import { assertDemoSeedMayRun, DEMO_SEED_DOMAIN } from "../src/lib/demo-seed-guard";
 import {
   ensureMemberAccessRoles,
@@ -599,16 +600,21 @@ async function main() {
   });
 
   // 5. PAID (payment SUCCEEDED via STRIPE + ADDITIONAL txn + FREE_NIGHTS promo)
+  const paidTotalPriceCents = NIGHTLY * 3;
+  const paidPromoAdjustmentCents = -NIGHTLY;
   const bPaid = await prisma.booking.create({
     data: {
       memberId: erin.id,
       checkIn: d(W.erinPaid.checkIn),
       checkOut: d(W.erinPaid.checkOut),
       status: "PAID",
-      totalPriceCents: NIGHTLY * 3,
-      discountCents: NIGHTLY,
-      promoAdjustmentCents: -NIGHTLY,
-      finalPriceCents: NIGHTLY * 2,
+      totalPriceCents: paidTotalPriceCents,
+      discountCents: Math.max(0, -paidPromoAdjustmentCents),
+      promoAdjustmentCents: paidPromoAdjustmentCents,
+      finalPriceCents: bookingFinalPriceCents({
+        totalPriceCents: paidTotalPriceCents,
+        promoAdjustmentCents: paidPromoAdjustmentCents,
+      }),
       lodgeId,
     },
   });

@@ -1244,6 +1244,8 @@ export async function approveSchoolBookingRequest(input: {
             checkIn: request.checkIn,
             checkOut: request.checkOut,
             totalPriceCents,
+            discountCents: 0,
+            promoAdjustmentCents: 0,
             finalPriceCents: totalPriceCents,
             hasNonMembers: true,
             notes: request.message,
