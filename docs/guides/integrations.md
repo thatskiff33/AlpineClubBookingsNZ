@@ -178,6 +178,11 @@ protection above is absent. You will not see the difference in the download
 summary, so if you need to know which case you are in, the application log says
 so on every download where the overlap is not applied.
 
+The [message board](message-board.md#how-posts-travel-for-the-technically-curious)
+mirror — the pull that brings other clubs' shared posts onto your board — uses
+the same re-ask, from the same one-minute setting, for the same reason. It is
+one setting in one place, so the two cannot drift apart.
+
 **Who can do what.** Enabling an item and running a sync needs finance **edit**.
 The server address and the API key additionally need **Full Admin**, because
 between them they decide where a credential is sent.
