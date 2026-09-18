@@ -13,6 +13,7 @@
  * | --------------------------------------- | ----------------------------------------- |
  * | a lodge night / DOB / season edge        | `CalendarDate` + `formatClubDate` and friends — no zone |
  * | a `@db.Date` that crossed a JSON boundary | `calendarDateOfSerialisedDbDate` — or the `OrNull` form in a client render |
+ * | a stay date to SHOW — `checkIn`/`checkOut`, `Date` or serialised | `formatStayDate` — the decode-then-format pair in one call; `formatStayDateOrNull` in a client render |
  * | a `createdAt` / `paidAt` / audit stamp   | `Instant` + `formatClubInstant*` — zone required        |
  * | "the club day D starts/ends when?"       | `startOfClubDay` / `endOfClubDayExclusive`              |
  * | "08:00 club time on D is when?"          | `instantForClubWallTime`                                |
@@ -111,6 +112,8 @@ export {
   formatClubWeekdayDate,
   formatClubWeekdayDay,
   formatClubWeekdayDayMonth,
+  formatStayDate,
+  formatStayDateOrNull,
 } from "./format";
 
 export { bindClubTime, type BoundClubTime } from "./bound";
