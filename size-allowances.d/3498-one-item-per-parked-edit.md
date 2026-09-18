@@ -30,7 +30,7 @@ reason: the in-progress planner composes the strands it records into one
   is about rather than in a module a reader would have to go and find.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1458
+lines: 1456
 reason: a parked removal now composes one occurrence instead of raising a task
   per strand, and the paragraphs explaining WHICH strands it records — including
   why the departing strand is always among them, which is the defect #3032 was
@@ -44,7 +44,7 @@ reason: nine lines: the parked exit carries one occurrence rather than a list,
   all. Both belong in the exit itself.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2246
+lines: 2244
 reason: four lines — the parked verdict is now "there is an occurrence" rather
   than "the list is not empty", and the raise is skipped rather than handed an
   empty list.
@@ -54,7 +54,7 @@ lines: 2527
 reason: three lines, the same shape as the date path's.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1557
+lines: 1586
 reason: five lines. A pure guest add is the case that rules out filtering the
   fan-out down instead of moving the grain up — no existing strand moves, so a
   filter would raise nothing — and the comment saying so belongs at the raise it
