@@ -28,7 +28,7 @@ const REVIEWED_WRITERS = [
   "prisma/demo-seed.ts|booking|create,deleteMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|11",
   "prisma/demo-seed.ts|bookingGuest|create,deleteMany|priceCents|2",
   "prisma/demo-seed.ts|bookingGuestNight|create,deleteMany|priceCents,priceSource|2",
-  "prisma/demo-seed.ts|promoRedemption|create,deleteMany|discountCents|2",
+  "prisma/demo-seed.ts|promoRedemption|deleteMany||1",
   "prisma/demo-seed.ts|promoRedemptionAllocation|deleteMany||1",
   "prisma/migrations/20260928020000_booking_owner_optional_member/migration.sql|promoRedemptionAllocation|rawSql|discountCents|1",
   "src/app/api/admin/bookings/[id]/capacity-hold/route.ts|booking|opaquePayload||1",
@@ -697,6 +697,21 @@ describe("INV-MONEY-031 booking money writer census", () => {
   });
 
   it("mechanically derives typed classifier mutations from every money writer", () => {
+    expect(reconcileBookingMoney(RECONCILED_FIXTURE)).toEqual({
+      state: "RECONCILED",
+      reasons: [],
+    });
+    const deliberatelyBadFixture: BookingMoneyReconciliationProjection = {
+      ...RECONCILED_FIXTURE,
+      promoAdjustmentCents: -1_499,
+      discountCents: 1_499,
+      finalPriceCents: 8_501,
+    };
+    expect(reconcileBookingMoney(deliberatelyBadFixture)).toMatchObject({
+      state: "UNRECONCILED",
+      reasons: ["PROMO_BUILD_UP_MISMATCH"],
+    });
+
     for (const writer of DISCOVERED_WRITERS) {
       const key = writerKey(writer);
       const nonMoney = REVIEWED_NON_MONEY_OPAQUE_WRITERS.has(key);

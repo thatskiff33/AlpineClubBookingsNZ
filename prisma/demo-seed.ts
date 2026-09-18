@@ -24,6 +24,7 @@ import bcrypt from "bcryptjs";
 import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
 import { bookingFinalPriceCents } from "../src/lib/booking-final-price";
 import { assertDemoSeedMayRun, DEMO_SEED_DOMAIN } from "../src/lib/demo-seed-guard";
+import { recordBookingNightAdjustments } from "../src/lib/night-adjustment-write";
 import {
   ensureMemberAccessRoles,
   ensureMemberAccessRolesFromCompatibilityFields,
@@ -32,6 +33,7 @@ import { backfillCurrentSeasonMembershipAssignments } from "../src/lib/membershi
 import { must } from "../src/lib/indexed-access";
 import { getDefaultLodgeId } from "../src/lib/lodges";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
+import { redeemPromoCode } from "../src/lib/promo";
 import {
   DEMO_BOOKING_WINDOWS,
   DUAL_HAT_ADMIN,
@@ -622,12 +624,46 @@ async function main() {
   const paidPayment = await prisma.payment.create({ data: { bookingId: bPaid.id, amountCents: bPaid.finalPriceCents, source: "STRIPE", status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid", stripeCustomerId: "cus_demo_erin", additionalPaymentIntentId: "pi_demo_paid_add", additionalAmountCents: 1500, additionalPaymentStatus: "SUCCEEDED" } });
   await prisma.paymentTransaction.create({ data: { paymentId: paidPayment.id, kind: "PRIMARY", source: "STRIPE", amountCents: bPaid.finalPriceCents, status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid" } });
   await prisma.paymentTransaction.create({ data: { paymentId: paidPayment.id, kind: "ADDITIONAL", source: "STRIPE", amountCents: 1500, status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid_add", reason: "Added extra guest night" } });
-  // The PromoRedemption_sync_allocation_insert trigger creates the matching
-  // PromoRedemptionAllocation row; inserting it here too violates the
-  // (promoRedemptionId, memberId) unique constraint.
-  const erinRedemption = await prisma.promoRedemption.create({ data: { promoCodeId: promoFreeNights.id, bookingId: bPaid.id, memberId: erin.id, discountCents: NIGHTLY, freeNightsUsed: 1, eligibleGuestCount: 1 } });
-  await prisma.promoRedemptionGuestTarget.create({ data: { promoRedemptionId: erinRedemption.id, bookingId: bPaid.id, bookingGuestId: erinGuest.id } });
-  await prisma.promoCode.update({ where: { id: promoFreeNights.id }, data: { currentRedemptions: 1 } });
+  // Keep all four FREE_NIGHTS identities in the ordinary fixture aligned:
+  // headline adjustment, redemption, beneficiary allocation and dated night
+  // adjustment. The canonical writers remove the trigger's transitional row
+  // before writing the allocation, then prove the target sums to it.
+  await prisma.$transaction(async (tx) => {
+    await redeemPromoCode(
+      tx,
+      promoFreeNights.id,
+      bPaid.id,
+      erin.id,
+      NIGHTLY,
+      paidPromoAdjustmentCents,
+      1,
+      1,
+      [
+        {
+          memberId: erin.id,
+          discountCents: NIGHTLY,
+          priceAdjustmentCents: paidPromoAdjustmentCents,
+          freeNightsUsed: 1,
+        },
+      ],
+      [erinGuest.id],
+      lodgeId,
+    );
+    await recordBookingNightAdjustments(tx, {
+      bookingId: bPaid.id,
+      guestIds: [erinGuest.id],
+      targets: [
+        {
+          scope: "night",
+          guestIndex: 0,
+          stayDate: d(W.erinPaid.checkIn),
+          beneficiaryMemberId: erin.id,
+          amountCents: paidPromoAdjustmentCents,
+        },
+      ],
+      writer: "the demo seed PAID FREE_NIGHTS fixture",
+    });
+  });
   await prisma.bookingEvent.create({ data: { bookingId: bPaid.id, type: "MEMBER_PAID", actorMemberId: erin.id, amountCents: bPaid.finalPriceCents } });
 
   // 6. BUMPED (payment REFUNDED + refund + recovery op) — past
