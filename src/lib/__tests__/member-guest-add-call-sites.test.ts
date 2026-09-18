@@ -592,6 +592,17 @@ describe("the add-guests route write", () => {
     const create = source.indexOf("tx.bookingGuest.create({");
     expect(create).toBeGreaterThan(-1);
     const createBlock = source.slice(create, source.indexOf("createdGuests.push", create));
-    expect(createBlock).toContain("...(normalizedNewGuests[i].memberGuestConsent ?? {})");
+    // Pinned by SHAPE rather than by the loop variable's spelling (#2801, which
+    // replaced `normalizedNewGuests[i]` with the iterated guest and broke this
+    // assertion without breaking the rule). It is also STRONGER than the exact
+    // string was: the consent must be spread off the same value the row takes
+    // its name from, which is what a re-indexing could otherwise get wrong —
+    // writing one guest's consent onto another.
+    const consentSpread = createBlock.match(
+      /\.\.\.\((\w+)\.memberGuestConsent \?\? \{\}\)/,
+    );
+    expect(consentSpread).not.toBeNull();
+    const [, plannedGuest] = consentSpread ?? [];
+    expect(createBlock).toContain(`firstName: ${plannedGuest}.firstName`);
   });
 });

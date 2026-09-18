@@ -242,8 +242,13 @@ describe("the payment path is DELIBERATELY ungated (#2779, INV-LOCKOUT-069)", ()
     "src/lib/booking-payment-flow.ts",
     // Payment row writes shared by every settle path.
     "src/lib/payment-transactions.ts",
-    // The emailed pay-by-link door onto the same journey.
+    // The emailed pay-by-link door onto the same journey (#2956 split it by
+    // responsibility; every piece stays listed so the door is still covered).
     "src/lib/payment-link.ts",
+    "src/lib/payment-link-context.ts",
+    "src/lib/payment-link-intent.ts",
+    "src/lib/payment-link-reissue.ts",
+    "src/lib/payment-link-split-guest.ts",
   ] as const;
 
   it.each(UNGATED_SETTLEMENT_MODULES)(
@@ -563,7 +568,10 @@ describe("the sixth refusal site, and the paths that were missing (#2543)", () =
   it("the removal service asks for the narrowed audience when the actor is not the owner", () => {
     const source = readRepoFile("src/lib/booking-guest-removal-service.ts");
     expect(source).toContain(
-      'booking.memberId === actorMemberId ? "BOOKER" : "OTHER_PARTY_MEMBER"',
+      // #3368: who owns the booking is read through the one accessor, which
+      // is the identity on this column while it is still required. The answer
+      // this rule pins — the OWNER, compared against the actor — is unchanged.
+      'bookingOwner(booking).memberId === actorMemberId ? "BOOKER" : "OTHER_PARTY_MEMBER"',
     );
     // And it is the ONLY site that asks for it: every other gate runs for the
     // unfinancial member themselves (or for an admin, who is exempt), so narrowing
@@ -651,23 +659,27 @@ describe("the booking OWNER reaches every evaluation (#2543, owner decision 3 Au
     [
       "POST /api/bookings/[id]/confirm-draft",
       "src/app/api/bookings/[id]/confirm-draft/route.ts",
-      "booking.memberId",
+      "bookingOwner(booking).memberId",
     ],
     [
       "POST /api/bookings/[id]/modify-quote",
       "src/app/api/bookings/[id]/modify-quote/route.ts",
-      "booking.memberId",
+      "bookingOwner(booking).memberId",
     ],
     [
       "POST /api/bookings/[id]/guests",
       "src/app/api/bookings/[id]/guests/route.ts",
-      "booking.memberId",
+      "bookingOwner(booking).memberId",
     ],
-    ["the modify APPLY path", "src/lib/booking-modify-plan.ts", "booking.memberId"],
+    [
+      "the modify APPLY path",
+      "src/lib/booking-modify-plan.ts",
+      "bookingOwner(booking).memberId",
+    ],
     [
       "single-guest removal",
       "src/lib/booking-guest-removal-service.ts",
-      "booking.memberId",
+      "bookingOwner(booking).memberId",
     ],
     ["group-booking join", "src/lib/group-booking.ts", "sessionUserId"],
   ] as const;
@@ -707,8 +719,12 @@ describe("the booking OWNER reaches every evaluation (#2543, owner decision 3 Au
     );
     expect(calls).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("bookingOwnerMemberId: offerKind.memberId"),
-        expect.stringContaining("bookingOwnerMemberId: offerDetails.memberId"),
+        expect.stringContaining(
+          "bookingOwnerMemberId: bookingOwner(offerKind).memberId",
+        ),
+        expect.stringContaining(
+          "bookingOwnerMemberId: bookingOwner(offerDetails).memberId",
+        ),
       ]),
     );
   });
@@ -725,7 +741,7 @@ describe("the booking OWNER reaches every evaluation (#2543, owner decision 3 Au
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain(
-      "bookingOwnerMemberId: preflight.memberId",
+      "bookingOwnerMemberId: bookingOwner(preflight).memberId",
     );
   });
 
@@ -756,7 +772,12 @@ describe("the booking OWNER reaches every evaluation (#2543, owner decision 3 Au
       /const PROPOSAL_BOOKING_SELECT = \{[\s\S]*?memberId: true,/,
     );
     expect(source).toContain("select: PROPOSAL_BOOKING_SELECT,");
-    expect(source).toContain("return booking?.memberId ?? null;");
+    // #3368 turned the optional chain into an explicit null test, because
+    // `bookingOwner(maybeNull)` is not the same expression. Same answer: a
+    // present booking gives its own owner, an absent one gives null.
+    expect(source).toContain(
+      "return booking ? bookingOwner(booking).memberId : null;",
+    );
     expect(source).toContain("return presence?.requestedByMemberId?.trim() || null;");
   });
 

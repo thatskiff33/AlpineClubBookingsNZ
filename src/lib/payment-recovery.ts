@@ -9,6 +9,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import type Stripe from "stripe";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import {
   cancelPaymentIntentIfCancellableWithResult,
@@ -30,8 +31,10 @@ import {
   // Type-only, so it adds nothing to this module's runtime import graph.
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
+import { sizeAdditionalAsk } from "@/lib/additional-payment-ask";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
+import { reportSupersededPaymentRefund } from "@/lib/superseded-additional-refund";
 import logger from "@/lib/logger";
 import { createAuditLog } from "@/lib/audit";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
@@ -143,10 +146,22 @@ function errorMessage(error: unknown) {
 }
 
 function nextRetryDate(attempts: number) {
-  const delayMinutes =
-    RETRY_BACKOFF_MINUTES[
-      Math.min(Math.max(attempts - 1, 0), RETRY_BACKOFF_MINUTES.length - 1)
-    ];
+  // The attempt index is clamped into the schedule's own bounds, so it always
+  // lands on a step. There is deliberately NO numeric fallback: a zero would be
+  // an immediate retry, which is the worst wait this function could invent, and
+  // any other number would be a backoff nobody configured. The schedule's
+  // length is asserted at module load, so an empty one cannot ship — and if it
+  // ever did, refusing to schedule is the safe answer (#2800).
+  const step = Math.min(
+    Math.max(attempts - 1, 0),
+    RETRY_BACKOFF_MINUTES.length - 1
+  );
+  const delayMinutes = RETRY_BACKOFF_MINUTES[step];
+  if (delayMinutes === undefined) {
+    throw new Error(
+      `The payment retry backoff schedule has no step ${step} of ${RETRY_BACKOFF_MINUTES.length}.`,
+    );
+  }
   return new Date(Date.now() + delayMinutes * 60 * 1000);
 }
 
@@ -467,6 +482,7 @@ import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
+  stripeIdempotencyKeyForAskAmount,
 } from "./payment-recovery-keys";
 export {
   buildBookingCancellationRefundMetadata,
@@ -1057,8 +1073,16 @@ async function enqueueSupersededPaymentRefundRecovery({
  * (completeCanceledSupersededPaymentIntentRecovery and the succeeded-intent
  * handoff) legitimately close PENDING/FAILED rows whose work verifiably
  * finished, so fencing to PROCESSING-only would break them.
+ *
+ * IT RETURNS WHETHER THIS CALL IS THE ONE THAT CLOSED IT (#3340 fix round).
+ * Because the fence lets exactly one concurrent or repeated attempt match, that
+ * verdict is a claim a caller can hang a once-only epilogue off - rather than
+ * off a re-derived condition that a partially-applied replay can make true
+ * twice.
  */
-async function completePaymentRecoveryOperation(operationId: string) {
+async function completePaymentRecoveryOperation(
+  operationId: string,
+): Promise<boolean> {
   const closed = await prisma.paymentRecoveryOperation.updateMany({
     where: {
       id: operationId,
@@ -1078,6 +1102,7 @@ async function completePaymentRecoveryOperation(operationId: string) {
       "Payment recovery completion matched no live operation (already succeeded, or deleted by a manual mark-paid reversal); nothing was resurrected"
     );
   }
+  return closed.count === 1;
 }
 
 async function alertPaymentRecoveryFailure(
@@ -1086,7 +1111,8 @@ async function alertPaymentRecoveryFailure(
 ) {
   const booking = await prisma.booking.findUnique({
     where: { id: operation.bookingId },
-    include: { member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { member: true, organisation: { select: { name: true, email: true } } },
   });
 
   if (!booking) {
@@ -1098,7 +1124,7 @@ async function alertPaymentRecoveryFailure(
   }
 
   await sendAdminPaymentFailureAlert({
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     amountCents: operation.amountCents,
@@ -1838,7 +1864,46 @@ async function processRefundSupersededPaymentOperation(
   });
 
   await reconcilePaymentAggregates({ paymentId: operation.paymentId });
-  await completePaymentRecoveryOperation(operation.id);
+
+  /**
+   * #3340: the club's own record of the refund, and the member's explanation.
+   *
+   * AFTER the reconcile, so the "still owing" figure it quotes is the
+   * post-refund one. It never throws - see its own docblock - so it cannot cost
+   * the operation its terminal transition.
+   *
+   * FENCED ON THE COMPLETION CLAIM (#3340 fix round), which is why it now runs
+   * after it rather than before. The `outstandingCents <= 0` short-circuit above
+   * is NOT an idempotence gate: it only becomes true once the transaction row's
+   * `refundedAmountCents` has been written, and a failure between the ledger
+   * entry and that write re-enters with the refund already made. Stripe answers
+   * the replay with the same refund and the ledger dedupes on the refund id, so
+   * the MONEY is safe - but the epilogue would run a second time, sending the
+   * member a second "we have refunded you" email and the admins a second alert,
+   * on a change whose entire point is not confusing members about card movement.
+   * `completePaymentRecoveryOperation`'s `updateMany` is fenced on
+   * `status != SUCCEEDED`, so exactly one attempt can win it, and that attempt
+   * is the one that speaks.
+   */
+  const closed = await completePaymentRecoveryOperation(operation.id);
+  if (!closed) {
+    logger.warn(
+      {
+        operationId: operation.id,
+        bookingId: operation.bookingId,
+        paymentIntentId: operation.paymentIntentId,
+      },
+      "Superseded-payment refund replayed against an operation that was already closed; the refund is idempotent and the notices were sent by the attempt that closed it",
+    );
+    return;
+  }
+
+  await reportSupersededPaymentRefund({
+    bookingId: operation.bookingId,
+    paymentId: operation.paymentId,
+    paymentIntentId: operation.paymentIntentId,
+    refundedAmountCents: outstandingCents,
+  });
 }
 
 /** Parse a persisted allocation plan (#1097); null when absent or malformed. */
@@ -2279,6 +2344,8 @@ async function processCreateAdditionalPaymentIntentOperation(
         member: {
           select: { id: true, email: true, firstName: true, lastName: true },
         },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         // #3181: `status` joins the select because the deferred supplementary
         // invoice this replay now raises is classified partly from it (the
         // primary invoice's local paid/refunded state). Whether an invoice
@@ -2312,11 +2379,14 @@ async function processCreateAdditionalPaymentIntentOperation(
       bookingId: operation.bookingId,
       bookingModificationId,
       paymentId: operation.paymentId,
-      member: booking.member
+      // #3369: the edit-review charge request is raised against a PERSON's
+      // Stripe customer, so a booking with no member carries none. The sync
+      // already models an absent member, which is the branch a school takes.
+      member: bookingOwner(booking).member.id
         ? {
-            id: booking.member.id,
-            email: booking.member.email,
-            name: `${booking.member.firstName} ${booking.member.lastName}`,
+            id: bookingOwner(booking).member.id as string,
+            email: bookingOwner(booking).member.email,
+            name: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
             stripeCustomerId: booking.payment?.stripeCustomerId ?? null,
           }
         : null,
@@ -2424,7 +2494,7 @@ async function processCreateAdditionalPaymentIntentOperation(
              */
             reviewTaskId: null,
             shareCents: null,
-            memberId: booking.member?.id ?? null,
+            memberId: bookingOwner(booking).member?.id ?? null,
             totalCents: synced.totalCents,
           }).catch((err) =>
             logger.error(
@@ -2475,7 +2545,7 @@ async function processCreateAdditionalPaymentIntentOperation(
             secondAsk: null,
             bookingId: operation.bookingId,
             bookingModificationId,
-            memberId: booking.member?.id ?? null,
+            memberId: bookingOwner(booking).member?.id ?? null,
             derivedTotalCents: synced.totalCents,
             // No ask exists to be short of, so there is no figure to compare
             // against - the same refusal to invent one the shortfall record makes.
@@ -2528,7 +2598,8 @@ async function processCreateAdditionalPaymentIntentOperation(
     where: { id: operation.paymentId },
     include: {
       transactions: true,
-      booking: { include: { member: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      booking: { include: { member: true, organisation: { select: { name: true, email: true } } } },
     },
   });
 
@@ -2596,20 +2667,93 @@ async function processCreateAdditionalPaymentIntentOperation(
       })
     : null;
 
-  const member = payment.booking.member;
+  const member = bookingOwner(payment.booking).member;
   let customerId = payment.stripeCustomerId ?? undefined;
   if (!customerId) {
     const customer = await findOrCreateCustomer({
       email: member.email,
       name: `${member.firstName} ${member.lastName}`,
-      memberId: member.id,
+      // #3369: the OWNER — a member id, or the organisation beside it.
+      memberId: member.id ?? null,
+      organisationId: payment.booking.organisationId,
     });
     customerId = customer.id;
   }
 
-  const stripeIdempotencyKey = operation.paymentIntentId;
+  /**
+   * #3340 fix round: THE ASK IS RE-DERIVED HERE, NOT REPLAYED FROM THE ROW.
+   *
+   * `operation.amountCents` was frozen when the mint failed, and since #3340 the
+   * ask is no longer a fact about an edit (a delta, which never goes stale) but
+   * a fact about a MOMENT - the edit's net plus whatever was still unpaid on the
+   * ask it supersedes. A frozen moment can OVERCHARGE: edit 1 raises $70 and is
+   * not cancelled because the mint that would have superseded it failed, the
+   * member pays that $70 while edit 2's recovery row sits frozen at $140, and
+   * the replay then asks for $140 against $70 genuinely outstanding.
+   *
+   * Re-deriving against the Payment as it stands now gives $70 in that case and
+   * the identical $140 when nothing was paid in between, so the correction only
+   * ever removes an over-ask. `modificationToBill` is the edit's own signed
+   * components, already read above the mint for #3181's reasons; with no
+   * modification to read from - or a modification whose own net is not positive,
+   * which an ordinary edit's row should never be - there is nothing better than
+   * the frozen figure, and the frozen figure is what runs.
+   *
+   * The `EDIT_FINANCIAL_REVIEW` fork returns far above this, so the components
+   * read here are always the ordinary edit's own. A review charge's debt is the
+   * sum of its settled shares and is re-derived by its own sync function.
+   */
+  const editNetCents = modificationToBill
+    ? modificationToBill.priceDiffCents + modificationToBill.changeFeeCents
+    : 0;
+  if (modificationToBill && editNetCents <= 0) {
+    // Belt and braces, and deliberately NOT a completion. An ordinary edit only
+    // reaches this processor because its own net was positive, so a
+    // non-positive net here means the modification row and the frozen figure
+    // disagree - and completing on that reading would retire a real debt for an
+    // arithmetic reason nobody has checked. Fall back to exactly the pre-fix
+    // behaviour, which never loses money, and say so.
+    logger.warn(
+      {
+        operationId: operation.id,
+        bookingId: operation.bookingId,
+        editNetCents,
+        frozenAmountCents: operation.amountCents,
+      },
+      "Additional intent recovery could not re-derive the ask (the modification's net is not positive); replaying the frozen amount",
+    );
+  }
+  const ask =
+    modificationToBill && editNetCents > 0
+      ? sizeAdditionalAsk({
+          priceDiffCents: modificationToBill.priceDiffCents,
+          changeFeeCents: modificationToBill.changeFeeCents,
+          payment,
+        })
+      : // #3371: the frozen fallback carried nothing that this replay can name.
+        // The row records an amount and no provenance, and inventing one here
+        // would be worse than recording none - a 0 says "nothing known to have
+        // been absorbed", which is the truth about a figure frozen before this
+        // column existed.
+        { amountCents: operation.amountCents, carriedCents: 0 };
+  const askCents = ask.amountCents;
+
+  /**
+   * The Stripe key still pins a replay of the SAME ask to the same intent, and
+   * gains the amount only when the re-derivation moved. The rule and the reasons
+   * are `stripeIdempotencyKeyForAskAmount`'s, which the edit-review charge's own
+   * re-derived mint reaches too (#3371 fix round) rather than spelling the
+   * suffix a second time. Here the base key is the ORIGINAL inline attempt's,
+   * frozen on the row, so an unmoved amount must keep it bare to converge on
+   * that attempt; the review path builds its base fresh at every attempt and has
+   * no bare form to preserve.
+   */
+  const stripeIdempotencyKey =
+    askCents === operation.amountCents
+      ? operation.paymentIntentId
+      : stripeIdempotencyKeyForAskAmount(operation.paymentIntentId, askCents);
   const pi = await createPaymentIntent({
-    amountCents: operation.amountCents,
+    amountCents: askCents,
     customerId,
     metadata: {
       bookingId: operation.bookingId,
@@ -2617,6 +2761,23 @@ async function processCreateAdditionalPaymentIntentOperation(
       reason: "modification_additional_recovery",
     },
     idempotencyKey: stripeIdempotencyKey,
+  });
+
+  // The new intent's row FIRST, then the supersede - see the same ordering and
+  // the same reasoning in `createModificationAdditionalPaymentIntent` (#3340
+  // fix round). A cancel reconciles the payment, and a reconcile run before this
+  // row exists mirrors the intent being retired back over the Payment.
+  await upsertPaymentIntentTransaction({
+    paymentId: operation.paymentId,
+    kind: PaymentTransactionKind.ADDITIONAL,
+    paymentIntentId: pi.id,
+    amountCents: askCents,
+    // #3371: the same value that sized the amount says what it absorbed, so the
+    // replay's row carries the provenance the inline mint would have written.
+    carriedAskCents: ask.carriedCents,
+    status: PaymentStatus.PENDING,
+    reason: "modification_additional_recovery",
+    stripeCustomerId: customerId,
   });
 
   // Dynamic import: booking-payment-cleanup imports this module.
@@ -2633,16 +2794,6 @@ async function processCreateAdditionalPaymentIntentOperation(
       "Failed to queue superseded additional intent cancellations during recovery",
     ),
   );
-
-  await upsertPaymentIntentTransaction({
-    paymentId: operation.paymentId,
-    kind: PaymentTransactionKind.ADDITIONAL,
-    paymentIntentId: pi.id,
-    amountCents: operation.amountCents,
-    status: PaymentStatus.PENDING,
-    reason: "modification_additional_recovery",
-    stripeCustomerId: customerId,
-  });
 
   // A supplementary Xero invoice op enqueued at modification time waited on
   // an intent that never existed; point it at the recovered one so the
@@ -2768,7 +2919,8 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
       createdAt: { lt: staleThreshold },
     },
     orderBy: { createdAt: "asc" },
-    include: { booking: { include: { member: true } } },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } },
   });
   if (!oldest) return;
 
@@ -2788,8 +2940,9 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
   // window (two instances reading between claim attempts) is bounded and this
   // is a noise-only alert.
   await sendAdminPaymentFailureAlert({
-    memberName: oldest.booking?.member
-      ? `${oldest.booking.member.firstName} ${oldest.booking.member.lastName}`
+    memberName:
+      oldest.booking && bookingOwner(oldest.booking).member
+      ? `${bookingOwner(oldest.booking).member.firstName} ${bookingOwner(oldest.booking).member.lastName}`
       : "Unknown member",
     checkIn: oldest.booking?.checkIn ?? null,
     checkOut: oldest.booking?.checkOut ?? null,
@@ -2803,6 +2956,82 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
       "Failed to send stale payment recovery queue alert",
     ),
   );
+}
+
+/**
+ * Run ONE already-enqueued recovery operation right now, best-effort (#3340).
+ *
+ * WHY THIS EXISTS. A superseded ADDITIONAL PaymentIntent used to stay
+ * confirmable until the five-minute recovery cron reached it. In the live case
+ * that window was 4 minutes 5 seconds, and a member holding the old client
+ * secret confirmed a $65 charge while the page read "Total: $300". The mint site
+ * therefore drains its own cancellation before it hands the new client secret
+ * back, so the old secret is dead by the time anything can be confirmed against
+ * it.
+ *
+ * IT REUSES THE PROCESSOR RATHER THAN DUPLICATING IT. Cancelling a Stripe intent
+ * has a genuinely hard case - Stripe can move the intent from cancellable to
+ * `succeeded` between the retrieve and the cancel, which has to hand off to a
+ * refund instead of marking the transaction FAILED - and that logic already
+ * lives in `processCancelPaymentIntentOperation`. A second copy at the mint site
+ * is the class of defect this repository keeps re-finding, so this claims the
+ * row and runs the same processor (`INV-SSOT-001`).
+ *
+ * IT NEVER THROWS, and it is never the durable guarantee. The enqueued row is,
+ * and it is written BEFORE this runs: a claim that loses (another worker got
+ * there first), a Stripe outage, or a failure of any kind leaves the row for the
+ * cron exactly as before #3340. The only thing this changes is latency.
+ */
+export async function runPaymentRecoveryOperationNow(
+  operationId: string,
+): Promise<"succeeded" | "not-claimed" | "failed"> {
+  const operation = await claimPaymentRecoveryOperation(operationId).catch(
+    (err) => {
+      logger.error(
+        { err, operationId },
+        "Could not claim a payment recovery operation for immediate processing; the queued row stands",
+      );
+      return null;
+    },
+  );
+  if (!operation) {
+    /**
+     * #3340 fix round: NOT-CLAIMED USED TO BE SILENT, and the case that makes
+     * that expensive is the second supersede.
+     *
+     * `enqueuePaymentIntentCancellationRecovery` upserts on its idempotency key
+     * and its UPDATE branch deliberately does not reset `status` or
+     * `nextRetryAt`. So when a first cancel attempt has failed, the row sits
+     * FAILED with a `nextRetryAt` five minutes out, and the claim below - which
+     * requires `nextRetryAt <= now` - cannot match. The immediate attempt this
+     * function exists to make does not happen, and the superseded intent stays
+     * confirmable for the remainder of that backoff: precisely the window the
+     * live incident was measured in. The durable row still finishes the job, but
+     * nothing recorded that the fast path had declined.
+     */
+    logger.warn(
+      { operationId },
+      "Immediate payment recovery did not claim the operation (already terminal, already processing, out of attempts, or still in retry backoff); only the queued row will act",
+    );
+    return "not-claimed";
+  }
+
+  try {
+    await processPaymentRecoveryOperation(operation);
+    return "succeeded";
+  } catch (error) {
+    logger.error(
+      { err: error, operationId, type: operation.type },
+      "Immediate payment recovery attempt failed; the durable queued operation remains",
+    );
+    await failPaymentRecoveryOperation(operation, error).catch((markErr) =>
+      logger.error(
+        { err: markErr, operationId },
+        "Could not record the failed immediate payment recovery attempt",
+      ),
+    );
+    return "failed";
+  }
 }
 
 export async function processPaymentRecoveryOperations(options?: {

@@ -215,11 +215,11 @@ vi.mock("@/lib/membership-type-policy", () => ({
 // hidden the whole point of the strict seams, which is that a failed read reaches
 // the caller.
 vi.mock("@/lib/age-tier", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/age-tier")>()),
+  ...((await importOriginal()) as typeof import("@/lib/age-tier")),
   getAgeTierSettingsStrict: getAgeTierSettingsMock,
 }));
 vi.mock("@/lib/member-subscription-eligibility", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-subscription-eligibility")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-subscription-eligibility")),
   peekSubscriptionLockoutModeStrict: peekSubscriptionLockoutModeMock,
 }));
 
@@ -228,7 +228,6 @@ import {
   DIAGNOSTICS_READ_ONLY_TRANSACTION_TIMEOUT_MS,
   resolveReadOnlyMaxWaitMs,
 } from "../../read-only-transaction";
-import { DIAGNOSTICS_TOOL_BOUNDS } from "../../types";
 import {
   AID6B_BOOKING_GUEST_CEILING,
   AID6B_CAPACITY_NIGHT_CEILING,
@@ -258,6 +257,8 @@ interface Store {
   policyExceptionReservationNight: Row[];
   bedAllocation: Row[];
   member: Row[];
+  // #3369: the other half of a booking's owner.
+  organisation: Row[];
   memberSubscription: Row[];
   memberInduction: Row[];
 }
@@ -318,7 +319,17 @@ const MODELS: Record<ModelName, ModelSpec> = {
       // is what makes a select of any OTHER column throw here.
       member: (row, state) =>
         state.member.find((candidate) => candidate.id === row.memberId) ?? null,
+      // #3369: the OTHER half of the owner. A booking has a member or an
+      // organisation, never both, and `bookingOwner()` reads whichever is
+      // there — so the pack's select names both and this double resolves both.
+      organisation: (row, state) =>
+        state.organisation.find(
+          (candidate) => candidate.id === row.organisationId,
+        ) ?? null,
     },
+  },
+  organisation: {
+    columns: ["id", "name", "email"],
   },
   bookingRequest: {
     columns: ["id"],
@@ -420,6 +431,7 @@ function emptyStore(): Store {
     policyExceptionReservationNight: [],
     bedAllocation: [],
     member: [],
+    organisation: [],
     memberSubscription: [],
     memberInduction: [],
   };
@@ -667,6 +679,9 @@ function relationModel(model: ModelName, relation: string): ModelName {
     return "bookingGuest";
   }
   if (model === "booking" && relation === "member") return "member";
+  if (model === "booking" && relation === "organisation") {
+    return "organisation";
+  }
   throw new Error(
     `booking-evidence test double: no model registered for ${model}.${relation}`,
   );

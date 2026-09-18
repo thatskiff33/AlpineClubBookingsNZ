@@ -34,7 +34,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/xero-member-grouping", async (importActual) => {
-  const actual = await importActual<typeof import("@/lib/xero-member-grouping")>();
+  const actual = (await importActual()) as typeof import("@/lib/xero-member-grouping");
   return {
     ...actual,
     loadXeroGroupingContext: mocks.loadXeroGroupingContext,

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -76,7 +77,7 @@ export async function POST(
     }
 
     if (
-      payment.booking.memberId !== session.user.id &&
+      bookingOwner(payment.booking).memberId !== session.user.id &&
       !hasAdminAccess(session.user)
     ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -204,6 +205,8 @@ export async function POST(
           where: { id: bookingId },
           include: {
             member: true,
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
             guests: true,
             promoRedemption: { include: { promoCode: true } },
           },
@@ -213,12 +216,12 @@ export async function POST(
           // child so the confirmation explains the separate later charge.
           const provisionalGuests = await getProvisionalNonMemberChildSummary({
             id: booking.id,
-            memberId: booking.memberId,
+            memberId: bookingOwner(booking).memberId,
           });
           await sendBookingConfirmedEmail(
-            { bookingId: booking.id, recipientMemberId: booking.memberId },
-            booking.member.email,
-            booking.member.firstName,
+            { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+            bookingOwner(booking).member.email,
+            bookingOwner(booking).member.firstName,
             booking.checkIn,
             booking.checkOut,
             booking.guests.length,
@@ -253,7 +256,7 @@ export async function POST(
       action: "booking.payment.confirmed",
       memberId: session.user.id,
       targetId: bookingId,
-      subjectMemberId: payment.booking.memberId,
+      subjectMemberId: bookingOwner(payment.booking).memberId,
       entityType: "Booking",
       entityId: bookingId,
       category: "payment",

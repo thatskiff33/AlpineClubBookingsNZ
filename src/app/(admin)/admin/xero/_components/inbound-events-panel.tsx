@@ -25,6 +25,7 @@ import {
   shortId,
   type ToggleSection,
 } from "./shared"
+import { xeroSectionId } from "./types"
 import type { XeroInboundEvent } from "./types"
 
 export function InboundEventsPanel({
@@ -256,7 +257,7 @@ export function InboundEventsPanel({
 
   return (
     <SectionCard
-      id="xero-section-inbound"
+      id={xeroSectionId("inbound")}
       title="Inbound Events"
       description="Stored webhook events and their reconciliation state."
       open={open}

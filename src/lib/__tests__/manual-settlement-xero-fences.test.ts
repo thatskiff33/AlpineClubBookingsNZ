@@ -26,6 +26,13 @@ const mocks = vi.hoisted(() => ({
   seasonFindFirst: vi.fn(),
   xeroObjectLinkFindFirst: vi.fn(),
   xeroSyncOperationFindFirst: vi.fn(),
+  // #2929: the invoice path reads the creation-time email instruction off the
+  // operation a dispatcher claimed. These fences drive it WITH a syncOperationId,
+  // so the delegate has to exist; null is "no instruction was recorded", which
+  // is what every row a settle-fence scenario enqueues honestly carries.
+  xeroSyncOperationFindUnique: vi.fn().mockResolvedValue({
+    invoiceEmailDelivery: null,
+  }),
   xeroSyncOperationUpdate: vi.fn(),
   startXeroSyncOperation: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
@@ -46,6 +53,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncOperation: {
       findFirst: (...a: unknown[]) => mocks.xeroSyncOperationFindFirst(...a),
+      findUnique: (...a: unknown[]) => mocks.xeroSyncOperationFindUnique(...a),
       update: (...a: unknown[]) => mocks.xeroSyncOperationUpdate(...a),
     },
   },
@@ -68,14 +76,16 @@ describe("level 1 — the enqueueXeroBookingInvoiceOperation choke point", () =>
 
   async function enqueue() {
     vi.doMock("@/lib/xero-sync", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("@/lib/xero-sync")>()),
+      ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
       startXeroSyncOperation: mocks.startXeroSyncOperation,
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,
     }));
     const { enqueueXeroBookingInvoiceOperation } = await import(
       "@/lib/xero-operation-outbox"
     );
-    return enqueueXeroBookingInvoiceOperation("booking-1");
+    return enqueueXeroBookingInvoiceOperation("booking-1", {
+      invoiceEmailDelivery: null,
+    });
   }
 
   it("refuses to queue an invoice for a manually settled booking, and says so", async () => {
@@ -130,7 +140,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     vi.clearAllMocks();
 
     vi.doMock("@/lib/xero-sync", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("@/lib/xero-sync")>()),
+      ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
       startXeroSyncOperation: mocks.startXeroSyncOperation,
       completeXeroSyncOperation: mocks.completeXeroSyncOperation,
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,
@@ -186,7 +196,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     vi.clearAllMocks();
 
     vi.doMock("@/lib/xero-sync", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("@/lib/xero-sync")>()),
+      ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
       startXeroSyncOperation: mocks.startXeroSyncOperation,
       completeXeroSyncOperation: mocks.completeXeroSyncOperation,
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,
@@ -219,10 +229,12 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
       checkIn: new Date("2026-08-01"),
       checkOut: new Date("2026-08-03"),
       createdAt: new Date("2026-07-01"),
+      totalPriceCents: 0,
       promoAdjustmentCents: 0,
       guests: [],
       member: { email: "ada@example.org" },
       promoRedemption: null,
+      nightAdjustments: [],
       payment: {
         id: "payment-1",
         xeroInvoiceId: null,
@@ -277,7 +289,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     vi.clearAllMocks();
 
     vi.doMock("@/lib/xero-sync", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("@/lib/xero-sync")>()),
+      ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
       startXeroSyncOperation: mocks.startXeroSyncOperation,
       completeXeroSyncOperation: mocks.completeXeroSyncOperation,
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,

@@ -326,6 +326,48 @@ describe("formatRoundingAuditReport", () => {
     expect(report).toContain("[GROUP SETTLEMENT]");
     expect(report).toContain("Settlement: s9 (group g9)");
   });
+
+  // #3302: this report deliberately shows the dollar amount AND the raw
+  // signed cent delta in parens — useful for a rounding audit where the exact
+  // cent matters. Nothing previously pinned the compound string; this locks
+  // it so the shared `formatCents` composition can never silently drop the
+  // "(+/-Nc)" suffix or the sign.
+  it("shows the net drift as both a dollar amount and the raw signed cent delta", () => {
+    const report = formatRoundingAuditReport({
+      ...emptyResult,
+      affected: [],
+      affectedCount: 0,
+      totalDriftCents: 1,
+    });
+    expect(report).toContain("Net drift across candidates: $0.01 (+1c)");
+  });
+
+  // #3302 review (equivalence lens F6): the +1c fixture above cannot catch a
+  // "drop the thousands grouping" mutation — it renders identically whether
+  // the dollar half groups or not. Unlike the Internet Banking report, this
+  // one's dollar half is DELIBERATELY the shared, grouping, currency-aware
+  // `formatCents` (only the "(+/-Nc)" suffix is local), so the correct
+  // behaviour here is the OPPOSITE assertion: grouping MUST appear. A
+  // negative delta in the thousands also locks the sign sitting before the
+  // "$", matching `formatCents` everywhere else, not duplicated into the
+  // parenthesised suffix.
+  it("groups a >=$1,000 net drift, and puts a negative delta's sign before $ not in the suffix", () => {
+    const positive = formatRoundingAuditReport({
+      ...emptyResult,
+      affected: [],
+      affectedCount: 0,
+      totalDriftCents: 100000,
+    });
+    expect(positive).toContain("Net drift across candidates: $1,000.00 (+100000c)");
+
+    const negative = formatRoundingAuditReport({
+      ...emptyResult,
+      affected: [],
+      affectedCount: 0,
+      totalDriftCents: -100000,
+    });
+    expect(negative).toContain("Net drift across candidates: -$1,000.00 (-100000c)");
+  });
 });
 
 // Nights that drift under the old builder: [2500,2500,3000] total 8000 / 3 =>

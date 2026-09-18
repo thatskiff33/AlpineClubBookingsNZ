@@ -10,6 +10,12 @@ import {
   type Prisma,
 } from "@prisma/client";
 
+import {
+  NO_ADDITIONAL_ASK,
+  sizeAdditionalAsk,
+  type AdditionalAsk,
+} from "@/lib/additional-payment-ask";
+import { bookingOwner } from "@/lib/booking-owner";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import {
@@ -54,7 +60,18 @@ export type BookingModificationSettlementOptions = {
 export type PaymentAdjustmentResult = {
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /**
+   * The plain figure the EMAILS, the response bodies and the Xero leg read. On
+   * the card arm it equals `additionalAsk.amountCents`; where there is no card
+   * it is the supplementary invoice's own delta, which supersedes nothing.
+   */
   additionalAmountCents: number;
+  /**
+   * #3371: the same card ask as a value only `@/lib/additional-payment-ask` can
+   * build, carrying what minting it will absorb. This is what the minter takes;
+   * `additionalAmountCents` above is not, and must never be handed to it.
+   */
+  additionalAsk: AdditionalAsk;
   pendingRefundAmountCents: number;
   hasSucceededPayment: boolean;
   hasIssuedXeroInvoice: boolean;
@@ -227,6 +244,9 @@ export async function applyPaymentAdjustments(
   let refundAmountCents = 0;
   let accountCreditAmountCents = 0;
   let additionalAmountCents = 0;
+  // #3371: zero until a card arm builds one. `NO_ADDITIONAL_ASK` never mints, so
+  // every non-card ending is safe by construction rather than by remembering.
+  let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
   let pendingRefundAmountCents = 0;
 
   if (hasSettledPayment && booking.payment) {
@@ -244,9 +264,48 @@ export async function applyPaymentAdjustments(
       );
       pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
     } else if (netAmountCents > 0) {
-      additionalAmountCents = hasSucceededPayment
-        ? netAmountCents
-        : xeroAdditionalAmountCents;
+      // #3340 (`INV-PAY-047`, `INV-ADDPAY-023`). A bare `netAmountCents` here is
+      // the money leak: minting the new ADDITIONAL intent retires every other
+      // outstanding ask on this payment
+      // (`queueSupersededAdditionalIntentCancellations`), so a delta-sized ask
+      // DELETES the unpaid balance of the one it replaces. Two +$70 edits on a
+      // $130 paid booking asked $70 and lost $70, permanently and silently.
+      //
+      // `sizeAdditionalAsk` is the one home for the arithmetic and the one
+      // place its reasoning is written down. `booking.payment` is the POST-LOCK
+      // re-read in every production caller (each re-reads the booking with
+      // `payment: true` after `pg_advisory_xact_lock(1)` + the per-lodge key).
+      //
+      // BE PRECISE ABOUT WHAT THOSE LOCKS BUY, because an earlier draft of this
+      // comment claimed more (#3340 fix round). The READ is inside them. The
+      // WRITER is not: `Payment.additionalAmountCents` is only ever written by
+      // `reconcilePaymentAggregates` from `upsertPaymentIntentTransaction`, and
+      // every mint site runs that AFTER the transaction has committed and
+      // OUTSIDE `lock(1)` - correctly so, because a provider round trip must not
+      // sit inside a transaction (`docs/CONCURRENCY_AND_LOCKING.md`). So two
+      // edits whose transactions both commit before either mint completes read
+      // the same pre-edit value, the second is sized without the first's ask, and
+      // whichever mints last retires the other. The locks serialise the edits;
+      // they do not serialise the edits against the mints.
+      //
+      // That window is not opened by this change and is not closed by it - before
+      // #3340 both edits were delta-sized, so the same pair lost the same money.
+      // The compensating control is the census (`INV-PAY-047`), which makes the
+      // resulting shortfall visible instead of silent.
+      //
+      // The Xero arm below is deliberately untouched: `xeroAdditionalAmountCents`
+      // sizes a SUPPLEMENTARY INVOICE for THIS edit, which supersedes nothing and
+      // is collected alongside whatever came before it.
+      if (hasSucceededPayment) {
+        additionalAsk = sizeAdditionalAsk({
+          priceDiffCents,
+          changeFeeCents,
+          payment: booking.payment,
+        });
+        additionalAmountCents = additionalAsk.amountCents;
+      } else {
+        additionalAmountCents = xeroAdditionalAmountCents;
+      }
     }
 
     if (changeFeeCents > 0) {
@@ -263,6 +322,7 @@ export async function applyPaymentAdjustments(
     refundAmountCents,
     accountCreditAmountCents,
     additionalAmountCents,
+    additionalAsk,
     pendingRefundAmountCents,
     hasSucceededPayment,
     hasIssuedXeroInvoice,
@@ -411,7 +471,7 @@ export async function applyLifecycleTransitions(
     );
     if (appliedBeforeClamp > 0) {
       const clamp = await clampAppliedCreditToBookingPrice(
-        { memberId: booking.memberId, bookingId, newFinalPriceCents },
+        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents },
         tx,
       );
       appliedCreditCents = clamp.appliedCreditCents;

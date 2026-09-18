@@ -47,7 +47,7 @@ vi.mock("@/lib/prisma", () => ({
 // `resolveOptionalActiveLodgeId` is left REAL so the active-lodge validation it
 // performs is exercised rather than assumed; only its two reads are doubled.
 vi.mock("@/lib/lodges", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/lodges")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/lodges");
   return {
     ...actual,
     getDefaultLodgeId: (...args: unknown[]) => mocks.getDefaultLodgeId(...args),

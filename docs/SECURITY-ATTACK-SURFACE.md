@@ -120,7 +120,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/admin/communications/**`, `/api/admin/email-templates/**`, `/api/admin/email-settings`, `/api/admin/email-suppressions/**`, `/api/admin/email-failures/**`, `/api/admin/notification-delivery-policies`, `/api/admin/notifications` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). | Admin. | Email templates/settings, send history, suppressions, notification preferences, email failure review. | SES/SMTP email send. | Admin role plus active guard; communications send is rate-limited. | Audit logs for template/settings/suppression/notification changes; logger. | Admin-triggered bulk email and template injection risk. #616 should review SES/email boundaries and redaction. |
 | `/api/admin/audit-log`, `/api/admin/reports`, `/api/admin/members/export`, `/api/admin/members/import` | Admin session. | Admin. | Audit log, reports, member import/export data, bookings/payments/report aggregates. | Import may email login-enabled rows when invites are requested; non-login shared-email rows do not receive setup tokens. | Admin role plus active guard; import has API rate limit; exports select broad PII. | Logger and audit rows for import/export where implemented. | Large data extraction surface. #613/#614 should guard missing admin markers; #617/#619 should review export handling and storage. |
 | `/api/admin/access-roles/**` | Admin session via the shared `requireAdmin()` guard (support area); create/update/delete additionally require Full Admin via an explicit `isFullAdmin` check inside the handlers, because an editable definition could otherwise widen itself past the area gate. | Full Admin for mutations; any admin with support view for the read/options list. | Access-role definitions: labels, descriptions, per-area permission matrices, holder counts. | None. | Zod validation; deletion returns 409 while any member holds the role (including bare enum rows) with a Restrict FK backstop; protected system roles have no definition rows and cannot be touched. | Critical-severity structured audit entries for create/update/delete with before/after definitions. | Permission definitions are security-critical configuration: an edit applies to every holder on their next request. Full-Admin-only management plus the separation-of-duties gate on assignments keeps scoped admins from widening access. |
-| `/api/admin/lodge`, `/api/admin/chores/**`, `/api/admin/committee/**`, `/api/admin/hut-leaders/**`, `/api/admin/roster/**`, `/api/admin/issue-reports/**` | Admin session. | Admin. | Lodge config, chores, committee contacts, hut leader PIN/email data, roster, issue reports. | Email sends for hut-leader PIN/issue report workflows. | Shared `requireAdmin()` guard with active-account checks on every method. `GET /api/admin/lodge` reads at `lodge:view`, but PROVISIONING the first kiosk account requires **Full Admin** (#2984 follow-through) — creating a `LODGE`-role login is an access-role write, which `POST` already refused to scoped admins (separation of duties, upstream #1012). Before that fix a `lodge:view` page load created it, so "Read-only Admin" could bring a login-capable account into existence. | Audit log for committee/issue/lodge changes; logger for failures. | Public-facing committee and lodge operational data. #618 should review kiosk and roster assumptions. |
+| `/api/admin/lodge`, `/api/admin/chores/**`, `/api/admin/committee/**`, `/api/admin/hut-leaders/**`, `/api/admin/roster/**`, `/api/admin/issue-reports/**` | Admin session. | Admin. | Lodge config, chores, committee contacts, hut leader PIN/email data, roster, issue reports. | Email sends for hut-leader PIN/issue report workflows. | Shared `requireAdmin()` guard with active-account checks on every method. `GET /api/admin/lodge` reads at `lodge:view`, but PROVISIONING the first kiosk account requires **Full Admin** (#2984 follow-through) — creating a `LODGE`-role login is an access-role write, which `POST` already refused to scoped admins (separation of duties, upstream #1012). Before that fix a `lodge:view` page load created it, so "Read-only Admin" could bring a login-capable account into existence. Reading an issue report needs `support:view`, but an issue-report SCREENSHOT taken by a reporter who held admin access is **Full-Admin-only** on every read path - `INV-PRIV-021` is the rule and its reasoning. | Audit log for committee/issue/lodge changes; logger for failures. A withheld screenshot writes `issue_report.screenshot_withheld` and stamps a disposition on `issue_report.admin_viewed`, both `privacy`. | Public-facing committee and lodge operational data. #618 should review kiosk and roster assumptions. |
 | `/api/admin/xero/**` | Admin session plus Xero OAuth state for connect/callback. | Admin. | Operational Xero tokens, contact groups, account/item mappings, contact links, sync operations, inbound events, duplicate/contact mismatch snapshots, Xero API usage. | Xero API and OAuth. | Admin role plus active guard; OAuth callback validates state cookie; feature gates through proxy/module state for many Xero paths. | Audit log for mutating admin Xero actions, Xero operation logs, Xero inbound event records, logger. | Sensitive integration surface. #613 should standardize guards; #616 should review OAuth state, token encryption, retry/replay controls, and webhook reconciliation. |
 | `/api/admin/lodges`, `/api/admin/lodges/[id]` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). The former `multiLodge` module flag was removed (ADR-005 / #128), so this surface is always-on and relies solely on `requireAdmin()` for authorisation; the data model is core (ADR-002), so the API is guarded on its own regardless. | Admin. | `Lodge` identity rows (name, slug, active, door code, travel note); the sole-active-lodge identity sync. | None. | Admin role plus active guard; Zod-validated strict schemas; deactivating the last active lodge is rejected with 409 (booking flows and the ADR-002 presentation rule assume one active lodge exists). | Structured audit logs for `LODGE_CREATED`/`LODGE_UPDATED`/`LODGE_ACTIVATED`/`LODGE_DEACTIVATED` with before/after identity. | Deactivation guards only the last-active-lodge case; it does not yet check future bookings, waitlist entries, hut-leader assignments, or kiosk STAFF bindings on the deactivated lodge (production-review §1.3). Kiosk/capacity resolvers do not read `Lodge.active`, so a kiosk bound to a deactivated lodge keeps operating. Door code and travel note are lodge-operational data behind the admin guard, not exposed on the member `/api/lodges` surface. |
 | `/api/lodges` | Authenticated active member (Auth.js session plus `requireActiveSessionUser()`). Not admin-gated: it is the booking-flow lodge selector. | Signed-in member. | Active lodges the member is eligible to book — id, name, and travel note only. Door codes and operational settings are deliberately not selected. | None. | Active-session guard; per-lodge eligibility filter (`isMemberEligibleToBookLodge`) so a `BOOKING_RESTRICTION`ed member never sees lodges they cannot book; only `active` lodges returned. Response hides the selector client-side when one lodge is returned (ADR-002). | None beyond DB errors if thrown. | Public-ish member-read surface. Keep the select list to identity-only fields; door codes and per-lodge operational settings must stay out of this response. Eligibility is enforced server-side, not just hidden client-side. |
@@ -385,6 +385,112 @@ The authority is `WRITABLE_CREDENTIALS` in
 the write endpoint enforces. A provider added there without being added here
 fails `credential-blast-radius-docs-contract.test.ts`, so this list cannot fall
 behind the code again the way the runbook did.
+
+### Who changed a credential, and when (#2723)
+
+**Every mutation of this store names its writer, and the store refuses one that
+does not.** `actor` is a required argument on `setIntegrationCredential`,
+`ensureGeneratedCredential` and `deleteIntegrationCredential`, so a write with
+no attribution does not compile; `assertCredentialActor` catches the value that
+gets past the type (a cast, untyped JavaScript, a forwarded value); and
+`credential-actor-census.test.ts` walks the tree for a writer that skips the
+store altogether. The rule is `INV-PRIV-020`.
+
+The writer is one of exactly two things, and an operator reading the audit log
+can tell them apart:
+
+- a **Full Admin**, recorded as the member id on the row's `updatedByUserId`
+  column and as `actorKind: "admin"` on the audit row;
+- a **named background actor** from the closed `CREDENTIAL_SYSTEM_ACTORS` list,
+  recorded as `actorKind: "system"` with the actor's own name. The row's
+  `updatedByUserId` is `NULL` for these, which is now unambiguous: before #2723
+  the argument was optional, so an omission stored the same `NULL`. Measured on
+  the merge base, the store had **18 production call sites** outside itself and
+  **ten of them stored no attribution at all** — every one of the six deletes
+  and the single generator call, because neither function took an attribution
+  argument, plus three writes that simply omitted the optional one.
+
+#### The background writers, in full (#2723)
+
+This is the whole closed list, and it is held to the code by
+`credential-actor-census.test.ts` — a second hand-written list is the defect
+this page already learnt about once, from the rotation runbook two sections up.
+
+- `google-verify-callback` — a Google OAuth round-trip succeeded, so the
+  non-secret verified marker is stamped.
+- `stripe-webhook-verify` — a signature-verified Stripe TEST-MODE webhook event
+  stamped the webhook marker.
+- `servernz-push-registration` — the shared-post sync registered this install
+  for pushes and stored the secret the central server issued.
+- `xero-token-key-generation` — first use of Xero token encryption generated
+  (or, after an auth-secret change, replaced) the wrapped token key.
+- `e2e-stripe-seed` — the E2E staging stack seeding Stripe test-mode keys.
+  Never a real deployment.
+
+**A verify-RESET is not on this list, deliberately.** Dropping a verified marker
+because a credential changed is part of the administrator's write, so those
+deletes carry that person's member id and request context, not a job's name.
+
+**The audit row commits with the secret or not at all.** Both are written inside
+one transaction, on the same client, so a failed audit rolls the credential
+change back. The admin write route used to build its row two awaits later in a
+different module, which left a window where a rewritten secret had no evidence
+of who rewrote it.
+
+**A stale concurrent write loses rather than winning quietly.** Every set and
+delete declares what it expected to find — nothing there, a specific version, or
+a deliberate unconditional overwrite — and a version claim is applied against the
+exact stored `(ciphertext, iv, authTag)` tuple that was read. Every encrypt draws
+a fresh random IV, so that tuple changes on every write; the loser matches zero
+rows, throws `StaleCredentialWriteError`, changes nothing and records nothing.
+The version token callers hold is a SHA-256 of the tuple, never the tuple, so the
+exposure contract above is unaffected by anything a caller does with it.
+
+**No plaintext reaches the audit row, a log line, or an error.** The audit
+payload is built from a typed evidence shape with no field a credential value
+fits into, and the store calls no logger at all — which matters because the
+log/Sentry redactor (`INV-PRIV-011`) is blind to any door that never calls it.
+`credential-write-contract.test.ts` drives the store with a sentinel secret and
+proves it appears in none of the audit rows, logger calls or errors the store
+emits on a success, a database failure, a lost race and a refused actor. That is
+a claim about the store's own doors; a caller that catches a value and logs it
+itself is outside that boundary.
+
+**Reads make no mutation noise.** The Xero token path calls
+`ensureGeneratedCredential` on every token decrypt; it returns the existing key
+and writes nothing, so no audit row. A delete that matches no row writes none
+either, which keeps verify-reset from burying the real deletions. The Stripe
+webhook marker follows the same rule from the other side: the route stamps it on
+every signature-verified test-mode event, so it is written only when the
+freshness answer would actually change, rather than minting a seven-year row per
+delivery.
+
+**What this contract covers, and what it does not.** Everything above is about
+the `IntegrationCredential` table. Two other secrets are stored elsewhere and
+are outside it, which is worth saying plainly on the page an operator reads to
+plan a rotation or reconstruct an incident:
+
+- **The Xero access and refresh tokens** (`XeroToken`) are their own table, with
+  no actor column and no audit row on any write or delete. `deleteXeroTokens()`
+  wipes them from the verify-reset path described above and from the OAuth
+  disconnect, so an administrator changing a Xero client credential destroys a
+  live provider grant and the trail records the credential write beside it but
+  nothing about the tokens.
+- **A member's TOTP secret** (`Member.totpSecret`) is encrypted at rest and
+  written at enrolment with no audit row of its own.
+
+Neither is a regression — both predate this contract and neither ever carried
+attribution — and neither is in this issue's scope. They are named here so the
+section is not read as covering every stored secret.
+
+**What the census can and cannot see.** It enumerates every DIRECT CALL of the
+three store mutators, found by walking the tree — not every function that
+ultimately causes a credential to change. A wrapper hides its own callers:
+`clearServerNzApiKey` appears, the admin route that calls it does not. That is
+sound rather than a gap, because a wrapper takes the actor as a REQUIRED
+parameter and so cannot supply one itself — the type is what covers its callers,
+and the census covers the wrapper. It is worth stating plainly because "every
+writer" would be a stronger claim than the instrument makes.
 
 - **A database backup + the auth secret decrypts everything.** Anyone who holds
   both a DB dump (or replica) and the auth-secret value can recover every stored
@@ -936,9 +1042,13 @@ Verified controls already present and intentionally preserved:
   lightweight unless explicitly approved.
 - Semgrep uses a pinned `semgrep/semgrep:1.161.0` image and runs this
   repository's own rules (`.semgrep/rules/`) alongside the four registry packs;
-  gitleaks uses the pinned `ghcr.io/gitleaks/gitleaks:v8.28.0` container for
-  the pull-request commit range, the history of `main` and the checked-out
-  tree, in one job; and the Dockerfile uses `node:24.15-alpine`.
+  gitleaks runs the container pinned in `scripts/ci/gitleaks-image.sh`, through
+  the one invocation in `scripts/ci/gitleaks-scan.sh`, over the pull-request
+  commit range, the history of `main` and the checked-out tree in the required
+  gate's single job, and over every branch's history in the advisory scheduled
+  sweep (#2852); and the Dockerfile uses `node:24.15-alpine`. The version
+  literal is deliberately not repeated here — a copy of it is a second home a
+  bump can miss.
 - Two CI security gates are **required** protected-branch checks today —
   `Static analysis gate` and `verify`. #2686 adds `Secret scan (gitleaks)` and
   `Image security gate (Trivy CRITICAL)` to that list, and #2946 adds
@@ -3133,6 +3243,35 @@ admin who authors CSS — a **content-area** admin, not necessarily a Full Admin
   `appCss` variant (which excludes `rawCss`), as the `(public)` layout did before
   #2818 — not a per-field DOM change.
 
+- **The same oracle on a LIVE secret, and it was reproducible: the kiosk PIN
+  (#2981, 14 Sep 2026).** The residual above is about server-rendered attendee
+  data. This is about what a visitor TYPES. React's controlled-input pattern
+  mirrors the live value into the `value` content attribute, so
+  `input#hut-leader-pin[value^="14"]` read the shared kiosk PIN a character at a
+  time on `/hut-leader-instructions`. Fixed; the rule, the mechanism and the
+  guards are in [`SECURITY.md`](SECURITY.md) → "Secret entry on pages that carry
+  Raw CSS" and are not restated here.
+
+  What belongs in THIS inventory is the measurement, because the issue was opened
+  on jsdom evidence and the whole question was whether a real browser behaves that
+  way. It does. With React 19.2.8, typing a six-digit PIN:
+
+  | Engine | in `el.value` | in the `value` **attribute** | `[value^="14"]` matched | CSS engine applied the rule |
+  | --- | --- | --- | --- | --- |
+  | Chromium 153.0.8010.12 | yes | **yes** | **yes** | **yes** |
+  | Firefox 155.0 | yes | **yes** | **yes** | **yes** |
+  | WebKit 26.6 | yes | **yes** | **yes** | **yes** |
+
+  Identical at every keystroke and after paste, mid-string edit, rerender and
+  submit. Confirmed again on the real page against the staging stack with real
+  saved Raw CSS. The **actor** is the same one this whole section is about — a
+  content/styling admin, not necessarily a Full Admin — and needs no script, since
+  a conditional `url()` in a matched rule is enough under the ratified
+  `style-src 'unsafe-inline'` (D1). The **blast radius** is wider than the other
+  entries here: the kiosk PIN is SHARED and gates both the remote lodge
+  instructions and the kiosk sign-in, so recovery is not confined to one person's
+  session.
+
 - **The same oracle, one hop along: the group-join payment link (#2827).** The
   group-join confirmation page rendered the pay-by-link token into an anchor
   (`<a href="/pay/<payToken>">`) as a "if you are not redirected" fallback. That
@@ -3503,10 +3642,10 @@ visibly new, and someone reads it.
 | --- | --- | --- | --- |
 | `js/request-forgery` | `src/lib/whakapapa-report.server.ts` | false positive | Allowlist barrier, below |
 | `js/path-injection` | `image-manager/images/route.ts` (×2) | false positive | "Image Manager path containment", below |
-| `js/insufficient-password-hash` | `src/lib/mirotalk-token.ts` | false positive | "MiroTalk meeting tokens", below |
+| `js/insufficient-password-hash`, `js/weak-cryptographic-algorithm` | `src/lib/mirotalk-token.ts` | false positive | "MiroTalk meeting tokens", below |
 | `js/insufficient-password-hash`, `js/weak-cryptographic-algorithm` | `mirotalk-token.test.ts` (×2) | used in tests | Same protocol reason, in the round-trip test |
 | `js/incomplete-multi-character-sanitization` | `booking-requests-noindex.test.ts`, `website-page-header-fallback-render.test.tsx` | used in tests | `vi.mock` doubles, "Test-file and harness alerts" below |
-| `js/bad-code-sanitization` | `measurement/**/self-test.mjs` (×3) | used in tests | Harness, never in the runtime image |
+| `js/bad-code-sanitization` | `measurement/**/self-test.mjs` (×3) | used in tests | Harness, never in the runtime image. **Historical** — the `measurement/` tree was removed whole by #3382; these three findings can no longer exist because the file they were raised against does not exist |
 
 **Two of those were never triaged by #2841, because they did not exist yet**, and
 both were verified from scratch on 28 August:
@@ -3624,6 +3763,15 @@ and every token minted here stops decrypting; the known-answer vectors in
 are the same construction in the test's independent decrypt, written to prove the
 round trip against the genuine libraries.
 
+**The same construction is also reported as `js/weak-cryptographic-algorithm`,
+against the source file rather than only the test** — observed on the #2940 head,
+which is the change that last touched `mirotalk-token.ts`. It is the identical MD5
+inside `evpBytesToKey` seen under a second rule id, so the triage above answers it
+unchanged, and the register row now names both ids rather than leaving the second
+looking untriaged. Neither rule blocks a merge: CodeQL is advisory here by
+[the required-check table in `AGENTS.md`](../AGENTS.md). Dismissing either alert in
+the Security tab is an owner action; nothing in this repository can close it.
+
 **What was real: `MIRO_JWT_KEY` had no documented entropy requirement at all.**
 That key does two jobs — it is the AES passphrase for the host username and
 password embedded in each join token, and the HS256 signing key for the token
@@ -3640,6 +3788,89 @@ purpose — a club whose meeting links silently stopped working is worse off tha
 one running a guessable key, and nothing in-process can repair a deployment's
 configuration. The key itself is never logged. Token issue is already gated to
 calendar managers and audited per mint, which is why this stays low severity.
+
+**What #2940 changed, and what it deliberately did not.** The key, the host
+username and the host password are now club-editable: a Full Admin sets them on
+**Admin → Integrations → Video meetings**, where they are stored in the encrypted
+`IntegrationCredential` store under provider `mirotalk`, and the environment
+variables become a per-field fallback. Four properties are worth stating because
+they are what makes that safe rather than merely convenient.
+
+- **The warning now reaches a person.** A key typed on that page is described
+  back to whoever typed it, in the response to their own Save, instead of only
+  reaching a server log nobody greps. It is still advisory, for the reason
+  above, and it still never echoes the value — `describeMirotalkJwtKeyWeakness`
+  returns a description, and the length it may quote is of a value that
+  administrator has in front of them.
+- **The status surface cannot carry a secret**, by shape rather than by
+  filtering. `MirotalkSecretStatus` has fields for whether a secret is set,
+  where it came from, when it changed and its concurrency token — and none a
+  value fits into. `mirotalk-exposure-contract.test.ts` drives the real resolver
+  with sentinel secrets, one from the environment and one from the store, and
+  proves neither reaches the status or the join URL; it is mutation-verified
+  against the one-line spread that would leak both.
+- **The concurrency token handed to the browser is a hash**, SHA-256 over
+  `(iv, authTag, ciphertext)`, which #2723 chose for exactly this use. It
+  changes on every write and reveals none of the three, and the store's
+  no-ciphertext-leaves-the-server contract is intact.
+- **A stored meeting-server address is held to rules the environment variable is
+  not**: public `https` only, no embedded credentials, and no private, loopback
+  or link-local host, through the shared `isBlockedDestinationHost` rule the
+  Alpine Central Server base URL already used. A join token travels to whatever
+  that address names, and it is a second admin-typed field deciding where
+  something of ours is sent — which is why that rule now lives in
+  `src/lib/private-destination-hosts.ts` with two callers rather than one.
+  `MIROTALK_URL` is deliberately exempt: refusing it would break an installation
+  that works today, so it is reported and used.
+
+**The redirect exposure, and what bounds it.** Whoever can change the
+meeting-server address can point join links at a host they control, and that
+host receives the signed token. It cannot read the host credentials inside
+without the signing key — the key never travels — but it gets a blob to attack
+offline. That is NOT equivalent to the weak-key exposure above, and the earlier
+wording here said it was: a weak key on its own still requires an attacker to
+already hold a token, and **the redirect is what supplies one**. Since the
+weakness advisory is deliberately never blocking, redirect-plus-weak-key
+compounds into practical recovery of the signing key and the host credentials,
+rather than a blob nobody has.
+
+Five things bound it.
+
+- Changing any of these settings requires **Full Admin** — not merely
+  `finance: edit`, which a Treasurer-shaped custom role can hold — on both
+  routes, and **both routes audit the refusal**: `mirotalk.settings.denied` for
+  the non-secret write and `mirotalk.credentials.denied` for a secret. (The
+  credentials route audited nothing until #2940's review round, which left the
+  higher-risk door the quieter of the two.)
+- The address must be a public `https` host, through the shared rule above.
+- The token is minted per click and short-lived.
+- **Moving the address CLEARS the three stored secrets**, which is the Alpine
+  Central Server remedy copied on its own terms: they are meaningful only to the
+  MiroTalk instance they were paired with, so a genuine move invalidates them
+  exactly as it invalidates the central server's API key. **A genuine move is a
+  change to the address IN FORCE**, decided by `mirotalkMeetingServerMoved`
+  through the one resolver — not a change to the stored column, which is `null`
+  on every environment-only install and would read "write down the address you
+  are already using" as a move and delete all three. On the installation
+  shape `.env.example` now recommends — the environment variables left empty,
+  everything set on the page — this is the whole fix: the resolver finds nothing
+  to fall back to, the join builder takes its no-token branch, and the redirected
+  host receives nothing at all. It is also the only lever the club has, because
+  a Full Admin cannot read a stored secret back out to re-supply it. **Where the
+  environment still holds those three it is ineffective**, because clearing the
+  stored value falls back to a variable that was set for the old server; it is
+  strictly better in every installation and worse in none.
+- **Every mint records which host it was built for** (`calendar.event.join`
+  carries the meeting-server origin, never the URL, which carries the token),
+  and a settings change records the address it moved from and to. Before that,
+  redirecting the address, waiting for a click and restoring it left no trace
+  anywhere of where the token had gone.
+
+**What is deliberately NOT done**, and is an owner's call rather than an
+implementor's: suppressing the environment fallback whenever the address is
+database-sourced would close the remaining half of the clearing remedy, and
+would break the mixed migration path this change exists to support — an
+installation part-way through moving its configuration onto the page.
 
 ### The Semgrep pair, which outranks the Critical
 
@@ -3679,11 +3910,16 @@ unsuppressed again, so the alert returns.
   `pageContentHtmlToPlainText` uses `sanitize-html` with `allowedTags: []`. Test
   doubles, no production path. Keeping the doubles crude is deliberate: a test
   that reimplements the sanitiser proves nothing about the sanitiser.
-- **38, 37, 36 — bad code sanitization** in the `measurement/` harness. One-off
-  evidence tooling that generates fixture `.js` files from paths it constructed
-  itself. Measured: the Dockerfile's runner stage copies only `public`,
-  `.next/standalone`, `.next/static`, `prisma`, `node_modules` and `.artifacts`,
-  so `measurement/` is not in the runtime image at all.
+- **38, 37, 36 — bad code sanitization** in the `measurement/` harness.
+  **Historical, since #3382.** This was one-off evidence tooling that generated
+  fixture `.js` files from paths it constructed itself. Measured at the time:
+  the Dockerfile's runner stage copied only `public`, `.next/standalone`,
+  `.next/static`, `prisma`, `node_modules` and `.artifacts`, so `measurement/`
+  was never in the runtime image at all. The `measurement/` tree was removed
+  whole by #3382 (owner decision on #2663: the CPU measurement it existed for
+  will never run), so these three findings can no longer exist — the file they
+  were raised against is gone. Left here rather than deleted, per this page's
+  own convention of keeping a disposition at the site of the thing it explains.
 
 ### Stated limits
 
@@ -3863,3 +4099,4 @@ global); the G5 observability gap is partially closed by design.
 - **D2 — `getClientIp` trusting `x-real-ip`: ratified.** Removing it breaks
   non-Caddy deploys; the "Caddy always fronts" deployment invariant stands. The
   rate-limiter degraded mode (issue #1142) is documented above.
+

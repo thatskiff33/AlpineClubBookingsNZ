@@ -329,9 +329,7 @@ describe("GET /api/chores/roster/[date]/print — date validation (#2478)", () =
     vi.resetModules();
     vi.doMock("@/lib/date-only", async () => {
       const actual =
-        await vi.importActual<typeof import("@/lib/date-only")>(
-          "@/lib/date-only",
-        );
+        (await vi.importActual("@/lib/date-only")) as typeof import("@/lib/date-only");
       return {
         ...actual,
         isDateOnlyString: () => true,

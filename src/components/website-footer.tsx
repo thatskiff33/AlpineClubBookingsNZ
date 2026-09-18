@@ -82,7 +82,7 @@ export async function WebsiteFooter({
             {blurbHtml ? (
               <div
                 className={FOOTER_HTML_CLASSES}
-                /* Admin-authored footer HTML, sanitised on write and read. nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml */
+                /* Admin-authored footer HTML, sanitised on write and read. */
                 dangerouslySetInnerHTML={{ __html: blurbHtml }}
               />
             ) : null}
@@ -92,7 +92,7 @@ export async function WebsiteFooter({
           {quickLinksHtml ? (
             <div
               className={FOOTER_HTML_CLASSES}
-              /* Admin-authored footer HTML, sanitised on write and read. nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml */
+              /* Admin-authored footer HTML, sanitised on write and read. */
               dangerouslySetInnerHTML={{ __html: quickLinksHtml }}
             />
           ) : null}
@@ -101,7 +101,7 @@ export async function WebsiteFooter({
           {affiliationsHtml ? (
             <div
               className={FOOTER_HTML_CLASSES}
-              /* Admin-authored footer HTML, sanitised on write and read. nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml */
+              /* Admin-authored footer HTML, sanitised on write and read. */
               dangerouslySetInnerHTML={{ __html: affiliationsHtml }}
             />
           ) : null}

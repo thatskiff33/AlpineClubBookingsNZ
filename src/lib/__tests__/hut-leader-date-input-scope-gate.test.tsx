@@ -50,7 +50,7 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>()),
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
 }));
 vi.mock("@/components/confirm-dialog", () => ({

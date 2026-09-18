@@ -23,8 +23,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
-  hasFinanceManagerAccess,
-  hasFinanceViewerAccess,
   loadFinanceAccessMember,
   requireFinanceManager,
   requireFinanceViewer,
@@ -38,70 +36,6 @@ describe("finance auth helpers", () => {
     mockRedirect.mockImplementation((path: string) => {
       throw new Error(`redirect:${path}`);
     });
-  });
-
-  it("allows viewer access from finance access role rows only", () => {
-    expect(
-      hasFinanceViewerAccess({ accessRoles: [{ role: "FINANCE_USER" }] }),
-    ).toBe(true);
-    expect(
-      hasFinanceViewerAccess({ accessRoles: [{ role: "FINANCE_ADMIN" }] }),
-    ).toBe(true);
-    expect(
-      hasFinanceViewerAccess({
-        financeAccessLevel: "MANAGER",
-        accessRoles: [],
-      }),
-    ).toBe(false);
-  });
-
-  it("allows manager access only from FINANCE_ADMIN rows", () => {
-    expect(
-      hasFinanceManagerAccess({ accessRoles: [{ role: "FINANCE_ADMIN" }] }),
-    ).toBe(true);
-    expect(
-      hasFinanceManagerAccess({ accessRoles: [{ role: "FINANCE_USER" }] }),
-    ).toBe(false);
-    expect(
-      hasFinanceManagerAccess({
-        financeAccessLevel: "MANAGER",
-        accessRoles: [],
-      }),
-    ).toBe(false);
-  });
-
-  it("allows finance access from access role rows", () => {
-    expect(
-      hasFinanceViewerAccess({
-        role: "USER",
-        financeAccessLevel: "NONE",
-        accessRoles: [{ role: "FINANCE_USER" }],
-      }),
-    ).toBe(true);
-    expect(
-      hasFinanceManagerAccess({
-        role: "USER",
-        financeAccessLevel: "NONE",
-        accessRoles: [{ role: "FINANCE_ADMIN" }],
-      }),
-    ).toBe(true);
-  });
-
-  it("uses explicit access role rows before stale financeAccessLevel values", () => {
-    expect(
-      hasFinanceManagerAccess({
-        role: "USER",
-        financeAccessLevel: "MANAGER",
-        accessRoles: [{ role: "FINANCE_USER" }],
-      }),
-    ).toBe(false);
-    expect(
-      hasFinanceViewerAccess({
-        role: "LODGE",
-        financeAccessLevel: "NONE",
-        accessRoles: [{ role: "LODGE" }, { role: "FINANCE_USER" }],
-      }),
-    ).toBe(true);
   });
 
   it("loads finance access state from Member", async () => {

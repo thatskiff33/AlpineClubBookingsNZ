@@ -196,9 +196,7 @@ vi.mock("@/lib/member-subscription-eligibility", () => ({
 // same body and the same code as the five booking write paths, so stubbing those
 // would test nothing.
 vi.mock("@/lib/subscription-lockout-enforcement", async (importActual) => {
-  const actual = await importActual<
-    typeof import("@/lib/subscription-lockout-enforcement")
-  >();
+  const actual = (await importActual()) as typeof import("@/lib/subscription-lockout-enforcement");
   return {
     ...actual,
     evaluateNonMemberPricingRequirements: h.evaluateNonMemberPricingRequirements,

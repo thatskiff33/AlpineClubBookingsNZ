@@ -43,7 +43,7 @@ export function FamilyGroupLoginHolderSection({
   return (
     <section className="space-y-3 rounded-lg border border-border p-4">
       <div>
-        <h3 className="text-sm font-semibold text-foreground">Shared email & login</h3>
+        <h3 className="text-sm font-semibold text-foreground">Shared email &amp; login</h3>
         <p className="mt-1 text-sm text-muted-foreground">
           Choose which adult in a shared-email cluster holds the login.
         </p>

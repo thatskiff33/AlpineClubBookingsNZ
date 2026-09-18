@@ -115,6 +115,9 @@ function formatHoursAgo(now: Date, value: Date): string {
 // invisible to every guard that looks for the ISO spellings (#2684).
 function previousMonthKey(monthKey: string): string {
   const [year, month] = monthKey.split("-").map(Number);
+  if (year === undefined || month === undefined) {
+    throw new Error(`previousMonthKey expects a "yyyy-MM" key, got: ${monthKey}`);
+  }
   return formatMonthOnly(new Date(Date.UTC(year, month - 2, 1)));
 }
 

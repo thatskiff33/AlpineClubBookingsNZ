@@ -627,6 +627,10 @@ describe("validateAgeTierPartition — subset validity rule (#2009)", () => {
     };
 
     it("rejects an empty set", () => {
+      // Since #2799 the emptiness check reads the youngest row rather than the
+      // length, so this case also pins that an empty list is refused HERE and
+      // does not fall through to the missing-ADULT rule below — remove the
+      // guard and this assertion fails on the wrong message.
       expectRejected([], /at least one age tier/i);
     });
 

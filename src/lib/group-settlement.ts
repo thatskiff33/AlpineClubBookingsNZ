@@ -32,6 +32,7 @@ import {
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -42,6 +43,7 @@ import {
   getPaymentIntent,
 } from "@/lib/stripe";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -623,9 +625,16 @@ async function commitChildrenToConfirmed(
         );
       }
       if (!capacity.available && !bookingHasCapacityOverride(fresh)) {
-        const fullNights = capacity.nightDetails
-          .filter((n) => n.availableBeds < 0)
-          .map((n) => n.date);
+        // #2930: the ONE helper, for two reasons this line got wrong on its own.
+        // It filtered `availableBeds < 0`, and a whole-lodge-held night is
+        // pinned to exactly 0 and never negative (`INV-CAP-021`), so a refusal
+        // caused only by a hold handed the organiser — a member — an EMPTY
+        // `fullNights` where genuine fullness handed them a populated one
+        // (ADR-001 decision 6). And it mapped `n.date`, a `Date`, so this one
+        // refusal serialised an instant (`"2026-08-10T00:00:00.000Z"`) where
+        // every other capacity refusal in the codebase emits the lodge night as
+        // a date-only string (`INV-DATE-014`).
+        const fullNights = getCapacityFullNights(capacity.nightDetails);
         throw new GroupBookingError(
           "The lodge is full for these dates, so the group cannot be settled",
           409,
@@ -977,7 +986,9 @@ async function settleConfirmedChildrenAndNotify(
     });
     if (options.enqueueChildInvoices) {
       try {
-        const queued = await enqueueXeroBookingInvoiceOperation(bookingId);
+        const queued = await enqueueXeroBookingInvoiceOperation(bookingId, {
+          invoiceEmailDelivery: null,
+        });
         if (queued.queueOperationId) {
           await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
         }
@@ -1025,6 +1036,8 @@ async function settleConfirmedChildrenAndNotify(
         checkIn: true,
         checkOut: true,
         member: { select: { email: true, firstName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         _count: { select: { guests: true } },
       },
     });
@@ -1033,10 +1046,10 @@ async function settleConfirmedChildrenAndNotify(
         await sendGroupJoinSettledEmail({
           bookingContext: {
             bookingId: booking.id,
-            recipientMemberId: booking.memberId,
+            recipientMemberId: bookingOwner(booking).memberId,
           },
-          email: booking.member.email,
-          firstName: booking.member.firstName,
+          email: bookingOwner(booking).member.email,
+          firstName: bookingOwner(booking).member.firstName,
           organiserName,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,

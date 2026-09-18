@@ -7,6 +7,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
@@ -71,12 +72,20 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import type { HostingCoverageLinkedMoveInput } from "@/lib/adult-member-hosting-linked-move";
 import logger from "@/lib/logger";
-import { createBookingModificationCredit } from "@/lib/member-credit";
+import {
+  createBookingModificationCredit,
+  requireMemberCreditRecipient,
+} from "@/lib/member-credit";
 import {
   CreditElectionNotAllowedError,
   resolveCreditElectionUpdate,
 } from "@/lib/booking-credit-election";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
+import {
+  recordBookingNightAdjustments,
+  restoreBookingNightAdjustments,
+  snapshotBookingNightAdjustments,
+} from "@/lib/night-adjustment-write";
 import {
   describePromoChangeNotApplied,
   type PromoChangeNotAppliedNotice,
@@ -139,6 +148,13 @@ export const LINKED_MOVE_CHANGE_FEE_WAIVED_REASON =
 
 type BatchModificationTransactionResult =
   BookingModificationPaymentContext & {
+    /**
+     * The plain figure the emails, the response body and the Xero leg read.
+     * Inherited from `BookingModificationPaymentContext` until #3371 replaced
+     * that field with `additionalAsk`; it is restated here because those
+     * consumers want a number and the minter must not be handed one.
+     */
+    additionalAmountCents: number;
     booking: ModifiedBooking;
     /** #3232: the deferred hosting reconciliation, when the caller asked for it. */
     pendingHostingReconcile?: () => Promise<void>;
@@ -341,8 +357,13 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
   // The two absences stay apart, exactly as they do at the write. `null` is the
   // row's own statement and is preserved; `undefined` is still a SELECT that
   // did not ask for the price — a caller wiring defect — and still throws.
-  const echoedNights = booking.guests.map((guest) =>
-    (guest.nights ?? []).map((night) => {
+  //
+  // Each guest carries its own echoed nights rather than a second array read
+  // back by position, so the rate vector and its dates cannot drift apart from
+  // the guest they describe (#2800).
+  const echoedGuests = booking.guests.map((guest) => ({
+    guest,
+    nights: (guest.nights ?? []).map((night) => {
       if (night.priceCents === undefined) {
         throw new Error(
           `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
@@ -359,7 +380,7 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
         priceSource: night.priceSource,
       };
     }),
-  );
+  }));
   return {
     kind: "priced",
     inProgressPlan: null,
@@ -367,11 +388,11 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
     newTotalPriceCents: booking.totalPriceCents,
     priceBreakdown: {
       totalPriceCents: booking.totalPriceCents,
-      guests: booking.guests.map((guest, index) => ({
+      guests: echoedGuests.map(({ guest, nights }) => ({
         priceCents: guest.priceCents,
-        perNightCents: echoedNights[index].map((night) => night.priceCents),
-        nightDates: echoedNights[index].map((night) => night.stayDate),
-        perNightPriceSources: echoedNights[index].map((night) => night.priceSource),
+        perNightCents: nights.map((night) => night.priceCents),
+        nightDates: nights.map((night) => night.stayDate),
+        perNightPriceSources: nights.map((night) => night.priceSource),
       })),
     },
     // #3170: RATES ONLY, and the pair stays aligned. A night whose stored price
@@ -381,8 +402,8 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
     // re-runs no promotion cap, which is the only reader — so dropping is safe
     // as well as honest; what would not be safe is a rate vector whose
     // positions no longer matched its dates.
-    guestNightRates: booking.guests.map((guest, index) => {
-      const rated = echoedNights[index].filter(
+    guestNightRates: echoedGuests.map(({ guest, nights }) => {
+      const rated = nights.filter(
         (night): night is typeof night & { priceCents: number } =>
           night.priceCents !== null,
       );
@@ -921,6 +942,8 @@ export async function modifyBookingBatch({
         },
         payment: true,
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         promoRedemption: {
           include: {
             promoCode: {
@@ -952,7 +975,7 @@ export async function modifyBookingBatch({
     // this is defence in depth rather than the decision).
     if (
       preTransaction &&
-      !(actor.role !== "ADMIN" && booking.memberId !== actor.id)
+      !(actor.role !== "ADMIN" && bookingOwner(booking).memberId !== actor.id)
     ) {
       assertDateEditClearsXeroLockDateFromFacts(
         booking,
@@ -1377,7 +1400,9 @@ export async function modifyBookingBatch({
           // `PromoChangeResult` is what forces this literal to answer the same
           // question the function does, so the notice below cannot be built off
           // a predicate that knows about only one of the two stubs.
-          promoEngineRan: false,
+          // `as const` keeps the literal narrow so the union on
+          // `PromoChangeResult` discriminates: no build-up exists on this arm.
+          promoEngineRan: false as const,
         }
       : await applyPromoCodeChanges(tx, {
           booking,
@@ -1511,6 +1536,16 @@ export async function modifyBookingBatch({
       throw new BookingModificationSettlementMethodRequiredError();
     }
 
+    // #3276: when the promotion engine did NOT run and the edit is still
+    // priced — a name-only correction, an in-progress extension — no money
+    // moved, so the recorded build-up is carried across the night rewrite
+    // below byte for byte. A PARKED edit carries nothing: its nights wait for
+    // a person and stay UNKNOWN.
+    const carriedAdjustments =
+      !promo.promoEngineRan && pricingResult.kind === "priced"
+        ? await snapshotBookingNightAdjustments(tx, bookingId)
+        : null;
+
     const { createdGuests } = await applyGuestChanges(tx, {
       bookingId,
       newCheckIn: dates.newCheckIn,
@@ -1554,6 +1589,32 @@ export async function modifyBookingBatch({
           ? pricingResult.otherLodgeRatedGuestIds
           : new Set<string>(),
     });
+
+    // #3276: AFTER `applyGuestChanges`, which is the last night write — the
+    // promotion itself was written above, before the nights it attaches to
+    // existed. Guest identity follows the engine's own list: a remaining guest
+    // by its id, an added guest by its position among the rows just created.
+    if (promo.promoEngineRan) {
+      if (pricingResult.kind !== "priced") {
+        throw new Error(
+          "INV-MONEY-029: the promotion engine ran on a modification that priced nothing",
+        );
+      }
+      let created = 0;
+      await recordBookingNightAdjustments(tx, {
+        bookingId,
+        guestIds: pricingResult.guestNightRates.map(
+          (guest) => guest.bookingGuestId ?? createdGuests[created++]?.id ?? null,
+        ),
+        targets: promo.adjustmentTargets,
+        writer: "the booking modification",
+      });
+    } else if (carriedAdjustments) {
+      await restoreBookingNightAdjustments(tx, {
+        snapshot: carriedAdjustments,
+        writer: "the booking modification",
+      });
+    }
 
     const choreWarnings = await applyChoreCleanup(tx, {
       bookingId,
@@ -1832,7 +1893,7 @@ export async function modifyBookingBatch({
 
     if (payments.accountCreditAmountCents > 0) {
       await createBookingModificationCredit(
-        booking.memberId,
+        requireMemberCreditRecipient(bookingOwner(booking).memberId),
         payments.accountCreditAmountCents,
         bookingId,
         bookingModification.id,
@@ -1912,7 +1973,7 @@ export async function modifyBookingBatch({
           ? {
               linkedMove: {
                 answer: hostingCoverageLinkedMove,
-                bookingOwnerMemberId: booking.memberId,
+                bookingOwnerMemberId: bookingOwner(booking).memberId,
               },
             }
           : {}),
@@ -1936,6 +1997,10 @@ export async function modifyBookingBatch({
       refundAmountCents: payments.refundAmountCents,
       accountCreditAmountCents: payments.accountCreditAmountCents,
       additionalAmountCents: payments.additionalAmountCents,
+      // #3371: the minter's own parameter, carried rather than re-derived. The
+      // plain figure above is the emails' and the Xero leg's; they are not
+      // interchangeable.
+      additionalAsk: payments.additionalAsk,
       pendingRefundAmountCents: payments.pendingRefundAmountCents,
       promoRemoved: promo.promoRemoved,
       promoChanged: promo.promoChanged,
@@ -1981,9 +2046,10 @@ export async function modifyBookingBatch({
       }),
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-      memberEmail: booking.member.email,
-      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-      memberId: booking.memberId,
+      memberEmail: bookingOwner(booking).member.email,
+      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+      memberFirstName: bookingOwner(booking).member.firstName,
+      memberId: bookingOwner(booking).memberId,
       bookingModificationId: bookingModification.id,
       // MG2 #2307: the cross-family guests this modification added, matched to
       // the rows it actually created, carried OUT of the transaction so the
@@ -2305,7 +2371,7 @@ async function dispatchBatchPostTransactionSideEffects({
       : "booking.modify.batch",
     memberId: actorMemberId,
     targetId: bookingId,
-    subjectMemberId: result.booking.memberId,
+    subjectMemberId: bookingOwner(result.booking).memberId,
     entityType: "BookingModification",
     entityId: result.bookingModificationId,
     category: "booking",
@@ -2372,10 +2438,20 @@ async function dispatchBatchPostTransactionSideEffects({
     return;
   }
 
-  const member = await prisma.member.findUnique({
-    where: { id: result.booking.memberId },
-  });
-  if (!member) return;
+  // #3369: the OWNER, not a re-read of a member row. A school's booking has no
+  // member to re-read, and the projection carries the same person-shaped name
+  // and address the invented school member used to supply — so the school still
+  // receives the message it received before this stage, at the same address.
+  // The relation was loaded in the same transaction, so this is no staler than
+  // the read it replaces.
+  // #3369: the owner as the transaction already resolved them. A school's
+  // booking has no member row to re-read, and these three fields are the
+  // person-shaped projection the invented school member used to supply, so the
+  // school receives the same message at the same address.
+  const member = {
+    email: result.memberEmail,
+    firstName: result.memberFirstName,
+  };
 
   /*
     #3032 (epic #2797): does this booking's money sit under review as this email
@@ -2403,7 +2479,7 @@ async function dispatchBatchPostTransactionSideEffects({
 
   sendBookingModifiedEmail({
     bookingId: result.booking.id,
-    recipientMemberId: member.id,
+    recipientMemberId: result.memberId,
     email: member.email,
     firstName: member.firstName,
     modificationType: "BATCH_MODIFY",

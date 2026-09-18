@@ -254,6 +254,20 @@ describe("Admin booking search route", () => {
                 },
               },
             },
+            // #3369: a school's booking is owned by the school, so the member
+            // clause alone would never find one. An officer typing a school's
+            // name still finds its bookings — which is what they did before
+            // this stage, when the invented member carried that name.
+            {
+              organisation: {
+                is: {
+                  OR: [
+                    { name: { contains: "alice", mode: "insensitive" } },
+                    { email: { contains: "alice", mode: "insensitive" } },
+                  ],
+                },
+              },
+            },
           ],
         },
         take: 8,

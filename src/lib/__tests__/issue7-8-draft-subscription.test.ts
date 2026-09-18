@@ -29,7 +29,17 @@ const mockTx = {
     upsert: vi.fn(),
   },
   season: { findMany: vi.fn() },
-  promoRedemption: { count: vi.fn(), create: vi.fn(), aggregate: vi.fn() },
+  promoRedemption: { count: vi.fn(), create: vi.fn(), aggregate: vi.fn(), findUnique: vi.fn().mockResolvedValue(null) },
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
   promoCode: { findUnique: vi.fn(), update: vi.fn() },
   promoCodeAssignment: { findMany: vi.fn() },
   member: { findUnique: vi.fn(), findMany: vi.fn() },
@@ -152,7 +162,7 @@ vi.mock("@/lib/payment-transactions", () => ({
 }));
 const mockLoadEffectiveModuleFlags = vi.fn();
 vi.mock("@/lib/module-settings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/module-settings");
 
   return {
     ...actual,
@@ -196,7 +206,7 @@ vi.mock("@/lib/capacity", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
-    discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    discount: { adjustmentTargets: [], discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   }),
   shouldPersistPromoRedemption: vi.fn().mockReturnValue(true),
@@ -576,7 +586,13 @@ describe("Internet Banking booking payment flow", () => {
     );
     expect(enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith(
       "booking-ib-1",
-      { createdByMemberId: "member-1" }
+      {
+        createdByMemberId: "member-1",
+        // #2929: the create records what it was told about emailing the member.
+        // This is a member booking for themselves, which is always emailed, so
+        // the recorded instruction is SEND and nothing is withheld.
+        invoiceEmailDelivery: "SEND",
+      }
     );
   });
 

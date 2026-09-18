@@ -60,6 +60,7 @@ vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
     discount: {
+      adjustmentTargets: [],
       discountCents: 0,
       priceAdjustmentCents: 0,
       freeNightsUsed: 0,
@@ -114,6 +115,12 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
 }));
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: vi.fn().mockResolvedValue({ id: "credit-1" }),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 vi.mock("@/lib/xero", () => ({
   createXeroSupplementaryInvoice: vi.fn().mockResolvedValue(undefined),
@@ -207,7 +214,11 @@ const SEASONS = [
 ];
 
 function night(day: string, priceCents: number) {
-  return { stayDate: new Date(`2026-11-0${day}T00:00:00.000Z`), priceCents };
+  return {
+    stayDate: new Date(`2026-11-0${day}T00:00:00.000Z`),
+    priceCents,
+    priceSource: "SOLD" as const,
+  };
 }
 
 type ConsentStatus = "PENDING" | "CONFIRMED" | "DECLINED" | "EXPIRED" | null;
@@ -303,6 +314,7 @@ function makeBooking(options: {
     payment: null,
     member: { id: OWNER, email: "owner@example.com", firstName: "Ophelia", lastName: "Owner" },
     promoRedemption: null,
+    nightAdjustments: [],
   };
 }
 
@@ -357,7 +369,15 @@ function makeTx(
       update: vi.fn().mockResolvedValue({}),
       delete: vi.fn().mockResolvedValue({}),
     },
+    // #3276: the night adjustment build-up writer reads and rewrites these.
+    bookingGuestNightAdjustment: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     bookingGuestNight: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
@@ -392,7 +412,7 @@ function makeTx(
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
     lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
-    promoRedemption: { update: vi.fn().mockResolvedValue({}) },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -819,6 +839,13 @@ describe("an unpriceable removal parks its money instead of inventing it (#3032,
     expect(result.additionalAmountCents).toBe(0);
     expect(result.xeroRefundAmountCents).toBe(0);
     expect(result.xeroAdditionalAmountCents).toBe(0);
+    expect(
+      tx.bookingModification.create.mock.calls[0][0].data.newData,
+    ).toMatchObject({
+      moneyBuildUpOperation: "GUEST_REMOVAL",
+      moneyBuildUpSource: "BASE_EVIDENCE_UNKNOWN",
+      moneyBuildUpDerivedCents: 0,
+    });
 
     // The task is RAISED WITH NO AMOUNT. Null is "not yet known"; a zero here
     // would be a financial statement the club has not made (epic #2797).

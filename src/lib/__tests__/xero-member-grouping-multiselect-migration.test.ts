@@ -148,7 +148,6 @@ async function withMigrationSchema(run: (client: Client) => Promise<void>) {
     await client.query(`CREATE SCHEMA ${schema}`);
     await client.query(`SET search_path TO ${schema}`);
     // Test fixture: hardcoded DDL in a disposable per-test schema; no user input.
-    // nosemgrep: javascript.express.db.pg-express.pg-express
     await client.query(PRE_EXISTING_SCHEMA_SQL);
     await run(client);
   } finally {
@@ -162,9 +161,7 @@ describeWithDatabase(
   () => {
     it("maps scalar tiers to arrays (X -> [X], NULL -> []) and drops the scalar column", async () => {
       await withMigrationSchema(async (client) => {
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(SEED_SQL);
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(migrationSql);
 
         const rules = await readRules(client);
@@ -182,7 +179,6 @@ describeWithDatabase(
 
     it("re-enforces shape uniqueness over identical stored arrays (same canonical shape collides)", async () => {
       await withMigrationSchema(async (client) => {
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(migrationSql);
         // Two type-wildcard rules with the SAME stored (canonical) tier set +
         // group collide under the reworked NULLS NOT DISTINCT array index. The
@@ -203,7 +199,6 @@ describeWithDatabase(
 
     it("does NOT collide on a genuinely reordered raw insert — canonical order is app-enforced, not DB-enforced", async () => {
       await withMigrationSchema(async (client) => {
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(migrationSql);
         // btree array equality is ORDER-SENSITIVE, so two raw inserts that differ
         // ONLY by tier order are DISTINCT rows at the DB level: the index does
@@ -248,7 +243,6 @@ describeWithDatabase(
 
     it("collides two all-tiers ([]) rules with the same group (empty-array + NULLS NOT DISTINCT)", async () => {
       await withMigrationSchema(async (client) => {
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(migrationSql);
         // The "all age tiers" wildcard stores []; two such type-wildcard (NULL
         // membershipTypeId) rules for the same group must collide (empty-array
@@ -268,12 +262,9 @@ describeWithDatabase(
 
     it("is idempotent: a second run of the migration is a no-op", async () => {
       await withMigrationSchema(async (client) => {
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(SEED_SQL);
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(migrationSql);
         const before = await readRules(client);
-        // nosemgrep: javascript.express.db.pg-express.pg-express
         await client.query(migrationSql);
         expect(await readRules(client)).toEqual(before);
       });

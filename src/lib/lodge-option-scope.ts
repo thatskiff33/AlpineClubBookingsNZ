@@ -10,6 +10,20 @@ export type SettledLodgeOptionScope =
   | { kind: "all" }
   | { kind: "lodge"; lodgeId: string; lodgeName: string }
 
+/**
+ * The ONE state that names a lodge — the only state a per-lodge editor may be
+ * handed (#2937).
+ *
+ * Extracted here rather than restated by each consumer so that "a settled lodge
+ * is the only write target" can be expressed as a TYPE at a component boundary
+ * instead of as a rule its host has to remember. A caller holding the wide
+ * `SettledLodgeOptionScope` has to discriminate before it can produce one.
+ */
+export type LodgeOptionScopeOnLodge = Extract<
+  SettledLodgeOptionScope,
+  { kind: "lodge" }
+>
+
 type LodgeOption = { id: string; name: string }
 
 export function deriveSettledLodgeOptionScope(input: {

@@ -70,6 +70,12 @@ vi.mock("@/lib/xero-booking-invoice-queue", () => ({
 // The route derives the applied credit from the ledger; drive it directly.
 vi.mock("@/lib/member-credit", () => ({
   deriveBookingAppliedCreditCents: mocks.deriveBookingAppliedCreditCents,
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 
 vi.mock("@/lib/logger", () => ({

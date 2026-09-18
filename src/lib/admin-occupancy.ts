@@ -1,4 +1,5 @@
 import type { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
@@ -46,7 +47,11 @@ export function parseOccupancyMonth(month: string | null):
     return { ok: false, error: "Invalid month" };
   }
 
+  // The `^\d{4}-\d{2}$` check above guarantees exactly two numeric segments.
   const [yearPart, monthPart] = month.split("-").map(Number);
+  if (yearPart === undefined || monthPart === undefined) {
+    return { ok: false, error: "Invalid month" };
+  }
   const nextYear = monthPart === 12 ? yearPart + 1 : yearPart;
   const nextMonth = monthPart === 12 ? 1 : monthPart + 1;
   const endDateString = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
@@ -93,6 +98,8 @@ export async function getAdminOccupancyMonth(input: {
           lastName: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: {
         select: {
           id: true,
@@ -116,7 +123,7 @@ export async function getAdminOccupancyMonth(input: {
     const bookingSummary: OccupancyBookingSummary = {
       id: booking.id,
       reference: formatBookingReference(booking.id),
-      ownerName: ownerName(booking.member),
+      ownerName: ownerName(bookingOwner(booking).member),
       checkIn: formatDateOnly(booking.checkIn),
       checkOut: formatDateOnly(booking.checkOut),
       guestCount: booking.guests.length,

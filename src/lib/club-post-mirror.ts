@@ -75,7 +75,8 @@ function rewriteMirrorImageSources(
 /** The server-side image id inside one of its image URLs, or null. */
 function serverImageId(url: string): string | null {
   const match = url.match(/\/api\/images\/posts\/([0-9a-f]{32})(?:\.webp)?/);
-  return match ? match[1] : null;
+  // The capture group has no `?` quantifier, so a match always carries it.
+  return match?.[1] ?? null;
 }
 
 /**
@@ -306,6 +307,14 @@ export async function ensurePushRegistration(): Promise<void> {
       provider: SERVERNZ_PROVIDER,
       key: SERVERNZ_PUSH_SECRET_KEY,
       value: result.secret,
+      actor: { kind: "system", actor: "servernz-push-registration" },
+      // Declared last-writer-wins, and deliberately NOT create-only (#2723).
+      // `registerPushTarget` is a PUT: the central server keeps the most
+      // recent registration and issues it a new secret version. So if two
+      // containers both register, the secret worth storing is the LAST one
+      // issued — refusing to overwrite would leave this install holding a
+      // superseded secret and rejecting every push the server signs.
+      expect: { expect: "any" },
     });
     logger.info(
       { callback, secretVersion: result.secretVersion },

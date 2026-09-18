@@ -49,7 +49,7 @@ vi.mock("@/lib/capacity", () => ({
 }));
 
 vi.mock("@/lib/policies/booking-route-decisions", async (importActual) => {
-  const actual = await importActual<typeof import("@/lib/policies/booking-route-decisions")>();
+  const actual = (await importActual()) as typeof import("@/lib/policies/booking-route-decisions");
   return {
     ...actual,
     // Deterministic $50/guest pricing so member/child bookings price above $0
@@ -86,6 +86,12 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 vi.mock("@/lib/member-credit", () => ({
   applyCreditToBooking: vi.fn(),
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
@@ -184,6 +190,17 @@ const tx = {
     findUnique: (...a: unknown[]) => h.lodgeFindUnique(...a),
   },
   bookingGuest: { findMany: (...a: unknown[]) => h.bookingGuestFindMany(...a) },
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   memberLodgeAccess: {
     findMany: (...a: unknown[]) => h.memberLodgeAccessFindMany(...a),
   },

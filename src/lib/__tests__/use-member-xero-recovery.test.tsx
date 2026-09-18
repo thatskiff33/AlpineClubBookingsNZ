@@ -12,9 +12,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 vi.mock("@/lib/admin-member-xero-actions", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/admin-member-xero-actions")
-  >();
+  const actual = (await importOriginal()) as typeof import("@/lib/admin-member-xero-actions");
   return { ...actual, ...mocks };
 });
 

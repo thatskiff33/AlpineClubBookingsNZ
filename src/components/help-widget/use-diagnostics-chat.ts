@@ -125,12 +125,17 @@ function nextId(): string {
  */
 function buildTranscript(messages: DiagnosticsMessage[]): DiagnosticsAskTurn[] {
   const turns: DiagnosticsAskTurn[] = [];
-  for (let index = 0; index < messages.length; index += 1) {
-    const question = messages[index];
+  // `.entries()` hands back each `question` already typed as a real message
+  // (never possibly-undefined the way `messages[index]` would read), so only
+  // the deliberate one-ahead lookahead (`messages[index + 1]`, already
+  // guarded below) still indexes. The former `index += 1` skip-ahead after a
+  // consumed answer is not needed for correctness: the next iteration's
+  // `question.role !== "operator"` check already rejects that same message
+  // when it is reached as a would-be question, for the identical result.
+  for (const [index, question] of messages.entries()) {
     if (question.role !== "operator") continue;
     const answer = messages[index + 1];
     if (!answer || answer.role !== "assistant") continue;
-    index += 1;
     if (answer.blocked) continue;
     const questionText = question.text.slice(0, TURN_MAX_CHARS);
     const answerText = answer.text.slice(0, TURN_MAX_CHARS);

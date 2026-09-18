@@ -141,7 +141,7 @@ const EXPANSION_SITES = [
     evidence: ["{ stayStart: booking.checkIn, stayEnd: booking.checkOut }"],
   },
   {
-    file: "src/app/(authenticated)/bookings/[id]/page.tsx",
+    file: "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-consent.ts",
     kind: "night-set-first",
     expansions: 1,
     what: "the nights quoted on a member's own consent card",

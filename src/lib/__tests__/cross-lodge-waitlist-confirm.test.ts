@@ -80,9 +80,7 @@ vi.mock("@/lib/member-subscription-eligibility", () => ({
  */
 vi.mock("@/lib/subscription-lockout-enforcement", async (importOriginal) => {
   const actual =
-    await importOriginal<
-      typeof import("@/lib/subscription-lockout-enforcement")
-    >();
+    (await importOriginal()) as typeof import("@/lib/subscription-lockout-enforcement");
   return { ...actual, evaluateNonMemberPricingRequirements: mocks.evaluateNonMemberPricing };
 });
 vi.mock("@/lib/booking-policies", () => ({

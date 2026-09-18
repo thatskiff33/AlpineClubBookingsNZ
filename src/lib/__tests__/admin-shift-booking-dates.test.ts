@@ -34,7 +34,16 @@ const tx = {
   $executeRaw: vi.fn().mockResolvedValue(undefined),
   booking: { findUnique: h.txBookingFindUnique, update: h.txBookingUpdate },
   bookingGuest: { update: h.txGuestUpdate },
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     deleteMany: h.txGuestNightDeleteMany,
     createMany: h.txGuestNightCreateMany,
   },
@@ -59,7 +68,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return {
     ...actual,
     checkCapacityForGuestRanges: h.checkCapacityForGuestRanges,
@@ -113,7 +122,15 @@ vi.mock("@/lib/booking-modification-settlement", () => ({
   createModificationAdditionalPaymentIntent: vi.fn(),
   executeBookingModificationRefund: vi.fn(),
 }));
-vi.mock("@/lib/member-credit", () => ({ createBookingModificationCredit: vi.fn() }));
+vi.mock("@/lib/member-credit", () => ({
+  createBookingModificationCredit: vi.fn(),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
+}));
 vi.mock("@/lib/booking-payment-cleanup", () => ({
   queueSupersededPrimaryIntentCancellations: vi.fn(),
 }));
@@ -137,9 +154,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 vi.mock("@/lib/adult-member-hosting-review", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/adult-member-hosting-review")
-  >();
+  const actual = (await importOriginal()) as typeof import("@/lib/adult-member-hosting-review");
   return {
     ...actual,
     reconcileAdultMemberHostingReviewWithSiblings: h.reconcileHosting,

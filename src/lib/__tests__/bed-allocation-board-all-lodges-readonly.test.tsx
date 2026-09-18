@@ -89,7 +89,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>();
+    (await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access");
   return { ...actual, useAdminAreaEditAccess: () => editAccessMock() };
 });
 
@@ -105,7 +105,7 @@ vi.mock("@/components/club-identity-provider", () => ({
  */
 vi.mock("@/components/lodge-select", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/components/lodge-select")>();
+    (await importOriginal()) as typeof import("@/components/lodge-select");
   return {
     ...actual,
     LodgeSelect: ({
@@ -150,14 +150,6 @@ vi.mock("@/components/admin/bed-allocation-move-dialog", () => ({
 vi.mock("@/components/admin/bed-range-assign-dialog", () => ({
   BedRangeAssignDialog: () => null,
 }));
-vi.mock(
-  "@/app/(admin)/admin/bed-allocation/_components/allocation-preferences-section",
-  () => ({
-    AllocationPreferencesSection: () => (
-      <div data-testid="allocation-preferences" />
-    ),
-  }),
-);
 
 import AdminBedAllocationPage from "@/app/(admin)/admin/bed-allocation/page";
 

@@ -97,7 +97,8 @@ export function MixPieChart({
     if (!active || !payload || payload.length === 0) {
       return null;
     }
-    const entry = payload[0];
+    const [entry] = payload;
+    if (!entry) return null;
     const value = Number(entry.value ?? 0);
     const share = total > 0 ? value / total : 0;
     return (

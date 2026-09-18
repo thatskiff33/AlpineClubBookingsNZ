@@ -144,6 +144,36 @@ describe("buildApprovalGuestNights — the engine's own rates (#2739)", () => {
   });
 });
 
+describe("buildApprovalGuestNights — a hole in the engine vector (#2800)", () => {
+  it("falls back to the even split rather than writing an absent amount", () => {
+    // A vector of the RIGHT length with a hole in it passes all three of this
+    // function's existing tests, because `every` and `reduce` both skip holes:
+    // the length matches, no non-integer is seen, and the sum of what is there
+    // equals the guest's price. Before this the hole was copied straight
+    // through, and a night WOULD HAVE reached Prisma with no `priceCents` at
+    // all, inside the approval transaction. No production caller can build such
+    // a vector today — both build theirs densely — so this pins the guard
+    // rather than reporting a live defect. The reconciled even split is the
+    // answer this function already gives every other unusable vector (#2800).
+    const sparse: number[] = [6000, 6000, 6000];
+    delete sparse[1];
+
+    const nights = buildApprovalGuestNights({
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      // The sum of what the vector DOES hold, so the reconciliation test above
+      // cannot be what rejects it — the hole has to be.
+      priceCents: 12000,
+      perNightCents: sparse,
+    });
+
+    expect(nights.map((night) => night.priceCents)).toEqual([4000, 4000, 4000]);
+    expect(nights.every((night) => Number.isInteger(night.priceCents))).toBe(
+      true,
+    );
+  });
+});
+
 describe("buildApprovalGuestNights — the money (#2739)", () => {
   it("splits to the exact cent, with the extra cents on the EARLIEST nights", () => {
     const nights = buildApprovalGuestNights({

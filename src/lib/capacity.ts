@@ -7,6 +7,7 @@ import {
   getLodgeCapacity,
   getLodgePartnerSharedCapacityStatus,
 } from "@/lib/lodge-capacity";
+import { bookingOwner } from "@/lib/booking-owner";
 import { mayShareDoubleBed } from "@/lib/double-bed-sharing";
 import {
   eachDateOnlyInRange,
@@ -32,13 +33,13 @@ export interface NightAvailability {
   date: Date;
   occupiedBeds: number;
   availableBeds: number;
-  // True when a capacity-holding booking overlapping this night holds the
-  // whole lodge exclusively (ADR-001, issue #118). A held night is hard-blocked:
-  // availableBeds is pinned to 0 (never negative, so it stays OUT of the
-  // over-capacity confirm set) and `available` is forced false. To members it is
-  // indistinguishable from a genuinely full lodge (decision 6); an admin
-  // over-capacity override cannot punch into it (decision 5).
-  wholeLodgeHeld?: boolean;
+  // True when a capacity-holding booking overlapping this night holds the whole
+  // lodge exclusively (ADR-001, issue #118). Hard-blocked: availableBeds is
+  // pinned to 0 (never negative, so it stays OUT of the over-capacity confirm
+  // set) and `available` is forced false — indistinguishable from genuine
+  // fullness to a member (decision 6), unreachable by an admin override
+  // (decision 5). REQUIRED since #2930; `capacity-full-nights.ts` says why.
+  wholeLodgeHeld: boolean;
 }
 
 // The admin-override over-capacity error/helpers (issue #1668) live in
@@ -184,6 +185,58 @@ function buildWholeLodgeHoldIndex(
   return index;
 }
 
+/**
+ * How many beds a whole-lodge hold REPRESENTS on one night (`INV-CAP-038`,
+ * #2698): the lodge's capacity less the beds a custodian holds that night.
+ *
+ * ADR-001 gives the holding group sole occupancy of the lodge, and until #2698
+ * that was read as every bed without exception — including the one the
+ * custodian sleeps in, which the custodian term (#2286) was simultaneously
+ * counting. The owner's rule (9 Aug 2026) makes the two sets DISJOINT: the hold
+ * represents what this returns, the custodian occupies the rest, and no
+ * bed-night is claimed twice.
+ *
+ * The three surfaces that pin a held night to a full lodge compose it out of
+ * those two disjoint parts rather than writing `lodgeCapacity` and hoping. The
+ * pinned total is still exactly `lodgeCapacity`, which is what keeps the #155
+ * payload contract (`occupiedBeds + availableBeds === lodgeCapacity`) and
+ * ADR-001 decision 6 (a held night is indistinguishable from a full one to a
+ * member) true: the rule changes who a bed-night belongs to, never how many
+ * there are. Clamped at zero because a lodge can carry more custodian holds
+ * than capacity — the #1668-style over-capacity the custodian write path asks
+ * the officer to confirm — and a hold cannot represent a negative number of
+ * beds.
+ *
+ * The per-BED shape of the same rule, for the callers that hold a bed set
+ * rather than a count, is `isCustodianHeldBedNight` in
+ * `custodian-occupancy.ts`. One source of "which beds has a custodian got",
+ * two views of it.
+ */
+export function wholeLodgeHoldRepresentedBeds(
+  lodgeCapacity: number,
+  custodianBeds: number
+): number {
+  return Math.max(0, lodgeCapacity - custodianBeds);
+}
+
+/**
+ * The occupancy a held night is PINNED to (ADR-001 decision 6): the hold's own
+ * represented beds plus the custodian beds it excludes (`INV-CAP-038`). Equal
+ * to `lodgeCapacity` on every reachable input — that is the proof the two sets
+ * partition the lodge — so writing it this way costs nothing and makes a future
+ * hold that re-claimed the custodian's bed fail the contract test instead of
+ * passing it.
+ */
+export function wholeLodgeHeldNightOccupiedBeds(
+  lodgeCapacity: number,
+  custodianBeds: number
+): number {
+  return (
+    wholeLodgeHoldRepresentedBeds(lodgeCapacity, custodianBeds) +
+    Math.min(custodianBeds, Math.max(0, lodgeCapacity))
+  );
+}
+
 function isNightWholeLodgeHeld(
   night: Date,
   index: WholeLodgeHoldEntry[]
@@ -275,6 +328,11 @@ export async function findOverlappingCapacityHoldingBookings(
       checkOut: true,
       status: true,
       member: { select: { firstName: true, lastName: true, email: true } },
+      // #3369: the owner may be an Organisation. Without this the accessor has
+      // no projection to build and hands the null member straight back, so an
+      // officer overriding a hold saw "Unknown member" for the school booking
+      // they were about to override.
+      organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },
     orderBy: [{ checkIn: "asc" }, { id: "asc" }],
@@ -283,8 +341,8 @@ export async function findOverlappingCapacityHoldingBookings(
   return rows.map((row) => ({
     id: row.id,
     memberName:
-      [row.member?.firstName, row.member?.lastName].filter(Boolean).join(" ") ||
-      row.member?.email ||
+      [bookingOwner(row).member.firstName, bookingOwner(row).member.lastName].filter(Boolean).join(" ") ||
+      bookingOwner(row).member.email ||
       "Unknown member",
     checkIn: formatDateOnly(row.checkIn),
     checkOut: formatDateOnly(row.checkOut),
@@ -348,6 +406,11 @@ export async function findOverlappingOverriddenNonHoldingBookings(
       checkOut: true,
       status: true,
       member: { select: { firstName: true, lastName: true, email: true } },
+      // #3369: the owner may be an Organisation. Without this the accessor has
+      // no projection to build and hands the null member straight back, so an
+      // officer overriding a hold saw "Unknown member" for the school booking
+      // they were about to override.
+      organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },
     orderBy: [{ checkIn: "asc" }, { id: "asc" }],
@@ -356,8 +419,8 @@ export async function findOverlappingOverriddenNonHoldingBookings(
   return rows.map((row) => ({
     id: row.id,
     memberName:
-      [row.member?.firstName, row.member?.lastName].filter(Boolean).join(" ") ||
-      row.member?.email ||
+      [bookingOwner(row).member.firstName, bookingOwner(row).member.lastName].filter(Boolean).join(" ") ||
+      bookingOwner(row).member.email ||
       "Unknown member",
     checkIn: formatDateOnly(row.checkIn),
     checkOut: formatDateOnly(row.checkOut),
@@ -425,6 +488,15 @@ export interface NightOccupancy {
    * the callers genuinely disagree about.
    */
   wholeLodgeHeld: boolean;
+  /**
+   * Beds a custodian holds this night (term 2, #2286) — already inside
+   * `occupiedBeds`, surfaced separately so a caller pinning a held night can
+   * compose the pin out of the two DISJOINT sets `INV-CAP-038` defines: the
+   * hold's represented beds ({@link wholeLodgeHoldRepresentedBeds}) and the
+   * custodian's. Without it every pin site has to write `lodgeCapacity` and
+   * take the partition on trust.
+   */
+  custodianBeds: number;
 }
 
 /**
@@ -460,7 +532,14 @@ export interface NightOccupancy {
  *    provisionally reserved beds are unavailable until the request is
  *    rejected/cancelled/superseded or approved. Read under the same per-lodge
  *    capacity lock the claim is written under, so a held request never oversells.
- * 4. **Whole-lodge holds (ADR-001, #118)** — reported as a per-night flag.
+ * 4. **Whole-lodge holds (ADR-001, #118)** — reported as a per-night flag,
+ *    because what a held night should look like is a caller decision. What the
+ *    hold REPRESENTS is not: since #2698 its bed set excludes the bed-nights a
+ *    custodian holds (`INV-CAP-038`), so every caller that pins a held night
+ *    composes the pin from {@link wholeLodgeHoldRepresentedBeds} and the
+ *    `custodianBeds` reported beside the flag, which are disjoint and together
+ *    are the lodge. Term 2 is reported twice for that reason — once inside
+ *    `occupiedBeds`, once on its own — and read once.
  *
  * ## Lock topology is unchanged
  *
@@ -547,6 +626,9 @@ export async function computeNightOccupancy(input: {
       custodianCount(night) +
       reservationCount(night),
     wholeLodgeHeld: isNightWholeLodgeHeld(night, holdIndex),
+    // Term 2 again, reported on its own so term 4's pin can subtract it
+    // (INV-CAP-038, #2698). Same counter, same holds — never a second read.
+    custodianBeds: custodianCount(night),
   });
 }
 
@@ -577,17 +659,25 @@ export async function checkCapacity(
   });
 
   const nightDetails: NightAvailability[] = nights.map((night) => {
-    const { occupiedBeds, wholeLodgeHeld } = occupancy(night);
+    const { occupiedBeds, wholeLodgeHeld, custodianBeds } = occupancy(night);
 
     return {
       date: night,
-      // A held night's occupiedBeds is pinned to lodgeCapacity, mirroring
+      // A held night's occupiedBeds is pinned to a full lodge, mirroring
       // getMonthAvailability's pinning (ADR-001 decision 6, issue #118): to a
       // member reading this result (e.g. the raw availability/check payload,
       // issue #155) a held-but-not-full night must be indistinguishable from
       // a genuinely full lodge, and occupiedBeds + availableBeds must equal
       // lodgeCapacity on every night, not just full ones.
-      occupiedBeds: wholeLodgeHeld ? lodgeCapacity : occupiedBeds,
+      //
+      // Composed from the two disjoint sets INV-CAP-038 defines rather than
+      // written as `lodgeCapacity`: the hold represents every bed EXCEPT the
+      // custodian's, and the custodian occupies exactly those (#2698). The
+      // total is the same full lodge; what changes is that it is now derived
+      // from a partition instead of asserting one.
+      occupiedBeds: wholeLodgeHeld
+        ? wholeLodgeHeldNightOccupiedBeds(lodgeCapacity, custodianBeds)
+        : occupiedBeds,
       // A held night is hard-blocked at 0 — never negative, so it stays out of
       // the over-capacity confirm set and cannot be bypassed by an admin
       // override (ADR-001 decision 5, issue #118).
@@ -826,7 +916,13 @@ export async function checkCapacityForPartnerSharedAdmission(
   // partner's-own-booking case, where excludeBookingId removes the partner's
   // existing row from occupancy), or from the partner's other capacity-
   // holding bookings at this lodge. Never from an unverified caller claim.
-  const coverageBySharer: Array<Set<string>> = [];
+  // Each sharer carries its own coverage set, rather than a parallel array
+  // read back by position: the pairing is then a fact of the type, not of two
+  // loops staying in step (#2799).
+  const sharersWithCoverage: Array<{
+    sharer: (typeof sharers)[number];
+    covered: Set<string>;
+  }> = [];
   for (const sharer of sharers) {
     const covered = new Set<string>();
     const proposedPartnerRows = ordinaryGuests.filter(
@@ -889,7 +985,7 @@ export async function checkCapacityForPartnerSharedAdmission(
         if (present) covered.add(nightKey);
       }
     }
-    coverageBySharer.push(covered);
+    sharersWithCoverage.push({ sharer, covered });
   }
 
   // Base occupancy from the one implementation. The custodian term carries an
@@ -925,11 +1021,11 @@ export async function checkCapacityForPartnerSharedAdmission(
     }
 
     let sharersPresent = 0;
-    for (const [index, sharer] of sharers.entries()) {
+    for (const { sharer, covered } of sharersWithCoverage) {
       if (countActiveGuestsForNight([sharer.range], night, envelope) === 0) {
         continue;
       }
-      if (!coverageBySharer[index].has(nightKey)) {
+      if (!covered.has(nightKey)) {
         // A shared slot exists only on nights the partner also stays.
         reason ??=
           "The partner is not staying on every night requested for the shared guest.";
@@ -1024,14 +1120,23 @@ export async function getMonthAvailability(
   });
 
   for (const night of nights) {
-    const { occupiedBeds, wholeLodgeHeld } = occupancy(night);
+    const { occupiedBeds, wholeLodgeHeld, custodianBeds } = occupancy(night);
     const key = formatDateOnly(night);
     // A whole-lodge-held night (ADR-001, issue #118) must be indistinguishable
     // from a genuinely full lodge on the public calendar (decision 6): report
     // full occupancy so no free beds are ever shown, regardless of the real
     // headcount on that night. Otherwise a held-but-not-full night would leak
     // the hold — a member could tell it apart from a full lodge.
-    availability.set(key, wholeLodgeHeld ? lodgeCapacity : occupiedBeds);
+    //
+    // The full lodge is composed from the hold's represented beds plus the
+    // custodian beds it excludes (INV-CAP-038, #2698) — the same number, taken
+    // from the partition rather than asserted.
+    availability.set(
+      key,
+      wholeLodgeHeld
+        ? wholeLodgeHeldNightOccupiedBeds(lodgeCapacity, custodianBeds)
+        : occupiedBeds,
+    );
   }
 
   return availability;

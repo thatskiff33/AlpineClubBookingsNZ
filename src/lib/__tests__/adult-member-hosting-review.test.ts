@@ -26,9 +26,7 @@ const subscriptionBridge = vi.hoisted(() => ({
   loadUnpaidSubscriptionMemberIds: vi.fn(async () => new Set<string>()),
 }));
 vi.mock("@/lib/subscription-lockout-enforcement", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/lib/subscription-lockout-enforcement")
-  >()),
+  ...((await importOriginal()) as typeof import("@/lib/subscription-lockout-enforcement")),
   loadUnpaidSubscriptionMemberIds:
     subscriptionBridge.loadUnpaidSubscriptionMemberIds,
 }));

@@ -176,7 +176,7 @@ vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: vi.fn().mockR
 // (Xero-off bypass); default to Xero on so guest checks behave as before.
 const mockLoadEffectiveModuleFlags = vi.fn();
 vi.mock("@/lib/module-settings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/module-settings");
   return {
     ...actual,
     loadEffectiveModuleFlags: (...args: unknown[]) =>
@@ -204,6 +204,33 @@ const mockPrisma = prisma as unknown as {
 };
 
 const mockAuth = auth as ReturnType<typeof vi.fn>;
+
+/**
+ * Stub `member.findMany` for the id-list queries this suite was written for,
+ * while answering #2721's own-dependant query with `[]`.
+ *
+ * `POST /api/bookings` now also asks `member.findMany` who the BOOKER'S OWN
+ * recorded dependants are, and that query is recognisable by its `OR` over the
+ * two parent-link columns. The blanket stubs below were written when this table
+ * was asked exactly one question, so without this wrapper they answer BOTH with
+ * the same rows — and a member-linked guest is read back as a dependant of the
+ * booker, which turns a guest-subscription case into an identity refusal. This
+ * suite's booker has no recorded dependants.
+ */
+function stubMemberFindMany(
+  rows:
+    | unknown[]
+    | ((args: {
+        where?: { id?: { in?: string[] } };
+      }) => Promise<unknown[]> | unknown[]),
+) {
+  mockPrisma.member.findMany.mockImplementation(
+    async (args: { where?: { OR?: unknown; id?: { in?: string[] } } }) => {
+      if (args?.where?.OR) return [];
+      return typeof rows === "function" ? rows(args) : rows;
+    },
+  );
+}
 
 const checkInDate = "2026-12-01";
 const checkOutDate = "2026-12-03";
@@ -265,7 +292,7 @@ beforeEach(() => {
     }
     return [];
   });
-  mockPrisma.member.findMany.mockResolvedValue([
+  stubMemberFindMany([
     { id: "member-1", ageTier: "ADULT" },
     { id: "guest-member-1", ageTier: "ADULT", firstName: "Bob", lastName: "Jones" },
   ]);
@@ -333,7 +360,7 @@ describe("P2.3: Guest subscription check", () => {
     // member.findMany is called multiple times:
     // 1. resolveLinkedBookingMembers (needs ageTier for linked members)
     // 2. unpaid member name lookup (needs firstName/lastName)
-    mockPrisma.member.findMany.mockResolvedValue([
+    stubMemberFindMany([
       { id: "member-1", ageTier: "ADULT", firstName: "Alice", lastName: "Smith" },
       { id: "guest-member-1", ageTier: "ADULT", firstName: "Bob", lastName: "Jones" },
     ]);
@@ -384,7 +411,7 @@ describe("P2.3: Guest subscription check", () => {
   it("allows child and infant member-guests without subscription invoice rows", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
-    mockPrisma.member.findMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) => {
+    stubMemberFindMany(async (args: { where?: { id?: { in?: string[] } } }) => {
       const ids = args?.where?.id?.in ?? [];
       if (ids.includes("guest-member-1")) {
         return [
@@ -409,7 +436,7 @@ describe("P2.3: Guest subscription check", () => {
   it("uses the stored member age tier when deciding if a guest subscription is required", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
-    mockPrisma.member.findMany.mockResolvedValue([
+    stubMemberFindMany([
       { id: "member-1", ageTier: "ADULT", firstName: "Alice", lastName: "Smith" },
       { id: "guest-member-1", ageTier: "ADULT", firstName: "Bob", lastName: "Jones" },
     ]);
@@ -462,7 +489,7 @@ describe("P2.3: Guest subscription check", () => {
   it("error message includes names of all unpaid members", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
-    mockPrisma.member.findMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) => {
+    stubMemberFindMany(async (args: { where?: { id?: { in?: string[] } } }) => {
       const ids = args?.where?.id?.in;
       if (ids && (ids.includes("guest-member-1") || ids.includes("guest-member-2"))) {
         return [
@@ -492,7 +519,7 @@ describe("P2.3: Guest subscription check", () => {
   it("blocks the modify quote flow from adding an unpaid member-guest later", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
-    mockPrisma.member.findMany.mockResolvedValue([
+    stubMemberFindMany([
       { id: "member-1", ageTier: "ADULT", firstName: "Alice", lastName: "Smith" },
       { id: "guest-member-1", ageTier: "ADULT", firstName: "Bob", lastName: "Jones" },
     ]);
@@ -948,7 +975,7 @@ describe("P2.3: Guest subscription check", () => {
       }
       return [];
     });
-    mockPrisma.member.findMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) => {
+    stubMemberFindMany(async (args: { where?: { id?: { in?: string[] } } }) => {
       const ids = args?.where?.id?.in ?? [];
       if (ids.includes("guest-member-1")) {
         return [

@@ -164,7 +164,7 @@ describe("adult-member hosting settings card (#2364)", () => {
   });
 
   it("sends the loaded revision and re-seeds from the server's answer", async () => {
-    const fetchMock = await renderWith(async (url, init) => {
+    const fetchMock = await renderWith(async (_url, init) => {
       if (init?.method === "PUT") {
         return json({ ...CONFIGURED_CLUB, mode: "DISABLED", version: 5 });
       }
@@ -194,7 +194,7 @@ describe("adult-member hosting settings card (#2364)", () => {
   });
 
   it("omits the revision on a first save, so the route can refuse a resurrection", async () => {
-    const fetchMock = await renderWith(async (url, init) => {
+    const fetchMock = await renderWith(async (_url, init) => {
       if (init?.method === "PUT") {
         return json({ ...UNCONFIGURED_CLUB, capacityMode: "HOLD", version: 1, configured: true });
       }
@@ -282,7 +282,7 @@ describe("adult-member hosting settings card (#2364)", () => {
     // "not available yet" beside it, because nothing could evaluate it; #2576
     // replaced that planned workflow with this narrower same-account rule, which
     // the settings surface carries in full.
-    const fetchMock = await renderWith(async (url, init) => {
+    const fetchMock = await renderWith(async (_url, init) => {
       if (init?.method === "PUT") {
         return json({
           ...CONFIGURED_CLUB,
@@ -329,7 +329,7 @@ describe("adult-member hosting settings card (#2364)", () => {
   });
 
   it("offers Group Trip coverage as a third independent, off-by-default box (#3037)", async () => {
-    const fetchMock = await renderWith(async (url, init) => {
+    const fetchMock = await renderWith(async (_url, init) => {
       if (init?.method === "PUT") {
         return json({
           ...CONFIGURED_CLUB,
@@ -412,7 +412,7 @@ describe("adult-member hosting settings card (#2364)", () => {
 
   it("surfaces a 409 and reloads the authoritative row", async () => {
     let loads = 0;
-    await renderWith(async (url, init) => {
+    await renderWith(async (_url, init) => {
       if (init?.method === "PUT") {
         return json({ error: "This hosting policy changed since you opened it" }, 409);
       }

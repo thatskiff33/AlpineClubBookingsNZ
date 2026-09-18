@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { sendAdminPendingDeadlineAlert } from "./email";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 
 /**
@@ -23,6 +24,8 @@ export async function checkPendingDeadlines(): Promise<{ alertedCount: number }>
     },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: true,
     },
     orderBy: { nonMemberHoldUntil: "asc" },
@@ -35,7 +38,7 @@ export async function checkPendingDeadlines(): Promise<{ alertedCount: number }>
   const bookingData = pendingBookings.map((b) => {
     const hoursRemaining = (b.nonMemberHoldUntil!.getTime() - now.getTime()) / (1000 * 60 * 60);
     return {
-      memberName: `${b.member.firstName} ${b.member.lastName}`,
+      memberName: `${bookingOwner(b).member.firstName} ${bookingOwner(b).member.lastName}`,
       checkIn: b.checkIn,
       checkOut: b.checkOut,
       guestCount: b.guests.length,

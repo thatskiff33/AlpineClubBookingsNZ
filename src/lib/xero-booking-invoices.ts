@@ -16,6 +16,7 @@ import {
 } from "xero-node";
 import { PaymentSource, PaymentTransactionKind } from "@prisma/client";
 import { prisma } from "./prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { getStayNights } from "./pricing";
@@ -42,6 +43,10 @@ import {
   sendXeroInvoiceEmail,
 } from "@/lib/xero-invoice-email";
 import {
+  readXeroInvoiceEmailInstruction,
+  xeroInvoiceEmailIsWithheldAtCreation,
+} from "@/lib/xero-invoice-email-instruction";
+import {
   describeGuestRateMembershipLabel,
   getAccountMapping,
   getHutFeeItemCodeMap,
@@ -51,10 +56,13 @@ import {
   getResolvedAccountMapping,
 } from "./xero-mappings";
 import {
-  findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
+import {
+  findOrCreateXeroContactForInvoicedParty,
+  invoicedPartyContactRepair,
+} from "@/lib/organisation-xero-contacts";
 import { formatDateOnly } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
@@ -64,6 +72,13 @@ import {
   getBookingInvoiceIssueDate,
 } from "./xero-invoice-helpers";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
+import type { XeroInvoiceEmailFailureCause } from "@/lib/xero-booking-invoice-outcome";
+import {
+  bookingMoneyBuildUpFromProjection,
+  d3CompatibleBookingMoneyBuildUpCents,
+  selectLoadedBookingMoneyBuildUp,
+} from "@/lib/booking-money-build-up";
 
 // #1765 — the aggregate Payment statuses that prove cash was captured at some
 // point. Settlement gating must pair one of these with a positive NET capture
@@ -394,10 +409,13 @@ export async function createXeroInvoiceForBooking(
       // item per contiguous run.
       guests: { include: { nights: true } },
       payment: true,
-      promoRedemption: { include: { promoCode: true } },
+      promoRedemption: { include: { promoCode: true, allocations: true } },
+      nightAdjustments: true,
       // #2258: recipient for the withheld-send audit row when the booking's
       // "No emails" switch stops Xero emailing the invoice.
       member: { select: { email: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
   });
 
@@ -477,12 +495,82 @@ export async function createXeroInvoiceForBooking(
     return null;
   }
 
+  /*
+    #2929 — THE CREATION-TIME DELIVERY INSTRUCTION, read from the operation that
+    asked for this invoice.
+
+    Read HERE, before the first provider round-trip, and deliberately not from a
+    parameter. The officer who chose "create without emailing" did so in a
+    request that ended long before this ran: the create enqueued an operation and
+    returned, a worker picked it up, and an operator retry may be picking it up
+    now, hours later. A flag passed down the call chain is gone by then, and a
+    retry that cannot tell a deliberate withhold from a lost flag sends the
+    member the very email the officer chose to withhold.
+
+    Read from `options.syncOperationId` — the row a dispatcher CLAIMED — rather
+    than from the operation this function may mint for itself a few lines below.
+    A self-minted operation has no enqueuer and therefore no instruction, so
+    reading it back would be asking a row what we just wrote into it.
+
+    HOW THIS FAILS, stated exactly, because the neighbouring switch gate below
+    fails the OTHER WAY and the two must not be confused:
+
+      - the read THROWING is the only fail-closed case, and it is deliberately
+        not wrapped in a try/catch: the whole invoice creation fails before any
+        invoice exists and before any email could be sent;
+      - an UNRECOGNISED stored value, and a `syncOperationId` naming a row that
+        is not there, both resolve to `null` and therefore SEND. That is
+        fail-OPEN, and it is the right direction HERE and only here. A withhold
+        nobody asked for is not safe: the member owes this money and the invoice
+        is how they learn it, so a typo in some future enqueuer must never
+        silently stop invoices reaching members. The switch below is the
+        opposite because its unknown answer is "we could not tell whether an
+        administrator promised this member silence", and breaking that promise
+        is the unrecoverable direction there.
+
+    So `null` here means "no instruction was recorded", which is what every row
+    written before #2929 honestly is, and it is treated identically to SEND.
+  */
+  const queuedInvoiceEmailInstruction = options?.syncOperationId
+    ? readXeroInvoiceEmailInstruction(
+        (
+          await prisma.xeroSyncOperation.findUnique({
+            where: { id: options.syncOperationId },
+            select: { invoiceEmailDelivery: true },
+          })
+        )?.invoiceEmailDelivery,
+      )
+    : null;
+  // #3277: verify the single aggregate promo line from the stored build-up
+  // before authentication or any provider call. A mismatch remains today's
+  // headline under D3 and its classified fallback is persisted on the uniquely
+  // anchored sync operation below.
+  const recordedMoneyBuildUp = bookingMoneyBuildUpFromProjection(booking, {
+    purpose: "XERO_PROMO_LINE",
+  });
+  const promoMoneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(
+    recordedMoneyBuildUp,
+    {
+      derivedCents: booking.promoAdjustmentCents,
+      mismatchClassification: "STORED_SIDE_DEFECT",
+    },
+  );
+  const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents(
+    promoMoneyBuildUpSelection,
+  );
+
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
-  // Ensure the member has a Xero contact
+  // Ensure the invoiced party has a Xero contact.
+  // #3367: where this booking is linked to an Organisation — a school — the
+  // ORGANISATION is the invoiced party and its own organisation-shaped Xero
+  // customer is used. Where it is not, this is byte-for-byte today's behaviour:
+  // the booking's member. The invoice payload below carries only a contact
+  // reference and no name, so this one line is the whole of "the organisation
+  // becomes the invoiced party" for the invoice builder.
   // #3036 review P1-12: this client was built two lines up, so hand it to the
   // containment verification rather than making it authenticate a second time.
-  const contactId = await findOrCreateXeroContact(booking.memberId, {
+  const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
     ...options,
     xero,
     tenantId,
@@ -544,7 +632,7 @@ export async function createXeroInvoiceForBooking(
 
   // Add signed promo adjustment line if applicable. Negative values behave
   // like discounts; positive values are extra revenue.
-  if (booking.promoAdjustmentCents !== 0) {
+  if (xeroPromoAdjustmentCents !== 0) {
     const promo = booking.promoRedemption?.promoCode ?? null;
     const firstGuest = booking.guests[0];
 
@@ -563,7 +651,7 @@ export async function createXeroInvoiceForBooking(
     const discountLineItem: LineItem = {
       description: promo ? `Promo adjustment - ${promo.code}` : "Promo adjustment",
       quantity: 1,
-      unitAmount: booking.promoAdjustmentCents / 100,
+      unitAmount: xeroPromoAdjustmentCents / 100,
       taxType: "OUTPUT2",
     };
     if (discountItemCode) {
@@ -591,14 +679,16 @@ export async function createXeroInvoiceForBooking(
     lineAmountTypes: LineAmountTypes.Inclusive,
   });
 
-  const invoiceIdempotencyKey = buildXeroIdempotencyKey(
-    "booking",
-    bookingId,
-    "invoice",
-    "v1"
-  );
+  // The booking's stable handle, minted in one place so the outbox row this
+  // operation continues, the key Xero is given, and #3001's warning on the
+  // booking itself can never be looking for three different strings.
+  const invoiceIdempotencyKey =
+    buildXeroBookingInvoiceCorrelationKey(bookingId);
   let operationId = options?.syncOperationId ?? null;
-  const requestPayload = { invoices: [buildInvoice(contactId)] };
+  const requestPayload = {
+    invoices: [buildInvoice(contactId)],
+    moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
+  };
 
   if (operationId) {
     await prisma.xeroSyncOperation.update({
@@ -656,14 +746,33 @@ export async function createXeroInvoiceForBooking(
 
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       currentContactId: contactId,
+      // #3367 / `INV-INT-019`: THE REPAIR ENTITY MUST MATCH THE INVOICED PARTY.
+      //
+      // `currentContactId` above is now the ORGANISATION's contact where this
+      // booking is a school's. The default repair resolves through
+      // `findOrCreateXeroContact(booking.memberId)`, which searches Xero by
+      // EMAIL first — and a school's recorded address is routinely a teacher's
+      // own, which this module's own comment calls routine. So on a stale
+      // contact reference the default would find that teacher's personal Xero
+      // contact, link it, and re-send the SCHOOL's invoice against a person:
+      // the #2912 prohibition, through the back door.
+      //
+      // Repairing the invoiced party instead is the fix. Disabling repair for
+      // schools would have been smaller and wrong — a stale reference is
+      // exactly the situation a repair exists for.
+      repairContactLink: invoicedPartyContactRepair(booking),
       workflow: "createXeroInvoiceForBooking",
       operationId: operationId!,
       repairExistingLink: options?.repairExistingLink,
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
         invoices: [buildInvoice(resolvedContactId)],
+        // Contact repair rewrites the stored operation request. Preserve the
+        // Stage 3 source verdict with the rebuilt invoice instead of erasing
+        // the evidence on the only retry that changes this payload.
+        moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
@@ -799,8 +908,34 @@ export async function createXeroInvoiceForBooking(
       );
     }
 
+    /*
+      ONE subject for this pseudo-template, shared by every reason it can be
+      withheld (#2929).
+
+      The withheld-emails banner groups by TEMPLATE NAME and renders a single
+      representative subject for the group — the most recent row's. Two withhold
+      sites spelling the subject out separately therefore makes one kind of
+      withheld email show two different subjects depending on which row happens
+      to be newest, which reads to an officer as two different messages. There
+      is no registry entry to hold this (we never render or transmit it), so the
+      one home is here, above both sites.
+    */
+    const withheldInvoiceEmailSubject = `Xero invoice ${
+      createdInvoice.invoiceNumber ?? createdInvoice.invoiceID ?? "(unnumbered)"
+    } for your Internet Banking booking payment`;
+
     let invoiceEmailResponseBody: unknown = null;
     let invoiceEmailError: unknown = null;
+    /*
+      #3001 — WHICH of the three faults stopped the email, recorded beside the
+      error rather than inferred from it. The error VALUE is not redacted and is
+      never read back out of this payload, so a surface that wants to tell an
+      officer what to do about an unsent invoice has nothing to go on unless the
+      cause is its own key. The three want three different actions, and one of
+      them — an unreadable "No emails" switch — must NOT be answered with "send
+      it from Xero yourself", because the switch may be on.
+    */
+    let invoiceEmailFailureCause: XeroInvoiceEmailFailureCause | null = null;
     const shouldEmailInvoice =
       booking.payment.source === PaymentSource.INTERNET_BANKING;
 
@@ -815,7 +950,7 @@ export async function createXeroInvoiceForBooking(
     // function, because invoice creation involves several provider round-trips
     // and an admin can flip the switch in between.
     //
-    // The two non-send decisions are kept STRICTLY apart, because conflating
+    // The gate's own two answers are kept STRICTLY apart, because conflating
     // them is money-adjacent (#1705): a deliberate `withhold` is a terminal,
     // intended outcome, while `unknown` means the switch could not be READ. Both
     // fail closed and send nothing, but an `unknown` is a FAULT — it must not be
@@ -847,10 +982,8 @@ export async function createXeroInvoiceForBooking(
       await recordWithheldBookingEmail({
         bookingId,
         templateName: XERO_BOOKING_INVOICE_EMAIL_TEMPLATE,
-        subject: `Xero invoice ${
-          createdInvoice.invoiceNumber ?? createdInvoice.invoiceID ?? "(unnumbered)"
-        } for your Internet Banking booking payment`,
-        to: booking.member.email,
+        subject: withheldInvoiceEmailSubject,
+        to: bookingOwner(booking).member.email,
         detail:
           'Withheld: this booking has the "No emails" switch turned on. The invoice exists in Xero but was not emailed.',
       });
@@ -860,12 +993,60 @@ export async function createXeroInvoiceForBooking(
       );
     }
 
+    /*
+      #2929 — THE ADMINISTRATOR'S CREATION-TIME CHOICE, and it is a THIRD reason
+      an invoice email does not go out. Kept strictly apart from its two
+      neighbours, because an operator reading a booking has to be able to tell
+      them apart:
+
+        - the per-booking "No emails" SWITCH above is persistent and withholds
+          everything about the booking for as long as it is on (#2258);
+        - THIS is one creation's decision, spent the moment this invoice is
+          raised. It changes nothing else: `Booking.noEmails` is untouched, the
+          Xero contact keeps its address, and every later reminder, change and
+          cancellation email is decided by the ordinary rules;
+        - the ENVIRONMENT-SAFETY suppression below is not the club's decision at
+          all, is not recorded as one, and writes no withheld row (#3035).
+
+      ONE WITHHOLD REASON PER EVENT (`INV-CONFIG-004`): this is asked only when
+      the switch neither withheld nor failed to read, so a silenced booking
+      records the switch's withhold and this one stays silent rather than
+      claiming the same non-send twice.
+
+      Like the switch, it withholds the EMAILING only. The invoice is already
+      raised in Xero and stays AUTHORISED, so an officer can still send it from
+      Xero by hand — which is the only way it ever goes out, because a re-drive
+      short-circuits on `payment.xeroInvoiceId` and the per-invoice idempotency
+      key would no-op anyway.
+    */
+    const invoiceEmailWithheldByCreationChoice =
+      shouldEmailInvoice &&
+      !invoiceEmailWithheld &&
+      !invoiceEmailGateUnreadable &&
+      xeroInvoiceEmailIsWithheldAtCreation(queuedInvoiceEmailInstruction);
+
+    if (invoiceEmailWithheldByCreationChoice) {
+      await recordWithheldBookingEmail({
+        bookingId,
+        templateName: XERO_BOOKING_INVOICE_EMAIL_TEMPLATE,
+        subject: withheldInvoiceEmailSubject,
+        to: bookingOwner(booking).member.email,
+        detail:
+          "Withheld: the administrator who created this booking chose not to email the member. The invoice exists in Xero but was not emailed.",
+      });
+      logger.warn(
+        { bookingId, invoiceId: createdInvoice.invoiceID },
+        "Skipped the Xero invoice email because the booking was created with \"do not email the member\"",
+      );
+    }
+
     if (invoiceEmailGateUnreadable) {
       // NOT a withhold: no SKIPPED_NO_EMAILS row is written, because the switch
       // may well be off and the member is simply owed their invoice email.
       invoiceEmailError = new Error(
         `Could not read the "No emails" switch for booking ${bookingId}; the Xero invoice email was not sent`,
       );
+      invoiceEmailFailureCause = "NO_EMAILS_UNREADABLE";
       logger.error(
         { bookingId, invoiceId: createdInvoice.invoiceID },
         "Did not email the Xero invoice because the booking's \"No emails\" switch could not be read; the sync operation is marked PARTIAL so the unsent invoice email stays visible",
@@ -894,7 +1075,10 @@ export async function createXeroInvoiceForBooking(
       by hand.
     */
     const invoiceEmailPolicy =
-      shouldEmailInvoice && !invoiceEmailWithheld && !invoiceEmailGateUnreadable
+      shouldEmailInvoice &&
+      !invoiceEmailWithheld &&
+      !invoiceEmailGateUnreadable &&
+      !invoiceEmailWithheldByCreationChoice
         ? await resolveXeroInvoiceEmailPolicy()
         : null;
     const invoiceEmailWithheldForEnvironment =
@@ -904,6 +1088,7 @@ export async function createXeroInvoiceForBooking(
       const context = { bookingId, invoiceId: createdInvoice.invoiceID };
       if (invoiceEmailPolicy.error) {
         invoiceEmailError = invoiceEmailPolicy.error;
+        invoiceEmailFailureCause = "ROLE_UNCONFIRMED";
         logger.error(context, invoiceEmailPolicy.logMessage);
       } else {
         logger.info(context, invoiceEmailPolicy.logMessage);
@@ -932,6 +1117,7 @@ export async function createXeroInvoiceForBooking(
         invoiceEmailResponseBody = emailResponse.body;
       } catch (error) {
         invoiceEmailError = error;
+        invoiceEmailFailureCause = "PROVIDER";
         logger.warn(
           { err: error, bookingId, invoiceId: createdInvoice.invoiceID },
           "Created Xero invoice but failed to email it to the contact"
@@ -980,15 +1166,24 @@ export async function createXeroInvoiceForBooking(
         paymentSkipReason: paymentSkipped ? paymentSkipReason : null,
         invoiceEmail: invoiceEmailResponseBody,
         invoiceEmailError,
+        // #3001: which of the three faults it was. Read back through
+        // `readXeroInvoiceOperationOutcome`, the one home for this payload.
+        invoiceEmailFailureCause,
         invoiceEmailSkipped:
           !shouldEmailInvoice ||
           invoiceEmailWithheld ||
+          invoiceEmailWithheldByCreationChoice ||
           invoiceEmailGateUnreadable ||
           invoiceEmailPolicy?.kind === "withhold",
         // #2258: a DELIBERATE withhold only. An unreadable switch is a fault and
         // is reported through invoiceEmailError above (status PARTIAL), never
         // here — the two must stay distinguishable to an operator.
         invoiceEmailWithheldByNoEmails: invoiceEmailWithheld,
+        // #2929: the administrator's creation-time "do not email the member"
+        // choice, which is the club's own decision like the switch above but
+        // spent on this one invoice creation. Reported as its own key so an
+        // operator is never told the persistent switch is on when it is not.
+        invoiceEmailWithheldByCreationChoice,
         // #3035: the environment-safety suppression, which is a THIRD reason and
         // must not be read as either of the two above. A confirmed copy did not
         // email the invoice; nothing failed and nobody asked for silence.
@@ -1263,7 +1458,7 @@ export async function updateXeroBookingInvoiceForBooking(
     */
     await requireContainedXeroContactForInvoiceOperation({
       resolveXeroContactId: async () => currentInvoice.contact?.contactID,
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       workflow: "updateXeroBookingInvoiceForBooking",
       xero,
       tenantId,

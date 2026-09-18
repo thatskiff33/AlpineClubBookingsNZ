@@ -441,6 +441,25 @@ enum SchoolCateringOption {
   NON_CATERED
 }
 
+// Programme #2912 stage 1 (#3366). What kind of body an Organisation is.
+// SCHOOL is the only value this release implements, and the only one any
+// writer will produce; the model is deliberately organisation-capable so a
+// later scout-group or corporate-booker use case is a value here rather than a
+// second model. INERT IN THIS RELEASE: nothing constructs an Organisation yet.
+enum OrganisationKind {
+  SCHOOL
+}
+
+// How a person is attached to an Organisation. TEACHER is a person who travels
+// with the party; CONTACT is a person the club corresponds with. Deliberately
+// NOT `Member.role` and NOT `AccessRole.ORG`: those two say what a person may
+// do in this system, and this says which organisation a person speaks for.
+// `Role.SCHOOL` and `AccessRole.ORG` keep their current meanings untouched.
+enum OrganisationContactRole {
+  TEACHER
+  CONTACT
+}
+
 enum AgeRestriction {
   ANY
   ADULTS_ONLY
@@ -669,6 +688,7 @@ model Member {
   newBookingPolicyExceptionRequestsReviewed  NewBookingPolicyExceptionRequest[]         @relation("NewBookingPolicyExceptionRequestsReviewed")
   promoRedemptions                           PromoRedemption[]
   promoRedemptionAllocations                 PromoRedemptionAllocation[]
+  nightAdjustmentsAsBeneficiary              BookingGuestNightAdjustment[]
   promoCodeAssignments                       PromoCodeAssignment[]
   notificationPreference                     NotificationPreference?
   hutLeaderAssignments                       HutLeaderAssignment[]
@@ -741,6 +761,16 @@ model Member {
   // completing/dismissing the manual-refund tasks a cash cancellation raises.
   paymentsManuallyMarkedPaid                 Payment[]                                  @relation("PaymentManualPaidBy")
   manualRefundTasksCompleted                 ManualRefundTask[]                         @relation("ManualRefundTaskCompletedBy")
+  // #3366: organisations this person is a teacher or contact for. INERT in
+  // this release — no writer creates one. Member merge classifies the owning
+  // side (`OrganisationContact.member`) as `resolve`, because the association
+  // is unique per (organisation, person).
+  organisationContacts                       OrganisationContact[]                      @relation("OrganisationContactMember")
+
+  // What this row actually was, when it was one of the school-shaped rows stage
+  // 4 (#3369) re-parented. At most one, and only ever present on a historical
+  // school or teacher row. Member merge classifies it `resolve`.
+  schoolClassification                       SchoolMemberClassification?                @relation("SchoolMemberClassificationMember")
 
   // Member profile photo (MP1). Outbound scalar FK, so it is part of the
   // additive master-wins field merge (not a re-pointed inbound relation); the
@@ -1660,7 +1690,32 @@ model MembershipTypeSeasonRate {
 
 model Booking {
   id                        String             @id @default(cuid())
-  memberId                  String
+
+  // WHO OWNS THIS BOOKING — the member half. Programme #2912, stage 4 (#3369).
+  //
+  // OPTIONAL SINCE #3369, and that is the whole point of this stage. A school's
+  // booking is owned by its `Organisation` (`organisationId` below) and has no
+  // member at all, so the invented surnameless person the club used to see in
+  // its member list stops existing. Every other booking is owned by a member
+  // exactly as before and this column is exactly what it always was.
+  //
+  // EXACTLY ONE OF THE TWO IS SET, enforced by the database rather than by
+  // convention: `Booking_owner_exactly_one`, a raw-SQL CHECK constraint added by
+  // 20260928020000. Prisma cannot express a CHECK, so the migration and this
+  // comment are its only record — the same arrangement every other CHECK in
+  // this schema has. It is what lets `bookingOwner()` in
+  // `src/lib/booking-owner.ts` promise a non-null owner projection to its
+  // several hundred readers instead of making every one of them branch —
+  // "unrepresentable over policed", AGENTS.md.
+  //
+  // READ THE OWNER THROUGH `bookingOwner()`, never off this column. The census
+  // in `src/lib/__tests__/booking-owner-census.test.ts` fails on a new direct
+  // read anywhere under `src/` or `scripts/`.
+  //
+  // FK stays Restrict: a member with bookings cannot be deleted out from under
+  // them. NOT SetNull — nulling this column is how a booking becomes
+  // organisation-owned, and a deletion must never be able to say that.
+  memberId                  String?
   checkIn                   DateTime           @db.Date
   checkOut                  DateTime           @db.Date
   status                    BookingStatus      @default(PENDING)
@@ -1843,10 +1898,30 @@ model Booking {
   // FK is Restrict, exactly like BookingRequest.otherLodgeId: an OtherLodge
   // cited by a priced booking cannot be deleted out from under it.
   otherLodgeId                 String?
+
+  // Organisation this booking belongs to (programme #2912, stage 1 — #3366).
+  //
+  // OPTIONAL, AND THAT IS THE POINT. It is added here as an expand-only column
+  // so the currently deployed release keeps reading this table unchanged: it
+  // never selects the column and its inserts omit it, which a nullable column
+  // accepts. INERT IN THIS RELEASE — no writer sets it and no reader names it,
+  // pinned by `organisation-record-inert-contract.test.ts`.
+  //
+  // `memberId` above stays REQUIRED and keeps its present meaning. Making it
+  // optional is stage 4 (#3369) and is a windowed migration; doing it here
+  // would break the draining colour before any reader knows what an
+  // Organisation is.
+  //
+  // FK is Restrict, like `otherLodgeId` and `lodgeId`: once a booking cites an
+  // organisation, that organisation cannot be deleted out from under it. Not
+  // SetNull, because from stage 4 this column is the booking's OWNER and
+  // silently nulling an owner is the one failure a deletion must not cause.
+  organisationId               String?
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
 
-  member                      Member                          @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  member                      Member?                         @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  organisation                Organisation?                   @relation(fields: [organisationId], references: [id], onDelete: Restrict)
   lodge                       Lodge                           @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
   otherLodge                  OtherLodge?                     @relation(fields: [otherLodgeId], references: [id], onDelete: Restrict)
   waitlistOfferedLodge        Lodge?                          @relation("BookingWaitlistOfferedLodge", fields: [waitlistOfferedLodgeId], references: [id], onDelete: SetNull)
@@ -1869,6 +1944,7 @@ model Booking {
   promoRedemption             PromoRedemption?
   promoRedemptionAllocations  PromoRedemptionAllocation[]
   promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
+  nightAdjustments            BookingGuestNightAdjustment[]
   modifications               BookingModification[]
   changeRequests              BookingChangeRequest[]
   creditsFromCancellation     MemberCredit[]                  @relation("CreditSource")
@@ -1916,6 +1992,7 @@ model Booking {
   @@index([parentBookingId])
   @@index([lodgeId])
   @@index([otherLodgeId])
+  @@index([organisationId])
 }
 
 // Durable booking-lifecycle event store (issue #740). One row per transition
@@ -2058,6 +2135,9 @@ model BookingGuest {
   // sync on every write. Reads outside the creation + manage-guests editing
   // flows keep using the envelope.
   nights                      BookingGuestNight[]
+  // #3276: guest-scope adjustment rows (a fixed-amount promo is decided per
+  // guest, never per night). Night-scope rows hang off BookingGuestNight.
+  nightAdjustments            BookingGuestNightAdjustment[]
 
   @@index([bookingId])
   @@index([bookingId, stayStart, stayEnd])
@@ -2092,6 +2172,14 @@ enum BookingGuestNightPriceSource {
   UNKNOWN
 }
 
+// #3276: what kind of adjustment a BookingGuestNightAdjustment row records.
+// PROMO is the only writer today. A change-fee waiver is fee-level, never a
+// night reduction, and account credit has its one home in the MemberCredit
+// ledger — so neither is a kind here (owner decision, 8 Sep 2026).
+enum BookingGuestNightAdjustmentKind {
+  PROMO
+}
+
 // Per-night stay record for a booking guest (issue #713). One row per night
 // the guest is actually staying, with that night's price in integer cents.
 // Non-contiguous stays are represented as a sparse set of these rows; the
@@ -2113,9 +2201,49 @@ model BookingGuestNight {
   createdAt      DateTime @default(now())
 
   bookingGuest BookingGuest @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
+  adjustments  BookingGuestNightAdjustment[]
 
   @@unique([bookingGuestId, stayDate])
   @@index([stayDate])
+}
+
+// #3276 (stage 2 of programme #3272): what each promotion took off a night, or
+// off a guest where the engine decides at guest grain. One row per adjustment
+// per target; exactly one of bookingGuestNightId / bookingGuestId is set (the
+// CHECK lives in the migration, Prisma cannot express it). The amount, its
+// NULL-means-not-known rule, the reconciliation to the recorded promo totals and
+// how a reader derives whether a booking's build-up is known are all stated
+// once, in INV-MONEY-029 (`docs/invariants/money.md`). Amounts are written only
+// by `night-adjustment-write.ts`; a member merge moves or deletes rows and
+// never invents one. Rows cascade with their redemption and carry
+// bookingId so a booking's rows are one indexed delete-and-rewrite.
+model BookingGuestNightAdjustment {
+  id                  String                          @id @default(cuid())
+  kind                BookingGuestNightAdjustmentKind
+  amountCents         Int?
+  bookingGuestNightId String?
+  bookingGuestId      String?
+  bookingId           String
+  promoRedemptionId   String
+  promoCodeId         String
+  beneficiaryMemberId String
+  createdAt           DateTime                        @default(now())
+
+  bookingGuestNight BookingGuestNight? @relation(fields: [bookingGuestNightId], references: [id], onDelete: Cascade)
+  bookingGuest      BookingGuest?      @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
+  booking           Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  promoRedemption   PromoRedemption    @relation(fields: [promoRedemptionId], references: [id], onDelete: Cascade)
+  promoCode         PromoCode          @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+  beneficiaryMember Member             @relation(fields: [beneficiaryMemberId], references: [id], onDelete: Cascade)
+
+  // Explicit names: Prisma's defaults for these two run past PostgreSQL's
+  // 63-character identifier limit and would be truncated silently.
+  @@unique([bookingGuestNightId, kind, promoRedemptionId], map: "BookingGuestNightAdjustment_night_kind_redemption_key")
+  @@unique([bookingGuestId, kind, promoRedemptionId], map: "BookingGuestNightAdjustment_guest_kind_redemption_key")
+  @@index([bookingId])
+  @@index([promoRedemptionId])
+  @@index([promoCodeId])
+  @@index([beneficiaryMemberId])
 }
 
 // ---------------------------------------------------------------------------
@@ -2282,6 +2410,19 @@ model BookingRequest {
   // adults are copied into BookingGuest.memberId on hold/acceptance.
   linkedGuestMembers Json?
 
+  // Organisation this request is made on behalf of (programme #2912, stage 1 —
+  // #3366). SCHOOL variant in this release.
+  //
+  // OPTIONAL and expand-only, for the same reason as `Booking.organisationId`:
+  // the draining colour neither selects nor inserts it. INERT IN THIS RELEASE —
+  // no writer sets it and no reader names it.
+  //
+  // It does NOT replace `schoolName` above, which stays exactly as it is: that
+  // column is the free text the public form captured, and it remains the record
+  // of what the requester typed. From stage 2 the organisation is what the club
+  // resolves that text to; nothing in this stage resolves anything.
+  organisationId     String?
+
   // Lodge the stay is requested at (lodge-scoping contract, audited
   // 2026-07-03). Null rows predate the column and mean the club's default
   // lodge; readers resolve request.lodgeId ?? default. New requests always
@@ -2352,6 +2493,7 @@ model BookingRequest {
   version Int @default(0)
 
   lodge            Lodge?                @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  organisation     Organisation?         @relation(fields: [organisationId], references: [id], onDelete: Restrict)
   otherLodge       OtherLodge?           @relation(fields: [otherLodgeId], references: [id], onDelete: Restrict)
   requestedByMember Member?              @relation("BookingRequestRequester", fields: [requestedByMemberId], references: [id], onDelete: SetNull)
   convertedBooking Booking?              @relation("BookingRequestConvertedBooking", fields: [convertedBookingId], references: [id], onDelete: SetNull)
@@ -2372,6 +2514,7 @@ model BookingRequest {
   // #2263: "My requests" reads by member, and the open-request cap counts a
   // member's non-terminal rows — both are (member, status) lookups.
   @@index([requestedByMemberId, status])
+  @@index([organisationId])
 }
 
 // Versioned public booking request quotes. The raw response token is emailed
@@ -2932,6 +3075,13 @@ model PaymentTransaction {
   xeroInvoiceNumber     String?
   reference             String?
   amountCents           Int
+  /// #3371: how much of `amountCents` was ABSORBED from an ask this mint retired,
+  /// rather than derived from this edit's own figures. Minting an ADDITIONAL
+  /// PaymentIntent cancels every other live one on the payment, so the new ask
+  /// carries the unpaid balance of the one it supersedes (INV-PAY-047); once the
+  /// earlier row is cancelled, what it was owed for is not derivable from
+  /// anything, so it is recorded here. 0 on every row that carried nothing.
+  carriedAskCents       Int                    @default(0)
   refundedAmountCents   Int                    @default(0)
   status                PaymentStatus          @default(PENDING)
   paymentMethodId       String?
@@ -3103,6 +3253,7 @@ model PromoCode {
   redemptions    PromoRedemption[]
   lodges         PromoCodeLodge[]
   allocations    PromoRedemptionAllocation[]
+  nightAdjustments BookingGuestNightAdjustment[]
   assignments    PromoCodeAssignment[]
   workPartyEvent WorkPartyEvent?
 
@@ -3115,7 +3266,17 @@ model PromoRedemption {
   id                   String   @id @default(cuid())
   promoCodeId          String
   bookingId            String   @unique
-  memberId             String
+
+  // OPTIONAL SINCE #3369 (programme #2912, stage 4): the booking this redemption
+  // belongs to may be owned by an `Organisation` rather than a member, and a
+  // redemption row cannot name an owner the booking does not have. NULL means
+  // "the booking's owner is not a member" — read the owner through
+  // `bookingOwner()` on `bookingId`, which is the one home for the question.
+  // Per-member promo limits count rows where this is set, which is the same set
+  // of rows they counted before, because only an organisation-owned booking can
+  // leave it null and an organisation holds no per-member entitlement.
+  // FK stays Cascade, unchanged.
+  memberId             String?
   discountCents        Int
   priceAdjustmentCents Int      @default(0)
   freeNightsUsed       Int? // Number of guest-nights subsidised (full or partial) for FREE_NIGHTS promos
@@ -3125,9 +3286,10 @@ model PromoRedemption {
   // Relations
   promoCode    PromoCode                    @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
   booking      Booking                      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  member       Member                       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  member       Member?                      @relation(fields: [memberId], references: [id], onDelete: Cascade)
   allocations  PromoRedemptionAllocation[]
   guestTargets PromoRedemptionGuestTarget[]
+  nightAdjustments BookingGuestNightAdjustment[]
 
   @@index([promoCodeId])
   @@index([memberId])
@@ -3138,7 +3300,26 @@ model PromoRedemptionAllocation {
   promoRedemptionId    String
   promoCodeId          String
   bookingId            String
-  memberId             String
+
+  // OPTIONAL SINCE #3369, and THIS is the column the #2912 census singled out:
+  // it sits inside both `@@unique`s below, and in PostgreSQL two NULLs are
+  // DISTINCT, so a null here collapses each of those uniqueness scopes for
+  // exactly the rows that carry it. The scope is restored by two raw-SQL PARTIAL
+  // unique indexes covering the null case — one per `@@unique`, each dropping
+  // the member column and predicated on `"memberId" IS NULL` — added by
+  // 20260928020000 and registered in `prisma/partial-unique-indexes.tsv`:
+  //
+  //   PromoRedemptionAllocation_promoRedemption_noMember_unique
+  //   PromoRedemptionAllocation_promoCode_booking_noMember_unique
+  //
+  // Together with the two `@@unique`s (which still hold for every row that
+  // names a member) that is exactly `NULLS NOT DISTINCT`, expressed in a way
+  // Prisma keeps managing and member merge keeps resolving on. Deliberately NOT
+  // done by re-creating the two constraints as raw `NULLS NOT DISTINCT` indexes:
+  // that would take them out of the schema, and `MEMBER_MERGE_RELATION_SPECS`
+  // classifies this model `resolve` off those very DMMF uniques.
+  // FK stays Cascade, unchanged.
+  memberId             String?
   discountCents        Int
   priceAdjustmentCents Int      @default(0)
   freeNightsUsed       Int      @default(0)
@@ -3148,7 +3329,7 @@ model PromoRedemptionAllocation {
   promoRedemption PromoRedemption @relation(fields: [promoRedemptionId], references: [id], onDelete: Cascade)
   promoCode       PromoCode       @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
   booking         Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  member          Member          @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  member          Member?         @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@unique([promoRedemptionId, memberId])
   @@unique([promoCodeId, bookingId, memberId])
@@ -4040,6 +4221,20 @@ model XeroSyncOperation {
   // the column MUST remain immutable after enqueue. Null for REQUEUE, BACKFILL,
   // inbound, and any other row enqueued with no queueType.
   queueType              String?
+  // The creation-time Xero-invoice-email delivery instruction (#2929, MAD epic
+  // #2725), captured once at enqueue and, like `queueType` above, NEVER updated
+  // afterward. "SEND" or "WITHHELD_AT_CREATION"; parsed only through
+  // `readXeroInvoiceEmailInstruction` in src/lib/xero-invoice-email-instruction.ts,
+  // which reads anything else -- including this NULL -- as "no instruction was
+  // recorded", the honest state of every row enqueued by a path with no
+  // on-behalf email choice to express and of every row written before #2929.
+  // It is a COLUMN rather than a `requestPayload` key for the reason the
+  // `queueType` comment above states: the booking-invoice handler rewrites
+  // requestPayload wholesale before its first provider call, and the contact
+  // repair rewrites it again, so a payload key would vanish exactly on the
+  // retry that needs it -- and a retry that cannot tell a deliberate withhold
+  // from a lost flag emails the member the officer chose not to email.
+  invoiceEmailDelivery   String?
   responsePayload        Json?
   xeroObjectType         String?
   xeroObjectId           String?
@@ -4404,7 +4599,8 @@ model SetupProgress {
 
 // Per-month rolled-up AI help usage. Mirrors the XeroApiUsageDaily pattern:
 // atomic upsert-with-increments alongside each event write. All token counts are
-// integers; costCents is NZD integer cents (never floats — money stays in cents).
+// integers; costCents is integer cents of the club's configured currency (#3354;
+// never floats — money stays in cents).
 model AiAssistantUsageMonthly {
   id               String   @id @default(cuid())
   // Calendar month in Pacific/Auckland, "YYYY-MM".
@@ -4452,7 +4648,8 @@ model AiAssistantUsageEvent {
 }
 
 // Deployment-specific AI spend control singleton (id="default"). The monthly
-// budget is a hard cutoff in NZD integer cents (default NZ$10 = 1000c).
+// budget is a hard cutoff in integer cents of the club's configured currency
+// (#3354; default 1000c).
 // updatedByMemberId is a PLAIN STRING with NO foreign key (audit-only; the id
 // need not resolve to a live Member row).
 model AiAssistantSettings {
@@ -4460,6 +4657,25 @@ model AiAssistantSettings {
   monthlyBudgetCents Int      @default(1000)
   updatedAt          DateTime @updatedAt
   updatedByMemberId  String?
+}
+
+// Deployment-specific NZD -> club-currency conversion rate for AI spend
+// (#3354, INV-CONFIG-001), shared by BOTH AI modules (the page-help assistant
+// and AI Diagnostics) — one home, so the two caps can never be priced at two
+// rates. The provider price tables stay in NZD cents; this rate converts each
+// estimate into the club's configured currency (APP_CURRENCY) before it is
+// booked or compared with a cap. Stored as an INTEGER in parts per million
+// (1 NZD = clubUnitsPerNzdMicros / 1_000_000 club units; 920000 = 0.92), so no
+// float or Decimal is ever stored (INV-MONEY). Never read when APP_CURRENCY is
+// NZD (identity); absent for a non-NZD club it is treated as identity and the
+// admin page says the rate is not set. rateSetAt/rateSetByMemberId are shown on
+// the settings page because a stale rate drifts silently. rateSetByMemberId is
+// a PLAIN STRING with NO foreign key (audit-only), like updatedByMemberId above.
+model AiSpendCurrencySettings {
+  id                    String   @id @default("default")
+  clubUnitsPerNzdMicros Int
+  rateSetAt             DateTime
+  rateSetByMemberId     String?
 }
 
 // ---------------------------------------------------------------------------
@@ -4471,10 +4687,12 @@ model AiAssistantSettings {
 // credential (IntegrationCredential provider "anthropic-diagnostics" — NEVER the
 // page-help "anthropic" key), its own deployment-local budget, and its own
 // concurrency-safe metering. NONE of these tables is shared with the page-help
-// AiAssistant* tables. All money is NZD integer cents.
+// AiAssistant* tables. All money is integer cents of the club's configured
+// currency (#3354).
 
 // Deployment-local Diagnostics spend control singleton (id="default"). The
-// monthly budget is a HARD cutoff in NZD integer cents and defaults to 0 =
+// monthly budget is a HARD cutoff in integer cents of the club's configured
+// currency (#3354) and defaults to 0 =
 // hard-off: no paid diagnostics call can be reserved until an admin sets a
 // positive budget (fail-closed, deliberate opt-in for a paid product). This
 // singleton deliberately does NOT travel in config-transfer bundles (mirrors
@@ -4493,7 +4711,8 @@ model DiagnosticsSettings {
 // RESERVATIONS live in DiagnosticsBudgetReservation, so a burst of paid calls
 // cannot overspend the monthly budget (the budget gate sums live reservations +
 // settledCents under an advisory lock before it inserts a reservation). All
-// token counts are integers; settledCents is NZD integer cents (never floats).
+// token counts are integers; settledCents is integer cents of the club's
+// configured currency (#3354; never floats).
 model DiagnosticsUsageMonthly {
   id               String   @id @default(cuid())
   // Calendar month in Pacific/Auckland, "YYYY-MM".
@@ -4655,6 +4874,18 @@ model ClubModuleSettings {
   // to CLUB_MODULE_SETTINGS_COLUMN_SELECT, so the previously deployed client
   // never names it.
   commsPortal             Boolean  @default(false)
+  // Member lodge roster (#2942): a signed-in member may see who else is
+  // staying at a lodge they can already book, over the next 30 lodge nights,
+  // as names and nights only. Default OFF. By the taxonomy in
+  // docs/adopters/configure-or-fork.md a roster is a general-purpose module
+  // and would normally default ON; this one INVERTS to OFF because turning it
+  // on discloses one member's stay pattern to another, which is a choice a
+  // club has to make deliberately rather than inherit from an upgrade. Safe
+  // to add as a defaulted column because every read narrows to
+  // CLUB_MODULE_SETTINGS_COLUMN_SELECT, so a previously deployed client never
+  // names it. How much of a name is shown is a separate per-lodge dial,
+  // Lodge.rosterNameGranularity.
+  memberLodgeRoster       Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -4699,6 +4930,16 @@ model Lodge {
   // (FIRST_NAME_SURNAME_INITIAL). Enum defined with the lobby-display
   // models at the end of this file.
   displayNameGranularity DisplayNameGranularity?
+  // Per-lodge name detail for the MEMBER LODGE ROSTER (#2942). Deliberately a
+  // SECOND column rather than a reuse of displayNameGranularity above: that
+  // one governs a screen on the wall inside the hut, read by people already
+  // in the building, while this governs a web page any signed-in member can
+  // open. The two surfaces may be set differently, which a single column
+  // cannot express. Null = the roster default (FULL_NAME, owner decision D2
+  // as amended 14 Sep 2026) — NOT the same default as the wall, which is
+  // FIRST_NAME_SURNAME_INITIAL. Both reduce through the one shared
+  // implementation in src/lib/display-name-granularity.ts.
+  rosterNameGranularity  DisplayNameGranularity?
   // Committee notice board for the lobby display (fork issue #36): the one
   // deliberately AUTHORED display surface — free text, admin-edited,
   // rendered as text nodes only ({{config:<key>}} placeholders resolve
@@ -4820,6 +5061,50 @@ model ServerNzSettings {
   // pass applies its page cleanly.
   commsPoisonChangeId String?  @db.VarChar(64)
   commsPoisonCount    Int      @default(0)
+
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// ---------------------------------------------------------------------------
+// MiroTalk video meetings — the NON-SECRET half of the club's configuration
+// (#2940). The secrets (the JWT key and the host username/password that pair
+// with it) are NOT here: they live in the encrypted IntegrationCredential
+// store under provider "mirotalk", the same place every other provider's
+// credentials live.
+//
+// EVERY COLUMN IS NULLABLE AND THAT IS THE CONTRACT, not an oversight. Null
+// means "the club has not set this in the database", which is what makes the
+// documented environment fallback possible: `src/lib/mirotalk-config.ts`
+// resolves each value as database -> environment -> derived default, and an
+// install that has only ever set MIROTALK_URL / MIRO_* environment variables
+// keeps working with no row here at all. A boolean therefore has to be
+// `Boolean?` rather than `Boolean @default(...)`: "the admin chose false" and
+// "the admin has not chosen" are different states and a default would spell
+// them the same way, silently overriding the environment.
+//
+// Nothing imports the environment into this table. A value arrives here only
+// when an administrator types it and presses Save.
+// ---------------------------------------------------------------------------
+model MirotalkSettings {
+  id String @id @default("default")
+
+  // Base URL of the club's MiroTalk instance, e.g. https://meet.example.org.
+  // Validated on write (https, no credentials in the URL, no private/loopback
+  // host) because a signed join token travels to whatever this names.
+  baseUrl String? @db.VarChar(500)
+
+  // Whether the join link marks the clicker as MiroTalk's presenter/host.
+  presenterEnabled Boolean?
+
+  // MiroTalk-style access-token lifetime: "1h", "30m", "45s", "1d" or a bare
+  // number of seconds. Stored as the operator typed it and parsed by the one
+  // resolver, so the stored value keeps matching what MiroTalk's own JWT_EXP
+  // documentation asks for.
+  tokenLifetime String? @db.VarChar(16)
 
   updatedByMemberId String?
   createdAt         DateTime @default(now())
@@ -5486,6 +5771,23 @@ model MembershipCancellationXeroContactGroup {
 model BookingModification {
   id               String   @id @default(cuid())
   bookingId        String
+
+  // STAYS REQUIRED, and #3369 is where that was decided rather than assumed.
+  //
+  // The #2912 reader census named this one of four models a school booking
+  // reaches through a required member link, and it does reach it. But THIS
+  // COLUMN IS THE ACTOR, NOT THE OWNER: every one of the six writers passes a
+  // signed-in person — `actor.id`, `actingMemberId`, `session.user.id` — and
+  // none of them passes the booking's member. A school booking has never been
+  // modifiable by anybody but an officer, because the invented school member
+  // had `canLogin: false`, so there is no path on which this is null. Widening
+  // it would drop a NOT NULL that currently guarantees every modification names
+  // who made it, in exchange for nothing.
+  //
+  // FK-LESS BY DESIGN and stays so: member merge classifies it `snapshot`
+  // (`INV-LIFE-078`), so it keeps pointing at whoever it recorded, for ever.
+  // Who OWNED the modified booking is a different question and is read through
+  // `bookingOwner()` on `bookingId`.
   memberId         String
   modificationType String // DATE_CHANGE | GUEST_ADD | GUEST_REMOVE | EXTEND_STAY
   previousData     Json // snapshot of changed fields before
@@ -5901,6 +6203,14 @@ model EmailSuppression {
   @@index([lastEventAt])
 }
 
+/// Where an issue-report screenshot was captured FROM, as a privilege context
+/// rather than a page address (#2703). Derived server-side at creation from the
+/// reporter's own access roles; a client cannot influence it.
+enum IssueReportOrigin {
+  ADMIN
+  MEMBER
+}
+
 model IssueReport {
   id                     String    @id @default(cuid())
   memberId               String
@@ -5916,6 +6226,15 @@ model IssueReport {
   browserInfo            String?   @db.Text
   browserInfoExpiresAt   DateTime?
   browserInfoDeletedAt   DateTime?
+  // The privilege context the capture was taken in, decided by the SERVER from
+  // the reporter's own admin standing at creation and never from the posted
+  // `pageUrl` (INV-PRIV-021, #2703). ADMIN means the reporter could reach admin screens, so
+  // the pixels may hold another member's record and are Full-Admin-only; MEMBER
+  // means they could not, and the screenshot keeps the ordinary `support:view`
+  // model. NULL is a row written before this release: it is read as ADMIN, so
+  // the unknown case fails closed. There is deliberately no backfill - the
+  // 30-day retention sweep drains the null population on its own.
+  screenshotOrigin       IssueReportOrigin?
   resolvedAt             DateTime?
   resolvedById           String?
   resolutionNote         String?   @db.VarChar(1000)
@@ -6331,6 +6650,21 @@ model MemberPartnerLink {
   @@index([assignedByAdminId])
 }
 
+// Internal, trigger-maintained state for INV-LIFE-024. Each row represents one
+// canonical unordered member pair. It is deliberately FK-less: Member deletes
+// and their cascading relationship cleanup must be able to net both source
+// tables through one stable serialization row before the deferred zero-row
+// cleanup removes it. The named CHECK constraints and all trigger machinery
+// live in migration SQL because Prisma cannot express them.
+model MemberParentPartnerExclusion {
+  memberAId       String
+  memberBId       String
+  parentLinkCount Int    @default(0)
+  partnerLinkCount Int   @default(0)
+
+  @@id([memberAId, memberBId], map: "MemberParentPartnerExclusion_pkey")
+}
+
 // ---------------------------------------------------------------------------
 // Notification Preferences (N-08)
 // ---------------------------------------------------------------------------
@@ -6380,7 +6714,7 @@ model NotificationPreference {
 
 model XeroAccountMapping {
   id        String   @id @default(cuid())
-  key       String   @unique // hutFeesIncome | hutFeeRefunds | stripeBankAccount | stripeFees | subscriptionIncome | membershipCancellationCredit | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
+  key       String   @unique // hutFeesIncome | hutFeeRefunds | goodwillWriteOffs | stripeBankAccount | stripeFees | subscriptionIncome | membershipCancellationCredit | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
   code      String? // null = not configured, use application default (GL account code or amount string)
   itemCode  String? // Xero Item Code — when set, Xero auto-fills account from Item config
   createdAt DateTime @default(now())
@@ -6758,6 +7092,17 @@ enum RefundRequestStatus {
 model RefundRequest {
   id                   String              @id @default(cuid())
   bookingId            String
+
+  // STAYS REQUIRED, decided in #3369 for the same reason as
+  // `BookingModification.memberId`: this is the person who ASKED, not the party
+  // that owns the booking. Its one writer is the member-facing refund-request
+  // route, which passes `session.user.id`; on a school booking that comparison
+  // sends the caller down the admin branch, so the requester is an officer and
+  // is a person either way. Who owns the booking is read through
+  // `bookingOwner()` on `bookingId`.
+  //
+  // FK stays Restrict: a member who has asked for a refund cannot be deleted
+  // out from under the request.
   memberId             String
   reason               String
   requestedAmountCents Int?
@@ -7556,4 +7901,182 @@ model XeroSandboxContactContainment {
   /// the club's real books", and answering it with the most recent re-check
   /// would date the damage to whenever the copy last ran anything at all.
   rewrittenAt DateTime?
+}
+
+// ---------------------------------------------------------------------------
+// Organisations (programme #2912, stage 1 — issue #3366)
+//
+// A school is a thing, not a person. Today the club records one by INVENTING a
+// member: first name holds the school's name, surname is empty, and that
+// invented person owns the booking, holds the Xero contact and is the subject
+// of every audit row. Nothing in the database says "this is an organisation",
+// so nothing can hold a school's identity across years, across bookings or
+// across a change of teacher — and Xero, which expects a person in a person
+// contact, gets a surnameless one it cannot match.
+//
+// These two models are where that identity is going to live. THEY ARE INERT IN
+// THIS RELEASE, deliberately and completely: no writer creates a row, no reader
+// names a column, and the invented member stays exactly as it is. That is what
+// makes this stage safe to ship on its own — every existing path keeps working
+// because nothing it reads has changed, and no new value can be empty where
+// something already looks.
+//
+// What the later stages do with them, so a reader of this file is not left
+// guessing why an empty table exists:
+//
+//   stage 2 (#3367)  the Organisation becomes the invoiced and contacted party,
+//                    with its OWN Xero customer created as an organisation.
+//   stage 3 (#3368)  "who owns this booking" gets one home instead of 510
+//                    direct reads of `Booking.memberId`.
+//   stage 4 (#3369)  `Booking.memberId` becomes optional, under a windowed
+//                    migration with an owner-run classification census.
+//
+// Deliberately NOT done here, and each was considered:
+//
+//   * `name` carries no UNIQUE constraint. Nothing writes these tables yet, so
+//     a constraint would police an empty set, and the rule about when two
+//     spellings are the same school is the binding classification rule on
+//     #2912 — owned by the stage that actually mints rows, with the owner
+//     resolving every ambiguous identity by hand. Asserting a machine answer
+//     here would prejudge that.
+//   * `Member.role = SCHOOL` and `AccessRole.ORG` are UNTOUCHED. They keep
+//     their current meanings and their current writers; this stage adds no
+//     writer that produces either. Retiring the school-as-person path is
+//     stage 4, and the enum value can only be removed in a release AFTER the
+//     epic merges (blue/green: nothing has drained inside one deploy).
+// ---------------------------------------------------------------------------
+
+// A body the club deals with as an entity in its own right: in this release, a
+// school. Club-wide, never lodge-scoped — see
+// `docs/multi-lodge/lodge-scoping-contract.md`, updated before this model was
+// added — because a school is a counterparty of the club rather than one of its
+// buildings, and the stay's lodge already lives on the booking that points here.
+model Organisation {
+  id   String           @id @default(cuid())
+  kind OrganisationKind @default(SCHOOL)
+
+  // The organisation's own name, as the club records it. Free text: what counts
+  // as a school name varies by country and by club, so nothing here encodes a
+  // format (INV-CONFIG-001).
+  name String @db.VarChar(200)
+
+  // The organisation's OWN durable Xero customer. Unique, exactly like
+  // `Member.xeroContactId`, so one provider contact can never be claimed twice.
+  //
+  // THIS IS THE WHOLE POINT OF THE PROGRAMME'S XERO HALF: the link lives on the
+  // organisation, not on a person, so a person's personal Xero contact is never
+  // renamed or reused as the school. Stage 2 (#3367) is what creates it, as a
+  // Xero ORGANISATION contact; this release only reserves the column.
+  xeroContactId String? @unique
+
+  // How the club reaches the organisation itself, as distinct from any person
+  // at it. Nullable because a school may only ever be reachable through a
+  // named teacher, and inventing an address to fill a column is the class of
+  // thing this programme exists to stop.
+  email String? @db.VarChar(200)
+  phone String? @db.VarChar(30)
+
+  // Officer-facing free text. Never rendered on a public page.
+  notes String? @db.VarChar(2000)
+
+  // Soft retirement. A school that stops coming keeps its booking history and
+  // its Xero link; it simply stops being offered. Deletion is blocked by the
+  // Restrict FKs on the booking side while any booking still cites it.
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts        OrganisationContact[]
+  bookings        Booking[]
+  bookingRequests BookingRequest[]
+
+  @@index([kind, name])
+  @@index([archivedAt])
+}
+
+// A person speaking for an organisation — its teacher, or the person the club
+// corresponds with. The person is still a plain `Member`; this row says which
+// organisation they act for and in what capacity, which is a fact about the
+// relationship and not about the person.
+//
+// One row per (organisation, person): the capacity lives in `role` rather than
+// in a second row, so "is this person attached to that school" has exactly one
+// answer. Member merge therefore classifies this relation `resolve` (keep the
+// master's row, drop the loser's colliding one) in
+// `MEMBER_MERGE_RELATION_SPECS`, keyed on `organisationId`.
+model OrganisationContact {
+  id             String                  @id @default(cuid())
+  organisationId String
+  memberId       String
+  role           OrganisationContactRole @default(CONTACT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Cascade on both sides: this row is pure association. It carries no history
+  // of its own, so when either end goes the association is simply no longer
+  // true — unlike a booking or an audit row, which must survive its member.
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  member       Member       @relation("OrganisationContactMember", fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, memberId])
+  @@index([memberId])
+  @@index([organisationId, role])
+}
+
+enum SchoolMemberClassificationKind {
+  ORGANISATION
+  PERSON
+}
+
+// WHAT A HISTORICAL "SCHOOL" MEMBER ROW ACTUALLY IS — the record of a decision,
+// not a guess (#3369, stage 4 of programme #2912; `INV-OPS-002`/`INV-OPS-010`).
+//
+// Before this programme a school was a person-shaped `Member` row: the school's
+// name in `firstName`, a blank `lastName`, and the booking hung off it. Stage 4
+// moves those bookings onto the school's `Organisation`. Which of those rows is
+// a SCHOOL and which is a real TEACHER is a question about history, and the
+// binding rule on #2912 says it is answered from evidence or by a person —
+// never by a fallback and never by a name that looks school-ish.
+//
+// This table is where that answer lives, and the backfill migration
+// (20260928030000) READS it and refuses to write anything at all while any
+// candidate row is missing from it. That is what "fails closed" means here: the
+// classification is an input to the migration, not something the migration
+// works out while it runs.
+//
+// Two kinds of row, and the difference is `decidedBy`:
+//
+//   - The census tool writes the rows it can PROVE — a member whose
+//     `convertedMemberId` on a `SCHOOL` booking request carries the same school
+//     name it holds in `firstName`, or a member with a teacher's hut-leader
+//     assignment. `evidence` records which proof, verbatim.
+//   - An officer records the rest by hand, one at a time, naming themselves and
+//     saying why. There is no bulk classify and no default.
+//
+// KEPT AFTER THE MIGRATION, deliberately. It is the audit trail for an
+// irreversible re-parenting of money-adjacent rows: months later it is the only
+// thing that can answer "who decided this school was a school, and on what?".
+model SchoolMemberClassification {
+  memberId       String                          @id
+  classification SchoolMemberClassificationKind
+  // Free text, and REQUIRED: a classification with no stated reason is exactly
+  // the guess this programme exists to stop.
+  evidence       String                          @db.VarChar(500)
+  // `census` for a proved row, otherwise the officer who decided it.
+  decidedBy      String                          @db.VarChar(200)
+  decidedAt      DateTime                        @default(now())
+
+  // Cascade: the classification is a fact ABOUT this row, so when the row goes
+  // the classification is not about anything. Member merge classifies this
+  // relation `cascade` for the same reason — see `MEMBER_MERGE_RELATION_SPECS`,
+  // which carries the full reasoning. NOT `resolve`: `memberId` is this model's
+  // `@id`, so the row cannot be re-pointed at the master, and one that survived
+  // onto the master would assert the master is the row an officer decided
+  // about. (This comment said `resolve` while the code said `cascade`; the code
+  // was right.)
+  member Member @relation("SchoolMemberClassificationMember", fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([classification])
 }

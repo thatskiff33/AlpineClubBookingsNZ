@@ -17,23 +17,17 @@ export const ROLE_VALUES = [
 export type AppRole = (typeof ROLE_VALUES)[number];
 
 /**
- * Compile-time proof that ROLE_VALUES covers every value of the Prisma `Role`
- * enum, so a value added to the enum cannot silently fall through the
- * record-class rules below (#2383).
- *
  * `as const satisfies readonly Role[]` above checks only that each listed value
  * IS a Role — assignability, not coverage — so on its own it permits an
- * unlisted enum value. This alias closes the other direction: `Exclude` is
- * empty today, and becomes the missing literal the moment the enum grows,
- * which fails the `extends never` constraint and stops `npm run typecheck`.
- * `src/lib/__tests__/member-roles.test.ts` pins the same property at runtime
- * against the generated enum object, so a stale build cannot hide it either.
+ * unlisted enum value (#2383). The other direction is closed in
+ * `src/lib/__tests__/member-roles.test.ts`: its
+ * `expectTypeOf<Exclude<Role, AppRole>>().toBeNever()` is checked by
+ * `npm run typecheck` (the test project) and fails the moment the enum grows
+ * past this list, and the runtime assertion beside it pins the same property
+ * against the generated enum object so a stale build cannot hide it either.
+ * It used to be an unreferenced type alias here; `noUnusedLocals` (#2693) has
+ * no room for a declaration whose whole job is never to be read.
  */
-type AssertNever<T extends never> = T;
-// Declaration-site constraint check: deliberately never referenced, and not
-// exported — its whole job is to fail to compile.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-type RolesMissingFromRoleValues = AssertNever<Exclude<Role, AppRole>>;
 
 export const MEMBER_LEVEL_ROLE_VALUES = [
   "USER",

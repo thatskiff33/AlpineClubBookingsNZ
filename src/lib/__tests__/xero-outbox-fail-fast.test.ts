@@ -128,7 +128,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
   return {
     ...actual,
     failXeroSyncOperation: mocks.failXeroSyncOperation,

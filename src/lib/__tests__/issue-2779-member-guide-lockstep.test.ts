@@ -20,7 +20,6 @@ import { describe, expect, it } from "vitest";
 
 function read(relativePath: string): string {
   // Test helper: fixed repo paths under process.cwd(), never user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 

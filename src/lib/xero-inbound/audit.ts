@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { createAuditLog } from "@/lib/audit";
@@ -49,7 +50,9 @@ function getXeroAuditAction(xeroObjectType: string) {
 async function resolveXeroAuditSubjects(links: XeroAuditLocalLink[]) {
   const subjects = new Map<
     string,
-    { subjectMemberId: string; bookingId?: string | null }
+    // #3369, `INV-PRIV-019`: an audit SUBJECT stays a person, so a booking
+    // owned by an `Organisation` carries none and the entity identifies it.
+    { subjectMemberId: string | null; bookingId?: string | null }
   >();
   const idsByModel = new Map<string, Set<string>>();
 
@@ -72,7 +75,7 @@ async function resolveXeroAuditSubjects(links: XeroAuditLocalLink[]) {
     });
     for (const booking of bookings) {
       subjects.set(`Booking:${booking.id}`, {
-        subjectMemberId: booking.memberId,
+        subjectMemberId: bookingOwner(booking).memberId,
         bookingId: booking.id,
       });
     }
@@ -107,12 +110,12 @@ async function resolveXeroAuditSubjects(links: XeroAuditLocalLink[]) {
       },
     });
     for (const payment of payments) {
-      if (!payment.booking?.memberId) {
+      if (!payment.booking || !bookingOwner(payment.booking).memberId) {
         continue;
       }
 
       subjects.set(`Payment:${payment.id}`, {
-        subjectMemberId: payment.booking.memberId,
+        subjectMemberId: bookingOwner(payment.booking).memberId,
         bookingId: payment.bookingId,
       });
     }

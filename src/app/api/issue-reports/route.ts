@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { normalizeInternalAppUrl } from "@/lib/app-url";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { deriveIssueReportScreenshotOrigin } from "@/lib/issue-report-screenshot-access";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { logAudit } from "@/lib/audit";
@@ -34,15 +36,20 @@ function parseScreenshot(
     return null;
   }
 
-  const match = screenshotDataUrl.match(
-    /^data:(image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=]+)$/
-  );
-  if (!match) {
+  // Both captures are mandatory in the pattern, so "the pattern matched" and
+  // "both parts are here" are one condition — read out of the destructure and
+  // answered by the one 400 that already existed (#2801).
+  const [, matchedContentType, base64Payload] =
+    screenshotDataUrl.match(
+      /^data:(image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=]+)$/
+    ) ?? [];
+  if (matchedContentType === undefined || base64Payload === undefined) {
     throw new ApiError("Screenshot format is invalid", 400);
   }
 
-  const contentType = match[1] === "image/jpg" ? "image/jpeg" : match[1];
-  const content = Buffer.from(match[2], "base64");
+  const contentType =
+    matchedContentType === "image/jpg" ? "image/jpeg" : matchedContentType;
+  const content = Buffer.from(base64Payload, "base64");
   if (content.length > MAX_SCREENSHOT_BYTES) {
     throw new ApiError("Screenshot is too large to submit", 400);
   }
@@ -148,6 +155,10 @@ export async function POST(request: NextRequest) {
         firstName: true,
         lastName: true,
         email: true,
+        // Joined role definitions, so the origin classification below resolves
+        // definition-backed (custom or club-edited) access roles rather than
+        // only the seeded enum ones (#2703).
+        accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
       },
     });
 
@@ -156,6 +167,15 @@ export async function POST(request: NextRequest) {
     }
 
     const screenshot = parseScreenshot(parsed.data.screenshotDataUrl);
+    // #2703. Decided HERE, from the reporter's own server-side admin standing,
+    // and written to the row — never from `parsed.data.pageUrl`, which the
+    // widget posts and any reporter can forge. Set on every report, with or
+    // without a screenshot, so a stored NULL means exactly one thing: a row
+    // written before this release, which every reader treats as ADMIN.
+    const screenshotOrigin = deriveIssueReportScreenshotOrigin({
+      member,
+      sessionUser: session.user,
+    });
     const pageUrlContext = normalizeIssueReportPageUrl(
       parsed.data.pageUrl,
       request
@@ -180,6 +200,7 @@ export async function POST(request: NextRequest) {
         pageUrl,
         pageTitle,
         description,
+        screenshotOrigin,
         screenshotDataUrl: screenshot?.dataUrl ?? null,
         screenshotCapturedAt: screenshot ? now : null,
         screenshotExpiresAt: screenshot ? sensitiveDataExpiresAt : null,
@@ -201,17 +222,17 @@ export async function POST(request: NextRequest) {
       //
       // `privacy` is member-visible, and this row is written with
       // `memberId: member.id`, so the REPORTER sees it on their own timeline.
-      // The usual reassurance — "`details` is a JSON object, so the member
-      // projection returns `null`" — is true by SHAPE but not by SIZE here.
-      // `sanitizeAuditDetails` clips anything over 1000 characters to
-      // `<first 1000>...[TRUNCATED]`; a clipped object no longer parses, so
-      // `parseJsonObject` returns null and `serializeAuditTimelineLog` hands
-      // the clipped string back as `details`/`description`. This payload CAN
-      // exceed 1000: `pageUrl` is capped at 2048 and `pageTitle` at 300 by the
-      // schema above, and `normalizeInternalAppUrl` keeps the query string. The
-      // exposure is nil — it is the reporter's own page URL and title on their
-      // own report — but the shape argument alone would be wrong here, so both
-      // halves are stated, in `docs/guides/audit-log.md` as well.
+      // What they read from it is now an explicit DECLARATION and nothing else
+      // (#2695): this event declares none, so the member's timeline and their
+      // data export both show them no free text from this row. The reasoning
+      // that used to sit here — "`details` is a JSON object, so the member
+      // projection returns null", caveated because a payload clipped past 1000
+      // characters stopped parsing and was handed back whole — was the SHAPE
+      // test, and it is gone. What the size still decides is what an AUTHORISED
+      // officer sees, and #2704 made that whole fields rather than a broken
+      // fragment; this payload can exceed 1000, because `pageUrl` is capped at
+      // 2048 and `pageTitle` at 300 by the schema above and
+      // `normalizeInternalAppUrl` keeps the query string.
       category: "privacy",
       memberId: member.id,
       targetId: issueReport.id,

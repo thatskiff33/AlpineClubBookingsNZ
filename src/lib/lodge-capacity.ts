@@ -1,12 +1,17 @@
 import { clubConfig } from "@/config/club";
 import {
-  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   DEFAULT_MODULE_SETTINGS,
   MODULE_KEYS,
   getEffectiveModuleFlags,
+  readClubModuleSettingsRecord,
   type ModuleSettingsValues,
 } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
+import {
+  resolveEffectiveLodgeCapacity,
+  resolvePartnerSharedHeadroom,
+  type LodgeCapacitySource,
+} from "@/lib/lodge-effective-capacity";
 
 // Club config bed total. Since #1982 the DB is the SOLE runtime source of a
 // lodge's booking capacity (the per-lodge `LodgeSettings.capacity`, backfilled
@@ -74,11 +79,10 @@ interface LodgeCapacityDb {
 
 export interface LodgeCapacityStatus {
   capacity: number;
-  source:
-    | "configured_beds"
-    | "capped_beds"
-    | "capacity_override"
-    | "unconfigured_lodge";
+  // The arithmetic behind this pair lives in `lodge-effective-capacity.ts`,
+  // which the admin configuration screen reads too so its explanation of the
+  // effective limit cannot drift from what this resolver decides (#2724).
+  source: LodgeCapacitySource;
   bedAllocationEnabled: boolean;
   activeBedCount: number;
   fallbackCapacity: number;
@@ -105,9 +109,8 @@ async function loadCapacityModuleState(
   }
 
   try {
-    const record = await db.clubModuleSettings.findUnique({
-      where: { id: "default" },
-      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+    const record = await readClubModuleSettingsRecord({
+      clubModuleSettings: db.clubModuleSettings,
     });
     return getEffectiveModuleFlags(normalizeModuleSettings(record));
   } catch {
@@ -154,19 +157,22 @@ export async function getLodgeCapacityStatus(
   const { loadLodgeCapacityOverride } = await import("@/lib/lodge-settings");
   const override = await loadLodgeCapacityOverride(client, lodgeId);
 
+  // Every branch below resolves through the one effective-capacity rule in
+  // `lodge-effective-capacity.ts` (#2724, INV-SSOT-001) — including the
+  // no-beds fallback, which is simply that rule with an empty bed inventory.
   // No club-config fallback (#1982): an unconfigured lodge — default or
   // additional — resolves to 0 so it can never be overbooked before its
   // capacity is configured or self-healed into the DB.
-  const fallbackCapacity = override ?? 0;
-  const fallbackSource =
-    override !== null && override !== undefined
-      ? ("capacity_override" as const)
-      : ("unconfigured_lodge" as const);
+  const fallback = resolveEffectiveLodgeCapacity({
+    configuredCapacity: override,
+    activeBedCount: 0,
+  });
+  const fallbackCapacity = fallback.capacity;
 
   if (!modules.bedAllocation) {
     return {
-      capacity: fallbackCapacity,
-      source: fallbackSource,
+      capacity: fallback.capacity,
+      source: fallback.source,
       bedAllocationEnabled: false,
       activeBedCount: 0,
       fallbackCapacity,
@@ -177,28 +183,19 @@ export async function getLodgeCapacityStatus(
     where: { active: true, room: { lodgeId } },
   });
 
-  if (activeBedCount <= 0) {
-    // Module on but no beds configured yet: fall back to the per-lodge
-    // capacity override, else 0 (unconfigured), unchanged.
-    return {
-      capacity: fallbackCapacity,
-      source: fallbackSource,
-      bedAllocationEnabled: true,
-      activeBedCount,
-      fallbackCapacity,
-    };
-  }
-
   // Beds are the placement inventory; an explicit per-lodge capacity is the
   // maximum sleeping capacity ceiling. Effective capacity is the lower of the
-  // two (#1653). Only an explicit override caps — an unconfigured (0) fallback
-  // does not, so `override` (not `fallbackCapacity`) is the ceiling here.
-  const capped =
-    override !== null && override !== undefined && override < activeBedCount;
+  // two (#1653) — and with no beds yet it is the fallback above, unchanged.
+  // Only an explicit override caps; an unconfigured (0) fallback never does,
+  // which is why the override rather than `fallbackCapacity` is passed in.
+  const effective = resolveEffectiveLodgeCapacity({
+    configuredCapacity: override,
+    activeBedCount,
+  });
 
   return {
-    capacity: capped ? override : activeBedCount,
-    source: capped ? "capped_beds" : "configured_beds",
+    capacity: effective.capacity,
+    source: effective.source,
     bedAllocationEnabled: true,
     activeBedCount,
     fallbackCapacity,
@@ -240,10 +237,10 @@ export async function getLodgePartnerSharedCapacityStatus(
   const client = db ?? (await resolveLodgeCapacityDb());
   const base = await getLodgeCapacityStatus(lodgeId, client);
 
-  // Shared slots exist only where beds are the bookable inventory: with the
-  // module off (or no active beds) there are no DOUBLE rows admitting a second
-  // occupant, and with a capacity below the bed count the explicit people
-  // ceiling already binds.
+  // Query short-circuit, not a second copy of the rule: on each of these the
+  // shared resolver below would return 0 anyway (no active beds cannot resolve
+  // to `configured_beds`, and neither can a capacity under the bed count), so
+  // there is nothing to learn from counting doubles or re-reading the override.
   if (
     !base.bedAllocationEnabled ||
     base.activeBedCount <= 0 ||
@@ -258,18 +255,15 @@ export async function getLodgePartnerSharedCapacityStatus(
 
   const { loadLodgeCapacityOverride } = await import("@/lib/lodge-settings");
   const override = await loadLodgeCapacityOverride(client, lodgeId);
-  const peopleCeiling =
-    override !== null && override !== undefined
-      ? override
-      : Number.POSITIVE_INFINITY;
 
-  const partnerSharedHeadroom = Math.max(
-    0,
-    Math.min(
-      activeDoubleBedCount,
-      peopleCeiling - base.activeBedCount,
-    ),
-  );
+  // The capacity-versus-beds relationship has one home (#2724, INV-SSOT-001).
+  // It used to be re-derived by hand here, which meant the admin screen could
+  // not preview the headroom without a third copy of it.
+  const partnerSharedHeadroom = resolvePartnerSharedHeadroom({
+    configuredCapacity: override,
+    activeBedCount: base.activeBedCount,
+    activeDoubleBedCount,
+  });
 
   return { ...base, activeDoubleBedCount, partnerSharedHeadroom };
 }

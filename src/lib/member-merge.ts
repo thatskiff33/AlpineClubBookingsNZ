@@ -1,5 +1,11 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { AccessRole, type Member, type Prisma } from "@prisma/client";
+import {
+  AccessRole,
+  Role,
+  SchoolMemberClassificationKind,
+  type Member,
+  type Prisma,
+} from "@prisma/client";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
 import {
   actorIsFullAdmin,
@@ -40,6 +46,14 @@ import {
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import { canonicalPartnerPair } from "@/lib/member-partner-link-shared";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  acquireMemberParentPartnerPairLocks,
+  isMemberParentPartnerExclusionViolation,
+  loadMemberMergeExclusivityTopology,
+} from "@/lib/member-parent-partner-exclusivity";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
 import {
@@ -294,10 +308,6 @@ export type PartnerLinkPlan = {
   warnings: string[];
 };
 
-function canonicalPair(a: string, b: string): [string, string] {
-  return a < b ? [a, b] : [b, a];
-}
-
 /**
  * Re-point the loser's partner links onto the master, honouring the
  * `memberAId < memberBId` CHECK, deleting self-pairs and duplicates, and
@@ -357,8 +367,8 @@ export function planPartnerLinkMerge(
       continue;
     }
 
-    const [a, b] = canonicalPair(masterId, other);
-    updates.push({ id: link.id, memberAId: a, memberBId: b });
+    const pair = canonicalPartnerPair(masterId, other);
+    updates.push({ id: link.id, ...pair });
     masterPartners.add(other);
     if (link.status === "CONFIRMED") masterHasConfirmed = true;
   }
@@ -634,7 +644,102 @@ export async function evaluateMemberMergeGuards(params: {
     });
   }
 
+  // A SCHOOL IS NOT A PERSON, AND A MERGE SAYS TWO ROWS ARE ONE PERSON
+  // (#3369, stage 4 of programme #2912; `INV-LIFE`).
+  //
+  // Every school the club ever took a booking from used to be a Member row with
+  // the school's name in `firstName` and a blank surname. Stage 4 moved those
+  // bookings onto the school's `Organisation` and left the row behind, holding
+  // nothing but its history. Folding one of those rows into a person — in
+  // either direction — would put a school's past under a person's name and
+  // re-create the school-as-person model this whole programme exists to end.
+  //
+  // TWO TESTS, AND THE SECOND IS WHY THIS COVERS THE CLASS RATHER THAN A
+  // POPULATION.
+  //
+  // The first is the RECORDED classification: `SchoolMemberClassification` is
+  // what an officer or the census decided, with its evidence, so the refusal can
+  // say which decision it is acting on. A row classified PERSON is a real
+  // teacher and merges exactly as anyone else does — the common case, and
+  // deliberately not blocked.
+  //
+  // On its own that would have covered only the rows the cutover census reached.
+  // The census asks about members that OWN A BOOKING, and the school approval's
+  // hold-recovery path still mints a school-shaped contact — the school's name,
+  // a blank surname, `role: SCHOOL`, no login — AFTER the census has run. Such a
+  // row is never classified, so a guard reading the table alone would let a
+  // school minted last week merge into a person with no blocker at all.
+  //
+  // So the second test is the SHAPE, and using a shape here is sound where using
+  // one to CLASSIFY would not be. The classification module refuses to call a
+  // blank surname plus no login a proof — quite right, because it is deciding
+  // what a row IS. This is deciding whether to REFUSE, and the shape is exactly
+  // the "cannot tell" the census hands to a person: an unclassified row that
+  // looks like a school is a question, and a merge is not the place to answer
+  // one. An officer who knows it is a teacher records that with
+  // `npm run db:school-classification-census -- --classify <id> --as PERSON`,
+  // which takes any member id, and the merge then proceeds.
+  //
+  // If a school really has been recorded twice, the two `Organisation` records
+  // are what an officer merges — a decision about the school, taken where the
+  // school lives.
+  const classified = await db.schoolMemberClassification.findMany({
+    where: { memberId: { in: [masterId, loserId] } },
+    select: { memberId: true, classification: true },
+  });
+  const classifiedById = new Map(
+    classified.map((row) => [row.memberId, row.classification]),
+  );
+  const schoolShaped = await db.member.findMany({
+    where: {
+      id: { in: [masterId, loserId] },
+      role: Role.SCHOOL,
+      lastName: "",
+      canLogin: false,
+    },
+    select: { id: true },
+  });
+  const schoolShapedIds = new Set(schoolShaped.map((row) => row.id));
+
+  const organisationSides = [masterId, loserId].filter((id) => {
+    const recorded = classifiedById.get(id);
+    if (recorded === SchoolMemberClassificationKind.ORGANISATION) return true;
+    // A recorded PERSON outranks the shape: that is somebody's decision, made
+    // with evidence this function cannot see.
+    if (recorded === SchoolMemberClassificationKind.PERSON) return false;
+    return schoolShapedIds.has(id);
+  });
+  if (organisationSides.length > 0) {
+    const sides = organisationSides.map((id) =>
+      id === masterId ? "master" : "duplicate",
+    );
+    const undecided = organisationSides.some((id) => !classifiedById.has(id));
+    const howToProceed = undecided
+      ? " If it is really a person, record that decision first: npm run db:school-classification-census -- --classify <memberId> --as PERSON --by \"<you>\" --because \"<what you checked>\"."
+      : "";
+    blockers.push({
+      code: "organisation_row",
+      label:
+        sides.length === 2
+          ? `Both records are schools, not people. Merge the two organisation records instead.${howToProceed}`
+          : `The ${sides[0]} record is a school, not a person, and cannot be merged with one. If two records exist for the same school, merge the organisations instead.${howToProceed}`,
+      count: organisationSides.length,
+    });
+  }
+
   blockers.push(...(await evaluateFamilyLinkGraphBlockers(db, masterId, loserId)));
+  const exclusivityTopology = await loadPlannedMemberMergeExclusivityTopology(
+    db,
+    masterId,
+    loserId,
+  );
+  if (exclusivityTopology.conflictingPairCount > 0) {
+    blockers.push({
+      code: "parent_partner_overlap",
+      label: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      count: exclusivityTopology.conflictingPairCount,
+    });
+  }
   blockers.push(
     ...(await evaluateContactCreateRecoveryBlockers(db, masterId, loserId)),
   );
@@ -769,15 +874,38 @@ async function countBlockedSubscriptionSeasons(
 // Preview builder
 // ---------------------------------------------------------------------------
 
+/**
+ * The ONE place a Prisma delegate is resolved from a merge spec's `delegate`
+ * NAME (#2800, `INV-SSOT`). Every step of the merge drives the client
+ * dynamically off `MEMBER_MERGE_RELATION_SPECS`, so a name that does not
+ * resolve means a spec has drifted from the schema — and a merge that quietly
+ * skipped that model would leave the duplicate's rows pointing at a member the
+ * merge is about to archive. There is no safe way to continue past it, so it
+ * refuses (INV-LIFE).
+ */
+function mergeDelegate<Delegate>(db: unknown, delegate: string): Delegate {
+  const resolved = (db as Record<string, Delegate | undefined>)[delegate];
+  if (resolved === undefined) {
+    throw new Error(
+      `Member merge cannot resolve the Prisma delegate "${delegate}"; the merge spec no longer matches the schema.`,
+    );
+  }
+  return resolved;
+}
+
+type CountingDelegate = { count: (args: unknown) => Promise<number> };
+type FindManyDelegate<Row> = { findMany: (args: unknown) => Promise<Row[]> };
+type UpdateManyDelegate = {
+  updateMany: (args: unknown) => Promise<{ count: number }>;
+};
+
 async function countLoserRows(
   db: MergeDbClient,
   delegate: string,
   column: string,
   loserId: string,
 ): Promise<number> {
-  const model = (db as unknown as Record<string, { count: (args: unknown) => Promise<number> }>)[
-    delegate
-  ];
+  const model = mergeDelegate<CountingDelegate>(db, delegate);
   return model.count({ where: { [column]: loserId } });
 }
 
@@ -837,13 +965,16 @@ async function countFkLessMoveRows(
   db: MergeDbClient,
   loserId: string,
 ): Promise<{ model: string; count: number }[]> {
-  const counts = await Promise.all(
-    MEMBER_MERGE_FK_LESS_MOVE_COLUMNS.map((c) =>
-      countLoserRows(db, c.delegate, c.column, loserId),
-    ),
+  // Each column carries its own count instead of a second array read back by
+  // position, so the two can never fall out of step (#2800).
+  const counted = await Promise.all(
+    MEMBER_MERGE_FK_LESS_MOVE_COLUMNS.map(async (c) => ({
+      key: c.key,
+      count: await countLoserRows(db, c.delegate, c.column, loserId),
+    })),
   );
-  return MEMBER_MERGE_FK_LESS_MOVE_COLUMNS.flatMap((c, i) =>
-    counts[i] > 0 ? [{ model: c.key, count: counts[i] }] : [],
+  return counted.flatMap(({ key, count }) =>
+    count > 0 ? [{ model: key, count }] : [],
   );
 }
 
@@ -898,19 +1029,22 @@ export async function buildMemberMergePreview(params: {
   // shared with the execute-time token re-derivation, so the digest agrees.
   const moveSpecs = MEMBER_MERGE_RELATION_SPECS.filter((s) => s.bucket === "move");
   const moveCounts = await Promise.all(
-    moveSpecs.map((s) => {
-      if (!s.selfRelation) return countLoserRows(db, s.delegate, s.column, loserId);
-      const delegate = (db as unknown as Record<string, {
-        count: (args: unknown) => Promise<number>;
-      }>)[s.delegate];
-      return delegate.count({
-        where: selfRelationMoveWhere(s.column, masterId, loserId),
-      });
+    moveSpecs.map(async (s) => {
+      if (!s.selfRelation) {
+        return { key: s.key, count: await countLoserRows(db, s.delegate, s.column, loserId) };
+      }
+      const delegate = mergeDelegate<CountingDelegate>(db, s.delegate);
+      return {
+        key: s.key,
+        count: await delegate.count({
+          where: selfRelationMoveWhere(s.column, masterId, loserId),
+        }),
+      };
     }),
   );
-  moveSpecs.forEach((s, i) => {
-    if (moveCounts[i] > 0) relationMoves.push({ model: s.key, count: moveCounts[i] });
-  });
+  for (const { key, count } of moveCounts) {
+    if (count > 0) relationMoves.push({ model: key, count });
+  }
   relationMoves.push(...(await countFkLessMoveRows(db, loserId)));
 
   // The loser's own OUTBOUND self-relation columns (parent, inheritEmailFrom,
@@ -1084,18 +1218,52 @@ async function loserAccessRolesGainedByMaster(
  * Generic keep-master resolver table, shared by the execute-time resolvers and
  * the preview drop-note summariser so the two can never disagree on keys.
  */
+/**
+ * Rows in another table that belong to a keyed row and must be dropped WITH it
+ * when the keep-master resolver drops the loser's colliding row. `matchColumn`
+ * is the column both tables share; `memberColumn` is the dependent table's own
+ * member id, still the loser's at resolve time because the generic moves run
+ * after every resolver (`resolveAllCollisions` precedes `applyMoves`).
+ */
+type DependentRows = {
+  delegate: string;
+  memberColumn: string;
+  matchColumn: string;
+};
+
 const GENERIC_KEYED_RESOLVERS: readonly {
   spec: string;
   delegate: string;
   memberColumn: string;
   keys: string[][];
+  dependents?: readonly DependentRows[];
 }[] = [
   { spec: "MemberAccessRole.member", delegate: "memberAccessRole", memberColumn: "memberId", keys: [["role"], ["roleDefinitionId"]] },
   { spec: "MemberSubscription.member", delegate: "memberSubscription", memberColumn: "memberId", keys: [["seasonYear"]] },
   { spec: "SeasonalMembershipAssignment.member", delegate: "seasonalMembershipAssignment", memberColumn: "memberId", keys: [["seasonYear"]] },
   { spec: "MembershipCancellationRequestParticipant.member", delegate: "membershipCancellationRequestParticipant", memberColumn: "memberId", keys: [["requestId"]] },
   { spec: "GroupBookingJoin.joinerMember", delegate: "groupBookingJoin", memberColumn: "joinerMemberId", keys: [["groupBookingId"]] },
-  { spec: "PromoRedemptionAllocation.member", delegate: "promoRedemptionAllocation", memberColumn: "memberId", keys: [["promoRedemptionId"], ["promoCodeId", "bookingId"]] },
+  {
+    spec: "PromoRedemptionAllocation.member",
+    delegate: "promoRedemptionAllocation",
+    memberColumn: "memberId",
+    keys: [["promoRedemptionId"], ["promoCodeId", "bookingId"]],
+    // #3276 (INV-MONEY-029): a loser's per-night/per-guest adjustment rows
+    // decompose that loser's allocation on the same redemption. When the
+    // allocation is dropped because the master already holds one, its rows
+    // go with it in this same step, so every surviving allocation still
+    // matches its rows PER BENEFICIARY; the redemption total still carries
+    // the dropped share, so that booking derives as not known until the next
+    // engine run rewrites it. Otherwise the generic move re-points the rows to
+    // the master alongside the allocation.
+    dependents: [
+      {
+        delegate: "bookingGuestNightAdjustment",
+        memberColumn: "beneficiaryMemberId",
+        matchColumn: "promoRedemptionId",
+      },
+    ],
+  },
   { spec: "PromoCodeAssignment.member", delegate: "promoCodeAssignment", memberColumn: "memberId", keys: [["promoCodeId"]] },
   { spec: "MemberLodgeAccess.member", delegate: "memberLodgeAccess", memberColumn: "memberId", keys: [["lodgeId", "kind"]] },
   { spec: "CommitteeAssignment.member", delegate: "committeeAssignment", memberColumn: "memberId", keys: [["committeeRoleId"]] },
@@ -1103,6 +1271,9 @@ const GENERIC_KEYED_RESOLVERS: readonly {
   { spec: "NotificationPreference.member", delegate: "notificationPreference", memberColumn: "memberId", keys: [[]] },
   { spec: "NoticeReadReceipt.member", delegate: "noticeReadReceipt", memberColumn: "memberId", keys: [["noticeId"]] },
   { spec: "ClubPostReport.reporter", delegate: "clubPostReport", memberColumn: "reporterMemberId", keys: [["postId"]] },
+  // #3366: one association row per (organisation, person), so two people merged
+  // into one keep the master's attachment to a school they were both listed on.
+  { spec: "OrganisationContact.member", delegate: "organisationContact", memberColumn: "memberId", keys: [["organisationId"]] },
 ];
 
 /**
@@ -1112,7 +1283,7 @@ const GENERIC_KEYED_RESOLVERS: readonly {
  */
 const MONEY_ROSTER_DROP_NOTES: Record<string, string> = {
   "PromoRedemptionAllocation.member":
-    "duplicate promo redemption allocation row(s) will be dropped (the master already holds the same allocation) — the dropped rows' promo money history is removed.",
+    "duplicate promo redemption allocation row(s) will be dropped (the master already holds the same allocation) — the dropped rows' promo money history is removed, together with the per-night adjustment rows that decomposed them (INV-MONEY-029); the master's own allocation still matches its rows, and the booking's build-up reads as not known until its promotion is next recomputed.",
   "GroupBookingJoin.joinerMember":
     "duplicate group-booking join row(s) will be dropped (both members joined the same group booking) — the dropped rows leave that group's roster.",
 };
@@ -1134,6 +1305,52 @@ async function loadPartnerLinkPlan(
   return planPartnerLinkMerge(loserLinks, masterLinks, masterId, loserId);
 }
 
+/**
+ * Read all incident links once, then project the exact link set that the
+ * existing PartnerLinkPlan will leave behind. The unprojected set still feeds
+ * the participant locks; only the projected set feeds the overlap check.
+ */
+async function loadPlannedMemberMergeExclusivityTopology(
+  db: MergeDbClient,
+  masterId: string,
+  loserId: string,
+) {
+  const currentLinks = await db.memberPartnerLink.findMany({
+    where: {
+      OR: [
+        { memberAId: { in: [masterId, loserId] } },
+        { memberBId: { in: [masterId, loserId] } },
+      ],
+    },
+    select: { id: true, memberAId: true, memberBId: true, status: true },
+  });
+  const plan = planPartnerLinkMerge(
+    currentLinks.filter(
+      (link) => link.memberAId === loserId || link.memberBId === loserId,
+    ),
+    currentLinks.filter(
+      (link) => link.memberAId === masterId || link.memberBId === masterId,
+    ),
+    masterId,
+    loserId,
+  );
+  const deletedIds = new Set(plan.deleteIds);
+  const updatesById = new Map(
+    plan.updates.map((update) => [update.id, update]),
+  );
+  const projectedLinks = currentLinks
+    .filter((link) => !deletedIds.has(link.id))
+    .map((link) => updatesById.get(link.id) ?? link);
+
+  return loadMemberMergeExclusivityTopology(
+    db,
+    masterId,
+    loserId,
+    currentLinks,
+    projectedLinks,
+  );
+}
+
 async function summariseResolveCollisions(
   db: MergeDbClient,
   masterId: string,
@@ -1146,23 +1363,31 @@ async function summariseResolveCollisions(
     // Both partner-link sides are summarised together via the planner below.
     (s) => s.bucket === "resolve" && s.model !== "MemberPartnerLink",
   );
-  const counts = await Promise.all(
-    specs.map((s) => countLoserRows(db, s.delegate, s.column, loserId)),
+  const counted = await Promise.all(
+    specs.map(async (s) => ({
+      spec: s,
+      count: await countLoserRows(db, s.delegate, s.column, loserId),
+    })),
   );
-  specs.forEach((s, i) => {
-    if (counts[i] > 0) {
-      collisions.push({ model: s.key, resolution: s.note ?? "dedupe on unique key", count: counts[i] });
+  for (const { spec, count } of counted) {
+    if (count > 0) {
+      collisions.push({
+        model: spec.key,
+        resolution: spec.note ?? "dedupe on unique key",
+        count,
+      });
     }
-  });
+  }
 
   // Specific drop notes for money/roster rows (actual collisions, not just
   // loser-row counts).
   for (const g of GENERIC_KEYED_RESOLVERS) {
     const note = MONEY_ROSTER_DROP_NOTES[g.spec];
     if (!note) continue;
-    const delegate = (db as unknown as Record<string, {
-      findMany: (a: unknown) => Promise<Record<string, unknown>[]>;
-    }>)[g.delegate];
+    const delegate = mergeDelegate<FindManyDelegate<Record<string, unknown>>>(
+      db,
+      g.delegate,
+    );
     const [loserRows, masterRows] = await Promise.all([
       delegate.findMany({ where: { [g.memberColumn]: loserId } }),
       delegate.findMany({ where: { [g.memberColumn]: masterId } }),
@@ -1450,9 +1675,14 @@ export async function executeMemberMerge(params: {
     // Dual advisory lock in sorted id order (deadlock-free) on the shared
     // member-lifecycle key space, so a merge serialises with any concurrent
     // delete/archive/merge touching either member.
-    const [lockA, lockB] = [masterId, loserId].sort();
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockA}`}))`;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockB}`}))`;
+    await acquireMemberLifecycleLocks(tx, [masterId, loserId]);
+
+    const exclusivityTopologyBeforeLocks =
+          await loadPlannedMemberMergeExclusivityTopology(
+            tx,
+            masterId,
+            loserId,
+          );
 
     // #2595 — merge is a partner-link WRITER (step 2 re-points the duplicate's
     // links onto the master) and, since this change, a partner-link READER whose
@@ -1479,7 +1709,48 @@ export async function executeMemberMerge(params: {
     // graph — only a second holder of one that already exists. It cannot cycle:
     // the partner-link service takes this key and no other tier, so a holder of
     // it never waits on anything merge holds. Sorted inside the helper.
-    await acquireMemberPartnerLinkLocks(tx, [masterId, loserId]);
+    await acquireMemberPartnerLinkLocks(
+      tx,
+      exclusivityTopologyBeforeLocks.participantIds,
+    );
+    await acquireMemberParentPartnerPairLocks(
+      tx,
+      exclusivityTopologyBeforeLocks.prospectivePairs,
+    );
+    const exclusivityTopologyUnderLocks =
+      await loadPlannedMemberMergeExclusivityTopology(
+        tx,
+        masterId,
+        loserId,
+      );
+    if (
+      exclusivityTopologyUnderLocks.participantIds.join("\u0000") !==
+        exclusivityTopologyBeforeLocks.participantIds.join("\u0000") ||
+      exclusivityTopologyUnderLocks.prospectivePairs
+        .map((pair) => pair.join("\u0000"))
+        .join("\u0001") !==
+        exclusivityTopologyBeforeLocks.prospectivePairs
+          .map((pair) => pair.join("\u0000"))
+          .join("\u0001")
+    ) {
+      throw new MemberMergeError(
+        "Family relationship participants changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
+        409,
+        "merge_drift_in_transaction",
+        { driftFields: ["parentPartnerParticipants", "parentPartnerPairs"] },
+      );
+    }
+    if (exclusivityTopologyUnderLocks.conflictingPairCount > 0) {
+      throw new MemberMergeError(
+        MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+        409,
+        "parent_partner_overlap",
+        {
+          conflictingPairCount:
+            exclusivityTopologyUnderLocks.conflictingPairCount,
+        },
+      );
+    }
 
     const [masterFull, loserFull] = await Promise.all([
       tx.member.findUnique({ where: { id: masterId } }),
@@ -1911,9 +2182,9 @@ export async function executeMemberMerge(params: {
     // FK check takes KEY SHARE on the duplicate's row, which conflicts with
     // FOR UPDATE) and then fails loudly on the FK once the hard-delete
     // commits.
-    const memberFindMany = (tx as unknown as Record<string, {
-      findMany: (args: unknown) => Promise<Record<string, unknown>[]>;
-    }>)["member"];
+    const memberFindMany = mergeDelegate<
+      FindManyDelegate<Record<string, unknown>>
+    >(tx, "member");
     const inboundAtWrite = await memberFindMany.findMany({
       where: {
         id: { notIn: [masterId, loserId] },
@@ -2089,7 +2360,19 @@ export async function executeMemberMerge(params: {
     // stale values and the #2243 fix would silently stop working (#2243).
     timeout: 120_000,
     maxWait: 10_000,
-  }).catch((error) => refuseMergeOrRethrow(client, refusalContext, error));
+  }).catch((error) =>
+    refuseMergeOrRethrow(
+      client,
+      refusalContext,
+      isMemberParentPartnerExclusionViolation(error)
+        ? new MemberMergeError(
+            MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+            409,
+            "parent_partner_overlap",
+          )
+        : error,
+    ),
+  );
   await settleHostingCoverageAfterCommit({ limit: 50 }, client);
 
   if (sweptShares.length > 0) {
@@ -2180,23 +2463,26 @@ async function previewRelationCountsForToken(
   const out: { model: string; count: number }[] = [];
   const moveSpecs = MEMBER_MERGE_RELATION_SPECS.filter((s) => s.bucket === "move");
   const selfRelationRefs: Record<string, string[]> = {};
-  const counts = await Promise.all(
+  const counted = await Promise.all(
     moveSpecs.map(async (s) => {
-      if (!s.selfRelation) return countLoserRows(db, s.delegate, s.column, loserId);
-      const delegate = (db as unknown as Record<string, {
-        findMany: (args: unknown) => Promise<{ id: string }[]>;
-      }>)[s.delegate];
+      if (!s.selfRelation) {
+        return { key: s.key, count: await countLoserRows(db, s.delegate, s.column, loserId) };
+      }
+      const delegate = mergeDelegate<FindManyDelegate<{ id: string }>>(
+        db,
+        s.delegate,
+      );
       const rows = await delegate.findMany({
         where: selfRelationMoveWhere(s.column, masterId, loserId),
         select: { id: true },
       });
       selfRelationRefs[s.column] = rows.map((r) => r.id);
-      return rows.length;
+      return { key: s.key, count: rows.length };
     }),
   );
-  moveSpecs.forEach((s, i) => {
-    if (counts[i] > 0) out.push({ model: s.key, count: counts[i] });
-  });
+  for (const { key, count } of counted) {
+    if (count > 0) out.push({ model: key, count });
+  }
   // Same order and same source as `buildMemberMergePreview`, so the digest the
   // token is verified against matches the one it was issued from (#2243).
   out.push(...(await countFkLessMoveRows(db, loserId)));
@@ -2216,9 +2502,10 @@ async function collectMovedIdSample(
       truncated = true;
       break;
     }
-    const delegate = (db as unknown as Record<string, {
-      findMany: (args: unknown) => Promise<{ id: string }[]>;
-    }>)[s.delegate];
+    const delegate = mergeDelegate<FindManyDelegate<{ id: string }>>(
+      db,
+      s.delegate,
+    );
     const remaining = MOVED_ID_SAMPLE_CAP - sample.length;
     const rows = await delegate.findMany({
       // Self-relation columns exclude the master's own row: its pointer at the
@@ -2330,9 +2617,7 @@ async function applyMoves(
   const moves: { model: string; count: number }[] = [];
   for (const s of MEMBER_MERGE_RELATION_SPECS) {
     if (s.bucket !== "move") continue;
-    const delegate = (tx as unknown as Record<string, {
-      updateMany: (args: unknown) => Promise<{ count: number }>;
-    }>)[s.delegate];
+    const delegate = mergeDelegate<UpdateManyDelegate>(tx, s.delegate);
     // Member SELF-relations (`parentMemberId`, `secondaryParentId`,
     // `inheritEmailFromId`, `detailsConfirmedByMemberId`) sweep ONLY the rows
     // captured by the token re-derivation (`selfRelationRefs`), and never the
@@ -2380,9 +2665,7 @@ async function applyMoves(
   // before deleting the loser. Left on a hard-deleted loser, either pointer
   // would later name a member that no longer exists.
   for (const c of MEMBER_MERGE_FK_LESS_MOVE_COLUMNS) {
-    const delegate = (tx as unknown as Record<string, {
-      updateMany: (args: unknown) => Promise<{ count: number }>;
-    }>)[c.delegate];
+    const delegate = mergeDelegate<UpdateManyDelegate>(tx, c.delegate);
     const res = await delegate.updateMany({
       where: { [c.column]: loserId },
       data: { [c.column]: masterId },
@@ -2456,6 +2739,7 @@ async function resolveAllCollisions(
       delegate: g.delegate,
       memberColumn: g.memberColumn,
       keySpecs: g.keys,
+      dependents: g.dependents,
       masterId,
       loserId,
     });
@@ -2508,15 +2792,15 @@ async function resolveKeyedCollisions(
     delegate: string;
     memberColumn: string;
     keySpecs: string[][];
+    dependents?: readonly DependentRows[];
     masterId: string;
     loserId: string;
   },
 ): Promise<{ moved: number; dropped: number }> {
-  const delegate = (tx as unknown as Record<string, {
-    findMany: (a: unknown) => Promise<Record<string, unknown>[]>;
-    deleteMany: (a: unknown) => Promise<{ count: number }>;
-    updateMany: (a: unknown) => Promise<{ count: number }>;
-  }>)[args.delegate];
+  const delegate = mergeDelegate<
+    FindManyDelegate<Record<string, unknown>> &
+      UpdateManyDelegate & { deleteMany: (a: unknown) => Promise<{ count: number }> }
+  >(tx, args.delegate);
 
   const [loserRows, masterRows] = await Promise.all([
     delegate.findMany({ where: { [args.memberColumn]: args.loserId } }),
@@ -2531,6 +2815,29 @@ async function resolveKeyedCollisions(
   );
 
   if (dropIds.length > 0) {
+    // Dependents first, while their member column still names the loser: the
+    // dropped parents' key values select exactly the loser's rows that
+    // decomposed them, and the master's own rows on the same key are untouched.
+    const droppedRows = loserRows.filter((row) => dropIds.includes(row.id as string));
+    for (const dependent of args.dependents ?? []) {
+      const matches = [...new Set(droppedRows.map((row) => row[dependent.matchColumn]))].filter(
+        (value): value is string => typeof value === "string",
+      );
+      if (matches.length === 0) continue;
+      // Routed through the same typed accessor as every other delegate read in
+      // this file (#2800). #3276 wrote this against an inline
+      // `Record<string, ...>` cast of the transaction, which is the shape the
+      // type-safety stage removed from six other sites; taking it verbatim
+      // would leave one untyped hole in a file that no longer has any.
+      await mergeDelegate<{
+        deleteMany: (a: unknown) => Promise<{ count: number }>;
+      }>(tx, dependent.delegate).deleteMany({
+        where: {
+          [dependent.memberColumn]: args.loserId,
+          [dependent.matchColumn]: { in: matches },
+        },
+      });
+    }
     await delegate.deleteMany({ where: { id: { in: dropIds } } });
   }
   await delegate.updateMany({
@@ -2571,20 +2878,22 @@ export function partitionKeyedCollisions(
   masterRows: readonly Record<string, unknown>[],
   keySpecs: readonly (readonly string[])[],
 ): { dropIds: string[]; moveIds: string[] } {
+  // Each unique key carries its own master-side set rather than a parallel
+  // array read back by position, so the pairing is a fact of the value (#2800).
   const masterKeySets = keySpecs.map((fields) => {
     const set = new Set<string>();
     for (const r of masterRows) {
       const k = keyOf(r, fields);
       if (k !== null) set.add(k);
     }
-    return set;
+    return { fields, set };
   });
   const dropIds: string[] = [];
   const moveIds: string[] = [];
   for (const row of loserRows) {
-    const collides = keySpecs.some((fields, i) => {
+    const collides = masterKeySets.some(({ fields, set }) => {
       const k = keyOf(row, fields);
-      return k !== null && masterKeySets[i].has(k);
+      return k !== null && set.has(k);
     });
     if (collides) dropIds.push(row.id as string);
     else moveIds.push(row.id as string);

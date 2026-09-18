@@ -30,9 +30,7 @@ vi.mock("@/lib/page-content-html", () => ({
 }));
 
 vi.mock("@/lib/deploy/warmup-discovery", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/deploy/warmup-discovery")
-  >("@/lib/deploy/warmup-discovery");
+  const actual = (await vi.importActual("@/lib/deploy/warmup-discovery")) as typeof import("@/lib/deploy/warmup-discovery");
 
   return {
     ...actual,
@@ -42,9 +40,7 @@ vi.mock("@/lib/deploy/warmup-discovery", async () => {
 });
 
 vi.mock("@/lib/deploy/warmup-run", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/deploy/warmup-run")
-  >("@/lib/deploy/warmup-run");
+  const actual = (await vi.importActual("@/lib/deploy/warmup-run")) as typeof import("@/lib/deploy/warmup-run");
 
   return { ...actual, runWarmup: mocks.runWarmup };
 });

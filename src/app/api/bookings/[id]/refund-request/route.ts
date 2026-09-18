@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -8,6 +9,7 @@ import { sendAdminRefundRequestAlert } from "@/lib/email";
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { deletedBookingRefusalResponse } from "@/lib/deleted-booking-refusal";
+import { formatCents } from "@/lib/utils";
 
 const createSchema = z.object({
   reason: z.string().min(10).max(2000),
@@ -29,14 +31,15 @@ export async function POST(
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { payment: true, member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { payment: true, member: true, organisation: { select: { name: true, email: true } } },
   });
 
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
+  if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -145,7 +148,7 @@ export async function POST(
   if (requestedAmountCents && requestedAmountCents > maxRefundable) {
     return NextResponse.json(
       {
-        error: `Requested amount exceeds maximum refundable amount of $${(maxRefundable / 100).toFixed(2)}`,
+        error: `Requested amount exceeds maximum refundable amount of ${formatCents(maxRefundable)}`,
       },
       { status: 400 }
     );
@@ -164,13 +167,13 @@ export async function POST(
     action: "refund-request.create",
     memberId: session.user.id,
     targetId: bookingId,
-    subjectMemberId: booking.memberId,
+    subjectMemberId: bookingOwner(booking).memberId,
     entityType: "RefundRequest",
     entityId: refundRequest.id,
     category: "payment",
     outcome: "success",
     summary: "Refund appeal submitted",
-    details: `Refund appeal submitted${requestedAmountCents ? ` for $${(requestedAmountCents / 100).toFixed(2)}` : ""}`,
+    details: `Refund appeal submitted${requestedAmountCents ? ` for ${formatCents(requestedAmountCents)}` : ""}`,
     metadata: {
       bookingId,
       requestedAmountCents: requestedAmountCents ?? null,
@@ -181,7 +184,7 @@ export async function POST(
 
   // Notify admins
   sendAdminRefundRequestAlert({
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
     bookingId,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
@@ -220,7 +223,7 @@ export async function GET(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
+  if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

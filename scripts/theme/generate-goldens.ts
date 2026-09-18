@@ -27,6 +27,7 @@ import {
   HUE_SCALES,
 } from "../../src/lib/theme/theme-substrate";
 import { SEED_SETS } from "../../src/lib/theme/__tests__/reference-seed-sets";
+import { must } from "../../src/lib/indexed-access";
 
 function scaleHexes(theme: ReturnType<typeof buildThemeSubstrate>) {
   const out: Record<string, string[]> = {};
@@ -45,15 +46,21 @@ const themes: Record<string, unknown> = {};
 for (const seedName of Object.keys(SEED_SETS) as Array<keyof typeof SEED_SETS>) {
   const light = buildThemeSubstrate(SEED_SETS[seedName], "light");
   const dark = buildThemeSubstrate(SEED_SETS[seedName], "dark");
-  const lightN12 = light.neutralHex[11];
+  // A fixed 12-step neutral ramp, same guarantee as buildKioskTheme's own
+  // light-neutral-12 (src/lib/theme/theme-substrate.ts).
+  const lightN12 = must(light.neutralHex[11], "generate-goldens: light neutral ramp has no step 12");
   // A4 solid-fg for each hue scale, both modes, using this seed set's light neutral-12.
   const a4 = (t: typeof light) => {
     const o: Record<string, { step9: string; step10: string }> = {};
     for (const name of HUE_SCALES) {
-      const s = t.scales[name];
+      // buildThemeSubstrate populates `scales` from this same HUE_SCALES list
+      // (plus "neutral"), so every name here is a guaranteed key.
+      const s = must(t.scales[name], `generate-goldens: theme has no "${name}" scale`);
+      const step9 = must(s.hex[8], `generate-goldens: "${name}" scale has no step 9`);
+      const step10 = must(s.hex[9], `generate-goldens: "${name}" scale has no step 10`);
       o[name] = {
-        step9: a4SolidForeground(s.hex[8], s.generatorContrast as string, lightN12).pick,
-        step10: a4SolidForeground(s.hex[9], s.generatorContrast as string, lightN12).pick,
+        step9: a4SolidForeground(step9, s.generatorContrast as string, lightN12).pick,
+        step10: a4SolidForeground(step10, s.generatorContrast as string, lightN12).pick,
       };
     }
     return o;
@@ -65,6 +72,10 @@ for (const seedName of Object.keys(SEED_SETS) as Array<keyof typeof SEED_SETS>) 
 }
 
 const { theme: kiosk, lightNeutral12: kioskLN12 } = buildKioskTheme();
+// buildKioskTheme sets "accent" itself, so this key is guaranteed present.
+const kioskAccent = must(kiosk.scales.accent, "generate-goldens: kiosk theme has no accent scale");
+const kioskAccentStep9 = must(kioskAccent.hex[8], "generate-goldens: kiosk accent scale has no step 9");
+const kioskAccentStep10 = must(kioskAccent.hex[9], "generate-goldens: kiosk accent scale has no step 10");
 themes.kiosk = {
   dark: {
     scales: scaleHexes(kiosk),
@@ -72,8 +83,8 @@ themes.kiosk = {
     a2Computed: a2ComputedPick(kiosk.neutralHex),
     a4SolidFg: {
       accent: {
-        step9: a4SolidForeground(kiosk.scales.accent.hex[8], kiosk.scales.accent.generatorContrast as string, kioskLN12).pick,
-        step10: a4SolidForeground(kiosk.scales.accent.hex[9], kiosk.scales.accent.generatorContrast as string, kioskLN12).pick,
+        step9: a4SolidForeground(kioskAccentStep9, kioskAccent.generatorContrast as string, kioskLN12).pick,
+        step10: a4SolidForeground(kioskAccentStep10, kioskAccent.generatorContrast as string, kioskLN12).pick,
       },
     },
   },

@@ -349,8 +349,9 @@ export const bookingPoliciesExporter: CategoryExporter = {
     // a plain throw here aborted the WHOLE export with nothing the admin could
     // act on. This is a fixable data problem in their own screen, so it must
     // reach them as a 400 carrying the remedy.
-    if (current.errors.length > 0) {
-      throw new ConfigTransferBundleError(current.errors[0]);
+    const [firstCurrentError] = current.errors;
+    if (firstCurrentError !== undefined) {
+      throw new ConfigTransferBundleError(firstCurrentError);
     }
     const rows = [...current.byKey.values()]
       .sort((a, b) => naturalKey(a.scope, a.name).localeCompare(naturalKey(b.scope, b.name)))
@@ -468,8 +469,9 @@ async function applyBookingPolicies(ctx: ApplyContext): Promise<CategoryApplyRes
   const current = await loadCurrent(ctx.tx);
   // Same reasoning as the exporter: the collision is an actionable data problem,
   // so it reaches the admin as a 400 rather than a generic 500.
-  if (current.errors.length > 0) {
-    throw new ConfigTransferBundleError(current.errors[0]);
+  const [firstCurrentError] = current.errors;
+  if (firstCurrentError !== undefined) {
+    throw new ConfigTransferBundleError(firstCurrentError);
   }
   const errors: string[] = [];
   const parsed = parsePolicies(ctx, new Set(current.lodgeIdBySlug.keys()), errors);

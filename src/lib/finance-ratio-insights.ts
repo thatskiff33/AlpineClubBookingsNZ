@@ -24,12 +24,27 @@ import {
   listFinanceReportCategories,
   UNMAPPED_FINANCE_CATEGORY_ID,
 } from "@/lib/finance-report-mappings";
+import { must } from "@/lib/indexed-access";
+import { normalizeXeroAccountClass } from "@/lib/xero-account-class";
 
 /** Full-history query floor; Xero orgs do not predate this. */
 const MATRIX_FROM_MONTH = "2000-01";
 
 function normalizeCode(value: string): string {
   return value.trim().toUpperCase();
+}
+
+/**
+ * Add cents to a series' month bucket at `index`. `index` always comes from
+ * `monthIndex`, built from the same `months` array every series' `valuesCents`
+ * is sized to (`zeroes()`), so the position is always in range.
+ */
+function addCentsAtMonth(series: FinanceRatioSeries, index: number, amountCents: number): void {
+  const current = must(
+    series.valuesCents[index],
+    `buildFinanceRatioMatrix: series ${series.id} has no month at index ${index}`
+  );
+  series.valuesCents[index] = current + amountCents;
 }
 
 export async function buildFinanceRatioMatrix(input: {
@@ -115,25 +130,35 @@ export async function buildFinanceRatioMatrix(input: {
     }
 
     const mapped = categoryByCode.get(normalizeCode(record.accountCode));
+    // Same reading of the account CLASS the P&L view and the admin account
+    // pickers use, from the one module that defines it (#2717). Unchanged
+    // behaviour: anything that is not REVENUE still falls into EXPENSE, so no
+    // row is dropped from both views.
     const kind =
       mapped?.kind ??
-      (record.accountClass?.toUpperCase() === "REVENUE" ? "REVENUE" : "EXPENSE");
+      (normalizeXeroAccountClass(record.accountClass) === "REVENUE"
+        ? "REVENUE"
+        : "EXPENSE");
 
     if (mapped) {
-      seriesById.get(mapped.id)!.valuesCents[index] += record.amountCents;
+      addCentsAtMonth(seriesById.get(mapped.id)!, index, record.amountCents);
     } else {
       const unmappedId = `${UNMAPPED_FINANCE_CATEGORY_ID}-${kind.toLowerCase()}`;
-      ensureSeries(
-        unmappedId,
-        kind === "REVENUE" ? "Unmapped income" : "Unmapped expenses",
-        kind
-      ).valuesCents[index] += record.amountCents;
+      addCentsAtMonth(
+        ensureSeries(
+          unmappedId,
+          kind === "REVENUE" ? "Unmapped income" : "Unmapped expenses",
+          kind
+        ),
+        index,
+        record.amountCents
+      );
     }
 
     if (kind === "REVENUE") {
-      totalIncome.valuesCents[index] += record.amountCents;
+      addCentsAtMonth(totalIncome, index, record.amountCents);
     } else {
-      totalExpenses.valuesCents[index] += record.amountCents;
+      addCentsAtMonth(totalExpenses, index, record.amountCents);
     }
   }
 

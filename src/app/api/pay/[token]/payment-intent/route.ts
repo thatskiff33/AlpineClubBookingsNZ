@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PaymentLinkError } from "@/lib/payment-link";
 import {
   createPaymentIntentForPaymentLink,
-  PaymentLinkError,
   PaymentLinkPaymentRecoveryError,
-} from "@/lib/payment-link";
+} from "@/lib/payment-link-intent";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { HOSTING_COVERAGE_RETRY_BODY } from "@/lib/adult-member-hosting-queue-participants";
 import {

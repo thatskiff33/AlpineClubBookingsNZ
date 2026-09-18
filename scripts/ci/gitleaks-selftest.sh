@@ -28,7 +28,11 @@
 # It needs Docker and the pinned gitleaks image, nothing else.
 set -Eeuo pipefail
 
-GITLEAKS_IMAGE="${GITLEAKS_IMAGE:-ghcr.io/gitleaks/gitleaks:v8.28.0}"
+# The pinned scanner comes from the one file that names it (#2852), so the
+# injection proves the gate can fail using the SAME binary the gate runs. A
+# self-test on a different version proves nothing about the gate.
+# shellcheck source=scripts/ci/gitleaks-image.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gitleaks-image.sh"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONFIG="${REPO_ROOT}/.gitleaks.toml"
 

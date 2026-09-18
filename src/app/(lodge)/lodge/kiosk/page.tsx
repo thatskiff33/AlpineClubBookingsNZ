@@ -30,6 +30,7 @@ import {
   LODGE_PIN_LOGIN_ENDPOINT,
   LODGE_PIN_SESSION_ENDPOINT,
 } from "@/components/lodge-pin-session";
+import { HUT_LEADER_PIN_LENGTH, sanitiseHutLeaderPin } from "@/lib/hut-leader-pin";
 import {
   addDaysToDateKey,
   getWeekStartDateKey,
@@ -1029,11 +1030,9 @@ export default function KioskPage() {
                   type="password"
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  maxLength={6}
+                  maxLength={HUT_LEADER_PIN_LENGTH}
                   value={pin}
-                  onChange={(event) =>
-                    setPin(event.target.value.replace(/\D/g, "").slice(0, 6))
-                  }
+                  onChange={(e) => setPin(sanitiseHutLeaderPin(e.target.value))}
                   className="w-full rounded-xl border border-kiosk-border bg-kiosk-page px-4 py-3 text-lg tracking-[0.35em] text-kiosk-fg outline-none transition-colors focus:border-kiosk-accent"
                   placeholder="123456"
                   autoComplete="one-time-code"
@@ -1278,22 +1277,27 @@ export default function KioskPage() {
                     <div className="space-y-2">
                       {/* Group by chore template */}
                       {Object.values(
-                        group.assignments.reduce(
-                          (acc, a) => {
-                            if (!acc[a.choreTemplateId]) {
-                              acc[a.choreTemplateId] = {
-                                name: a.choreTemplateName,
-                                assignments: [],
-                              };
-                            }
-                            acc[a.choreTemplateId].assignments.push(a);
-                            return acc;
-                          },
-                          {} as Record<
+                        group.assignments.reduce<
+                          Record<
                             string,
                             { name: string; assignments: Assignment[] }
                           >
-                        )
+                        >((acc, a) => {
+                          // ONE read of the chore's bucket, then either grow
+                          // it or start it — rather than a presence test
+                          // followed by a second lookup the compiler cannot
+                          // tie to it (#2801). Also drops the seed cast.
+                          const chore = acc[a.choreTemplateId];
+                          if (chore) {
+                            chore.assignments.push(a);
+                          } else {
+                            acc[a.choreTemplateId] = {
+                              name: a.choreTemplateName,
+                              assignments: [a],
+                            };
+                          }
+                          return acc;
+                        }, {})
                       ).map((chore) => (
                         <div
                           key={chore.name}

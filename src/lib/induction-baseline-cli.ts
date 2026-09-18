@@ -58,6 +58,8 @@ export function parseInductionBaselineArgs(
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    // Unreachable: the loop condition already guarantees `index < argv.length`.
+    if (arg === undefined) break;
     if (arg === "--help" || arg === "-h") {
       help = true;
       continue;

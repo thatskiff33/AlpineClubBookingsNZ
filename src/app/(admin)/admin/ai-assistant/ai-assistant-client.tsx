@@ -13,12 +13,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
+import { AiSpendCurrencyCard } from "@/components/admin/ai-spend-currency-card";
+import { APP_CURRENCY } from "@/config/operational";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { isFullAdmin } from "@/lib/access-roles";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
 import type { AiAssistantKeyState } from "@/lib/ai-assistant-config";
+import { formatCents } from "@/lib/utils";
 import {
   MAX_BUDGET_CENTS,
   centsToDollars,
@@ -121,6 +125,7 @@ export function AiAssistantClient({
     <div className="space-y-6">
       <KeyCard initialKeyState={initialKeyState} initialKeySetAt={keySetAt} />
       <BudgetCard />
+      <SpendCurrencyCard />
       <UsageCard />
     </div>
   );
@@ -336,9 +341,10 @@ function BudgetCard() {
       <CardHeader>
         <CardTitle>Monthly spend cap</CardTitle>
         <CardDescription>
-          A hard limit on paid AI spend per calendar month (NZD). Once reached,
-          the assistant stops answering until the next month; curated page help
-          keeps working. Set it to $0.00 to switch paid answers off entirely.
+          A hard limit on paid AI spend per calendar month, in {APP_CURRENCY}.
+          Once reached, the assistant stops answering until the next month;
+          curated page help keeps working. Set it to {formatCents(0)} to switch
+          paid answers off entirely.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -354,26 +360,26 @@ function BudgetCard() {
         ) : (
           <>
             <div className="grid gap-2 sm:max-w-xs">
-              <Label htmlFor="ai-budget">Monthly cap (NZD)</Label>
+              <Label htmlFor="ai-budget">Monthly cap ({APP_CURRENCY})</Label>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">$</span>
                 <Input
                   id="ai-budget"
-                  inputMode="decimal"
+                  {...MONEY_INPUT_PROPS}
                   value={dollars}
                   disabled={editingDisabled}
                   onChange={(event) => setDollars(event.target.value)}
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                Maximum ${centsToDollars(MAX_BUDGET_CENTS)}. Also set a spend
-                limit in the Anthropic console as the hard backstop.
+                Maximum {formatCents(MAX_BUDGET_CENTS)}. Also set a spend limit
+                in the Anthropic console as the hard backstop.
               </p>
             </div>
 
             {savedCents === 0 ? (
               <p className="text-xs text-warning">
-                The cap is $0.00 — paid AI answers are currently switched off.
+                The cap is {formatCents(0)} — paid AI answers are currently
+                switched off.
               </p>
             ) : null}
 
@@ -393,6 +399,28 @@ function BudgetCard() {
             </Button>
           </>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Currency for AI spend (#3354) — one setting shared with AI Diagnostics
+// ---------------------------------------------------------------------------
+
+function SpendCurrencyCard() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Currency for AI spend</CardTitle>
+        <CardDescription>
+          How New Zealand dollar AI prices are converted into the club&apos;s
+          currency before they count against the cap. Shared with AI
+          Diagnostics.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <AiSpendCurrencyCard />
       </CardContent>
     </Card>
   );
@@ -470,8 +498,8 @@ function UsageCard() {
             <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
               <UsageStat
                 label="Spent this month"
-                value={`$${centsToDollars(month.costCents)}`}
-                detail={`of $${centsToDollars(usage.budget.limitCents)} cap`}
+                value={formatCents(month.costCents)}
+                detail={`of ${formatCents(usage.budget.limitCents)} cap`}
               />
               <UsageStat
                 label="Requests"

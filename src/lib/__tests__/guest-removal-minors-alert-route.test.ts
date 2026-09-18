@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
 import { NextRequest } from "next/server";
 import { AdminReviewStatus, BookingStatus } from "@prisma/client";
 import { ADULT_SUPERVISION_REVIEW_REASON } from "@/lib/booking-review";
@@ -49,16 +51,26 @@ vi.mock("@/lib/prisma", () => ({
     member: { findUnique: mocks.memberFindUnique },
   },
 }));
-vi.mock("@/lib/booking-edit-policy", () => ({
-  getBookingEditPolicy: () => ({ canModify: true, mode: "future", reason: null }),
-  usesActiveBookingEditLifecycle: () => true,
-}));
+// #3245: PARTIAL, through `importOriginal`. This used to replace the whole
+// module with two stubs, which meant the removal route's STATUS ELIGIBILITY was
+// never exercised here — and the day that gate started deriving its answer from
+// this module instead of restating it, the missing export made every case in
+// this file 400. The date-window policy is still stubbed, because that is what
+// these cases are neutralising; the eligibility rule is now the real one, and
+// both fixtures (PAID, PENDING) are statuses it genuinely admits.
+vi.mock("@/lib/booking-edit-policy", async (importActual) => {
+  const actual = (await importActual()) as typeof import("@/lib/booking-edit-policy");
+  return {
+    ...actual,
+    getBookingEditPolicy: () => ({ canModify: true, mode: "future", reason: null }),
+  };
+});
 vi.mock("@/lib/booking-modify", async (importActual) => {
   // #2543: `rateSnapshotUpdateForRepricedGuest` is a PURE decision about whether a
   // repriced guest keeps its stored rate snapshot, so the real one is pulled through
   // rather than stubbed — a stub here would make the removal path's coding behaviour
   // untested on the very route that exercises it.
-  const actual = await importActual<typeof import("@/lib/booking-modify")>();
+  const actual = (await importActual()) as typeof import("@/lib/booking-modify");
   return {
     assertBookingNotQuotePriced: mocks.assertBookingNotQuotePriced,
     applyLifecycleTransitions: mocks.applyLifecycleTransitions,
@@ -177,8 +189,18 @@ function preEditBooking(guests: Guest[]) {
       // at today's rate. Two nights at 2000 summing to the 4000 below, which is
       // also what `toHostingParticipants` reads `.length` from.
       nights: [
-        { stayDate: CHECK_IN, priceCents: 2000 },
-        { stayDate: new Date("2027-07-16"), priceCents: 2000 },
+        {
+          id: `${g.id}-night-1`,
+          stayDate: CHECK_IN,
+          priceCents: 2000,
+          priceSource: "SOLD",
+        },
+        {
+          id: `${g.id}-night-2`,
+          stayDate: new Date("2027-07-16"),
+          priceCents: 2000,
+          priceSource: "SOLD",
+        },
       ],
       priceCents: 4000,
       // No consent was ever asked for on this booking, which is one of the two
@@ -214,6 +236,7 @@ function preEditBooking(guests: Guest[]) {
       lastName: "Owner",
     },
     promoRedemption: null,
+    nightAdjustments: [],
   };
 }
 
@@ -282,6 +305,17 @@ function buildTx(
       delete: vi.fn().mockResolvedValue(undefined),
       update: vi.fn().mockResolvedValue(undefined),
     },
+    // #3276: the night adjustment build-up writer reads and rewrites these.
+    bookingGuestNightAdjustment: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    bookingGuestNight: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -359,6 +393,9 @@ beforeEach(() => {
     accountCreditAmountCents: 0,
     pendingRefundAmountCents: 0,
     additionalAmountCents: 0,
+    // #3371: the minter's own parameter, zero here - this removal asks for
+    // nothing, and a zero ask never mints, so it can retire nothing.
+    additionalAsk: NO_ADDITIONAL_ASK,
     settlementMethod: null,
     policyRetainedAmountCents: 0,
     xeroRefundAmountCents: 0,

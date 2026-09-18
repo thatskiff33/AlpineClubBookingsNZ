@@ -138,8 +138,18 @@ export function parseMaintenancePhoto(
     );
   }
 
-  const declaredType = match[1] === "image/jpg" ? "image/jpeg" : match[1];
-  const bytes = Buffer.from(match[2], "base64");
+  const [, capturedType, capturedBase64] = match;
+  // Both capture groups have no `?` quantifier, so a match always carries
+  // them; this is the same "could not be read" outcome the function already
+  // gives for a pattern that fails to match at all.
+  if (capturedType === undefined || capturedBase64 === undefined) {
+    throw new MaintenancePhotoError(
+      "That photo could not be read. Please attach a JPEG, PNG or WebP image.",
+    );
+  }
+
+  const declaredType = capturedType === "image/jpg" ? "image/jpeg" : capturedType;
+  const bytes = Buffer.from(capturedBase64, "base64");
 
   if (bytes.length === 0) {
     throw new MaintenancePhotoError(

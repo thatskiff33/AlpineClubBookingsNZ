@@ -137,15 +137,17 @@ export function resolveObjectFromCandidates(params: {
     });
   }
 
-  if (candidates.length === 0) {
+  const priority = { field: 0, link: 1, operation: 2 } satisfies Record<ResolvedLocalObject["source"], number>;
+  // Reading the highest-priority candidate is what says there is a candidate
+  // at all, so the "no local object" answer and the chosen one come from the
+  // same read (#2800).
+  const [chosen] = [...candidates].sort(
+    (left, right) => priority[left.source] - priority[right.source]
+  );
+  if (chosen === undefined) {
     return null;
   }
-
   const uniqueIds = [...new Set(candidates.map((candidate) => candidate.objectId))];
-  const priority = { field: 0, link: 1, operation: 2 } satisfies Record<ResolvedLocalObject["source"], number>;
-  const chosen = [...candidates].sort(
-    (left, right) => priority[left.source] - priority[right.source]
-  )[0];
 
   return {
     ...chosen,
@@ -174,7 +176,10 @@ export function getBlockingOperation(
       payloadQueueTypeCompatible(operation, options?.payloadQueueType)
   );
 
-  if (relevant.length === 0) {
+  // The first relevant operation is read here: it is the fallback below, and
+  // its absence is the "nothing blocking" answer (#2800).
+  const [firstRelevant] = relevant;
+  if (firstRelevant === undefined) {
     return null;
   }
 
@@ -188,10 +193,9 @@ export function getBlockingOperation(
     };
   }
 
-  const pendingOrRunning = relevant[0];
   return {
-    operation: pendingOrRunning,
-    retryMeta: getXeroOperationRetryMeta(pendingOrRunning),
+    operation: firstRelevant,
+    retryMeta: getXeroOperationRetryMeta(firstRelevant),
   };
 }
 

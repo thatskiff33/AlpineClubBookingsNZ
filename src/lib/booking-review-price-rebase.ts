@@ -6,6 +6,14 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { recalculateBookingPromo } from "@/lib/booking-guest-removal-service";
 import type { CalendarDate } from "@/lib/club-time";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
+import {
+  BOOKING_MONEY_BUILD_UP_INVARIANT,
+  d3CompatibleBookingMoneyBuildUpCents,
+  readBookingMoneyBuildUp,
+  selectLoadedBookingMoneyBuildUp,
+  type BookingMoneyBuildUpSelection,
+} from "@/lib/booking-money-build-up";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 
 /**
@@ -203,8 +211,16 @@ export type BookingPriceRebaseDeclineReason =
   | "no-surviving-strands";
 
 export type BookingPriceRebaseOutcome =
-  | { rebased: true; rebase: BookingPriceRebase }
-  | { rebased: false; reason: BookingPriceRebaseDeclineReason };
+  | {
+      rebased: true;
+      rebase: BookingPriceRebase;
+      moneyBuildUpSelection: BookingMoneyBuildUpSelection;
+    }
+  | {
+      rebased: false;
+      reason: BookingPriceRebaseDeclineReason;
+      moneyBuildUpSelection: BookingMoneyBuildUpSelection;
+    };
 
 /**
  * Did the re-base actually move any of the booking's four money columns?
@@ -406,16 +422,44 @@ export async function rebaseBookingPriceFromStrands({
         409,
       );
     }
-  } else if (booking.guests.length === 0) {
+  }
+
+  // #3277: the review writer consumes exact per-night provenance because it is
+  // about to run a night-grain promotion over these rows. A booking/headline
+  // reader deliberately uses a broader grain in the same canonical projection.
+  const recordedMoneyBuildUp = await readBookingMoneyBuildUp(store, {
+    bookingId,
+    purpose: "REVIEW_REBASE",
+  });
+  const currentMoneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(
+    recordedMoneyBuildUp,
+    {
+      derivedCents: booking.finalPriceCents,
+      mismatchClassification: "STORED_SIDE_DEFECT",
+    },
+  );
+
+  if (booking.guests.length === 0) {
     // A repaired strand PROVED the list was not empty. With none there is
     // nothing to prove it, and summing an empty list would zero the headline
     // outright - the second half of the hole the guard above closes.
-    return { rebased: false, reason: "no-surviving-strands" };
+    return {
+      rebased: false,
+      reason: "no-surviving-strands",
+      moneyBuildUpSelection: currentMoneyBuildUpSelection,
+    };
   }
 
   const strandNights = readStrandNightPrices(booking.guests);
-  if (strandNights === null) {
-    return { rebased: false, reason: "strand-evidence-unreadable" };
+  if (
+    strandNights === null ||
+    currentMoneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN"
+  ) {
+    return {
+      rebased: false,
+      reason: "strand-evidence-unreadable",
+      moneyBuildUpSelection: currentMoneyBuildUpSelection,
+    };
   }
 
   const newTotalPriceCents = booking.guests.reduce(
@@ -444,6 +488,17 @@ export async function rebaseBookingPriceFromStrands({
     })),
     todayAtClub,
   });
+  // #3276: the engine just re-decided the promotion over the strands' STORED
+  // nights, so what it took off each of them is recorded here — the night rows
+  // themselves were written by the repair before this ran, and nothing rewrites
+  // them after it. The officer's prices stay OFFICER_PRICED; the build-up on
+  // top of them is the engine's own figure and is RECORDED.
+  await recordBookingNightAdjustments(store, {
+    bookingId,
+    guestIds: strandNights.map((strand) => strand.bookingGuestId),
+    targets: promo.adjustmentTargets,
+    writer: "the review price re-base",
+  });
 
   const newFinalPriceCents = bookingFinalPriceCents({
     totalPriceCents: newTotalPriceCents,
@@ -454,6 +509,26 @@ export async function rebaseBookingPriceFromStrands({
     // is the one column in the tree that has been shown able to go negative.
     throw new Error(REBASE_NEGATIVE_PRICE_MESSAGE);
   }
+
+  const freshlyRecordedMoneyBuildUp = await readBookingMoneyBuildUp(store, {
+    bookingId,
+    purpose: "REVIEW_REBASE",
+  });
+  const moneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(
+    freshlyRecordedMoneyBuildUp,
+    {
+      derivedCents: newFinalPriceCents,
+      mismatchClassification: "STORED_SIDE_DEFECT",
+    },
+  );
+  if (moneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN") {
+    throw new Error(
+      `${BOOKING_MONEY_BUILD_UP_INVARIANT}: the review re-base lost exact base evidence after recording its build-up`,
+    );
+  }
+  const verifiedNewFinalPriceCents = d3CompatibleBookingMoneyBuildUpCents(
+    moneyBuildUpSelection,
+  );
 
   const rebased = await store.booking.updateMany({
     where: {
@@ -467,7 +542,7 @@ export async function rebaseBookingPriceFromStrands({
       totalPriceCents: newTotalPriceCents,
       discountCents: promo.newDiscountCents,
       promoAdjustmentCents: promo.newPromoAdjustmentCents,
-      finalPriceCents: newFinalPriceCents,
+      finalPriceCents: verifiedNewFinalPriceCents,
     },
   });
   if (rebased.count !== 1) {
@@ -476,6 +551,7 @@ export async function rebaseBookingPriceFromStrands({
 
   return {
     rebased: true,
+    moneyBuildUpSelection,
     rebase: {
       previousTotalPriceCents: booking.totalPriceCents,
       previousDiscountCents: booking.discountCents,
@@ -484,7 +560,7 @@ export async function rebaseBookingPriceFromStrands({
       newTotalPriceCents,
       newDiscountCents: promo.newDiscountCents,
       newPromoAdjustmentCents: promo.newPromoAdjustmentCents,
-      newFinalPriceCents,
+      newFinalPriceCents: verifiedNewFinalPriceCents,
       promoRemoved: promo.promoRemoved,
     },
   };
@@ -534,6 +610,7 @@ export function bookingRebaseAuditMetadata({
     newBookingFinalPriceCents: rebase?.newFinalPriceCents ?? null,
     promoRemoved: rebase?.promoRemoved ?? null,
     xeroInvoiceDiverged,
+    ...outcome.moneyBuildUpSelection.historyMetadata,
   };
 }
 
@@ -597,54 +674,4 @@ export function rebaseDivergesFromIssuedInvoice({
  * movement therefore lives in `newData`, which only the booking's own history
  * narrative reads.
  */
-export async function recordBookingPriceRebaseHistory({
-  bookingId,
-  actingMemberId,
-  taskId,
-  resolution,
-  rebase,
-  xeroInvoiceDiverged,
-  store,
-}: {
-  bookingId: string;
-  actingMemberId: string;
-  taskId: string;
-  resolution: "completed" | "dismissed";
-  rebase: BookingPriceRebase;
-  xeroInvoiceDiverged: boolean;
-  store: Prisma.TransactionClient;
-}): Promise<void> {
-  await store.bookingModification.create({
-    data: {
-      bookingId,
-      memberId: actingMemberId,
-      modificationType: "PRICE_REBASE",
-      previousData: {
-        totalPriceCents: rebase.previousTotalPriceCents,
-        discountCents: rebase.previousDiscountCents,
-        promoAdjustmentCents: rebase.previousPromoAdjustmentCents,
-        finalPriceCents: rebase.previousFinalPriceCents,
-      },
-      newData: {
-        totalPriceCents: rebase.newTotalPriceCents,
-        discountCents: rebase.newDiscountCents,
-        promoAdjustmentCents: rebase.newPromoAdjustmentCents,
-        finalPriceCents: rebase.newFinalPriceCents,
-        promoRemoved: rebase.promoRemoved,
-        xeroInvoiceDiverged,
-        financialReviewTaskId: taskId,
-        financialReviewResolution: resolution,
-        // The signed movement of the booking's final price, kept HERE rather
-        // than on `priceDiffCents` - see the docblock. Nothing that decides
-        // whether money is owed reads `newData`.
-        rebasedPriceMovementCents:
-          rebase.newFinalPriceCents - rebase.previousFinalPriceCents,
-      },
-      // NOT a settlement: no money is moved by this row, and the review's own
-      // task carries what was settled. Both components stay 0 so no money
-      // reader can mistake the re-base for an unbilled ask (docblock above).
-      priceDiffCents: 0,
-      changeFeeCents: 0,
-    },
-  });
-}
+export { recordBookingPriceRebaseHistory } from "@/lib/booking-review-price-rebase-history";

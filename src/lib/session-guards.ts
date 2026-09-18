@@ -133,7 +133,9 @@ async function isModuleGatedRequestPath(): Promise<boolean> {
 
     // The header carries `${pathname}${search}`; the route rules match on the
     // pathname alone.
-    const pathname = value.split("?")[0];
+    // `split` always yields a first element, even for the empty string; an
+    // absent one is an empty path, which matches no gated route (#2800).
+    const pathname = value.split("?")[0] ?? "";
     return getRequiredFeaturesForPath(pathname).length > 0;
   } catch {
     return false;

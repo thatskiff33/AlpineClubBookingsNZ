@@ -213,7 +213,10 @@ export async function GET() {
       select: KIOSK_SELECT,
       orderBy: { createdAt: "asc" },
     });
-    lodge = accounts[0];
+    // `?? null` is this route's own "none" state, not a fallback invented to
+    // satisfy the compiler: `lodge` is declared nullable and the block below
+    // already owns the absent case (#2801).
+    lodge = accounts[0] ?? null;
   }
 
   // Only when one exists. A scoped admin who found none is reading an empty

@@ -4,6 +4,7 @@ import {
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog, logAudit } from "@/lib/audit";
 import { deleteDraftBookingDependents } from "@/lib/draft-booking-cleanup";
 import logger from "@/lib/logger";
@@ -11,6 +12,7 @@ import { markPaymentIntentTransactionFailed } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { formatCents } from "@/lib/utils";
 
 type BookingDeleteDb = Prisma.TransactionClient | typeof prisma;
 
@@ -65,7 +67,7 @@ export async function deleteBooking(input: {
 
   if (booking.status === BookingStatus.DRAFT) {
     if (
-      booking.memberId !== input.actor.memberId &&
+      bookingOwner(booking).memberId !== input.actor.memberId &&
       input.actor.role !== "ADMIN"
     ) {
       return { status: 403, error: "Forbidden" };
@@ -116,7 +118,7 @@ async function hardDeleteDraftBooking(
         error: "Only draft bookings can be hard-deleted",
       };
     }
-    if (booking.memberId !== actor.memberId && actor.role !== "ADMIN") {
+    if (bookingOwner(booking).memberId !== actor.memberId && actor.role !== "ADMIN") {
       return { status: 403, error: "Forbidden" };
     }
 
@@ -125,7 +127,7 @@ async function hardDeleteDraftBooking(
         action: "booking.delete.draft",
         memberId: actor.memberId,
         targetId: booking.id,
-        subjectMemberId: booking.memberId,
+        subjectMemberId: bookingOwner(booking).memberId,
         entityType: "Booking",
         entityId: booking.id,
         category: "booking",
@@ -365,7 +367,7 @@ async function softDeleteCancelledBookingInTransaction(
         action: "booking.delete.cancelled.soft",
         memberId: actor.memberId,
         targetId: booking.id,
-        subjectMemberId: booking.memberId,
+        subjectMemberId: bookingOwner(booking).memberId,
         entityType: "Booking",
         entityId: booking.id,
         category: "booking",
@@ -590,7 +592,7 @@ async function getCancelledBookingDeleteBlockers(
     "member_credit",
     `Member credit history exists (${memberCreditRows.length} row${
       memberCreditRows.length === 1 ? "" : "s"
-    }, net ${formatNetCents(creditNetCents)})`,
+    }, net ${formatCents(creditNetCents)})`,
     memberCreditRows.length > 0 && !creditFullyRestored ? memberCreditRows.length : 0
   );
   addBlocker(
@@ -680,13 +682,6 @@ function hasCapturedOrCreditedPayment(
   );
 }
 
-// #1547: render a signed net-cents figure for the member_credit blocker label,
-// e.g. -$5.00 / $0.00. Money stays in integer cents internally.
-function formatNetCents(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
-
 function hasXeroPaymentReference(payment: BookingForDelete["payment"]): boolean {
   if (!payment) {
     return false;
@@ -702,7 +697,7 @@ function hasXeroPaymentReference(payment: BookingForDelete["payment"]): boolean 
 function buildBookingSnapshot(booking: BookingForDelete) {
   return {
     id: booking.id,
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
     status: booking.status,
     checkIn: booking.checkIn.toISOString(),
     checkOut: booking.checkOut.toISOString(),

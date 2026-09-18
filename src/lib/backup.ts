@@ -678,6 +678,9 @@ function validateBackupRestore(
     .map((value) => Number.parseInt(value, 10));
 
   if (
+    memberCount === undefined ||
+    bookingCount === undefined ||
+    paymentCount === undefined ||
     !Number.isFinite(memberCount) ||
     !Number.isFinite(bookingCount) ||
     !Number.isFinite(paymentCount)

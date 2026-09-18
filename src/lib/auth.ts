@@ -47,7 +47,7 @@ import { getGoogleOAuthConfig, recordGoogleVerified } from "./google-config";
 import { isDeletedAccountRecord } from "./deleted-account";
 
 class EmailNotVerifiedError extends CredentialsSignin {
-  code = "EMAIL_NOT_VERIFIED";
+  override code = "EMAIL_NOT_VERIFIED";
 }
 
 // A magic link must never trap a member who has a pending forced password
@@ -55,7 +55,7 @@ class EmailNotVerifiedError extends CredentialsSignin {
 // password-reset flow clears `forcePasswordChange`. So passwordless sign-in
 // refuses these members and points them at "Forgot password" (#2034).
 class MagicLinkPasswordChangeRequiredError extends CredentialsSignin {
-  code = "PASSWORD_CHANGE_REQUIRED";
+  override code = "PASSWORD_CHANGE_REQUIRED";
 }
 
 // bcrypt hash of a random throwaway value. Compared against when no member
@@ -64,7 +64,6 @@ class MagicLinkPasswordChangeRequiredError extends CredentialsSignin {
 const DUMMY_PASSWORD_HASH =
   // Not a live credential: a bcrypt hash of a random throwaway value, only ever
   // compared against to equalise response timing (see comment above).
-  // nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
   "$2b$12$vgnj5fAMZNzi.jYdELu0f.rjCvFqb/tgzYxtvBWJu8vCJYVO64SKC";
 
 const SESSION_MEMBER_SECURITY_SELECT = {

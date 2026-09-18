@@ -27,7 +27,6 @@ const SCRIPT_PATH = "scripts/diagnose-calendar-access.ts";
 function readScript(): string {
   // Test helper: reads a fixed repo file under process.cwd(); the path is a
   // constant in this file, not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), SCRIPT_PATH), "utf8");
 }
 

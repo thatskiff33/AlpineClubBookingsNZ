@@ -150,8 +150,8 @@ describe("applyPromoCodeChanges — beneficiary binding at apply time (#2266 MED
       newCheckIn: new Date("2026-09-14T00:00:00.000Z"),
       newTotalPriceCents: 20_000,
       guestNightRates: [
-        { bookingGuestId: "g1", memberId: "m1", isMember: true, perNightRates: [10_000] },
-        { bookingGuestId: "g2", memberId: null, isMember: false, perNightRates: [10_000] },
+        { bookingGuestId: "g1", memberId: "m1", isMember: true, perNightRates: [10_000], nightDates: [] },
+        { bookingGuestId: "g2", memberId: null, isMember: false, perNightRates: [10_000], nightDates: [] },
       ],
       todayAtClub: CLUB_TODAY_FOR_TEST,
     };

@@ -51,15 +51,12 @@ describe("Phase 8d: Booking Modification UI", () => {
       expect(checkOutAfter <= checkIn).toBe(false);
     });
 
-    it("should format price differences correctly", () => {
-      // formatCents: cents -> "$X.XX"
-      const formatCents = (cents: number) => `$${(cents / 100).toFixed(2)}`;
-
-      expect(formatCents(5000)).toBe("$50.00");
-      expect(formatCents(-3000)).toBe("$-30.00");
-      expect(formatCents(0)).toBe("$0.00");
-      expect(formatCents(12550)).toBe("$125.50");
-    });
+    // #3302 review (equivalence lens): removed. This asserted its own
+    // self-contained arithmetic ("$-30.00" for a negative amount) against no
+    // real code, and had become the one place in the tree still describing
+    // the pre-#3302 sign-placement rendering as if it were current. The real
+    // formatter is `formatCents` in `@/lib/utils`, pinned by `src/test/utils.test.ts`
+    // (which asserts the current "-$25.00" placement).
   });
 
   describe("UI-01: Modify Quote API contract", () => {

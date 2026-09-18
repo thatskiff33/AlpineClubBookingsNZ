@@ -74,10 +74,6 @@ vi.mock("@/lib/public-layout-config", async () => {
   };
 });
 
-vi.mock("@/lib/finance-auth", () => ({
-  hasFinanceViewerAccess: () => false,
-}));
-
 vi.mock("@/lib/member-onboarding", () => ({
   MEMBER_ONBOARDING_GATE_SELECT: {
     id: true,

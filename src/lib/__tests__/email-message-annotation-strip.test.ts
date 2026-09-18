@@ -677,7 +677,6 @@ async function withMigrationSchema(run: (client: Client) => Promise<void>) {
     await client.query(`CREATE SCHEMA ${schema}`);
     await client.query(`SET search_path TO ${schema}`);
     // Test fixture: hardcoded DDL in a disposable per-test schema; no user input.
-    // nosemgrep: javascript.express.db.pg-express.pg-express
     await client.query(PRE_EXISTING_SCHEMA_SQL);
     await run(client);
   } finally {
@@ -701,7 +700,6 @@ async function seedOverride(
 async function runMigration(client: Client) {
   // Test fixture: runs the migration's own SQL against a disposable per-test
   // schema; no user input.
-  // nosemgrep: javascript.express.db.pg-express.pg-express
   await client.query(migrationSql);
 }
 

@@ -14,6 +14,7 @@ import {
   type XeroActivitySummary,
   type XeroState,
 } from "@/lib/admin-operational-state";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
@@ -154,7 +155,9 @@ type PaymentCandidate = {
       firstName: string;
       lastName: string;
       email: string;
-    };
+    } | null;
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    organisation: { name: string; email: string | null } | null;
     creditsFromCancellation: Array<{
       amountCents: number;
       description: string | null;
@@ -262,7 +265,7 @@ function latestPaymentActivityAt(payment: PaymentCandidate) {
 }
 
 function memberSortValue(payment: PaymentCandidate) {
-  return `${payment.booking.member.lastName} ${payment.booking.member.firstName}`.toLowerCase();
+  return `${bookingOwner(payment.booking).member.lastName} ${bookingOwner(payment.booking).member.firstName}`.toLowerCase();
 }
 
 function settlementSortValue(payment: PaymentCandidate) {
@@ -295,7 +298,13 @@ function sortValue(payment: EnrichedPaymentCandidate, sortBy: z.infer<typeof sor
     case "booking":
       return payment.bookingId;
     case "amount":
-      return payment.amountCents;
+      // #3340 fix round: NET, because that is what the column renders. Sorting a
+      // visibly-net column by its gross figure puts rows in an order the officer
+      // can see is wrong wherever a refund exists - the "Amount (net)" header and
+      // this expression are one decision. The Amount FILTER stays gross: it is a
+      // `where` on a database column, which a net expression cannot be, and the
+      // boxes say "Gross amount" for exactly that reason.
+      return payment.amountCents - payment.refundedAmountCents;
     case "status":
       return payment.status;
     case "stripe":
@@ -401,6 +410,28 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                 },
               },
             },
+            // #3369: a school's payment is found by the school's name. Its own
+            // ARM, not a key beside `member` in the same filter: the two arms
+            // would be ANDed, and `Booking_owner_exactly_one` means no booking
+            // can satisfy both, so an officer searching any name would have got
+            // nothing. Per term, like every other arm in this list — this
+            // surface already lets one term match a reference and another a
+            // name, unlike the bookings list, which picks one party for the
+            // whole search.
+            {
+              booking: {
+                is: {
+                  organisation: {
+                    is: {
+                      OR: [
+                        { name: insensitiveContains(term) },
+                        { email: insensitiveContains(term) },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
           ],
         }))
       );
@@ -448,6 +479,8 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                 email: true,
               },
             },
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
           },
         },
       },
@@ -580,6 +613,8 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                 member: {
                   select: { id: true, firstName: true, lastName: true, email: true },
                 },
+                // #3369: the owner may be an Organisation; bookingOwner() reads both.
+                organisation: { select: { name: true, email: true } },
               },
             },
           },

@@ -49,7 +49,7 @@ vi.mock("@/lib/session-guards", () => ({
 // over the real module and overrides only what it actually stubs — which is the shape
 // that cannot break again the next time an edge is added.
 vi.mock("@/lib/access-roles", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/access-roles")>()),
+  ...((await importOriginal()) as typeof import("@/lib/access-roles")),
   hasAdminAccess: mocks.hasAdminAccess,
 }));
 
@@ -62,7 +62,7 @@ vi.mock("@/lib/access-roles", async (importOriginal) => ({
 // asserts the route both uses the seam and catches its refusal above the generic
 // branch) and by the hosting suites themselves.
 vi.mock("@/lib/adult-member-hosting-review", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/adult-member-hosting-review")>()),
+  ...((await importOriginal()) as typeof import("@/lib/adult-member-hosting-review")),
   reconcileAdultMemberHostingReviewWithSiblings: vi.fn(async () => ({
     action: "none" as const,
     violation: null,
@@ -140,6 +140,12 @@ vi.mock("@/lib/xero-booking-invoice-queue", () => ({
 }));
 vi.mock("@/lib/member-credit", () => ({
   deriveBookingAppliedCreditCents: vi.fn().mockResolvedValue(0),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 vi.mock("@/lib/booking-credit-election", () => ({
   consumeStoredCreditElection: mocks.consumeStoredCreditElection,

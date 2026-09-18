@@ -128,7 +128,7 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
   // member-guest add policy on the booking paths), and admin-modules re-exports
   // module-settings helpers at module scope — so the bare object mock now
   // breaks the import. Keep the real module and override only the flag loader.
-  ...(await importOriginal<typeof import("@/lib/module-settings")>()),
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: mocks.loadModuleFlags,
 }));
 vi.mock("@/lib/email", () => ({
@@ -416,6 +416,91 @@ describe("createGroupSettlementIntent", () => {
       createGroupSettlementIntent("ABCD2345", ORGANISER)
     ).rejects.toMatchObject({ status: 409, code: "CAPACITY_EXCEEDED" });
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #2930 — the organiser is a MEMBER, and this 409's `details` is returned to
+   * them verbatim by `POST /api/group-bookings/[code]/settle`.
+   *
+   * The list was built inline here by filtering `availableBeds < 0`. A
+   * whole-lodge-held night is pinned to exactly 0 available beds and never goes
+   * negative (`INV-CAP-021`), so a refusal caused only by a hold handed the
+   * organiser an EMPTY `fullNights` where genuine fullness handed them a
+   * populated one — the tell ADR-001 decision 6 forbids, on a second member
+   * surface. Both cases now go through `getCapacityFullNights`.
+   */
+  it("names a whole-lodge-held night in the refusal, exactly as a full one (#2930)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "child-1",
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    });
+    // A held night as the engine reports it: full lodge, zero free beds, and
+    // never a negative number.
+    mocks.checkCapacity.mockResolvedValue({
+      available: false,
+      nightDetails: [
+        {
+          date: new Date("2026-07-01"),
+          occupiedBeds: 20,
+          availableBeds: 0,
+          wholeLodgeHeld: true,
+        },
+      ],
+    });
+
+    await expect(
+      createGroupSettlementIntent("ABCD2345", ORGANISER)
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "CAPACITY_EXCEEDED",
+      details: { bookingId: "child-1", fullNights: ["2026-07-01"] },
+    });
+  });
+
+  /**
+   * #2930 — the same line mapped `n.date`, which is a `Date`, so this ONE
+   * refusal put an instant on the wire (`"2026-07-01T00:00:00.000Z"`) where
+   * every other capacity refusal emits the lodge night as a date-only string
+   * (`INV-DATE-014`). A member reading two refusals from the same club got two
+   * different spellings of the same day.
+   */
+  it("emits the full nights as date-only strings, not serialised instants (#2930)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "child-1",
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    });
+    mocks.checkCapacity.mockResolvedValue({
+      available: false,
+      nightDetails: [
+        { date: new Date("2026-07-01"), occupiedBeds: 21, availableBeds: -1 },
+      ],
+    });
+
+    let thrown: unknown;
+    try {
+      await createGroupSettlementIntent("ABCD2345", ORGANISER);
+    } catch (error) {
+      thrown = error;
+    }
+
+    // Asserted through the wire form the settle route returns, because that is
+    // where the `Date` used to become an ISO instant.
+    const details = (thrown as { details: { fullNights: unknown[] } }).details;
+    expect(JSON.parse(JSON.stringify(details.fullNights))).toEqual(["2026-07-01"]);
   });
 
   // #1771 — defensive: a child that somehow carried a persisted capacity

@@ -38,7 +38,7 @@ vi.mock("@/components/admin-booking-calendar", () => ({
 }));
 
 vi.mock("@/lib/module-settings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/module-settings");
   return { ...actual, loadEffectiveModuleFlags: vi.fn() };
 });
 
@@ -48,7 +48,7 @@ vi.mock("@/lib/module-settings", async (importOriginal) => {
 // the chip and the list agree on ONE filter.
 vi.mock("@/lib/admin-bookings-service", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/admin-bookings-service")>();
+    (await importOriginal()) as typeof import("@/lib/admin-bookings-service");
   return { ...actual, listAdminBookings: vi.fn() };
 });
 
@@ -118,6 +118,7 @@ const MODULES_ON = {
   maintenanceReports: true,
   alpineCentralServer: false,
   commsPortal: false,
+  memberLodgeRoster: false,
 };
 
 function exceptionRow(overrides: Record<string, unknown> = {}) {

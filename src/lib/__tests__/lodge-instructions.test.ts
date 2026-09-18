@@ -66,7 +66,7 @@ vi.mock("@/lib/lodge-auth", () => ({
 // Deterministic values for text-token resolution; importOriginal keeps the
 // modules' other exports intact for email-templates and club-identity.
 vi.mock("@/config/club-identity", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/config/club-identity")>()),
+  ...((await importOriginal()) as typeof import("@/config/club-identity")),
   CLUB_NAME: "Test Alpine Club",
 }));
 // {{club-name}}/{{hut-leader}} now resolve through the DB-first club-identity
@@ -83,7 +83,7 @@ vi.mock("@/lib/club-identity-settings", async () => {
   };
 });
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/lodge-capacity")>()),
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity")),
   getLodgeCapacity: vi.fn(async () => 32),
   // The bare {{lodge-capacity}} token resolves the default lodge.
   getDefaultLodgeCapacity: vi.fn(async () => 32),

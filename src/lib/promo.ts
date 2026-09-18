@@ -1,5 +1,6 @@
 import { PromoCodeType, type FixedNightlyMode } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
   calculatePromoDiscount,
   type PromoCodeInput,
@@ -16,7 +17,7 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   getWorkPartyNightWindowForPromo,
-  restrictPerNightRatesToWindow,
+  inWindowNightIndexes,
 } from "@/lib/work-party";
 import { ApiError } from "@/lib/api-error";
 import {
@@ -122,16 +123,22 @@ export interface AssignedPromoCodeSummary extends AvailablePromoCode {
  */
 interface PromoDiscountGuestWithNights extends PromoDiscountGuest {
   firstNight?: Date | null;
-  // Actual dates of each entry in perNightRates (issue #713), parallel to that
-  // array. Used to restrict an internal work-party promo to its night window
-  // correctly when the guest stays non-contiguous nights. Falls back to
-  // positional dates from firstNight when omitted.
-  nightDates?: Date[] | null;
+  // `nightDates` — the actual date of each entry in perNightRates, parallel to
+  // it (issue #713) — is declared once, on `PromoDiscountGuest` in
+  // `pricing.ts` (#3276). It restricts an internal work-party promo to its
+  // night window correctly on a non-contiguous stay, and it is what an
+  // adjustment row is attributed by. Positional dates from `firstNight` are the
+  // fallback for the window only, never for attribution.
 }
 
 export interface BookingDetailsForPromo {
   totalPriceCents: number;
-  memberId: string;
+  /**
+   * The BOOKER, or null when the booking is owned by an `Organisation`
+   * (#3369). A members-only promotion already refuses an empty booker, and an
+   * organisation holds no per-member entitlement to spend.
+   */
+  memberId: string | null;
   guests: PromoDiscountGuestWithNights[];
   bookingCheckIn?: Date;
 }
@@ -178,11 +185,22 @@ export interface PromoCapCoverage {
   excludedMemberIds: string[];
 }
 
+/**
+ * The engine's result with, beside it, what it took off each night or guest of
+ * `bookingDetails.guests` by position in THAT list (#3276). Bundled so that a
+ * discount without its build-up cannot be represented: a writer reads
+ * `discount.adjustmentTargets` and hands it to `recordBookingNightAdjustments`
+ * after its last night write.
+ */
+export type PromoApplicationDiscount = PromoDiscountResult & {
+  adjustmentTargets: PromoAdjustmentTarget[];
+};
+
 export interface PromoApplicationResult {
   error?: string;
   requiresGuestSelection?: boolean;
   selectableGuestIndexes?: number[];
-  discount?: PromoDiscountResult;
+  discount?: PromoApplicationDiscount;
   beneficiaryMemberIds: string[];
   remainingFreeNights?: number;
   remainingFreeNightsByMemberId?: Record<string, number>;
@@ -250,7 +268,10 @@ function clubDateKey(value: Date, zone: ClubTimeZone) {
  */
 function normalizeAllocations(
   allocations: PromoDiscountAllocation[] | undefined,
-  fallbackMemberId: string,
+  // #3369: NULL when the booking is owned by an Organisation. See the early
+  // return below — an organisation holds no per-member entitlement, so the
+  // booker fallback has nobody to be about.
+  fallbackMemberId: string | null,
   discountCents: number,
   priceAdjustmentCents: number,
   freeNightsUsed: number
@@ -269,6 +290,13 @@ function normalizeAllocations(
       }))
       .filter(isBeneficialPromoAllocation);
   }
+
+  // #3369: the fallback allocation is the BOOKER's, and an organisation-owned
+  // booking has no booker member. No per-member entitlement is spent and no cap
+  // slot is held, so the honest answer is no allocation row at all rather than
+  // one naming nobody. The partial unique indexes 20260928020000 adds are the
+  // backstop for a null that gets in another way, not the reason for this.
+  if (fallbackMemberId === null) return [];
 
   const fallback = {
     memberId: fallbackMemberId,
@@ -289,7 +317,12 @@ function normalizeAllocations(
 export function calculatePromoDiscountForGuestRates(
   promo: PromoCodeInput,
   totalPriceCents: number,
-  bookingMemberId: string,
+  /**
+   * The BOOKER. Null since #3369, when the booking is owned by an
+   * `Organisation` — and on an UNASSIGNED promotion that is a refusal, not a
+   * branch. See the throw below.
+   */
+  bookingMemberId: string | null,
   guests: PromoDiscountGuest[],
   assignedMemberIds: string[] | null = null,
   remainingFreeNights?: number,
@@ -325,6 +358,25 @@ export function calculatePromoDiscountForGuestRates(
   // A CAP_ONLY fixed-nightly code that never bites is NOT one of these cases:
   // pricing counts no eligible guest for it at all, so it produced neither an
   // allocation nor a redemption row before this change either.
+  // #3369: an unassigned promotion attributes its WHOLE benefit to the booker,
+  // and an organisation-owned booking has no booker. There is nobody to
+  // attribute it to, so there is no benefit to price — and the decomposed
+  // night adjustments below would have to name a beneficiary member that does
+  // not exist (`BookingGuestNightAdjustment.beneficiaryMemberId`, which is NOT
+  // NULL and is the FIFTH member-linked model a school booking can reach; the
+  // #2912 census named four).
+  //
+  // `validateAndCalculatePromoDiscount` refuses this in words the officer
+  // reads, before pricing runs. Reaching here means a caller skipped that
+  // refusal, so this throws rather than inventing a beneficiary or quietly
+  // dropping the targets and leaving a discount nothing accounts for
+  // (`INV-MONEY-029`).
+  if (bookingMemberId === null) {
+    throw new Error(
+      "An unassigned promotion cannot be priced for a booking with no member: its whole benefit belongs to the booker, and an organisation is not one (#3369).",
+    );
+  }
+
   return {
     ...result,
     allocations: normalizeAllocations(
@@ -334,6 +386,12 @@ export function calculatePromoDiscountForGuestRates(
       result.priceAdjustmentCents,
       result.freeNightsUsed
     ),
+    // #3276: the rows follow the allocation they decompose, decided HERE and
+    // nowhere else — the same branch, the same member (INV-MONEY-029).
+    targets: result.targets.map((target) => ({
+      ...target,
+      beneficiaryMemberId: bookingMemberId,
+    })),
   };
 }
 
@@ -765,7 +823,7 @@ export interface PromoRuleCounts {
  */
 export function validatePromoCodeRules(
   promoCode: PromoRuleSubject | null,
-  bookingDetails: { memberId: string; bookingCheckIn?: Date },
+  bookingDetails: { memberId: string | null; bookingCheckIn?: Date },
   todayAtClub: CalendarDate,
   counts: PromoRuleCounts = {},
   assignedMemberIds: string[] | null = null,
@@ -997,17 +1055,70 @@ export async function validateAndCalculatePromoDiscount(
   if (promoCode.internal) {
     const nightWindow = await getWorkPartyNightWindowForPromo(db, promoCode.id);
     if (nightWindow) {
-      detailGuests = bookingDetails.guests.map((guest) => ({
-        ...guest,
-        perNightRates: guest.firstNight
-          ? restrictPerNightRatesToWindow(
-              guest.perNightRates,
-              guest.firstNight,
-              nightWindow,
-              guest.nightDates
-            )
-          : [],
-      }));
+      detailGuests = bookingDetails.guests.map((guest) => {
+        if (!guest.firstNight) return { ...guest, perNightRates: [], nightDates: [] };
+        // Rates AND dates filtered by the same positions (#3276): an adjustment
+        // row is attributed to a night by date, so the two vectors must stay
+        // parallel through the window.
+        const kept = inWindowNightIndexes(
+          guest.perNightRates.length,
+          guest.firstNight,
+          nightWindow,
+          guest.nightDates
+        );
+        // BOTH vectors are built by mapping over `kept`, so both are exactly
+        // `kept.length` long and position n of one is position n of the other.
+        // That is the parallelism the comment above requires, and it is the one
+        // thing this block may not get wrong: a date that has slipped by one
+        // attributes a discount to a night it was not taken off.
+        //
+        // NOT `filter` (#3374 review). Filtering each vector independently
+        // makes each one's length depend on ITS OWN contents, and `filter`
+        // skips holes -- so a sparse or short `nightDates` yields a dates
+        // vector SHORTER than the rates vector, silently shifted. That is the
+        // hole-skipping class this repository has already shipped once, where
+        // `every` and `reduce` passed a vector with a gap (#3167). Mapping over
+        // `kept` cannot shorten: a missing entry stays a hole-shaped
+        // `undefined` AT ITS OWN POSITION, and `resolveTargets` refuses a
+        // night-scope target with no date rather than writing the wrong one.
+        //
+        // A missing RATE is different and refuses here, because the type has
+        // always claimed `number[]`: passing `undefined` on would be a lie the
+        // compiler stopped accepting, and there is no rate to fall back to that
+        // is not invented money.
+        const keptRates = kept.map((index) => {
+          const rate = guest.perNightRates[index];
+          if (rate === undefined) {
+            throw new Error(
+              `Work-party promo window kept night index ${index} for a guest whose per-night rates have no entry there (#3276).`,
+            );
+          }
+          return rate;
+        });
+        // Built by POSITION, so a source date that is missing stays missing at
+        // its own index rather than pulling the rest forward. The result is
+        // still `Date[]` — a hole reads as `undefined`, which is exactly what
+        // `nightTarget` turns into a `null` `stayDate` and `resolveTargets`
+        // then refuses. Setting `length` last matters: without it a missing
+        // FINAL date would shorten the vector, which is the same shift by
+        // another route.
+        const sourceDates = guest.nightDates;
+        let keptDates: Date[] | typeof sourceDates = sourceDates;
+        if (sourceDates) {
+          const positioned: Date[] = [];
+          kept.forEach((index, position) => {
+            const date = sourceDates[index];
+            if (date !== undefined) positioned[position] = date;
+          });
+          positioned.length = kept.length;
+          keptDates = positioned;
+        }
+        return {
+          ...guest,
+          perNightRates: keptRates,
+          nightDates: keptDates,
+        };
+      });
     }
   }
 
@@ -1057,8 +1168,14 @@ export async function validateAndCalculatePromoDiscount(
       };
     }
   }
+  // `filterGuestsByIndexes` maps selected indexes back through `detailGuests`
+  // and drops any that came up empty (out of range); `PromoDiscountGuest` is
+  // always an object (never falsy), so this type predicate proves the same
+  // thing its `.filter(Boolean)` already guarantees at runtime.
   const guestsForPromo = requiresGuestSelection
-    ? filterGuestsByIndexes(detailGuests, selectedGuestIndexes.indexes)
+    ? filterGuestsByIndexes(detailGuests, selectedGuestIndexes.indexes).filter(
+        (guest): guest is PromoDiscountGuest => guest !== undefined
+      )
     : detailGuests;
   const assignedGuestScopeMemberIds = scopedAssignmentMemberIds(
     promoCode,
@@ -1127,13 +1244,29 @@ export async function validateAndCalculatePromoDiscount(
     };
   }
 
+  // #3369: an unassigned promotion's whole benefit belongs to the person who
+  // made the booking. A school's booking is made by the school, which holds no
+  // member entitlement, so there is nobody for the code to benefit. Said here,
+  // in words an officer reads, rather than left to pricing to discover.
+  if (!hasAssignedMembers(assignedGuestScopeMemberIds) && bookingDetails.memberId === null) {
+    return {
+      error:
+        "This promo code applies to the member who made the booking, and this booking belongs to a school rather than to a person.",
+      beneficiaryMemberIds: [],
+    };
+  }
+
   const beneficiaryUsage = await getPromoBeneficiaryUsage(
     promoCode.id,
     initialBeneficiaryMemberIds,
     options.excludeBookingId,
     db
   );
-  const bookerUsage = beneficiaryUsage[bookingDetails.memberId] ?? {
+  // #3369: no booker, no booker usage. Zero is the fact rather than a default:
+  // an organisation has spent nothing because it holds no entitlement.
+  const bookerUsage = (bookingDetails.memberId
+    ? beneficiaryUsage[bookingDetails.memberId]
+    : undefined) ?? {
     redemptionCount: 0,
     freeNightsUsed: 0,
   };
@@ -1379,13 +1512,55 @@ export async function validateAndCalculatePromoDiscount(
   // rewritten by a cap that has since moved. (In practice a guest-targeted code
   // scopes its cap to the booker, so this branch and the trim rarely meet.)
   return {
-    discount,
+    discount: {
+      ...discount,
+      adjustmentTargets: promoAdjustmentTargetsFor({ discount, guests: detailGuests }),
+    },
     beneficiaryMemberIds: coveredBeneficiaryMemberIds,
     remainingFreeNights,
     remainingFreeNightsByMemberId,
     selectedGuestIndexes: requiresGuestSelection ? selectedGuestIndexes.indexes : undefined,
     capCoverage,
   };
+}
+
+/**
+ * Resolve the engine's per-target detail to the caller's guest list (#3276).
+ *
+ * The engine names each target by the GUEST OBJECT it was handed; every filter
+ * between `guests` and the engine (`filterGuestsByIndexes`,
+ * `scopeGuestsForAssignedMembers`, `selectPromoDiscountGuests`) passes the same
+ * objects through, so identity maps a target back to its position in `guests`
+ * — which is the position a writer resolves to a `BookingGuest.id`. Nothing
+ * about the money is decided here: the beneficiary arrives already stamped by
+ * `calculatePromoDiscountForGuestRates`, the one place that decides it for the
+ * allocations too.
+ */
+export function promoAdjustmentTargetsFor(params: {
+  discount: PromoDiscountResult;
+  guests: ReadonlyArray<PromoDiscountGuest>;
+}): PromoAdjustmentTarget[] {
+  const { discount, guests } = params;
+  return discount.targets.map((target) => {
+    const guestIndex = guests.indexOf(target.guest);
+    if (guestIndex < 0) {
+      throw new Error(
+        "INV-MONEY-029: the promotion engine attributed an adjustment to a guest that is not on the priced list",
+      );
+    }
+    if (!target.beneficiaryMemberId) {
+      throw new Error(
+        "INV-MONEY-029: an assigned-scoped promotion attributed an adjustment to a guest with no linked member",
+      );
+    }
+    return {
+      guestIndex,
+      scope: target.scope,
+      stayDate: target.scope === "night" ? target.stayDate : null,
+      beneficiaryMemberId: target.beneficiaryMemberId,
+      amountCents: target.amountCents,
+    };
+  });
 }
 
 /**
@@ -1619,7 +1794,12 @@ export async function redeemPromoCode(
   tx: PrismaTx,
   promoCodeId: string,
   bookingId: string,
-  memberId: string,
+  // #3369: the BOOKER, or null when the booking is owned by an Organisation.
+  // The redemption row then names no member and no booker allocation is
+  // written, because an organisation holds no per-member entitlement. Every
+  // per-member cap still counts exactly the rows it counted before, since only
+  // an organisation-owned booking can leave this empty.
+  memberId: string | null,
   discountCents: number,
   priceAdjustmentCents: number,
   freeNightsUsed?: number,
@@ -1710,7 +1890,13 @@ export async function redeemPromoCode(
  */
 export async function replacePromoRedemptionAllocations(
   tx: PrismaTx,
-  redemption: { id: string; promoCodeId: string; bookingId: string; memberId: string },
+  redemption: {
+    id: string;
+    promoCodeId: string;
+    bookingId: string;
+    // #3369: null when the booking is owned by an Organisation.
+    memberId: string | null;
+  },
   discountCents: number,
   priceAdjustmentCents: number,
   freeNightsUsed?: number,

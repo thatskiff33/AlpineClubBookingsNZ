@@ -5,6 +5,7 @@ import {
   lockMemberCreditLedger,
 } from "./member-credit";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
@@ -312,11 +313,15 @@ function isEventualConsistencyShapedTotal(params: {
   const unknown = observed.filter(
     (allocation) => !knownIds.includes(allocation.allocationID),
   );
+  // "No unknown allocation, or exactly one that is the recreate" said as a
+  // first with no rest, so the amount compared below is a value this
+  // expression already holds (#2800).
+  const [soleUnknown, ...extraUnknown] = unknown;
   const unknownIsSoleRecreate =
-    unknown.length === 0 ||
-    (unknown.length === 1 &&
+    soleUnknown === undefined ||
+    (extraUnknown.length === 0 &&
       targetCents > 0 &&
-      unknown[0].amountCents === targetCents);
+      soleUnknown.amountCents === targetCents);
   if (!unknownIsSoleRecreate) return false;
   return (
     providerTotal === preTotal ||
@@ -644,6 +649,20 @@ export async function deallocateExcessAppliedCreditForBooking(
     return;
   }
 
+  // #3369: deallocation removes credit from a MEMBER's ledger, and an
+  // organisation-owned booking has none to remove — it can never have had
+  // applied credit in the first place. Resolved once, at the top.
+  const creditOwnerMemberId = bookingOwner(booking).memberId;
+  if (!creditOwnerMemberId) {
+    await completeXeroSyncOperation(options.syncOperationId, {
+      responsePayload: {
+        skipped: true,
+        reason: "The booking is owned by an organisation, which holds no member credit.",
+      },
+    });
+    return;
+  }
+
   /*
     INV-CONFIG-005 (#3036): deallocation REMOVES credit from an invoice, so it
     raises what is outstanding on it — and Xero emails reminders for an
@@ -676,7 +695,7 @@ export async function deallocateExcessAppliedCreditForBooking(
       );
       return response.body.invoices?.[0]?.contact?.contactID;
     },
-    memberId: booking.memberId,
+    memberId: creditOwnerMemberId,
     workflow: "deallocateExcessAppliedCreditForBooking",
   });
 
@@ -702,7 +721,14 @@ export async function deallocateExcessAppliedCreditForBooking(
   }
 
   const snapshot = await prisma.$transaction(async (tx) => {
-    await lockMemberCreditLedger(booking.memberId, tx);
+    const creditLedgerMemberId = bookingOwner(booking).memberId;
+    // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+    // booking has none, so there is no key to take. Passing a null key would
+    // either throw inside the helper or degenerate to a shared advisory key,
+    // which is an `INV-LOCK` hazard that shows up only under concurrency.
+    if (creditLedgerMemberId) {
+      await lockMemberCreditLedger(creditLedgerMemberId, tx);
+    }
     await assertNoAppliedCreditDeallocationFence(booking.payment!.id, tx, {
       excludeOperationId: options.syncOperationId,
       allowUncheckpointedPending: true,
@@ -973,7 +999,7 @@ export async function deallocateExcessAppliedCreditForBooking(
     await applyLocalGroup({
       operationId: options.syncOperationId,
       bookingId,
-      memberId: booking.memberId,
+      memberId: creditOwnerMemberId,
       paymentId: booking.payment.id,
       invoiceId: booking.payment.xeroInvoiceId,
       group,

@@ -1782,9 +1782,15 @@ Collision rules refuse approval (BLOCK) when a mapping target is inactive or
 archived, already belongs to a family group (for a family application), is
 mapped for two people at once, is a nominator on this application, is an admin
 mapped as a dependent, or when the application email belongs to a *different*
-login-capable member. A target that already has this season's membership
-coverage is kept as-is and excluded from new subscription billing (SKIP with a
-note, repeated in the post-approval warnings), so nobody is double-charged.
+login-capable member. Mapping an applicant and dependant onto two existing
+records also refuses a parent link when those records already have either a
+pending or confirmed partner link. The mapping preview names that conflict and
+approval re-checks it after taking the same sorted relationship locks as every
+other existing-member parent writer; a changed relationship returns 409 and
+nothing from the application is saved. A target that already has this season's
+membership coverage is kept as-is and excluded from new subscription billing
+(SKIP with a note, repeated in the post-approval warnings), so nobody is
+double-charged.
 
 Mapping also refuses (BLOCK) when a **scoped** admin's mapping would overwrite
 the login email of a member who holds a privileged access role — the same
@@ -2007,35 +2013,17 @@ bank account details, or provider credentials; Stripe, Xero, email, cron, and
 other operator-owned credentials stay in environment variables and provider
 setup screens.
 
-The effective module state is the saved Admin Modules value. Missing module
-settings use the hardened first-install defaults below. If the settings table
+The effective module state is the saved Admin Modules value. A module the club
+has never saved runs on its first-install default, and if the settings table
 cannot be read, optional modules fail closed.
 
-| Module | Default | Description |
-| --- | --- | --- |
-| Lodge kiosk | off | Guest arrival, departure, and lodge access screens. |
-| Chores and roster | off | Roster generation, chore templates, and guest chore tracking. |
-| Finance dashboard | off | Finance reports, sync diagnostics, and finance-only dashboards. |
-| Waitlist | off | Waitlist booking state, admin queue, offer handling, and waitlist cron. |
-| Xero integration | off | Operational Xero linking, sync actions, reconciliation tools, Xero cron, and Xero webhooks. |
-| Bed allocation | off | Room and bed inventory, guest-to-bed allocation, auto-allocation, and allocation approvals. |
-| Internet Banking payments | off | Member Internet Banking payment option backed by Xero invoices. Operational Xero still needs credentials and a tenant connection before invoices can be issued and reconciled. |
-| Address autocomplete | off | Addy-powered suggestions on address fields. Manual address entry remains available whenever the module is off, credentials are missing, Addy fails, or rate limiting applies. |
-| Group bookings | on | Group-booking organiser, join, and settlement surfaces. |
-| Lockers | on | Physical locker records and member allocations. |
-| Lodge induction | on | Lodge induction templates, assigned signers, and single-Pass sign-off. |
-| Work parties | on | Volunteer work-party events and the internal booking discounts they grant. |
-| Promo codes | on | Promo-code administration and promo-aware booking flows. |
-| Hut leaders | on | Hut-leader assignments, kiosk access, and auto-assignment. |
-| Communications | on | Admin bulk email to members. Transactional notifications are unaffected. |
-| Events calendar | on | Club events calendar for meetings, working bees, and social events, with recurring events and optional MiroTalk video-meeting links. Defaults on, which is exactly how the calendar behaved before it had a module at all, so an existing club sees no change. Switching it off makes `/calendar`, `/admin/calendar`, and `/api/calendar/*` return Not Found and removes the dashboard Events card; existing events are kept and reappear if it is switched back on. Organisation accounts never see the calendar whether the module is on or off. |
-| Ski-field conditions | on | Live mountain/road status panel, public API routes, and admin cache controls. |
-| Two-factor authentication | off | Requires users to complete authenticator-app, email-code, or recovery-code verification after password login. |
-| Email sign-in link | off | Lets members request a single-use email link to sign in without their password (additive to password login, never a replacement). Only ever works for existing active members with a verified email; the `magic-link-login` link expiry defaults to 15 minutes (stored on the Login & Security settings, range 5–60) and is read by the sign-in request flow. |
-| Google sign-in | off | Lets members sign in with a Google account they have linked from their profile (additive to password login, never a replacement). Credentials are entered and verified **in-app** on the Google sign-in setup page (Admin → Integrations → Google) — no env vars, no restart. The module cannot be turned on until a real Google OAuth round-trip verifies (hard gate), and replacing a credential re-locks it until re-verified. The "Continue with Google" button appears only when the module is on AND credentials resolve. No account is ever created from Google, and an unlinked Google account is refused with a friendly message. See the Google sign-in section below. |
-| Google Analytics | off | GA4 tracking on the public website, configured **in-app** at Admin → Integrations → Google Analytics (measurement id, consent-banner mode, banner wording) — no env vars, no restart. The module is the master switch: with it off there is no card, no configuration API and no tag. With the consent banner on (the default and the recommended option) nothing at all is sent to Google until a visitor selects Accept; with it off the tag loads automatically and visitors opt out afterwards from the footer's Analytics preferences link. Advertising consent categories stay denied in both modes, and analytics never runs on admin pages, signed-in member pages, or any address carrying a token, PIN or personal identifier. See the Google Analytics section below. |
-| AI help assistant | off | Free-text help questions answered by a paid AI model (Anthropic Claude Haiku), grounded strictly in each page's curated help content. The Anthropic API key is entered **in-app** on Admin → Integrations (encrypted vault, never an env var). Unlike Google sign-in there is **no** enable-gate on a present key — with the module on but no key, the ask box degrades to a structured fallback and curated page help still works. A monthly spend cap (default NZ$10) hard-stops AI answers for the rest of the month once reached. See the AI help assistant section below. |
-| Add another member as a guest | off | Lets a member add another club member, outside their own family group, as a guest on their booking. With the module off, a cross-family add is refused exactly as it was before this feature existed, so an existing club sees no change until an admin turns it on. With it on, the other member is emailed and asked first by default, and a bed is held for them until they answer or the request lapses. A member who has been asked but has not answered holds a bed and is deliberately kept off the kiosk arrivals list, the chore roster, bed allocation and the arrival emails until they accept. The surface exists both when a booking is created and when it is edited, and admins get the same section on a member's booking page. Turning the module on also brings admin adds, the admin booking-copy and the booking-request pipeline under the always-notify rule; with it off, none of those write a consent record or send anything. See the member-guest settings section below. |
+**The per-module list — every module, what it enables and its default — has
+one home: [`docs/guides/modules.md` → "Settings
+reference"](docs/guides/modules.md#settings-reference).** That table is checked
+against the application's module registry in both directions by
+`src/lib/__tests__/modules-guide-settings-reference.test.ts`, so it cannot fall
+behind. This file used to carry a second, unchecked copy of it, and that copy
+had already drifted (#2996).
 
 ### Member-guest settings
 
@@ -2428,16 +2416,28 @@ question text is ever stored). The whole page 404s while the module is off.
    works. This asymmetry is deliberate (an unconfigured assistant is invisible,
    not broken).
 3. **Adjust the budget** if needed on **Admin → AI help assistant** (the
-   monthly spend-cap editor takes dollars-and-cents; support-edit access). The
-   in-app **monthly spend cap** (default **NZ$10**, `AiAssistantSettings.monthlyBudgetCents`,
-   integer cents) is a **hard cutoff**: once the month's estimated spend would
-   exceed it, the assistant returns a "budget exhausted" fallback for the rest of
-   the calendar month (Pacific/Auckland) and no further paid calls are made. Cost
-   is deliberately **over-estimated** (conservative NZD FX, rounded up) so the cap
-   trips early rather than late, and the app also stops spending if it can no
-   longer record usage ("can't-meter ⇒ don't-spend"). The cap is a
-   deployment-specific control and does **not** travel in a config-transfer
-   bundle — a fresh import gets the NZ$10 default.
+   monthly spend-cap editor takes an amount in the club's configured currency;
+   support-edit access). The in-app **monthly spend cap** (default **10.00 in
+   the club's configured currency** — NZ$10 for a New Zealand club —
+   `AiAssistantSettings.monthlyBudgetCents`, integer cents) is a **hard
+   cutoff**: once the month's estimated spend would exceed it, the assistant
+   returns a "budget exhausted" fallback for the rest of the calendar month
+   (Pacific/Auckland) and no further paid calls are made. Cost is deliberately
+   **over-estimated** (conservative USD→NZD FX, then the club's rate below,
+   rounded up) so the cap trips early rather than late, and the app also stops
+   spending if it can no longer record usage ("can't-meter ⇒ don't-spend"). The
+   cap is a deployment-specific control and does **not** travel in a
+   config-transfer bundle — a fresh import gets the default.
+4. **If `CURRENCY` / `NEXT_PUBLIC_CURRENCY` is not `NZD`, set the conversion rate** (#3354). AI usage is
+   priced in New Zealand dollars; the **Currency for AI spend** card on both AI
+   settings pages takes **how many units of the club's currency one New Zealand
+   dollar buys** (for example `0.92`), stores it as an integer in parts per
+   million (`AiSpendCurrencySettings.clubUnitsPerNzdMicros`, one row shared by
+   the AI help assistant and AI Diagnostics) and shows **when it was last set**,
+   because nothing updates it for you. Until it is set, spend is counted as if
+   1 NZD = 1 unit of the club's currency. A New Zealand club sees no editor.
+   Like the caps, the rate is deployment-local and is **not** carried in the
+   config-transfer bundle.
 
 Per-member, per-IP, and global daily rate limits throttle abuse, but the monthly
 budget cap is the real spend ceiling.

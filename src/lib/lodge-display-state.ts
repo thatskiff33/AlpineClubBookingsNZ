@@ -1,4 +1,3 @@
-import type { AgeTier, DisplayNameGranularity } from "@prisma/client";
 import { isValidArrivalTime } from "./arrival-time";
 import {
   getActiveGuestsForNight,
@@ -10,6 +9,14 @@ import {
   isGuestDepartingOnDay,
 } from "./booking-guest-stay-ranges";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "./booking-status";
+import {
+  bookingLabel,
+  DEFAULT_DISPLAY_NAME_GRANULARITY,
+  isMinorAgeTier as isMinor,
+  namesAllowedForBooking,
+  reduceName,
+  WHOLE_LODGE_MIN_GUESTS,
+} from "./display-name-granularity";
 import {
   addDaysDateOnly,
   eachDateOnlyInRange,
@@ -30,6 +37,11 @@ import { loadEffectiveModuleFlags } from "./module-settings";
 import { canServeMemberPhoneOnLodgeSurface, formatXeroPhone } from "./phone";
 import type { ModuleKey } from "@/config/modules";
 import { prisma } from "./prisma";
+import {
+  bookingOwner,
+  bookingOwnerAgeTier,
+  bookingOwnerHasNoAgeTier,
+} from "@/lib/booking-owner";
 
 // The lobby display's data contract and privacy serialiser (fork issue #28,
 // docs/lobby-display/design.md §5 and §10). THIS FILE IS THE SINGLE
@@ -46,19 +58,8 @@ import { prisma } from "./prisma";
 // shows individual names. Both config flags default off, so by default no phone
 // ever enters the payload.
 
-export const DEFAULT_DISPLAY_NAME_GRANULARITY: DisplayNameGranularity =
-  "FIRST_NAME_SURNAME_INITIAL";
-
 export const DISPLAY_WINDOW_DEFAULT_DAYS = 3;
 export const DISPLAY_WINDOW_MAX_DAYS = 7;
-
-// A sole-occupancy booking only collapses to the whole-lodge blockout
-// treatment when it is a genuine group take-over: an organisation booking, or
-// at least this many guests. Keeps a lone mid-week guest off the blockout
-// board. Documented in design.md §10; review-flagged on epic #25.
-export const WHOLE_LODGE_MIN_GUESTS = 8;
-
-const MINOR_AGE_TIERS: readonly AgeTier[] = ["INFANT", "CHILD", "YOUTH"];
 
 export interface DisplayStateGuest {
   label: string;
@@ -225,107 +226,6 @@ export interface DisplayState {
   custodian: { label: string | null; count: number } | null;
 }
 
-function isMinor(ageTier: AgeTier): boolean {
-  return MINOR_AGE_TIERS.includes(ageTier);
-}
-
-/** Reduce an adult's name to the configured granularity. */
-export function reduceName(
-  firstName: string,
-  lastName: string,
-  granularity: DisplayNameGranularity
-): string | null {
-  const first = firstName.trim();
-  const last = lastName.trim();
-  switch (granularity) {
-    case "FULL_NAME":
-      return [first, last].filter(Boolean).join(" ");
-    case "FIRST_NAME_SURNAME_INITIAL":
-      return last ? `${first} ${last[0].toUpperCase()}` : first;
-    case "FIRST_NAME_ONLY":
-      return first;
-    case "COUNTS_ONLY":
-      return null;
-  }
-}
-
-interface OrganiserShape {
-  firstName: string;
-  lastName: string;
-  ageTier: AgeTier;
-}
-
-/**
- * Whether a booking's guests may be individually named anywhere on the wall
- * (design.md §10 settled rules; issue #174): sole occupancy of the lodge, any
- * minor in the booking, an organisation organiser, or counts-only
- * granularity all suppress individual names in favour of the booking's
- * reduced group label. This is the SINGLE definition of that condition —
- * every board that might name an individual (booking rows, chore assignees)
- * calls this instead of re-deriving the condition list.
- *
- * `soleOccupancy`, not `wholeLodge` (#2735). It was renamed because the two
- * came apart: `row.wholeLodge` says the wall may draw a BLOCKOUT (the group
- * holds a night inside the window), while this asks whether the group had the
- * building to itself on any night that put it on the wall — which includes the
- * night before the window, whose occupants are still here on the first morning.
- * The privacy rule follows the second, so it is the second that belongs here.
- */
-export function namesAllowedForBooking(options: {
-  soleOccupancy: boolean;
-  containsMinors: boolean;
-  organiserAgeTier: AgeTier;
-  granularity: DisplayNameGranularity;
-}): boolean {
-  return (
-    !options.soleOccupancy &&
-    !options.containsMinors &&
-    options.organiserAgeTier !== "NOT_APPLICABLE" &&
-    options.granularity !== "COUNTS_ONLY"
-  );
-}
-
-/**
- * The booking-level label (design.md §10 settled rules):
- * - organisation organiser (schools, clubs): the organisation's full name at
- *   EVERY granularity — organisations are not people;
- * - booking containing minors: a family/group label, never individual names;
- * - otherwise: the organiser's name at the configured granularity.
- */
-export function bookingLabel(
-  organiser: OrganiserShape,
-  options: {
-    granularity: DisplayNameGranularity;
-    containsMinors: boolean;
-    guestCount: number;
-  }
-): string {
-  const { granularity, containsMinors, guestCount } = options;
-
-  if (organiser.ageTier === "NOT_APPLICABLE") {
-    return [organiser.firstName.trim(), organiser.lastName.trim()]
-      .filter(Boolean)
-      .join(" ");
-  }
-
-  if (containsMinors) {
-    const last = organiser.lastName.trim();
-    if (
-      last &&
-      (granularity === "FULL_NAME" ||
-        granularity === "FIRST_NAME_SURNAME_INITIAL")
-    ) {
-      return `${last} family`;
-    }
-    return `Family of ${guestCount}`;
-  }
-
-  return (
-    reduceName(organiser.firstName, organiser.lastName, granularity) ??
-    `Guests · ${guestCount}`
-  );
-}
-
 /** Sanitise the per-lodge config glob to a flat string map with caps. */
 export function sanitiseDisplayConfig(raw: unknown): Record<string, string> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -439,6 +339,12 @@ export async function buildDisplayState(
         member: {
           select: { firstName: true, lastName: true, ageTier: true },
         },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        // THE NAME ONLY. The wall renders who a booking belongs to and nothing
+        // else, and AC7 forbids an email anywhere in this query — the owner
+        // projection's address defaults to empty, which is exactly right for a
+        // surface that must never carry one.
+        organisation: { select: { name: true } },
         guests: {
           // Owner decision D-12 (#2307): the wall describes who is actually at
           // the lodge, so an unconsented member guest is not in this set.
@@ -517,6 +423,12 @@ export async function buildDisplayState(
                 member: {
                   select: { firstName: true, lastName: true, ageTier: true },
                 },
+                // #3369: the owner may be an Organisation; bookingOwner() reads both.
+                // THE NAME ONLY. The wall renders who a booking belongs to and nothing
+                // else, and AC7 forbids an email anywhere in this query — the owner
+                // projection's address defaults to empty, which is exactly right for a
+                // surface that must never carry one.
+                organisation: { select: { name: true } },
                 // D-12 (#2307): the chore panel re-derives containsMinors and
                 // the group headcount for its own assignee label, so it has to
                 // read the SAME guest set as the booking rows above or the two
@@ -667,7 +579,13 @@ export async function buildDisplayState(
       continue;
     }
     const guestCount = booking.guests.length;
-    const isOrganisation = booking.member.ageTier === "NOT_APPLICABLE";
+    // #3369: an ORGANISATION-owned booking has no member and so no age tier,
+    // and an organisation is a group outright, whatever its size. Asked through
+    // the one home of that rule (#3480, `INV-SSOT-005`): this very line once
+    // spelled it `=== "NOT_APPLICABLE"`, which was false for every school
+    // booking after the backfill, and a five-student school alone in the lodge
+    // stopped drawing as a blockout (#3391).
+    const isOrganisation = bookingOwnerHasNoAgeTier(booking);
     const isGroup = isOrganisation || guestCount >= WHOLE_LODGE_MIN_GUESTS;
     if (!isGroup) continue;
     const nightMap = perBookingNightCounts.get(booking.id);
@@ -697,7 +615,7 @@ export async function buildDisplayState(
 
     const containsMinors = booking.guests.some((guest) => isMinor(guest.ageTier));
     const wholeLodge = wholeLodgeBookingIds.has(booking.id);
-    const label = bookingLabel(booking.member, {
+    const label = bookingLabel(bookingOwner(booking).member, {
       granularity,
       containsMinors,
       guestCount: booking.guests.length,
@@ -712,7 +630,12 @@ export async function buildDisplayState(
     const namesAllowed = namesAllowedForBooking({
       soleOccupancy: soleOccupancyBookingIds.has(booking.id),
       containsMinors,
-      organiserAgeTier: booking.member.ageTier,
+      // #3369: an ORGANISATION has no age tier, and `NOT_APPLICABLE` is exactly
+      // that — the value this module already reserves for an organiser who is
+      // not a person, and whose branch in `bookingLabel` shows a full name
+      // instead of a person's abbreviated one. A school's name is not personal
+      // data, so the privacy abbreviation was never protecting anything there.
+      organiserAgeTier: bookingOwnerAgeTier(booking),
       granularity,
     });
 
@@ -868,7 +791,9 @@ export async function buildDisplayState(
       const namesAllowed = namesAllowedForBooking({
         soleOccupancy: soleOccupancyBookingIds.has(assignment.booking.id),
         containsMinors: bookingContainsMinors,
-        organiserAgeTier: assignment.booking.member.ageTier,
+        // #3369: see the note on the sibling call — an organisation has no age
+        // tier, and `NOT_APPLICABLE` is what that is.
+        organiserAgeTier: bookingOwnerAgeTier(assignment.booking),
         granularity,
       });
       if (namesAllowed) {
@@ -883,7 +808,7 @@ export async function buildDisplayState(
         // organisation organiser, or counts-only): fall back to the
         // booking's reduced group label rather than the assignee's name.
         assigneeLabels = [
-          bookingLabel(assignment.booking.member, {
+          bookingLabel(bookingOwner(assignment.booking).member, {
             granularity,
             containsMinors: bookingContainsMinors,
             guestCount: assignment.booking.guests.length,

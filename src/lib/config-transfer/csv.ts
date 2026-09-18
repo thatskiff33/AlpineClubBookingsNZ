@@ -3,6 +3,8 @@
 // LF/CRLF tolerant on read, LF on write. Values are strings on the wire; typed
 // coercion is the caller's job (per the entity's field allowlist).
 
+import { must } from "@/lib/indexed-access";
+
 export type CsvRow = Record<string, string>;
 
 function encodeField(value: unknown): string {
@@ -116,10 +118,10 @@ export function parseCsv(
   if (records.length === 0) {
     return { headers: [], rows: [] };
   }
-  const headers = records[0];
+  const headers = must(records[0], "parseCsv: records is non-empty but has no element 0");
   const rows: CsvRow[] = [];
   for (let r = 1; r < records.length; r += 1) {
-    const cols = records[r];
+    const cols = must(records[r], `parseCsv: no record at index ${r} within records.length`);
     // Skip a blank trailing line (single empty field).
     if (cols.length === 1 && cols[0] === "") continue;
     if (options.strictColumnCount && cols.length !== headers.length) {
@@ -129,7 +131,8 @@ export function parseCsv(
     }
     const row: CsvRow = {};
     for (let c = 0; c < headers.length; c += 1) {
-      row[headers[c]] = cols[c] ?? "";
+      const header = must(headers[c], `parseCsv: no header at index ${c} within headers.length`);
+      row[header] = cols[c] ?? "";
     }
     rows.push(row);
   }

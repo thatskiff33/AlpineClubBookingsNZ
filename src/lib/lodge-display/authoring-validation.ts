@@ -107,7 +107,9 @@ function cssSanitisationWarnings(css: string, path: string): ValidationIssue[] {
   const urlRegex = /url\(\s*(['"]?)([^)'"]*)\1\s*\)/gi;
   let urlMatch: RegExpExecArray | null;
   while ((urlMatch = urlRegex.exec(css)) !== null) {
-    if (isExternalCssUrl(urlMatch[2])) {
+    // Group 2 has no `?` quantifier, so it is always present (possibly empty).
+    const urlTarget = urlMatch[2];
+    if (urlTarget !== undefined && isExternalCssUrl(urlTarget)) {
       hasExternalUrl = true;
       break;
     }
@@ -167,7 +169,9 @@ function htmlImgSanitisationWarnings(html: string, path: string): ValidationIssu
   const imgSrcRegex = /<img\b[^>]*\ssrc\s*=\s*(['"])(.*?)\1/gi;
   let match: RegExpExecArray | null;
   while ((match = imgSrcRegex.exec(html)) !== null) {
-    if (isDisplayBlockedImgSrc(match[2])) {
+    // Group 2 has no `?` quantifier, so it is always present (possibly empty).
+    const imgSrc = match[2];
+    if (imgSrc !== undefined && isDisplayBlockedImgSrc(imgSrc)) {
       return [
         {
           path,

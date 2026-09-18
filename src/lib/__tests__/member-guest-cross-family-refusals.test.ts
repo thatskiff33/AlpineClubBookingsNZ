@@ -19,14 +19,14 @@ import { describe, expect, it, vi } from "vitest";
 // with D-8; forcing it ON is what makes the third refusal reachable in a unit test
 // at all. Everything else in this file runs against the real implementations.
 vi.mock("@/lib/member-subscription-eligibility", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-subscription-eligibility")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-subscription-eligibility")),
   isSubscriptionEnforcementActive: vi.fn().mockResolvedValue(true),
 }));
 // The membership-type policy resolver needs far more of the schema than this
 // unit test stubs; an empty map means "no type-level exemption", which is the
 // case that reaches the refusal.
 vi.mock("@/lib/membership-type-policy", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/membership-type-policy")>()),
+  ...((await importOriginal()) as typeof import("@/lib/membership-type-policy")),
   resolveMembershipTypePoliciesForMembers: vi.fn().mockResolvedValue(new Map()),
 }));
 vi.mock("@/lib/age-tier", () => ({

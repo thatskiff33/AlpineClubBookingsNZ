@@ -44,11 +44,15 @@ export async function POST(request: Request) {
 
     const result = await manuallyAllocateBedForNights(body.data);
 
-    if (result.allocations.length > 0) {
+    // The first allocation IS the condition: an audit row is written exactly
+    // when this bulk set allocated something, and the booking it names comes
+    // from that same allocation (#2801).
+    const [firstAllocation] = result.allocations;
+    if (firstAllocation) {
       await createAuditLog({
         action: "BED_ALLOCATION_BULK_SET",
         memberId: guard.session.user.id,
-        targetId: result.allocations[0].bookingId,
+        targetId: firstAllocation.bookingId,
         entityType: "BedAllocation",
         category: "lodge",
         outcome: "success",

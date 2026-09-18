@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { CREDENTIAL_SYSTEM_ACTORS } from "@/lib/integration-credential-actor";
+
 /*
   #2720 — the credential blast-radius list has ONE home, and it is current.
 
@@ -33,6 +35,21 @@ const CREDENTIALS_ROUTE =
   "src/app/api/admin/integrations/credentials/route.ts";
 const CANONICAL_LIST_DOC = "docs/SECURITY-ATTACK-SURFACE.md";
 const ROTATION_RUNBOOK_DOC = "DEPLOYMENT.md";
+
+/**
+ * The SECOND list on this page that is restated from code (#2723): the closed
+ * set of background writers of the credential store.
+ *
+ * It is here for the reason written at the top of this file. A second
+ * hand-written list IS the defect — the rotation runbook's copy of the provider
+ * list went four providers stale, and an operator would have met the missing
+ * ones mid-rotation. The actor list has exactly the same shape: it is closed, it
+ * is reviewed, it is restated in prose on the attack-surface page, and adding or
+ * removing a background writer is precisely the moment the prose falls behind.
+ * #2723 removed two entries from it in a single fix round, which is how fast it
+ * moves.
+ */
+const ACTOR_LIST_HEADING = "#### The background writers, in full (#2723)";
 
 /** The heading the canonical provider list lives under. */
 const CANONICAL_LIST_HEADING =
@@ -203,6 +220,34 @@ describe("credential blast-radius documentation contract (#2720)", () => {
         "mid-rotation, after sessions and 2FA are already gone. Add it with " +
         "the keys it holds and the issue that introduced it.",
     ).toEqual([]);
+  });
+
+  it("names every background credential writer, and invents none (#2723)", () => {
+    const section = documentSection(CANONICAL_LIST_DOC, ACTOR_LIST_HEADING);
+    // Read back what the page actually claims, from its own bullets, so the
+    // comparison is set-to-set rather than "does the text mention it".
+    const documented = [
+      ...section.matchAll(/^- `([a-z0-9-]+)`/gm),
+    ].map((match) => match[1]);
+
+    expect(
+      documented.length,
+      `${CANONICAL_LIST_DOC} → "${ACTOR_LIST_HEADING}" parsed to no entries at ` +
+        "all, so this check would pass over an empty set. The list is written " +
+        "as one `- \`actor-name\` — description` bullet per actor; keep that " +
+        "shape or teach this parser the new one.",
+    ).toBeGreaterThan(0);
+
+    expect(
+      [...documented].sort(),
+      `${CANONICAL_LIST_DOC} → "${ACTOR_LIST_HEADING}" does not match ` +
+        "CREDENTIAL_SYSTEM_ACTORS. That list is closed and every entry is a " +
+        "background writer with access to a stored secret, so an operator " +
+        "reading this page to find out which job touched a credential must be " +
+        "reading the real set. Add or remove the bullet in the same change as " +
+        "the constant — a second hand-written list is the defect this whole " +
+        "file exists to prevent.",
+    ).toEqual([...CREDENTIAL_SYSTEM_ACTORS].sort());
   });
 
   it("keeps the rotation runbook pointing at that list instead of copying it", () => {

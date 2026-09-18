@@ -8,6 +8,8 @@ import {
   type Role,
 } from "@prisma/client";
 
+import type { BookingGuestNightPriceSource } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { logAudit } from "@/lib/audit";
@@ -15,6 +17,7 @@ import {
   queueSupersededPrimaryIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
 import {
+  activeLifecycleEditRefusal,
   canModifyBookingStatusForRole,
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
@@ -78,6 +81,7 @@ import {
   clampAppliedCreditToBookingPrice,
   createBookingModificationCredit,
   deriveBookingAppliedCreditCents,
+  requireMemberCreditRecipient,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import {
@@ -105,6 +109,12 @@ import {
   replacePromoRedemptionAllocations,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
+import {
+  recordBookingNightAdjustments,
+  restoreBookingNightAdjustments,
+  snapshotBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
 import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
@@ -165,6 +175,13 @@ type ModifiedBooking = Booking & {
 
 type DateModificationTransactionResult =
   BookingModificationPaymentContext & {
+    /**
+     * The plain figure the emails, the response body and the Xero leg read.
+     * Inherited from `BookingModificationPaymentContext` until #3371 replaced
+     * that field with `additionalAsk`; it is restated here because those
+     * consumers want a number and the minter must not be handed one.
+     */
+    additionalAmountCents: number;
     booking: ModifiedBooking;
     priceDiffCents: number;
     changeFeeCents: number;
@@ -340,6 +357,8 @@ export async function modifyBookingDates({
         },
         payment: true,
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
         promoRedemption: {
           include: {
             guestTargets: { select: { bookingGuestId: true } },
@@ -358,7 +377,7 @@ export async function modifyBookingDates({
       throw new ApiError("Booking not found", 404);
     }
 
-    if (booking.memberId !== actor.id && actor.role !== "ADMIN") {
+    if (bookingOwner(booking).memberId !== actor.id && actor.role !== "ADMIN") {
       throw new ApiError("Forbidden", 403);
     }
     await assertBookingNotQuotePriced(tx, bookingId);
@@ -377,15 +396,12 @@ export async function modifyBookingDates({
 
     // Under an admin override the fully-past COMPLETED status is editable too
     // (issue #1668); the standard path keeps the active-lifecycle allowlist.
-    const allowedStatuses = adminOverride
-      ? ["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED"]
-      : ["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"];
-    if (!allowedStatuses.includes(booking.status)) {
-      throw new ApiError(
-        "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-        400,
-      );
-    }
+    // #3245: both sets are derived rather than written out, and the refusal now
+    // names whichever one was applied instead of the standard four in both.
+    const editRefusal = activeLifecycleEditRefusal(booking.status, actor.role, {
+      includeFinishedStay: adminOverride,
+    });
+    if (editRefusal) throw new ApiError(editRefusal, 400);
 
     const editPolicy = getBookingEditPolicy({
       status: booking.status,
@@ -562,7 +578,7 @@ export async function modifyBookingDates({
     }));
     const seasonYear = seasonYearOfStoredDate(newCheckIn);
     await assertMembershipTypeBookingAllowed(tx, {
-      ownerMemberId: booking.memberId,
+      ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,
       seasonYear,
       // Finding 2 (privacy re-review of MG3 #2308) — see
@@ -576,7 +592,7 @@ export async function modifyBookingDates({
     let priceBreakdown;
     try {
       priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         checkIn: newCheckIn,
         checkOut: newCheckOut,
         guests: guestsForPricing,
@@ -616,14 +632,28 @@ export async function modifyBookingDates({
     // otherwise answer a stranger's occupancy in full on every date change. Mark
     // the party from the live family boundary first — see
     // `markCrossFamilyGuestsOnBooking`.
+    // The person-night guard (INV-CAP-013, INV-CAP-017) is only as good as the
+    // night set it is handed: a guest counted on fewer nights than they will
+    // hold is a clash the guard cannot see. So a guest with no priced row
+    // refuses here rather than being counted on none — the same answer the
+    // write loop below gives the same condition (#2800).
+    const nightDatesForMemberNightGuard = (index: number, guestId: string) => {
+      const priced = priceBreakdown.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `The date change has no priced guest at breakdown position ${index} for booking guest ${guestId} (#3031).`,
+        );
+      }
+      return priced.nightDates ?? [];
+    };
     const guestsForMemberNightGuard = await markCrossFamilyGuestsOnBooking(
       tx,
-      booking.memberId,
+      bookingOwner(booking).memberId,
       booking.guests.map((g, index) => ({
         memberId: g.memberId ?? null,
         stayStart: newCheckIn,
         stayEnd: newCheckOut,
-        nights: priceBreakdown.guests[index].nightDates ?? [],
+        nights: nightDatesForMemberNightGuard(index, g.id),
       })),
       { skipAuthorization: actor.role === "ADMIN", bookingId },
     );
@@ -701,22 +731,36 @@ export async function modifyBookingDates({
     const newTotalPriceCents = parked
       ? booking.totalPriceCents
       : priceBreakdown.totalPriceCents;
-    const guestNightRates = guestsForPricing.map((guest, index) => ({
-      bookingGuestId: guest.bookingGuestId,
-      memberId: guest.memberId ?? null,
-      isMember: guest.isMember,
-      perNightRates: priceBreakdown.guests[index].perNightCents,
-      nightDates: priceBreakdown.guests[index].nightDates,
-      // Guests are priced over the full new range here, so the first rate
-      // is the new check-in night. Dates the rates so internal work-party
-      // promos restrict the discount to the event's night window.
-      firstNight: newCheckIn,
-    }));
+    // Each guest's own priced row, read once. The breakdown was built from
+    // `guestsForPricing`, so a guest with no row is a wiring defect and there
+    // is no amount to promo-allocate against — refused, not guessed (#2800).
+    const guestNightRates = guestsForPricing.map((guest, index) => {
+      const priced = priceBreakdown.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `The date change has no priced guest at breakdown position ${index} of ${priceBreakdown.guests.length} (#3031).`,
+        );
+      }
+      return {
+        bookingGuestId: guest.bookingGuestId,
+        memberId: guest.memberId ?? null,
+        isMember: guest.isMember,
+        perNightRates: priced.perNightCents,
+        nightDates: priced.nightDates,
+        // Guests are priced over the full new range here, so the first rate
+        // is the new check-in night. Dates the rates so internal work-party
+        // promos restrict the discount to the event's night window.
+        firstNight: newCheckIn,
+      };
+    });
 
     let newDiscountCents = 0;
     let newPromoAdjustmentCents = 0;
     let promoRemoved = false;
     let promoCoverage: PromoCoverageNotice | null = null;
+    // #3276: what the promotion took off each night or guest; empty when the
+    // booking carries none.
+    let adjustmentTargets: PromoAdjustmentTarget[] = [];
 
     if (parked) {
       // #3166: the booking's stored promotion figures, written back untouched.
@@ -743,7 +787,7 @@ export async function modifyBookingDates({
       const application = await validateAndCalculatePromoDiscount(
         promo,
         {
-          memberId: booking.memberId,
+          memberId: bookingOwner(booking).memberId,
           bookingCheckIn: newCheckIn,
           totalPriceCents: newTotalPriceCents,
           guests: guestNightRates,
@@ -771,6 +815,7 @@ export async function modifyBookingDates({
         const promoResult = application.discount;
         newDiscountCents = promoResult.discountCents;
         newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
+        adjustmentTargets = promoResult.adjustmentTargets;
         promoCoverage = await describePromoCapCoverage(tx, {
           promoCode: promo.code,
           capCoverage: application.capCoverage,
@@ -868,6 +913,9 @@ export async function modifyBookingDates({
       refundAmountCents,
       accountCreditAmountCents,
       additionalAmountCents,
+      // #3371: the minter's own parameter. The plain figure above is the
+      // emails' and the Xero leg's; they are not interchangeable.
+      additionalAsk,
       pendingRefundAmountCents,
       hasSucceededPayment,
       hasIssuedXeroInvoice,
@@ -929,7 +977,7 @@ export async function modifyBookingDates({
       : 0;
     if (appliedBeforeClamp > 0) {
       const clampedCredit = await clampAppliedCreditToBookingPrice(
-        { memberId: booking.memberId, bookingId, newFinalPriceCents },
+        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents },
         tx,
       );
       const effectivePriceCents =
@@ -971,6 +1019,21 @@ export async function modifyBookingDates({
     // longer covers instead of the range they now hold.
     await Promise.all(
       booking.guests.map(async (g, i) => {
+        // This guest's own priced row, required on BOTH paths — and the PARKED
+        // path is why the refusal sits above the parked condition rather than
+        // inside it. A parked edit takes its amounts from the stored rows, but
+        // the night SET it writes still comes from `nightDates`, and the
+        // `deleteMany` below has already removed the strand's history by the
+        // time that is read. Tolerating an absent row there would delete the
+        // sold-price evidence the park exists to preserve and write nothing
+        // back — the one outcome #3166 is against. So the file answers this one
+        // condition one way, the way its siblings do (#2800, #3031).
+        const priced = priceBreakdown.guests[i];
+        if (priced === undefined) {
+          throw new Error(
+            `The date change has no priced guest at breakdown position ${i} for booking guest ${g.id} (#3031).`,
+          );
+        }
         await tx.bookingGuest.update({
           where: { id: g.id },
           data: {
@@ -979,9 +1042,7 @@ export async function modifyBookingDates({
             // #3166: on a parked edit the strand keeps its STORED total. Not a
             // recomputed one, not a delta, not a zero — how much this date
             // change alters it is the question the OPEN task exists to answer.
-            priceCents: parked
-              ? g.priceCents
-              : priceBreakdown.guests[i].priceCents,
+            priceCents: parked ? g.priceCents : priced.priceCents,
             // A date change re-bases every guest at current rates (#1930, E4):
             // overwrite the rate-type snapshot with the newly priced total —
             // EXCEPT where the new range keeps nights the guest already bought,
@@ -998,7 +1059,7 @@ export async function modifyBookingDates({
             rateMembershipTypeId: parked
               ? undefined
               : rateSnapshotUpdateForRepricedGuest(
-                  priceBreakdown.guests[i],
+                  priced,
                   guestsForPricing[i]?.lockedNightPrices,
                 ),
           },
@@ -1006,7 +1067,7 @@ export async function modifyBookingDates({
         await tx.bookingGuestNight.deleteMany({
           where: { bookingGuestId: g.id },
         });
-        const nightDates = priceBreakdown.guests[i].nightDates ?? [];
+        const nightDates = priced.nightDates ?? [];
         // #3166: THE PER-NIGHT VECTOR THIS EDIT WRITES. On a parked edit it is
         // built from what is STORED against each night and nothing else — the
         // integer where the row carried one, byte for byte, and `NULL` where it
@@ -1026,10 +1087,37 @@ export async function modifyBookingDates({
               dateEditEvidence.storedNightPriceByGuestId.get(g.id),
               nightDates,
             )
-          : priceBreakdown.guests[i].perNightCents.map((priceCents, index) => ({
-              priceCents,
-              priceSource: repricedSources[index],
-            }));
+          : // #3275 gave every written night a provenance, and this arm is the
+            // reprice one. It is built over `nightDates` — the set actually
+            // written — rather than over the price vector, because the two are
+            // NOT the same length: a breakdown can carry per-night amounts with
+            // no night list, in which case nothing is written at all and the
+            // `createMany` below is skipped entirely.
+            //
+            // NO REFUSAL HERE, deliberately. An earlier revision of this port
+            // refused a short source vector by name and that was wrong twice
+            // over: it fired on the empty-night case where nothing is written,
+            // and it added a SECOND answer to a condition this file already
+            // answers one screen below, where `classifyNightPriceToWrite`
+            // raises the member-visible 400. One condition, one answer (#3031).
+            // The element type says `number | undefined` OUT LOUD. Without the
+            // flag on for this file an indexed read types as `number`, which is
+            // a lie on exactly the short-vector case this arm exists to hand
+            // downstream — and a later reader who trusts it and drops the `?.`
+            // below gets a NaN into a money path instead of the refusal. Making
+            // the absence representable beats policing it (`INV-SSOT-001`).
+            nightDates.map(
+              (
+                _stayDate,
+                index,
+              ): {
+                priceCents: number | undefined;
+                priceSource: BookingGuestNightPriceSource | undefined;
+              } => ({
+                priceCents: priced.perNightCents[index],
+                priceSource: repricedSources[index],
+              }),
+            );
         if (nightDates.length > 0) {
           await tx.bookingGuestNight.createMany({
             data: nightDates.map((stayDate, k) => {
@@ -1095,6 +1183,18 @@ export async function modifyBookingDates({
         }
       }),
     );
+
+    // #3276: after the last night write and the promotion write. A PARKED
+    // date change re-ran nothing and wrote what it could preserve of the
+    // stored prices; its nights stay UNKNOWN for the reviewer.
+    if (!parked) {
+      await recordBookingNightAdjustments(tx, {
+        bookingId,
+        guestIds: guestsForPricing.map((guest) => guest.bookingGuestId),
+        targets: adjustmentTargets,
+        writer: "the booking date modification",
+      });
+    }
 
     const oldCheckIn = new Date(booking.checkIn);
     const oldCheckOut = new Date(booking.checkOut);
@@ -1224,7 +1324,7 @@ export async function modifyBookingDates({
 
     if (accountCreditAmountCents > 0) {
       await createBookingModificationCredit(
-        booking.memberId,
+        requireMemberCreditRecipient(bookingOwner(booking).memberId),
         accountCreditAmountCents,
         bookingId,
         bookingModification.id,
@@ -1269,7 +1369,7 @@ export async function modifyBookingDates({
           ? {
               linkedMove: {
                 answer: hostingCoverageLinkedMove,
-                bookingOwnerMemberId: booking.memberId,
+                bookingOwnerMemberId: bookingOwner(booking).memberId,
               },
             }
           : {}),
@@ -1285,6 +1385,7 @@ export async function modifyBookingDates({
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
       additionalAmountCents,
+      additionalAsk,
       pendingRefundAmountCents,
       promoRemoved,
       promoCoverage,
@@ -1306,9 +1407,10 @@ export async function modifyBookingDates({
       zeroDollarAutoPaid,
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-      memberEmail: booking.member.email,
-      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-      memberId: booking.memberId,
+      memberEmail: bookingOwner(booking).member.email,
+      memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+      memberFirstName: bookingOwner(booking).member.firstName,
+      memberId: bookingOwner(booking).memberId,
       bookingModificationId: bookingModification.id,
     } satisfies DateModificationTransactionResult;
   });
@@ -1414,7 +1516,7 @@ async function dispatchDatePostTransactionSideEffects({
       : "booking.modify.dates",
     memberId: actorMemberId,
     targetId: bookingId,
-    subjectMemberId: result.booking.memberId,
+    subjectMemberId: bookingOwner(result.booking).memberId,
     entityType: "BookingModification",
     entityId: result.bookingModificationId,
     category: "booking",
@@ -1484,12 +1586,21 @@ async function dispatchDatePostTransactionSideEffects({
 
   // Owner decision (#1668 review): an override admin may choose not to email
   // the member; the choice is recorded in the audit fields above.
-  const member = result.notifyMember
-    ? await prisma.member.findUnique({
-        where: { id: result.booking.memberId },
-      })
-    : null;
-  if (member) {
+  // #3369: the OWNER, not a re-read of a member row. A school's booking has no
+  // member to re-read, and the projection carries the same person-shaped name
+  // and address the invented school member used to supply — so the school still
+  // receives the message it received before this stage, at the same address.
+  // The relation was loaded in the same transaction, so this is no staler than
+  // the read it replaces.
+  // #3369: the owner as the transaction already resolved them. A school's
+  // booking has no member row to re-read, and these three fields are the
+  // person-shaped projection the invented school member used to supply, so the
+  // school receives the same message at the same address.
+  const member = {
+    email: result.memberEmail,
+    firstName: result.memberFirstName,
+  };
+  if (result.notifyMember) {
     /*
       #3032 (epic #2797): whether the club is still working out an amount on
       this booking as the email is written. The booking's CURRENT state rather
@@ -1519,7 +1630,7 @@ async function dispatchDatePostTransactionSideEffects({
 
     sendBookingModifiedEmail({
       bookingId: result.booking.id,
-      recipientMemberId: member.id,
+      recipientMemberId: result.memberId,
       email: member.email,
       firstName: member.firstName,
       modificationType: "DATE_CHANGE",
@@ -1653,6 +1764,8 @@ export async function adminShiftBookingDates({
         },
         payment: true,
         member: true,
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     if (!booking) {
@@ -1814,7 +1927,7 @@ export async function adminShiftBookingDates({
     // routing, and an unmarked party is exactly the silent read-out C1 closed.
     const capacityRangesForGuard = await markCrossFamilyGuestsOnBooking(
       tx,
-      booking.memberId,
+      bookingOwner(booking).memberId,
       capacityRanges,
       { skipAuthorization: true, bookingId },
     );
@@ -1829,6 +1942,11 @@ export async function adminShiftBookingDates({
       // the shift's edit-policy gate reads.
       today: clubTodayDateOnly,
     });
+
+    // #3276: a shift moves every night by the same delta and no money moves, so
+    // the recorded build-up moves with it — captured before the rewrite below
+    // cascades it away, re-attached by (guest, date + delta) afterwards.
+    const carriedAdjustments = await snapshotBookingNightAdjustments(tx, bookingId);
 
     // Writes: translate each guest's envelope and rebuild its night rows at the
     // shifted dates with the SAME priceCents. Guest priceCents is untouched.
@@ -1851,6 +1969,12 @@ export async function adminShiftBookingDates({
         });
       }
     }
+
+    await restoreBookingNightAdjustments(tx, {
+      snapshot: carriedAdjustments,
+      shiftDays: deltaDays,
+      writer: "the admin date shift",
+    });
 
     // Non-member hold recalculation, mirroring modifyBookingDates: the hold
     // window and the PENDING → PAYMENT_PENDING release both key off the new
@@ -1984,9 +2108,9 @@ export async function adminShiftBookingDates({
       capacityOverridden,
       choreWarnings,
       bookingModificationId: bookingModification.id,
-      memberId: booking.memberId,
-      memberEmail: booking.member.email,
-      memberFirstName: booking.member.firstName,
+      memberId: bookingOwner(booking).memberId,
+      memberEmail: bookingOwner(booking).member.email,
+      memberFirstName: bookingOwner(booking).member.firstName,
       guestCount: booking.guests.length,
       finalPriceCents: booking.finalPriceCents,
       paymentReference: booking.payment?.reference ?? null,

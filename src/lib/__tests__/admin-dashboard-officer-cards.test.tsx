@@ -33,7 +33,7 @@ vi.mock("@/lib/auth", () => ({
 // suite supplies, so mocking them would only let the suite disagree with
 // production about when a lodge name is shown (#2917).
 vi.mock("@/lib/hut-leader-coverage", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/hut-leader-coverage")>()),
+  ...((await importOriginal()) as typeof import("@/lib/hut-leader-coverage")),
   getUnassignedHutLeaderDates: vi.fn(),
 }));
 

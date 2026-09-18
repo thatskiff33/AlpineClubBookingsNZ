@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 import { useSectionEditState } from "@/hooks/use-section-edit-state"
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy"
 
@@ -125,6 +126,10 @@ function assignmentsEqual(a: DraftAssignment[], b: DraftAssignment[]) {
   if (a.length !== b.length) return false
   return a.every((assignment, index) => {
     const other = b[index]
+    // The length check above guarantees `other` exists for every `index` a
+    // reaches, but that fact lives at the call site, not the read — so this
+    // is the one place the type needs telling.
+    if (!other) return false
     return assignment.rowKey === other.rowKey &&
       assignment.assignmentId === other.assignmentId &&
       assignment.choreTemplateId === other.choreTemplateId &&
@@ -174,6 +179,17 @@ export function isRosterData(value: unknown): value is RosterData {
       typeof template.sortOrder === "number" &&
       typeof template.isDueOnDate === "boolean") &&
     isRecord(value.guestHistory)
+}
+
+/**
+ * The DOM id of a row's guest picker, minted once because two sides depend on
+ * it agreeing: the row renders it, and the focus effect reads it back with
+ * `getElementById` to move focus to the row an admin just added. Retyped at
+ * each end, a changed shape makes the focus silently do nothing — there is no
+ * error, focus simply stays where it was (`INV-SSOT-001`).
+ */
+function rosterGuestFieldId(rowKey: string) {
+  return `roster-guest-${rowKey}`
 }
 
 function groupedGuests(guests: RosterGuest[]) {
@@ -238,6 +254,14 @@ export function RosterEditor({
 }) {
   const [acknowledgeCompletedReset, setAcknowledgeCompletedReset] = useState(false)
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
+  // Which invalid row should take focus, and a nonce so the same row can be
+  // asked for twice. Set only by an explicit outcome — a person added with no
+  // name yet, or the server naming the row it refused — never derived from
+  // `rowErrors` changing, which also happens when the admin is mid-way through
+  // fixing a different row and must not have focus taken from them (#2934).
+  const [focusRowRequest, setFocusRowRequest] = useState<{ rowKey: string; nonce: number } | null>(null)
+  const requestRowFocus = (rowKey: string) =>
+    setFocusRowRequest((current) => ({ rowKey, nonce: (current?.nonce ?? 0) + 1 }))
   const alertRef = useRef<HTMLDivElement>(null)
   const newRowCounter = useRef(0)
 
@@ -284,9 +308,7 @@ export function RosterEditor({
         if (typeof details.rowKey === "string") {
           const rowKey = details.rowKey
           setRowErrors({ [rowKey]: message })
-          requestAnimationFrame(() => {
-            document.getElementById(`roster-guest-${rowKey}`)?.focus()
-          })
+          requestRowFocus(rowKey)
         }
         throw new Error(message)
       }
@@ -311,17 +333,16 @@ export function RosterEditor({
     return () => onEditingChange(false)
   }, [onEditingChange, section.editing])
 
-  useEffect(() => {
-    if (!section.error) return
-    alertRef.current?.focus()
-    alertRef.current?.scrollIntoView({ block: "center" })
-  }, [section.error])
+  // A roster-level failure takes focus through the shared primitive (#2934).
+  useActionAttention({ error: section.error, errorTarget: alertRef, errorBlock: "center" })
 
+  // A row-level failure focuses the invalid control itself — the row's own
+  // `<select>` is the actionable target. It runs in the commit that rendered
+  // the request, so no animation frame is needed to wait for the row to exist.
   useEffect(() => {
-    const firstInvalidRow = Object.keys(rowErrors)[0]
-    if (!firstInvalidRow) return
-    document.getElementById(`roster-guest-${firstInvalidRow}`)?.focus()
-  }, [rowErrors])
+    if (!focusRowRequest) return
+    document.getElementById(rosterGuestFieldId(focusRowRequest.rowKey))?.focus()
+  }, [focusRowRequest])
 
   const draftAssignments = section.draft?.assignments ?? []
   const guestsById = useMemo(
@@ -374,7 +395,7 @@ export function RosterEditor({
       ...current,
       [rowKey]: "Choose a person before saving this roster.",
     }))
-    requestAnimationFrame(() => document.getElementById(`roster-guest-${rowKey}`)?.focus())
+    requestRowFocus(rowKey)
   }
 
   function removePerson(rowKey: string) {
@@ -499,7 +520,7 @@ export function RosterEditor({
                             {section.editing ? (
                               <div>
                                 <select
-                                  id={`roster-guest-${assignment.rowKey}`}
+                                  id={rosterGuestFieldId(assignment.rowKey)}
                                   value={assignment.bookingGuestId}
                                   onChange={(event) => updateGuest(assignment.rowKey, event.target.value)}
                                   aria-invalid={Boolean(rowErrors[assignment.rowKey])}

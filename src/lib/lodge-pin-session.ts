@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { createHmac, randomInt, timingSafeEqual } from "crypto";
+import { HUT_LEADER_PIN_LENGTH } from "@/lib/hut-leader-pin";
 import { cookies } from "next/headers";
 import { prisma } from "./prisma";
 import { addDaysDateOnly, formatDateOnly } from "./date-only";
@@ -210,7 +211,10 @@ function getAssignmentRange(assignment: {
 }
 
 export function generateHutLeaderPin(): string {
-  return String(randomInt(0, 1_000_000)).padStart(6, "0");
+  // Derived from the one length (`INV-SSOT`): the exclusive upper bound is
+  // 10^length, and the pad makes a short draw a full-width PIN.
+  const upperBound = 10 ** HUT_LEADER_PIN_LENGTH;
+  return String(randomInt(0, upperBound)).padStart(HUT_LEADER_PIN_LENGTH, "0");
 }
 
 export async function hashHutLeaderPin(pin: string): Promise<string> {

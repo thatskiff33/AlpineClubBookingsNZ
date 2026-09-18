@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/backup-config", async (importOriginal) => {
   // `isAnyBackupDestinationEnabled` stays REAL — it is the thing under test.
-  const actual = await importOriginal<typeof import("@/lib/backup-config")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/backup-config");
   return { ...actual, resolveBackupConfig: mocks.resolveBackupConfig };
 });
 vi.mock("@/lib/backup-run", () => ({

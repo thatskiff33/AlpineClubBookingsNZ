@@ -319,9 +319,19 @@ describe("repository agent workflow contract", () => {
       rules to that same file, which is exactly the pressure this budget exists
       to make visible.
 
-      Measured rather than asserted from memory. At the time of writing
-      `AGENTS.md` is 9,859 words; the ceiling leaves a few hundred words of
-      genuine headroom — roughly six more routing rows — and no more.
+      Measured rather than asserted from memory, and RE-MEASURE before you rely
+      on it: this sentence said 9,859 words and "a few hundred words of genuine
+      headroom — roughly six more routing rows" long after both had stopped
+      being true, which is the failure it was written to prevent.
+
+      Measured on MEP #2680's merge (12 September 2026): **10,392 words, eight
+      below the ceiling.** That is room for ZERO routing rows — a row costs
+      fifteen to twenty-five. `main` stood at 10,350 and the epic spent 42 of
+      the 50 that were left, almost all of it #3259's model-routing rewrite.
+
+      So the next addition of any size fails this test, and that is the budget
+      working rather than breaking. `AGENTS.md` changed 37 times in the 30 days
+      to that date, so it will be soon.
 
       WHEN THIS FAILS, THE FIX IS NOT A BIGGER NUMBER. The core is a fixed
       budget: something has to be routed out to a page the routing table already

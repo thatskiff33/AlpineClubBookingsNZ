@@ -188,14 +188,14 @@ export function excludedColumnsFor(spec: SingletonSpec): Record<string, string> 
 // AiAssistantSettings (the AI spend-cap singleton, id="default"). The monthly
 // budget is a deployment-specific operational spend control, not portable club
 // configuration — a source club's cap should never silently reset a target's.
-// A fresh import gets the schema default (NZ$10) and the target operator sets
-// their own. (Recorded epic decision.)
+// A fresh import keeps the target's own cap in its configured currency. (Epic
+// decision; reasoning stated once on the entries in `singleton-models.ts`.)
 //
 // SAME DISPOSITION, DELIBERATELY, for AI Diagnostics (AID-2, #2371): none of the
 // four Diagnostics tables travels. DiagnosticsSettings holds a deployment-local
 // spend budget (same reasoning as AiAssistantSettings, and stricter — it defaults
-// to NZ$0 hard-off so an import can never plant a spend cap a target did not
-// choose). DiagnosticsUsageMonthly / DiagnosticsBudgetReservation /
+// to 0 = hard-off in the target's configured currency, so an import can never
+// plant a spend cap a target did not choose). DiagnosticsUsageMonthly / DiagnosticsBudgetReservation /
 // DiagnosticsUsageEvent are runtime metering/audit records, never configuration.
 // The DEDICATED Anthropic credential lives in the encrypted IntegrationCredential
 // store (provider "anthropic-diagnostics"), which is outside config-transfer
@@ -260,6 +260,18 @@ export const SINGLETONS: SingletonSpec[] = [
       "commsPortal",
     ],
     excluded: {
+      memberLodgeRoster:
+        "turning the roster on discloses one member's stay pattern to every " +
+        "other member who can book that lodge, and the per-lodge name detail " +
+        "that bounds it (Lodge.rosterNameGranularity) does NOT travel in a " +
+        "bundle. An importing club would therefore switch the feature on at " +
+        "the code default, FULL_NAME, which is the most disclosive of the " +
+        "four levels -- publishing full names on an upgrade nobody opted " +
+        "into, through the import door the default-OFF flag closes at the " +
+        "deploy door (#2942). The first version of this entry had the flag " +
+        "travelling and reasoned that not inheriting the source's dial was " +
+        "the safe direction; it is the opposite, because the fallback is the " +
+        "most permissive value rather than the least",
       multiLodge:
         "retired-but-not-yet-dropped flag; kept out of every read via " +
         "CLUB_MODULE_SETTINGS_COLUMN_SELECT and awaiting a contract DROP (#139)",
@@ -879,7 +891,11 @@ function parseSingleton(
   const record = spec.reconcile
     ? spec.reconcile(incoming as Record<string, unknown>)
     : (incoming as Record<string, unknown>);
-  const modelName = spec.delegate[0].toUpperCase() + spec.delegate.slice(1);
+  const delegateInitial = spec.delegate[0];
+  if (delegateInitial === undefined) {
+    throw new Error(`Singleton spec for ${file} has an empty delegate name`);
+  }
+  const modelName = delegateInitial.toUpperCase() + spec.delegate.slice(1);
   const model = Prisma.dmmf.datamodel.models.find((m) => m.name === modelName);
   let ok = true;
   for (const field of spec.fields) {
@@ -955,7 +971,11 @@ function parseSingleton(
 }
 
 function delegateOf(db: ReadDb | TxDb, name: string): SingletonDelegate {
-  return (db as unknown as Record<string, SingletonDelegate>)[name];
+  const delegate = (db as unknown as Record<string, SingletonDelegate>)[name];
+  if (!delegate) {
+    throw new Error(`No Prisma delegate named "${name}" on this client`);
+  }
+  return delegate;
 }
 
 /** Fields to serialise, dropping opt-in fields unless the admin opted in. */

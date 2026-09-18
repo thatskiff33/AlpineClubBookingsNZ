@@ -166,7 +166,11 @@ export function isHelpPanelSize(value: unknown): value is HelpPanelSize {
  */
 export function nextHelpPanelSize(current: HelpPanelSize): HelpPanelSize {
   const index = HELP_PANEL_SIZES.indexOf(current);
-  return HELP_PANEL_SIZES[(index + 1) % HELP_PANEL_SIZES.length];
+  // (index + 1) % HELP_PANEL_SIZES.length is always in [0, length) for any
+  // integer index — including indexOf's -1-not-found case, which wraps to 0
+  // — so this lookup cannot actually miss; `?? current` just keeps the type
+  // honest without inventing a size that isn't `current`.
+  return HELP_PANEL_SIZES[(index + 1) % HELP_PANEL_SIZES.length] ?? current;
 }
 
 /**

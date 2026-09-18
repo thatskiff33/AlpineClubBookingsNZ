@@ -206,8 +206,13 @@ function normalizeBundleEntries(unzipped: Record<string, Uint8Array>): {
       wrapperPrefixes.add(name.slice(0, slash + 1));
     }
   }
-  if (wrapperPrefixes.size === 1) {
-    const prefix = [...wrapperPrefixes][0];
+  // `wrapperPrefixes.size === 1` guarantees an element, but destructuring a
+  // Set is still an iterator read the type can't mark present — and an
+  // absent prefix here is exactly the "ambiguous" case the docstring already
+  // falls through for, so it is handled the same way rather than asserted
+  // away.
+  const [prefix] = wrapperPrefixes;
+  if (wrapperPrefixes.size === 1 && prefix !== undefined) {
     const discarded = cleaned
       .filter(([name]) => !name.startsWith(prefix))
       .map(([name]) => name);
@@ -325,7 +330,10 @@ export function readBundle(zipBytes: Uint8Array): ReadBundleResult {
   const files = new Map<string, Uint8Array>();
   for (const name of names) {
     if (name === CONFIG_TRANSFER_MANIFEST_PATH) continue;
-    files.set(name, unzipped[name]);
+    const bytes = unzipped[name];
+    // Unreachable: `name` came from `Object.keys(unzipped)` above.
+    if (!bytes) continue;
+    files.set(name, bytes);
   }
 
   // Advisory integrity: compare the manifest's declared file list to what is
@@ -363,6 +371,9 @@ export function readBundle(zipBytes: Uint8Array): ReadBundleResult {
   const presentCategories = new Set<string>();
   for (const name of files.keys()) {
     const seg = name.split("/")[0];
+    // Unreachable: `String.prototype.split` always returns at least one
+    // element, even for an empty string.
+    if (seg === undefined) continue;
     if (seg === "media") continue; // media rides with its referencing category
     if ((CONFIG_TRANSFER_CATEGORIES as readonly string[]).includes(seg)) {
       presentCategories.add(seg);

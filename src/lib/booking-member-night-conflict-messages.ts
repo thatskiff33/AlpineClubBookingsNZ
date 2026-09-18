@@ -97,8 +97,17 @@ function formatNight(night: string): string {
 }
 
 function joinWithAnd(items: string[]): string {
-  if (items.length === 1) return items[0];
-  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+  // One item reads as itself, an empty list joins to nothing, and the last item
+  // comes off the tail rather than out of the list by a computed position. Each
+  // is a value this holds rather than a length it trusts — and none of them
+  // throws, because this is display copy on a 409 and an exception here would
+  // replace a refusal the member can act on with a 500 (#2800).
+  const [firstItem, ...laterItems] = items;
+  if (firstItem === undefined) return "";
+  const lastItem = laterItems.at(-1);
+  if (lastItem === undefined) return firstItem;
+  const leading = [firstItem, ...laterItems.slice(0, -1)];
+  return `${leading.join(", ")} and ${lastItem}`;
 }
 
 function capitaliseFirst(sentence: string): string {
@@ -200,12 +209,12 @@ export function buildBookingMemberNightConflictSummary(
     return "Someone in this party is already booked on one or more of these nights.";
   }
 
-  if (conflicts.length === 1) {
-    const conflict = conflicts[0];
-    const nights = formatNightList(conflict.conflictingNights);
-    return isViewersOwnPlace(conflict)
+  const [soleConflict, ...extraConflicts] = conflicts;
+  if (soleConflict !== undefined && extraConflicts.length === 0) {
+    const nights = formatNightList(soleConflict.conflictingNights);
+    return isViewersOwnPlace(soleConflict)
       ? `You are already on another booking for ${nights}.`
-      : `${conflict.memberName} is already on a booking for ${nights}.`;
+      : `${soleConflict.memberName} is already on a booking for ${nights}.`;
   }
 
   // The viewer is addressed as "you" wherever they appear in the list, and the
@@ -218,10 +227,11 @@ export function buildBookingMemberNightConflictSummary(
     ...new Set(conflicts.flatMap((conflict) => conflict.conflictingNights)),
   ]);
 
-  if (labels.length === 1) {
-    const verb = labels[0] === "you" ? "are" : "is";
+  const [onlyLabel, ...extraLabels] = labels;
+  if (onlyLabel !== undefined && extraLabels.length === 0) {
+    const verb = onlyLabel === "you" ? "are" : "is";
     return capitaliseFirst(
-      `${labels[0]} ${verb} already on other bookings for ${nights}.`,
+      `${onlyLabel} ${verb} already on other bookings for ${nights}.`,
     );
   }
   return capitaliseFirst(
@@ -240,8 +250,9 @@ export function buildBookingMemberNightConflictMessage(
 ): string {
   const summary = buildBookingMemberNightConflictSummary(conflicts);
 
-  if (conflicts.length === 1) {
-    return `${summary} ${describeBookingMemberNightConflictNextStep(conflicts[0], options)}`;
+  const [soleConflict, ...extraConflicts] = conflicts;
+  if (soleConflict !== undefined && extraConflicts.length === 0) {
+    return `${summary} ${describeBookingMemberNightConflictNextStep(soleConflict, options)}`;
   }
 
   const nextStep = options.canChooseDifferentDates

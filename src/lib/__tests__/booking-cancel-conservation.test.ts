@@ -75,9 +75,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/cancellation", async () => {
-  const policies = await vi.importActual<
-    typeof import("@/lib/policies/cancellation")
-  >("@/lib/policies/cancellation");
+  const policies = (await vi.importActual("@/lib/policies/cancellation")) as typeof import("@/lib/policies/cancellation");
   return {
     calculateRefundAmount: policies.calculateRefundAmount,
     daysUntilDate: mocks.daysUntilDate,
@@ -97,6 +95,12 @@ vi.mock("@/lib/member-credit", () => ({
   createCancellationCredit: mocks.createCancellationCredit,
   lockMemberCreditLedger: mocks.lockMemberCreditLedger,
   restoreCreditFromBooking: mocks.restoreCreditFromBooking,
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 
 vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({

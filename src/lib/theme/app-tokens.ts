@@ -40,6 +40,7 @@ import {
   resolveAlias,
   type AliasEntry,
 } from "./aliases";
+import { must } from "./index-guards";
 
 /**
  * J8 card shadow (A6 candidate ii, from measurements.json). Mode-specific.
@@ -119,27 +120,29 @@ export interface AppThemeTokenSet {
 export function buildAppThemeTokens(seeds: ThemeSeeds): AppThemeTokenSet {
   const light = buildThemeSubstrate(seeds, "light");
   const dark = buildThemeSubstrate(seeds, "dark");
-  const lightNeutral12 = light.neutralHex[11];
+  const lightNeutral12 = must(light.neutralHex[11], "buildAppThemeTokens: light neutral ramp has no step 12");
 
   const tokens: Record<string, string> = {};
 
   // Raw scale steps (the exposed tail): neutral + every hue scale, both modes.
   const scaleNames = ["neutral", ...HUE_SCALES] as const;
   for (const scale of scaleNames) {
-    const l = light.scales[scale];
-    const d = dark.scales[scale];
-    for (let i = 0; i < 12; i += 1) {
-      tokens[`--gen-${scale}-${i + 1}`] = l.hex[i];
-      tokens[`--gen-${scale}-dark-${i + 1}`] = d.hex[i];
-    }
+    const l = must(light.scales[scale], `buildAppThemeTokens: light theme has no "${scale}" scale`);
+    const d = must(dark.scales[scale], `buildAppThemeTokens: dark theme has no "${scale}" scale`);
+    l.hex.forEach((hex, i) => {
+      tokens[`--gen-${scale}-${i + 1}`] = hex;
+    });
+    d.hex.forEach((hex, i) => {
+      tokens[`--gen-${scale}-dark-${i + 1}`] = hex;
+    });
   }
 
   // Resolved role tokens (what the static blocks consume).
   const roleLight = resolveRoleTokens(light, lightNeutral12);
   const roleDark = resolveRoleTokens(dark, lightNeutral12);
   for (const role of Object.keys(APP_ROLE_ALIASES)) {
-    tokens[`--gen-${role}`] = roleLight[role];
-    tokens[`--gen-${role}-dark`] = roleDark[role];
+    tokens[`--gen-${role}`] = must(roleLight[role], `buildAppThemeTokens: role "${role}" missing from light role tokens`);
+    tokens[`--gen-${role}-dark`] = must(roleDark[role], `buildAppThemeTokens: role "${role}" missing from dark role tokens`);
   }
 
   // J8 card shadow variables (A6 candidate ii).
@@ -205,7 +208,7 @@ export function defaultAppRoleFallbacks(seeds: ThemeSeeds): {
 } {
   const light = buildThemeSubstrate(seeds, "light");
   const dark = buildThemeSubstrate(seeds, "dark");
-  const lightNeutral12 = light.neutralHex[11];
+  const lightNeutral12 = must(light.neutralHex[11], "defaultAppRoleFallbacks: light neutral ramp has no step 12");
   return {
     light: resolveRoleTokens(light, lightNeutral12),
     dark: resolveRoleTokens(dark, lightNeutral12),
@@ -268,7 +271,7 @@ export const WEBSITE_ROLE_ALIASES: Record<string, AliasEntry> = {
 /** Resolve every website role token against the LIGHT substrate. */
 function resolveWebsiteRoleTokens(seeds: ThemeSeeds): Record<string, string> {
   const light = buildThemeSubstrate(seeds, "light");
-  const lightNeutral12 = light.neutralHex[11];
+  const lightNeutral12 = must(light.neutralHex[11], "resolveWebsiteRoleTokens: light neutral ramp has no step 12");
   const out: Record<string, string> = {};
   for (const [role, entry] of Object.entries(WEBSITE_ROLE_ALIASES)) {
     out[role] = resolveAlias(entry, light, lightNeutral12);

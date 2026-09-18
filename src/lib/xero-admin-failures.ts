@@ -309,6 +309,11 @@ export async function resolveFailedXeroOperationStates(
     );
     const representative =
       ordered.find((operation) => operation.operationType !== "REQUEUE") ?? ordered[0];
+    // A group only exists because an operation was pushed into it, so it
+    // always has one. An empty group would name no failure to resolve, so it
+    // contributes no resolution rather than a fabricated representative
+    // (#2800).
+    if (representative === undefined) continue;
     const groupCorrelationKey = rootKey.startsWith("correlation:")
       ? rootKey.slice("correlation:".length)
       : representative.correlationKey;

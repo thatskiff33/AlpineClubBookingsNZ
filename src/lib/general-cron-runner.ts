@@ -99,9 +99,10 @@ export class GeneralCronCycleError extends Error {
     result: GeneralCronCycleResult,
     failures: Array<{ jobName: GeneralCronJobName; message: string }>
   ) {
+    const [onlyFailure] = failures;
     super(
-      failures.length === 1
-        ? failures[0].message
+      failures.length === 1 && onlyFailure
+        ? onlyFailure.message
         : `General cron cycle failed for ${failures
             .map((failure) => failure.jobName)
             .join(", ")}`

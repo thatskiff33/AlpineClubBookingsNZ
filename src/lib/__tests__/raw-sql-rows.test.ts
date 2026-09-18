@@ -174,14 +174,14 @@ describe("rawIntColumn — what Postgres actually sends (#2289)", () => {
     expect(decodeRawRows([{ count: 7 }], schema, "counter")[0].count).toBe(7);
   });
 
-  // BigInt LITERALS (`42n`) are unavailable at this repo's ES2017 target, which
-  // is itself part of the trap: the value still arrives as a BigInt at runtime.
+  // The value arrives as a BigInt at runtime, which is the trap: nothing in the
+  // row's declared type says so.
   it("accepts the BigInt that COUNT(*) and int8 return, and narrows it to a number", () => {
-    const decoded = decodeRawRows([{ count: BigInt(42) }], schema, "counter")[0];
+    const decoded = decodeRawRows([{ count: 42n }], schema, "counter")[0];
     expect(decoded.count).toBe(42);
     expect(typeof decoded.count).toBe("number");
     // The trap this closes: arithmetic on the raw value throws.
-    expect(() => (BigInt(42) as unknown as number) + 1).toThrow(TypeError);
+    expect(() => (42n as unknown as number) + 1).toThrow(TypeError);
   });
 
   it("refuses a BigInt too large to convert without losing precision", () => {

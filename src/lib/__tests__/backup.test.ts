@@ -15,7 +15,7 @@ vi.mock("child_process", () => ({
 }));
 
 vi.mock("fs", async () => {
-  const actual = await vi.importActual<typeof import("fs")>("fs");
+  const actual = (await vi.importActual("fs")) as typeof import("fs");
   return {
     ...actual,
     existsSync: vi.fn(),
@@ -40,7 +40,7 @@ vi.mock("@/lib/logger", () => ({
 // replacing the whole module left it undefined — killing every case in this
 // file with "No isAnyBackupDestinationEnabled export is defined on the mock".
 vi.mock("@/lib/backup-config", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/backup-config")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/backup-config");
   return { ...actual, resolveBackupConfig: vi.fn() };
 });
 

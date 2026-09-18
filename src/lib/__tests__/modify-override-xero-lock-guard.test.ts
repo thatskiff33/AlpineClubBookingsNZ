@@ -33,7 +33,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/xero-period-lock-guard", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/xero-period-lock-guard")>();
+    (await importOriginal()) as typeof import("@/lib/xero-period-lock-guard");
   return { ...actual, assertProposedCheckInClearsXeroLockDate: h.assertProposed };
 });
 // The ordinary-edit guard's lock-date chain (#1729). getEffectiveXeroLockDate
@@ -41,7 +41,7 @@ vi.mock("@/lib/xero-period-lock-guard", async (importOriginal) => {
 // import time (only the flag loader is stubbed).
 vi.mock("@/lib/module-settings", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/module-settings")>();
+    (await importOriginal()) as typeof import("@/lib/module-settings");
   return { ...actual, loadEffectiveModuleFlags: h.loadEffectiveModuleFlags };
 });
 vi.mock("@/lib/xero-token-store", () => ({
@@ -49,7 +49,7 @@ vi.mock("@/lib/xero-token-store", () => ({
 }));
 vi.mock("@/lib/xero-organisation", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/xero-organisation")>();
+    (await importOriginal()) as typeof import("@/lib/xero-organisation");
   return { ...actual, getXeroLockDates: h.getXeroLockDates };
 });
 vi.mock("@/lib/logger", () => ({

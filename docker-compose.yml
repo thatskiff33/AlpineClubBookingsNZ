@@ -150,20 +150,38 @@ x-app-environment: &app-environment
   SENTRY_ORG: ${SENTRY_ORG:-}
   SENTRY_PROJECT: ${SENTRY_PROJECT:-}
   SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
-  # MiroTalk video-meeting base URL (calendar events). Runtime, server-side only
-  # — join links are built as <MIROTALK_URL>/join/<room>. Empty is DERIVED in code
+  # MiroTalk video meetings (calendar events). EVERY VARIABLE HERE IS A FALLBACK:
+  # a club sets these on Admin -> Integrations -> Video meetings, and each one is
+  # used only while nothing is set there, per field. They stay so an installation
+  # configured before that page existed keeps working with no restart and no
+  # migration of its values. The Caddy MEET_HOST / MIROTALK_UPSTREAM block below
+  # is the opposite — deployment topology, which stays here.
+  #
+  # MIROTALK_URL: runtime, server-side only — join links are built as
+  # <base>/join/<room>. Empty, with nothing set on the page, is DERIVED in code
   # from the app domain (NEXTAUTH_URL) as https://meet.<domain>, falling back to
   # http://localhost:3010 only for a loopback app host.
   MIROTALK_URL: ${MIROTALK_URL:-}
-  # MiroTalk JWT access (optional). When MIRO_JWT_KEY (matching MiroTalk's
-  # JWT_KEY) plus a HOST_USERS credential are set, the join link carries a
-  # short-lived signed token so committee members skip MiroTalk's host login.
-  # All server-side secrets — never exposed to the browser.
+  # MiroTalk JWT access (optional). When the signing key (matching MiroTalk's
+  # JWT_KEY) plus a HOST_USERS credential are set — here, or encrypted on the
+  # page — the join link carries a short-lived signed token so committee members
+  # skip MiroTalk's host login. All server-side secrets — never exposed to the
+  # browser.
+  #
+  # NO COMPOSE-LEVEL DEFAULT for the lifetime or the presenter flag (#2940
+  # review, T3). These carried `:-1h` and `:-true`, so on the deployment shape
+  # this repository ships the variable was ALWAYS set even when the operator
+  # left it blank — and the new setup page then told every install "In force: 1h
+  # — from MIRO_JWT_EXP … changing it means editing the environment and
+  # restarting" for a value nobody chose, with the `derived` branch unreachable.
+  # The application holds the same two defaults once, in
+  # `mirotalk-settings-shared.ts`; a second copy here can only be the one that
+  # goes stale, and it lies about where the value came from while it agrees.
   MIRO_JWT_KEY: ${MIRO_JWT_KEY:-}
-  MIRO_JWT_EXP: ${MIRO_JWT_EXP:-1h}
+  MIRO_JWT_EXP: ${MIRO_JWT_EXP:-}
   MIRO_MEETING_USERNAME: ${MIRO_MEETING_USERNAME:-}
   MIRO_MEETING_PASSWORD: ${MIRO_MEETING_PASSWORD:-}
-  MIRO_MEETING_PRESENTER: ${MIRO_MEETING_PRESENTER:-true}
+  MIRO_MEETING_PRESENTER: ${MIRO_MEETING_PRESENTER:-}
   # TEST-ONLY mock-Xero E2E harness (#2080). Empty in every real deployment, so
   # the mock endpoints 404 and the OAuth/org code path is unchanged. The E2E
   # staging stack sets API_ORIGIN to the BROWSER-reachable origin (the consent

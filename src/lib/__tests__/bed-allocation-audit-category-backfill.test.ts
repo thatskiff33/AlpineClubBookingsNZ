@@ -23,22 +23,26 @@
  *
  * WHAT IT IS NOT. It is not a general "every reclassification ships a backfill"
  * gate, and INV-OPS-012 says plainly why one is not available: the census pins
- * only 127 of 468 write sites per-site by design, so a reclassification of any
+ * only 128 of 483 write sites per-site by design, so a reclassification of any
  * other site is invisible to any check that has no per-site baseline to compare
  * against. This is the enforceable half — the population the rule was invented
  * on — and the rest of INV-OPS-012 is a rule a reviewer applies.
  *
- * That figure is not transcribed twice by hand any more: it went stale after
- * #2755 (3 low) and again after #2765 (16 low), so `audit-writer-census.test.ts`
- * now counts the union of the four per-site maps and asserts 127 pinned / 341
- * unpinned. If this sentence and INV-OPS-012 disagree with each other, that test
- * is the one that measured it.
+ * DO NOT TRANSCRIBE THESE TWO NUMBERS FROM ANYWHERE — re-measure them with
+ * `npm run audit:census` and read the assertion in `audit-writer-census.test.ts`,
+ * which counts the union of the four per-site maps and is the only thing here
+ * that measures anything. The pair went stale after #2755 (3 low), again after
+ * #2765 (16 low), and again on #2940, where this sentence and INV-OPS-012 both
+ * still said 481/354 while the test in the same commit asserted 482/355. A
+ * sentence nothing parses is a sentence that goes stale, so when these disagree
+ * with the test, the test is right and this is the copy to correct.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
+  literalActionNamesAt,
   scanAuditWriterCensus,
   type AuditWriteSite,
 } from "../../../scripts/audit/audit-writer-census";
@@ -103,20 +107,10 @@ function actionsTheMigrationRewrites(): string[] {
  * would let a whole writer fall out of the comparison.
  */
 function actionNamesWrittenAt(site: AuditWriteSite): string[] {
-  if (!site.action.startsWith("(dynamic)")) {
-    return [site.action];
-  }
-  const literals = [...site.action.matchAll(/"([A-Za-z0-9_.\-]+)"/g)].map(
-    (match) => match[1],
-  );
-  if (literals.length === 0) {
-    throw new Error(
-      `${site.id}: its action is computed and names no string literal, so this ` +
-        "gate cannot tell whether the #2751 backfill covers it. Name the " +
-        "actions at the site, or extend this helper deliberately.",
-    );
-  }
-  return literals;
+  // One home for the rendering's inverse (`INV-SSOT`): the census renders a
+  // dynamic action, and `literalActionNamesAt` beside it reads the names back
+  // out, throwing on a site that names none — the behaviour this test decided.
+  return literalActionNamesAt(site);
 }
 
 describe("the #2751 bed-allocation category backfill (INV-OPS-012)", () => {

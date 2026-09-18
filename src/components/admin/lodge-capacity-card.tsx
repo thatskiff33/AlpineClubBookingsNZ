@@ -13,8 +13,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { useClubIdentity } from "@/components/club-identity-provider";
-import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  MAX_CONFIGURED_LODGE_CAPACITY,
+  MIN_CONFIGURED_LODGE_CAPACITY,
+  parseConfiguredLodgeCapacity,
+} from "@/lib/lodge-effective-capacity";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
@@ -94,7 +99,6 @@ export function LodgeCapacityCard() {
   useEffect(() => {
     activeLodgeIdRef.current = scopedLodgeId;
   }, [scopedLodgeId]);
-  const { scrollToError, scrollToTop } = useScrollToFeedback();
 
   async function load(
     requestedLodgeId: string,
@@ -167,13 +171,14 @@ export function LodgeCapacityCard() {
     return () => controller.abort();
   }, [scopedLodgeId]);
 
-  useEffect(() => {
-    if (error) scrollToError(feedbackRef);
-  }, [error, scrollToError]);
-
-  useEffect(() => {
-    if (savedMessage) scrollToTop(cardRef);
-  }, [savedMessage, scrollToTop]);
+  // Failure wins, success positions at the top, and neither runs for a
+  // passive re-render — the shared action-attention rule (#2934).
+  useActionAttention({
+    error: error,
+    errorTarget: feedbackRef,
+    success: savedMessage,
+    successTarget: cardRef,
+  });
 
   async function save() {
     // #2701 backstop for the disabled Save button: a PUT with no lodgeId lands
@@ -189,17 +194,19 @@ export function LodgeCapacityCard() {
     setError("");
     setSavedMessage("");
 
-    const trimmed = capacityValue.trim();
-    let capacity: number | null = null;
-    if (trimmed !== "") {
-      const parsed = Number(trimmed);
-      if (!Number.isInteger(parsed) || parsed <= 0) {
-        setError("Enter a whole number greater than zero, or leave blank to use the default.");
-        setSaving(false);
-        return;
-      }
-      capacity = parsed;
+    // The same field, the same route, the same bounds as the lodge
+    // configuration screen's capacity box — read from the one definition
+    // rather than spelled out again here (#2724, INV-SSOT-001). This copy had
+    // no upper bound at all, so a figure above the schema's maximum was
+    // accepted locally and refused by the server as a bare "Invalid input".
+    const typedCapacity = parseConfiguredLodgeCapacity(capacityValue);
+    if (typedCapacity.kind === "invalid") {
+      setError(typedCapacity.message);
+      setSaving(false);
+      return;
     }
+    const capacity: number | null =
+      typedCapacity.kind === "valid" ? typedCapacity.capacity : null;
 
     const hutLeaderLookaheadDays = Number(hutLeaderLookaheadValue.trim());
     if (
@@ -327,7 +334,8 @@ export function LodgeCapacityCard() {
             <Input
               id="lodge-capacity"
               type="number"
-              min={1}
+              min={MIN_CONFIGURED_LODGE_CAPACITY}
+              max={MAX_CONFIGURED_LODGE_CAPACITY}
               inputMode="numeric"
               className="w-40"
               placeholder={

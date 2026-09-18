@@ -37,7 +37,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/post-image-storage", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/post-image-storage")>()),
+  ...((await importOriginal()) as typeof import("@/lib/post-image-storage")),
   ensurePostImageDirectory: mocks.ensurePostImageDirectory,
   writePostImage: mocks.writePostImage,
 }));

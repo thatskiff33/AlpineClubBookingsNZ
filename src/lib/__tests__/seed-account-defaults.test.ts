@@ -12,7 +12,7 @@ import type { AgeTierSettingData } from "@/lib/age-tier";
 
 const mockLoadEffectiveModuleFlags = vi.fn();
 vi.mock("@/lib/module-settings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/module-settings");
   return {
     ...actual,
     loadEffectiveModuleFlags: (...args: unknown[]) =>
@@ -22,7 +22,7 @@ vi.mock("@/lib/module-settings", async (importOriginal) => {
 
 const mockGetAgeTierSettings = vi.fn();
 vi.mock("@/lib/age-tier", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/age-tier")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/age-tier");
   return {
     ...actual,
     getAgeTierSettings: (...args: unknown[]) => mockGetAgeTierSettings(...args),

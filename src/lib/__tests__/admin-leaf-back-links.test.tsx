@@ -41,6 +41,12 @@ vi.mock(
   "@/app/(admin)/admin/lodges/[id]/_components/lodge-display-settings-card",
   () => ({ LodgeDisplaySettingsCard: () => null }),
 );
+// #2942: the per-lodge Member roster settings sub-page renders a client card
+// that fetches on mount; only its top-of-page BackLink matters here.
+vi.mock(
+  "@/app/(admin)/admin/lodges/[id]/_components/lodge-roster-settings-card",
+  () => ({ LodgeRosterSettingsCard: () => null }),
+);
 // #2046 F2: stub the Xero record activity loader + its heavy client panel so the
 // async server component renders down to its top-of-page BackLink only.
 vi.mock("@/lib/xero-record-activity", () => ({
@@ -90,6 +96,7 @@ import DisplayBuilderPage from "@/app/(admin)/admin/display/builder/page";
 // #2249: the guided setup wizard, the sixth Lobby Display leaf.
 import DisplaySetupPage from "@/app/(admin)/admin/display/setup/page";
 import LodgeDisplaySettingsPage from "@/app/(admin)/admin/lodges/[id]/display/page";
+import LodgeRosterSettingsPage from "@/app/(admin)/admin/lodges/[id]/roster/page";
 import XeroRecordActivityPage from "@/app/(admin)/admin/xero/records/[localModel]/[localId]/page";
 import AdminInductionSettingsPage from "@/app/(admin)/admin/induction/settings/page";
 import { MemberDetailHeader } from "@/app/(admin)/admin/members/[id]/_components/member-detail-header";
@@ -180,6 +187,22 @@ describe("admin drill-down leaf back links", () => {
   it("points the per-lodge Display settings sub-page back at its lodge (dynamic [id] parent)", async () => {
     const html = renderToStaticMarkup(
       await LodgeDisplaySettingsPage({
+        params: Promise.resolve({ id: "lodge-42" }),
+      }),
+    );
+
+    expect(html).toContain('href="/admin/lodges/lodge-42"');
+    expect(html).toContain("← Lodge configuration");
+  });
+
+  // #2942: the Member roster settings sub-page is the lodge hub's second
+  // [id]-aware leaf, and it is reachable while its own module is switched OFF —
+  // deliberately, because an administrator sets the disclosure level before
+  // turning the roster on. So its back-link is the only way out of it in
+  // exactly the state a first-time operator arrives in.
+  it("points the per-lodge Member roster settings sub-page back at its lodge", async () => {
+    const html = renderToStaticMarkup(
+      await LodgeRosterSettingsPage({
         params: Promise.resolve({ id: "lodge-42" }),
       }),
     );

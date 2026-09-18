@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import type {
   BedAllocationRemovalCategory,
@@ -172,15 +173,6 @@ function categoryForAnchor(
 
 export { categoryForAnchor as bedAllocationRemovalCategoryForAnchor };
 
-async function readResponseError(response: Response, fallback: string) {
-  try {
-    const body = (await response.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 export function BedAllocationRemovalDialog({
   open,
   onOpenChange,
@@ -225,8 +217,11 @@ export function BedAllocationRemovalDialog({
     previewInFlightRef.current = false;
     if (!open || !anchor) return;
     setScopeType(anchor.initialScope);
+    const [onlyAllocation] = anchor.allocations;
     setSelectedNight(
-      anchor.allocations.length === 1 ? anchor.allocations[0].stayDate : "",
+      anchor.allocations.length === 1 && onlyAllocation
+        ? onlyAllocation.stayDate
+        : "",
     );
     setCategories(anchor.initialCategories);
     setPreview(null);
@@ -297,7 +292,7 @@ export function BedAllocationRemovalDialog({
       );
       if (generation !== requestGenerationRef.current || !open) return;
       if (!response.ok) {
-        const message = await readResponseError(
+        const message = await apiErrorMessageFromResponse(
           response,
           "Removal preview failed",
         );
@@ -387,7 +382,7 @@ export function BedAllocationRemovalDialog({
       }
       if (!response.ok) {
         if (generation !== requestGenerationRef.current || !open) return;
-        const message = await readResponseError(response, "Removal failed");
+        const message = await apiErrorMessageFromResponse(response, "Removal failed");
         if (generation !== requestGenerationRef.current || !open) return;
         setError(message);
         setStatus("");

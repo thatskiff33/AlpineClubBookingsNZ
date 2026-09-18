@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { bookingOwner } from "@/lib/booking-owner";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -19,10 +20,7 @@ import {
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
-import {
-  calendarDateOfSerialisedDbDate,
-  formatClubDate,
-} from "@/lib/club-time";
+import { calendarDateOfSerialisedDbDate, formatClubDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
@@ -91,12 +89,17 @@ interface BookingChangeRequestData {
     checkOut: string;
     status: string;
     finalPriceCents: number;
+    // #3369: NULLABLE — a school booking has no member, and an officer can
+    // raise a locked-period change request on one. Declared non-null here, a
+    // hand-written copy of an API shape that was right, it satisfied the
+    // compiler while the render threw inside the `.map()`.
     member: {
       id: string;
       firstName: string;
       lastName: string;
       email: string;
-    };
+    } | null;
+    organisation: { name: string; email: string | null } | null;
     payment: {
       id: string;
       amountCents: number;
@@ -424,6 +427,9 @@ export function BookingChangeRequestsPanel({
               request.requestedChanges?.requested?.summary ||
               "Locked-period booking change";
             const reviewedAt = formatDateTime(request.reviewedAt);
+            // #3369: a school presents through the owner projection; `id` is a
+            // MEMBER id and is absent for one, which is what the link asks.
+            const owner = bookingOwner(request.booking).member;
 
             return (
               <Card
@@ -433,9 +439,7 @@ export function BookingChangeRequestsPanel({
                 <CardHeader>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <CardTitle className="text-lg">
-                        {request.booking.member.firstName} {request.booking.member.lastName}
-                      </CardTitle>
+                      <CardTitle className="text-lg">{owner.firstName} {owner.lastName}</CardTitle>
                       <p className="text-sm text-muted-foreground">
                         Requested by {request.requestedBy.firstName} {request.requestedBy.lastName} on{" "}
                         {formatDateTime(request.createdAt)}
@@ -485,23 +489,19 @@ export function BookingChangeRequestsPanel({
 
                   <div className="flex flex-wrap gap-3 text-sm">
                     <Link
-                      href={buildHrefWithReturnTo(
-                        `/bookings/${request.booking.id}`,
-                        currentPath
-                      )}
+                      href={buildHrefWithReturnTo(`/bookings/${request.booking.id}`, currentPath)}
                       className="text-info-11 hover:underline"
                     >
                       Open booking
                     </Link>
-                    <Link
-                      href={buildHrefWithReturnTo(
-                        `/admin/members/${request.booking.member.id}`,
-                        currentPath
-                      )}
-                      className="text-info-11 hover:underline"
-                    >
-                      Open member
-                    </Link>
+                    {owner.id ? (
+                      <Link
+                        href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentPath)}
+                        className="text-info-11 hover:underline"
+                      >
+                        Open member
+                      </Link>
+                    ) : null}
                   </div>
 
                   {request.status === "REQUESTED" ? (

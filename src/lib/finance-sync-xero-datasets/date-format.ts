@@ -99,7 +99,25 @@ export function monthStartString(monthKey: string): string {
 }
 
 export function monthEndString(monthKey: string): string {
-  const [year, month] = monthKey.split("-").map(Number);
+  // A month key is `YYYY-MM`, and the SHAPE is checked rather than just the
+  // presence of two halves: `Number("abc")` is `NaN`, not `undefined`, so a
+  // presence check alone let a malformed key through to `Date.UTC(NaN, NaN, 0)`
+  // and returned a period bound ending in "NaN" — on a Xero report window
+  // (#2800).
+  const [yearText, monthText, ...extraParts] = monthKey.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  if (
+    extraParts.length > 0 ||
+    yearText === undefined ||
+    monthText === undefined ||
+    !/^\d{4}$/.test(yearText) ||
+    !/^\d{2}$/.test(monthText) ||
+    month < 1 ||
+    month > 12
+  ) {
+    throw new Error(`Month key must be YYYY-MM, got "${monthKey}"`);
+  }
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
 
   return `${monthKey}-${String(lastDay).padStart(2, "0")}`;

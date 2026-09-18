@@ -16,8 +16,9 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
+import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
 import { ApiError } from "@/lib/api-error";
-import type { EditFinancialReviewOccurrence } from "@/lib/edit-financial-review-context";
 import {
   OtherLodgeRateInProgressError,
   requestCarriesOtherLodgeElection,
@@ -230,14 +231,17 @@ const FULLY_PAID_BOOKING_STATUSES = new Set<BookingStatus | string>([
   BookingStatus.COMPLETED,
 ]);
 
+/**
+ * #3340 (`INV-SSOT-001`): this was a third hand-written copy of the money half
+ * of the owed test (`additionalAmountCents > 0 && status !== "SUCCEEDED"`). It
+ * now CALLS `isAdditionalAmountUncollected`, the one predicate, so a change to
+ * what "still owed" means cannot leave this door disagreeing with the chase, the
+ * ask sizing and the ledger census.
+ */
 export function hasOutstandingAdditionalPayment(
   payment: BookingGuestNameEditPayment,
 ) {
-  return Boolean(
-    payment &&
-      payment.additionalAmountCents > 0 &&
-      payment.additionalPaymentStatus !== "SUCCEEDED",
-  );
+  return isAdditionalAmountUncollected(payment);
 }
 
 export function isBookingFullyPaidForGuestNameEdits(booking: {
@@ -520,7 +524,7 @@ export function assertBookingModifiable(
   { role, actorId }: { role: Role; actorId: string },
 ): asserts booking is LoadedBookingForModify {
   if (!booking) throw new ApiError("Booking not found", 404);
-  if (booking.memberId !== actorId && role !== "ADMIN") {
+  if (bookingOwner(booking).memberId !== actorId && role !== "ADMIN") {
     throw new ApiError("Forbidden", 403);
   }
   if (!canModifyBookingStatusForRole(booking.status, role)) {

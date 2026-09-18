@@ -157,6 +157,20 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "POST /api/admin/hut-leaders#1",
+    tier: "GLOBAL",
+    reason:
+      "#2698 ACCEPT path only: a custodian bed hold the officer has explicitly accepted narrows an existing whole-lodge hold's represented bed set (INV-CAP-038), so the amendment must exclude that hold's RELEASE — booking cancel's RELEASE_WHOLE_LODGE_HOLD_UPDATE, which serialises on this key and never on the lodge key — before taking acquireLodgeCapacityLock. Taken only when `amendOverlappingHolds` is in the request AND the write actually involves a bed — a bedless assignment can narrow no hold, so it never joins this cohort — decided before any lock so the order cannot invert; the detect-and-refuse path writes nothing and stays on the lodge key alone.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "applyHutLeaderAssignmentEditUnderLocks#1",
+    tier: "GLOBAL",
+    reason:
+      "#2698 ACCEPT path only, the edit counterpart of the create above: setting or moving a custodian bed hold onto nights an existing whole-lodge hold covers narrows that hold, so the accepted amendment excludes the hold-release cohort before taking the lodge key. Same request-decided gate, same order — `amendAccepted` is settled by PUT /api/admin/hut-leaders/[id] from the request AND from whether the edit leaves a bed held, before this function opens a transaction, so the order cannot invert. An edit that ends bedless narrows nothing and never takes this key.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "POST /api/admin/bookings/[id]/force-confirm#1",
     tier: "GLOBAL",
     reason:
@@ -469,6 +483,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "respondToBookingRequestQuote#2",
+    tier: "GLOBAL",
+    reason:
+      "#2936: the accept re-arm, which used to be a bare unlocked update guarded only on the request not being DECLINED/CANCELLED. A correction (`correctBookingRequest`, which holds this key) leaves the request VERIFIED and SUPERSEDES the quote, so that guard passed — and the accept then wrote the retired quote's price and snapshot onto the corrected envelope and converted it, queueing the corrected school's Xero invoice at yesterday's price. The key orders this re-arm against the correction so the quote's status can be re-read under it as the evidence; the claim itself stays status-guarded. Taken alone: the re-arm creates no booking and claims no bed, and the conversion that follows opens its own two-tier transaction after this one has committed.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "approveBookingRequest#1",
     tier: "GLOBAL",
     reason:
@@ -692,6 +713,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "correctBookingRequest#1",
+    tier: "GLOBAL",
+    reason:
+      "#2936: the key is what makes the school-record preview re-read inside this transaction a FENCE rather than a snapshot. The correction stores a school name the officer acknowledged as either an existing record or a new one, and `resolveOrCreateSchoolOrganisation` — whose unique-name claim is the approval transaction's hold of this very key — is the only writer of those records. Excluding approval is therefore what lets the re-read promise that no record appeared between the preview and the claim, so the acknowledgement pins an identity instead of describing a stale one. It is NOT what fences the conversion's own write: both approvals claim on `version: request.version` (#1923), so the correction's version bump already loses to a conversion in flight and wins ahead of one. The counterparts that were NOT closed by a version fence, and are reconciled per-writer rather than by this key, are the FOUR quote writers in `booking-request-quotes.ts`, none of which took a lock and all of which fenced only on 'not declined, not cancelled' — a set that a correction's VERIFIED is in: `createBookingRequestQuote` now claims on the request version, `sendBookingRequestQuote` now claims the quote row while it is still DRAFT/SENT, and the accept re-arm in `respondToBookingRequestQuote` now takes this key itself (see `respondToBookingRequestQuote#2`). The fourth, that function's MODIFY/QUERY branch, is deliberately NOT fenced and so is deliberately absent from this registry: it writes a status and the requester's message and nothing else — no price, no snapshot, no hold, no conversion — so a correction it races loses a status rather than money or a bed, and refusing it would throw away the requester's words. Its quote write is narrowed to DRAFT/SENT so it cannot re-stamp a correction's supersede mark; if it ever writes a price or converts, it joins this registry. It takes NO per-lodge key: it creates no booking and claims no bed, and the stale hold it releases is cancelled afterwards, outside this transaction, by the shared cancel path that takes both tiers itself.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "approveMemberWholeLodgeRequest#1",
     tier: "GLOBAL",
     reason:
@@ -803,7 +831,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // insert does not bump Member.updatedAt, so the preview token alone cannot
   // catch the race). Single-lock holders; composition and counterpart analysis
   // in docs/CONCURRENCY_AND_LOCKING.md.
-  "src/lib/admin-family-group-requests-service.ts": 2,
+  // #3291 moves existing-member parent approval onto the shared lifecycle
+  // helper and then the shared partner helper. The one remaining raw site is
+  // the requester's separate lifecycle transition; the shared mints below are
+  // each counted once at their authority module.
+  "src/lib/admin-family-group-requests-service.ts": 1,
   // #2586: every roster-date writer calls the shared helper; the key is minted
   // once here and writer participation is pinned by roster-lock-contract.test.
   "src/lib/roster-lock.ts": 1,
@@ -938,25 +970,25 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // PostgreSQL reaches tuple locks. Config import orders its existing singleton
   // first, then this key; live CRUD takes only this key.
   "src/lib/minimum-stay-policy-set.ts": 1,
-  // #1937/#2596: executeMemberMerge first calls the shared hosting policy-set
+  // #1937/#2596/#3291: executeMemberMerge first calls the shared hosting policy-set
   // helper, then — since #2595 — the merge-only partner-share prefix helper
   // (`acquireMemberMergePartnerSharedLodgeLocks`: every affected lodge capacity
-  // key, sorted, and NO global cohort key), then takes the two raw
-  // member-lifecycle:{id} keys in sorted order, and finally the canonical
+  // key, sorted, and NO global cohort key), then takes the two
+  // member-lifecycle keys through their shared helper, and finally the canonical
   // member-partner-link keys through `member-partner-lock.ts` — because merge
   // re-points partner links AND reads them to decide which future shared
-  // doubles step 3b deletes. The count stays 2 because all three added tiers
-  // come from helpers that own their own raw sites
+  // doubles step 3b deletes. All three added tiers come from helpers that own
+  // their own raw sites
   // (adult-member-hosting-policy-set.ts, bed-allocation-lifecycle.ts +
   // lodge-capacity-lock.ts, member-partner-lock.ts) — merge mints no new key of
-  // its own. This order serialises policy enumeration before relation moves,
+  // its own. Merge therefore has no raw scoped site of its own. This order
+  // serialises policy enumeration before relation moves,
   // keeps the fixed lodge -> member order for the #2595 shared-double
   // reconciliation, matches the reviewed move's member-lifecycle ->
   // member-partner-link order so no new wait-graph edge appears, and
   // excludes every delete/archive/merge touching either member. Merge is
   // deliberately absent from GLOBAL_LOCK_SITE_REGISTRY above:
   // `member-merge-execute.test.ts` pins that it takes no `lock(1)` at all.
-  "src/lib/member-merge.ts": 2,
   // #2595: the partner-link service and reviewed move service share this one
   // canonical sorted member-partner-link lock mint.
   "src/lib/member-partner-lock.ts": 1,
@@ -966,13 +998,69 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // and confirm serialise; counterpart analysis in
   // docs/CONCURRENCY_AND_LOCKING.md, compatibility evidence in PR #2158.
   "src/lib/membership-subscription-billing.ts": 2,
-  // #1936: 2 pre-existing membership-application locks (application id +
-  // applicant email) plus the approval-mapping transaction's sorted
-  // member-lifecycle:{targetId} loop — the approval composes
-  // member-application THEN member-lifecycle; ordering and counterpart
-  // analysis in docs/CONCURRENCY_AND_LOCKING.md.
-  "src/lib/nomination.ts": 3,
+  // #1936/#3291: the two pre-existing membership-application locks
+  // (application id + applicant email) remain local. Approval mapping now
+  // takes its complete sorted lifecycle set through member-lifecycle-lock.ts,
+  // followed by the complete partner set through member-partner-lock.ts.
+  // Those shared mints are counted at their authority modules.
+  "src/lib/nomination.ts": 2,
   "src/lib/xero-contacts.ts": 2,
+  /*
+    #3367 — the CONTACT-HOME key,
+    `pg_advisory_xact_lock(hashtext('xero-contact-home:<contactId>'))`.
+    INV-INT-018, minted once in `lockXeroContactHome` and taken by all four
+    writers that link a Xero contact id to a local record.
+
+    WHY IT EXISTS. Since #3366 two columns can hold one Xero contact id —
+    `Member.xeroContactId` and `Organisation.xeroContactId` — each unique within
+    its own table, with no constraint able to span the two. The refusal that
+    keeps them exclusive is a READ of the other table, and a read cannot see an
+    uncommitted concurrent link, so without a key scoped to the CONTACT rather
+    than to either record two writers can both pass the check and both write.
+    Exactly the reasoning that gave the member-night lock its own family: an
+    invariant across two records cannot be serialised by either record's key.
+
+    COMPOSITION AND ORDER — and the rule is NOT "taken last".
+
+    An earlier revision of this entry said it was taken last and that nothing
+    else was acquired while it was held. That was false, and it described a
+    reachable DEADLOCK. `takeXeroContactFromSchoolsOwnMember` takes a `Member`
+    ROW lock — it clears the holder's `xeroContactId` — while holding this key;
+    the two member-side linkers took the row lock FIRST and then waited for this
+    key. Wait graph: the credit-note path on a school's earlier booking against
+    the new booking's invoice, which is the pair `xero-contact-home.ts` calls
+    reachable on purpose. Postgres resolves it by aborting one with `40P01`.
+
+    THE REAL RULE: the contact-home key is the OUTER lock relative to any
+    `Member` row lock. Each writer takes its own entity ADVISORY key first —
+    `hashtext(<memberId>)` in `findOrCreateXeroContact`'s phase 2, the
+    per-organisation key below in the organisation resolve — then THIS key, and
+    only then may it touch a `Member` row, whether by `SELECT … FOR UPDATE`
+    (`lockMemberForXeroContactLink`, `lockMemberForManualXeroContactLink`) or by
+    an `update`. Every participant therefore reaches a member row with the
+    contact key already held, and the cycle cannot form.
+
+    No provider call runs inside the holding transaction (the F7/#1355 property
+    this area was restructured for).
+
+    ONE site: every acquisition in the tree goes through the helper. Counterpart
+    analysis in docs/CONCURRENCY_AND_LOCKING.md; the rule itself is
+    docs/invariants/integrations.md → INV-INT-018.
+  */
+  "src/lib/xero-contact-home.ts": 1,
+  /*
+    #3367 — the per-organisation contact key,
+    `pg_advisory_xact_lock(hashtext('xero-organisation-contact:<organisationId>'))`.
+    A NEW keyspace, in its own namespace, keyed on the club's `Organisation`.
+
+    It is this path's equivalent of the member key `findOrCreateXeroContact`
+    takes: it serialises two resolutions of the SAME school so the phase-2
+    re-read-then-write cannot interleave and produce two links. Taken FIRST, with
+    the contact-home key immediately after it, so the whole family acquires in
+    one direction. No counterpart reverses that order, because this is the only
+    writer of `Organisation.xeroContactId`.
+  */
+  "src/lib/organisation-xero-contacts.ts": 1,
   // #3170: `enqueueXeroSupplementaryInvoiceOperation` takes
   // `pg_advisory_xact_lock(hashtext('xero-supplementary-invoice'), hashtext(<anchor>))`
   // - a NEW keyspace in its own namespace, keyed on the `BookingModification`

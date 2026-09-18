@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
 import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
@@ -162,6 +163,7 @@ async function handleGet(req: NextRequest, dateStr: string) {
         },
       },
       member: { select: { firstName: true, lastName: true } },
+      organisation: { select: { name: true, email: true } },
       // #3040: canonical Group Trip identity; tier split in `kiosk-group-trip.ts`.
       ...GROUP_TRIP_IDENTITY_SELECT,
     },
@@ -178,7 +180,7 @@ async function handleGet(req: NextRequest, dateStr: string) {
 
       return {
         bookingId: b.id,
-        memberName: `${b.member.firstName} ${b.member.lastName}`,
+        memberName: `${bookingOwner(b).member.firstName} ${bookingOwner(b).member.lastName}`,
         expectedArrivalTime: b.expectedArrivalTime,
         // #1422: flag (don't hide) a booking blocked by a pending admin review.
         // The kiosk shows a "see Booking Officer" note and disables its arrival
@@ -233,7 +235,10 @@ async function handleGet(req: NextRequest, dateStr: string) {
 
   // #3040: after the filter, so linkage is asked of the list the reader sees.
   const capabilities = kioskGroupTripCapabilities(tier);
-  const withGroupTrip = await attachKioskGroupTrip(result, bookings, { db: prisma, lodgeId, capabilities });
+  // #3369: a group trip is a MEMBER's, so a school's booking is not offered to
+  // the linkage pass. It still appears on the kiosk list itself, above.
+  const linkable = bookings.filter((b): b is typeof b & { memberId: string } => Boolean(bookingOwner(b).memberId));
+  const withGroupTrip = await attachKioskGroupTrip(result, linkable, { db: prisma, lodgeId, capabilities });
 
   return NextResponse.json({
     date: dateStr,

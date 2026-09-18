@@ -595,13 +595,14 @@ function moveLodgeIds(
 }
 
 async function loadWholeLodgeHolds(base: MoveBaseState, db: MoveDb) {
+  // Both ends of the changed nights: no changed night is no window to look in
+  // (#2800, half-open per INV-DATE).
   const nights = changedDateKeys(base);
-  if (nights.length === 0) return [];
-  const from = parseDateOnly(nights[0]);
-  const toExclusive = addDaysDateOnly(
-    parseDateOnly(nights[nights.length - 1]),
-    1,
-  );
+  const firstNightKey = nights[0];
+  const lastNightKey = nights.at(-1);
+  if (firstNightKey === undefined || lastNightKey === undefined) return [];
+  const from = parseDateOnly(firstNightKey);
+  const toExclusive = addDaysDateOnly(parseDateOnly(lastNightKey), 1);
   return db.booking.findMany({
     where: {
       lodgeId: base.destination.room.lodgeId,
@@ -616,15 +617,14 @@ async function loadWholeLodgeHolds(base: MoveBaseState, db: MoveDb) {
 
 async function loadCustodianHolds(base: MoveBaseState, db: MoveDb) {
   const nights = changedDateKeys(base);
-  if (nights.length === 0) return [];
+  const firstNightKey = nights[0];
+  const lastNightKey = nights.at(-1);
+  if (firstNightKey === undefined || lastNightKey === undefined) return [];
   return findCustodianBedHolds({
     lodgeId: base.destination.room.lodgeId,
     bedIds: [base.destination.id],
-    from: parseDateOnly(nights[0]),
-    toExclusive: addDaysDateOnly(
-      parseDateOnly(nights[nights.length - 1]),
-      1,
-    ),
+    from: parseDateOnly(firstNightKey),
+    toExclusive: addDaysDateOnly(parseDateOnly(lastNightKey), 1),
     db,
   });
 }
@@ -831,12 +831,15 @@ function evaluateMove(input: Omit<MoveState, "preview" | "targetSecondByAllocati
     const destinationOccupants = roomOccupants.filter(
       (candidate) => candidate.bedId === input.destination.id,
     );
-    if (destinationOccupants.length === 0) {
+    // "Exactly one primary occupant" said as a first with no rest, so the
+    // share check below holds the occupant itself (#2800).
+    const [primary, ...extraOccupants] = destinationOccupants;
+    if (primary === undefined) {
       targetSecondByAllocationId.set(row.id, false);
     } else if (
       input.destination.bedType !== "DOUBLE" ||
-      destinationOccupants.length !== 1 ||
-      destinationOccupants[0].isSecondOccupant
+      extraOccupants.length > 0 ||
+      primary.isSecondOccupant
     ) {
       conflicts.push(
         conflict(
@@ -850,7 +853,6 @@ function evaluateMove(input: Omit<MoveState, "preview" | "targetSecondByAllocati
         ),
       );
     } else {
-      const primary = destinationOccupants[0];
       const movingMemberId = row.bookingGuest.memberId;
       const primaryMemberId = primary.bookingGuest.memberId;
       const movingMember = movingMemberId

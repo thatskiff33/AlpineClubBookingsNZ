@@ -10,10 +10,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, describedByFieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
+import { formatCents } from "@/lib/utils";
+import { APP_CURRENCY } from "@/config/operational";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { parseDecimalDollarsToCents } from "@/lib/money-input";
+import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import { useClubTime } from "@/components/club-time-provider";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
@@ -67,7 +69,7 @@ const JOINING_TIERS = [
 ] as const;
 const tierLabel = (tier: string | null) =>
   JOINING_TIERS.find((option) => option.value === (tier ?? "FLAT"))?.label ?? (tier ?? "Flat");
-const dollars = (cents: number | null) => cents == null ? "Not configured" : new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100);
+const dollars = (cents: number | null) => cents == null ? "Not configured" : formatCents(cents);
 const memberName = (member: { firstName: string; lastName: string }) => `${member.firstName} ${member.lastName}`.trim();
 // The fee-level proration rule, in the same words as the editor's Proration
 // select (#2068, finding 7). Rendered on saved fees so the display can never
@@ -139,15 +141,22 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
   const [stagedBilling, setStagedBilling] = useState<Record<string, string | null>>({});
   const [deleteTarget, setDeleteTarget] = useState<{ action: "DELETE_MEMBERSHIP_FEE" | "DELETE_JOINING_FEE"; id: string; label: string } | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const { scrollToError } = useScrollToFeedback();
+  const { scrollToError, revealEditor } = useScrollToFeedback();
   // The per-fee Edit pencils sit in lists below the form they populate, which
   // renders at the top of the panel — without a scroll nothing visibly changes
-  // on click. Scroll the panel's own top into view (not the page top: these
-  // panels sit below Hut Fees, so the page top would hide them entirely).
+  // on click. Reveal the panel itself (not the page top: these panels sit below
+  // Hut Fees, so the page top would hide them entirely) through the shared
+  // reveal primitive, so the panel also takes focus for keyboard and
+  // screen-reader users (#2934).
+  //
+  // Each panel is therefore a NAMED region: focus landing on an unnamed card
+  // announces only "group". The name is `aria-labelledby` on the panel's own
+  // visible title rather than an `aria-label` repeating its words, so the two
+  // cannot drift (`INV-SSOT-001`), and `tabIndex={-1}` is declarative so React
+  // owns the attribute instead of the primitive writing it behind React's back.
   const joiningPanelRef = useRef<HTMLDivElement>(null);
   const membershipPanelRef = useRef<HTMLDivElement>(null);
-  const scrollToPanelTop = (panel: { current: HTMLDivElement | null }) =>
-    panel.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const scrollToPanelTop = revealEditor;
   // #2264 — example amounts move out of the placeholders (grey text inside a
   // money box reads as an amount already entered) and into hints under each
   // field.
@@ -295,8 +304,10 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
     let components: Array<{ label: string; amountCents: number; prorate: boolean; xeroAccountCode: string | null; xeroItemCode: string | null; sortOrder: number }> = [];
     if (billingBasis !== "NO_INVOICE") {
       const built: typeof components = [];
-      for (let index = 0; index < componentRows.length; index += 1) {
-        const row = componentRows[index];
+      // `entries()` rather than a counting loop: the index is only the
+      // component's `sortOrder`, and iterating hands the row over rather than
+      // looking it up (#2801).
+      for (const [index, row] of componentRows.entries()) {
         const rowCents = componentRows.length === 1 ? amountCents : parseDecimalDollarsToCents(row.amount);
         if (rowCents == null) { setError("Enter a valid NZD amount for each fee component."); return; }
         built.push({
@@ -350,7 +361,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
       <span>{exceptions.length} membered {exceptions.length === 1 ? "family has" : "families have"} no billing member. They will be omitted from family invoice generation.</span>
     </Alert>}
 
-    <Card ref={joiningPanelRef} className="scroll-mt-20"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle>Joining fees</CardTitle><CardDescription>the one-off fee a new member pays to join, per membership type and age tier</CardDescription></div>{data?.canEdit && !entranceEditing && <Button variant="outline" size="sm" aria-label="Edit joining fees" onClick={() => { setEntranceEditing(true); scrollToPanelTop(joiningPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
+    <Card ref={joiningPanelRef} role="region" aria-labelledby="joining-fees-title" tabIndex={-1} className="scroll-mt-20 focus:outline-none"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle id="joining-fees-title">Joining fees</CardTitle><CardDescription>the one-off fee a new member pays to join, per membership type and age tier</CardDescription></div>{data?.canEdit && !entranceEditing && <Button variant="outline" size="sm" aria-label="Edit joining fees" onClick={() => { setEntranceEditing(true); scrollToPanelTop(joiningPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
       <Alert>
         <span>Family joining fees now apply only to members assigned the <strong>Family</strong> membership type. Applicants who previously matched the automatic family heuristic (two adults plus a dependent) are now invoiced their own membership type&apos;s joining fee. A type with no rows raises no joining fee.</span>
       </Alert>
@@ -358,7 +369,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
         <div className="grid gap-3 md:grid-cols-5">
           <div><Label htmlFor="joining-type">Membership type</Label><Select value={joiningTypeId} onValueChange={setJoiningTypeId} disabled={!!editingEntranceFeeId}><SelectTrigger id="joining-type"><SelectValue /></SelectTrigger><SelectContent>{data?.membershipTypes.map((type) => <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>)}</SelectContent></Select></div>
           <div><Label htmlFor="joining-tier">Age tier</Label><Select value={joiningTier} onValueChange={setJoiningTier} disabled={!!editingEntranceFeeId}><SelectTrigger id="joining-tier"><SelectValue /></SelectTrigger><SelectContent>{JOINING_TIERS.map((tier) => <SelectItem key={tier.value} value={tier.value}>{tier.label}</SelectItem>)}</SelectContent></Select></div>
-          <div><Label htmlFor="entrance-amount">Amount (NZD)</Label><Input id="entrance-amount" inputMode="decimal" value={entranceAmount} onChange={(event) => setEntranceAmount(event.target.value)} {...entranceAmountHint.fieldProps} /><FieldHint {...entranceAmountHint.hintProps}>Example: 75.00</FieldHint></div>
+          <div><Label htmlFor="entrance-amount">Amount ({APP_CURRENCY})</Label><Input id="entrance-amount" {...MONEY_INPUT_PROPS} value={entranceAmount} onChange={(event) => setEntranceAmount(event.target.value)} {...entranceAmountHint.fieldProps} /><FieldHint {...entranceAmountHint.hintProps}>Example: 75.00</FieldHint></div>
           <div><Label htmlFor="entrance-from">Effective from</Label><Input id="entrance-from" type="date" value={entranceFrom} onChange={(event) => setEntranceFrom(event.target.value)} /></div>
           <div><Label htmlFor="entrance-to">Effective to (optional)</Label><Input id="entrance-to" type="date" value={entranceTo} onChange={(event) => setEntranceTo(event.target.value)} /></div>
         </div>
@@ -367,7 +378,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
       <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}{!type.isActive && <span className="ml-2 text-sm text-muted-foreground">(archived)</span>}</div>{type.joiningFees.length === 0 ? <p className="text-sm text-muted-foreground">No joining fee</p> : type.joiningFees.map((fee) => <div key={fee.id} className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{tierLabel(fee.ageTier)}</Badge><span>{dollars(fee.amountCents)} · {fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{entranceEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} ${tierLabel(fee.ageTier)} joining fee`} disabled={saving} onClick={() => { setEditingEntranceFeeId(fee.id); setJoiningTypeId(type.id); setJoiningTier(fee.ageTier ?? "FLAT"); setEntranceAmount((fee.amountCents / 100).toFixed(2)); setEntranceFrom(fee.effectiveFrom); setEntranceTo(fee.effectiveTo ?? ""); scrollToPanelTop(joiningPanelRef); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} ${tierLabel(fee.ageTier)} joining fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_JOINING_FEE", id: fee.id, label: `${type.name} ${tierLabel(fee.ageTier)} joining fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>)}</div>)}</div>
     </CardContent></Card>
 
-    <Card ref={membershipPanelRef} className="scroll-mt-20"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle>Annual membership fees</CardTitle><CardDescription>the fee to be a paid-up member of the club</CardDescription></div>{data?.canEdit && !membershipEditing && <Button variant="outline" size="sm" aria-label="Edit membership fees" onClick={() => { setMembershipEditing(true); scrollToPanelTop(membershipPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
+    <Card ref={membershipPanelRef} role="region" aria-labelledby="membership-fees-title" tabIndex={-1} className="scroll-mt-20 focus:outline-none"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle id="membership-fees-title">Annual membership fees</CardTitle><CardDescription>the fee to be a paid-up member of the club</CardDescription></div>{data?.canEdit && !membershipEditing && <Button variant="outline" size="sm" aria-label="Edit membership fees" onClick={() => { setMembershipEditing(true); scrollToPanelTop(membershipPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
       <p className="text-sm text-muted-foreground">Amounts are GST-inclusive integer cents after saving. Effective ranges are inclusive and may not overlap for one membership type.</p>
       {!familyBillingActive && hasPerFamilySchedule && <Alert variant="warning">
         <span>This club bills members individually, but one or more schedules still use the per-family basis. Those schedules cannot be invoiced and are not reinterpreted; edit each one to a per-member or no-invoice basis. Per-family can only be chosen after switching the family billing mode on the subscription billing settings.</span>
@@ -379,7 +390,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
               row; per-tier rows win at resolution. Per-family fees are flat-only,
               so the tier is forced to Flat and locked while PER_FAMILY is chosen. */}
           <div><Label htmlFor="membership-tier">Age tier</Label><Select value={membershipTier} onValueChange={(value) => { setMembershipTier(value); if (value !== "FLAT" && billingBasis === "PER_FAMILY") setBillingBasis("PER_MEMBER"); }} disabled={!!editingMembershipFeeId || billingBasis === "PER_FAMILY"}><SelectTrigger id="membership-tier"><SelectValue /></SelectTrigger><SelectContent>{JOINING_TIERS.map((tier) => <SelectItem key={tier.value} value={tier.value}>{tier.label}</SelectItem>)}</SelectContent></Select></div>
-          <div><Label htmlFor="membership-amount">Annual amount (NZD)</Label><Input id="membership-amount" inputMode="decimal" value={membershipAmount} onChange={(event) => setMembershipAmount(event.target.value)} disabled={billingBasis === "NO_INVOICE"} {...membershipAmountHint.fieldProps} /><FieldHint {...membershipAmountHint.hintProps}>{billingBasis === "NO_INVOICE" ? "A no-invoice fee raises no amount." : "Example: 150.00"}</FieldHint></div>
+          <div><Label htmlFor="membership-amount">Annual amount ({APP_CURRENCY})</Label><Input id="membership-amount" {...MONEY_INPUT_PROPS} value={membershipAmount} onChange={(event) => setMembershipAmount(event.target.value)} disabled={billingBasis === "NO_INVOICE"} {...membershipAmountHint.fieldProps} /><FieldHint {...membershipAmountHint.hintProps}>{billingBasis === "NO_INVOICE" ? "A no-invoice fee raises no amount." : "Example: 150.00"}</FieldHint></div>
           <div><Label htmlFor="billing-basis">Billing basis</Label><Select value={billingBasis} onValueChange={(value) => { setBillingBasis(value); if (value === "NO_INVOICE") setMembershipAmount("0"); if (value === "PER_FAMILY") setMembershipTier("FLAT"); }}><SelectTrigger id="billing-basis"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PER_MEMBER">Per member</SelectItem>{familyBillingActive && membershipTier === "FLAT" && <SelectItem value="PER_FAMILY">Per family</SelectItem>}<SelectItem value="NO_INVOICE">No invoice</SelectItem></SelectContent></Select></div>
           <div><Label htmlFor="proration-rule">Proration</Label><Select value={prorationRule} onValueChange={setProrationRule}><SelectTrigger id="proration-rule"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="NONE">Full annual fee</SelectItem><SelectItem value="REMAINING_MONTHS_INCLUSIVE">Remaining months, including decision month</SelectItem></SelectContent></Select></div>
           <div><Label htmlFor="membership-from">Effective from</Label><Input id="membership-from" type="date" value={membershipFrom} onChange={(event) => setMembershipFrom(event.target.value)} /></div>
@@ -406,7 +417,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
                     is disabled, so that row's hint states what the amount is
                     rather than offering an example the operator cannot type
                     (#2264). */}
-                <div><Label htmlFor={`component-amount-${index}`} className="text-xs">Amount (NZD)</Label><Input id={`component-amount-${index}`} inputMode="decimal" value={componentRows.length === 1 ? membershipAmount : row.amount} onChange={(event) => updateComponentRow(index, { amount: event.target.value })} disabled={componentRows.length === 1} aria-describedby={describedByFieldHint(componentAmountHintId(index))} /><FieldHint id={componentAmountHintId(index)}>{componentRows.length === 1 ? "Taken from the annual fee amount above." : "Example: 120.00"}</FieldHint></div>
+                <div><Label htmlFor={`component-amount-${index}`} className="text-xs">Amount ({APP_CURRENCY})</Label><Input id={`component-amount-${index}`} {...MONEY_INPUT_PROPS} value={componentRows.length === 1 ? membershipAmount : row.amount} onChange={(event) => updateComponentRow(index, { amount: event.target.value })} disabled={componentRows.length === 1} aria-describedby={describedByFieldHint(componentAmountHintId(index))} /><FieldHint id={componentAmountHintId(index)}>{componentRows.length === 1 ? "Taken from the annual fee amount above." : "Example: 120.00"}</FieldHint></div>
                 {/* A "Full annual fee" (NONE) rule prorates nothing, so the
                     per-component Prorate opt-in is replaced with a read-only
                     "Prorate n/a" placeholder when the rule is NONE (#2068,

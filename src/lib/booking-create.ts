@@ -25,6 +25,7 @@ import {
   PaymentStatus,
   type PrismaClient,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { assertMemberMayBookLodge } from "@/lib/lodge-access";
 import {
   lodgeNullTolerantScope,
@@ -55,6 +56,10 @@ import {
   validateAndCalculatePromoDiscount,
   type PromoBeneficiaryAllocation,
 } from "@/lib/promo";
+import {
+  recordBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   sendAdminNewBookingAlert,
@@ -68,6 +73,7 @@ import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
+import { xeroInvoiceEmailInstructionForNotifyChoice } from "@/lib/xero-invoice-email-instruction";
 import { applyCreditToBooking, getMemberCreditBalance } from "@/lib/member-credit";
 import {
   buildInternetBankingPaymentReference,
@@ -103,9 +109,9 @@ import {
   resolveEffectivePromoSource,
   resolvePromoInTransaction,
 } from "./booking-create-promo";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import {
   buildGuestCreateData,
-  getCapacityFullNights,
   getCapacityGuestRanges,
   resolveAdminReviewFields,
   resolveAdultMemberHostingDecision,
@@ -358,6 +364,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     let promoFreeNightsUsed = 0;
     let promoEligibleGuestCount = 0;
     let promoAllocations: PromoBeneficiaryAllocation[] = [];
+    let promoAdjustmentTargets: PromoAdjustmentTarget[] = [];
     let promoSelectedGuestIndexes: number[] | undefined;
     let promoShouldPersist = false;
     let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
@@ -387,6 +394,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       promoFreeNightsUsed = resolved.promoFreeNightsUsed;
       promoEligibleGuestCount = resolved.promoEligibleGuestCount;
       promoAllocations = resolved.promoAllocations;
+      promoAdjustmentTargets = resolved.promoAdjustmentTargets;
       promoSelectedGuestIndexes = resolved.promoSelectedGuestIndexes;
       promoShouldPersist = resolved.promoShouldPersist;
       promoCodeRecord = resolved.promoCodeRecord;
@@ -462,6 +470,16 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         bookingLodgeId,
       );
     }
+
+    // #3276: the build-up of every night this booking was just sold, after the
+    // last night write and the redemption write. With no promotion the targets
+    // are empty and RECORDED says exactly that: nothing was taken off.
+    await recordBookingNightAdjustments(tx, {
+      bookingId: createdBooking.id,
+      guestIds: createdBooking.guests.map((guest) => guest.id),
+      targets: promoAdjustmentTargets,
+      writer: "booking creation",
+    });
 
     await reconcileBedAllocationsForBookingWithGlobalLockHeld({
       bookingId: createdBooking.id,
@@ -651,6 +669,22 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   // The member email is a per-create choice only for on-behalf bookings; a
   // member booking for themselves is always emailed.
   const notifyMember = !isOnBehalf || input.notifyMember !== false;
+  /*
+    #2929 — the same choice, carried to the invoice this create raises.
+
+    Recorded on the outbox operation rather than passed to the invoice code,
+    because the invoice is not raised by this request: the create enqueues an
+    operation and returns, a worker raises the invoice afterwards, and an
+    operator retry may raise it days later. Only the operation row is still
+    there by then.
+
+    Written for a member's own booking too, where it is always SEND: the value
+    then says "nothing was withheld here", which is the truth, and it keeps "the
+    officer chose to send" distinguishable from "nobody was asked" on a path
+    that never offers the choice at all.
+  */
+  const creationInvoiceEmailDelivery =
+    xeroInvoiceEmailInstructionForNotifyChoice(notifyMember);
 
   // Defence in depth: the route already gates a past-dated on-behalf create,
   // but the service re-checks the RESOLVED envelope (guest nights can expand
@@ -893,6 +927,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       let promoFreeNightsUsed = 0;
       let promoEligibleGuestCount = 0;
       let promoAllocations: PromoBeneficiaryAllocation[] = [];
+      let promoAdjustmentTargets: PromoAdjustmentTarget[] = [];
       let promoSelectedGuestIndexes: number[] | undefined;
       let promoShouldPersist = false;
       let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
@@ -922,6 +957,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         promoFreeNightsUsed = resolved.promoFreeNightsUsed;
         promoEligibleGuestCount = resolved.promoEligibleGuestCount;
         promoAllocations = resolved.promoAllocations;
+        promoAdjustmentTargets = resolved.promoAdjustmentTargets;
         promoSelectedGuestIndexes = resolved.promoSelectedGuestIndexes;
         promoShouldPersist = resolved.promoShouldPersist;
         promoCodeRecord = resolved.promoCodeRecord;
@@ -1072,6 +1108,16 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           bookingLodgeId,
         );
       }
+
+      // #3276: the build-up of every night this booking was just sold, after the
+      // last night write and the redemption write. With no promotion the targets
+      // are empty and RECORDED says exactly that: nothing was taken off.
+      await recordBookingNightAdjustments(tx, {
+        bookingId: newBooking.id,
+        guestIds: newBooking.guests.map((guest) => guest.id),
+        targets: promoAdjustmentTargets,
+        writer: "booking creation",
+      });
 
       if (creditAppliedCents > 0) {
         await applyCreditToBooking(effectiveMemberId, creditAppliedCents, newBooking.id, tx);
@@ -1316,6 +1362,14 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           },
           include: { guests: true },
         });
+        // #3276: the split child carries no promotion (one redemption per party,
+        // on the member booking), so its nights record that nothing came off.
+        await recordBookingNightAdjustments(tx, {
+          bookingId: childBooking.id,
+          guestIds: childBooking.guests.map((guest) => guest.id),
+          targets: [],
+          writer: "booking creation (split child)",
+        });
         await reconcileBedAllocationsForBookingWithGlobalLockHeld({
           bookingId: childBooking.id,
           db: tx,
@@ -1472,6 +1526,8 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           where: { id: booking.id },
           include: {
             member: true,
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
             guests: true,
             promoRedemption: {
               include: {
@@ -1491,15 +1547,15 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             // here — the split engine above is untouched.)
             const provisionalGuests = await getProvisionalNonMemberChildSummary({
               id: fullBooking.id,
-              memberId: fullBooking.memberId,
+              memberId: bookingOwner(fullBooking).memberId,
             });
             sendBookingConfirmedEmail(
               {
                 bookingId: fullBooking.id,
-                recipientMemberId: fullBooking.memberId,
+                recipientMemberId: bookingOwner(fullBooking).memberId,
               },
-              fullBooking.member.email,
-              fullBooking.member.firstName,
+              bookingOwner(fullBooking).member.email,
+              bookingOwner(fullBooking).member.firstName,
               fullBooking.checkIn,
               fullBooking.checkOut,
               fullBooking.guests.length,
@@ -1524,7 +1580,10 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
 
           const effectiveModules = await loadEffectiveModuleFlags();
           if (effectiveModules.xeroIntegration) {
-            void enqueueXeroBookingInvoiceOperation(booking.id, { createdByMemberId: sessionUserId })
+            void enqueueXeroBookingInvoiceOperation(booking.id, {
+              createdByMemberId: sessionUserId,
+              invoiceEmailDelivery: creationInvoiceEmailDelivery,
+            })
               .then(async (queuedInvoice) => {
                 if (!queuedInvoice.queueOperationId) return;
                 await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
@@ -1547,6 +1606,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       try {
         const queuedInvoice = await enqueueXeroBookingInvoiceOperation(booking.id, {
           createdByMemberId: sessionUserId,
+          invoiceEmailDelivery: creationInvoiceEmailDelivery,
         });
         // #1620 — allocate the member's existing floating credit notes against this
         // invoice so they pay the effective (credit-reduced) amount. Enqueued after
@@ -1733,6 +1793,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
   let promoFreeNightsUsed = 0;
   let promoEligibleGuestCount = 0;
   let promoAllocations: PromoBeneficiaryAllocation[] = [];
+  let promoAdjustmentTargets: PromoAdjustmentTarget[] = [];
   let promoSelectedGuestIndexes: number[] | undefined;
   let promoShouldPersist = false;
   let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
@@ -1759,13 +1820,24 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     const assignedMemberIds = promoCode?.assignments?.length
       ? promoCode.assignments.map((a) => a.memberId)
       : null;
-    const guestNightRates = guests.map((guest, index) => ({
-      memberId: guest.memberId ?? null,
-      isMember: guest.isMember,
-      perNightRates: price.guests[index].perNightCents,
-      firstNight: guest.stayStart ?? checkIn,
-      nightDates: price.guests[index].nightDates,
-    }));
+    // Each guest's own priced row, read once. The breakdown was built for
+    // exactly this party, so a guest with no row would be a promo evaluated
+    // against nothing — refused rather than discounted on a guess (#2800).
+    const guestNightRates = guests.map((guest, index) => {
+      const priced = price.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `Promo evaluation has no priced guest at breakdown position ${index} of ${price.guests.length} (#3167).`,
+        );
+      }
+      return {
+        memberId: guest.memberId ?? null,
+        isMember: guest.isMember,
+        perNightRates: priced.perNightCents,
+        firstNight: guest.stayStart ?? checkIn,
+        nightDates: priced.nightDates,
+      };
+    });
     const application = await validateAndCalculatePromoDiscount(
       promoCode,
       {
@@ -1791,6 +1863,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     promoFreeNightsUsed = promoResult.freeNightsUsed;
     promoEligibleGuestCount = promoResult.eligibleGuestCount;
     promoAllocations = promoResult.allocations;
+    promoAdjustmentTargets = promoResult.adjustmentTargets;
     promoSelectedGuestIndexes = application.selectedGuestIndexes;
     promoShouldPersist = shouldPersistPromoRedemption(promoResult);
     promoCodeRecord = promoCode;
@@ -1877,6 +1950,16 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         waitlistLodgeId,
       );
     }
+
+    // #3276: the build-up of every night this booking was just sold, after the
+    // last night write and the redemption write. With no promotion the targets
+    // are empty and RECORDED says exactly that: nothing was taken off.
+    await recordBookingNightAdjustments(tx, {
+      bookingId: createdBooking.id,
+      guestIds: createdBooking.guests.map((guest) => guest.id),
+      targets: promoAdjustmentTargets,
+      writer: "waitlist booking creation",
+    });
 
     if (alternateLodgeIds.length > 0) {
       await tx.bookingWaitlistAlternateLodge.createMany({

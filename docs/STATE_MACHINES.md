@@ -635,6 +635,36 @@ negative delta -> Stripe refund or source-linked member credit
 admin review path -> REQUESTED -> APPROVED or REJECTED
 ```
 
+**One ask at a time, sized to the whole outstanding balance (#3340).** A booking
+edit raises ONE ask, so minting a replacement ADDITIONAL PaymentIntent queues
+every other outstanding one on that payment for cancellation. That makes the new
+ask the ONLY figure anybody will ever collect, and sizing it on this edit's own
+delta therefore deleted the unpaid balance of the ask it replaced — two
+consecutive +$70 edits on a $130 paid booking asked $70 and lost $70, silently
+and permanently ([INV-PAY-047]). The ask is the edit's net PLUS the unpaid
+balance of the ask it supersedes.
+
+```text
+edit raises an ask -> mint the replacement intent
+  -> enqueue CANCEL_PAYMENT_INTENT for every other live ADDITIONAL intent
+  -> cancel it SYNCHRONOUSLY, best-effort, BEFORE the new client secret returns
+       still cancellable -> transaction FAILED, operation SUCCEEDED
+       Stripe already captured it -> handed off to REFUND_SUPERSEDED_PAYMENT
+       provider failure -> the queued operation stands; the recovery cron finishes
+  -> the member's card sees only the replacing intent
+REFUND_SUPERSEDED_PAYMENT completes
+  -> reconcile aggregates, THEN one audit row + one REFUNDED BookingEvent
+     (discriminated, so the cancellation narrative never reads it as a
+     settlement) + ONE member email (superseded-payment-refunded, naming the
+     corrected amount owing) + ONE admin alert
+     (admin-superseded-payment-refund)
+```
+
+Before #3340 the cancellation was only enqueued, so the retired intent stayed
+confirmable until the five-minute cron reached it (measured at 4m05s), and the
+refund that followed a capture inside that window wrote nothing at all — Stripe's
+own receipt was the entire notice.
+
 **Booking-policy exception requests (#2365).** A `BookingChangeRequest` now
 carries a `kind`: the original today/past-night edit is `LOCKED_PERIOD`, and a
 member request to override an eligible *soft* booking-policy failure (a
@@ -1039,6 +1069,69 @@ cancellation email suppressed (an admin decision, not a requester cancellation).
 A held pointer that is stale or no longer a live `AWAITING_REVIEW` hold is simply
 detached. SCHOOL requests use the same function (no type branch).
 
+Correction and the quote (#2936): an officer may **correct** an unconverted
+request — its dates, its party, its catering preference, its school name and its
+contact details — from the same six states decline claims
+(`CORRECTABLE_BOOKING_REQUEST_STATUSES`), and correcting it **re-opens** it. Every
+`DRAFT` and `SENT` quote flips to `SUPERSEDED` in the same transaction as the
+correction's status-and-version-guarded claim, `priceCents` is cleared and the
+request returns to `VERIFIED`, so no price or quote can outlive the shape it was
+computed from. `SUPERSEDED` again rather than `CANCELLED` — an officer retired
+it — and again it is what kills the requester's live link, since
+`loadSentQuoteByToken` requires `SENT`.
+
+An **accepted** quote blocks the correction outright (`409`), on either
+evidence: a quote row at `ACCEPTED`, or the request's own `acceptedQuoteId`,
+which is set by the accept re-arm before conversion runs and therefore survives a
+conversion that did not finish. Re-opening the agreement is the officer's
+deliberate act — decline it or issue a fresh quote — not a side effect of an
+edit. The claim itself additionally fences on `convertedBookingId: null` and
+`acceptedQuoteId: null`, so the refusal holds under a race as well as at the
+guard.
+
+The hold follows decline's shape exactly: claim first, then release the
+`AWAITING_REVIEW` hold through the shared cancel path with
+`requireRequestHold: true`, then tell any member guests the hold had notified. A
+correction that changes ONLY the catering preference keeps the hold — that is the
+one corrected field a hold does not read. A release that fails is reported as a
+correction that SAVED with its beds still held, never as a failed save, and so is
+every other post-claim failure: the whole block is wrapped the way decline's is.
+
+Beds a correction keeps, or fails to release, are swept by
+`cron-quote-expiry-reminders`' stale-hold phase **once the request's last quote
+response window has lapsed**, which is what selecting `VERIFIED` alongside
+`MODIFICATION_REQUESTED` and `QUERY_PENDING` bought — `VERIFIED` is where a
+correction leaves the request, and the expiry phase cannot see it because the
+correction has just superseded the `SENT` quote that phase selects on.
+
+**That qualifier is load-bearing, not throat-clearing.** The deadline is
+`max(responseTokenExpiresAt)` across the request's quotes, and only a SENT quote
+ever writes one — so a request that has never had a quote sent has no window, no
+deadline, and is skipped on every tick for ever. Beds held on such a request by
+the officer's own "Hold slots" and then kept by a catering-only correction (or
+left behind by a release that failed) have **no** cron recovery at all; the
+officer's Release button is the only thing that frees them. That is the same rule
+that protects a deliberate re-hold (#1296) rather than a gap in this sweep, and
+it is why the page says "once the window lapses" rather than "are swept".
+
+**What a correction is NOT fenced by, and what it is.** `VERIFIED` is a LIVE
+status, not decline's terminal one, so every writer guarding on "not `DECLINED`,
+not `CANCELLED`" sees a corrected request as ordinary. Three of the four quote
+writers are therefore fenced individually: the quote save claims on the request's
+`version`, the quote send claims the quote row while it is still `DRAFT`/`SENT`,
+and the accept re-arm takes `pg_advisory_xact_lock(1)` and re-reads the quote's
+status under it, refusing only a `SUPERSEDED`/`CANCELLED` one so #1232's
+double-accept replay still works.
+
+The fourth — the `MODIFY`/`QUERY` response — is **deliberately left unfenced**,
+so a requester acting on a quote link that was live a moment ago can still move a
+freshly corrected request to `MODIFICATION_REQUESTED`/`QUERY_PENDING`. It writes
+a status and the requester's own message and nothing else: no price, no accepted
+snapshot, no hold, no conversion, and both states it can reach are correctable
+and swept exactly as `VERIFIED` is. Only its quote write was narrowed, to
+`DRAFT`/`SENT`, so it can no longer re-stamp the supersede mark the correction
+made. `docs/CONCURRENCY_AND_LOCKING.md` carries the same split.
+
 Because `QUOTE_SENT` (and other quote-bearing states) DO carry a live `SENT`
 quote a requester could still act on, broadening decline reintroduces a
 decline-vs-requester race. A DECLINED request is made untouchable by every other
@@ -1243,9 +1336,19 @@ This stops a re-quote from reusing a cancelled row and 409-ing on accept (#1254)
 School group requests share this quote lifecycle. The public form shows a soft
 warning above 25 total students, teachers, and parent helpers because a club
 member must host larger groups, but the hard submission limit remains lodge
-capacity. Before approval, admins can adjust the bulk child counts; approval
-regenerates the school guest list from the preserved teachers/parent helpers and
-the adjusted counts, then reprices and rechecks capacity against that final list.
+capacity. Admins can adjust the bulk child counts, and **saving the quote is
+where that adjustment lands** (#3412): the regenerated guest list is persisted
+on the request in the transaction that mints the quote, so pricing, the sent
+quote's breakdown, the send-time hold and approval all read one list. Approval
+applies the same override through the same resolver, and still reprices and
+rechecks per-night capacity against that final list. What the resolver
+guarantees is
+[`INV-ADDPAY-008`](invariants/additional-payment-chasing.md#inv-addpay-008); why
+a live hold makes a count change a refusal rather than a re-size is
+[`INV-ADDPAY-006`](invariants/additional-payment-chasing.md#inv-addpay-006).
+Both writes are claims rather than overwrites: the request row on
+version/status/hold, and the quote row on its own status, so neither a save nor
+a send that lost a race writes anything or emails anybody.
 The non-login records these flows create are classified by `Member.role`, not
 counted as paying members: school groups (the school contact and each teacher)
 get role `SCHOOL`, and general public booking-request contacts get `NON_MEMBER`.
@@ -2062,6 +2165,16 @@ offer expires/declined -> WAITLISTED or CANCELLED
 stranded free confirm, admin repair -> WAITLISTED
 ```
 
+An entry may legitimately sit over nights a whole-lodge hold covers (#2930).
+That became reachable when the member calendar started letting a full future
+night be selected — which is how the waitlist is reached at all — so
+`capacity unavailable -> WAITLISTED` now includes "unavailable because the lodge
+is held". It changes no transition. Promotion is gated on
+`checkCapacityForGuestRanges(...).available`, and a hold forces that false
+whatever the bed arithmetic says (`INV-CAP-021`), so the entry keeps its queue
+position until the hold is released rather than being offered or cancelled. The
+member is never told which of the two kept them waiting (ADR-001 decision 6).
+
 Cross-lodge offers (ADR-004, `waitlistOfferedLodgeId` set) accept
 differently: the entry never changes lodge. Confirming re-checks the
 quoted price, creates a fresh booking at the offered lodge through the
@@ -2184,7 +2297,9 @@ the booking has an adult on-site that night.
 Two occupancies with no booking behind them feed this invariant as
 attribution-less rows and so are covered by that last clause: a **custodian bed
 hold** (#2286) and, since #2317, an **exclusive whole-lodge hold** — every
-active bed of the held lodge on every held night. Both are tierless, so both
+active bed of the held lodge on every held night, less the bed-nights a
+custodian holds (`INV-CAP-038`, #2698), so the two sets are disjoint and a
+bed-night is claimed exactly once. Both are tierless, so both
 read as an adult: another booking's unaccompanied minors are kept out of the
 rooms, and no name, booking id or age tier of the held group ever reaches the
 planner. Neither can be displaced: neither has a row to move, and — because a
@@ -2438,12 +2553,14 @@ links are hard-deleted (audit log keeps history), so the pair can re-form.
 
 ```text
 member requests partner by email (registered login adult) -> PENDING + email to target
+member requests direct parent/dependant as partner -> generic 201/no link for by-email; specific 422 for authorised member-id/admin paths
 target confirms from profile -> CONFIRMED (one-confirmed-partner invariant re-checked under advisory lock; other PENDING requests involving either member pruned)
+target confirms after direct parentage appeared -> 409, request remains PENDING, no success audit/email
 target declines -> row hard-deleted (no email), initiator may re-request
 initiator withdraws own PENDING -> row hard-deleted
 the adult recorded as having confirmed a NO-LOGIN adult co-member's details declares them -> CONFIRMED in one step (no consent round-trip; "one login manages the family"). Gated on Member.detailsConfirmedByMemberId naming the initiator AND the pair still sharing a family group (#2284 re-anchored this off the FamilyGroupMember.role ADMIN value, which #2520 then dropped from the database outright — there is no rank on a family membership to re-anchor onto); the voucher pointer is self-assignable by any adult login co-member, so this is an equal-adults gate, not a group-lead privilege
 admin assigns directly (admin member-detail card) -> CONFIRMED immediately, assignedByAdminId recorded; an existing PENDING for the pair is promoted; both members emailed unless the admin chose not to notify (#1769a)
-unregistered partner claims a createPartnerLink invite token -> CONFIRMED inside the claim transaction (claim = consent)
+unregistered partner claims a createPartnerLink invite token -> CONFIRMED inside the claim transaction (claim = consent); direct-parent conflict -> family join still succeeds, partnerLinkFormed false, direct_parent_relationship skip audited
 either CONFIRMED partner removes the link -> row hard-deleted, other partner emailed
 admin removes any link -> row hard-deleted, both partners emailed when it was CONFIRMED unless the admin chose not to notify (#1769a); a PENDING removal emails no one
 CONFIRMED link deleted (either dissolve path) -> pair's FUTURE shared double-bed second-occupant allocations swept back to the awaiting-allocation queue in the same transaction (#1756; both bookings audited, admins alerted post-commit)
@@ -2453,13 +2570,23 @@ CONFIRMED link DROPPED by a member merge (the master already had its one confirm
 
 To verify: canonical pair ordering (`memberAId < memberBId` CHECK), the
 one-CONFIRMED-partner-per-member invariant (advisory locks + partial unique
-indexes), ADULT-only + no-self-partner guards, pending pruning on confirm,
+indexes), ADULT-only + no-self-partner guards, direct-parent exclusion through
+both parent columns and both partner statuses in either write order, pending pruning on confirm,
 one outstanding outgoing request per member, the memberId-target
 shared-family-group guard on the member API, and the stale-share sweep
 invariant (#1756, extended to merge by #2595): no future `isSecondOccupant`
 allocation may outlive its partner link or the active-adult precondition (see
 `INV-CAP-010` for the #1756 sweep and `INV-CAP-030` for the merge form, both in
 docs/invariants/booking-dates-and-capacity.md).
+
+The direct-parent exclusion also has a transactional PostgreSQL backstop (#3271):
+statement triggers on both parent columns and on every `MemberPartnerLink` status
+maintain one canonical `MemberParentPartnerExclusion` count row per unordered
+pair. The pair primary key serializes application writers and direct SQL. The
+check rejects a state with both counts positive using a stable, non-identifying
+error; deleting or moving the last source edge decrements the counts and a
+deferred trigger removes an empty pair row. This table is derived internal state,
+not a second relationship API or an operator-editable record.
 
 ## Member Guest Consent Lifecycle ("+ Add Member Guest", #2305 / MG2 #2307, MG4 #2309)
 
@@ -2610,7 +2737,16 @@ the custodian bed hold (#2286): it stays a stateless dated record whose
 Upcoming / Active / Past reading is derived from `startDate`/`endDate` against
 today. Adding, changing or clearing its optional `bedId` is a plain field edit —
 the held bed is computed from the row on every query, so shortening, extending
-or deleting the assignment returns the bed with nothing to reconcile.
+or deleting the assignment returns the bed with nothing to reconcile. The same
+is true of the whole-lodge-hold exclusion #2698 added: a hold's represented bed
+set is derived from the live custodian holds at read time and stored nowhere, so
+adding or removing a bed hold moves a bed-night between the two sets with no
+state to migrate. What #2698 does add is a WRITE-time question, not a state: a
+bed hold created or changed over nights an existing whole-lodge hold covers is
+refused with `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD` until the officer accepts
+it explicitly, and the acceptance and the assignment commit together. Deleting
+an assignment now runs under the lodge capacity key, because it widens every
+overlapping hold's represented set.
 
 ## Membership Cancellation, Archive, And Delete Lifecycle
 
@@ -2783,7 +2919,7 @@ member creates group -> memberless FamilyGroup + PENDING GROUP_CREATE (+ bundled
 create-group names an unregistered partner email -> single-use PartnerInviteToken minted + emailed (see Partner Invite Token Lifecycle) instead of an invitedMemberId
 create-group marks the named partner as a declared partner (#1742) -> registered partner gets a PENDING MemberPartnerLink request; unregistered partner's token carries createPartnerLink (see Partner Link Lifecycle)
 dependent inherits email or has explicit email inheritance source
-parent link requested -> parent is active + not archived + not an organisation account (ANY age tier) -> ancestors(parent) + 1 + descendants(child) <= 3 links -> linked | 422 (parent inactive/archived/organisation) | 422 (four-generation cap) | 422 (would close a family loop)
+parent link requested -> parent is active + not archived + not an organisation account (ANY age tier) -> ancestors(parent) + 1 + descendants(child) <= 3 links -> linked | 422 (parent inactive/archived/organisation) | 422 (four-generation cap) | 422 (would close a family loop) | 422 (PENDING or CONFIRMED direct partner pair)
 dependent inherits email -> the chosen parent themselves, if adult + not archived + not cancelled + real address + not themselves inheriting -> record that parent as the CHOICE and derive the effective pointer from it | 422 (that parent cannot receive club mail). One hop only since #2716: no walk, and no fallback to a grandparent.
 family removal/cancellation/delete -> relationship cleanup while preserving history
 cancellation approved for a middle generation -> its dependants' links cleared, NOT re-parented -> detached members named in the response and the audit log
@@ -2812,8 +2948,11 @@ writers that enforce it, and the direct-parent-only email inheritance that goes
 with it (`INV-LIFE-047`).
 
 To verify: non-login adult confirmation, dependent age-up behavior, inherited
-email changes, the four-generation cap and its cycle guard at depth, and Xero
-contact synchronization.
+email changes, the four-generation cap and its cycle guard at depth, direct-
+partner exclusion through both parent columns and both partner statuses, blocked
+request/application recovery without partial membership or notification side
+effects, database-trigger recovery after unlink/delete, and Xero contact
+synchronization.
 
 ## Email Retry Lifecycle
 

@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator"
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups"
 import { fetchJson, postJson } from "./api"
 import { SectionCard, type ToggleSection } from "./shared"
+import { xeroSectionId } from "./types"
 import type {
   ContactGroup,
   DuplicateGroup,
@@ -284,7 +285,7 @@ export function SetupPanels({
 
   return (
     <SectionCard
-      id="xero-section-setup"
+      id={xeroSectionId("setup")}
       title="Setup Tools"
       description="One-off import and duplicate cleanup tools used during Xero setup or remediation."
       open={open}

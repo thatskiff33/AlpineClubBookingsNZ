@@ -671,12 +671,9 @@ export function groupCronRunsByJob(
   const sortedRuns = [...runs].sort((a, b) => runTime(b) - runTime(a));
 
   for (const run of sortedRuns) {
-    if (!grouped[run.jobName]) {
-      grouped[run.jobName] = [];
-    }
-
-    if (grouped[run.jobName].length < perJobLimit) {
-      grouped[run.jobName].push(run);
+    const bucket = (grouped[run.jobName] ??= []);
+    if (bucket.length < perJobLimit) {
+      bucket.push(run);
     }
   }
 
@@ -690,10 +687,7 @@ function groupAllCronRunsByJob(
   const sortedRuns = [...runs].sort((a, b) => runTime(b) - runTime(a));
 
   for (const run of sortedRuns) {
-    if (!grouped[run.jobName]) {
-      grouped[run.jobName] = [];
-    }
-    grouped[run.jobName].push(run);
+    (grouped[run.jobName] ??= []).push(run);
   }
 
   return grouped;

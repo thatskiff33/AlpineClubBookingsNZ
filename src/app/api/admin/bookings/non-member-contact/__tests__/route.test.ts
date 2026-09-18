@@ -13,7 +13,7 @@ const mockSuggest = vi.fn();
 // union with the schema and does `instanceof NonMemberContactError`); override
 // only the three service functions.
 vi.mock("@/lib/non-member-contact", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/non-member-contact")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/non-member-contact");
   return {
     ...actual,
     createNonMemberContact: (...a: unknown[]) => mockCreate(...a),

@@ -39,6 +39,7 @@ import {
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -48,6 +49,7 @@ import {
 } from "@/lib/member-credit";
 import { calculateRestoredCreditAmount } from "@/lib/policies/member-credit";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
+import { formatCents } from "@/lib/utils";
 
 // The full client, not a nested TransactionClient: the heal path opens its own
 // per-booking $transaction, so it must not run inside another one.
@@ -55,7 +57,8 @@ type BackfillStore = typeof prisma;
 
 export interface OrphanedAppliedCreditFinding {
   bookingId: string;
-  memberId: string;
+  /** The booking OWNER, null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   appliedCreditCents: number; // positive SIGNED net of BOOKING_APPLIED rows (post-clamp, #1887 F2)
   appliedRowCount: number;
   paymentId: string | null;
@@ -144,7 +147,7 @@ export function deriveOrphanedAppliedCreditFinding(
 
   return {
     bookingId: booking.id,
-    memberId: booking.memberId,
+    memberId: bookingOwner(booking).memberId,
     appliedCreditCents,
     appliedRowCount: booking.creditsApplied.length,
     paymentId: booking.payment?.id ?? null,
@@ -228,8 +231,14 @@ export async function healOrphanedAppliedCredits(options?: {
   const skipped: OrphanedAppliedCreditHealResult["skipped"] = [];
 
   for (const finding of findings) {
+    // #3369: an orphaned APPLIED CREDIT belongs to a member's ledger, so a
+    // finding with no member is a booking owned by an organisation — which can
+    // hold no applied credit and therefore can never orphan any. The scan
+    // reports it either way; the heal has nothing to key on and skips.
+    const findingMemberId = finding.memberId;
+    if (!findingMemberId) continue;
     const outcome = await store.$transaction(async (tx) => {
-      await lockMemberCreditLedger(finding.memberId, tx);
+      await lockMemberCreditLedger(findingMemberId, tx);
 
       const fresh = await tx.booking.findUnique({
         where: { id: finding.bookingId },
@@ -245,7 +254,7 @@ export async function healOrphanedAppliedCredits(options?: {
       }
 
       const restoredCents = await restoreCreditFromBooking(
-        finding.memberId,
+        findingMemberId,
         finding.bookingId,
         tx
       );
@@ -273,7 +282,8 @@ export async function healOrphanedAppliedCredits(options?: {
           severity: "critical",
           outcome: "success",
           summary: "Orphaned applied credit restored by backfill",
-          details: `Restored NZ$${(restoredCents / 100).toFixed(2)} of applied account credit orphaned by a pre-#1547 cancellation`,
+          // The club's configured currency, through the one formatter (#3325).
+          details: `Restored ${formatCents(restoredCents)} of applied account credit orphaned by a pre-#1547 cancellation`,
           metadata: { restoredCents, appliedRowCount: recheck.appliedRowCount },
         },
         tx
@@ -285,7 +295,7 @@ export async function healOrphanedAppliedCredits(options?: {
     if (outcome.healed) {
       healed.push({
         bookingId: finding.bookingId,
-        memberId: finding.memberId,
+        memberId: findingMemberId,
         restoredCents: outcome.restoredCents,
       });
       await recordBookingEvent({

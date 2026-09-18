@@ -86,6 +86,14 @@ import {
   dependentSubject,
   unreadableDateOfBirthRefusal,
 } from "@/lib/member-application-date-of-birth";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
+import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  acquireMemberParentPartnerPairLocks,
+  hasAnyPartnerRelationship,
+  isMemberParentPartnerExclusionViolation,
+} from "@/lib/member-parent-partner-exclusivity";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format");
@@ -643,8 +651,9 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
       ? []
       : [`Dependent ${index + 1} date of birth must be a real date`],
   );
-  if (dependentDayErrors.length > 0) {
-    throw new MembershipApplicationError(dependentDayErrors[0], 422, {
+  const [firstDependentDayError] = dependentDayErrors;
+  if (firstDependentDayError) {
+    throw new MembershipApplicationError(firstDependentDayError, 422, {
       familyMembers: dependentDayErrors,
     });
   }
@@ -1450,9 +1459,32 @@ export async function approveMemberApplication(
       400
     );
   }
-  const applicantDecision = decisions[0].decision;
+  // `resolvePersonDecisions` always unshifts the applicant's own decision
+  // first, in both the default-CREATE branch and the supplied-decisions
+  // branch, so `decisions` is never empty. The type can't carry that, so a
+  // missing head is a named refusal rather than a guessed decision.
+  const [applicantEntry] = decisions;
+  if (!applicantEntry) {
+    throw new MembershipApplicationError(
+      "The application's person decisions are missing the applicant entry",
+      500
+    );
+  }
+  const applicantDecision = applicantEntry.decision;
   const applicantMapped = applicantDecision.mode === "MAP";
   const applicantMapTargetId = applicantMapped ? applicantDecision.memberId : null;
+  // A newly-created applicant id cannot be referenced by any concurrent
+  // relationship writer. When the applicant is mapped to an existing member,
+  // however, every existing mapped family target is a prospective parent pair
+  // even if the under-lock recompute later decides not to write it. Lock the
+  // superset once, in canonical order, before that recompute.
+  const prospectiveMappedParentPairs = applicantMapTargetId
+    ? decisions.slice(1).flatMap(({ decision }) =>
+        decision.mode === "MAP" && decision.memberId !== applicantMapTargetId
+          ? ([[applicantMapTargetId, decision.memberId]] as const)
+          : [],
+      )
+    : [];
 
   const applicantPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
   const passwordSetupToken = buildResetToken();
@@ -1474,9 +1506,15 @@ export async function approveMemberApplication(
     // convention, member-lifecycle-actions.ts) so concurrent approvals mapping
     // the same member serialize; the second approval then sees the first's
     // committed row and 409s on token drift.
-    for (const targetId of mapTargetIds) {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${targetId}`}))`;
-    }
+    await acquireMemberLifecycleLocks(tx, mapTargetIds);
+    // Nomination mapping may turn one mapped member into another mapped
+    // member's parent. Acquire the complete set once, in the canonical order,
+    // after lifecycle locks so no per-person loop can invert the tiers.
+    await acquireMemberPartnerLinkLocks(tx, mapTargetIds);
+    await acquireMemberParentPartnerPairLocks(
+      tx,
+      prospectiveMappedParentPairs,
+    );
 
     const lockedApplication = await tx.memberApplication.findUnique({
       where: { id: applicationId },
@@ -1843,13 +1881,37 @@ export async function approveMemberApplication(
       });
     }
 
-    for (let index = 0; index < familyMembers.length; index += 1) {
-      const familyMember = familyMembers[index];
-      const familyDecision = decisions[index + 1].decision;
+    // One array of pairs rather than three parallel arrays read back by
+    // position: `decisions` and `dependentDaysOfBirth` are each built 1:1
+    // against `familyMembers` above, but the type can't carry that alignment,
+    // so a divergence is a named refusal here rather than a silent crash
+    // further down the loop.
+    const familyEntries = familyMembers.map((familyMember, index) => {
+      const decisionEntry = decisions[index + 1];
       // The day decoded once above, so the tier and the stored date can never
       // come from two readings of one string.
-      const { day: dependentDayOfBirth, instant: dependentDateOfBirth } =
-        dependentDaysOfBirth[index];
+      const dependentDay = dependentDaysOfBirth[index];
+      if (!decisionEntry || !dependentDay) {
+        throw new MembershipApplicationError(
+          "A family member's decision or date of birth could not be resolved",
+          500
+        );
+      }
+      return {
+        familyMember,
+        familyDecision: decisionEntry.decision,
+        dependentDayOfBirth: dependentDay.day,
+        dependentDateOfBirth: dependentDay.instant,
+      };
+    });
+
+    for (const [index, familyEntry] of familyEntries.entries()) {
+      const {
+        familyMember,
+        familyDecision,
+        dependentDayOfBirth,
+        dependentDateOfBirth,
+      } = familyEntry;
       const dependentAgeTier = mappingAgeTierSettings
         ? computeAgeTierWithSettings(
             dependentDateOfBirth,
@@ -1901,6 +1963,19 @@ export async function approveMemberApplication(
         // member with no existing parent; never touch auth/email on a
         // login-capable target (hard invariant). The preview noted the skip.
         if (outcome.setParentLink) {
+          if (
+            await hasAnyPartnerRelationship(
+              tx,
+              applicantMember.id,
+              target.id,
+            )
+          ) {
+            throw new MembershipApplicationError(
+              MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+              409,
+            );
+          }
+
           // #2255: the identity guards every other writer has, which this one
           // lacked. The mapping predicate only checks that `parentMemberId` is
           // null, so a target whose SECONDARY parent is already the applicant
@@ -2198,6 +2273,14 @@ export async function approveMemberApplication(
       entranceFeeQueue,
       entranceFeeQueueFailed,
     };
+  }).catch((error) => {
+    if (isMemberParentPartnerExclusionViolation(error)) {
+      throw new MembershipApplicationError(
+        MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+        409,
+      );
+    }
+    throw error;
   });
 
   // E10: Xero contact sync + subscription billing run over the union of created

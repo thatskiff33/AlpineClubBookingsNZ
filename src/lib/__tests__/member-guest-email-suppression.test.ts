@@ -81,9 +81,7 @@ vi.mock("@/lib/email-message-renderer", () => ({
   }),
 }));
 vi.mock("@/lib/email-message-settings", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/email-message-settings")
-  >();
+  const actual = (await importOriginal()) as typeof import("@/lib/email-message-settings");
   return {
     ...actual,
     loadEmailMessageSettingsForLodge: vi.fn(async () => mocks.settingsStub),

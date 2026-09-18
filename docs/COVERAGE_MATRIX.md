@@ -100,7 +100,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `membership-cancellations` | membership | `CANCELLATIONS.md`, `ARCHITECTURE.md` (cancellation review queue) | [guide](guides/membership-cancellations.md) | 2 |
 | `membership-setup` | membership | `ARCHITECTURE.md` (membership types) | [guide](guides/membership-setup.md) | 2 |
 | `membership-types` | membership | `ARCHITECTURE.md` (seasonal membership types) | [guide](guides/membership-types.md) | 2 |
-| `modules` | support | `CONFIGURATION.md` (module flags) | [guide](guides/modules.md) | 4 |
+| `modules` | support | `guides/modules.md` → Settings reference (the one module list); `CONFIGURATION.md` for storage mechanics | [guide](guides/modules.md) | 4 |
 | `mountain-conditions` | content | — | [guide](guides/mountain-conditions.md) | 4 |
 | `notification-recipients` | support | `ARCHITECTURE.md` (email / notifications) | [guide](guides/notification-recipients.md) | 4 |
 | `notification-rules` | support | `ARCHITECTURE.md` (email / notifications) | [guide](guides/notification-rules.md) | 4 |
@@ -121,6 +121,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | [guide](guides/stuck-states.md) | 4 |
 | `subscription-lockout` | finance | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
+| `video-meetings` | finance | [`guides/calendar.md`](guides/calendar.md) ("Video meetings (MiroTalk)"), `SECURITY-ATTACK-SURFACE.md` (MiroTalk meeting tokens) | [guide](guides/calendar.md) | — (MAD #2940, epic #2725; postdates #2050) |
 | `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | [guide](guides/waitlist.md) | 1 |
 | `work-parties` | lodge | — | [guide](guides/work-parties.md) | 3 |
 | `xero` | finance | `xero/ARCHITECTURE.md`, `XERO_MEMBER_GROUPING_RUNBOOK.md` | [guide](guides/xero.md) | 2 |

@@ -29,6 +29,7 @@ import {
   collapseNightRuns,
   stayWindowPage,
 } from "@/lib/bed-allocation-board-window";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import {
   bedAllocationRemovalCategoryForAnchor,
@@ -253,15 +254,6 @@ interface GuestRow {
   unplacedNightCount: number;
 }
 
-async function readApiError(response: Response, fallback: string) {
-  try {
-    const body = (await response.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function nightWord(count: number) {
   return count === 1 ? "night" : "nights";
 }
@@ -365,7 +357,7 @@ export function BookingBedAllocationPanel({
         `/api/admin/bed-allocation?${params.toString()}`,
       );
       if (!response.ok) {
-        const message = await readApiError(
+        const message = await apiErrorMessageFromResponse(
           response,
           "Failed to load bed allocation",
         );
@@ -554,6 +546,13 @@ export function BookingBedAllocationPanel({
       ];
       const row = byId.get(guestId);
       if (!row) continue;
+      const [firstAllocation] = group;
+      // `group` is never empty: `nightsByGuestBed` is only ever populated by
+      // `.set(key, [allocation])` or a push onto an existing bucket, so every
+      // entry this `for...of` visits holds at least the allocation that
+      // created it. Every item in the bucket shares the same bed (bedId is
+      // part of `key`), so the first one stands for the whole group/run.
+      if (!firstAllocation) continue;
       const byNight = new Map(group.map((item) => [item.stayDate, item]));
       for (const run of collapseNightRuns(group.map((it) => it.stayDate))) {
         const items = run.nights
@@ -561,9 +560,9 @@ export function BookingBedAllocationPanel({
           .filter((item): item is PanelAllocation => Boolean(item));
         row.runs.push({
           key: `${key}:${run.firstNight}`,
-          bedId: group[0].bedId,
-          bedName: group[0].bedName,
-          roomName: group[0].roomName,
+          bedId: firstAllocation.bedId,
+          bedName: firstAllocation.bedName,
+          roomName: firstAllocation.roomName,
           firstNight: run.firstNight,
           lastNight: run.lastNight,
           nightCount: items.length,
@@ -685,7 +684,7 @@ export function BookingBedAllocationPanel({
         body: JSON.stringify({ bookingId, lodgeId }),
       });
       if (!response.ok) {
-        toast.error(await readApiError(response, "Failed to confirm beds"));
+        toast.error(await apiErrorMessageFromResponse(response, "Failed to confirm beds"));
         return;
       }
       const body = (await response.json()) as { approvedCount?: number };

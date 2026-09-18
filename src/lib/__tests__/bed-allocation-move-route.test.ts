@@ -29,9 +29,7 @@ vi.mock("@/lib/audit", () => ({
   createAuditLog: (...args: unknown[]) => mockCreateAuditLog(...args),
 }));
 vi.mock("@/lib/bed-allocation-manual-writes", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/bed-allocation-manual-writes")
-  >("@/lib/bed-allocation-manual-writes");
+  const actual = (await vi.importActual("@/lib/bed-allocation-manual-writes")) as typeof import("@/lib/bed-allocation-manual-writes");
   return {
     ...actual,
     moveBedAllocationsSameDate: (...args: unknown[]) =>
@@ -39,9 +37,7 @@ vi.mock("@/lib/bed-allocation-manual-writes", async () => {
   };
 });
 vi.mock("@/lib/bed-allocation-move", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/bed-allocation-move")>(
-    "@/lib/bed-allocation-move",
-  );
+  const actual = (await vi.importActual("@/lib/bed-allocation-move")) as typeof import("@/lib/bed-allocation-move");
   return {
     ...actual,
     applyBedAllocationMove: (...args: unknown[]) =>

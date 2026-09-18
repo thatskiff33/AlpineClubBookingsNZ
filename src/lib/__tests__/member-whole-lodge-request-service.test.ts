@@ -71,7 +71,7 @@ vi.mock("@/lib/lodge-settings", () => ({
 // over the real module and overrides only what it actually stubs — which is the shape
 // that cannot break again the next time an edge is added.
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/lodge-capacity")>()),
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity")),
   getLodgeCapacity: vi.fn(async () => 30),
   getDefaultLodgeCapacity: vi.fn(async () => 30),
 }));

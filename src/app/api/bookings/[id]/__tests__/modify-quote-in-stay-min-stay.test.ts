@@ -56,7 +56,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return { ...actual, checkCapacityForGuestRanges: h.checkCapacityForGuestRanges };
 });
 vi.mock("@/lib/booking-member-night-conflicts", () => ({
@@ -76,7 +76,7 @@ vi.mock("@/lib/lodges", () => ({
 // file died before a single test ran. `importOriginal` keeps every other export
 // real, so the next widening cannot break it the same way (docs/TESTING.md).
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/lodge-capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/lodge-capacity");
   return { ...actual, getLodgeCapacity: h.getLodgeCapacity };
 });
 vi.mock("@/lib/membership-type-policy", () => ({
@@ -151,7 +151,7 @@ vi.mock("@/lib/xero-token-store", () => ({
 }));
 vi.mock("@/lib/xero-organisation", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/xero-organisation")>();
+    (await importOriginal()) as typeof import("@/lib/xero-organisation");
   return { ...actual, getXeroLockDates: h.getXeroLockDates };
 });
 // #2124: control the minimum-stay verdict and capture the exact range the
@@ -165,6 +165,12 @@ vi.mock("@/lib/booking-policies", () => ({
 // #2266: the quote now returns the booking owner's live credit balance.
 vi.mock("@/lib/member-credit", () => ({
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },

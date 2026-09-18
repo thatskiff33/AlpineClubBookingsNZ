@@ -245,8 +245,11 @@ async function resolveSecondOccupant(input: {
     },
   });
 
-  // Free bed-night → normal primary allocation.
-  if (occupants.length === 0) {
+  // Free bed-night → normal primary allocation. Reading the sole occupant is
+  // what says the night is taken and by whom, and the rest of this function
+  // works from that occupant rather than from the count (#2800).
+  const [primary, ...extraOccupants] = occupants;
+  if (primary === undefined) {
     return { isSecondOccupant: false };
   }
 
@@ -256,14 +259,13 @@ async function resolveSecondOccupant(input: {
       409,
     );
   }
-  if (occupants.length >= 2 || occupants.some((row) => row.isSecondOccupant)) {
+  if (extraOccupants.length > 0 || occupants.some((row) => row.isSecondOccupant)) {
     throw new BedAllocationAdminError(
       "This double bed already has two occupants for the selected date.",
       409,
     );
   }
 
-  const [primary] = occupants;
   if (!isCapacityHoldingBookingStatus(primary.bookingGuest.booking.status)) {
     throw new BedAllocationAdminError(
       "A partner can only be added to a confirmed booking's double bed.",

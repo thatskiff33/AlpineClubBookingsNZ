@@ -125,12 +125,14 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import {
   ADMIN_PERMISSION_AREAS,
   canAccessConsolidatedFeesPage,
+  canAccessRoomsBedsPage,
   getAdminPermissionMatrix,
   getAdminRouteRequirement,
   hasAdminAreaAccess,
   hasAdminPortalAccess,
   isAnyAdminAdmissionPath,
   isConsolidatedFeesPath,
+  isRoomsBedsPath,
   type AdminAccessRequirement,
   type AdminPermissionArea,
 } from "@/lib/admin-permissions";
@@ -324,12 +326,13 @@ function satisfies(grid: Grid, gate: EffectiveGate): boolean {
 
 /**
  * Whether the layout guard should admit this grid to this page: the map's area,
- * plus the two adjudicated special cases — the fee console's bookings-OR-finance
- * rule (#1933) and ADR-002 §1 admission. Written out here on purpose rather than
- * calling `canOpenAdminPath`: deriving the expectation from the function under
- * test would be a tautology. It calls `canAccessConsolidatedFeesPage` for the fee
- * rule because a SECOND SPELLING of that rule is how the two copies of it drifted
- * apart in the first place.
+ * plus the three adjudicated special cases — the fee console's
+ * bookings-OR-finance rule (#1933), Rooms & Beds' lodge-OR-bookings rule (#2937)
+ * and ADR-002 §1 admission. Written out here on purpose rather than calling
+ * `canOpenAdminPath`: deriving the expectation from the function under test
+ * would be a tautology. It calls each rule's own published predicate because a
+ * SECOND SPELLING of the fee rule is how the two copies of it drifted apart in
+ * the first place.
  */
 function pageAdmitsExpected(grid: Grid, pathname: string): boolean {
   if (isAnyAdminAdmissionPath(pathname)) {
@@ -337,6 +340,9 @@ function pageAdmitsExpected(grid: Grid, pathname: string): boolean {
   }
   if (isConsolidatedFeesPath(pathname)) {
     return canAccessConsolidatedFeesPage(getAdminPermissionMatrix(grid.member));
+  }
+  if (isRoomsBedsPath(pathname)) {
+    return canAccessRoomsBedsPage(getAdminPermissionMatrix(grid.member));
   }
   return hasAdminAreaAccess(grid.member, mapRequirement(pathname, "GET"));
 }
@@ -1041,6 +1047,25 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
     expect(
       (await pageAdmits(viewGridFor("membership"), "/admin/fees")).ok,
     ).toBe(false);
+  });
+
+  it("reaches Rooms & Beds, which admits on lodge OR bookings (#2937)", async () => {
+    // Everything this page renders is bookings-gated, and since #2937 it is the
+    // only home of the allocation preferences the Bed Allocation board sends an
+    // officer to. A bookings grid that the map's `lodge` prefix would refuse is
+    // exactly the officer who was standing on that board.
+    expect(allAdminPaths.has("/admin/rooms-beds")).toBe(true);
+    expect(
+      (await pageAdmits(viewGridFor("bookings"), "/admin/rooms-beds")).ok,
+    ).toBe(true);
+    expect(
+      (await pageAdmits(viewGridFor("lodge"), "/admin/rooms-beds")).ok,
+    ).toBe(true);
+    // It is an OR, not an opening: neither area means no page.
+    expect(
+      (await pageAdmits(viewGridFor("membership"), "/admin/rooms-beds")).ok,
+    ).toBe(false);
+    expect((await pageAdmits(FINANCE_ONLY, "/admin/rooms-beds")).ok).toBe(false);
   });
 });
 

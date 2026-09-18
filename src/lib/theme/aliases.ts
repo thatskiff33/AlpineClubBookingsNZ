@@ -16,6 +16,7 @@
  */
 import type { BuiltTheme } from "./theme-substrate";
 import { a4SolidForeground } from "./theme-substrate";
+import { must } from "./index-guards";
 
 export interface StepRef {
   scale: string;
@@ -45,7 +46,14 @@ export const ACCENT_NEUTRAL_STEP = 4;
 
 /** Core shadcn tokens. `--accent` = neutral-4 is one band off `--muted`/`--secondary`
  * = neutral-3 — the structural fix for the seven hover-dead #2144 buttons. */
-export const CORE_ALIASES: Record<string, AliasEntry> = {
+/*
+ * `satisfies` (not `: Record<string, AliasEntry>`) keeps each key's literal
+ * name in the inferred type, so `CORE_ALIASES["--background"]` resolves to
+ * `AliasEntry`, not `AliasEntry | undefined` — the lookups below are always
+ * one of these named tokens, never an arbitrary string. Still checked against
+ * `Record<string, AliasEntry>`, so a typo'd entry still fails to typecheck.
+ */
+export const CORE_ALIASES = {
   "--background": { scale: "neutral", step: 2 },
   "--card": { scale: "neutral", step: 1 },
   "--popover": { scale: "neutral", step: 1 },
@@ -57,16 +65,16 @@ export const CORE_ALIASES: Record<string, AliasEntry> = {
   "--secondary": { scale: "neutral", step: 3, note: "D13: quiet neutral surface, aligns with --muted" },
   "--input": { from: "A2", note: "J1 pin: neutral-10 uniformly" },
   "--ring": { from: "A2", note: "J1 pin: neutral-10 uniformly (same as --input)" },
-};
+} as const satisfies Record<string, AliasEntry>;
 
-export const DESTRUCTIVE_DANGER_ALIASES: Record<string, AliasEntry> = {
+export const DESTRUCTIVE_DANGER_ALIASES = {
   "--destructive": { scale: "danger", step: 9, note: "D14: exactly one red" },
   "--danger": { scale: "danger", step: 9 },
   "--destructive-foreground": { from: "A4", scale: "danger", note: "recomputed on-solid fg" },
-};
+} as const satisfies Record<string, AliasEntry>;
 
 /** D13 light sidebar surfaces from neutral 1–4 light steps. */
-export const SIDEBAR_ALIASES: Record<string, AliasEntry> = {
+export const SIDEBAR_ALIASES = {
   "--sidebar": { scale: "neutral", step: 1 },
   "--sidebar-foreground": { scale: "neutral", step: 12 },
   "--sidebar-accent": { scale: "neutral", step: 3 },
@@ -75,7 +83,7 @@ export const SIDEBAR_ALIASES: Record<string, AliasEntry> = {
   "--sidebar-primary": { scale: "accent", step: 9 },
   "--sidebar-primary-foreground": { from: "A4", scale: "accent" },
   "--sidebar-ring": { from: "A2" },
-};
+} as const satisfies Record<string, AliasEntry>;
 
 /** D15/J7 chart mapping: --chart-1..5 = cat1–5 step 9. */
 export const CHART_ALIASES: Array<{ token: string; scale: string; step: number }> = [1, 2, 3, 4, 5].map(
@@ -102,37 +110,47 @@ export function resolveAlias(entry: AliasEntry, theme: BuiltTheme, lightNeutral1
   if (isStepRef(entry)) {
     const scale = theme.scales[entry.scale];
     if (!scale) throw new Error(`resolveAlias: no scale ${entry.scale}`);
-    return scale.hex[entry.step - 1];
+    return must(scale.hex[entry.step - 1], `resolveAlias: scale ${entry.scale} has no step ${entry.step}`);
   }
   switch (entry.from) {
     case "A2":
-      return theme.neutralHex[A2_INPUT_RING_NEUTRAL_STEP - 1];
+      return must(
+        theme.neutralHex[A2_INPUT_RING_NEUTRAL_STEP - 1],
+        `resolveAlias A2: no neutral step ${A2_INPUT_RING_NEUTRAL_STEP}`,
+      );
     case "D11.variant_a_computed_3to1": {
       // Not shipped in P1 (variant b is); resolve for completeness.
-      const surface = theme.neutralHex[1];
-      for (let i = 0; i < 12; i++) {
-        const c = theme.neutralHex[i];
+      const surface = must(theme.neutralHex[1], "resolveAlias D11: no neutral step 2");
+      for (const c of theme.neutralHex) {
         if (contrastLum(c, surface) >= 3) return c;
       }
-      return theme.neutralHex[BORDER_NEUTRAL_STEP - 1];
+      return must(
+        theme.neutralHex[BORDER_NEUTRAL_STEP - 1],
+        `resolveAlias D11: no neutral step ${BORDER_NEUTRAL_STEP}`,
+      );
     }
     case "A4": {
       if (!entry.scale) throw new Error("resolveAlias A4: missing scale");
       const s = theme.scales[entry.scale];
-      return a4SolidForeground(s.hex[8], s.generatorContrast as string, lightNeutral12).pick;
+      if (!s) throw new Error(`resolveAlias A4: no scale ${entry.scale}`);
+      return a4SolidForeground(
+        must(s.hex[8], `resolveAlias A4: scale ${entry.scale} has no step 9`),
+        s.generatorContrast as string,
+        lightNeutral12,
+      ).pick;
     }
   }
 }
 
 // local luminance-contrast (kept private; theme-substrate exposes the shared one)
+function relLumChannel(full: string, byteOffset: number): number {
+  const c = parseInt(full.slice(byteOffset, byteOffset + 2), 16) / 255;
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
 function relLum(hex: string): number {
   const h = hex.replace("#", "");
   const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-  const [r, g, b] = [0, 2, 4].map((i) => {
-    const c = parseInt(full.slice(i, i + 2), 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return 0.2126 * relLumChannel(full, 0) + 0.7152 * relLumChannel(full, 2) + 0.0722 * relLumChannel(full, 4);
 }
 function contrastLum(a: string, b: string): number {
   const la = relLum(a);

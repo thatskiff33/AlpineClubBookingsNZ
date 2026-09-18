@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
+import { bookingOwner } from "@/lib/booking-owner";
 import { addDaysDateOnly } from "@/lib/date-only";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
@@ -51,6 +52,10 @@ import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscrip
 import { formatAdultMemberHostingWaitlistRefusal } from "@/lib/policies/adult-member-hosting";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import { carriesUnvaluedStoredNight } from "@/lib/stored-night-price-write";
+import {
+  recordBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 export const WAITLIST_OFFER_HOURS =
@@ -107,6 +112,8 @@ export async function getWaitlistForDates(
     include: {
       guests: true,
       member: { select: { id: true, email: true, firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -188,6 +195,15 @@ async function repriceWaitlistCandidate(
     return candidate.finalPriceCents;
   }
 
+  // #3276 (INV-MONEY-029): the recorder runs AFTER this try/catch, not inside
+  // it. The catch below degrades to the stored snapshot instead of rolling
+  // back, so a refusal raised inside it after the night rewrite would commit a
+  // half-reprice. Outside it, a refusal fails the sweep transaction like any
+  // other post-mutation error, and the recorder itself refuses before it writes.
+  let repriced: {
+    newFinalPriceCents: number;
+    adjustmentTargets: PromoAdjustmentTarget[];
+  } | null = null;
   try {
     const seasonRateData = await loadSeasonRateData(tx, lodgeId);
     const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
@@ -204,7 +220,7 @@ async function repriceWaitlistCandidate(
     }));
 
     const priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-      ownerMemberId: candidate.memberId,
+      ownerMemberId: bookingOwner(candidate).memberId,
       checkIn: candidate.checkIn,
       checkOut: candidate.checkOut,
       guests: guestsForPricing,
@@ -219,14 +235,25 @@ async function repriceWaitlistCandidate(
     });
 
     const newTotalPriceCents = priceBreakdown.totalPriceCents;
-    const guestNightRates = guestsForPricing.map((guest, index) => ({
-      bookingGuestId: guest.bookingGuestId,
-      memberId: guest.memberId,
-      isMember: guest.isMember,
-      perNightRates: priceBreakdown.guests[index].perNightCents,
-      nightDates: priceBreakdown.guests[index].nightDates,
-      firstNight: candidate.checkIn,
-    }));
+    // Each guest's own priced row, read once. The breakdown was built from
+    // `guestsForPricing`, so a guest with no row is a wiring defect and there
+    // is no amount to promo-allocate against — refused, not guessed (#2800).
+    const guestNightRates = guestsForPricing.map((guest, index) => {
+      const priced = priceBreakdown.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `The waitlist offer reprice has no priced guest at breakdown position ${index} of ${priceBreakdown.guests.length} (#3031).`,
+        );
+      }
+      return {
+        bookingGuestId: guest.bookingGuestId,
+        memberId: guest.memberId,
+        isMember: guest.isMember,
+        perNightRates: priced.perNightCents,
+        nightDates: priced.nightDates,
+        firstNight: candidate.checkIn,
+      };
+    });
     const promoResult = await recalculateBookingPromo({
       tx,
       bookingId: candidate.id,
@@ -263,9 +290,18 @@ async function repriceWaitlistCandidate(
     // BETWEEN two writes would commit half a reprice — a guest at the new total
     // with its night rows already deleted. Everything that can refuse is
     // therefore resolved here, before the first mutation.
-    const repricedNightRows = candidate.guests.map((guest, index) => {
-      const nightDates = priceBreakdown.guests[index].nightDates ?? [];
-      return nightDates.map((stayDate, k) => ({
+    //
+    // Each guest is paired with its own priced row here, so the writes below
+    // read the pair rather than the breakdown by position again (#2800).
+    const repricedGuests = candidate.guests.map((guest, index) => {
+      const priced = priceBreakdown.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `The waitlist offer reprice has no priced guest at breakdown position ${index} for booking guest ${guest.id} (#3031).`,
+        );
+      }
+      const nightDates = priced.nightDates ?? [];
+      const nightRows = nightDates.map((stayDate, k) => ({
         bookingGuestId: guest.id,
         stayDate,
         // NO `?? 0`. These rows become the booking's sold-price history from
@@ -275,26 +311,26 @@ async function repriceWaitlistCandidate(
         // stated once in `required-price-cents.ts` (#3031, #3167); all this
         // site says is which writer it is.
         priceCents: requiredNightPriceCents(
-          priceBreakdown.guests[index].perNightCents,
+          priced.perNightCents,
           k,
           stayDate,
           "the waitlist offer reprice",
         ),
         priceSource: "SOLD" as const,
       }));
+      return { guest, priced, nightRows };
     });
 
     await Promise.all(
-      candidate.guests.map(async (guest, index) => {
+      repricedGuests.map(async ({ guest, priced, nightRows }) => {
         await tx.bookingGuest.update({
           where: { id: guest.id },
           // Reprice overwrites the rate-membership-type snapshot alongside the
           // price (#1930, E4): the offer re-bases the whole booking at current
           // rates before the member confirms.
           data: {
-            priceCents: priceBreakdown.guests[index].priceCents,
-            rateMembershipTypeId:
-              priceBreakdown.guests[index].rateMembershipTypeId,
+            priceCents: priced.priceCents,
+            rateMembershipTypeId: priced.rateMembershipTypeId,
           },
         });
         // Delete-then-create, exactly as every other night writer does, because
@@ -302,10 +338,8 @@ async function repriceWaitlistCandidate(
         await tx.bookingGuestNight.deleteMany({
           where: { bookingGuestId: guest.id },
         });
-        if (repricedNightRows[index].length > 0) {
-          await tx.bookingGuestNight.createMany({
-            data: repricedNightRows[index],
-          });
+        if (nightRows.length > 0) {
+          await tx.bookingGuestNight.createMany({ data: nightRows });
         }
       })
     );
@@ -336,7 +370,7 @@ async function repriceWaitlistCandidate(
       );
     }
 
-    return newFinalPriceCents;
+    repriced = { newFinalPriceCents, adjustmentTargets: promoResult.adjustmentTargets };
   } catch (err) {
     logger.error(
       { err, bookingId: candidate.id },
@@ -344,6 +378,15 @@ async function repriceWaitlistCandidate(
     );
     return candidate.finalPriceCents;
   }
+  // #3276: after the last night write and the promotion write, and outside the
+  // degrade path above (see the comment at the top of the try).
+  await recordBookingNightAdjustments(tx, {
+    bookingId: candidate.id,
+    guestIds: candidate.guests.map((guest) => guest.id),
+    targets: repriced.adjustmentTargets,
+    writer: "the waitlist offer reprice",
+  });
+  return repriced.newFinalPriceCents;
 }
 
 /**
@@ -449,6 +492,8 @@ export async function processWaitlistForDates(freedDates: {
         include: {
           guests: { include: { nights: true } }, // per-night sets (issue #713)
           member: { select: { id: true, email: true, firstName: true, lastName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           waitlistAlternateLodges: { select: { lodgeId: true } },
           // Full promo shape for the offer-time reprice (upstream #1035);
           // the cross-lodge quote only needs its existence.
@@ -532,14 +577,14 @@ export async function processWaitlistForDates(freedDates: {
           // booking at the offered lodge costs, re-checked at confirm.
           const eligible = await isMemberEligibleToBookLodge(
             tx,
-            candidate.memberId,
+            bookingOwner(candidate).memberId,
             offerLodgeId,
           );
           if (!eligible) continue;
           const quote = await quoteWaitlistEntryAtLodge(
             tx,
             {
-              memberId: candidate.memberId,
+              memberId: bookingOwner(candidate).memberId,
               checkIn: candidate.checkIn,
               checkOut: candidate.checkOut,
               guests: candidate.guests,
@@ -609,15 +654,15 @@ export async function processWaitlistForDates(freedDates: {
         });
 
         offerDetails = {
-          email: candidate.member.email,
-          firstName: candidate.member.firstName,
+          email: bookingOwner(candidate).member.email,
+          firstName: bookingOwner(candidate).member.firstName,
           checkIn: candidate.checkIn,
           checkOut: candidate.checkOut,
           guestCount: candidate.guests.length,
           expiresAt,
           bookingId: candidate.id,
-          memberId: candidate.memberId,
-          memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
+          memberId: bookingOwner(candidate).memberId ?? "",
+          memberName: `${bookingOwner(candidate).member.firstName} ${bookingOwner(candidate).member.lastName}`,
           position: position + 1,
           lodgeId: candidate.lodgeId,
           finalPriceCents: offerPriceCents,
@@ -655,7 +700,7 @@ export async function processWaitlistForDates(freedDates: {
         // path below, which is where the refusal lives; this call reads only the
         // rate notice, and that notice is keyed on an actual reprice, so an
         // unfinancial owner who holds no bed changes nothing here.
-        bookingOwnerMemberId: offerDetails.memberId,
+        bookingOwnerMemberId: bookingOwner(offerDetails).memberId,
         participants: toSubscriptionLockoutParticipants(
           await prisma.bookingGuest.findMany({
             where: { bookingId: offerDetails.bookingId },
@@ -673,7 +718,7 @@ export async function processWaitlistForDates(freedDates: {
     sendWaitlistOfferEmail(
       {
         bookingId: offerDetails.bookingId,
-        recipientMemberId: offerDetails.memberId,
+        recipientMemberId: bookingOwner(offerDetails).memberId,
       },
       offerDetails.email,
       offerDetails.firstName,
@@ -708,7 +753,7 @@ export async function processWaitlistForDates(freedDates: {
       action: "waitlist.offer_sent",
       memberId: null,
       targetId: offerDetails.bookingId,
-      subjectMemberId: offerDetails.memberId,
+      subjectMemberId: bookingOwner(offerDetails).memberId,
       entityType: "Booking",
       entityId: offerDetails.bookingId,
       category: "booking",
@@ -889,7 +934,7 @@ export async function confirmWaitlistOffer(
   // ownership, status and expiry regardless.
   if (
     offerKind &&
-    offerKind.memberId === memberId &&
+    bookingOwner(offerKind).memberId === memberId &&
     offerKind.status === BookingStatus.WAITLIST_OFFERED &&
     // An already-expired offer keeps its existing "offer has expired" answer
     // from the transaction below rather than being re-explained as a refusal.
@@ -963,7 +1008,7 @@ export async function confirmWaitlistOffer(
       // Owner decision, 3 Aug 2026. The guard above has already established that
       // this offer belongs to `memberId`, so the booking's owner is the member
       // confirming it.
-      bookingOwnerMemberId: offerKind.memberId,
+      bookingOwnerMemberId: bookingOwner(offerKind).memberId,
       participants: toSubscriptionLockoutParticipants(
         await prisma.bookingGuest.findMany({ where: { bookingId } }),
       ),
@@ -1031,7 +1076,7 @@ export async function confirmWaitlistOffer(
         return { success: false, error: "Booking not found" };
       }
 
-      if (booking.memberId !== memberId) {
+      if (bookingOwner(booking).memberId !== memberId) {
         return { success: false, error: "Forbidden" };
       }
 
@@ -1261,6 +1306,8 @@ export async function expireStaleOffers(): Promise<{
       },
       include: {
         member: { select: { email: true, firstName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
 
@@ -1350,9 +1397,9 @@ export async function expireStaleOffers(): Promise<{
 
   for (const offer of staleOffers) {
     sendWaitlistOfferExpiredEmail(
-      { bookingId: offer.id, recipientMemberId: offer.memberId },
-      offer.member.email,
-      offer.member.firstName,
+      { bookingId: offer.id, recipientMemberId: bookingOwner(offer).memberId },
+      bookingOwner(offer).member.email,
+      bookingOwner(offer).member.firstName,
       offer.checkIn,
       offer.checkOut,
       offer.newPosition,
@@ -1363,7 +1410,7 @@ export async function expireStaleOffers(): Promise<{
       action: "waitlist.offer_expired",
       memberId: null,
       targetId: offer.id,
-      subjectMemberId: offer.memberId,
+      subjectMemberId: bookingOwner(offer).memberId,
       entityType: "Booking",
       entityId: offer.id,
       category: "booking",

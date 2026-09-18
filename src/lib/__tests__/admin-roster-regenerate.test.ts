@@ -148,6 +148,11 @@ describe("PUT /api/admin/roster/[date] regenerate action", () => {
         id: "booking-1",
         checkIn: new Date("2026-04-10T00:00:00.000Z"),
         checkOut: new Date("2026-04-11T00:00:00.000Z"),
+        // #3369: the roster query loads BOTH halves of the owner for its
+        // "Booking for …" group label, so a row it returns always carries both.
+        memberId: "member-1",
+        member: { firstName: "Ana", lastName: "Reid" },
+        organisation: null,
         guests: [
           {
             id: "guest-1",
@@ -272,6 +277,11 @@ describe("PUT /api/admin/roster/[date] excludes unconsented member guests (D-12,
           id: "booking-1",
           checkIn: new Date("2026-04-10T00:00:00.000Z"),
           checkOut: new Date("2026-04-11T00:00:00.000Z"),
+          // #3369: the roster query loads BOTH halves of the owner for its
+          // "Booking for …" group label, so a row it returns always carries both.
+          memberId: "member-1",
+          member: { firstName: "Ana", lastName: "Reid" },
+          organisation: null,
           guests: where?.OR
             ? guests.filter((guest) =>
                 where.OR!.some((branch) => branch.consentStatus === guest.consentStatus)

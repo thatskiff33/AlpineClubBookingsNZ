@@ -17,7 +17,7 @@ vi.mock("@/lib/lodge-capacity", () => ({
 // promise never to ENUMERATE a range it is about to refuse can be asserted.
 vi.mock("@/lib/date-only", async () => {
   const actual =
-    await vi.importActual<typeof import("@/lib/date-only")>("@/lib/date-only");
+    (await vi.importActual("@/lib/date-only")) as typeof import("@/lib/date-only");
   return { ...actual, eachDateOnlyInRange: vi.fn(actual.eachDateOnlyInRange) };
 });
 

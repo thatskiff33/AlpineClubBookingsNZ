@@ -30,18 +30,18 @@ vi.mock("@/lib/admin-modules", () => ({
   isEffectiveModuleEnabled: h.isEffectiveModuleEnabled,
 }));
 vi.mock("@/lib/member-guest-settings", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-guest-settings")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-guest-settings")),
   loadMemberGuestSettings: h.loadMemberGuestSettings,
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: { member: { findMany: h.memberFindMany } },
 }));
 vi.mock("@/lib/audit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/audit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/audit")),
   createStructuredAuditLog: h.createStructuredAuditLog,
 }));
 vi.mock("@/lib/rate-limit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/rate-limit")),
   applyMemberScopedRateLimit: h.applyMemberScopedRateLimit,
 }));
 vi.mock("@/lib/logger", () => ({

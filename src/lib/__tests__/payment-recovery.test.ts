@@ -35,6 +35,7 @@ const {
   mockFindWaitingSupplementaryOpForIntent,
   mockExecuteGroupSettlementRefundPlan,
   mockRecordDuplicateCaptureRefundEvent,
+  mockReportSupersededPaymentRefund,
   mockSyncEditFinancialReviewChargeRequest,
   mockBookingModificationFindUnique,
   mockCompleteDeferredSupplementaryInvoice,
@@ -84,6 +85,10 @@ const {
     .fn()
     .mockResolvedValue({ outcome: "refunded", mirroredChildren: 1 }),
   mockRecordDuplicateCaptureRefundEvent: vi.fn().mockResolvedValue(undefined),
+  // #3340: the supersede-refund epilogue - one audit row, one booking event, one
+  // member email, one admin alert. Mocked so a REPLAY can be asked whether it
+  // spoke a second time.
+  mockReportSupersededPaymentRefund: vi.fn().mockResolvedValue(undefined),
   mockSyncEditFinancialReviewChargeRequest: vi.fn(),
   // #3181: the edit whose additional payment is being recovered, read back for
   // the SIGNED components its deferred supplementary invoice bills.
@@ -234,6 +239,11 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/booking-events", () => ({
   recordDuplicateCaptureRefundEvent: (...args: unknown[]) =>
     mockRecordDuplicateCaptureRefundEvent(...args),
+}));
+
+vi.mock("@/lib/superseded-additional-refund", () => ({
+  reportSupersededPaymentRefund: (...args: unknown[]) =>
+    mockReportSupersededPaymentRefund(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -731,6 +741,74 @@ describe("payment recovery worker", () => {
       data: expect.objectContaining({
         refundedAmountCents: 3000,
       }),
+    });
+  });
+
+  /*
+    #3340 fix round (concurrency lens F4) - THE EPILOGUE SPEAKS ONCE.
+
+    `outstandingCents <= 0` is not an idempotence gate. It only becomes true
+    after the transaction row's `refundedAmountCents` has been written, so a
+    failure between the ledger entry and that write re-enters with the refund
+    already made: Stripe answers the replay with the same refund under the same
+    key and the ledger dedupes on the refund id, so the MONEY is safe - but the
+    epilogue used to run again, sending a second "we have refunded you" email and
+    a second admin alert on a change whose whole point is not confusing members
+    about card movement.
+
+    The fence is `completePaymentRecoveryOperation`'s own `updateMany`, which is
+    already scoped to `status != SUCCEEDED`: exactly one attempt can win it, and
+    that attempt is the one that speaks.
+  */
+  describe("the supersede-refund epilogue is fenced on the completion claim", () => {
+    beforeEach(() => {
+      mockPaymentRecoveryFindUnique.mockResolvedValue(
+        makeOperation({
+          type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+        }),
+      );
+      mockPaymentTransactionFindUnique.mockResolvedValue({
+        id: "txn-1",
+        paymentId: "payment-1",
+        stripePaymentIntentId: "pi_superseded",
+        amountCents: 6000,
+        refundedAmountCents: 0,
+        status: PaymentStatus.SUCCEEDED,
+      });
+      mockProcessRefund.mockResolvedValue({
+        id: "re_1",
+        amount: 6000,
+        currency: "nzd",
+        status: "succeeded",
+        payment_intent: "pi_superseded",
+      });
+      mockSumRecordedRefundsForTransaction.mockResolvedValue(6000);
+    });
+
+    it("reports the refund on the attempt that closes the operation", async () => {
+      await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(mockReportSupersededPaymentRefund).toHaveBeenCalledWith({
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        paymentIntentId: "pi_superseded",
+        refundedAmountCents: 6000,
+      });
+    });
+
+    it("says nothing on a replay whose completion claim was already won", async () => {
+      // The completion `updateMany` matches nothing: another attempt closed this
+      // operation, and with it sent the notices.
+      mockPaymentRecoveryUpdateMany.mockImplementation(
+        (args: { data?: { status?: string } }) =>
+          Promise.resolve({
+            count: args?.data?.status === "SUCCEEDED" ? 0 : 1,
+          }),
+      );
+
+      await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(mockReportSupersededPaymentRefund).not.toHaveBeenCalled();
     });
   });
 
@@ -1966,6 +2044,120 @@ describe("payment recovery worker", () => {
           where: { id: "recovery-additional" },
           data: { paymentIntentId: "pi_recovered" },
         }),
+      );
+    });
+
+    /*
+      #3340 fix round — THE ASK IS RE-DERIVED HERE, NOT REPLAYED.
+
+      Before #3340 the ask was a delta: a fact about an edit, which never goes
+      stale, so freezing it on the recovery row was exactly right. Since #3340 it
+      is the edit's net PLUS whatever is still unpaid on the ask it supersedes -
+      a fact about a MOMENT - and a frozen moment can OVERCHARGE.
+
+      The shape: edit 1 raises $70 and is NOT cancelled, because the mint that
+      would have superseded it is the one that failed. Edit 2 sizes $140 and
+      freezes it. The member's page still renders edit 1's live secret and they
+      pay that $70. The cron then replays $140 against $70 genuinely outstanding.
+    */
+    function paymentWithAsk(
+      additionalAmountCents: number,
+      additionalPaymentStatus: string,
+    ) {
+      return {
+        id: "payment-1",
+        stripeCustomerId: "cus_123",
+        stripePaymentIntentId: "pi_original",
+        additionalAmountCents,
+        additionalPaymentStatus,
+        transactions: [
+          {
+            id: "txn-1",
+            kind: "PRIMARY",
+            stripePaymentIntentId: "pi_original",
+            amountCents: 10000,
+            refundedAmountCents: 0,
+            status: PaymentStatus.SUCCEEDED,
+            createdAt: new Date("2026-05-01T00:00:00.000Z"),
+          },
+        ],
+        booking: {
+          id: "booking-1",
+          memberId: "m1",
+          member: {
+            id: "m1",
+            email: "alice@test.com",
+            firstName: "Alice",
+            lastName: "Smith",
+          },
+        },
+      };
+    }
+
+    it("re-derives a smaller ask when the superseded one was paid in the meantime", async () => {
+      primeQueue(additionalIntentOperation({ amountCents: 10000 }));
+      // $70 was outstanding when edit 2 sized its $100 ask; the member has since
+      // paid it, so only the edit's own $30 is still owed.
+      mockPaymentFindUnique.mockResolvedValue(
+        paymentWithAsk(7000, PaymentStatus.SUCCEEDED),
+      );
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: 3000,
+          // A changed amount is a different request. Stripe refuses a key reused
+          // with different parameters, so replaying the stored key here would be
+          // a permanent idempotency_error on every remaining attempt.
+          idempotencyKey: "mod_guest_bk1_mod-9_3000",
+        }),
+      );
+      expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paymentIntentId: "pi_recovered",
+          amountCents: 3000,
+        }),
+      );
+    });
+
+    it("keeps the stored Stripe key when the re-derivation lands on the frozen figure", async () => {
+      primeQueue(additionalIntentOperation({ amountCents: 10000 }));
+      // Nothing was paid in between: the superseded $70 is still outstanding, so
+      // the ask is the same $100 the row froze.
+      mockPaymentFindUnique.mockResolvedValue(
+        paymentWithAsk(7000, PaymentStatus.PENDING),
+      );
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: 10000,
+          idempotencyKey: "mod_guest_bk1_mod-9",
+        }),
+      );
+    });
+
+    /*
+      #3340 fix round — the replay writes the NEW intent's row before retiring
+      the old one, for the reason spelled out in
+      `superseded-additional-mint-ordering.test.ts`: the cancel reconciles the
+      payment aggregates, and a reconcile run before this row exists mirrors the
+      intent being retired back over the Payment.
+    */
+    it("writes the recovered intent's ADDITIONAL row before queueing the supersede", async () => {
+      primeQueue(additionalIntentOperation());
+
+      await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(
+        mockUpsertPaymentIntentTransaction.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        mockQueueSupersededAdditionalIntentCancellations.mock
+          .invocationCallOrder[0],
       );
     });
 

@@ -65,19 +65,26 @@ describe("ServerNZ credential wiring", () => {
   });
 
   it("stores and clears the key through the encrypted-credential helpers", async () => {
-    await setServerNzApiKey("acs_new", "member-1");
+    // The actor is REQUIRED (#2723): this helper used to take an optional
+    // `updatedByUserId`, so an admin action could reach the store attributed
+    // to nobody and store the same NULL a background writer stores.
+    const actor = { kind: "admin", memberId: "member-1" } as const;
+    await setServerNzApiKey("acs_new", actor);
     expect(mocks.setIntegrationCredential).toHaveBeenCalledWith({
       provider: "servernz",
       key: "api_key",
       value: "acs_new",
-      updatedByUserId: "member-1",
+      actor,
+      expect: { expect: "any" },
     });
 
-    await clearServerNzApiKey();
-    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith(
-      "servernz",
-      "api_key",
-    );
+    await clearServerNzApiKey(actor);
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith({
+      provider: "servernz",
+      key: "api_key",
+      actor,
+      expect: { expect: "any" },
+    });
   });
 });
 

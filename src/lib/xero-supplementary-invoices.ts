@@ -14,6 +14,7 @@ import {
   Payment as XeroPayment,
 } from "xero-node";
 import { prisma } from "./prisma";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { asRecord } from "@/lib/xero-json";
@@ -33,10 +34,11 @@ import {
   getAccountMapping,
   getResolvedAccountMapping,
 } from "./xero-mappings";
+import { retryXeroWriteWithContactRepair } from "./xero-contacts";
 import {
-  findOrCreateXeroContact,
-  retryXeroWriteWithContactRepair,
-} from "./xero-contacts";
+  findOrCreateXeroContactForInvoicedParty,
+  invoicedPartyContactRepair,
+} from "@/lib/organisation-xero-contacts";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   xeroDocumentDateForClubToday,
@@ -131,7 +133,8 @@ export async function createXeroSupplementaryInvoice(params: {
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { payment: true, member: true },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { payment: true, member: true, organisation: { select: { name: true, email: true } } },
   });
 
   if (!booking?.payment?.xeroInvoiceId) {
@@ -147,7 +150,11 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(booking.memberId, {
+  // The INVOICED PARTY, not the booking's member (#3368; #3367's leftover).
+  // A supplementary invoice bills the same customer the original invoice did,
+  // and on a returning school that customer is the school. Where no
+  // organisation is linked, this is the same member resolved the same way.
+  const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
     createdByMemberId,
     repairExistingLink,
   });
@@ -333,8 +340,10 @@ export async function createXeroSupplementaryInvoice(params: {
 
   try {
     const response = await retryXeroWriteWithContactRepair({
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       currentContactId: contactId,
+      // The repair entity matches the invoiced party (#3368, `INV-INT-019`).
+      repairContactLink: invoicedPartyContactRepair(booking),
       workflow: "createXeroSupplementaryInvoice",
       operationId: operationId!,
       repairExistingLink,

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { loginPersona } from "./helpers/auth";
 import { ROLE_PERSONAS } from "./helpers/fixtures";
 import { personas } from "./helpers/personas";
@@ -12,7 +12,7 @@ import { personas } from "./helpers/personas";
 
 test.describe.configure({ mode: "serial" });
 
-async function openMemberDetail(page: import("@playwright/test").Page, name: string) {
+async function openMemberDetail(page: Page, name: string) {
   await page.goto("/admin/members");
   // The table renders client-side after the members fetch; the demo seed fits
   // on page 1 sorted by name, so no search needed. Interacting before the

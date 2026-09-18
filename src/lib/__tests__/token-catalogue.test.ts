@@ -5,7 +5,7 @@ vi.mock("@/config/club-identity", () => ({
   CLUB_NAME: "Club <Name>",
   CLUB_PUBLIC_URL: "https://alpine.example.nz",
 }));
-vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD" }));
+vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD", APP_STRIPE_CURRENCY: "nzd", APP_TIME_ZONE: "Pacific/Auckland", APP_LOCALE: "en-NZ" }));
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: vi.fn(async () => 42),
   // The parameterised {{lodge-capacity:slug}} fallback path (multi-lodge).

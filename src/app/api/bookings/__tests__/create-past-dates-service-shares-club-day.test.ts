@@ -100,11 +100,11 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/session-guards", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/session-guards")>()),
+  ...((await importOriginal()) as typeof import("@/lib/session-guards")),
   requireActiveSessionUser: h.requireActiveSessionUser,
 }));
 vi.mock("@/lib/rate-limit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/rate-limit")),
   applyRateLimit: vi.fn().mockResolvedValue(null),
   rateLimiters: { bookingCreate: {}, bookingQuery: {} },
 }));
@@ -122,16 +122,16 @@ vi.mock("@/lib/logger", () => ({
   the spread; override only what a case actually steers.
 */
 vi.mock("@/lib/access-roles", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/access-roles")>()),
+  ...((await importOriginal()) as typeof import("@/lib/access-roles")),
   hasAdminAccess: h.hasAdminAccess,
   hasAccessRole: h.hasAccessRole,
 }));
 vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/admin-permissions")>()),
+  ...((await importOriginal()) as typeof import("@/lib/admin-permissions")),
   bookingManagementAuthorizationRole: h.managementRole,
 }));
 vi.mock("@/lib/module-settings", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/module-settings")>()),
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: h.loadEffectiveModuleFlags,
   // MG2 (#2307): the route now reaches `@/lib/admin-modules` through
   // `member-guest-add-policy` (it reads the memberGuests module flag before
@@ -173,7 +173,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/booking-guests", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/booking-guests")>()),
+  ...((await importOriginal()) as typeof import("@/lib/booking-guests")),
   // MG3 (#2308) C1: `markCrossFamilyGuestsOnBooking` re-derives the D-8 marker
   // over the WHOLE proposed party from this function. These fixtures are about
   // pricing/payment rather than family boundaries, and were written when every
@@ -201,12 +201,12 @@ vi.mock("@/lib/booking-guests", async (importOriginal) => ({
   }),
 }));
 vi.mock("@/lib/booking-guest-stay-range-input", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/booking-guest-stay-range-input")>()),
+  ...((await importOriginal()) as typeof import("@/lib/booking-guest-stay-range-input")),
   normalizeGuestStayRanges: (guests: unknown[]) => guests,
   BookingGuestStayRangeValidationError: class extends Error {},
 }));
 vi.mock("@/lib/booking-member-night-conflicts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/booking-member-night-conflicts")>()),
+  ...((await importOriginal()) as typeof import("@/lib/booking-member-night-conflicts")),
   findBookingMemberNightConflicts: vi.fn().mockResolvedValue([]),
   BookingMemberNightConflictError: class extends Error {
     conflicts: unknown[] = [];
@@ -214,17 +214,17 @@ vi.mock("@/lib/booking-member-night-conflicts", async (importOriginal) => ({
   getBookingMemberNightConflictResponse: () => ({ error: "conflict" }),
 }));
 vi.mock("@/lib/lodges", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/lodges")>()),
+  ...((await importOriginal()) as typeof import("@/lib/lodges")),
   resolveOptionalActiveLodgeId: h.resolveOptionalActiveLodgeId,
   // The member self-book minimum-stay check filters policy rows per lodge.
   resolvePolicyRowsForLodge: () => [],
 }));
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/lodge-capacity")>()),
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity")),
   getLodgeCapacity: vi.fn().mockResolvedValue(30),
 }));
 vi.mock("@/lib/membership-type-policy", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/membership-type-policy")>()),
+  ...((await importOriginal()) as typeof import("@/lib/membership-type-policy")),
   assertMembershipTypeBookingAllowed: vi.fn().mockResolvedValue(undefined),
   getMembershipTypeBookingPolicyErrorBody: (e: { message: string }) => ({
     error: e.message,
@@ -235,17 +235,17 @@ vi.mock("@/lib/membership-type-policy", async (importOriginal) => ({
   requiresPaidSubscriptionForMemberForBooking: vi.fn().mockResolvedValue(false),
 }));
 vi.mock("@/lib/booking-member-guest-subscriptions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/booking-member-guest-subscriptions")>()),
+  ...((await importOriginal()) as typeof import("@/lib/booking-member-guest-subscriptions")),
   findUnpaidMemberGuests: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/cancellation", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/cancellation")>()),
+  ...((await importOriginal()) as typeof import("@/lib/cancellation")),
   getNonMemberHoldPolicy: vi
     .fn()
     .mockResolvedValue({ enabled: false, holdDays: 0, source: "default" }),
 }));
 vi.mock("@/lib/policies/booking-route-decisions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/policies/booking-route-decisions")>()),
+  ...((await importOriginal()) as typeof import("@/lib/policies/booking-route-decisions")),
   calculateBookingHoldDecision: () => ({
     shouldBePending: false,
     status: "PAYMENT_PENDING",
@@ -253,22 +253,22 @@ vi.mock("@/lib/policies/booking-route-decisions", async (importOriginal) => ({
   toGroupDiscountConfig: () => ({}),
 }));
 vi.mock("@/lib/member-credit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-credit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-credit")),
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/internet-banking-settings", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/internet-banking-settings")>()),
+  ...((await importOriginal()) as typeof import("@/lib/internet-banking-settings")),
   checkInternetBankingLeadTime: () => ({ allowed: true }),
   loadInternetBankingPaymentSettings: vi.fn().mockResolvedValue({}),
 }));
 // The lock guard (#1697 extraction) reads connectivity from the source
 // domain module, not the @/lib/xero facade.
 vi.mock("@/lib/xero-token-store", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/xero-token-store")>()),
+  ...((await importOriginal()) as typeof import("@/lib/xero-token-store")),
   isXeroConnected: h.isXeroConnected,
 }));
 vi.mock("@/lib/xero-organisation", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/xero-organisation")>()),
+  ...((await importOriginal()) as typeof import("@/lib/xero-organisation")),
   getXeroLockDates: h.getXeroLockDates,
   getEffectiveXeroLockDate: h.getEffectiveXeroLockDate,
   // #2543's lockout-mode read refreshes the financial-year config, which asks

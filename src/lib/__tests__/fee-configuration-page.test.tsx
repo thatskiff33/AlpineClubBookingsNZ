@@ -31,10 +31,10 @@ const todayIn = (zone: string) =>
     day: "2-digit",
   }).format(new Date());
 
-const mocks = vi.hoisted(() => ({ toastSuccess: vi.fn(), toastError: vi.fn(), scrollToError: vi.fn() }));
+const mocks = vi.hoisted(() => ({ toastSuccess: vi.fn(), toastError: vi.fn(), scrollToError: vi.fn(), revealEditor: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: mocks.toastSuccess, error: mocks.toastError } }));
 vi.mock("@/hooks/use-scroll-to-feedback", () => ({
-  useScrollToFeedback: () => ({ scrollToError: mocks.scrollToError, scrollToTop: vi.fn() }),
+  useScrollToFeedback: () => ({ scrollToError: mocks.scrollToError, scrollToTop: vi.fn(), revealEditor: mocks.revealEditor }),
 }));
 
 // The finance fee sections moved to the consolidated /admin/fees console (#1933,
@@ -50,7 +50,7 @@ const editableData = {
   membershipTypes: [{
     id: "type-1", key: "FULL", name: "Full", isActive: true,
     annualFees: [{ id: "fee-1", ageTier: null, amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_MEMBER", prorationRule: "NONE" }],
-    joiningFees: [{ id: "joining-1", ageTier: "ADULT", amountCents: 5000, effectiveFrom: "2026-01-01", effectiveTo: null }],
+    joiningFees: [{ id: "joining-1", ageTier: "ADULT", amountCents: 123456, effectiveFrom: "2026-01-01", effectiveTo: null }],
   }],
   familyGroups: [{
     id: "family-1", name: "Example family", billingMemberId: "member-1", billingException: false,
@@ -235,7 +235,40 @@ describe("fee configuration page", () => {
     expect(screen.queryByRole("combobox", { name: "Billing member" })).toBeNull();
     // Saved values still render (fee schedule + billing member as static text).
     expect(screen.getByText("$100.00")).toBeTruthy();
+    // The joining fee renders through the shared `formatCents` (#3325): the
+    // club's configured currency, grouped — a hand-rolled or hard-coded
+    // formatter would print "$1234.56" or a fixed "NZ$". The row's span also
+    // carries the date range, so match the exact amount prefix.
+    expect(
+      screen.getByText((_, element) =>
+        element?.tagName === "SPAN" && (element.textContent ?? "").startsWith("$1,234.56 · "),
+      ),
+    ).toBeTruthy();
     expect(screen.getByText(/Alex Example/)).toBeTruthy();
+  });
+
+  it("reveals the fee panel for its Edit button and for each per-fee pencil (#2934)", async () => {
+    // The pencils sit in a list BELOW the form they populate, at the top of the
+    // panel, so without the reveal nothing visibly changes on click. Both
+    // triggers hand the shared reveal primitive the panel itself.
+    stubFetch(response(true, editableData));
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    expect(mocks.revealEditor).toHaveBeenCalledTimes(1);
+    const panel = (mocks.revealEditor.mock.calls[0][0] as { current: HTMLElement | null }).current;
+    // A NAMED region, not a bare card: the reveal focuses this element, and an
+    // unnamed container announces only "group" to whoever lands on it. The name
+    // comes from the panel's own visible title, so the two cannot drift.
+    expect(panel).toBe(
+      screen.getByRole("region", { name: "Annual membership fees" }),
+    );
+    expect(panel?.getAttribute("tabindex")).toBe("-1");
+    expect(
+      screen.getByRole("region", { name: "Joining fees" }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
+    expect(mocks.revealEditor).toHaveBeenCalledTimes(2);
+    expect((mocks.revealEditor.mock.calls[1][0] as { current: HTMLElement | null }).current).toBe(panel);
   });
 
   it("gates the membership form and row controls behind Edit", async () => {
@@ -628,5 +661,39 @@ describe("fee configuration page", () => {
     selectRadixOption("Proration", /Remaining months/);
     expect(screen.getByRole("checkbox")).toBeTruthy();
     expect(screen.queryByText("Prorate n/a")).toBeNull();
+  });
+
+  // The amount labels used to hard-code "(NZD)"; they now read the club's
+  // configured currency code (#3325). The literal "(NZD)" pins above are the
+  // byte-identical proof under the default configuration; this case is what
+  // makes the code path discriminate — a fresh import under a different
+  // configured currency must label the inputs with THAT code.
+  it("labels the amount inputs with the configured currency code, not a hard-coded NZD (#3325)", async () => {
+    vi.resetModules();
+    vi.doMock("@/config/operational", () => ({
+      APP_CURRENCY: "AUD",
+      APP_STRIPE_CURRENCY: "aud",
+      APP_TIME_ZONE: "Australia/Sydney",
+      APP_LOCALE: "en-AU",
+    }));
+    try {
+      const { FinanceFeesSections } = await import("@/app/(admin)/admin/fees/_components/finance-fees-sections");
+      // The fresh module tree has its own club-time context object, so the
+      // render helper's (static) provider would not be seen; wrap with the
+      // freshly imported one.
+      const { ClubTimeProvider: FreshClubTimeProvider } = await import("@/components/club-time-provider");
+      stubFetch(response(true, editableData));
+      render(<FinanceFeesSections />, {
+        wrapper: ({ children }) => (
+          <FreshClubTimeProvider zone="Australia/Sydney">{children}</FreshClubTimeProvider>
+        ),
+      });
+      fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+      expect(screen.getByLabelText("Annual amount (AUD)")).toBeTruthy();
+      expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
+    } finally {
+      vi.doUnmock("@/config/operational");
+      vi.resetModules();
+    }
   });
 });

@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireInstant } from "@/lib/club-time";
 import { formatPayloadCalendarDay } from "../_lib/calendar-day";
 import { readAdminQueryErrorMessage } from "@/lib/admin-query-error";
@@ -26,6 +27,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { FieldHint, describedByFieldHint } from "@/components/ui/field-hint";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import {
   Select,
   SelectContent,
@@ -61,7 +63,7 @@ import {
   getPaymentDisplayStatus,
 } from "@/lib/payment-status-display";
 import Link from "next/link";
-import { cn } from "@/lib/utils";
+import { cn, formatCents } from "@/lib/utils";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
@@ -100,10 +102,6 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 
 // #2264 — the id of the single hint shared by the three amount filter boxes.
 const PAYMENT_AMOUNT_HINT_ID = "payment-amount-filter-hint";
-
-function formatCents(cents: number): string {
-  return "$" + (cents / 100).toFixed(2);
-}
 
 type PaymentSortBy =
   | "lastUpdated"
@@ -774,7 +772,7 @@ export default function PaymentsPage() {
   if (amountExact) {
     filterChips.push({
       key: "amountExact",
-      label: "Amount exact",
+      label: "Gross amount exact",
       value: amountExact,
       onRemove: () => { setAmountExact(""); resetPage(); },
     });
@@ -782,7 +780,7 @@ export default function PaymentsPage() {
   if (amountMin) {
     filterChips.push({
       key: "amountMin",
-      label: "Amount min",
+      label: "Gross amount min",
       value: amountMin,
       onRemove: () => { setAmountMin(""); resetPage(); },
     });
@@ -790,7 +788,7 @@ export default function PaymentsPage() {
   if (amountMax) {
     filterChips.push({
       key: "amountMax",
-      label: "Amount max",
+      label: "Gross amount max",
       value: amountMax,
       onRemove: () => { setAmountMax(""); resetPage(); },
     });
@@ -929,10 +927,10 @@ export default function PaymentsPage() {
             <div className="space-y-1">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="space-y-1">
-                  <Label className="text-xs" htmlFor="payment-amount-exact">Amount exact</Label>
+                  <Label className="text-xs" htmlFor="payment-amount-exact">Gross amount exact</Label>
                   <Input
                     id="payment-amount-exact"
-                    inputMode="decimal"
+                    {...MONEY_INPUT_PROPS}
                     value={amountExact}
                     onChange={(event) => {
                       setAmountExact(event.target.value);
@@ -943,10 +941,10 @@ export default function PaymentsPage() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs" htmlFor="payment-amount-min">Amount min</Label>
+                  <Label className="text-xs" htmlFor="payment-amount-min">Gross amount min</Label>
                   <Input
                     id="payment-amount-min"
-                    inputMode="decimal"
+                    {...MONEY_INPUT_PROPS}
                     value={amountMin}
                     onChange={(event) => {
                       setAmountMin(event.target.value);
@@ -957,10 +955,10 @@ export default function PaymentsPage() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs" htmlFor="payment-amount-max">Amount max</Label>
+                  <Label className="text-xs" htmlFor="payment-amount-max">Gross amount max</Label>
                   <Input
                     id="payment-amount-max"
-                    inputMode="decimal"
+                    {...MONEY_INPUT_PROPS}
                     value={amountMax}
                     onChange={(event) => {
                       setAmountMax(event.target.value);
@@ -972,7 +970,8 @@ export default function PaymentsPage() {
                 </div>
               </div>
               <FieldHint id={PAYMENT_AMOUNT_HINT_ID}>
-                Amounts in dollars. Example: 125.00
+                Amounts in dollars, matched against the gross amount captured —
+                before any refund. Example: 125.00
               </FieldHint>
               {/* The refusal sits with the boxes that cause it, not in a banner
                   at the top of a long screen, and is announced rather than only
@@ -1051,7 +1050,13 @@ export default function PaymentsPage() {
             <PaymentSortHeader column="checkIn">Check In</PaymentSortHeader>
             <PaymentSortHeader column="member">Member</PaymentSortHeader>
             <PaymentSortHeader column="booking">Booking</PaymentSortHeader>
-            <PaymentSortHeader column="amount" align="right">Amount</PaymentSortHeader>
+            {/* #3340 fix round: the column renders NET of refunds, so the header
+                says so. The filter boxes beside it search the GROSS capture -
+                a database column, which a net expression cannot be - and they
+                are labelled "Gross amount" for the same reason. An officer
+                reading $65.00 here and typing it into a box labelled "Amount"
+                found nothing, and nothing on the screen explained why. */}
+            <PaymentSortHeader column="amount" align="right">Amount (net)</PaymentSortHeader>
             <PaymentSortHeader column="status">Status</PaymentSortHeader>
             <PaymentSortHeader column="stripe">Stripe</PaymentSortHeader>
             <PaymentSortHeader column="xeroInvoice">Xero Invoice</PaymentSortHeader>
@@ -1096,6 +1101,9 @@ export default function PaymentsPage() {
                 p.booking.creditsFromCancellation
               );
               const xeroChip = xeroStateChip(p.xeroState);
+              // #3369/#3480: an organisation owner has no member page; its name
+              // renders as text rather than as a link to `/admin/members/undefined`.
+              const owner = bookingOwner(p.booking).member;
 
               return (
                 <TableRow key={p.id}>
@@ -1109,12 +1117,18 @@ export default function PaymentsPage() {
                   <TableCell className="text-sm">{clubTime.instantDate(requireInstant(p.lastUpdatedAt))}</TableCell>
                   <TableCell className="text-sm">{formatPayloadCalendarDay(p.booking.checkIn)}</TableCell>
                   <TableCell className="font-medium">
-                    <Link
-                      href={buildHrefWithReturnTo(`/admin/members/${p.booking.member.id}`, currentPaymentsPath)}
-                      className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {p.booking.member.lastName}, {p.booking.member.firstName}
-                    </Link>
+                    {owner.id ? (
+                      <Link
+                        href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentPaymentsPath)}
+                        className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {owner.lastName}, {owner.firstName}
+                      </Link>
+                    ) : (
+                      <span className="text-foreground">
+                        {owner.lastName}, {owner.firstName}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Link
@@ -1124,7 +1138,21 @@ export default function PaymentsPage() {
                       View
                     </Link>
                   </TableCell>
-                  <TableCell className="text-right text-sm font-medium tabular-nums">{formatCents(p.amountCents)}</TableCell>
+                  {/* #3340 (`INV-PAY-047`) - NET OF REFUNDS: the cash the club
+                      actually holds. Rendering GROSS beside a "Partially
+                      refunded" chip made a $130 capture with $65 refunded read as
+                      "paid $130", so an officer sized the balance at 430-130=$300
+                      when it was 430-65=$365 - the ask-sizing bug's own error,
+                      rendered rather than arithmetized. Gross and refund print
+                      underneath, so only the headline figure changed. */}
+                  <TableCell className="text-right text-sm font-medium tabular-nums">
+                    {formatCents(p.amountCents - p.refundedAmountCents)}
+                    {p.refundedAmountCents > 0 && (
+                      <div className="text-xs font-normal text-muted-foreground">
+                        {formatCents(p.amountCents)} paid, {formatCents(p.refundedAmountCents)} refunded
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className="space-y-1">
                       <Link
@@ -1170,7 +1198,7 @@ export default function PaymentsPage() {
                           available to this admin. */}
                       <DiagnosticsRecordButton
                         recordId={p.id}
-                        subject={`the ${formatCents(p.amountCents)} payment for ${p.booking.member.firstName} ${p.booking.member.lastName}`}
+                        subject={`the ${formatCents(p.amountCents - p.refundedAmountCents)} payment for ${bookingOwner(p.booking).member.firstName} ${bookingOwner(p.booking).member.lastName}`}
                       />
                     </div>
                   </TableCell>

@@ -104,6 +104,45 @@ export function adminPaymentFailureTemplate(data: {
  * No bearer token, so this is not sensitive-log material.
  */
 
+/**
+ * #3340 — the operator's copy of the supersede refund. Money moved without any
+ * person deciding it should, which is exactly the class of event an operator has
+ * to be told about; before #3340 this path was silent on every surface.
+ *
+ * It names the corrected amount owing because that is the number the member has
+ * just been told in their own mail, and an officer reading the booking a minute
+ * later must not reach a different one — the `430 - 130 = 300` reading of a
+ * partially refunded payment is the mistake this whole issue is about.
+ * No bearer token, so this is not sensitive-log material.
+ */
+export function adminSupersededPaymentRefundTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  refundedAmountCents: number;
+  amountOwingCents: number;
+  paymentIntentId: string;
+  bookingUrl: string;
+}): string {
+  return layout(`
+    ${heading("Superseded Payment Auto-Refunded")}
+    ${alertBox(
+      "A member paid a charge that a later booking change had already replaced. The capture has been refunded in full automatically — no action is needed unless the amount owing below looks wrong.",
+      "info"
+    )}
+    ${paragraph("The member has been emailed an explanation naming the refund and the corrected amount owing.")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+      { label: "Amount refunded", value: formatCents(data.refundedAmountCents) },
+      { label: "Still owing", value: formatCents(data.amountOwingCents) },
+      { label: "Superseded Stripe PI", value: escapeHtml(data.paymentIntentId) },
+    ])}
+    ${button("Open Booking", data.bookingUrl)}
+  `);
+}
+
 export function adminDuplicateCaptureRefundTemplate(data: {
   memberName: string;
   checkIn: Date;
@@ -537,10 +576,10 @@ export function adminRefundRequestTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Paid", value: "$" + (data.paidAmountCents / 100).toFixed(2) },
-      { label: "Already Refunded", value: "$" + (data.refundedAmountCents / 100).toFixed(2) },
-      { label: "Remaining", value: "$" + (remaining / 100).toFixed(2) },
-      ...(data.requestedAmountCents ? [{ label: "Requested", value: "$" + (data.requestedAmountCents / 100).toFixed(2) }] : []),
+      { label: "Paid", value: formatCents(data.paidAmountCents) },
+      { label: "Already Refunded", value: formatCents(data.refundedAmountCents) },
+      { label: "Remaining", value: formatCents(remaining) },
+      ...(data.requestedAmountCents ? [{ label: "Requested", value: formatCents(data.requestedAmountCents) }] : []),
     ])}
     ${alertBox(escapeHtml(data.reason), "info")}
     ${button("Review Appeal", BASE_URL + "/admin/refund-requests")}

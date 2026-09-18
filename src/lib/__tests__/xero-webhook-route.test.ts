@@ -62,7 +62,6 @@ function signedRequest(payload: unknown, signatureOverride?: string) {
   const signature =
     signatureOverride ??
     // Test fixture: hardcoded key signs test webhook payloads so the route can verify them; not a real secret.
-    // nosemgrep: javascript.lang.security.audit.hardcoded-hmac-key.hardcoded-hmac-key
     createHmac("sha256", "xero-webhook-key").update(body).digest("base64");
 
   return new NextRequest("http://localhost/api/webhooks/xero", {
@@ -183,7 +182,6 @@ describe("Xero webhook route", () => {
     const { POST } = await import("@/app/api/webhooks/xero/route");
     const body = "not-json{";
     // Test fixture: hardcoded key signs a test webhook payload so the route can verify it; not a real secret.
-    // nosemgrep: javascript.lang.security.audit.hardcoded-hmac-key.hardcoded-hmac-key
     const signature = createHmac("sha256", "xero-webhook-key")
       .update(body)
       .digest("base64");
@@ -234,7 +232,6 @@ describe("Xero webhook route", () => {
   it("rejects oversized Xero webhook payloads before signature verification", async () => {
     const body = "{}";
     // Test fixture: hardcoded key signs a test webhook payload so the route can verify it; not a real secret.
-    // nosemgrep: javascript.lang.security.audit.hardcoded-hmac-key.hardcoded-hmac-key
     const signature = createHmac("sha256", "xero-webhook-key")
       .update(body)
       .digest("base64");
@@ -261,7 +258,6 @@ describe("Xero webhook route", () => {
   it("rejects malformed Xero webhook content-length before signature verification", async () => {
     const body = "{}";
     // Test fixture: hardcoded key signs a test webhook payload so the route can verify it; not a real secret.
-    // nosemgrep: javascript.lang.security.audit.hardcoded-hmac-key.hardcoded-hmac-key
     const signature = createHmac("sha256", "xero-webhook-key")
       .update(body)
       .digest("base64");

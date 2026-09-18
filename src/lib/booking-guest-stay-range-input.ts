@@ -108,15 +108,20 @@ export function normalizeGuestStayRange(
       );
       byKey.set(formatDateOnly(normalized), normalized);
     });
+    // Both ends of the selected nights; reading them is what says at least one
+    // was selected, and the envelope stays half-open over exactly those nights
+    // (#2800, INV-DATE).
     const sorted = [...byKey.values()].sort((a, b) => a.getTime() - b.getTime());
-    if (sorted.length === 0) {
+    const firstNight = sorted[0];
+    const lastNight = sorted.at(-1);
+    if (firstNight === undefined || lastNight === undefined) {
       throw new BookingGuestStayRangeValidationError(
         `${label}: select at least one night.`
       );
     }
     return {
-      stayStart: sorted[0],
-      stayEnd: addDaysDateOnly(sorted[sorted.length - 1], 1),
+      stayStart: firstNight,
+      stayEnd: addDaysDateOnly(lastNight, 1),
       nights: sorted,
     };
   }

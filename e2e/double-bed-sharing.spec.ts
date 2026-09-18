@@ -104,7 +104,8 @@ type CreatedAllocation = {
 const createdAllocations: CreatedAllocation[] = [];
 
 type Member = { id: string; firstName: string; lastName: string; email: string };
-const members: Record<string, Member> = {};
+/** The seeded members this spec pairs and books, resolved once in beforeAll. */
+let members: Record<"carol" | "dave" | "erin" | "frank" | "grace" | "heidi", Member>;
 
 let carolBookingId = "";
 let heidiBookingId = "";
@@ -343,9 +344,12 @@ async function deriveHoldingWindows(): Promise<void> {
   let start = "";
   for (let i = 0; i + needed <= nights.length; i += 1) {
     const run = nights.slice(i, i + needed);
-    const contiguous = run.every((f, k) => k === 0 || shiftDateOnly(run[k - 1].date, 1) === f.date);
+    const [first] = run;
+    if (!first) break;
+    // Contiguous when every night is exactly k days after the first.
+    const contiguous = run.every((f, k) => shiftDateOnly(first.date, k) === f.date);
     if (contiguous && run.every((f) => f.ok)) {
-      start = run[0].date;
+      start = first.date;
       break;
     }
   }
@@ -378,9 +382,14 @@ test.beforeAll(async ({ browser }) => {
     false,
   );
 
-  for (const local of ["carol", "dave", "erin", "frank", "grace", "heidi"]) {
-    members[local] = await resolveMember(local);
-  }
+  members = {
+    carol: await resolveMember("carol"),
+    dave: await resolveMember("dave"),
+    erin: await resolveMember("erin"),
+    frank: await resolveMember("frank"),
+    grace: await resolveMember("grace"),
+    heidi: await resolveMember("heidi"),
+  };
 
   await createPartnerLink(members.carol.id, members.dave.id);
   await createPartnerLink(members.erin.id, members.frank.id);

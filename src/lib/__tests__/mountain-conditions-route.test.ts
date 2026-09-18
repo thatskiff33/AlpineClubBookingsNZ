@@ -45,7 +45,7 @@ vi.mock("@/lib/prisma", () => ({
 // invalid — and jsdom's engine is lenient in places (it accepts an unclosed
 // `[class*="x`), so that disagreement is a live risk, not a theoretical one.
 vi.mock("@/lib/whakapapa-report.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/whakapapa-report.server")>()),
+  ...((await importOriginal()) as typeof import("@/lib/whakapapa-report.server")),
   fetchWhakapapaCurlData: mocks.fetchWhakapapaCurlData,
 }));
 

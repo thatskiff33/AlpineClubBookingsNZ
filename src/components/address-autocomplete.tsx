@@ -263,7 +263,15 @@ export function AddressAutocomplete({
 
     if (event.key === "Enter" && highlightedIndex >= 0) {
       event.preventDefault();
-      void selectSuggestion(suggestions[highlightedIndex]);
+      // Every `setSuggestions` call is paired with `setHighlightedIndex(-1)`,
+      // so whenever this is >= 0 it was set by the arrow-key handlers above
+      // against the CURRENT suggestions array — always in range. The guard
+      // is for the type only; an out-of-range index (which cannot happen)
+      // would just do nothing rather than crash.
+      const suggestion = suggestions[highlightedIndex];
+      if (suggestion) {
+        void selectSuggestion(suggestion);
+      }
       return;
     }
 

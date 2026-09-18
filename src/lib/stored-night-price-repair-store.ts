@@ -1,5 +1,4 @@
 import "server-only";
-
 import { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
 import {
@@ -7,11 +6,9 @@ import {
   requireCalendarDate,
   type CalendarDate,
 } from "@/lib/club-time";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
-import {
-  isNonNegativeIntegerCents,
-  parseEditFinancialReviewContext,
-} from "@/lib/edit-financial-review-context";
+import { isNonNegativeIntegerCents, parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
@@ -331,7 +328,8 @@ export async function recordReviewClosurePricing({
 }: {
   /** What the officer recorded, or null where the review offered no boxes. */
   plan: StoredNightPriceRepairPlan | null;
-  task: { id: string; bookingId: string; booking: { memberId: string } };
+  /** The booking OWNER is null when it is owned by an Organisation (#3369). */
+  task: { id: string; bookingId: string; booking: { memberId: string | null } };
   actingMemberId: string;
   resolution: "completed" | "dismissed";
   note: string | null;
@@ -411,6 +409,7 @@ export async function recordReviewClosurePricing({
       taskId: task.id,
       resolution,
       rebase,
+      moneyBuildUpSelection: outcome.moneyBuildUpSelection,
       xeroInvoiceDiverged,
       store,
     });
@@ -427,7 +426,7 @@ export async function recordReviewClosurePricing({
         : "booking-payment.review-closure.reprice",
       memberId: actingMemberId,
       actorMemberId: actingMemberId,
-      subjectMemberId: task.booking.memberId,
+      subjectMemberId: bookingOwner(task.booking).memberId,
       targetId: task.bookingId,
       entityType: plan ? "BookingGuest" : "Booking",
       entityId: plan ? plan.bookingGuestId : task.bookingId,

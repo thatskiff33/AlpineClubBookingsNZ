@@ -27,7 +27,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return { ...actual, checkCapacityForGuestRanges: h.checkCapacityForGuestRanges };
 });
 vi.mock("@/lib/booking-member-night-conflicts", () => ({
@@ -47,6 +47,12 @@ vi.mock("@/lib/logger", () => ({
 // #2266: the quote now returns the booking owner's live credit balance.
 vi.mock("@/lib/member-credit", () => ({
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 
 import { POST } from "@/app/api/bookings/[id]/modify-quote/route";

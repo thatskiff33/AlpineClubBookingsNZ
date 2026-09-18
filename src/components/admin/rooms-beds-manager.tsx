@@ -37,7 +37,9 @@ import {
   type BedTypeValue,
 } from "@/components/admin/bed-type-indicator";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
+import { AllocationPreferencesPanel } from "@/components/admin/allocation-preferences-section";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import type { LodgeCapacityStatus } from "@/lib/lodge-capacity";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
@@ -126,15 +128,6 @@ const EMPTY_BED_DRAFT: BedDraft = {
   bedType: "SINGLE",
   bunkGroup: "",
 };
-
-async function readApiError(response: Response, fallback: string) {
-  try {
-    const body = (await response.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function roomEditFromRoom(room: DashboardRoom): RoomDraft {
   return {
@@ -424,7 +417,7 @@ export function RoomsBedsManager({
         return;
       }
       if (!response.ok) {
-        throw new Error(await readApiError(response, "Failed to load rooms and beds"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Failed to load rooms and beds"));
       }
 
       const data = (await response.json()) as RoomsBedsPayload;
@@ -505,7 +498,7 @@ export function RoomsBedsManager({
     try {
       const response = await request();
       if (!response.ok) {
-        throw new Error(await readApiError(response, "Request failed"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Request failed"));
       }
       if (activeScopeRef.current !== requestedScope) return false;
       toast.success(success);
@@ -756,7 +749,7 @@ export function RoomsBedsManager({
         method: "DELETE",
       });
       if (!response.ok) {
-        const message = await readApiError(response, "Failed to delete room");
+        const message = await apiErrorMessageFromResponse(response, "Failed to delete room");
         setDeleteErrors((current) => ({ ...current, [roomId]: message }));
         return;
       }
@@ -826,7 +819,7 @@ export function RoomsBedsManager({
       ) : null}
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Rooms & Beds</h1>
+          <h1 className="text-2xl font-bold text-foreground">Rooms &amp; Beds</h1>
           <div className="mt-2 flex flex-wrap gap-2">
             {payload ? (
               <>
@@ -1497,6 +1490,22 @@ export function RoomsBedsManager({
       ) : null}
         </>
       ) : null}
+
+      {/*
+        #2937: allocation preferences live HERE — Bookings Setup -> Rooms & Beds
+        — rather than on the daily Bed Allocation board, beside the rooms and
+        beds the preferences order guests into. Deliberately OUTSIDE the
+        `lodgeScopeReady` gate above, so the panel states its own per-scope
+        reason instead of vanishing without one; it is total over the scope and
+        offers a write target in exactly one of its states.
+
+        It takes this manager's OWN `lodgeScope`, which is the point of putting
+        it on this page: one lodge selector, one derivation, one committed
+        scope. Nothing here changes the allocation algorithm, what a priority
+        means, who may edit, where the setting is stored, or the route it is
+        read and written through.
+      */}
+      <AllocationPreferencesPanel scope={lodgeScope} canEdit={canEdit} />
     </div>
   );
 }

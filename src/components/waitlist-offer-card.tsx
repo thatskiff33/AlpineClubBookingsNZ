@@ -11,6 +11,7 @@ import {
   isWaitlistOfferRevoked,
 } from "@/lib/waitlist-confirm-recovery-contract";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
+import { formatCents } from "@/lib/utils";
 
 interface WaitlistOfferCardProps {
   bookingId: string;
@@ -20,10 +21,6 @@ interface WaitlistOfferCardProps {
   // for it. Both null for a same-lodge offer, which renders as before.
   offeredLodgeName?: string | null;
   offeredPriceCents?: number | null;
-}
-
-function formatOfferCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
 }
 
 export function WaitlistOfferCard({
@@ -193,7 +190,7 @@ export function WaitlistOfferCard({
             </p>
             <p className="text-sm text-muted-foreground">
               The price at this lodge for your stay is{" "}
-              <strong>{displayPriceCents !== null && displayPriceCents !== undefined ? formatOfferCents(displayPriceCents) : ""}</strong>
+              <strong>{displayPriceCents !== null && displayPriceCents !== undefined ? formatCents(displayPriceCents) : ""}</strong>
               , which differs from your original booking. Nothing is booked
               until you confirm this price — your original waitlist entry is
               replaced only once you do.
@@ -255,7 +252,7 @@ export function WaitlistOfferCard({
               {confirming
                 ? "Confirming..."
                 : isCrossLodge && displayPriceCents !== null && displayPriceCents !== undefined
-                  ? `Confirm at ${offeredLodgeName ?? "this lodge"} for ${formatOfferCents(displayPriceCents)}`
+                  ? `Confirm at ${offeredLodgeName ?? "this lodge"} for ${formatCents(displayPriceCents)}`
                   : "Confirm Booking"}
             </Button>
           ) : null}

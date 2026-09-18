@@ -1,4 +1,5 @@
 import logger from "@/lib/logger";
+import { must } from "@/lib/indexed-access";
 
 /**
  * Shared constants and helpers for the database-backed image library
@@ -46,7 +47,7 @@ function startsWithCaseInsensitive(
 
 function skipWhitespace(text: string, index: number): number {
   let next = index;
-  while (next < text.length && /\s/.test(text[next])) {
+  while (next < text.length && /\s/.test(must(text[next], "skipWhitespace: index within text.length"))) {
     next += 1;
   }
   return next;
@@ -191,7 +192,7 @@ function extractJpegDimensions(bytes: Buffer): ImageDimensions | null {
       offset += 1;
       continue;
     }
-    const marker = bytes[offset + 1];
+    const marker = must(bytes[offset + 1], "extractJpegDimensions: offset within bytes.length");
     // Start-of-frame markers (baseline/progressive/etc), excluding DHT/JPG/DAC.
     const isSofMarker =
       marker >= 0xc0 &&
@@ -217,7 +218,7 @@ function extractJpegDimensions(bytes: Buffer): ImageDimensions | null {
 }
 
 function readUInt24LE(bytes: Buffer, offset: number): number {
-  return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+  return must(bytes[offset], "readUInt24LE: offset within bytes.length") | (must(bytes[offset + 1], "readUInt24LE: offset+1 within bytes.length") << 8) | (must(bytes[offset + 2], "readUInt24LE: offset+2 within bytes.length") << 16);
 }
 
 /**
@@ -264,12 +265,11 @@ function extractWebpDimensions(bytes: Buffer): ImageDimensions | null {
     // packed little-endian across the next 4 bytes.
     if (bytes.length < payload + 5) return null;
     if (bytes[payload] !== 0x2f) return null;
-    const bits =
-      ((bytes[payload + 4] << 24) |
-        (bytes[payload + 3] << 16) |
-        (bytes[payload + 2] << 8) |
-        bytes[payload + 1]) >>>
-      0;
+    const b1 = must(bytes[payload + 1], "extractWebpDimensions VP8L: payload+1 within bytes.length");
+    const b2 = must(bytes[payload + 2], "extractWebpDimensions VP8L: payload+2 within bytes.length");
+    const b3 = must(bytes[payload + 3], "extractWebpDimensions VP8L: payload+3 within bytes.length");
+    const b4 = must(bytes[payload + 4], "extractWebpDimensions VP8L: payload+4 within bytes.length");
+    const bits = ((b4 << 24) | (b3 << 16) | (b2 << 8) | b1) >>> 0;
     return {
       width: (bits & 0x3fff) + 1,
       height: ((bits >>> 14) & 0x3fff) + 1,
@@ -288,8 +288,8 @@ function extractSvgDimensions(bytes: Buffer): ImageDimensions | null {
   const widthMatch = svgTag.match(/\bwidth="([0-9.]+)(?:px)?"/i);
   const heightMatch = svgTag.match(/\bheight="([0-9.]+)(?:px)?"/i);
   if (widthMatch && heightMatch) {
-    const width = Math.round(Number.parseFloat(widthMatch[1]));
-    const height = Math.round(Number.parseFloat(heightMatch[1]));
+    const width = Math.round(Number.parseFloat(must(widthMatch[1], "extractSvgDimensions: width match has no capture group")));
+    const height = Math.round(Number.parseFloat(must(heightMatch[1], "extractSvgDimensions: height match has no capture group")));
     if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
       return { width, height };
     }
@@ -299,8 +299,8 @@ function extractSvgDimensions(bytes: Buffer): ImageDimensions | null {
     /\bviewBox="\s*[-0-9.]+\s+[-0-9.]+\s+([0-9.]+)\s+([0-9.]+)\s*"/i,
   );
   if (viewBoxMatch) {
-    const width = Math.round(Number.parseFloat(viewBoxMatch[1]));
-    const height = Math.round(Number.parseFloat(viewBoxMatch[2]));
+    const width = Math.round(Number.parseFloat(must(viewBoxMatch[1], "extractSvgDimensions: viewBox match has no width capture group")));
+    const height = Math.round(Number.parseFloat(must(viewBoxMatch[2], "extractSvgDimensions: viewBox match has no height capture group")));
     if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
       return { width, height };
     }
@@ -370,7 +370,7 @@ function stripJpegMetadata(bytes: Buffer): StripImageResult {
   let offset = 2;
   while (offset + 2 <= bytes.length) {
     if (bytes[offset] !== 0xff) return { ok: false, bytes }; // not at a marker
-    const marker = bytes[offset + 1];
+    const marker = must(bytes[offset + 1], "stripJpegMetadata: offset within bytes.length");
 
     if (marker === 0xd9) {
       // Primary EOI: end of the primary image. Emit it and STOP, dropping any
@@ -391,7 +391,7 @@ function stripJpegMetadata(bytes: Buffer): StripImageResult {
       if (scan > bytes.length) return { ok: false, bytes };
       while (scan + 1 < bytes.length) {
         if (bytes[scan] === 0xff) {
-          const m = bytes[scan + 1];
+          const m = must(bytes[scan + 1], "stripJpegMetadata scan: scan+1 within bytes.length");
           if (m === 0x00 || (m >= 0xd0 && m <= 0xd7)) {
             scan += 2; // stuffed byte or restart marker → part of the scan
             continue;
@@ -503,7 +503,7 @@ function stripWebpMetadata(bytes: Buffer): StripImageResult {
     let chunk = bytes.subarray(offset, chunkEnd);
     if (fourCC === "VP8X" && chunk.length > 8) {
       // Clear the EXIF (0x08) and XMP (0x04) flag bits in the first payload byte.
-      const flags = chunk[8];
+      const flags = must(chunk[8], "stripWebpMetadata: chunk has more than 8 bytes");
       const cleared = flags & ~0b0000_1100;
       if (cleared !== flags) {
         chunk = Buffer.from(chunk);
@@ -669,7 +669,8 @@ export function storableLogoDataUrl(
     );
     return value;
   }
-  const [, declaredType, base64] = match;
+  const declaredType = must(match[1], "storableLogoDataUrl: matched data URI has no media-type capture group");
+  const base64 = must(match[2], "storableLogoDataUrl: matched data URI has no base64 capture group");
   const bytes = Buffer.from(base64, "base64");
   const stored = storableImageBytes(bytes, detectImageContentType(bytes), {
     ...context,

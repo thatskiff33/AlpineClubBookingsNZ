@@ -16,7 +16,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/xero-api-client")>();
+    (await importOriginal()) as typeof import("@/lib/xero-api-client");
   return {
     ...actual,
     // The metering wrapper is exercised by its own suites; here it must simply

@@ -55,7 +55,7 @@ vi.mock("@/lib/observability-bridge", () => ({ reportAiError: vi.fn() }));
 let meteringHealthy = true;
 vi.mock("@/lib/ai-diagnostics-usage", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/ai-diagnostics-usage")>();
+    (await importOriginal()) as typeof import("@/lib/ai-diagnostics-usage");
   return { ...actual, isDiagnosticsMeteringHealthy: () => meteringHealthy };
 });
 

@@ -18,6 +18,7 @@ import {
   readHostingCoverageOverridePrompt,
   type HostingCoverageOverridePromptData,
 } from "@/lib/hosting-coverage-override-client";
+import { formatCents } from "@/lib/utils";
 
 interface CancelPreview {
   refundAmountCents: number;
@@ -35,10 +36,6 @@ interface CancelPreview {
    * the club hands the refund back directly. The figures are unchanged.
    */
   manualRefund?: boolean;
-}
-
-function formatDollars(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
 }
 
 export function CancelBookingButton({
@@ -329,7 +326,7 @@ export function CancelBookingButton({
         </p>
         {result?.creditRestoredCents && result.creditRestoredCents > 0 && (
           <p className="text-sm text-success-11">
-            {formatDollars(result.creditRestoredCents)} of previously applied credit has been returned to {onBehalfOfMember ? "the member's" : "your"} account.
+            {formatCents(result.creditRestoredCents)} of previously applied credit has been returned to {onBehalfOfMember ? "the member's" : "your"} account.
           </p>
         )}
         {/* B5 (#2262): a manual (cash / off-Xero) settlement has no card to
@@ -339,18 +336,18 @@ export function CancelBookingButton({
         {refund > 0 && result?.refundMethod === "manual" ? (
           <p className="text-sm text-success-11">
             {onBehalfOfMember
-              ? `The club will arrange the member's refund of ${formatDollars(refund)} directly — they'll hear from the club about how it will be paid back.`
-              : `The club will arrange your refund of ${formatDollars(refund)} directly — you'll hear from them about how it will be paid back.`}
+              ? `The club will arrange the member's refund of ${formatCents(refund)} directly — they'll hear from the club about how it will be paid back.`
+              : `The club will arrange your refund of ${formatCents(refund)} directly — you'll hear from them about how it will be paid back.`}
           </p>
         ) : refund > 0 && isCredit ? (
           <p className="text-sm text-success-11">
-            A credit of {formatDollars(refund)} has been added to {onBehalfOfMember ? "the member's" : "your"} account for future bookings.
+            A credit of {formatCents(refund)} has been added to {onBehalfOfMember ? "the member's" : "your"} account for future bookings.
           </p>
         ) : refund > 0 ? (
           <p className="text-sm text-success-11">
             {onBehalfOfMember
-              ? `The refund of ${formatDollars(refund)} has been processed to the member's original payment method.${emailSuppressed ? "" : " They will receive a confirmation email shortly."}`
-              : `Your refund of ${formatDollars(refund)} has been processed to your original payment method.${emailSuppressed ? "" : " You will receive a confirmation email shortly."}`}
+              ? `The refund of ${formatCents(refund)} has been processed to the member's original payment method.${emailSuppressed ? "" : " They will receive a confirmation email shortly."}`
+              : `Your refund of ${formatCents(refund)} has been processed to your original payment method.${emailSuppressed ? "" : " You will receive a confirmation email shortly."}`}
           </p>
         ) : emailSuppressed ? null : (
           <p className="text-sm text-success-11">
@@ -431,7 +428,7 @@ export function CancelBookingButton({
             </p>
             {preview.creditRestoredCents > 0 && (
               <p className="text-sm text-success-11">
-                {formatDollars(preview.creditRestoredCents)} of previously applied
+                {formatCents(preview.creditRestoredCents)} of previously applied
                 account credit will be returned to{" "}
                 {onBehalfOfMember ? "the member's" : "your"} account.
               </p>
@@ -452,7 +449,7 @@ export function CancelBookingButton({
                 card payment to reverse and no account credit is added. The club
                 will arrange{" "}
                 <span className="font-medium text-success-11">
-                  {formatDollars(preview.creditRefundAmountCents)}
+                  {formatCents(preview.creditRefundAmountCents)}
                 </span>{" "}
                 back to {onBehalfOfMember ? "the member" : "you"} directly.
               </p>
@@ -471,7 +468,7 @@ export function CancelBookingButton({
                   />
                   <span>
                     <span className="font-medium text-foreground">
-                      Refund {formatDollars(preview.refundAmountCents)} to original payment method
+                      Refund {formatCents(preview.refundAmountCents)} to original payment method
                     </span>
                     <span className="text-muted-foreground ml-1">({preview.refundPercentage}% refund)</span>
                   </span>
@@ -487,12 +484,12 @@ export function CancelBookingButton({
                   />
                   <span>
                     <span className="font-medium text-success-11">
-                      Hold {formatDollars(preview.creditRefundAmountCents)} as account credit
+                      Hold {formatCents(preview.creditRefundAmountCents)} as account credit
                     </span>
                     <span className="text-muted-foreground ml-1">({preview.creditRefundPercentage}% refund)</span>
                     {preview.creditRefundAmountCents > preview.refundAmountCents && (
                       <span className="ml-1 text-xs text-success-11 font-medium">
-                        +{formatDollars(preview.creditRefundAmountCents - preview.refundAmountCents)} more
+                        +{formatCents(preview.creditRefundAmountCents - preview.refundAmountCents)} more
                       </span>
                     )}
                   </span>
@@ -514,7 +511,7 @@ export function CancelBookingButton({
                     Refund arranged by the club:
                   </span>
                   <span className="font-medium text-success-11">
-                    {formatDollars(preview.creditRefundAmountCents)}
+                    {formatCents(preview.creditRefundAmountCents)}
                   </span>
                 </div>
               )}
@@ -525,7 +522,7 @@ export function CancelBookingButton({
                       Amount kept ({preview.creditRefundPercentage}% refund):
                     </span>
                     <span className="font-medium text-muted-foreground">
-                      {formatDollars(
+                      {formatCents(
                         preview.totalPaidCents - preview.creditRefundAmountCents
                       )}
                     </span>
@@ -537,7 +534,7 @@ export function CancelBookingButton({
                     {refundMethod === "credit" ? "Credit to account:" : "Refund to card:"}
                   </span>
                   <span className="font-medium text-success-11">
-                    {formatDollars(
+                    {formatCents(
                       refundMethod === "credit"
                         ? preview.creditRefundAmountCents
                         : preview.refundAmountCents
@@ -552,7 +549,7 @@ export function CancelBookingButton({
                     <span className="text-muted-foreground">
                       Amount kept ({preview.refundPercentage}% refund):
                     </span>
-                    <span className="font-medium text-muted-foreground">{formatDollars(preview.keptAmountCents)}</span>
+                    <span className="font-medium text-muted-foreground">{formatCents(preview.keptAmountCents)}</span>
                   </div>
                 )}
               {refundAppealDescription ? (
@@ -563,7 +560,7 @@ export function CancelBookingButton({
               {preview.changeFeeCents > 0 && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Change fees (non-refundable):</span>
-                  <span className="font-medium text-muted-foreground">{formatDollars(preview.changeFeeCents)}</span>
+                  <span className="font-medium text-muted-foreground">{formatCents(preview.changeFeeCents)}</span>
                 </div>
               )}
               {preview.creditRestoredCents > 0 && (
@@ -571,7 +568,7 @@ export function CancelBookingButton({
                   <span className="text-muted-foreground">
                     Previously applied credit restored (per the cancellation policy):
                   </span>
-                  <span className="font-medium text-success-11">{formatDollars(preview.creditRestoredCents)}</span>
+                  <span className="font-medium text-success-11">{formatCents(preview.creditRestoredCents)}</span>
                 </div>
               )}
             </div>

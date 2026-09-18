@@ -76,13 +76,19 @@ export async function encryptToken(plaintext: string): Promise<string> {
  * failure. Callers wrap this to attach the right typed error / policy.
  */
 function decryptWithKey(encrypted: string, key: Buffer): string {
-  const parts = encrypted.split(":");
-  if (parts.length !== 3) {
+  // `iv:authTag:ciphertext` and nothing else, said by the destructure rather
+  // than by a length compared before three separate reads (#2800).
+  const [ivHex, authTagHex, ciphertext, ...extraParts] = encrypted.split(":");
+  if (
+    ivHex === undefined ||
+    authTagHex === undefined ||
+    ciphertext === undefined ||
+    extraParts.length > 0
+  ) {
     throw new Error("Invalid encrypted token format");
   }
-  const iv = Buffer.from(parts[0], "hex");
-  const authTag = Buffer.from(parts[1], "hex");
-  const ciphertext = parts[2];
+  const iv = Buffer.from(ivHex, "hex");
+  const authTag = Buffer.from(authTagHex, "hex");
   if (authTag.length !== AUTH_TAG_LENGTH) {
     throw new Error("Invalid encrypted token authentication tag length");
   }

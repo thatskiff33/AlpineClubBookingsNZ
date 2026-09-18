@@ -164,7 +164,7 @@ export function readExceptionOffer(body: unknown): ExceptionOffer | null {
   const review = asRecord(data.exceptionReview);
   if (!review) return null;
   const rawViolations = review.violations;
-  if (!Array.isArray(rawViolations) || rawViolations.length === 0) return null;
+  if (!Array.isArray(rawViolations)) return null;
 
   const violations: ExceptionOfferViolation[] = [];
   for (const raw of rawViolations) {
@@ -174,6 +174,12 @@ export function readExceptionOffer(body: unknown): ExceptionOffer | null {
     if (!violation) return null;
     violations.push(violation);
   }
+
+  // The refusal message falls back to the FIRST violation's wording, so reading
+  // it is what says the review named any violation at all — the empty-list
+  // refusal the length check made, now made by the value it needs (#2800).
+  const firstViolation = violations[0];
+  if (firstViolation === undefined) return null;
 
   const aggregate = review.capacityMode;
   if (typeof aggregate !== "string" || !CAPACITY_MODE_SET.has(aggregate)) {
@@ -185,7 +191,7 @@ export function readExceptionOffer(body: unknown): ExceptionOffer | null {
     message:
       typeof data.error === "string" && data.error
         ? data.error
-        : violations[0].message,
+        : firstViolation.message,
     violations,
     capacityMode: aggregate as PolicyExceptionCapacityMode,
   };

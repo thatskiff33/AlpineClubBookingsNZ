@@ -36,7 +36,7 @@ vi.mock("@/lib/module-settings", () => ({
 // `after` needs a request context in tests; run the task inline instead so the
 // assertion can await its effect.
 vi.mock("next/server", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("next/server")>();
+  const actual = (await importOriginal()) as typeof import("next/server");
   return {
     ...actual,
     after: (task: () => Promise<void>) => {

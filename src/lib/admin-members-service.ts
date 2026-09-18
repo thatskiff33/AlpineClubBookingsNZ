@@ -69,6 +69,10 @@ import {
   dependentParentStateBlocker,
   type DependentLinkIneligibleMatch,
 } from "@/lib/dependent-link-eligibility";
+import {
+  notDirectParentWithMemberWhere,
+  notPartnerWithMemberWhere,
+} from "@/lib/member-parent-partner-exclusivity";
 import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
 import { ensureDefaultSeasonSubscriptionForNewMember } from "@/lib/member-subscription-defaults";
@@ -533,6 +537,7 @@ export async function listAdminMembers(
     // `ageTier: NOT_APPLICABLE`, which age-exempt HUMAN members carry too.
     andConditions.push(
       { id: { notIn: excludedParentIds } },
+      ...notPartnerWithMemberWhere(parentLinkEligibleFor),
       ancestorDepthWithinWhere(
         allowedParentAncestorGenerations(childSide.descendantGenerations),
       ),
@@ -548,6 +553,7 @@ export async function listAdminMembers(
       { id: { not: partnerLinkEligibleFor } },
       { active: true },
       { ageTier: "ADULT" },
+      ...notDirectParentWithMemberWhere(partnerLinkEligibleFor),
       { partnerLinksAsMemberA: { none: { status: "CONFIRMED" } } },
       { partnerLinksAsMemberB: { none: { status: "CONFIRMED" } } },
     );
@@ -1095,14 +1101,18 @@ export async function listAdminMembers(
     );
 
     const explained = textMatches.flatMap((candidate, index) => {
+      // `candidateDepths` is built 1:1 against `textMatches` just above, so
+      // this always has an entry; an unreachable gap just drops that one
+      // candidate from the explanation list, which is display-only.
+      const candidateDepth = candidateDepths[index];
+      if (!candidateDepth) return [];
       const [reason] = dependentLinkBlockers(
         dependentLinkEligibleFor,
         candidate,
         {
           parentAncestorIds: parentSide.ancestorIds,
           parentAncestorGenerations: parentSide.ancestorGenerations,
-          candidateDescendantGenerations:
-            candidateDepths[index].descendantGenerations,
+          candidateDescendantGenerations: candidateDepth.descendantGenerations,
         },
       );
       if (!reason) return [];

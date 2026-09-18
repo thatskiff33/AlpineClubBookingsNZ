@@ -21,7 +21,16 @@ const ADMIN_TEMPLATE_NAMES = [
 
 type TemplateName = typeof ADMIN_TEMPLATE_NAMES[number];
 
-const TEMPLATE_TO_SECTION: Record<TemplateName, string> = {
+/** The countable sections below, minus the derived `totalAlerts`. */
+type AlertSectionKey =
+  | "newBookings"
+  | "paymentFailures"
+  | "capacityWarnings"
+  | "bookingsBumped"
+  | "pendingDeadlines"
+  | "xeroErrors";
+
+const TEMPLATE_TO_SECTION: Record<TemplateName, AlertSectionKey> = {
   "admin-new-booking": "newBookings",
   "admin-payment-failure": "paymentFailures",
   "admin-capacity-warning": "capacityWarnings",
@@ -62,9 +71,7 @@ export async function sendAdminDigest(): Promise<{
 
   for (const row of alertLogs) {
     const sectionKey = TEMPLATE_TO_SECTION[row.templateName as TemplateName];
-    if (sectionKey && sectionKey in sections) {
-      (sections as Record<string, number>)[sectionKey]++;
-    }
+    sections[sectionKey]++;
   }
 
   sections.totalAlerts = sections.newBookings + sections.paymentFailures +

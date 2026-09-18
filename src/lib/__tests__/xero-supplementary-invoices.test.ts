@@ -47,7 +47,7 @@ vi.mock("@/lib/xero-links", () => ({
 // Keep buildXeroIdempotencyKey / sanitizeForJson real so we can assert the actual
 // key the operation records.
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
   return {
     ...actual,
     startXeroSyncOperation: mocks.startXeroSyncOperation,

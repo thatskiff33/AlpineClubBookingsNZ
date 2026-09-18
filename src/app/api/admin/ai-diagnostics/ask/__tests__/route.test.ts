@@ -48,7 +48,7 @@ vi.mock("@/lib/ai-diagnostics-config", () => ({
 // (`DIAGNOSTICS_MAX_TOOL_ROUNDS`) that `tools/session.ts` reads at module-body time,
 // and a full replacement makes the route fail to import rather than fail a test.
 vi.mock("@/lib/ai-diagnostics-usage", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/ai-diagnostics-usage")>()),
+  ...((await importOriginal()) as typeof import("@/lib/ai-diagnostics-usage")),
   isDiagnosticsMeteringHealthy: mocks.meteringHealthy,
 }));
 vi.mock("@/lib/diagnostics/page-context/authorize", () => ({

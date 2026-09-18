@@ -26,7 +26,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/audit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/audit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/audit")),
   createStructuredAuditLog: h.createStructuredAuditLog,
 }));
 vi.mock("@/lib/prisma", () => ({
@@ -40,7 +40,7 @@ vi.mock("@/lib/logger", () => ({
 // this file about WHEN the throttle is consulted and what is done with its
 // answer, which is the part #2388 actually decided.
 vi.mock("@/lib/rate-limit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/rate-limit")),
   applyMemberScopedRateLimit: h.applyMemberScopedRateLimit,
 }));
 

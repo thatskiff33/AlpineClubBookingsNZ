@@ -1,10 +1,10 @@
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
-const CAPTURED_PAYMENT_STATUSES = new Set<PaymentStatus>([
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-]);
+import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
+
+// #3340 (`INV-SSOT-001`): imported, not restated. The list lives once in
+// `booking-payment-state.ts`.
+const CAPTURED_PAYMENT_STATUSES = new Set<string>(CAPTURED_PAYMENT_STATUS_LIST);
 
 interface AdditionalLedgerGapPaymentLike {
   additionalPaymentStatus: string | null;

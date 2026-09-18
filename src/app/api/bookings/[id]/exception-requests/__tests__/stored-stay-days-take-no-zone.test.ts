@@ -98,7 +98,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/booking-exception-request-service")>();
+    (await importOriginal()) as typeof import("@/lib/booking-exception-request-service");
   return {
     ...actual,
     // Recorded, then delegated: the assertions are about the ARGUMENTS the

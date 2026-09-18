@@ -17,9 +17,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * 1. Every host form a REAL capture stack in this repository uses is accepted.
  *    That is not a nicety — `EMAIL_SERVER_HOST=mailpit` is what the browser
- *    suite, `.env.staging.example` and the measurement stack all set, and a rule
- *    that only accepted loopback and RFC 1918 literals would have refused all
- *    three while looking correct in review.
+ *    suite and `.env.staging.example` both set, and a rule that only accepted
+ *    loopback and RFC 1918 literals would have refused both while looking
+ *    correct in review.
  * 2. A public host is refused, and refused as its OWN outcome rather than folded
  *    into a neighbour, because each outcome carries a different operator remedy.
  * 3. The refusal reaches the VERIFY path too, so the health check and the setup
@@ -105,13 +105,13 @@ describe("classifyCaptureHost accepts the capture hosts this repository really u
   /**
    * THE CASE THAT DECIDES THE WHOLE DESIGN. The obvious rule — "loopback or
    * RFC 1918 only" — refuses `mailpit`, and `mailpit` is what
-   * `.github/workflows/e2e.yml`, `.env.staging.example`,
-   * `docker-compose.staging.yml` and `measurement/stack/` all set. A check that
-   * breaks every capture stack in the repository is not a safer check, it is a
-   * broken one that would have been reverted rather than fixed.
+   * `.github/workflows/e2e.yml`, `.env.staging.example` and
+   * `docker-compose.staging.yml` all set. A check that breaks every capture
+   * stack in the repository is not a safer check, it is a broken one that
+   * would have been reverted rather than fixed.
    */
   it.each([
-    ["mailpit", "the browser suite's and the measurement stack's capture"],
+    ["mailpit", "the browser suite's and staging's capture"],
     ["mailhog", "the other common sink container"],
     ["smtp", "a bare service name"],
     ["localhost", "a developer's laptop"],

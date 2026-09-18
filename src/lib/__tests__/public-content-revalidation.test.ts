@@ -37,7 +37,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("@/lib/public-layout-cache", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/public-layout-cache")>()),
+  ...((await importOriginal()) as typeof import("@/lib/public-layout-cache")),
   invalidatePublicLayoutConfig: mocks.invalidatePublicLayoutConfig,
 }));
 

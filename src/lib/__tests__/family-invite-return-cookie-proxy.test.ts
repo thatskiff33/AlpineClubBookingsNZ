@@ -58,7 +58,7 @@ vi.mock("@/lib/club-theme", () => ({
 }));
 
 vi.mock("@/lib/module-settings", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@/lib/module-settings")>();
+  const original = (await importOriginal()) as typeof import("@/lib/module-settings");
   const { MODULE_KEYS: keys } = await import("@/config/modules");
 
   return {

@@ -539,8 +539,84 @@ const CENSUS_CEILING = {
    * for a new file outright — and the shift rule it took with it needs the same
    * three zone-free exports. Both modules now import them; neither resolves a
    * timezone. Re-measured, not incremented.
+   *
+   * 221 -> 224 (#2958): the same benign split shape as #3128 and #3232, at the
+   * largest scale yet. `bookings/[id]/page.tsx` carried the whole surface's
+   * single `date-only` import; the behaviour-preserving decomposition
+   * moved its sections and projections verbatim into route-local modules, and
+   * four of them took the zone-free helper they were already calling with them:
+   * `_lib/booking-detail-consent.ts` (`eachDateOnlyInRange`, feeding
+   * `formatConsentNightsLabel`), `_lib/booking-detail-editor-data.ts`,
+   * `_lib/booking-detail-linked-party.ts` and
+   * `_components/booking-stay-preferences.tsx` (`formatDateOnly`). The page
+   * itself no longer imports the adapter, so one importer became four: -1 +4.
+   * No call was added, removed or changed, none of the four resolves a
+   * timezone, and every club-facing instant on the page still comes from the
+   * one `clubTime()` the shell resolves (CT-4, #2870; INV-CONFIG-002).
+   * Re-measured against the branch base, and re-measured again after the merge
+   * of the epic branch, per the warning above.
+   *
+   * 224 -> 225 (#2698): the same shape again. The hut-leader route sat exactly
+   * on its file-size ceiling, and the gate refuses an allowance for a file that
+   * was inside its budget, so the audit blocks moved into
+   * `hut-leader-assignment-audit.ts` and took `formatDateOnly` with them. That
+   * export is `date.toISOString().slice(0, 10)` — it resolves no timezone at
+   * all, and the zone-aware sibling `formatDateOnlyForTimeZone` is not used
+   * here. The dates it formats are the assignment's own `@db.Date` bounds, which
+   * arrive date-only and are written into an audit payload unchanged.
+   * Re-measured, not incremented.
+   *
+   * 225 -> 221 (#2930), and a DOWNWARD revision, which is the direction this
+   * census exists to reward. Six importers went and two arrived; the whole
+   * movement is set out here because an earlier draft of this entry said 220 by
+   * counting only five of the eight and was caught by this test, not by review.
+   *
+   * The first round took the FOUR copies of `getCapacityFullNights` into
+   * `src/lib/capacity-full-nights.ts`, which removed the whole `date-only`
+   * import from `booking-request-shared.ts`, `booking-request-quotes.ts` and
+   * `group-booking.ts` — in each of those the copied helper was the file's ONLY
+   * reader of the adapter — and added one import to the new module: -3 +1.
+   * `booking-create-guests.ts` lost the same copy but still imports
+   * `addDaysDateOnly`, so it stays counted.
+   *
+   * The second took the six INLINE re-spellings of the same comparison through
+   * one of the two canonical helpers, which removed `formatDateOnly` from the
+   * three admin overbook routes — `capacity-hold`, `force-confirm` and
+   * `confirm-pending-guests`, each of which formatted the night itself — and
+   * from `group-settlement.ts`, which had not imported the adapter at all
+   * because its copy mapped the raw `Date` (that was the defect): -3 and no
+   * additions, `over-capacity-confirmation.ts` having imported it all along.
+   *
+   * The third is the one the first accounting missed: +1 for
+   * `book/_lib/capacity-advisory.ts`, the wizard's per-night shortfall
+   * calculation lifted out of `use-booking-wizard.ts`. It imports `parseDateOnly`
+   * for a reason this census should want — it stopped restating the stay-night
+   * rule and now calls the frozen `isGuestActiveOnNight`, whose parameters are
+   * date-only `Date` encodings, so the adapter is how a `yyyy-MM-dd` from the
+   * availability payload reaches the one model (`INV-DATE-005`). The hook it
+   * came from does not import the adapter, so this is a genuine new importer
+   * rather than a move, and it is counted as one.
+   *
+   * Neither `formatDateOnly` (`date.toISOString().slice(0, 10)`) nor
+   * `parseDateOnly` resolves a timezone; the values on both sides are the
+   * capacity engine's own date-only lodge nights. No call was added or changed
+   * by the two collapse rounds — many call sites became two, calling the same
+   * function on the same values — and the group settlement path gained one it
+   * should always have made. Re-measured against the branch base, not
+   * subtracted from.
+   *
+   * 221 -> 223 (#2936): the officer's booking-request correction adds two
+   * importers, and both are the benign direction this docblock describes. The
+   * correction route imports `isDateOnlyString` and `parseDateOnly` to turn the
+   * posted `yyyy-MM-dd` strings into date-only lodge nights per INV-DATE-001;
+   * the correction form imports `dateOnlyFromIsoString` to seed its two date
+   * inputs from the serialised request. All three are zone-free — none of them
+   * takes a `timeZone` parameter at all — so neither file consults a timezone,
+   * and the correction service itself derives the club's today through
+   * `club-time` rather than through this adapter. Re-measured by RUNNING this
+   * suite on this tree, not by adding two to the literal.
    */
-  dateOnlyImporters: 221,
+  dateOnlyImporters: 223,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

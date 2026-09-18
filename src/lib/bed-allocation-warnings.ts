@@ -29,7 +29,10 @@ export function buildBedAllocationWarnings(input: {
   }
 
   for (const group of allocationsByBookingNight.values()) {
+    // A group exists only because a row was pushed into it, so it always has a
+    // first row; an empty group names no booking-night to warn about (#2800).
     const first = group[0];
+    if (first === undefined) continue;
     const roomIds = new Set(group.map((allocation) => allocation.roomId));
 
     if (roomIds.size > 1) {
@@ -97,6 +100,7 @@ export function buildBedAllocationWarnings(input: {
     );
     if (!mixedMinorBookingId) continue;
     const first = group[0];
+    if (first === undefined) continue;
     warnings.push({
       id: `MINOR_ADULT_MIX:${first.roomId}:${first.stayDate}`,
       type: "MINOR_ADULT_MIX",
@@ -127,11 +131,14 @@ export function buildBedAllocationWarnings(input: {
     roomIds.add(allocation.roomId);
   }
   for (const [bookingId, nights] of nightRoomsByBooking) {
-    const sortedNights = [...nights.keys()].sort();
-    if (sortedNights.length < 2) continue;
+    // Two nights or more, and reading the first is what says so; a single
+    // night has nothing to switch between (#2800).
+    const [firstNight, ...laterNights] = [...nights.keys()].sort();
+    if (firstNight === undefined || laterNights.length === 0) continue;
+    const sortedNights = [firstNight, ...laterNights];
     const roomKeyForNight = (night: string) =>
       [...(nights.get(night) ?? [])].sort().join(",");
-    const firstKey = roomKeyForNight(sortedNights[0]);
+    const firstKey = roomKeyForNight(firstNight);
     const switchNight = sortedNights.find(
       (night) => roomKeyForNight(night) !== firstKey,
     );

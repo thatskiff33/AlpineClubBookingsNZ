@@ -41,12 +41,17 @@ import { getStayNights } from "@/lib/policies/pricing";
 import { prisma } from "@/lib/prisma";
 import { requiredGuestPriceCents } from "@/lib/required-price-cents";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
-import { formatDateOnly } from "@/lib/date-only";
 
 /** A held booking's owner failed re-validation and a fresh contact was
  * substituted at conversion (issue #1255 residual-risk decision 1). */
 export type OwnerSubstitution = {
-  invalidMemberId: string;
+  /**
+   * The contact the accept INTENDED to use, or null when the held booking was
+   * owned by an `Organisation` and therefore named no person at all (#3369).
+   * The alert then says a substitute was minted without naming an intended
+   * member, which is the truth.
+   */
+  invalidMemberId: string | null;
   substituteMemberId: string;
   reason: string;
 };
@@ -158,11 +163,29 @@ export function buildApprovalGuestNights(params: {
     engine.every((cents) => Number.isInteger(cents)) &&
     engine.reduce((sum, cents) => sum + cents, 0) === params.priceCents
   ) {
-    return nightDates.map((stayDate, index) => ({
+    // The engine vector was just checked to be the same length as the night
+    // list, so each night has its amount; reading it here is what says so, and
+    // a short vector falls through to the even split below exactly as a
+    // length mismatch already did (#2800).
+    const enginePriced = nightDates.map((stayDate, index) => ({
       stayDate,
       priceCents: engine[index],
-      priceSource: "SOLD",
+      // `as const` because this local has no contextual type to pin the literal
+      // against, unlike the even-split return below; without it the source
+      // widens to `string` and no longer satisfies the provenance union (#3275).
+      priceSource: "SOLD" as const,
     }));
+    if (
+      enginePriced.every(
+        // The predicate keeps the whole element type rather than restating a
+        // shape: restating one silently drops `priceSource` and the narrowed
+        // array stops satisfying `ApprovalGuestNight[]` (#3275 + #2800).
+        (night): night is typeof night & { priceCents: number } =>
+          night.priceCents !== undefined,
+      )
+    ) {
+      return enginePriced;
+    }
   }
   const base = Math.floor(params.priceCents / count);
   const remainder = params.priceCents - base * count;
@@ -173,15 +196,6 @@ export function buildApprovalGuestNights(params: {
     // of a guest total, not a per-night amount the pricing engine quoted.
     priceSource: "EVEN_SPLIT",
   }));
-}
-
-/** Capacity nights that came back oversubscribed, as NZ date-only strings. */
-export function getCapacityFullNights(
-  nightDetails: Array<{ date: Date; availableBeds: number }>
-): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => formatDateOnly(night.date));
 }
 
 /**
@@ -401,7 +415,8 @@ export async function planBookingRequestGuestConsent<
 >(
   tx: Prisma.TransactionClient,
   params: {
-    bookingOwnerMemberId: string;
+    /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+    bookingOwnerMemberId: string | null;
     guests: readonly Guest[];
     actor: MemberGuestAddActor;
     policy: MemberGuestAddPolicy;
@@ -587,12 +602,15 @@ export async function sendOwnerSubstitutionAdminAlert(params: {
   const { request, bookingId, ownerSubstitution, failureLogMessage } = params;
   try {
     const [intendedMember, substituteMember] = await Promise.all([
-      prisma.member
-        .findUnique({
-          where: { id: ownerSubstitution.invalidMemberId },
-          select: { firstName: true, lastName: true },
-        })
-        .catch(() => null),
+      ownerSubstitution.invalidMemberId
+        ? prisma.member
+            .findUnique({
+              where: { id: ownerSubstitution.invalidMemberId },
+              select: { firstName: true, lastName: true },
+            })
+            .catch(() => null)
+        : // #3369: no intended member to name.
+          Promise.resolve(null),
       prisma.member
         .findUnique({
           where: { id: ownerSubstitution.substituteMemberId },
@@ -612,7 +630,8 @@ export async function sendOwnerSubstitutionAdminAlert(params: {
     await sendAdminOwnerSubstitutionAlert({
       requestId: request.id,
       bookingId,
-      intendedMemberId: ownerSubstitution.invalidMemberId,
+      // #3369: no intended member when the held booking named an organisation.
+      intendedMemberId: ownerSubstitution.invalidMemberId ?? "",
       intendedMemberName: fullName(intendedMember),
       substituteMemberId: ownerSubstitution.substituteMemberId,
       substituteMemberName: fullName(substituteMember),

@@ -6,6 +6,7 @@ import {
   isWithinAdditionalPaymentResendCooldown,
   resolveAdditionalPaymentChase,
 } from "@/lib/additional-payment-chase";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { readBookingNoEmails } from "@/lib/booking-email-suppression";
 import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
@@ -86,6 +87,8 @@ export async function resendAdditionalPaymentEmail(params: {
       deletedAt: true,
       lodgeId: true,
       member: { select: { email: true, firstName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: {
         select: {
           id: true,
@@ -308,9 +311,9 @@ export async function resendAdditionalPaymentEmail(params: {
   try {
     outcome = await sendAdditionalPaymentReminderEmail({
       bookingId: booking.id,
-      recipientMemberId: booking.memberId,
-      email: booking.member.email,
-      firstName: booking.member.firstName,
+      recipientMemberId: bookingOwner(booking).memberId,
+      email: bookingOwner(booking).member.email,
+      firstName: bookingOwner(booking).member.firstName,
       additionalAmountCents: payment.additionalAmountCents,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
@@ -378,7 +381,7 @@ export async function resendAdditionalPaymentEmail(params: {
     action: "booking.additionalPayment.reminderResent",
     memberId: params.actorMemberId,
     actorMemberId: params.actorMemberId,
-    subjectMemberId: booking.memberId,
+    subjectMemberId: bookingOwner(booking).memberId,
     targetId: booking.id,
     entityType: "Booking",
     entityId: booking.id,

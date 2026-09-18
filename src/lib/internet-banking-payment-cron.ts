@@ -4,6 +4,7 @@ import {
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
@@ -19,6 +20,7 @@ import {
 } from "@/lib/member-credit";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
+import { formatCents } from "@/lib/utils";
 import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
@@ -51,6 +53,8 @@ function releaseOneHold(paymentId: string, now: Date) {
           booking: {
             include: {
               member: true,
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
               guests: { include: { nights: true } },
             },
           },
@@ -75,7 +79,14 @@ function releaseOneHold(paymentId: string, now: Date) {
       // allocation/deallocation reconciliation from changing precise slices
       // between this guard, the local restore, and the clearing aggregate.
       await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId);
-      await lockMemberCreditLedger(fresh.booking.memberId, tx);
+      const creditLedgerMemberId = bookingOwner(fresh.booking).memberId;
+      // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+      // booking has none, so there is no key to take. Passing a null key would
+      // either throw inside the helper or degenerate to a shared advisory key,
+      // which is an `INV-LOCK` hazard that shows up only under concurrency.
+      if (creditLedgerMemberId) {
+        await lockMemberCreditLedger(creditLedgerMemberId, tx);
+      }
 
       if (await findUnconvergedAppliedCreditDeallocation(fresh.id, tx)) {
         return {
@@ -117,11 +128,11 @@ function releaseOneHold(paymentId: string, now: Date) {
       // replay guard; this transaction's guard set (payment still PENDING,
       // hold not yet released, booking still CONFIRMED) is its exactly-once
       // guarantee — re-runs skip released holds before reaching this line.
-      const creditRestoredCents = await restoreCreditFromBooking(
-        fresh.booking.memberId,
-        fresh.bookingId,
-        tx,
-      );
+      // #3369: no member, no ledger, so nothing to restore. Zero is the fact.
+      const restoreMemberId = bookingOwner(fresh.booking).memberId;
+      const creditRestoredCents = restoreMemberId
+        ? await restoreCreditFromBooking(restoreMemberId, fresh.bookingId, tx)
+        : 0;
 
       // Size the invoice-clearing credit note like the never-captured cancel
       // path (#1547 / booking-cancel.ts), NOT the credit-reduced payment amount
@@ -266,6 +277,8 @@ export async function releaseExpiredInternetBankingHolds(
       booking: {
         include: {
           member: true,
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           guests: { include: { nights: true } },
         },
       },
@@ -316,7 +329,7 @@ export async function releaseExpiredInternetBankingHolds(
       // the cancel branches.
       reason:
         creditRestoredCents > 0
-          ? `Internet Banking payment hold expired before reconciliation. NZ$${(creditRestoredCents / 100).toFixed(2)} of applied account credit was returned.`
+          ? `Internet Banking payment hold expired before reconciliation. ${formatCents(creditRestoredCents)} of applied account credit was returned.`
           : "Internet Banking payment hold expired before reconciliation.",
       snapshot: {
         paymentId: payment.id,
@@ -328,7 +341,7 @@ export async function releaseExpiredInternetBankingHolds(
     createAuditLog({
       action: "booking.internet_banking_hold_expired",
       targetId: payment.bookingId,
-      subjectMemberId: payment.booking.memberId,
+      subjectMemberId: bookingOwner(payment.booking).memberId,
       entityType: "Booking",
       entityId: payment.bookingId,
       category: "payment",
@@ -368,10 +381,10 @@ export async function releaseExpiredInternetBankingHolds(
     sendBookingCancelledEmail(
       {
         bookingId: payment.booking.id,
-        recipientMemberId: payment.booking.memberId,
+        recipientMemberId: bookingOwner(payment.booking).memberId,
       },
-      payment.booking.member.email,
-      payment.booking.member.firstName,
+      bookingOwner(payment.booking).member.email,
+      bookingOwner(payment.booking).member.firstName,
       payment.booking.checkIn,
       payment.booking.checkOut,
       0,

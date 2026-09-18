@@ -108,7 +108,7 @@ vi.mock("@/lib/audit", () => ({
 // over the real module and overrides only what it actually stubs — which is the shape
 // that cannot break again the next time an edge is added.
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/lodge-capacity")>()),
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity")),
   // getPublicBookingRequestLodges now resolves each lodge's capacity.
   getLodgeCapacity: vi.fn(async (lodgeId: string) =>
     lodgeId === "lodge-2" ? 40 : 20,
@@ -158,7 +158,7 @@ vi.mock("@/lib/member-guest-consent-notifications", () => ({
 // error constructor stay usable; only the assertion is a controllable spy.
 vi.mock("@/lib/booking-member-night-conflicts", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/booking-member-night-conflicts")>();
+    (await importOriginal()) as typeof import("@/lib/booking-member-night-conflicts");
   return {
     ...actual,
     assertNoBookingMemberNightConflicts: vi.fn().mockResolvedValue(undefined),

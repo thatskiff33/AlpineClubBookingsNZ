@@ -139,6 +139,7 @@ function runSwap(tx: ReturnType<typeof makeTx>["tx"]) {
         memberId: "member-1",
         isMember: true,
         perNightRates: [5000, 5000],
+        nightDates: [new Date("2026-08-01T00:00:00Z"), new Date("2026-08-02T00:00:00Z")],
       },
     ],
   });

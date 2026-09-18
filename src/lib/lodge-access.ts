@@ -46,9 +46,15 @@ export async function getEligibleLodgeIdsForMember(
  */
 export async function isMemberEligibleToBookLodge(
   db: LodgeAccessDb,
-  memberId: string,
+  /** The BOOKER, or null when the booking is owned by an Organisation (#3369). */
+  memberId: string | null,
   lodgeId: string,
 ): Promise<boolean> {
+  // #3369: a booking restriction is a MEMBER grant, held as rows against a
+  // person. An organisation has none, which is the default-open case — exactly
+  // the answer the invented school member gave, since it never carried a
+  // restriction row either. No school's lodge access changes today.
+  if (memberId === null) return true;
   const eligible = await getEligibleLodgeIdsForMember(db, memberId);
   return eligible.allLodges || eligible.lodgeIds.includes(lodgeId);
 }
@@ -119,7 +125,10 @@ export async function getStaffLodgeBinding(
   // @@unique([memberId, lodgeId, kind]) guarantees two rows = two distinct
   // lodges, so a length of 2 is genuinely ambiguous, not a duplicate.
   if (grants.length === 0) return { kind: "none" };
-  if (grants.length === 1) return { kind: "bound", lodgeId: grants[0].lodgeId };
+  const [onlyGrant] = grants;
+  if (grants.length === 1 && onlyGrant) {
+    return { kind: "bound", lodgeId: onlyGrant.lodgeId };
+  }
   return { kind: "ambiguous" };
 }
 

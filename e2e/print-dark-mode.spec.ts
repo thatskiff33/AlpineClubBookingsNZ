@@ -64,7 +64,7 @@ async function readLuminance(page: Page, selector: string) {
     const parseSrgb = (color: string): number[] | null => {
       const match = /^rgba?\(([^)]*)\)$/i.exec(color.trim());
       if (!match) return null;
-      return match[1]
+      return (match[1] ?? "")
         .split(/[\s,/]+/)
         .filter(Boolean)
         .map(Number);
@@ -72,7 +72,14 @@ async function readLuminance(page: Page, selector: string) {
 
     const relativeLuminance = (color: string): number => {
       const channels = parseSrgb(color);
-      if (!channels || channels.length < 3 || channels.some(Number.isNaN)) {
+      const [red, green, blue] = channels ?? [];
+      if (
+        !channels ||
+        channels.some(Number.isNaN) ||
+        red === undefined ||
+        green === undefined ||
+        blue === undefined
+      ) {
         throw new Error(
           `#2146 luminance probe: expected getComputedStyle to serialize a ` +
             `colour as rgb()/rgba(), got "${color}". Modern colour syntaxes ` +
@@ -83,13 +90,13 @@ async function readLuminance(page: Page, selector: string) {
             `re-enabling the assertion.`,
         );
       }
-      const [red, green, blue] = channels.slice(0, 3).map((part) => {
+      const linear = (part: number) => {
         const channel = part / 255;
         return channel <= 0.04045
           ? channel / 12.92
           : ((channel + 0.055) / 1.055) ** 2.4;
-      });
-      return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+      };
+      return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
     };
 
     const element = document.querySelector(target);

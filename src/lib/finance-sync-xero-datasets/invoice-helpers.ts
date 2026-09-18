@@ -217,8 +217,14 @@ export function compareOpenInvoicePayloadsByDueDate(
 export function deriveSnapshotCurrency(
   currencyPayloads: ReadonlyArray<{ currency: string }>
 ): string | null {
-  const currencies = currencyPayloads.map((currency) => currency.currency);
-  return currencies.length === 1 && currencies[0] !== "UNKNOWN"
-    ? currencies[0]
+  // "Exactly one known currency" said as a first with no rest, so the currency
+  // returned is the one this expression already checked (#2800).
+  const [soleCurrency, ...extraCurrencies] = currencyPayloads.map(
+    (payload) => payload.currency
+  );
+  return soleCurrency !== undefined &&
+    extraCurrencies.length === 0 &&
+    soleCurrency !== "UNKNOWN"
+    ? soleCurrency
     : null;
 }

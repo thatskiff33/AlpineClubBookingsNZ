@@ -136,11 +136,16 @@ export function subscriptionInvoiceMatchesSnapshot(input: {
     && invoice.contact?.contactID === contactId
     && invoiceCents(invoice) === amountCents
     && invoiceLines.length === lines.length
-    && lines.every((line, index) =>
-      lineCents(invoiceLines[index]) === line.amountCents
-      && invoiceLines[index]?.accountCode === line.accountCode
-      && (invoiceLines[index]?.itemCode ?? null) === line.itemCode
-      && invoiceLines[index]?.taxType === "OUTPUT2")
+    // The line at this position is read once; its absence fails the match, as
+    // the length comparison above already did for a short list (#2800).
+    && lines.every((line, index) => {
+      const invoiceLine = invoiceLines[index];
+      return invoiceLine !== undefined
+        && lineCents(invoiceLine) === line.amountCents
+        && invoiceLine.accountCode === line.accountCode
+        && (invoiceLine.itemCode ?? null) === line.itemCode
+        && invoiceLine.taxType === "OUTPUT2";
+    })
     && invoiceDueIntervalDays(invoice) === dueDays
     && invoice.type === Invoice.TypeEnum.ACCREC
     && invoice.lineAmountTypes === LineAmountTypes.Inclusive

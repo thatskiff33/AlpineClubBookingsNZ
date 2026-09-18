@@ -89,16 +89,57 @@ export function restrictPerNightRatesToWindow(
   window: WorkPartyNightWindow,
   nightDates?: ReadonlyArray<Date> | null
 ): number[] {
+  // Mapped over the kept positions, and NOT `filter` (#3374 review). The two
+  // agree on every dense input, and `filter` reads better — but it skips holes,
+  // so a sparse `perNightRates` silently yields a SHORTER vector rather than
+  // one that still lines up with the nights it was taken from. This function is
+  // exported and reads like a live API, so it should not hand a future caller
+  // the shape that `promo.ts` had to fix: there, the same `filter` form could
+  // shift a discount onto the wrong night.
+  //
+  // A kept index always exists, because the positions come from this array's
+  // own length — so the refusal below is unreachable rather than defensive, and
+  // it says which invariant it rests on instead of asserting the value away.
+  return inWindowNightIndexes(perNightRates.length, firstNight, window, nightDates).map(
+    (index) => {
+      const rate = perNightRates[index];
+      if (rate === undefined) {
+        throw new Error(
+          `Work-party window kept night index ${index}, which is inside the rate vector's own length but holds no rate (#3276).`,
+        );
+      }
+      return rate;
+    }
+  );
+}
+
+/**
+ * The positions, among `nightCount` nights, that fall inside the event window
+ * (#3276) — the ONE statement of the window rule, which
+ * `restrictPerNightRatesToWindow` narrows to rates. `promo.ts` needs the
+ * positions themselves so it can keep a guest's `nightDates` parallel to the
+ * rates it filters: an adjustment row is attributed to a night by DATE, and a
+ * rate vector filtered without its dates would attribute the discount to the
+ * wrong nights on any stay the window only partly covers.
+ */
+export function inWindowNightIndexes(
+  nightCount: number,
+  firstNight: Date,
+  window: WorkPartyNightWindow,
+  nightDates?: ReadonlyArray<Date> | null
+): number[] {
   const startKey = formatDateOnly(window.startDate);
   const endKey = formatDateOnly(window.endDate);
-  return perNightRates.filter((_, index) => {
-    const nightDate =
-      nightDates && nightDates[index]
-        ? nightDates[index]
-        : addDaysDateOnly(firstNight, index);
+  const kept: number[] = [];
+  for (let index = 0; index < nightCount; index += 1) {
+    // Read once. The pair of reads this replaces tested one and returned the
+    // other, so the type could not know they were the same value (#2800).
+    const providedDate = nightDates?.[index];
+    const nightDate = providedDate ?? addDaysDateOnly(firstNight, index);
     const nightKey = formatDateOnly(nightDate);
-    return nightKey >= startKey && nightKey <= endKey;
-  });
+    if (nightKey >= startKey && nightKey <= endKey) kept.push(index);
+  }
+  return kept;
 }
 
 /**

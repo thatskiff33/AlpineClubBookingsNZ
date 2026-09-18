@@ -94,6 +94,19 @@ const BLOCKED_TYPE = {
   name: "Social",
   bookingBehavior: "BLOCK_BOOKING",
 };
+/**
+ * The built-in `FULL` after an officer picked a different booking behaviour for
+ * it. The membership-type route's built-in guard covers deletion only, and the
+ * membership-types screen renders the selector for every type. The engine still
+ * resolves `FULL` by key, so its hut fees are still invoiced and still need an
+ * item code (#2933).
+ */
+const REBEHAVED_FULL_TYPE = {
+  id: "type-full-rebehaved",
+  key: "FULL",
+  name: "Full Member",
+  bookingBehavior: "NON_MEMBER_RATE",
+};
 
 describe("Xero item-code mappings route", () => {
   beforeEach(() => {
@@ -103,7 +116,13 @@ describe("Xero item-code mappings route", () => {
     mockPrisma.membershipType.findMany.mockImplementation(
       async (args: { where?: { id?: { in?: string[] } } }) => {
         const ids = args?.where?.id?.in ?? [];
-        return [FULL_TYPE, NON_MEMBER_TYPE, SCHOOL_FLAT_TYPE, BLOCKED_TYPE].filter((type) =>
+        return [
+          FULL_TYPE,
+          NON_MEMBER_TYPE,
+          SCHOOL_FLAT_TYPE,
+          BLOCKED_TYPE,
+          REBEHAVED_FULL_TYPE,
+        ].filter((type) =>
           ids.includes(type.id)
         );
       }
@@ -484,6 +503,23 @@ describe("Xero item-code mappings route", () => {
       makePutRequest({
         hutFees: {
           [`${NON_MEMBER_TYPE.id}_WINTER_ADULT`]: { itemCode: "HUTFEE-NON" },
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroItemCodeMapping.upsert).toHaveBeenCalled();
+  });
+
+  it("PUT accepts hut fees for a key-resolved built-in whose behaviour was edited", async () => {
+    // `FULL` is resolved by key for an unplaceable member and for every
+    // other-lodge guest, so its hut fees are still invoiced whatever its own
+    // row says about booking behaviour. Refusing it an item code here would
+    // silently push those lines onto the legacy flat code (#2933).
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          [`${REBEHAVED_FULL_TYPE.id}_WINTER_ADULT`]: { itemCode: "HUTFEE-FULL" },
         },
       })
     );

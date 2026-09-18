@@ -379,7 +379,7 @@ describe("runMirrorSync", () => {
   it("mirrors an over-long sanitised body as plain text rather than wedging", async () => {
     const anchors = Array.from(
       { length: 420 },
-      (unused, i) => `<a href="https://example.org/${i}">x</a>`,
+      (_unused, i) => `<a href="https://example.org/${i}">x</a>`,
     ).join(" ");
     mocks.pullSharedPostSync.mockResolvedValue(
       envelope([visiblePost({ bodyHtml: anchors })]),

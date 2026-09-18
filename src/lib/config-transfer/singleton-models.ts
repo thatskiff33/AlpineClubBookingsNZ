@@ -28,7 +28,8 @@ export function singletonShapedModelNamesFromSchema(schemaText: string): string[
   for (const rawLine of schemaText.split(/\r?\n/)) {
     const line = rawLine.trim();
     const modelMatch = line.match(/^model\s+(\w+)\s*\{/);
-    if (modelMatch) {
+    // The capture group has no `?` quantifier, so a match always carries it.
+    if (modelMatch?.[1] !== undefined) {
       current = modelMatch[1];
       continue;
     }
@@ -82,8 +83,14 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "deployment-local setup-wizard progress (which steps THIS install has " +
     "completed/skipped, and by whom); operational install state, not portable " +
     "club policy — instance-local",
+  AiSpendCurrencySettings:
+    "the administrator-set NZD -> club-currency conversion rate for AI spend " +
+    "(#3354), shared by both AI modules; a property of THIS deployment's " +
+    "configured currency (APP_CURRENCY), so a source club's rate has no meaning on " +
+    "a target and, like the two spend caps it prices against, must never land " +
+    "there — a fresh import keeps the target's own rate (or none) — instance-local",
   AiAssistantSettings:
-    "deployment-specific AI monthly spend cap (NZD integer cents); an operational " +
+    "deployment-specific AI monthly spend cap (club-currency integer cents, #3354); an operational " +
     "spend control a source club must never silently reset on a target — a fresh " +
     "import keeps the target's own cap (#2211) — instance-local",
   AnalyticsSettings:
@@ -96,7 +103,7 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "target's own analytics configuration, and a target with none stays off " +
     "(fail-closed) — instance-local",
   DiagnosticsSettings:
-    "deployment-local AI Diagnostics monthly spend cap (NZD integer cents) for a " +
+    "deployment-local AI Diagnostics monthly spend cap (club-currency integer cents) for a " +
     "SEPARATE admin-only paid product (AID-2, #2371); like AiAssistantSettings it " +
     "is an operational spend control a source club must never silently reset on a " +
     "target — enabling paid diagnostics is a per-deployment decision, so a fresh " +
@@ -155,6 +162,24 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "never agreed to, or hand it a foreign sync position that silently skips rows " +
     "it has never sent — a fresh import keeps the target's own connection, and a " +
     "target with none stays disconnected (fail-closed) — instance-local",
+  MirotalkSettings:
+    "this install's own video-meeting server (#2940), and ServerNzSettings' case " +
+    "almost exactly: baseUrl names the MiroTalk instance THIS club runs, and the " +
+    "three secrets that make a join link work — the signing key and the host " +
+    "username/password — live in the encrypted credential store and never travel. " +
+    "So importing the address is harmful in the one direction it can go: a target " +
+    "club's members would be sent to the SOURCE club's meeting server, holding a " +
+    "token minted with the target's own key, which that server will not accept. " +
+    "The pairing is the point — this change clears the stored secrets whenever an " +
+    "administrator moves the address, precisely because a secret is meaningless to " +
+    "any instance but the one it was set for, and a bundle apply would re-create " +
+    "the mismatch that clearing exists to prevent. The presenter flag and the " +
+    "join-link lifetime are portable-looking club policy, but they are two columns " +
+    "of the same singleton row and mean nothing without an address; the source " +
+    "club's answers are not worth carrying that risk for. A fresh import keeps the " +
+    "target's own settings, and a target with none falls back to its own " +
+    "environment or to the derived meet.<domain> (fail-closed: no address it did " +
+    "not choose) — instance-local",
 };
 
 /**

@@ -1,4 +1,9 @@
-import type { Prisma } from "@prisma/client";
+import type { ClubModuleSettings, Prisma, PrismaClient } from "@prisma/client";
+import { formatCents } from "@/lib/utils";
+import {
+  AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS,
+  AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS,
+} from "./ai-spend";
 import type { FeatureFlags } from "./schema";
 
 export const MODULE_KEYS = [
@@ -29,6 +34,7 @@ export const MODULE_KEYS = [
   "memberGuests",
   "aiDiagnostics",
   "maintenanceReports",
+  "memberLodgeRoster",
   "alpineCentralServer",
   "commsPortal",
 ] as const;
@@ -55,6 +61,80 @@ export const CLUB_MODULE_SETTINGS_COLUMN_SELECT = {
   updatedAt: true,
   updatedByMemberId: true,
 } satisfies Prisma.ClubModuleSettingsSelect;
+
+/** The id of the one ClubModuleSettings row. `module-settings.ts` re-exports it. */
+export const CLUB_MODULE_SETTINGS_ID = "default";
+
+/** Exactly the columns the canonical select projects. */
+export type ClubModuleSettingsRecord = Pick<
+  ClubModuleSettings,
+  ModuleKey | "updatedAt" | "updatedByMemberId"
+>;
+
+/**
+ * What `readClubModuleSettingsRecord` needs from a client. Structural so that
+ * Prisma's own delegate and the narrow fakes tests inject both satisfy it, and
+ * generic in what `findUnique` resolves to, so a real client yields the full
+ * record and a Partial fake yields its Partial — the caller's own type, not a
+ * cast.
+ */
+export interface ClubModuleSettingsReadClient<TRecord> {
+  clubModuleSettings: {
+    findUnique: (args: {
+      where: { id: string };
+      select: typeof CLUB_MODULE_SETTINGS_COLUMN_SELECT;
+    }) => PromiseLike<TRecord>;
+  };
+}
+
+/**
+ * THE ONE READ of the ClubModuleSettings singleton (#2996; INV-SSOT-001, and
+ * the "unrepresentable over policed" preference of INV-SSOT-003). It owns the
+ * select, so no caller spells one; the guard in
+ * `club-module-settings-select-guard.test.ts` refuses a direct read call
+ * anywhere else, which makes the rule exact rather than a threshold. The one
+ * path it cannot see is config-transfer's generic `delegateOf(...)` read in
+ * `src/lib/config-transfer/categories/club-settings.ts`, which threads the same
+ * select through `spec.select` and is pinned by its own contract test.
+ *
+ * It returns the RAW row — null when the club has never saved the Modules page
+ * — and neither normalises nor defaults nor catches. That is deliberate: setup
+ * readiness tells never-saved from saved by exactly that null, and the tolerant
+ * loaders that map null to the defaults or swallow a read failure sit above
+ * this in `module-settings.ts` and `admin-modules.ts`, each with its own
+ * documented reason.
+ *
+ * WHY HERE and not in `module-settings.ts`: this module has no runtime imports,
+ * so a caller gains no prisma or logger edge by reaching it; and 65 test files
+ * replace `@/lib/module-settings` with a mock factory, every one of which would
+ * have needed this export added before `admin-modules` and `lodge-capacity`
+ * could call it. Nothing mocks this module with a factory.
+ */
+export function readClubModuleSettingsRecord(
+  db: Pick<PrismaClient, "clubModuleSettings">,
+): Promise<ClubModuleSettingsRecord | null>;
+export function readClubModuleSettingsRecord<TRecord>(
+  db: ClubModuleSettingsReadClient<TRecord>,
+): Promise<TRecord>;
+export async function readClubModuleSettingsRecord(
+  db: Pick<PrismaClient, "clubModuleSettings"> | ClubModuleSettingsReadClient<unknown>,
+): Promise<unknown> {
+  // Two overloads because Prisma's delegate is generic over its own args and
+  // TypeScript cannot unify that with a concrete structural signature — it
+  // infers the UNNARROWED row and then rejects the narrowed one the call
+  // returns. The real client therefore gets the projection type stated
+  // outright, a fake keeps whatever its own findUnique resolves to, and the one
+  // place the two meet is this narrowing of the delegate.
+  //
+  // Written as `client.clubModuleSettings.findUnique(` on purpose: the guard
+  // recognises the delegate call by that spelling and asserts this file is the
+  // one read it exempts, so a shape it cannot see would fail the self-check.
+  const client = db as unknown as ClubModuleSettingsReadClient<unknown>;
+  return client.clubModuleSettings.findUnique({
+    where: { id: CLUB_MODULE_SETTINGS_ID },
+    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+  });
+}
 
 // Default activation for a club that has not saved its Modules page yet. The
 // optional "capability" modules (which require deploy-time setup such as Xero
@@ -98,6 +178,11 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   // post from this module publishes member-written content to other clubs.
   // An upgrade must not start doing that because nobody opted out (#2993).
   commsPortal: false,
+  // Default OFF, inverting the general ON rule above on purpose: switching the
+  // roster on shows one member's stay pattern — which lodge, which nights — to
+  // every other member who can book that lodge. An upgrade must not start
+  // doing that because nobody opted out (#2942).
+  memberLodgeRoster: false,
 };
 
 export interface ModuleDefinition {
@@ -308,7 +393,9 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "Free-text help questions answered by a paid AI model, grounded in each page's help content. Curated page help works without it.",
     dependencies: [
       "Enter your Anthropic API key under Admin → Integrations before the assistant can answer.",
-      "A monthly spend cap (default NZ$10) hard-stops AI answers for the rest of the month once reached; adjust it on the AI assistant settings.",
+      // The default renders through the canonical money formatter in the
+      // club's configured currency (#3354, INV-CONFIG-001) — never a literal.
+      `A monthly spend cap (default ${formatCents(AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS)}) hard-stops AI answers for the rest of the month once reached; adjust it on the AI assistant settings.`,
     ],
   },
   memberGuests: {
@@ -363,7 +450,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       // that spends money — the two setup steps below, and a passing readiness
       // check, are what make the product usable.
       "Enter a DEDICATED Anthropic API key under Admin → Integrations (a separate key from the AI help assistant — the keys are never shared).",
-      "Set a monthly spend budget on the AI Diagnostics settings. It ships at NZ$0, which hard-stops every paid diagnostics call until you raise it.",
+      `Set a monthly spend budget on the AI Diagnostics settings. It ships at ${formatCents(AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS)}, which hard-stops every paid diagnostics call until you raise it.`,
     ],
   },
   alpineCentralServer: {
@@ -386,6 +473,17 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "The board works with no central-server connection: posts are club-only unless a member ticks 'share with all clubs'.",
       "Sharing a post with other clubs additionally needs the Alpine Central Server module switched on and connected.",
       "When off, the member board and its admin screens return Not Found. Existing posts are kept and reappear when it is switched back on.",
+    ],
+  },
+  memberLodgeRoster: {
+    key: "memberLodgeRoster",
+    label: "Member lodge roster",
+    description:
+      "Let a signed-in member see who else is staying, for the next 30 nights, at a lodge they can already book. Names and nights only — no contact details, no prices and no booking information. SHOWS MEMBERS TO EACH OTHER: a member's name and the nights they are staying become visible to every other member with access to that lodge, and there is no way for an individual to hide themselves. Off unless you turn it on.",
+    dependencies: [
+      "Choose how much of a name is shown for each lodge under Admin → Lodges → the lodge → Member roster. The default shows full names.",
+      "A booking that includes a child never names anyone in it: it shows a family or group label instead, at every setting.",
+      "When off, the roster page returns Not Found and no roster data is read.",
     ],
   },
 };

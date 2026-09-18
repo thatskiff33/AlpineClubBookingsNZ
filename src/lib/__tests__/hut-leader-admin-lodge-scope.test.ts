@@ -31,7 +31,7 @@ vi.mock("@/lib/hut-leader-coverage", () => ({
   getUnassignedHutLeaderDates: mocks.getUnassigned,
 }))
 vi.mock("@/lib/admin-occupancy", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/admin-occupancy")>()),
+  ...((await importOriginal()) as typeof import("@/lib/admin-occupancy")),
   getAdminOccupancyMonth: mocks.getOccupancy,
 }))
 

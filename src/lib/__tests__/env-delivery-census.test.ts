@@ -131,11 +131,12 @@ function declaredVariables(): Map<string, Set<string>> {
  * Keys in a Compose file's `environment:` mappings — the shared anchor AND every
  * service's own block.
  *
- * BOTH HALVES ARE LOAD-BEARING. `measurement/stack/docker-compose.measure.yml`
- * delivers literals per service and `docker-compose.staging.yml` delivers
- * `APP_ENVIRONMENT_ROLE` and the transport flags per service, so a reader that
- * only parsed the base anchor would call those stacks broken. A reader that only
- * parsed services would miss the anchor that supplies almost everything.
+ * BOTH HALVES ARE LOAD-BEARING. `docker-compose.staging.yml` delivers
+ * `APP_ENVIRONMENT_ROLE` and the transport flags per service and declares
+ * nothing in an anchor, so a reader that only parsed the base anchor would call
+ * that stack broken. `docker-compose.yml` delivers almost everything through
+ * its `x-app-environment` anchor, so a reader that only parsed services would
+ * miss it.
  *
  * `build.args:` is deliberately NOT counted. A build arg is baked into an image
  * and is not a runtime environment variable — `RELEASE_ID` is exactly that, and
@@ -321,9 +322,9 @@ describe("GUARD A: every declared, read variable is delivered (INV-CONFIG-004)",
   });
 
   it("parses environment keys out of EVERY compose file, not just the base one", () => {
-    // The measurement stack delivers per service and declares nothing in an
-    // anchor, so a reader that only understood anchors would return zero for it
-    // and wrongly report the stack broken.
+    // docker-compose.staging.yml delivers per service and declares nothing in
+    // an anchor, so a reader that only understood anchors would return zero
+    // for it and wrongly report the stack broken.
     for (const file of composeFiles) {
       expect(
         deliveredKeys(file).size,
@@ -455,7 +456,6 @@ function booleanFlag(value: string | null | undefined): boolean | "invalid" | un
 const STACK_SCRIPTS = [
   "scripts/run-production-blue-green-deploy.sh",
   "scripts/e2e-stack.sh",
-  "measurement/stack/measure-stack.sh",
 ];
 
 function composeCombinations(): string[][] {
@@ -574,29 +574,27 @@ function renderCompose(files: string[], envFile: string): ComposeRender {
 
 describe("GUARD B: the rendered compose environment (INV-CONFIG-004)", () => {
   /*
-    The fixture is the repository's own tracked staging template plus the one
-    `:?`-required variable no tracked file supplies. Placeholder values only —
-    nothing secret is written anywhere.
+    The fixture is the repository's own tracked staging template. Every
+    `:?`-required variable across the remaining compose files (DB_PASSWORD,
+    NEXTAUTH_SECRET) is already supplied there; the one variable that was NOT
+    — MEASURE_APP_IMAGE, required only by the now-removed measurement stack's
+    Compose file — went with it (#3382). Placeholder values only — nothing
+    secret is written anywhere.
   */
   const combinations = composeCombinations();
   const fixtureDir = mkdtempSync(path.join(tmpdir(), "env-delivery-census-"));
   const envFile = path.join(fixtureDir, "census.env");
-  writeFileSync(
-    envFile,
-    `${readRepoFile(".env.staging.example")}\nMEASURE_APP_IMAGE=env-delivery-census-fixture:local\n`,
-    "utf8",
-  );
+  writeFileSync(envFile, readRepoFile(".env.staging.example"), "utf8");
 
   it("derives the stack combinations from the scripts that run them", () => {
     /*
-      Non-empty AND exactly the set the scripts name. If a fourth stack appears,
+      Non-empty AND exactly the set the scripts name. If a third stack appears,
       this fails and its combination has to be acknowledged rather than skipped.
     */
     expect(combinations.length).toBeGreaterThan(0);
     expect(combinations.map((files) => files.join(" + ")).sort()).toEqual([
       "docker-compose.yml",
       "docker-compose.yml + docker-compose.staging.yml",
-      "docker-compose.yml + measurement/stack/docker-compose.measure.yml",
     ]);
   });
 

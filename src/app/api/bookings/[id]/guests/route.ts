@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import {
   PaymentSource,
@@ -37,6 +38,10 @@ import {
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import {
+  recordBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
+import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
@@ -58,6 +63,11 @@ import {
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import {
+  NO_ADDITIONAL_ASK,
+  sizeAdditionalAsk,
+  type AdditionalAsk,
+} from "@/lib/additional-payment-ask";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
@@ -98,8 +108,15 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { nameField } from "@/lib/zod-helpers";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
-import { hasIssuedPrimaryXeroInvoice, isSettledBookingStatus } from "@/lib/booking-payment-state";
+import {
+  activeLifecycleEditRefusal,
+  getBookingEditPolicy,
+} from "@/lib/booking-edit-policy";
+import {
+  hasIssuedPrimaryXeroInvoice,
+  isCapturedPaymentStatus,
+  isSettledBookingStatus,
+} from "@/lib/booking-payment-state";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
@@ -285,6 +302,8 @@ export async function POST(
           },
           payment: true,
           member: true,
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           promoRedemption: {
             include: {
               guestTargets: { select: { bookingGuestId: true } },
@@ -304,7 +323,7 @@ export async function POST(
       }
 
       if (
-        booking.memberId !== session.user.id &&
+        bookingOwner(booking).memberId !== session.user.id &&
         !isAdmin
       ) {
         throw new ApiError("Forbidden", 403);
@@ -313,15 +332,10 @@ export async function POST(
       // #3200: this door admits no finished stay, which is why the shared
       // invoice test further down — it answers COMPLETED as "invoice issued" —
       // has nothing new to handle here. Widening this gate is a real change.
-      // #3245 proposes routing this list through `canModifyBookingStatusForRole`
-      // rather than restating it; that is a convergence, not a widening, and the
-      // COMPLETED exclusion has to survive it either way.
-      if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
-        throw new ApiError(
-          "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-          400
-        );
-      }
+      // #3245: derived, not restated. `includeFinishedStay` stays off, so the
+      // COMPLETED exclusion survives the convergence unchanged.
+      const editRefusal = activeLifecycleEditRefusal(booking.status, actorRole);
+      if (editRefusal) throw new ApiError(editRefusal, 400);
 
       const editPolicy = getBookingEditPolicy({
         status: booking.status,
@@ -398,7 +412,7 @@ export async function POST(
         const { members: linkedMembers, boundary } =
           await resolveLinkedBookingMembersWithBoundary(
             tx,
-            booking.memberId,
+            bookingOwner(booking).memberId,
             newGuests.map((guest) => guest.memberId),
             {
               skipAuthorization: isAdmin,
@@ -411,7 +425,7 @@ export async function POST(
           session.user.id,
           {
             actorRole,
-            onBehalfOfMemberId: isAdmin ? booking.memberId : null,
+            onBehalfOfMemberId: isAdmin ? bookingOwner(booking).memberId : null,
             // D-8: a blocked cross-family member is refused neutrally.
             crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
           }
@@ -449,7 +463,7 @@ export async function POST(
 
       const seasonYear = seasonYearOfStoredDate(booking.checkIn);
       await assertMembershipTypeBookingAllowed(tx, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         guests: [
           ...booking.guests,
           ...normalizedNewGuests.map((guest) => ({
@@ -464,7 +478,7 @@ export async function POST(
 
       if (!isAdmin) {
         const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
-          bookingMemberId: booking.memberId,
+          bookingMemberId: bookingOwner(booking).memberId,
           checkIn: booking.checkIn,
           guests: normalizedNewGuests,
         });
@@ -495,7 +509,7 @@ export async function POST(
           // Owner decision, 3 Aug 2026: an unfinancial owner triggers the
           // requirement whether or not they hold a bed on the booking they are
           // adding to.
-          bookingOwnerMemberId: booking.memberId,
+          bookingOwnerMemberId: bookingOwner(booking).memberId,
           // D-12 over the whole post-add party. `toSubscriptionLockoutParticipants`
           // reads a persisted row's `consentStatus` and a pre-persist row's planned
           // `memberGuestConsent.consentStatus`, which is exactly the two shapes
@@ -598,7 +612,7 @@ export async function POST(
       let fullPriceBreakdown;
       try {
         fullPriceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-          ownerMemberId: booking.memberId,
+          ownerMemberId: bookingOwner(booking).memberId,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           guests: allGuestsForPricing,
@@ -678,22 +692,61 @@ export async function POST(
        */
       const parked = addEvidence.occurrences.length > 0;
 
+      /**
+       * The breakdown row for one position of the party pass.
+       *
+       * `fullPriceBreakdown.guests` is index-aligned with `allGuestsForPricing`
+       * by the pricing engine's construction, but `PriceBreakdown` declares no
+       * length relation to its input, so a short breakdown type-checks cleanly
+       * and would otherwise be read past. A missing row here is a wiring defect
+       * in whoever built the breakdown, and there is no honest amount to sell a
+       * night at or to promo-allocate against — refused by name, never guessed
+       * (#3031, #2801). One home for that condition: both readers below go
+       * through it, so neither repeats the answer.
+       */
+      const pricedPartyMember = (index: number) => {
+        const priced = fullPriceBreakdown.guests[index];
+        if (priced === undefined) {
+          throw new Error(
+            `The add-guest route has no priced guest at breakdown position ${index} of ${fullPriceBreakdown.guests.length} (#3031).`
+          );
+        }
+        return priced;
+      };
+
       // Create BookingGuest records from their slice of the full-party
       // breakdown, persisting one BookingGuestNight row per priced night
       // (#1093) so added guests join the uniform night-row model: without
       // rows, a later edit would reprice their whole stay at current season
       // rates instead of honouring the prices they booked at (#1036).
+      //
+      // Each created guest's promo-allocation row is built in this same pass
+      // (#2801): the created `BookingGuest`, the normalized input it came from
+      // and the breakdown row that priced it are all in hand here, so they are
+      // carried together instead of being three arrays re-indexed against each
+      // other afterwards.
       const createdGuests: BookingGuest[] = [];
-      for (let i = 0; i < normalizedNewGuests.length; i++) {
-        const priced = fullPriceBreakdown.guests[booking.guests.length + i];
+      type PartyGuestNightRate = {
+        bookingGuestId: string;
+        memberId: string | null;
+        isMember: boolean;
+        perNightRates: ReturnType<typeof pricedPartyMember>["perNightCents"];
+        nightDates: ReturnType<typeof pricedPartyMember>["nightDates"];
+        firstNight: Date;
+      };
+      const newGuestNightRates: PartyGuestNightRate[] = [];
+      for (const [newGuestIndex, newGuest] of normalizedNewGuests.entries()) {
+        const priced = pricedPartyMember(
+          booking.guests.length + newGuestIndex
+        );
         const guest = await tx.bookingGuest.create({
           data: {
             bookingId,
-            firstName: normalizedNewGuests[i].firstName,
-            lastName: normalizedNewGuests[i].lastName,
-            ageTier: normalizedNewGuests[i].ageTier,
-            isMember: normalizedNewGuests[i].isMember,
-            memberId: normalizedNewGuests[i].memberId || null,
+            firstName: newGuest.firstName,
+            lastName: newGuest.lastName,
+            ageTier: newGuest.ageTier,
+            isMember: newGuest.isMember,
+            memberId: newGuest.memberId || null,
             stayStart: booking.checkIn,
             stayEnd: booking.checkOut,
             priceCents: priced.priceCents,
@@ -704,7 +757,7 @@ export async function POST(
             // `buildMemberGuestConsentWrite`. Spread only when present: a
             // family-scope or non-member guest writes exactly what it wrote
             // before.
-            ...(normalizedNewGuests[i].memberGuestConsent ?? {}),
+            ...(newGuest.memberGuestConsent ?? {}),
             nights: {
               create: (priced.nightDates ?? []).map((stayDate, k) => ({
                 stayDate,
@@ -727,22 +780,39 @@ export async function POST(
           },
         });
         createdGuests.push(guest);
+        newGuestNightRates.push({
+          bookingGuestId: guest.id,
+          memberId: newGuest.memberId ?? null,
+          isMember: newGuest.isMember,
+          perNightRates: priced.perNightCents,
+          nightDates: priced.nightDates,
+          // nightDates carry each guest's actual priced nights (partial stays
+          // included); firstNight remains the booking's check-in so internal
+          // work-party promos date their window from the stay start.
+          firstNight: booking.checkIn,
+        });
       }
 
-      const guestNightRates = allGuestsForPricing.map((guest, index) => ({
-        bookingGuestId:
-          index < booking.guests.length
-            ? booking.guests[index].id
-            : createdGuests[index - booking.guests.length]?.id ?? null,
-        memberId: guest.memberId ?? null,
-        isMember: guest.isMember,
-        perNightRates: fullPriceBreakdown.guests[index].perNightCents,
-        nightDates: fullPriceBreakdown.guests[index].nightDates,
-        // nightDates carry each guest's actual priced nights (partial stays
-        // included); firstNight remains the booking's check-in so internal
-        // work-party promos date their window from the stay start.
-        firstNight: booking.checkIn,
-      }));
+      // The party in the order the pricing pass saw it: the existing guests
+      // (whose pricing inputs `allGuestsForPricing` derives from these very
+      // rows, position for position), then the guests created above in arrival
+      // order. Each half reads its own source, so no position is looked up in
+      // an array it did not come from — which is also why `bookingGuestId` is
+      // now always a real id rather than a nullable one.
+      const guestNightRates: PartyGuestNightRate[] = [
+        ...booking.guests.map((guest, index) => {
+          const priced = pricedPartyMember(index);
+          return {
+            bookingGuestId: guest.id,
+            memberId: guest.memberId ?? null,
+            isMember: guest.isMember,
+            perNightRates: priced.perNightCents,
+            nightDates: priced.nightDates,
+            firstNight: booking.checkIn,
+          };
+        }),
+        ...newGuestNightRates,
+      ];
 
       // #3166: on a parked add the booking's stored total is written back
       // unchanged. The guests created above carry their own real prices; what
@@ -758,6 +828,9 @@ export async function POST(
       let newPromoAdjustmentCents = 0;
       let promoRemoved = false;
       let promoCoverage: PromoCoverageNotice | null = null;
+      // #3276: what the promotion took off each night or guest; empty when the
+      // booking carries none.
+      let adjustmentTargets: PromoAdjustmentTarget[] = [];
 
       if (parked) {
         // The booking's stored promotion figures, written back untouched. A
@@ -786,7 +859,7 @@ export async function POST(
         const application = await validateAndCalculatePromoDiscount(
           promo,
           {
-            memberId: booking.memberId,
+            memberId: bookingOwner(booking).memberId,
             bookingCheckIn: booking.checkIn,
             totalPriceCents: newTotalPriceCents,
             guests: guestNightRates,
@@ -816,6 +889,7 @@ export async function POST(
           const promoResult = application.discount;
           newDiscountCents = promoResult.discountCents;
           newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
+          adjustmentTargets = promoResult.adjustmentTargets;
           promoCoverage = await describePromoCapCoverage(tx, {
             promoCode: promo.code,
             capCoverage: application.capCoverage,
@@ -835,6 +909,19 @@ export async function POST(
             ),
           );
         }
+      }
+
+      // #3276: after the last night write and the promotion write, record what
+      // the promotion took off every night of every guest the engine priced —
+      // the existing guests included, since it re-decided the whole booking.
+      // A PARKED add re-ran nothing, so its new nights stay UNKNOWN.
+      if (!parked) {
+        await recordBookingNightAdjustments(tx, {
+          bookingId,
+          guestIds: guestNightRates.map((guest) => guest.bookingGuestId),
+          targets: adjustmentTargets,
+          writer: "the add-guest route",
+        });
       }
 
       // #3166: the booking's own stored final price on a parked add, written
@@ -887,6 +974,10 @@ export async function POST(
 
       // Calculate additional amount for confirmed+paid bookings
       let additionalAmountCents = 0;
+      // #3371: the card ask as the minter's own value type, carrying what
+      // minting it will absorb. Zero here never mints, so the Xero-only and
+      // nothing-owed endings below are safe without remembering to say so.
+      let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
       /**
        * #3200: "has the main Xero invoice already been raised?" is asked at four
        * edit doors and DEFINED in one — `hasIssuedPrimaryXeroInvoice`
@@ -896,19 +987,81 @@ export async function POST(
        * took its status list from the eligibility gate above instead, omitting
        * COMPLETED. Worked example in `docs/invariants/single-source-of-truth.md`.
        *
-       * The SUCCEEDED-only test below is deliberately left alone rather than
-       * folded into `hasCapturedPayment`: that would newly treat a refunded
-       * payment as settled and charge a card, which is a money decision this
-       * issue does not make.
+       * #3244 finished the job #3200 left: the SUCCEEDED-only test that used to
+       * sit here is now `hasCapturedPayment`, the same predicate the other three
+       * doors reach through `applyPaymentAdjustments`
+       * (`booking-modify-settlement.ts`). All four now answer "has money
+       * already moved through this card?" identically. Owner decision, 17 Sep
+       * 2026, on #3244 — the alternative of treating a fully-refunded booking
+       * as unpaid was rejected because it would have replaced one divergence
+       * with another.
+       *
+       * It WIDENS and does not narrow. `PARTIALLY_REFUNDED` and `REFUNDED` now
+       * count as paid, so the difference is charged instead of collected from
+       * nobody — the reachable defect this issue was filed for.
+       *
+       * It asks `isCapturedPaymentStatus`, the STATUS half, rather than the
+       * full `hasCapturedPayment` the other three doors use. That is deliberate
+       * and it is the one place this door differs from them. The full predicate
+       * also requires `amountCents > 0`, and a ZERO-DOLLAR booking — a stay
+       * fully covered by credit or a 100% promo — carries
+       * `{ amountCents: 0, status: SUCCEEDED }`. Using it here would have made
+       * this door stop asking that member for the added guest's price, because
+       * the Xero arm below cannot cover them at a club with the integration off.
+       * That is a NEW under-collection, at the very door this issue exists to
+       * stop under-collecting at, and it was never put to the owner.
+       *
+       * The money IS collectable: the additional-payment mint creates a FRESH
+       * intent and only reuses the Stripe customer (`findOrCreateCustomer` when
+       * there is none), so a null `stripePaymentIntentId` on the zero-dollar row
+       * is no obstacle. The other three doors share that hole; converging onto
+       * it would have been converging onto a defect. Filed separately.
        */
       const hasSettledPayment =
         isSettledBookingStatus(booking.status) &&
-        booking.payment?.status === "SUCCEEDED";
+        isCapturedPaymentStatus(booking.payment?.status ?? "");
       const hasSucceededPayment =
         hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
       const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
 
-      if ((hasSucceededPayment || hasIssuedXeroInvoice) && priceDiffCents > 0) {
+      /**
+       * #3340: THE FIFTH ASK-SIZING DOOR, and the one the first round missed.
+       *
+       * The other four reach `sizeAdditionalAsk` through
+       * `applyPaymentAdjustments`; this door settles for itself, so it calls the
+       * one home directly rather than restating a bare delta (`INV-SSOT-001`).
+       * It is fully wired into the same machinery -
+       * `createModificationAdditionalPaymentIntent` below mints through
+       * `queueSupersededAdditionalIntentCancellations`, which RETIRES every other
+       * outstanding ADDITIONAL intent on this payment - so a delta-sized ask here
+       * deletes the unpaid balance of the ask it replaces. A $130 booking paid,
+       * edited +$70 unpaid, then a guest added at +$70 asked for $70 and left $70
+       * owed by nobody: byte-for-byte the #3340 leak, at a door the fix had not
+       * reached. `isBookingFullyPaidForGuestNameEdits` returns false while an ask
+       * is outstanding, so nothing upstream refuses the sequence.
+       *
+       * The two arms stay separate, exactly as `applyPaymentAdjustments` keeps
+       * them. The STRIPE ask folds the superseded balance in because minting
+       * retires it; the Xero arm sizes a SUPPLEMENTARY INVOICE for THIS edit,
+       * which supersedes nothing and is collected alongside whatever came before
+       * it - folding a Stripe balance into that figure would invoice the same
+       * money twice. Stripe wins where both are true, which is the order
+       * `applyPaymentAdjustments` already uses.
+       *
+       * The payment read here is the post-lock re-read (`pg_advisory_xact_lock(1)`
+       * plus the per-lodge key, above), so the ask being superseded is read under
+       * the same locks that serialise every counterpart writer in this route.
+       */
+      if (hasSucceededPayment && priceDiffCents > 0) {
+        additionalAsk = sizeAdditionalAsk({
+          priceDiffCents,
+          // A guest add never charges one; the route passes 0 to the Xero
+          // settlement and to the member's email for the same reason.
+          changeFeeCents: 0,
+          payment: booking.payment,
+        });
+        additionalAmountCents = additionalAsk.amountCents;
+      } else if (hasIssuedXeroInvoice && priceDiffCents > 0) {
         additionalAmountCents = priceDiffCents;
       }
 
@@ -932,6 +1085,8 @@ export async function POST(
             adminReviewReason,
           };
 
+      // #3500: this first arm is UNREACHABLE — the gate above refuses
+      // AWAITING_REVIEW. #3245 deleted the last record of what it is for.
       const newStatus =
         reviewCleared && booking.status === "AWAITING_REVIEW"
           ? "PAYMENT_PENDING"
@@ -1047,6 +1202,7 @@ export async function POST(
         addedGuests: createdGuests,
         priceDiffCents,
         additionalAmountCents,
+        additionalAsk,
         promoRemoved,
         promoCoverage,
         oldGuestCount: booking.guests.length,
@@ -1058,9 +1214,10 @@ export async function POST(
         xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
         paymentId: booking.payment?.id ?? null,
         paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-        memberEmail: booking.member.email,
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-        memberId: booking.memberId,
+        memberEmail: bookingOwner(booking).member.email,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+        memberFirstName: bookingOwner(booking).member.firstName,
+        memberId: bookingOwner(booking).memberId,
         addedGuestNames: normalizedNewGuests.map((guest) => `${guest.firstName} ${guest.lastName}`),
         bookingModificationId: bookingModification.id,
         // MG2 #2307: the cross-family rows to tell about, matched to the guest
@@ -1124,7 +1281,7 @@ export async function POST(
       try {
         await sendFamilyMemberBookingAddNotifications({
           bookingId,
-          bookerMemberId: result.booking.memberId,
+          bookerMemberId: bookingOwner(result.booking).memberId,
           actorMemberId: session.user.id,
           addedMemberIds: result.familyAddMemberIds,
         });
@@ -1157,7 +1314,7 @@ export async function POST(
       action: "booking.modify.guests.add",
       memberId: session.user.id,
       targetId: bookingId,
-      subjectMemberId: result.booking.memberId,
+      subjectMemberId: bookingOwner(result.booking).memberId,
       entityType: "BookingModification",
       entityId: result.bookingModificationId,
       category: "booking",
@@ -1198,10 +1355,20 @@ export async function POST(
     );
 
     // Send email
-    const member = await prisma.member.findUnique({
-      where: { id: result.booking.memberId },
-    });
-    if (member && notifyMember !== false) {
+    // #3369: the OWNER, not a re-read of a member row. A school's booking has no
+    // member to re-read, and the projection carries the same person-shaped name
+    // and address the invented school member used to supply — so the school still
+    // receives the message it received before this stage, at the same address.
+    // The relation was loaded in the same transaction, so this is no staler than
+    // the read it replaces.
+    // #3369: the owner as the transaction already resolved them — a school's
+    // booking has no member row to re-read, and these are the person-shaped
+    // projection the invented school member used to supply.
+    const member = {
+      email: result.memberEmail,
+      firstName: result.memberFirstName,
+    };
+    if (notifyMember !== false) {
       /*
         #3032 (epic #2797): whether the club is still working out an amount on
         this booking as the email is written. The booking's CURRENT state, read
@@ -1223,7 +1390,7 @@ export async function POST(
 
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
-        recipientMemberId: member.id,
+        recipientMemberId: result.memberId,
         email: member.email,
         firstName: member.firstName,
         modificationType: "GUEST_ADD",

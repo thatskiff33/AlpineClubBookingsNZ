@@ -29,12 +29,15 @@
  * `[A-Za-z_][A-Za-z0-9_]*`), `--` line comments, and nested block comments.
  */
 
+import { must } from "../../src/lib/indexed-access";
+
 /** True when `value[index]` begins a valid dollar-quote tag; returns the tag. */
 function dollarTagAt(value: string, index: number): string | null {
   let cursor = index + 1;
   let first = true;
   while (cursor < value.length) {
-    const char = value[cursor];
+    // The loop condition just above is exactly what makes this in range.
+    const char = must(value[cursor], `dollarTagAt: cursor ${cursor} out of range for a string of length ${value.length}`);
     if (char === "$") return value.slice(index, cursor + 1);
     if (first) {
       if (!/[A-Za-z_]/.test(char)) return null;
@@ -163,11 +166,93 @@ export function splitSqlStatements(sql: string): string[] {
   return statements.filter((statement) => hasExecutableText(statement));
 }
 
+/**
+ * `sql` with `--` line comments and `/* … *​/` blocks BLANKED OUT — replaced by
+ * spaces, newlines kept — so byte offsets and line numbers survive. Blanking
+ * rather than deleting is what keeps the offsets usable: the audit-writer census
+ * reports the line of every raw-SQL statement, and the door-code migration
+ * discusses `UPDATE "AuditLog"` in its header comment as well as performing it,
+ * so a scan that did not strip comments would over-count exactly the way a
+ * docblock false positive does. Single-quoted literals are respected, so a `--`
+ * inside a string stays. Block comments do not nest here (the splitter above
+ * nests them; no committed migration nests one inside a literal-bearing
+ * statement, and a nested opener inside a comment is still inside a comment).
+ *
+ * ONE HOME (`INV-SSOT`): the census (`scripts/audit/audit-writer-census.ts`) and
+ * the backfill contract tests both strip comments before reading a migration,
+ * and a second copy is how the two would come to disagree on what counts as SQL.
+ */
+export function stripSqlComments(sql: string): string {
+  let out = "";
+  let index = 0;
+  let inLine = false;
+  let inBlock = false;
+  let inString = false;
+
+  while (index < sql.length) {
+    const char = sql[index];
+    const next = sql[index + 1];
+
+    if (inLine) {
+      if (char === "\n") {
+        inLine = false;
+        out += char;
+      } else {
+        out += " ";
+      }
+      index += 1;
+      continue;
+    }
+    if (inBlock) {
+      if (char === "*" && next === "/") {
+        inBlock = false;
+        out += "  ";
+        index += 2;
+        continue;
+      }
+      out += char === "\n" ? "\n" : " ";
+      index += 1;
+      continue;
+    }
+    if (inString) {
+      // Postgres doubles a quote to escape it; either way the state machine only
+      // has to know it is still inside the literal.
+      if (char === "'") inString = false;
+      out += char;
+      index += 1;
+      continue;
+    }
+    if (char === "'") {
+      inString = true;
+      out += char;
+      index += 1;
+      continue;
+    }
+    if (char === "-" && next === "-") {
+      inLine = true;
+      out += "  ";
+      index += 2;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      inBlock = true;
+      out += "  ";
+      index += 2;
+      continue;
+    }
+    out += char;
+    index += 1;
+  }
+
+  return out;
+}
+
 /** True when a chunk holds something other than whitespace and comments. */
 function hasExecutableText(statement: string): boolean {
   let index = 0;
   while (index < statement.length) {
-    const char = statement[index];
+    // The loop condition just above is exactly what makes this in range.
+    const char = must(statement[index], `hasExecutableText: index ${index} out of range for a string of length ${statement.length}`);
     if (/\s/.test(char)) {
       index += 1;
       continue;

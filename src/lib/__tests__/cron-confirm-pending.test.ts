@@ -57,7 +57,7 @@ vi.mock("../payment-reconciliation", () => ({
 // the one export replaced — the real one needs a Payment row to read.
 const mockReconcilePaymentAggregates = vi.fn();
 vi.mock("../payment-transactions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../payment-transactions")>()),
+  ...((await importOriginal()) as typeof import("../payment-transactions")),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
   reconcilePaymentAggregates: (...args: unknown[]) =>
@@ -182,10 +182,16 @@ const mockRevokePaymentLinkById = vi.fn().mockResolvedValue(1);
 vi.mock("@/lib/payment-link", () => ({
   revokePaymentLinksForBooking: (...args: unknown[]) =>
     mockRevokePaymentLinksForBooking(...args),
-  mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
-    mockMintSplitGuestPaymentLinkIfAbsent(...args),
   revokePaymentLinkById: (...args: unknown[]) =>
     mockRevokePaymentLinkById(...args),
+}));
+// Partial mock: the mint is stubbed, the real SPLIT_GUEST_PAYMENT_LINK_TEMPLATE
+// flows through so the withheld-row assertion below compares against the
+// production constant rather than a second literal (INV-SSOT-002).
+vi.mock("@/lib/payment-link-split-guest", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/payment-link-split-guest")),
+  mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
+    mockMintSplitGuestPaymentLinkIfAbsent(...args),
 }));
 
 // Mock promo cleanup used by the whole-bump path.
@@ -871,7 +877,10 @@ describe("Cron: Confirm Pending Bookings", () => {
         metadata: { bookingId: "child_1", memberId: "member_child_1" },
       })
     );
-    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("child_1");
+    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("child_1", {
+      // #2929: the cron has no creation-time email choice to express.
+      invoiceEmailDelivery: null,
+    });
     // #1967 FIX-6: the auto-charge claim revokes any outstanding /pay link
     // inside the claim transaction, so a link minted while no card was on
     // file can never race the saved-card charge into a double payment.
@@ -1374,7 +1383,9 @@ describe("Cron: Confirm Pending Bookings", () => {
     const result = await confirmPendingBookings();
 
     expect(result.confirmedBookingIds).toEqual(["b1"]);
-    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("b1");
+    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("b1", {
+      invoiceEmailDelivery: null,
+    });
   });
 
   it("does not revert or alert when local persistence fails after Stripe already succeeded", async () => {
@@ -2103,11 +2114,14 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockMintSplitGuestPaymentLinkIfAbsent).not.toHaveBeenCalled();
     expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
     expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+    const { SPLIT_GUEST_PAYMENT_LINK_TEMPLATE } = await import(
+      "@/lib/payment-link-split-guest"
+    );
     expect(mockEmailLogCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           bookingId: "child_1",
-          templateName: "split-guest-payment-link",
+          templateName: SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
           status: "SKIPPED_NO_EMAILS",
         }),
       })

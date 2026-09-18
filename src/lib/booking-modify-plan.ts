@@ -14,6 +14,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 import type { CalendarDate } from "@/lib/club-time";
 import {
@@ -76,6 +77,7 @@ import {
   shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
+import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
@@ -794,7 +796,7 @@ export async function prepareGuestPlan(
   const { members: linkedMembers, boundary } =
     await resolveLinkedBookingMembersWithBoundary(
       tx,
-      booking.memberId,
+      bookingOwner(booking).memberId,
       [
         ...(input.addGuests ?? []).map((guest) => guest.memberId),
         ...guestMemberLinks.map((link) => link.memberId),
@@ -810,10 +812,13 @@ export async function prepareGuestPlan(
     // Judged as the booking's own member when the caller asked for member
     // semantics: the profile/bookability gate answers "can THIS person add that
     // member", and for an approved exception request that person is the booker.
-    guestAuthorizationIsAdmin ? actorId : booking.memberId,
+    // #3369: when the caller asked for member semantics the judging person is
+    // the booker, and a school has none. `null` is the honest answer and the
+    // gate treats it as "no member is vouching", which is the fail-closed side.
+    guestAuthorizationIsAdmin ? actorId : bookingOwner(booking).memberId,
     {
     actorRole: guestAuthorizationRole,
-    onBehalfOfMemberId: guestAuthorizationIsAdmin ? booking.memberId : null,
+    onBehalfOfMemberId: guestAuthorizationIsAdmin ? bookingOwner(booking).memberId : null,
     // D-8: a blocked cross-family member is refused neutrally.
     crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
     },
@@ -933,13 +938,27 @@ export async function prepareGuestPlan(
   // own raw `nights` (date STRINGS from the request payload) and the resolved
   // range carries the normalised `Date[]`, so a spread leaves the property typed
   // as the union of the two and the pricing input rejects it.
+  // Both lists are built from `input.addGuests` in the same order — the consent
+  // plan above and `resolveStayRangesOrApiError`'s `added`, which is documented
+  // as "every added guest, in input order". If they ever fall out of step, the
+  // guest being added has no resolved stay range and there is nothing safe to
+  // put in its place: an invented envelope would write nights the request never
+  // asked for. So it refuses rather than guessing (#2800, INV-MOD).
   const normalizedAddGuestsWithRanges = normalizedAddGuests
-    ? normalizedAddGuests.map((guest, index) => ({
-        ...guest,
-        stayStart: resolvedRanges.added[index].stayStart,
-        stayEnd: resolvedRanges.added[index].stayEnd,
-        nights: resolvedRanges.added[index].nights,
-      }))
+    ? normalizedAddGuests.map((guest, index) => {
+        const range = resolvedRanges.added[index];
+        if (range === undefined) {
+          throw new Error(
+            `Added guest ${index + 1} of ${normalizedAddGuests.length} has no resolved stay range (${resolvedRanges.added.length} resolved).`,
+          );
+        }
+        return {
+          ...guest,
+          stayStart: range.stayStart,
+          stayEnd: range.stayEnd,
+          nights: range.nights,
+        };
+      })
     : undefined;
 
   const proposedGuestRows = [
@@ -1015,7 +1034,7 @@ export async function prepareGuestPlan(
   // rather than the persisted consent columns.
   const guestsForPricing = await markCrossFamilyGuestsOnBooking(
     tx,
-    booking.memberId,
+    bookingOwner(booking).memberId,
     proposedGuestRows,
     // `bookingId` arms the owner's gate (finding 4) — see
     // `markCrossFamilyGuestsOnBooking`.
@@ -1079,7 +1098,7 @@ export async function prepareGuestPlan(
 
   if (!guestAuthorizationIsAdmin) {
     const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
-      bookingMemberId: booking.memberId,
+      bookingMemberId: bookingOwner(booking).memberId,
       checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
       guests: normalizedAddGuests ?? [],
     });
@@ -1121,7 +1140,7 @@ export async function prepareGuestPlan(
       // Owner decision, 3 Aug 2026. On the apply path this also closes the
       // removal shape of the same hole: an unfinancial owner cannot take their own
       // row off and leave a party they still own with nobody paid-up on it.
-      bookingOwnerMemberId: booking.memberId,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
       participants: guestsForPricing.map((guest) => ({
         isMember: guest.isMember,
         memberId: guest.memberId ?? null,
@@ -1304,7 +1323,8 @@ export type PricedModification = {
     memberId: string | null;
     isMember: boolean;
     perNightRates: number[];
-    nightDates?: Date[];
+    /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
+    nightDates: Date[];
   }>;
   /**
    * The existing guests pricing ACTUALLY resolved to the other-lodge member rate
@@ -1610,7 +1630,7 @@ export async function calculateModifiedPricing(
 ): Promise<PricingResult> {
   const seasonYear = seasonYearOfStoredDate(newCheckIn);
   await assertMembershipTypeBookingAllowed(tx, {
-    ownerMemberId: booking.memberId,
+    ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,
     seasonYear,
     skipAuthorization,
@@ -1846,7 +1866,7 @@ export async function calculateModifiedPricing(
       };
     } else {
       const priced = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-          ownerMemberId: booking.memberId,
+          ownerMemberId: bookingOwner(booking).memberId,
           checkIn: newCheckIn,
           checkOut: newCheckOut,
           guests: policyAdjustedGuestsForPricing,
@@ -2065,8 +2085,24 @@ export type PromoChangeResult = {
    * honour a promo change flips this flag at the same time, and the notice
    * disappears on its own.
    */
-  promoEngineRan: boolean;
-};
+} & (
+  | {
+      promoEngineRan: true;
+      /**
+       * #3276: what the promotion took off each night or guest of the
+       * `guestNightRates` this ran over — `[]` when the engine ran and no
+       * promotion remains. The batch service records these AFTER
+       * `applyGuestChanges` has rewritten the night rows, which is the only
+       * order in which they can be attached.
+       */
+      adjustmentTargets: PromoAdjustmentTarget[];
+    }
+  | {
+      promoEngineRan: false;
+      /** The engine did not run, so there is no build-up to record: the caller carries the stored rows across. */
+      adjustmentTargets?: undefined;
+    }
+);
 
 /**
  * Resolve a request's promo beneficiaries to positional indexes over the
@@ -2161,6 +2197,8 @@ export async function applyPromoCodeChanges(
       memberId: string | null;
       isMember: boolean;
       perNightRates: number[];
+      /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
+      nightDates: Date[];
     }>;
     /**
      * The club's own calendar day (#3123, `INV-CONFIG-002`), resolved by the
@@ -2198,6 +2236,7 @@ export async function applyPromoCodeChanges(
   let promoRemoved = false;
   let promoChanged = false;
   let promoCoverage: PromoCoverageNotice | null = null;
+  let adjustmentTargets: PromoAdjustmentTarget[] = [];
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
 
   // Row-lock every promo code whose usage caps this transaction may charge or
@@ -2255,7 +2294,7 @@ export async function applyPromoCodeChanges(
     const application = await validateAndCalculatePromoDiscount(
       promoCode,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,
@@ -2285,13 +2324,14 @@ export async function applyPromoCodeChanges(
     const promoResult = application.discount;
     newDiscountCents = promoResult.discountCents;
     newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
+    adjustmentTargets = promoResult.adjustmentTargets;
 
     if (shouldPersistPromoRedemption(promoResult)) {
       await redeemPromoCode(
         tx,
         promoCode.id,
         bookingId,
-        booking.memberId,
+        bookingOwner(booking).memberId,
         newDiscountCents,
         newPromoAdjustmentCents,
         promoResult.freeNightsUsed,
@@ -2325,7 +2365,7 @@ export async function applyPromoCodeChanges(
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,
@@ -2356,6 +2396,7 @@ export async function applyPromoCodeChanges(
       const promoResult = application.discount;
       newDiscountCents = promoResult.discountCents;
       newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
+      adjustmentTargets = promoResult.adjustmentTargets;
       promoCoverage = await describePromoCapCoverage(tx, {
         promoCode: promo.code,
         capCoverage: application.capCoverage,
@@ -2384,6 +2425,7 @@ export async function applyPromoCodeChanges(
     promoChanged,
     promoCoverage,
     promoEngineRan: true,
+    adjustmentTargets,
   };
 }
 
@@ -2660,7 +2702,12 @@ export async function applyGuestChanges(
   ): Promise<{ stayStart: Date; stayEnd: Date }> => {
     await tx.bookingGuestNight.deleteMany({ where: { bookingGuestId } });
     const nightDates = bg?.nightDates ?? [];
-    if (nightDates.length > 0) {
+    // Reading both ends is what says the guest has nights at all; the envelope
+    // written below is half-open over exactly those nights (INV-DATE), and a
+    // guest with none keeps the caller's fallback envelope as before (#2800).
+    const firstNight = nightDates[0];
+    const lastNight = nightDates.at(-1);
+    if (firstNight !== undefined && lastNight !== undefined) {
       await tx.bookingGuestNight.createMany({
         data: nightDates.map((stayDate, k) => ({
           bookingGuestId,
@@ -2683,8 +2730,8 @@ export async function applyGuestChanges(
         })),
       });
       return {
-        stayStart: nightDates[0],
-        stayEnd: addDaysDateOnly(nightDates[nightDates.length - 1], 1),
+        stayStart: firstNight,
+        stayEnd: addDaysDateOnly(lastNight, 1),
       };
     }
     return { stayStart: fallbackStart, stayEnd: fallbackEnd };
@@ -2692,8 +2739,7 @@ export async function applyGuestChanges(
 
   if (inProgressPlan) {
     const existingCount = inProgressPlan.proposedExistingGuests.length;
-    for (let e = 0; e < existingCount; e++) {
-      const entry = inProgressPlan.proposedExistingGuests[e];
+    for (const [e, entry] of inProgressPlan.proposedExistingGuests.entries()) {
       const nameUpdate = nameUpdatesByGuestId.get(entry.guest.id);
       // #2337: stamp the member identity onto a linked existing row here too, for
       // identity consistency if a link ever rides the in-progress path (the
@@ -2734,8 +2780,7 @@ export async function applyGuestChanges(
       });
     }
 
-    for (let a = 0; a < inProgressPlan.proposedAddedGuests.length; a++) {
-      const entry = inProgressPlan.proposedAddedGuests[a];
+    for (const [a, entry] of inProgressPlan.proposedAddedGuests.entries()) {
       const g = entry.guest;
       const guest = await tx.bookingGuest.create({
         data: {
@@ -2788,10 +2833,18 @@ export async function applyGuestChanges(
 
   const addedGuestStartIndex = remainingGuests.length;
   const addList = normalizedAddGuests ?? [];
-  for (let i = 0; i < addList.length; i++) {
-    const g = addList[i];
+  for (const [i, g] of addList.entries()) {
     const guestPriceIndex = addedGuestStartIndex + i;
     const bg = priceBreakdown.guests[guestPriceIndex];
+    // #3031, restated by the type: the breakdown is what this write's money
+    // comes from, so a guest the pricing engine did not produce a row for has
+    // no price at all. There is no default that is not invented money, so this
+    // refuses rather than writing one (#2800).
+    if (bg === undefined) {
+      throw new Error(
+        `No priced guest at breakdown position ${guestPriceIndex} for the guest being added (#3031).`,
+      );
+    }
     const guest = await tx.bookingGuest.create({
       data: {
         bookingId,
@@ -2829,22 +2882,32 @@ export async function applyGuestChanges(
     createdGuests.push(guest);
   }
 
-  for (let i = 0; i < remainingGuests.length; i++) {
+  for (const [i, remainingGuest] of remainingGuests.entries()) {
     const proposedRange = proposedRemainingGuests[i];
-    const nameUpdate = nameUpdatesByGuestId.get(remainingGuests[i].id);
+    // Same rule as the added-guest loop above and for the same reason (#3031):
+    // this row's `priceCents` is written straight from the breakdown, so a
+    // guest the pricing engine produced no row for has no price to write and
+    // no safe substitute for one (#2800).
+    const priced = priceBreakdown.guests[i];
+    if (priced === undefined) {
+      throw new Error(
+        `No priced guest at breakdown position ${i} for booking guest ${remainingGuest.id} (#3031).`,
+      );
+    }
+    const nameUpdate = nameUpdatesByGuestId.get(remainingGuest.id);
     // #2337: a placeholder→member link stamps the member identity onto this
     // existing row (today this loop wrote only names here). The row was already
     // repriced at the member rate above via its cleared lockedNightPrices; this
     // records who it is FOR, plus any beyond-family consent columns.
-    const link = linkByGuestId.get(remainingGuests[i].id);
+    const link = linkByGuestId.get(remainingGuest.id);
     const envelope = await syncGuestNights(
-      remainingGuests[i].id,
-      priceBreakdown.guests[i],
+      remainingGuest.id,
+      priced,
       proposedRange?.stayStart ?? newCheckIn,
       proposedRange?.stayEnd ?? newCheckOut,
     );
     await tx.bookingGuest.update({
-      where: { id: remainingGuests[i].id },
+      where: { id: remainingGuest.id },
       data: {
         ...(nameUpdate
           ? {
@@ -2870,7 +2933,7 @@ export async function applyGuestChanges(
           : {}),
         stayStart: envelope.stayStart,
         stayEnd: envelope.stayEnd,
-        priceCents: priceBreakdown.guests[i].priceCents,
+        priceCents: priced.priceCents,
         // Other Lodges epic: the tick this row now carries. Written ONLY for the
         // guests whose flag this request actually changed, so an unrelated edit
         // never rewrites a settled row — and written here, in the same update as
@@ -2885,13 +2948,13 @@ export async function applyGuestChanges(
         // of this club. Unticking is unconditional in the other direction: a
         // request that clears somebody's flag always clears it, or a stale flag
         // could never be removed.
-        ...(otherLodgeElection?.repriceGuestIds.has(remainingGuests[i].id)
+        ...(otherLodgeElection?.repriceGuestIds.has(remainingGuest.id)
           ? {
               otherLodgeMember:
                 otherLodgeElection.flaggedGuestIds.has(
-                  remainingGuests[i].id,
+                  remainingGuest.id,
                 ) &&
-                (otherLodgeRatedGuestIds?.has(remainingGuests[i].id) ?? false),
+                (otherLodgeRatedGuestIds?.has(remainingGuest.id) ?? false),
             }
           : {}),
         // Overwrite the rate-type snapshot on the full-reprice path (#1930,
@@ -2901,12 +2964,12 @@ export async function applyGuestChanges(
         // undefined there as well and Prisma leaves the stored snapshot
         // untouched. See `rateSnapshotUpdateForRepricedGuest`.
         rateMembershipTypeId: rateSnapshotUpdateForRepricedGuest(
-          priceBreakdown.guests[i] as {
+          priced as {
             rateMembershipTypeId?: string | null;
             nightDates?: Date[];
           },
           link ||
-            otherLodgeElection?.repriceGuestIds.has(remainingGuests[i].id)
+            otherLodgeElection?.repriceGuestIds.has(remainingGuest.id)
             ? []
             : lockedNightPricesForGuest(proposedRange?.guest ?? {}),
         ),

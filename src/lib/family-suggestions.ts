@@ -138,9 +138,14 @@ export async function suggestFamilyGroups(): Promise<{
       const ln = m.lastName;
       lastNameCounts.set(ln, (lastNameCounts.get(ln) || 0) + 1);
     }
-    const commonLastName = [...lastNameCounts.entries()].sort(
+    // `members.length >= 2` (checked above) guarantees at least one entry
+    // here, but the type can't carry that, so an empty result is treated
+    // like any other group this pass declines to suggest.
+    const [topLastName] = [...lastNameCounts.entries()].sort(
       (a, b) => b[1] - a[1]
-    )[0][0];
+    );
+    if (!topLastName) continue;
+    const commonLastName = topLastName[0];
 
     const suggestion = withSignature({
       suggestedName: `${commonLastName} Family`,
@@ -182,11 +187,14 @@ export async function suggestFamilyGroups(): Promise<{
 
   for (const [, members] of lastNameGroups) {
     if (members.length < 2) continue;
+    // `members.length >= 2` just above guarantees a first member.
+    const [firstMember] = members;
+    if (!firstMember) continue;
 
     suggestions.push(
       withSignature({
-        suggestedName: `${members[0].lastName} Family`,
-        reason: `${members.length} ungrouped members share last name "${members[0].lastName}"`,
+        suggestedName: `${firstMember.lastName} Family`,
+        reason: `${members.length} ungrouped members share last name "${firstMember.lastName}"`,
         score: 3,
         members: members.map((m) => ({
           id: m.id,

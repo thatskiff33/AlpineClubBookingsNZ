@@ -94,6 +94,10 @@ const mocks = vi.hoisted(() => {
         update: vi.fn(),
         create: vi.fn(),
       },
+      // #3367 (INV-INT-018): a contact may have only ONE local home, so the
+      // contact-link transaction refuses one an ORGANISATION already holds.
+      // `null` is the ordinary answer; a missing delegate throws first.
+      organisation: { findFirst: vi.fn().mockResolvedValue(null) },
       passwordResetToken: {
         create: vi.fn(),
       },
@@ -205,7 +209,7 @@ vi.mock("xero-node", () => ({
 // encryptForTest fixtures round-trip, and the operational config must resolve
 // without integration-credential DB rows.
 vi.mock("@/lib/xero-config", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-config")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-config");
   return {
     ...actual,
     getOperationalXeroConfig: vi.fn().mockResolvedValue({
@@ -264,6 +268,14 @@ describe("Phase 4 contact sync and cached import", () => {
     // created. That is the conservative reading, and it is the one the live
     // site's imported contacts present.
     mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue(null);
+    /*
+      #2939: nobody else holds the contact, which is the ordinary case. Set
+      HERE rather than only at the hoisted declaration, because `mockResolvedValue`
+      survives `vi.clearAllMocks()` — a test that gives this a holder to drive
+      the `INV-INT-018` refusal would otherwise refuse every later test in the
+      file too.
+    */
+    mocks.prisma.organisation.findFirst.mockResolvedValue(null);
     mocks.prisma.xeroContactGroupCache.deleteMany.mockResolvedValue({ count: 0 });
     mocks.prisma.xeroContactGroupCache.findMany.mockResolvedValue([]);
     mocks.prisma.xeroContactGroupCache.upsert.mockResolvedValue({});
@@ -1233,6 +1245,95 @@ describe("Phase 4 contact sync and cached import", () => {
         }),
       })
     );
+  });
+
+  it("skips a contact an Organisation already holds, and never retries it (#2939)", async () => {
+    /*
+      `INV-INT-018` reaches this loop now, and it had no bucket for it: the
+      refusal landed in the generic catch, which pushes the contact id onto
+      `nextRetryContactIds` — and that list is PERSISTED into the sync cursor,
+      so the contact was re-fetched and re-refused on every later sync with an
+      error line in every report, for ever. Nothing is corrupted; the state is
+      permanently red, costs a provider read each pass, and has no remedy in
+      this loop, because the remedy is in Xero or in the Organisation record.
+
+      Driven through the REAL `assertXeroContactHasNoOtherHome`, by giving the
+      Organisation table a holder — not by mocking the writer to throw — so this
+      fails if either the refusal or the classification stops working.
+    */
+    mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue({
+      cursorDateTime: null,
+      lastSuccessfulSyncAt: new Date("2026-04-14T10:05:00.000Z"),
+      metadata: {},
+    });
+    mocks.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact_school",
+            name: "Tokoroa Primary School",
+            firstName: "Tokoroa",
+            lastName: "School",
+            emailAddress: "office@school.example",
+          },
+        ],
+      },
+    });
+    // Nobody is linked to it yet, and a member DOES match the address — which
+    // is the reachable-on-purpose case: a school's contact carries the same
+    // address as the invented member record standing in for it.
+    mocks.prisma.member.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "member_1",
+        firstName: "Tokoroa",
+        lastName: "School",
+        email: "office@school.example",
+        active: true,
+        xeroContactId: null,
+        joinedDate: null,
+        phoneNumber: null,
+        streetAddressLine1: null,
+        postalAddressLine1: null,
+      });
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: "member_1",
+      firstName: "Tokoroa",
+      lastName: "School",
+      email: "office@school.example",
+      passwordHash: "not-deleted",
+      xeroContactId: null,
+      joinedDate: null,
+      dateOfBirth: null,
+      phoneNumber: null,
+      streetAddressLine1: null,
+      postalAddressLine1: null,
+    });
+    // …and the Organisation is already this contact's home.
+    mocks.prisma.organisation.findFirst.mockResolvedValue({
+      id: "org_1",
+      name: "Tokoroa Primary School",
+    });
+
+    const report = await syncContactsFromXero();
+
+    expect(report.skippedOther).toEqual([
+      {
+        name: "Tokoroa Primary School",
+        xeroContactId: "contact_school",
+        reason: expect.stringContaining("already the Xero customer"),
+      },
+    ]);
+    // Not an error the report shouts about, and — the point of the fix — not
+    // written into the cursor's retry list.
+    expect(report.errors).toEqual([]);
+    const cursorUpsert = mocks.prisma.xeroSyncCursor.upsert.mock.calls.find(
+      (call) =>
+        call[0]?.where?.resourceType_scope?.resourceType === "CONTACT_SYNC",
+    );
+    expect(cursorUpsert?.[0]?.update?.metadata?.retryContactIds).toEqual([]);
+    // And nothing was linked, which is the refusal doing its job.
+    expect(mocks.prisma.member.update).not.toHaveBeenCalled();
   });
 
   it("repairs a linked Xero contact when first and last names are reversed", async () => {

@@ -114,14 +114,18 @@ function buildTranscript(
   messages: HelpChatMessage[],
 ): Array<{ role: HelpChatRole; content: string }> {
   const turns: Array<{ role: HelpChatRole; content: string }> = [];
-  for (let i = 0; i < messages.length; i += 1) {
-    const user = messages[i];
+  // `.entries()` types `user` as a real message directly (never
+  // possibly-undefined the way `messages[i]` would read); only the
+  // deliberate one-ahead lookahead still indexes, and it is already guarded
+  // below. The former `i += 1` skip-ahead after a consumed answer is not
+  // needed for correctness: the next iteration's `user.role !== "user"`
+  // check already rejects that same message when it is reached as a
+  // would-be user turn, for the identical result.
+  for (const [i, user] of messages.entries()) {
     if (user.role !== "user") continue;
     const answer = messages[i + 1];
     // Unpaired trailing user turn (no answer settled yet) — drop it.
     if (!answer || answer.role !== "assistant") continue;
-    // Consume the answer turn regardless of whether we keep the pair.
-    i += 1;
     // Curated exchanges live in the grounding block; transient bubbles mark a
     // failed exchange. Either way, do not resend the pair.
     if (answer.fromGuide || answer.transient) continue;

@@ -101,12 +101,45 @@ vi.mock("@/lib/payment-reconciliation", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
-vi.mock("@/lib/member-credit", () => ({
-  createBookingModificationCredit: (...a: unknown[]) =>
-    mocks.createBookingModificationCredit(...a),
-}));
+vi.mock("@/lib/member-credit", () => {
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  //
+  // The CLASS has to be here too, and not as decoration. The module under test
+  // branches on `error instanceof SchoolHasNoCreditAccountError` to tell a
+  // school's missing account from any other allocation failure, so a factory
+  // that stubs only the function leaves that import undefined and vitest kills
+  // the whole file at import time. Throwing a bare `Error` instead would be
+  // worse than the crash: the branch would silently stop matching and every
+  // other failure would start reading as an operator input error, which is the
+  // exact confusion the test below exists to forbid.
+  //
+  // Declared INSIDE the factory, because `vi.mock` is hoisted to the top of the
+  // file and a class declared beside it is not initialised yet when it runs.
+  // `ApiError` in the real module; a plain `Error` carrying the same `status`
+  // here, because this suite asserts on the BRANCH rather than the rendering.
+  class SchoolHasNoCreditAccountError extends Error {
+    status = 400;
+    constructor() {
+      super("This booking belongs to a school, which has no account to credit.");
+      this.name = "SchoolHasNoCreditAccountError";
+    }
+  }
+  return {
+    createBookingModificationCredit: (...a: unknown[]) =>
+      mocks.createBookingModificationCredit(...a),
+    SchoolHasNoCreditAccountError,
+    requireMemberCreditRecipient: (memberId: string | null) => {
+      if (!memberId) throw new SchoolHasNoCreditAccountError();
+      return memberId;
+    },
+  };
+});
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+// The MOCKED class — the same constructor the module under test compares
+// against, so the branch is exercised rather than approximated.
+import { SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { requireCalendarDate } from "@/lib/club-time";
 // NOT mocked: the Stripe key prefix is the exactly-once boundary this suite is
 // about, so it is asserted against the real builder rather than a stub that
@@ -130,7 +163,14 @@ const tx = {
   },
   bookingGuestNight: {
     updateMany: (...a: unknown[]) => mocks.bookingGuestNightUpdateMany(...a),
+    findMany: vi.fn().mockResolvedValue([]),
   },
+  // #3276: the re-base records the promotion build-up over the strands' nights.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   // #3219: the booking whose four money columns move with the strands.
   booking: {
     findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a),
@@ -168,6 +208,7 @@ function frozenBooking(overrides?: Record<string, unknown>) {
     memberId: "member-1",
     lodgeId: null,
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    checkOut: new Date("2026-08-03T00:00:00.000Z"),
     totalPriceCents: 24_000,
     discountCents: 0,
     promoAdjustmentCents: 0,
@@ -175,21 +216,31 @@ function frozenBooking(overrides?: Record<string, unknown>) {
     // No promotion on the default booking, so `recalculateBookingPromo` answers
     // zero without reading anything. The promotion cases install their own.
     promoRedemption: null,
+    nightAdjustments: [],
     guests: [
       {
         id: "guest-1",
         priceCents: guestOneTotal,
         memberId: "member-1",
         isMember: true,
+        stayStart: null,
+        stayEnd: null,
         // The strand's rows AS THIS TRANSACTION HAS JUST LEFT THEM: the night
         // that always carried $40.00, and the one the officer has just priced.
         // They reconcile to the strand's total by construction, which is what
         // `INV-MOD-028` requires before the booking may be re-priced from them.
         nights: [
-          { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
           {
+            id: "guest-1-night-1",
+            stayDate: new Date("2026-08-01T00:00:00.000Z"),
+            priceCents: 4_000,
+            priceSource: "SOLD",
+          },
+          {
+            id: "guest-1-night-2",
             stayDate: new Date("2026-08-02T00:00:00.000Z"),
             priceCents: guestOneTotal - 4_000,
+            priceSource: "SOLD",
           },
         ],
       },
@@ -198,9 +249,21 @@ function frozenBooking(overrides?: Record<string, unknown>) {
         priceCents: 8_000,
         memberId: null,
         isMember: false,
+        stayStart: null,
+        stayEnd: null,
         nights: [
-          { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
-          { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 4_000 },
+          {
+            id: "guest-2-night-1",
+            stayDate: new Date("2026-08-01T00:00:00.000Z"),
+            priceCents: 4_000,
+            priceSource: "SOLD",
+          },
+          {
+            id: "guest-2-night-2",
+            stayDate: new Date("2026-08-02T00:00:00.000Z"),
+            priceCents: 4_000,
+            priceSource: "SOLD",
+          },
         ],
       },
     ],
@@ -731,6 +794,37 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       })
     ).rejects.toMatchObject({ message: "connection reset" });
   });
+
+  it("reaches the officer with the school's refusal instead of a 500 (#3369)", async () => {
+    // Same masking, one class further along. This route's catch tests
+    // `ManualBookingPaymentError` and nothing else, so a school booking whose
+    // reduction an officer chose to settle as ACCOUNT CREDIT reported "Could
+    // not close the refund task" and a 500 — for a correct refusal, on the
+    // screen that had just offered the choice. The message says what to do
+    // instead, so it has to arrive; converting it is what makes it arrive.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.applyLocalRefundAllocation.mockRejectedValueOnce(
+      new SchoolHasNoCreditAccountError(),
+    );
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "credit it",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 9000,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }),
+    ).rejects.toMatchObject({
+      // The officer's own 400, carrying the sentence that says what to do
+      // instead — not the bare class, which this route renders as a 500.
+      name: "ManualBookingPaymentError",
+      status: 400,
+      message: expect.stringContaining("no account to credit"),
+    });
+  });
 });
 
 describe("#3030 - amending at completion, audited (owner decision D2)", () => {
@@ -888,9 +982,7 @@ describe("#2262 guard 3 — the self-match refutation, pinned", () => {
     // so a future "derive the source from the payment" refactor fails loudly
     // instead of quietly making a Stripe capture refund itself.
     const upsert = vi.fn().mockResolvedValue(undefined);
-    const { upsertPaymentIntentTransaction } = await vi.importActual<
-      typeof import("@/lib/payment-transactions")
-    >("@/lib/payment-transactions");
+    const { upsertPaymentIntentTransaction } = (await vi.importActual("@/lib/payment-transactions")) as typeof import("@/lib/payment-transactions");
 
     await upsertPaymentIntentTransaction({
       paymentId: "payment-1",
@@ -1576,7 +1668,13 @@ describe("recording per-night amounts while settling (#3191)", () => {
       recordedNightPrices: null,
     });
 
-    expect(mocks.bookingGuestNightUpdateMany).not.toHaveBeenCalled();
+    // #3276: the re-base that follows records the promotion build-up as
+    // adjustment rows, not as a night write. No call here may write priceCents.
+    expect(
+      mocks.bookingGuestNightUpdateMany.mock.calls.filter(
+        ([args]) => "priceCents" in ((args as { data?: object }).data ?? {}),
+      ),
+    ).toEqual([]);
     expect(mocks.bookingGuestUpdateMany).not.toHaveBeenCalled();
     /*
       #3257 (owner, 7 September 2026) INVERTED THE SECOND HALF OF THIS TEST. It
@@ -2001,14 +2099,20 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
             priceCents: 8_000,
             memberId: null,
             isMember: false,
+            stayStart: null,
+            stayEnd: null,
             nights: [
               {
+                id: "guest-2-night-1",
                 stayDate: new Date("2026-08-01T00:00:00.000Z"),
                 priceCents: 4_000,
+                priceSource: "SOLD",
               },
               {
+                id: "guest-2-night-2",
                 stayDate: new Date("2026-08-02T00:00:00.000Z"),
                 priceCents: 4_000,
+                priceSource: "SOLD",
               },
             ],
           },
@@ -2025,7 +2129,13 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
     });
 
     // Nothing was priced - there was no strand left to price.
-    expect(mocks.bookingGuestNightUpdateMany).not.toHaveBeenCalled();
+    // #3276: the re-base that follows records the promotion build-up as
+    // adjustment rows, not as a night write. No call here may write priceCents.
+    expect(
+      mocks.bookingGuestNightUpdateMany.mock.calls.filter(
+        ([args]) => "priceCents" in ((args as { data?: object }).data ?? {}),
+      ),
+    ).toEqual([]);
     // And the headline stops counting the deleted guest: $80.00, not $240.00.
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({

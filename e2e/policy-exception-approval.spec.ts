@@ -8,7 +8,7 @@ import {
   cancelOpenExceptionRequests,
   deactivateMinimumStayPolicies,
 } from "./helpers/reset";
-import { stayWindowForAttempt } from "./helpers/stay-dates";
+import { oneNightCheckOut, stayWindowForAttempt } from "./helpers/stay-dates";
 
 /**
  * TLR-8C (#2526) — the booking-policy exception REQUEST → APPROVE → EXECUTE
@@ -171,7 +171,7 @@ test.afterAll(async () => {
 test("a refused one-night stay becomes a request an officer approves — and the booking exists", async ({}, testInfo) => {
   const window = stayWindowForAttempt(21, testInfo.retry);
   const checkIn = window.checkIn;
-  const checkOut = window.nights[1];
+  const checkOut = oneNightCheckOut(window);
 
   // A retry must start from the same place: clear any booking a failed attempt
   // left on this window before asking for it again.
@@ -278,7 +278,7 @@ test("a refused one-night stay becomes a request an officer approves — and the
 test("a NO_HOLD request the lodge can no longer fit stays PENDING, never approved", async () => {
   // The seeded-full window: 22 guests already hold every bed there.
   const checkIn = WAITLIST_FULL_WINDOW.checkIn;
-  const checkOut = WAITLIST_FULL_WINDOW.nights[1];
+  const checkOut = oneNightCheckOut(WAITLIST_FULL_WINDOW);
 
   const submitted = await submitOneNightRequest(
     memberContext.request,

@@ -128,7 +128,16 @@ const mockTx = {
   },
   // #3031: the offer-time reprice now writes the per-night rows it prices, so
   // the rows and the guest total agree afterwards (INV-MOD-028).
+  // #3276: the night adjustment build-up writer reads and rewrites these.
+  bookingGuestNightAdjustment: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   bookingGuestNight: {
+    findMany: vi.fn().mockResolvedValue([]),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     deleteMany: vi.fn(),
     createMany: vi.fn(),
   },
@@ -182,9 +191,7 @@ vi.mock("@/lib/capacity", () => ({
 
 vi.mock("@/lib/bed-allocation-lifecycle", async () => {
   const actual =
-    await vi.importActual<typeof import("@/lib/bed-allocation-lifecycle")>(
-      "@/lib/bed-allocation-lifecycle",
-    );
+    (await vi.importActual("@/lib/bed-allocation-lifecycle")) as typeof import("@/lib/bed-allocation-lifecycle");
   return {
     ...actual,
     reconcileBedAllocationsForBookingWithGlobalLockHeld: (
@@ -203,9 +210,7 @@ vi.mock("@/lib/bed-allocation-lifecycle", async () => {
 const mockValidateMinimumStay = vi.fn();
 vi.mock("@/lib/booking-policies", async () => {
   const actual =
-    await vi.importActual<typeof import("@/lib/booking-policies")>(
-      "@/lib/booking-policies"
-    );
+    (await vi.importActual("@/lib/booking-policies")) as typeof import("@/lib/booking-policies");
   return {
     ...actual,
     validateMinimumStay: (...args: unknown[]) =>
@@ -329,6 +334,9 @@ beforeEach(() => {
     newDiscountCents: 0,
     newPromoAdjustmentCents: 0,
     promoRemoved: false,
+    // #3276: no promotion, so nothing to attribute and no engine result.
+    adjustmentTargets: [],
+    discount: null,
   });
 });
 
@@ -926,6 +934,8 @@ describe("processWaitlistForDates", () => {
       newDiscountCents: 0,
       newPromoAdjustmentCents: 0,
       promoRemoved: true,
+      adjustmentTargets: [],
+      discount: null,
     });
 
     await processWaitlistForDates({
@@ -944,6 +954,97 @@ describe("processWaitlistForDates", () => {
         }),
       })
     );
+  });
+
+  it("a build-up recorder refusal fails the sweep instead of degrading to the snapshot, because the recorder sits outside the degrade block (#3276, INV-MONEY-029)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [{ id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] }],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      promoRedemption: null,
+    };
+    mockTxBookingFindMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockResolvedValue({
+      totalPriceCents: 24000,
+      guests: [{ priceCents: 24000, perNightCents: [12000, 12000], nightDates: [] }],
+    });
+    // The wiring defect the recorder exists to catch: a stored redemption whose
+    // recorded total nothing in the engine's (empty) build-up accounts for.
+    mockTx.promoRedemption.findUnique.mockResolvedValueOnce({
+      id: "pr-stale",
+      promoCodeId: "pc1",
+      priceAdjustmentCents: -500,
+      allocations: [{ memberId: "m1", priceAdjustmentCents: -500 }],
+    });
+
+    const logger = (await import("@/lib/logger")).default;
+    const { sendWaitlistOfferEmail } = await import("@/lib/email");
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-05"),
+    });
+
+    // The reprice itself completed inside its degrade block; the recorder that
+    // follows sits OUTSIDE it, so its refusal is not swallowed into "offer at the
+    // stored snapshot": it fails the sweep's transaction, no offer issues for
+    // these dates, and the outer catch logs the invariant by name. That is the
+    // documented contract (docs/guides/waitlist.md -> Troubleshooting).
+    expect(result).toEqual({ offeredBookingId: null });
+    expect(sendWaitlistOfferEmail).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: expect.objectContaining({ message: expect.stringMatching(/INV-MONEY-029/) }),
+      }),
+      "Failed to process waitlist for dates",
+    );
+    // Refuse-before-mutate: the recorder wrote nothing before it refused.
+    expect(mockTx.bookingGuestNightAdjustment.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuestNightAdjustment.createMany).not.toHaveBeenCalled();
+  });
+
+  it("when the pricing itself fails, the recorder is never reached and the stored snapshot is offered (#3276)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [{ id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] }],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      promoRedemption: null,
+    };
+    mockTxBookingFindMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockRejectedValue(new Error("no season rate for tier"));
+
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-05"),
+    });
+
+    expect(result.offeredBookingId).toBe("booking1");
+    expect(mockTx.promoRedemption.findUnique).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuestNightAdjustment.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.bookingGuestNightAdjustment.createMany).not.toHaveBeenCalled();
   });
 
   it("falls back to the stored snapshot when repricing fails (#1035)", async () => {
@@ -1027,6 +1128,65 @@ describe("processWaitlistForDates", () => {
     });
 
     expect(result.offeredBookingId).toBeNull();
+  });
+
+  /**
+   * #2930 — a waitlist entry sitting over a whole-lodge hold must not promote
+   * while the hold applies.
+   *
+   * This case is NEWLY REACHABLE. Until #2930 a member could not select a full
+   * night at all, so they could not put an entry over a held range in the first
+   * place; the settled owner contract now lets them (point 4), which makes "the
+   * entry exists and must stay put" a state the sweep meets in production rather
+   * than only in theory.
+   *
+   * The engine half is proved in `capacity.test.ts` ("whole-lodge exclusive hold
+   * — capacity engine"): a held night comes back `available: false` with
+   * `availableBeds` pinned to 0, even when the numeric beds would fit easily.
+   * This is the other half — that the sweep's decision is that same flag, so the
+   * hold really does hold, and that it hangs on to the entry rather than
+   * discarding it.
+   */
+  it("does not promote an entry whose nights a whole-lodge hold covers, and leaves it waitlisted (#2930)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+
+    const candidate = {
+      id: "booking1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      guests: [{ id: "g1" }],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      memberId: "m1",
+      lodgeId: "lodge-1",
+      waitlistAlternateLodges: [],
+      promoRedemption: null,
+    };
+
+    mockTxBookingFindMany.mockResolvedValue([candidate]);
+    // Exactly what the engine returns for a held range: NOT negative beds — a
+    // lodge pinned to zero free with the flag set. A promotion gate that keyed
+    // on "beds went negative" instead of on `available` would wave this through,
+    // because nothing here is negative.
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({
+      available: false,
+      minAvailable: 0,
+      nightDetails: [
+        { date: new Date("2026-07-01"), occupiedBeds: 20, availableBeds: 0, wholeLodgeHeld: true },
+        { date: new Date("2026-07-02"), occupiedBeds: 20, availableBeds: 0, wholeLodgeHeld: true },
+      ],
+    });
+
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-05"),
+    });
+
+    expect(result.offeredBookingId).toBeNull();
+    // No status write at all: the entry keeps its place in the queue for when
+    // the hold is released, rather than being offered or cancelled.
+    expect(mockTx.booking.update).not.toHaveBeenCalled();
   });
 
   it("passes per-guest stay ranges into waitlist promotion capacity checks", async () => {

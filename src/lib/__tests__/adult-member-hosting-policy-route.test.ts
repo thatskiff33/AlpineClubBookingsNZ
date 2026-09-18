@@ -23,9 +23,7 @@ vi.mock("@/lib/public-content-revalidation", () => ({
   revalidatePublicPageContent: mocks.revalidate,
 }));
 vi.mock("@/lib/adult-member-hosting-policy-reconciliation", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/adult-member-hosting-policy-reconciliation")
-  >("@/lib/adult-member-hosting-policy-reconciliation");
+  const actual = (await vi.importActual("@/lib/adult-member-hosting-policy-reconciliation")) as typeof import("@/lib/adult-member-hosting-policy-reconciliation");
   return {
     ...actual,
     enqueueActiveHostingIncidentPolicyReconciliation:

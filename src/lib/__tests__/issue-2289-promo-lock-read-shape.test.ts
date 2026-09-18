@@ -164,6 +164,7 @@ function resolve(tx: ReturnType<typeof makeTx>["tx"]) {
     ],
     totalPriceCents: 10_000,
     perNightCentsByGuest: [[5_000, 5_000]],
+    nightDatesByGuest: [[CHECK_IN, new Date(Date.UTC(2026, 6, 2))]],
     lodgeId: "lodge-1",
   });
 }

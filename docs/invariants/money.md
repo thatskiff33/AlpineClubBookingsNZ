@@ -293,6 +293,99 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   writer classifiers (including zero and null amounts) and every predicate that
   admits a draining-colour officer-repair audit.
 
+## INV-MONEY-029
+
+- **What a promotion took off each night or guest is recorded beside it, at
+  the grain the pricing engine decided it; the rows reconcile to the recorded
+  promo totals; and whether a booking's build-up can be trusted is DERIVED from
+  that reconciliation, never stored** (#3276, stage 2 of programme #3272; D1
+  on #3272 as refined 8 Sep 2026; owner decision 10 Sep 2026 on derived
+  validity). `BookingGuestNightAdjustment` holds one row per adjustment per
+  target: the NIGHT for a percentage, free-night or fixed-nightly promotion,
+  whose arithmetic is per night; the GUEST for a fixed-amount promotion, which
+  is `min(value, guest total)` with no per-night rule. The amount is the
+  engine's own figure — the very term its totals were summed from — never
+  translated to a finer grain by a rule. It is a signed delta in integer cents
+  like `priceAdjustmentCents`: negative for a discount, positive where a
+  `SET_PRICE` code raised a night, and `0` where it set a night to exactly its
+  rate, which is a real value. A row's beneficiary is decided in the same
+  function and branch that decides the allocation it decomposes
+  (`calculatePromoDiscountForGuestRates`), so the two can never name different
+  people. **The identity:** the rows of one redemption sum, per beneficiary, to
+  that member's `PromoRedemptionAllocation.priceAdjustmentCents` (an absent
+  allocation row means the member received nothing, per `INV-MONEY-005`) and,
+  overall, to `PromoRedemption.priceAdjustmentCents`. The one writer of an
+  AMOUNT, `recordBookingNightAdjustments` in `night-adjustment-write.ts`
+  (a member merge only moves or deletes rows and never invents one), enforces
+  it at write time and REFUSES BEFORE IT MUTATES — every read and check
+  precedes its first write, so a refusal rolls the edit back; the waitlist
+  reprice, whose own catch degrades to the stored snapshot instead of rolling
+  back, therefore calls the recorder outside that catch, where a refusal fails
+  the sweep like any other error. `amountCents = NULL` means NOT KNOWN and is
+  written only where the engine genuinely has no per-target figure — the
+  per-member safety-cap rescale; unknown rows are excluded from the sums, and
+  `?? 0` on the column is prohibited exactly as it is on
+  `BookingGuestNight.priceCents`. **A reader asks `deriveNightAdjustmentState`
+  — the one home — and runs the same sum:** a booking with no redemption had
+  nothing taken off (`NO_PROMOTION`); rows that reconcile are `KNOWN`; anything
+  else — rows missing, rows that do not sum, a NULL amount — is `NOT_KNOWN`.
+  No column stores that answer: a flag can be left asserting what a draining
+  colour or a rollback has since made false; a sum cannot. An officer-priced night, an even split
+  and a parked edit need no special state: their rows are absent or no longer
+  sum, so they derive as not known until the settle re-base re-runs the
+  promotion over the stored prices and records the engine's figure. Stated
+  limit (owner-accepted): an old-colour officer price repair that
+  changes a night's rate without touching the promotion is not detected. A
+  mechanical rewrite that moves no money (a name-only correction, an
+  in-progress extension, an admin date shift) carries the recorded rows across
+  by guest and stay date byte for byte, and where it cannot, leaves the
+  booking's rows absent rather than guess. A member merge that drops a
+  duplicate's colliding allocation deletes that duplicate's rows on the same
+  redemption in the same step, so each surviving allocation still matches its
+  rows per beneficiary — but the redemption total still carries the dropped
+  share, so it derives as not known until the next engine run
+  rewrites it. An allocation may name no member — a school's booker slot
+  (#3369), which decomposes no member's benefit; `memberBenefitAllocations`,
+  the one helper, excludes it from the per-member identity for writer and
+  reader alike, so a redemption carrying a non-zero member-less allocation
+  derives `NOT_KNOWN`, never `KNOWN`. **Account credit is not in this table**:
+  it has one home, the `MemberCredit` ledger entry with its booking link, and
+  is composed from there, never split across nights. Stage 2 added the record
+  and changed no reader or member-visible figure (D3), pinned by
+  `promo-money-byte-identical.test.ts`.
+
+
+## INV-MONEY-030
+
+- **Stored money readers use one operation-aware projection and one pure
+  discriminator, preserve today's member-visible amounts, and record which
+  source they used** (#3277, programme #3272; owner-approved D3 blueprint,
+  12 September 2026). The caller names its operation because the required grain
+  differs: whole-guest removal may use a reconciling guest total even when its
+  nights are `EVEN_SPLIT`; review re-base needs exact individual-night
+  provenance; credit election verifies the booking headline; Xero verifies the
+  booking promotion aggregate.
+
+  `selectBookingMoneyBuildUp` returns `STORED`,
+  `DERIVED_COMPATIBILITY_FALLBACK`, or `BASE_EVIDENCE_UNKNOWN`, with its reason,
+  known cents, and history metadata. Stored money is selected only when it is
+  byte-identical to today's result. A disagreement must be classified as
+  `STORED_SIDE_DEFECT`, `DERIVATION_DEFECT`, or `LEGITIMATE_DIVERGENCE`, and
+  today's result still wins. `ADJUSTMENT_BUILDUP_NOT_KNOWN` means historical
+  evidence is missing or unrecorded, not necessarily corrupt. Unknown base
+  evidence has no selectable amount and is never re-derived or defaulted to
+  zero.
+
+  Guest removal decides before deleting its targets and records the verdict on
+  the existing `BookingModification`. Review closure writes a fresh build-up
+  and records the verdict in existing audit and `PRICE_REBASE` history. Credit
+  election preserves its headline, clamp, shortfall, and ledger arithmetic and
+  records the verdict with its atomic credit result. Per-booking Xero invoices
+  retain gross guest/night lines plus one promotion line and record that line's
+  source on the existing operation. Group-settlement totals and their omission
+  of a child promotion line remain unchanged unless a fixture proves a D3 defect
+  and the owner separately approves its correction.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and

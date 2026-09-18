@@ -107,6 +107,55 @@ function formatStoredDate(value: string) {
   return calendarDayFromPayload(value) ?? value;
 }
 
+/**
+ * The attending-bookings table for one expanded event, or the loading state.
+ *
+ * Extracted (#2801) so the expanded detail is looked up ONCE: the row above
+ * used to test `details[event.id]` and then read `.attendingBookings` off a
+ * second lookup of the same key, which under stricter indexed access is the
+ * compiler pointing out that the two reads were never provably the same value.
+ * "Have I loaded this event's bookings yet" is now one question with one
+ * answer, in one place.
+ */
+function ExpandedEventBookings({ detail }: { detail: EventDetail | undefined }) {
+  if (!detail) {
+    return (
+      <div className="rounded-md border p-3 text-sm text-muted-foreground">
+        Loading bookings...
+      </div>
+    );
+  }
+  return (
+    <AdminDataTable showDensityToggle={false}>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Member</TableHead>
+          <TableHead>Stay</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead className="text-right">Discount</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {detail.attendingBookings.map((row) => (
+          <TableRow key={row.id}>
+            <TableCell>
+              {row.member.firstName} {row.member.lastName}
+            </TableCell>
+            <TableCell>
+              {formatStoredDate(row.booking.checkIn)} to{" "}
+              {formatStoredDate(row.booking.checkOut)}
+            </TableCell>
+            <TableCell>{row.booking.status}</TableCell>
+            <TableCell className="text-right">
+              {formatCents(row.discountCents)}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </AdminDataTable>
+  );
+}
+
 export default function AdminWorkPartiesPage() {
   // Work-party events are lodge config; the write routes enforce lodge:edit, so
   // a lodge:view admin sees this screen read-only (#1940).
@@ -553,40 +602,9 @@ export default function AdminWorkPartiesPage() {
                     </Button>
                   )}
                 </div>
-                {expandedId === event.id &&
-                  (details[event.id] ? (
-                    <AdminDataTable showDensityToggle={false}>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Member</TableHead>
-                          <TableHead>Stay</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Discount</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {details[event.id].attendingBookings.map((row) => (
-                          <TableRow key={row.id}>
-                            <TableCell>
-                              {row.member.firstName} {row.member.lastName}
-                            </TableCell>
-                            <TableCell>
-                              {formatStoredDate(row.booking.checkIn)} to{" "}
-                              {formatStoredDate(row.booking.checkOut)}
-                            </TableCell>
-                            <TableCell>{row.booking.status}</TableCell>
-                            <TableCell className="text-right">
-                              {formatCents(row.discountCents)}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </AdminDataTable>
-                  ) : (
-                    <div className="rounded-md border p-3 text-sm text-muted-foreground">
-                      Loading bookings...
-                    </div>
-                  ))}
+                {expandedId === event.id && (
+                  <ExpandedEventBookings detail={details[event.id]} />
+                )}
               </CardContent>
             </Card>
           ))}

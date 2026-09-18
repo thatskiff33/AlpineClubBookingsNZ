@@ -3,6 +3,7 @@ import {
   type MemberAddressValues,
 } from "@/lib/member-address"
 import { seasonSelectLabel } from "@/lib/season-label"
+import { formatCents } from "@/lib/utils"
 import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
@@ -204,7 +205,7 @@ export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
   }
   if (promo.type === "FIXED_AMOUNT") {
     return promo.valueCents !== null
-      ? `$${(promo.valueCents / 100).toFixed(2)} off per individual`
+      ? `${formatCents(promo.valueCents)} off per individual`
       : "Fixed discount"
   }
   if (promo.type === "FIXED_NIGHTLY_PRICE") {
@@ -212,7 +213,7 @@ export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
       return "Fixed nightly price"
     }
     const mode = promo.fixedNightlyMode === "SET_PRICE" ? "set price" : "cap only"
-    return `$${(promo.fixedNightlyPriceCents / 100).toFixed(2)} per eligible night · ${mode}`
+    return `${formatCents(promo.fixedNightlyPriceCents)} per eligible night · ${mode}`
   }
   if (promo.freeNightsPerIndividual !== null) {
     const perBooking = `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per booking`
@@ -355,7 +356,7 @@ export function formatMemberFinancePreview(input: {
   return [
     input.creditBalanceCents === null
       ? "Credit —"
-      : `Credit $${(input.creditBalanceCents / 100).toFixed(2)}`,
+      : `Credit ${formatCents(input.creditBalanceCents)}`,
     input.promoCodeCount > 0
       ? pluralize(input.promoCodeCount, "promo code")
       : null,

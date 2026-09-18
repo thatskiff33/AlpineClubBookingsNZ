@@ -18,9 +18,11 @@ import crypto from "node:crypto";
  * makes the peer a host.
  *
  * This module is server-only: the signing key and the host password are secrets
- * and must never reach the browser. The join URL is assembled during server-side
- * API serialization (see buildMeetingJoinUrl), so a fresh, short-lived token is
- * minted each time the calendar is served.
+ * and must never reach the browser. The join URL is assembled per click on the
+ * join endpoint by `buildMeetingJoinUrl` in `mirotalk-config.ts`, which resolves
+ * the club's own configuration and hands the pieces to `mintMirotalkAccessToken`
+ * below, so a fresh, short-lived token is minted each time somebody opens a
+ * meeting.
  *
  * Implemented with Node's built-in `crypto` (no new dependencies). The AES step
  * matches CryptoJS's OpenSSL-compatible format exactly: an 8-byte random salt,
@@ -121,31 +123,6 @@ export function signHs256(
 }
 
 /**
- * Parse a MiroTalk-style expiry (`"1h"`, `"30m"`, `"45s"`, `"1d"`, or a bare
- * number of seconds) into seconds. Falls back to one hour.
- */
-export function parseExpiresToSeconds(value: string | undefined): number {
-  const raw = value?.trim();
-  if (!raw) return 3600;
-  const match = /^(\d+)\s*([smhd]?)$/i.exec(raw);
-  if (!match) return 3600;
-  const amount = Number(match[1]);
-  switch (match[2].toLowerCase()) {
-    case "s":
-    case "":
-      return amount;
-    case "m":
-      return amount * 60;
-    case "h":
-      return amount * 3600;
-    case "d":
-      return amount * 86400;
-    default:
-      return 3600;
-  }
-}
-
-/**
  * Shortest MIRO_JWT_KEY that does not draw a warning. 32 characters is what
  * `openssl rand -base64 32` produces (44 characters) comfortably clears, and it
  * is the length the documentation now asks for.
@@ -193,7 +170,8 @@ const PLACEHOLDER_KEY_FRAGMENTS = [
  * Deliberately advisory: a weak key still mints working tokens, because a
  * meeting link that silently stops working is a worse failure for a club than a
  * guessable one, and the deployment cannot be repaired from inside this
- * process.
+ * process. Since #2940 the key may come from the encrypted credential store
+ * as well as from MIRO_JWT_KEY, so the message names neither source.
  */
 export function describeMirotalkJwtKeyWeakness(key: string): string | null {
   const lower = key.toLowerCase();
@@ -220,7 +198,7 @@ function warnOnceAboutWeakKey(key: string): void {
   if (warnedKeyDigests.has(digest)) return;
   warnedKeyDigests.add(digest);
   console.warn(
-    `mirotalk: MIRO_JWT_KEY ${weakness}. That key both signs every meeting join token and encrypts the host credentials inside it, so a guessable value lets anyone mint a token MiroTalk accepts as host. Generate one with "openssl rand -base64 32" and set the same value as MiroTalk's JWT_KEY. Meeting links keep working — this is a warning, not a failure.`,
+    `mirotalk: the meeting signing key ${weakness}. That key both signs every meeting join token and encrypts the host credentials inside it, so a guessable value lets anyone mint a token MiroTalk accepts as host. Generate one with "openssl rand -base64 32" and set the same value as MiroTalk's JWT_KEY. Meeting links keep working — this is a warning, not a failure.`,
   );
 }
 
@@ -244,39 +222,23 @@ export function buildMirotalkToken(input: MirotalkTokenInput): string {
 }
 
 /**
- * Build the meeting token from the app environment, or null when JWT access is
- * not configured (then the join link carries no token and MiroTalk falls back to
- * its own host-login prompt). A key that fails
- * `describeMirotalkJwtKeyWeakness` logs one warning per distinct key and is
- * then used anyway. Requires all three of `MIRO_JWT_KEY`,
- * `MIRO_MEETING_USERNAME`, and `MIRO_MEETING_PASSWORD` — with HOST_USER_AUTH on,
- * a token whose credentials do not match a HOST_USERS entry would be rejected,
- * so we omit the token entirely rather than emit one that cannot authenticate.
+ * Mint the access token for a join link, warning once about a weak signing key.
+ *
+ * WHAT CHANGED IN #2940: this used to be `resolveMirotalkMeetingToken()`, which
+ * read `MIRO_JWT_KEY`, `MIRO_MEETING_USERNAME`, `MIRO_MEETING_PASSWORD`,
+ * `MIRO_MEETING_PRESENTER` and `MIRO_JWT_EXP` out of `process.env` itself. It
+ * takes them now, because the club can set every one of them in Admin ->
+ * Integrations and `mirotalk-config.ts` is the one place that decides which
+ * source wins. Two modules reading the environment for the same setting is how
+ * a screen ends up disagreeing with what the link actually does.
+ *
+ * This module is therefore pure MiroTalk protocol: the byte-for-byte token
+ * format, and the entropy warning that belongs with the key it is about.
  */
-export function resolveMirotalkMeetingToken(): string | null {
-  const key = process.env.MIRO_JWT_KEY?.trim();
-  const username = process.env.MIRO_MEETING_USERNAME?.trim();
-  const password = process.env.MIRO_MEETING_PASSWORD;
-  if (!key || !username || !password) return null;
-
-  // Advisory only — the token is still minted below (#2841).
-  warnOnceAboutWeakKey(key);
-
-  // Default true: the calendar link is meant to let committee members open and
-  // host the meeting immediately. MiroTalk's /join page grants host status
-  // purely from this flag (it does NOT apply first-to-join there), so "false"
-  // leaves the clicker stuck on the "waiting for host" screen. Set
-  // MIRO_MEETING_PRESENTER=false only if you want joiners to wait for a host.
-  const presenter =
-    (process.env.MIRO_MEETING_PRESENTER ?? "true").trim().toLowerCase() !==
-    "false";
-  const expiresInSeconds = parseExpiresToSeconds(process.env.MIRO_JWT_EXP);
-
-  return buildMirotalkToken({
-    key,
-    username,
-    password,
-    presenter,
-    expiresInSeconds,
-  });
+export function mintMirotalkAccessToken(input: MirotalkTokenInput): string {
+  // Advisory only — the token is still minted (#2841). A meeting link that
+  // silently stops working is a worse failure for a club than a guessable one,
+  // and the key cannot be repaired from inside this process.
+  warnOnceAboutWeakKey(input.key);
+  return buildMirotalkToken(input);
 }

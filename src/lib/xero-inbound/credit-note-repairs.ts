@@ -1,5 +1,6 @@
 import { type CreditNote as XeroCreditNote } from "xero-node";
 import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
@@ -116,8 +117,11 @@ export async function resolvePaymentIdsByInvoiceTargets(
   const resolvedPaymentIds = new Map<string, string>();
   for (const invoiceId of uniqueInvoiceIds) {
     const paymentIds = paymentIdsByInvoiceId.get(invoiceId);
-    if (paymentIds?.size === 1) {
-      resolvedPaymentIds.set(invoiceId, Array.from(paymentIds)[0]);
+    // "Exactly one payment" said as a first with no rest, so the id the
+    // resolution stores is a value this branch already holds (#2800).
+    const [onlyPaymentId, ...extraPaymentIds] = paymentIds ?? [];
+    if (onlyPaymentId !== undefined && extraPaymentIds.length === 0) {
+      resolvedPaymentIds.set(invoiceId, onlyPaymentId);
       continue;
     }
 
@@ -725,7 +729,12 @@ export async function repairAccountCreditAllocationBusinessState(
       },
     });
 
-    if (paymentCandidates.length !== 1) {
+    // "Exactly one local payment" said as a first with no rest: the repair
+    // below then holds the payment itself rather than a count that licenses a
+    // later read. A no-match and a multi-match are both skipped, exactly as
+    // the length check skipped them (#2800).
+    const [payment, ...extraPaymentCandidates] = paymentCandidates;
+    if (payment === undefined || extraPaymentCandidates.length > 0) {
       skippedAllocations += 1;
       logger.warn(
         {
@@ -739,7 +748,6 @@ export async function repairAccountCreditAllocationBusinessState(
     }
 
     matchedPayments += 1;
-    const payment = paymentCandidates[0];
     const expectedAmountCents = -target.amountCents;
     const expectedDescription = buildBookingAppliedCreditDescription(
       payment.bookingId
@@ -756,12 +764,21 @@ export async function repairAccountCreditAllocationBusinessState(
     // keeps the applied total within the payment amount (invariant (b),(d),
     // #1234). DB-only work: no external Xero call runs inside this transaction.
     await prisma.$transaction(async (tx) => {
-      await lockMemberCreditLedger(payment.booking.memberId, tx);
+      const creditLedgerMemberId = bookingOwner(payment.booking).memberId;
+      // #3369: this whole repair is about a MEMBER's applied credit — the
+      // ledger rows, the per-member lock that serialises them against the
+      // spend engine, and the `creditAppliedCents` they sum to. An
+      // organisation-owned booking has no member ledger, so there is nothing
+      // here to repair and no key to take. Skipping is the answer, not a
+      // branch inside one: a null advisory key would degenerate to a shared
+      // key, which is an `INV-LOCK` hazard visible only under concurrency.
+      if (!creditLedgerMemberId) return;
+      await lockMemberCreditLedger(creditLedgerMemberId, tx);
       await assertNoAppliedCreditDeallocationFence(payment.id, tx);
 
       const existingAppliedCredits = await tx.memberCredit.findMany({
         where: {
-          memberId: payment.booking.memberId,
+          memberId: creditLedgerMemberId,
           appliedToBookingId: payment.bookingId,
           type: CreditType.BOOKING_APPLIED,
           OR: [
@@ -786,8 +803,11 @@ export async function repairAccountCreditAllocationBusinessState(
         (credit) => credit.xeroCreditNoteId === creditNoteId
       );
 
-      if (linkedAppliedCredits.length === 1) {
-        const appliedCredit = linkedAppliedCredits[0];
+      // One linked row is a first with no rest; the two multi-row branches
+      // below are unchanged (#2800).
+      const [onlyLinkedCredit, ...extraLinkedCredits] = linkedAppliedCredits;
+      if (onlyLinkedCredit !== undefined && extraLinkedCredits.length === 0) {
+        const appliedCredit = onlyLinkedCredit;
         const updates: {
           description?: string;
         } = {};
@@ -805,7 +825,7 @@ export async function repairAccountCreditAllocationBusinessState(
           });
           updatedAppliedCredits += 1;
         }
-      } else if (linkedAppliedCredits.length > 1) {
+      } else if (extraLinkedCredits.length > 0) {
         // Historical negative rows plus later positive/negative offsets are an
         // intentional append-only record. The precise slice reconciler below,
         // not destructive rewrites of those rows, determines provider truth.
@@ -826,10 +846,12 @@ export async function repairAccountCreditAllocationBusinessState(
             credit.amountCents === expectedAmountCents
         );
 
-        if (unlinkedExactCredits.length === 1) {
+        const [onlyUnlinkedCredit, ...extraUnlinkedCredits] =
+          unlinkedExactCredits;
+        if (onlyUnlinkedCredit !== undefined && extraUnlinkedCredits.length === 0) {
           await tx.memberCredit.update({
             where: {
-              id: unlinkedExactCredits[0].id,
+              id: onlyUnlinkedCredit.id,
             },
             data: {
               xeroCreditNoteId: creditNoteId,
@@ -837,7 +859,7 @@ export async function repairAccountCreditAllocationBusinessState(
             },
           });
           updatedAppliedCredits += 1;
-        } else if (unlinkedExactCredits.length > 1) {
+        } else if (extraUnlinkedCredits.length > 0) {
           skippedAllocations += 1;
           logger.warn(
             {
@@ -851,7 +873,7 @@ export async function repairAccountCreditAllocationBusinessState(
         } else {
           await tx.memberCredit.create({
             data: {
-              memberId: payment.booking.memberId,
+              memberId: creditLedgerMemberId,
               amountCents: expectedAmountCents,
               type: CreditType.BOOKING_APPLIED,
               description: expectedDescription,
@@ -887,7 +909,7 @@ export async function repairAccountCreditAllocationBusinessState(
         }),
         tx.memberCredit.aggregate({
           where: {
-            memberId: payment.booking.memberId,
+            memberId: creditLedgerMemberId,
             appliedToBookingId: payment.bookingId,
             type: CreditType.BOOKING_APPLIED,
             xeroCreditNoteId: null,
@@ -896,7 +918,7 @@ export async function repairAccountCreditAllocationBusinessState(
         }),
         tx.memberCredit.aggregate({
           where: {
-            memberId: payment.booking.memberId,
+            memberId: creditLedgerMemberId,
             appliedToBookingId: payment.bookingId,
             type: CreditType.BOOKING_APPLIED,
           },
@@ -914,7 +936,7 @@ export async function repairAccountCreditAllocationBusinessState(
       if (ledgerDeltaCents !== 0) {
         await tx.memberCredit.create({
           data: {
-            memberId: payment.booking.memberId,
+            memberId: creditLedgerMemberId,
             amountCents: -ledgerDeltaCents,
             type: CreditType.BOOKING_APPLIED,
             description: `Xero allocation reconciliation for booking ${payment.bookingId.slice(0, 8)}`,
@@ -928,7 +950,7 @@ export async function repairAccountCreditAllocationBusinessState(
 
       const aggregate = await tx.memberCredit.aggregate({
         where: {
-          memberId: payment.booking.memberId,
+          memberId: creditLedgerMemberId,
           appliedToBookingId: payment.bookingId,
           type: CreditType.BOOKING_APPLIED,
         },

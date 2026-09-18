@@ -566,10 +566,14 @@ export async function getMemberDeleteEligibility({
     throw new MemberLifecycleActionError("Member not found.", 404);
   }
 
-  const counts = await Promise.all(
-    MEMBER_DELETE_BLOCKER_SPECS.map((spec) =>
-      spec.query(db, memberId, ignoreRequestId),
-    ),
+  // Each spec carries its own count instead of a second array read back by
+  // position, so the pairing is a fact of the value and nothing has to index
+  // one list with the other's position (#2800).
+  const blockerCounts = await Promise.all(
+    MEMBER_DELETE_BLOCKER_SPECS.map(async (spec) => ({
+      spec,
+      count: await spec.query(db, memberId, ignoreRequestId),
+    })),
   );
 
   const blockers: MemberDeleteEligibilityBlocker[] = [];
@@ -603,12 +607,11 @@ export async function getMemberDeleteEligibility({
     });
   }
 
-  MEMBER_DELETE_BLOCKER_SPECS.forEach((spec, index) => {
-    const count = counts[index];
+  for (const { spec, count } of blockerCounts) {
     if (count > 0) {
       blockers.push({ code: spec.code, label: spec.label, count });
     }
-  });
+  }
 
   return {
     eligible: blockers.length === 0,
@@ -1294,7 +1297,7 @@ export async function reviewMemberDeleteRequest({
     // plainer version of the same defect. Deleted, not nulled: a row that
     // exists and holds `null` reads to `buildXeroContactCompanyNumberPatch` as
     // "we looked, and Xero's NZBN field is empty", which is its permission to
-    // write — and Xero still holds the value (#2873), so manufacturing that
+    // write — and Xero still holds the value (#3058), so manufacturing that
     // permission would let a later namesake matched onto this same contact have
     // a real business number overwritten by a birthday.
     if (fencedMember.xeroContactId) {

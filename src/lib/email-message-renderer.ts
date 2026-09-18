@@ -193,15 +193,21 @@ function normaliseSubjectProse(value: string): string {
 }
 
 function findSignPrefixedTokens(value: string): string[] {
+  // The pattern's one capture group has no `?` quantifier, so it is always
+  // present; the predicate proves that to the type instead of asserting it.
   return Array.from(
-    new Set(Array.from(value.matchAll(SIGN_CARRYING_TOKEN_PATTERN), (m) => m[1])),
+    new Set(
+      Array.from(value.matchAll(SIGN_CARRYING_TOKEN_PATTERN), (m) => m[1]).filter(
+        (token): token is string => token !== undefined,
+      ),
+    ),
   );
 }
 
 function extractTemplateTokens(value: string): string[] {
   return Array.from(value.matchAll(/\{\{([^{}]+)\}\}/g))
-    .map((match) => match[1].trim())
-    .filter(Boolean);
+    .map((match) => match[1]?.trim())
+    .filter((token): token is string => Boolean(token));
 }
 
 // test seam
@@ -755,7 +761,6 @@ export function neutraliseSensitiveSubjectContent(
   const sensitiveSubjectTokenSet = getSensitiveEmailSubjectTokens(templateName);
   // The alternation is built from a fixed internal token set, not user input; the
   // tokens are simple {{name}} identifiers with no ReDoS structure.
-  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const sensitiveSubjectTokenPattern = new RegExp(
     `\\{\\{\\s*(?:${Array.from(sensitiveSubjectTokenSet).join("|")})\\s*\\}\\}`,
     "g",

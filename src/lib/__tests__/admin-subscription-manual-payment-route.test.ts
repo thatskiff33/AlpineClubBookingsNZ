@@ -20,9 +20,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("@/lib/manual-subscription-payment", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/manual-subscription-payment")
-  >("@/lib/manual-subscription-payment");
+  const actual = (await vi.importActual("@/lib/manual-subscription-payment")) as typeof import("@/lib/manual-subscription-payment");
   return {
     ...actual,
     applyManualSubscriptionPayment: mocks.applyManualSubscriptionPayment,

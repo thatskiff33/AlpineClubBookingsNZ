@@ -25,6 +25,7 @@ import {
   readRowLabel,
   type PnlReportRow,
 } from "@/lib/finance-pnl-snapshot";
+import { must } from "@/lib/indexed-access";
 
 interface FinanceChartAccountInfo {
   accountId: string;
@@ -99,7 +100,11 @@ export function shiftMonthKey(monthKey: string, deltaMonths: number): string {
     throw new Error(`shiftMonthKey requires a YYYY-MM month key, got "${monthKey}"`);
   }
 
-  const [year, month] = monthKey.split("-").map(Number);
+  // `isMonthKey` above pinned the "YYYY-MM" shape, so the split always has
+  // both parts.
+  const parts = monthKey.split("-");
+  const year = Number(must(parts[0], `shiftMonthKey: malformed month key "${monthKey}"`));
+  const month = Number(must(parts[1], `shiftMonthKey: malformed month key "${monthKey}"`));
   const zeroBased = year * 12 + (month - 1) + deltaMonths;
   const shiftedYear = Math.floor(zeroBased / 12);
   const shiftedMonth = (((zeroBased % 12) + 12) % 12) + 1;
@@ -142,12 +147,16 @@ export function parseReportColumnMonth(value: string | null): string | null {
     /^(?:(\d{1,2})\s+)?([A-Za-z]{3,9})[\s-]+(\d{2}|\d{4})$/
   );
   if (nameMatch) {
-    const month = MONTH_NUMBER_BY_NAME.get(nameMatch[2].slice(0, 3).toLowerCase());
+    // The 2nd and 3rd groups are mandatory (no trailing `?`), so a successful
+    // match always captures them.
+    const monthName = must(nameMatch[2], "parseReportColumnMonth: matched date has no month-name capture group");
+    const yearText = must(nameMatch[3], "parseReportColumnMonth: matched date has no year capture group");
+    const month = MONTH_NUMBER_BY_NAME.get(monthName.slice(0, 3).toLowerCase());
     if (month === undefined) {
       return null;
     }
 
-    return buildMonthKey(normalizeYear(Number(nameMatch[3])), month);
+    return buildMonthKey(normalizeYear(Number(yearText)), month);
   }
 
   return null;

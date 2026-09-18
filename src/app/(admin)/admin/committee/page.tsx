@@ -18,7 +18,7 @@ import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { CommitteePhotoDisplayControl } from "@/components/admin/committee-photo-display-control";
 import {
@@ -118,7 +118,29 @@ export default function CommitteePage() {
   const [error, setError] = useState("");
   const pageRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const { scrollToError, scrollToTop } = useScrollToFeedback();
+  /*
+    The success half of the action-attention rule, on a screen that shows no
+    success banner: the count of saves that have landed. It is a signal, not a
+    message — nothing renders it — and it exists so failure and success are
+    decided by ONE hook.
+
+    Two independent effects are not an equivalent spelling. A save that POSTs
+    successfully and then fails its refresh sets the error AND bumps this in the
+    same commit, and `useActionAttention` runs only the failure position; the
+    `closeRoleForm(); await fetchCommitteeData(); scrollToTop(pageRef);` shape
+    this replaced ran BOTH — `fetchCommitteeData` sets an error of its own — so
+    two smooth scrolls raced and the admin could be left at the top of the page
+    with the failure off-screen below (#2934).
+  */
+  const [savesLanded, setSavesLanded] = useState(0);
+  // Failure wins, success positions at the top, and neither runs for a passive
+  // re-render — the shared rule, in one place (#2934).
+  useActionAttention({
+    error,
+    errorTarget: errorRef,
+    success: savesLanded,
+    successTarget: pageRef,
+  });
   // Committee roles/assignments resolve to the membership area (their write
   // routes enforce membership:edit), so gate the editors on that area (#1940).
   const canEdit = useAdminAreaEditAccess("membership");
@@ -181,10 +203,6 @@ export default function CommitteePage() {
   useEffect(() => {
     void fetchCommitteeData();
   }, [fetchCommitteeData]);
-
-  useEffect(() => {
-    if (error) scrollToError(errorRef);
-  }, [error, scrollToError]);
 
   function openAddRoleForm() {
     setEditingRoleId(null);
@@ -269,7 +287,7 @@ export default function CommitteePage() {
       }
       closeRoleForm();
       await fetchCommitteeData();
-      scrollToTop(pageRef);
+      setSavesLanded((landed) => landed + 1);
     } catch (saveError) {
       setError(
         saveError instanceof Error ? saveError.message : "Failed to save role",
@@ -314,7 +332,7 @@ export default function CommitteePage() {
       }
       closeAssignmentForm();
       await fetchCommitteeData();
-      scrollToTop(pageRef);
+      setSavesLanded((landed) => landed + 1);
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -748,18 +766,23 @@ export default function CommitteePage() {
                 </div>
               </div>
               <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-4">
-                {[
-                  ["published", "Published"],
-                  ["showPhone", "Show phone"],
-                  ["contactable", "Contactable"],
-                  ["isActive", "Active"],
-                ].map(([key, label]) => (
+                {/* `as const` makes each row a 2-tuple of literals, so `key`
+                    is one of the four boolean field names rather than
+                    `string | undefined` — which is what a computed property
+                    name and the form lookup both need. Two casts go with it
+                    (#2801). */}
+                {(
+                  [
+                    ["published", "Published"],
+                    ["showPhone", "Show phone"],
+                    ["contactable", "Contactable"],
+                    ["isActive", "Active"],
+                  ] as const
+                ).map(([key, label]) => (
                   <label key={key} className="flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
-                      checked={
-                        assignmentForm[key as keyof typeof assignmentForm] as boolean
-                      }
+                      checked={assignmentForm[key]}
                       onChange={(event) =>
                         setAssignmentForm({
                           ...assignmentForm,

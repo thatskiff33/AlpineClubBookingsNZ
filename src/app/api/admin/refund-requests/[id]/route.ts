@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -54,7 +55,8 @@ export async function PUT(
   const refundRequest = await prisma.refundRequest.findUnique({
     where: { id },
     include: {
-      booking: { include: { payment: true, member: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      booking: { include: { payment: true, member: true, organisation: { select: { name: true, email: true } } } },
       member: true,
     },
   });
@@ -117,7 +119,7 @@ export async function PUT(
     if (approvedAmountCents > maxRefundable) {
       return NextResponse.json(
         {
-          error: `Amount exceeds maximum refundable of $${(maxRefundable / 100).toFixed(2)}`,
+          error: `Amount exceeds maximum refundable of ${formatCents(maxRefundable)}`,
         },
         { status: 400 }
       );
@@ -280,10 +282,15 @@ export async function PUT(
     // #1792: resolve the member email BEFORE the audit so the notify choice can
     // be recorded honestly. Only stamp notifyMember:false when there was an
     // email to suppress; otherwise there was nothing to opt out of.
-    const memberEmail = booking.member.email || refundRequest.member.email;
-    const recipientMemberId = booking.member.email
-      ? booking.member.id
-      : refundRequest.member.id;
+    const memberEmail = bookingOwner(booking).member.email || refundRequest.member.email;
+    // #3369: the owner where there is a member to name, and otherwise the
+    // person who ASKED for the refund — who is always a member, because
+    // `RefundRequest.memberId` is the requester and stays required. A school's
+    // booking therefore still addresses somebody real.
+    const recipientMemberId =
+      (bookingOwner(booking).member.email
+        ? bookingOwner(booking).member.id
+        : refundRequest.member.id) ?? refundRequest.member.id;
     const notifyAuditFields =
       memberEmail && notifyMember === false ? { notifyMember: false } : {};
 
@@ -291,13 +298,13 @@ export async function PUT(
       action: "refund-request.approve",
       memberId: session.user.id,
       targetId: id,
-      subjectMemberId: booking.memberId,
+      subjectMemberId: bookingOwner(booking).memberId,
       entityType: "RefundRequest",
       entityId: id,
       category: "payment",
       outcome: "success",
       summary: "Refund appeal approved",
-      details: `Approved refund appeal for $${(approvedAmountCents / 100).toFixed(2)} on booking ${booking.id}`,
+      details: `Approved refund appeal for ${formatCents(approvedAmountCents)} on booking ${booking.id}`,
       metadata: {
         bookingId: booking.id,
         approvedAmountCents,
@@ -369,10 +376,15 @@ export async function PUT(
     // #1792: resolve the member email BEFORE the audit so the notify choice can
     // be recorded honestly. Only stamp notifyMember:false when there was an
     // email to suppress; otherwise there was nothing to opt out of.
-    const memberEmail = booking.member.email || refundRequest.member.email;
-    const recipientMemberId = booking.member.email
-      ? booking.member.id
-      : refundRequest.member.id;
+    const memberEmail = bookingOwner(booking).member.email || refundRequest.member.email;
+    // #3369: the owner where there is a member to name, and otherwise the
+    // person who ASKED for the refund — who is always a member, because
+    // `RefundRequest.memberId` is the requester and stays required. A school's
+    // booking therefore still addresses somebody real.
+    const recipientMemberId =
+      (bookingOwner(booking).member.email
+        ? bookingOwner(booking).member.id
+        : refundRequest.member.id) ?? refundRequest.member.id;
     const notifyAuditFields =
       memberEmail && notifyMember === false ? { notifyMember: false } : {};
 
@@ -380,7 +392,7 @@ export async function PUT(
       action: "refund-request.reject",
       memberId: session.user.id,
       targetId: id,
-      subjectMemberId: booking.memberId,
+      subjectMemberId: bookingOwner(booking).memberId,
       entityType: "RefundRequest",
       entityId: id,
       category: "payment",

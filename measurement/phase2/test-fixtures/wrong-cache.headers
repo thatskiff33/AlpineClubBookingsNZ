@@ -1,4 +1,0 @@
-HTTP/1.1 200 OK
-ETag: "fixture-etag"
-X-Nextjs-Cache: MISS
-Cache-Control: private, no-store

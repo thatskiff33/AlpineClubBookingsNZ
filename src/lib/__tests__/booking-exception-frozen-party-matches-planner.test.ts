@@ -36,7 +36,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/booking-guests", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-guests")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-guests");
   return {
     ...actual,
     resolveLinkedBookingMembersWithBoundary:
@@ -54,9 +54,7 @@ vi.mock("@/lib/booking-member-night-conflicts", () => ({
 }));
 
 vi.mock("@/lib/booking-member-guest-subscriptions", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/booking-member-guest-subscriptions")
-  >();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-member-guest-subscriptions");
   return { ...actual, findUnpaidMemberGuestNames: h.findUnpaidMemberGuestNames };
 });
 

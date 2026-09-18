@@ -110,9 +110,18 @@ export function monthGridRange(
   zone: ClubTimeZone,
 ): { from: Instant; to: Instant } {
   const grid = buildMonthGrid(monthStart);
-  const from = startOfClubDay(grid[0], zone);
+  // `buildMonthGrid` always returns exactly 42 days (`Array.from({ length:
+  // 42 }, ...)` above), so the first and last cells always exist; the array
+  // type can't carry that fixed length, so a missing end is a named refusal
+  // rather than a guessed day.
+  const firstDay = grid[0];
+  const lastDay = grid[grid.length - 1];
+  if (!firstDay || !lastDay) {
+    throw new Error("Month grid must always contain 42 days");
+  }
+  const from = startOfClubDay(firstDay, zone);
   const to = new Date(
-    endOfClubDayExclusive(grid[grid.length - 1], zone).getTime() - 1,
+    endOfClubDayExclusive(lastDay, zone).getTime() - 1,
   );
   return { from, to };
 }
@@ -319,7 +328,14 @@ export function isoFromDateTimeInputs(
 function parseWallTime(
   timeValue: string | undefined,
 ): { hour: number; minute: number } | null {
-  const [hour, minute] = (timeValue || "00:00").split(":").map(Number);
+  const parts = (timeValue || "00:00").split(":");
+  const [hourPart, minutePart] = parts;
+  // A one-segment (no colon) input has no minute part at all; validated here
+  // rather than by relying on `Number.isInteger(undefined)` happening to be
+  // false, which is what noUncheckedIndexedAccess was flagging.
+  if (hourPart === undefined || minutePart === undefined) return null;
+  const hour = Number(hourPart);
+  const minute = Number(minutePart);
   if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
   if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
   return { hour, minute };

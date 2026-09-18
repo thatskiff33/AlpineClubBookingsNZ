@@ -41,7 +41,6 @@ export async function GET(request: NextRequest) {
       // absDir is contained under IMAGES_ROOT; e.name comes from readdir of that
       // directory, not from request input. Justification and the #2841 triage:
       // docs/SECURITY-ATTACK-SURFACE.md -> "Image Manager path containment".
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const filePath = path.join(absDir, e.name);
       const stat = await fs.stat(filePath);
       return {
@@ -73,20 +72,19 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const dir =
-    body !== null &&
-    typeof body === "object" &&
-    "dir" in body &&
-    typeof (body as Record<string, unknown>).dir === "string"
-      ? (body as Record<string, string>).dir
-      : "";
-  const filename =
-    body !== null &&
-    typeof body === "object" &&
-    "filename" in body &&
-    typeof (body as Record<string, unknown>).filename === "string"
-      ? (body as Record<string, string>).filename
-      : "";
+  // ONE read of each field, narrowed by `typeof`, rather than a `typeof` check
+  // on one read and the value taken from a second read through a
+  // `Record<string, string>` cast. Under stricter indexed access that cast's
+  // own lookup is `string | undefined` — the compiler pointing out that the
+  // two reads were never provably the same value (#2801). Net one cast fewer.
+  const bodyFields: Record<string, unknown> =
+    body !== null && typeof body === "object"
+      ? (body as Record<string, unknown>)
+      : {};
+  const rawDir = bodyFields.dir;
+  const rawFilename = bodyFields.filename;
+  const dir = typeof rawDir === "string" ? rawDir : "";
+  const filename = typeof rawFilename === "string" ? rawFilename : "";
 
   if (!filename || /[/\\]/.test(filename)) {
     return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
@@ -106,7 +104,6 @@ export async function DELETE(request: NextRequest) {
   // contains a separator; the startsWith check below re-confirms containment.
   // Justification and the #2841 triage:
   // docs/SECURITY-ATTACK-SURFACE.md -> "Image Manager path containment".
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const filePath = path.join(absDir, filename);
   // Strict: the file being deleted is always a child of absDir, never absDir
   // itself. The dropped `filePath !== absDir &&` escape hatch was the same shape

@@ -53,7 +53,7 @@ vi.mock("next/navigation", () => ({
 // wholesale replacement makes the review step throw at render — the widened
 // module graph problem `test:related` exists to catch.
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>()),
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
 }))
 

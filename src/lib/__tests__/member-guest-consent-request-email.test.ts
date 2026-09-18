@@ -26,9 +26,7 @@ const { sendEmailMock, settingsStub } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/email/core", () => ({ sendEmail: sendEmailMock }));
 vi.mock("@/lib/email-message-settings", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/email-message-settings")
-  >();
+  const actual = (await importOriginal()) as typeof import("@/lib/email-message-settings");
   return {
     ...actual,
     // The sender resolves the booking's lodge identity for the lodge NAME the

@@ -124,7 +124,9 @@ answer is not an epic at all.
 Write the answers into the epic body — the "why this must ship atomically" part
 of the issue order above exists for exactly that. An epic body that cannot
 answer these four is the clearest signal available that the work is a
-programme.
+programme. Once it has passed, the child list that body carries ends with the
+final compose-and-review child, created alongside the rest — see "The final
+compose-and-review child" under the shipping rule below.
 
 ### What does not make an epic
 
@@ -231,9 +233,69 @@ each child separately.
 
 **That last pull request is an INTEGRATION review, not a re-review.** Each child
 was already reviewed into the branch by the normal adversarial lenses at its own
-small size. The epic pull request carries the conflict resolutions, the migration
-sequencing, the deploy rehearsal below, and a link to each child's review
-evidence.
+small size. The epic pull request carries the migration sequencing, the deploy
+rehearsal below, a link to each child's review evidence, and the findings of the
+final compose-and-review child — the one review that reads what the children
+only produce in combination. What that child covers, and when it runs, is the
+next subsection; it is stated there once.
+
+#### The final compose-and-review child — mandatory, and created with the others
+
+**Every epic carries one last child issue: compose, then review, then open the
+epic's pull request.** It is the final entry in the child list, it is created
+when the other children are created rather than remembered at the end, and the
+epic does not go to `main` without it. Owner decision, 13 Sep 2026 (#3374).
+Declined: a checklist line in the epic pull-request template, which has no
+acceptance criteria, no state and no evidence trail; and leaving it to
+orchestrator judgement, which is what produced the gap.
+
+The reason is that nothing else reviews the epic. Every lens that ran read one
+child's diff, so two things reach the gated merge unread:
+
+- **the composition** — a guard an early child added that a later child's move
+  or rename silently disarmed (still green, matching nothing); a tree-wide
+  census figure that several children and every `main` sync each re-measured;
+  an ordering the epic declared binding; an `INV-*` id an epic minted while
+  `main` was minting the same one; and two children solving one problem in ways
+  that now disagree;
+- **the orchestrator's own conflict resolutions**, across every `main` sync the
+  epic absorbed — the only code on the branch written by the same party that
+  decides what gets reviewed, often in lines neither side's author would
+  recognise.
+
+So the child covers exactly those, and nothing else:
+
+1. **The composition**, as listed above, read on the composed branch rather than
+   in any one child.
+2. **Every conflict resolution the orchestrator wrote**, with each sync's diff as
+   the evidence and a differential proof wherever a resolution changed
+   behaviour-bearing code rather than only its shape.
+3. **Every census or contract suite that reads the tree from disk, run by
+   name with `npm run test:named`.** Select them per
+   [`TESTING.md`](../TESTING.md) → "Selecting the censuses a change can reach",
+   over the epic's whole diff against `main`, never from memory: that is the
+   class the module graph cannot reach — so `vitest related` never selects
+   it — and the class that catches a disarmed guard.
+
+**It is deliberately not a re-review of the epic diff.** Nobody reads a
+751-file diff — MEP #2680's size — and a review that claims to have is worse
+than a scoped one that says what it covered.
+
+**Timing is part of the contract.** It runs *after* the final `main` sync and
+*before* the epic's pull request is marked ready. A review approves the commit
+it read (`AGENTS.md` → "Wave Orchestration Playbook" §3): a sync landing
+afterwards re-opens the child over the delta only — the
+new sync's resolutions and any census the sync re-measured — never a fresh pass
+over the whole branch.
+
+The worked example is MEP #2680, which absorbed eleven syncs. On the fourth, the
+orchestrator resolved a conflict by assuming a provenance vector and a price
+vector are always the same length; no local gate caught it, and it surfaced as
+22 tests returning 400 instead of 200. The lens dispatched at that resolution
+after the fact found the corrected version sound by differential probe and a
+second defect beside it — and the fifth sync's three money-path resolutions were
+still unreviewed when the epic was called ready. They were reviewed only because
+the owner asked.
 
 #### What this costs, and what to do about each
 
@@ -297,6 +359,11 @@ runs the next epic.
 - **Migration prefixes.** Reserve one per child in the epic body up front, so
   queued children cannot collide, and re-run the duplicate-prefix check on every
   merge into the branch rather than only at pull-request time.
+- **The child list ends with the compose-and-review child.** Create it in the
+  same sitting as the other children and write it into the epic body as the
+  last entry in the merge order, per the subsection above. A step that depends
+  on somebody remembering it at the end is a step that is sometimes skipped,
+  and the epic merge is the worst place for that.
 - **Branch protection does not reach an integration branch** unless somebody with
   admin adds it. An agent session cannot: the machine account holds `push`, not
   `admin`, and that endpoint's 404 means "not permitted", never "not protected".

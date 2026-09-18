@@ -48,6 +48,10 @@ function bookingLabel(booking: DisplayStateBooking): { label: string; group: boo
     return { label: `${booking.label} · ${booking.guestCount}`, group: true };
   }
   const [lead, ...rest] = booking.guests;
+  if (!lead) {
+    // Unreachable: the length check above guarantees at least one guest.
+    return { label: `${booking.label} · ${booking.guestCount}`, group: true };
+  }
   return {
     label: rest.length > 0 ? `${lead.label} +${rest.length}` : lead.label,
     group: false,

@@ -18,6 +18,16 @@ import {
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import {
+  recordBookingNightAdjustments,
+  type PromoAdjustmentTarget,
+} from "@/lib/night-adjustment-write";
+import {
+  d3CompatibleBookingMoneyBuildUpCents,
+  readBookingMoneyBuildUp,
+  selectBookingMoneyBuildUp,
+  selectLoadedBookingMoneyBuildUp,
+} from "@/lib/booking-money-build-up";
+import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
@@ -34,12 +44,15 @@ import {
   minorsReviewAlertShouldFire,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
+import { bookingOwner } from "@/lib/booking-owner";
+import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import {
   hostingCoverageActorOptions,
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
 import {
+  activeLifecycleEditRefusal,
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
@@ -63,7 +76,10 @@ import {
   editFinancialReviewOccurrence,
   storedSoldPriceEvidenceForGuest,
 } from "@/lib/stored-sold-price-evidence";
-import { createBookingModificationCredit } from "@/lib/member-credit";
+import {
+  createBookingModificationCredit,
+  requireMemberCreditRecipient,
+} from "@/lib/member-credit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
@@ -104,6 +120,13 @@ export type RemoveBookingGuestResult = {
   accountCreditAmountCents: number;
   pendingRefundAmountCents: number;
   additionalAmountCents: number;
+  /**
+   * #3371: the minter's own value, carrying what minting it would absorb. The
+   * plain figure above is what the emails and the response body read; the two
+   * are not interchangeable and only this one may reach
+   * `createModificationAdditionalPaymentIntent`.
+   */
+  additionalAsk: AdditionalAsk;
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
@@ -115,7 +138,10 @@ export type RemoveBookingGuestResult = {
   paymentCustomerId: string | null;
   memberEmail: string;
   memberName: string;
-  memberId: string;
+  /** The owner's first name, as `bookingOwner()` projects it (#3369). */
+  memberFirstName: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   promoRemoved: boolean;
   // #2390: set only when a usage cap stopped the promotion reaching somebody
   // this edit added; null means everybody the code applies to is covered.
@@ -364,6 +390,8 @@ export async function removeBookingGuestInTransaction({
       },
       payment: true,
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
         promoRedemption: {
           include: {
             guestTargets: { select: { bookingGuestId: true } },
@@ -401,7 +429,7 @@ export async function removeBookingGuestInTransaction({
 
   const isOwnerOrAdmin =
     !consentAuthorityApplies &&
-    (booking.memberId === actorMemberId || actorRole === "ADMIN");
+    (bookingOwner(booking).memberId === actorMemberId || actorRole === "ADMIN");
   // A consent removal runs the SELF-REMOVAL gate set on purpose (D-14): the
   // cases in which a never-consented member is trapped on a booking must be
   // exactly the cases in which they could not have taken themselves off, and
@@ -460,15 +488,12 @@ export async function removeBookingGuestInTransaction({
     store: tx,
   });
 
-  if (
-    !isSelfRemoval &&
-    !["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)
-  ) {
-    throw new BookingGuestRemovalError(
-      "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-      400
-    );
-  }
+  // #3245: derived, not restated. A self-removal answers a different question
+  // and keeps its own named set (`SELF_REMOVABLE_GUEST_BOOKING_STATUSES`).
+  const editRefusal = isSelfRemoval
+    ? null
+    : activeLifecycleEditRefusal(booking.status, actorRole);
+  if (editRefusal) throw new BookingGuestRemovalError(editRefusal, 400);
   if (
     isSelfRemoval &&
     !SELF_REMOVABLE_GUEST_BOOKING_STATUSES.has(booking.status)
@@ -572,7 +597,7 @@ export async function removeBookingGuestInTransaction({
     )
     .map((guest) => ({
       guest,
-      evidence: storedSoldPriceEvidenceForGuest(guest, booking),
+      evidence: storedSoldPriceEvidenceForGuest(guest, booking, "WHOLE_GUEST"),
     }));
   /**
    * Is this removal's money unknowable from the booking's own history?
@@ -651,9 +676,15 @@ export async function removeBookingGuestInTransaction({
         ];
       });
 
-  const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
-
-  await tx.bookingGuest.delete({ where: { id: guestId } });
+  // #3277: capture the build-up under the existing global -> lodge locks and
+  // before the chore/guest deletes below can cascade any of its target rows.
+  // Selection waits until today's existing calculation is available; the input
+  // itself is the pre-removal record.
+  const recordedMoneyBuildUp = await readBookingMoneyBuildUp(tx, {
+    bookingId,
+    purpose: "GUEST_REMOVAL",
+    bookingGuestId: guestId,
+  });
 
   const remainingGuests = booking.guests.filter((guest) => guest.id !== guestId);
   const seasonRateData = await loadSeasonRateData(tx, bookingLodgeId);
@@ -676,7 +707,7 @@ export async function removeBookingGuestInTransaction({
   }));
   const seasonYear = seasonYearOfStoredDate(booking.checkIn);
   await assertMembershipTypeBookingAllowed(tx, {
-    ownerMemberId: booking.memberId,
+    ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,
     seasonYear,
     // Finding 2 (privacy re-review of MG3 #2308): a member removing a guest must
@@ -721,7 +752,7 @@ export async function removeBookingGuestInTransaction({
       // owner who removes their OWN guest row would otherwise walk out from under
       // the requirement entirely, leaving a party they still own and still pay for
       // with nobody paid-up on it.
-      bookingOwnerMemberId: booking.memberId,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
       participants: toSubscriptionLockoutParticipants(remainingGuests),
     });
     if (nonMemberPricing?.violation) {
@@ -735,7 +766,7 @@ export async function removeBookingGuestInTransaction({
       // is withheld. See `PaidUpAdultRefusalAudience`.
       throw new PaidUpAdultMemberRequiredError(
         nonMemberPricing.violation,
-        booking.memberId === actorMemberId ? "BOOKER" : "OTHER_PARTY_MEMBER",
+        bookingOwner(booking).memberId === actorMemberId ? "BOOKER" : "OTHER_PARTY_MEMBER",
       );
     }
   }
@@ -783,6 +814,7 @@ export async function removeBookingGuestInTransaction({
     newPromoAdjustmentCents: booking.promoAdjustmentCents,
     promoRemoved: false,
     promoCoverage: null,
+    adjustmentTargets: [],
   };
 
   if (!parkedFinancialReview) {
@@ -790,7 +822,7 @@ export async function removeBookingGuestInTransaction({
       where: { id: "default" },
     });
     priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-      ownerMemberId: booking.memberId,
+      ownerMemberId: bookingOwner(booking).memberId,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       guests: guestsForPricing,
@@ -814,17 +846,28 @@ export async function removeBookingGuestInTransaction({
       skipAuthorization: actorRole === "ADMIN",
     });
     const repriced = priceBreakdown;
-    const guestNightRates = guestsForPricing.map((guest, index) => ({
-      bookingGuestId: guest.bookingGuestId,
-      memberId: guest.memberId ?? null,
-      isMember: guest.isMember,
-      perNightRates: repriced.guests[index].perNightCents,
-      nightDates: repriced.guests[index].nightDates,
-      // nightDates carry each guest's actual priced nights (partial stays
-      // included); firstNight remains the booking's check-in so internal
-      // work-party promos date their window from the stay start.
-      firstNight: booking.checkIn,
-    }));
+    // Each guest's own priced row, read once. The breakdown was built from
+    // `guestsForPricing`, so a guest with no row is a wiring defect and there
+    // is no amount to promo-allocate against — refused, not guessed (#2800).
+    const guestNightRates = guestsForPricing.map((guest, index) => {
+      const priced = repriced.guests[index];
+      if (priced === undefined) {
+        throw new Error(
+          `Guest removal reprice has no priced guest at breakdown position ${index} of ${repriced.guests.length} (#3031).`,
+        );
+      }
+      return {
+        bookingGuestId: guest.bookingGuestId,
+        memberId: guest.memberId ?? null,
+        isMember: guest.isMember,
+        perNightRates: priced.perNightCents,
+        nightDates: priced.nightDates,
+        // nightDates carry each guest's actual priced nights (partial stays
+        // included); firstNight remains the booking's check-in so internal
+        // work-party promos date their window from the stay start.
+        firstNight: booking.checkIn,
+      };
+    });
 
     newTotalPriceCents = repriced.totalPriceCents;
     // #3031: THE CREDIT IS THE DEPARTING GUEST'S OWN STORED PRICE, and the gate
@@ -852,6 +895,15 @@ export async function removeBookingGuestInTransaction({
       guestNightRates,
       todayAtClub,
     });
+    // #3276: the remaining guests' nights are untouched by a removal, so only
+    // the build-up is rewritten — from the engine's fresh decision over exactly
+    // those guests. A PARKED removal re-ran nothing and records nothing.
+    await recordBookingNightAdjustments(tx, {
+      bookingId,
+      guestIds: guestsForPricing.map((guest) => guest.bookingGuestId),
+      targets: promoResult.adjustmentTargets,
+      writer: "guest removal",
+    });
   }
 
   // Written from the STORED total on the parked branch rather than recomposed
@@ -866,7 +918,34 @@ export async function removeBookingGuestInTransaction({
         totalPriceCents: newTotalPriceCents,
         promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
       });
-  const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+  const derivedPriceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+  const firstUnusableEvidence = strandEvidence.find(
+    (strand) => strand.evidence.kind === "unusable",
+  )?.evidence;
+  const moneyBuildUpSelection = parkedFinancialReview
+    ? selectBookingMoneyBuildUp({
+        ...recordedMoneyBuildUp,
+        baseEvidence: {
+          kind: "UNKNOWN",
+          reason:
+            firstUnusableEvidence?.kind === "unusable"
+              ? firstUnusableEvidence.cause
+              : "STORED_TOTAL_MISMATCH",
+        },
+        derivedCents: derivedPriceDiffCents,
+      })
+    : selectLoadedBookingMoneyBuildUp(recordedMoneyBuildUp, {
+        derivedCents: derivedPriceDiffCents,
+        // A valid old build-up can differ when the surviving promo is re-capped
+        // or redistributed. D3 keeps today's existing result in that case.
+        mismatchClassification: "LEGITIMATE_DIVERGENCE",
+      });
+
+  // The canonical decision is complete while the departing guest and all of
+  // its targets still exist. Only now may the destructive half start.
+  const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
+  await tx.bookingGuest.delete({ where: { id: guestId } });
+  const priceDiffCents = d3CompatibleBookingMoneyBuildUpCents(moneyBuildUpSelection);
   // Owner rule (#1100): a booking left with only non-adults must go through
   // admin approval, even if it was previously paid and approved for a
   // different composition. The self-removing guest is never blocked — the
@@ -947,8 +1026,17 @@ export async function removeBookingGuestInTransaction({
   const repricedGuests = priceBreakdown;
   if (repricedGuests) {
     await Promise.all(
-      remainingGuests.map((guest, index) =>
-        tx.bookingGuest.update({
+      remainingGuests.map((guest, index) => {
+        // Same rule as the reprice above (#3031): this row's stored total is
+        // written straight from the breakdown, so a guest the engine produced
+        // no row for has no total and no safe substitute (#2800).
+        const priced = repricedGuests.guests[index];
+        if (priced === undefined) {
+          throw new Error(
+            `Guest removal reprice has no priced guest at breakdown position ${index} for booking guest ${guest.id} (#3031).`,
+          );
+        }
+        return tx.bookingGuest.update({
           where: { id: guest.id },
           // Overwrite the rate-type snapshot alongside the repriced total
           // (#1930, E4) — unless this guest kept a locked night, in which case
@@ -956,14 +1044,14 @@ export async function removeBookingGuestInTransaction({
           // describe a stay that mixes locked member-rate nights with newly
           // priced ones (#2543). See `rateSnapshotUpdateForRepricedGuest`.
           data: {
-            priceCents: repricedGuests.guests[index].priceCents,
+            priceCents: priced.priceCents,
             rateMembershipTypeId: rateSnapshotUpdateForRepricedGuest(
-              repricedGuests.guests[index],
+              priced,
               guestsForPricing[index]?.lockedNightPrices,
             ),
           },
-        })
-      )
+        });
+      })
     );
   }
 
@@ -1037,6 +1125,7 @@ export async function removeBookingGuestInTransaction({
         ...(promoResult.promoCoverage
           ? { promoCoverageNote: promoResult.promoCoverage.message }
           : {}),
+        ...moneyBuildUpSelection.historyMetadata,
       },
       priceDiffCents,
       changeFeeCents: 0,
@@ -1102,7 +1191,7 @@ export async function removeBookingGuestInTransaction({
 
   if (paymentImpact.accountCreditAmountCents > 0) {
     await createBookingModificationCredit(
-      booking.memberId,
+      requireMemberCreditRecipient(bookingOwner(booking).memberId),
       paymentImpact.accountCreditAmountCents,
       bookingId,
       bookingModification.id,
@@ -1139,6 +1228,7 @@ export async function removeBookingGuestInTransaction({
     accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     additionalAmountCents: paymentImpact.additionalAmountCents,
+    additionalAsk: paymentImpact.additionalAsk,
     settlementMethod: paymentImpact.settlementMethod,
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
@@ -1148,9 +1238,10 @@ export async function removeBookingGuestInTransaction({
     paymentStatus: booking.payment?.status ?? null,
     paymentId: booking.payment?.id ?? null,
     paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-    memberEmail: booking.member.email,
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-    memberId: booking.memberId,
+    memberEmail: bookingOwner(booking).member.email,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+    memberFirstName: bookingOwner(booking).member.firstName,
+    memberId: bookingOwner(booking).memberId,
     promoRemoved: promoResult.promoRemoved,
     promoCoverage: promoResult.promoCoverage,
     choreWarnings,
@@ -1246,6 +1337,8 @@ export async function recalculateBookingPromo({
     memberId: string | null;
     isMember: boolean;
     perNightRates: number[];
+    /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
+    nightDates: Date[];
     firstNight?: Date | null;
   }>;
   /**
@@ -1263,6 +1356,7 @@ export async function recalculateBookingPromo({
   let newPromoAdjustmentCents = 0;
   let promoRemoved = false;
   let promoCoverage: PromoCoverageNotice | null = null;
+  let adjustmentTargets: PromoAdjustmentTarget[] = [];
 
   if (booking.promoRedemption?.promoCode) {
     // Row-lock the promo code and re-read its usage counter before the caps are
@@ -1282,7 +1376,7 @@ export async function recalculateBookingPromo({
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: booking.checkIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,
@@ -1310,6 +1404,7 @@ export async function recalculateBookingPromo({
       const discount = application.discount;
       newDiscountCents = discount.discountCents;
       newPromoAdjustmentCents = discount.priceAdjustmentCents;
+      adjustmentTargets = discount.adjustmentTargets;
       promoCoverage = await describePromoCapCoverage(tx, {
         promoCode: promo.code,
         capCoverage: application.capCoverage,
@@ -1331,5 +1426,12 @@ export async function recalculateBookingPromo({
     }
   }
 
-  return { newDiscountCents, newPromoAdjustmentCents, promoRemoved, promoCoverage };
+  return {
+    newDiscountCents,
+    newPromoAdjustmentCents,
+    promoRemoved,
+    promoCoverage,
+    // #3276: what the engine took off each night or guest of `guestNightRates`.
+    adjustmentTargets,
+  };
 }

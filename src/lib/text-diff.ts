@@ -9,6 +9,8 @@
  * one read-only admin panel.
  */
 
+import { must } from "@/lib/indexed-access";
+
 export type TextDiffLineType = "equal" | "removed" | "added";
 
 export interface TextDiffLine {
@@ -84,16 +86,33 @@ export function diffLines(before: string, after: string): TextDiffLine[] {
 
   // lcs[i][j] = length of the longest common subsequence of beforeLines[i..]
   // and afterLines[j..]. Built backwards so the walk below emits in order.
+  // Every (i, j) this function reads or writes is in
+  // 0..beforeLines.length / 0..afterLines.length, so the row and the cell
+  // always exist.
+  const cell = (table: number[][], row: number, col: number): number =>
+    must(must(table[row], `diffLines: no lcs row ${row}`)[col], `diffLines: no lcs cell [${row}][${col}]`);
+  const setCell = (table: number[][], row: number, col: number, value: number): void => {
+    must(table[row], `diffLines: no lcs row ${row}`)[col] = value;
+  };
+  const beforeAt = (index: number): string =>
+    must(beforeLines[index], `diffLines: no before-line at index ${index}`);
+  const afterAt = (index: number): string =>
+    must(afterLines[index], `diffLines: no after-line at index ${index}`);
+
   const lcs: number[][] = Array.from(
     { length: beforeLines.length + 1 },
     () => new Array<number>(afterLines.length + 1).fill(0),
   );
   for (let i = beforeLines.length - 1; i >= 0; i -= 1) {
     for (let j = afterLines.length - 1; j >= 0; j -= 1) {
-      lcs[i][j] =
-        beforeLines[i] === afterLines[j]
-          ? lcs[i + 1][j + 1] + 1
-          : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+      setCell(
+        lcs,
+        i,
+        j,
+        beforeAt(i) === afterAt(j)
+          ? cell(lcs, i + 1, j + 1) + 1
+          : Math.max(cell(lcs, i + 1, j), cell(lcs, i, j + 1)),
+      );
     }
   }
 
@@ -101,24 +120,24 @@ export function diffLines(before: string, after: string): TextDiffLine[] {
   let i = 0;
   let j = 0;
   while (i < beforeLines.length && j < afterLines.length) {
-    if (beforeLines[i] === afterLines[j]) {
-      result.push({ type: "equal", value: beforeLines[i] });
+    if (beforeAt(i) === afterAt(j)) {
+      result.push({ type: "equal", value: beforeAt(i) });
       i += 1;
       j += 1;
-    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
-      result.push({ type: "removed", value: beforeLines[i] });
+    } else if (cell(lcs, i + 1, j) >= cell(lcs, i, j + 1)) {
+      result.push({ type: "removed", value: beforeAt(i) });
       i += 1;
     } else {
-      result.push({ type: "added", value: afterLines[j] });
+      result.push({ type: "added", value: afterAt(j) });
       j += 1;
     }
   }
   while (i < beforeLines.length) {
-    result.push({ type: "removed", value: beforeLines[i] });
+    result.push({ type: "removed", value: beforeAt(i) });
     i += 1;
   }
   while (j < afterLines.length) {
-    result.push({ type: "added", value: afterLines[j] });
+    result.push({ type: "added", value: afterAt(j) });
     j += 1;
   }
 

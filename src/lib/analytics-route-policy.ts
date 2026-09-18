@@ -161,11 +161,16 @@ function chunkLooksRandom(chunk: string): boolean {
   if (chunk.length < 4) return false;
   if (!/[a-z]/.test(chunk) || !/[0-9]/.test(chunk)) return false;
 
+  // Walking the string char-by-char, carrying the previous char's shape
+  // forward, rather than indexing `index - 1` alongside `index`.
   let alternations = 0;
-  for (let index = 1; index < chunk.length; index += 1) {
-    const wasDigit = /[0-9]/.test(chunk[index - 1]);
-    const isDigit = /[0-9]/.test(chunk[index]);
-    if (wasDigit !== isDigit) alternations += 1;
+  let previousWasDigit: boolean | null = null;
+  for (const char of chunk) {
+    const isDigit = /[0-9]/.test(char);
+    if (previousWasDigit !== null && previousWasDigit !== isDigit) {
+      alternations += 1;
+    }
+    previousWasDigit = isDigit;
   }
   return alternations >= 2;
 }

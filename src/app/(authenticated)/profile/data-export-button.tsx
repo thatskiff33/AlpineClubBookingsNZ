@@ -28,8 +28,12 @@ export function DataExportButton() {
       }
       const blob = await res.blob();
       const disposition = res.headers.get("Content-Disposition") || "";
-      const match = disposition.match(/filename="(.+?)"/);
-      const filename = match ? match[1] : "tac-my-data.json";
+      // The captured name is the condition: the group is mandatory, so it is
+      // present exactly when the header matched, and the default name already
+      // answered its absence (#2801).
+      const [, matchedFilename] =
+        disposition.match(/filename="(.+?)"/) ?? [];
+      const filename = matchedFilename ?? "tac-my-data.json";
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

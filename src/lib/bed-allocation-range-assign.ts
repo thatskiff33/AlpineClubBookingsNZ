@@ -17,6 +17,7 @@ import {
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import { bookingOwner } from "@/lib/booking-owner";
 import { promoteOrphanedSecondOccupantsBatch } from "@/lib/bed-allocation-lifecycle";
 import {
   bookingHoldsCapacity,
@@ -213,6 +214,8 @@ async function classifyBedTakenNights(input: {
               member: {
                 select: { firstName: true, lastName: true, email: true },
               },
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
             },
           },
         },
@@ -247,16 +250,17 @@ async function classifyBedTakenNights(input: {
       : new Set<string>();
 
   for (const stayDate of input.candidateNights) {
-    const occupants = byNight.get(stayDate);
-    if (!occupants || occupants.length === 0) continue;
-
-    const [primary] = occupants;
+    // Reading the first occupant is what says the bed-night has one; an empty
+    // night is not taken and needs no refusal (#2800).
+    const occupants = byNight.get(stayDate) ?? [];
+    const primary = occupants[0];
+    if (primary === undefined) continue;
     const describe = (): BedRangeRefusal => ({
       stayDate,
       category: "BED_TAKEN",
       occupiedBy: {
         guestName: guestName(primary.bookingGuest),
-        memberName: memberName(primary.bookingGuest.booking.member),
+        memberName: memberName(bookingOwner(primary.bookingGuest.booking).member),
         bookingId: primary.bookingGuest.booking.id,
         holdsCapacity: bookingHoldsCapacity({
           status: primary.bookingGuest.booking.status,
@@ -345,6 +349,8 @@ async function runAssignBedRangeAttempt(input: {
       where: { id: guest.bookingId },
       select: {
         member: { select: { firstName: true, lastName: true, email: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
       },
     });
     for (const stayDate of range.nights) {
@@ -354,7 +360,7 @@ async function runAssignBedRangeAttempt(input: {
         hold: {
           bookingId: guest.bookingId,
           memberName: ownBooking
-            ? memberName(ownBooking.member)
+            ? memberName(bookingOwner(ownBooking).member)
             : "Unknown member",
           ownBooking: true,
         },
@@ -547,9 +553,15 @@ const RETRYABLE_RANGE_WRITE_CODES: Record<string, string> = {
     "That range collided with another change being saved at the same moment, twice. Nothing was written — reload the board and try again.",
 };
 
-function retryableRangeWriteCode(error: unknown): string | null {
+/**
+ * The operator wording for a retryable write conflict, or `null` when the error
+ * is not one. Returning the MESSAGE rather than the code makes the table lookup
+ * and its answer one read, so the caller cannot look the code up again and find
+ * nothing (#2800).
+ */
+function retryableRangeWriteMessage(error: unknown): string | null {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
-  return error.code in RETRYABLE_RANGE_WRITE_CODES ? error.code : null;
+  return RETRYABLE_RANGE_WRITE_CODES[error.code] ?? null;
 }
 
 /**
@@ -624,7 +636,7 @@ export async function assignBedRange(
   try {
     return await runAttempt();
   } catch (error) {
-    if (!retryableRangeWriteCode(error)) {
+    if (!retryableRangeWriteMessage(error)) {
       throw error;
     }
     // Nothing was written (the transaction rolled back), so re-attempt once
@@ -633,12 +645,9 @@ export async function assignBedRange(
     try {
       return await runAttempt();
     } catch (retryError) {
-      const code = retryableRangeWriteCode(retryError);
-      if (code) {
-        throw new BedAllocationAdminError(
-          RETRYABLE_RANGE_WRITE_CODES[code],
-          409,
-        );
+      const retryableMessage = retryableRangeWriteMessage(retryError);
+      if (retryableMessage) {
+        throw new BedAllocationAdminError(retryableMessage, 409);
       }
       throw retryError;
     }

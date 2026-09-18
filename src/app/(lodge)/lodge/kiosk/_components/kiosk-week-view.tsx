@@ -134,7 +134,13 @@ const rosterStatusMeta: Record<
   into the club's zone would reintroduce the very drift this block removed.
 */
 export function parseDateKey(dateKey: string): Date {
-  const [year, month, day] = dateKey.split("-").map(Number);
+  // Sliced at the fixed `yyyy-MM-dd` offsets rather than split: the three
+  // parts read as `number` where a destructured split hands back lookups the
+  // compiler must treat as possibly absent. A malformed key still yields
+  // `NaN` and so an invalid `Date`, exactly as before (#2801).
+  const year = Number(dateKey.slice(0, 4));
+  const month = Number(dateKey.slice(5, 7));
+  const day = Number(dateKey.slice(8, 10));
   return new Date(Date.UTC(year, month - 1, day));
 }
 

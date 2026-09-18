@@ -45,7 +45,7 @@ vi.mock("@/lib/authoritative-fees", () => ({
 // the REAL getSubscriptionItemCodes so the #2109 FIX-4d closed-loop test can
 // assert the codes billing stamps are a subset of the detection resolver output.
 vi.mock("@/lib/xero-mappings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-mappings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-mappings");
   return {
     ...actual,
     getResolvedAccountMapping: mocks.mapping,

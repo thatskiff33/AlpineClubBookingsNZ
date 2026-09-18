@@ -117,7 +117,8 @@ export interface BookingXeroRepairBookingSummary {
   bookingStatus: string;
   paymentId: string | null;
   paymentStatus: string | null;
-  memberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   memberName: string;
   memberEmail: string;
   checkIn: string;
@@ -167,6 +168,8 @@ export interface BookingXeroRepairRunReport {
 export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
   id: true,
   memberId: true,
+  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+  organisation: { select: { name: true, email: true } },
   status: true,
   checkIn: true,
   checkOut: true,

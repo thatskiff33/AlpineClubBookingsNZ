@@ -149,8 +149,7 @@ export async function POST(request: Request) {
 
   (async () => {
     const { sendEmail } = await import("@/lib/email");
-    for (let i = 0; i < eligibleRecipients.length; i++) {
-      const recipient = eligibleRecipients[i];
+    for (const [i, recipient] of eligibleRecipients.entries()) {
       try {
         await sendEmail({
           to: recipient.email,

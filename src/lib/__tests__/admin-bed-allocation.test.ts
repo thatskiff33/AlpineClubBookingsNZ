@@ -101,7 +101,6 @@ const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 const CLUB_DAY = requireCalendarDate("2026-07-01");
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 

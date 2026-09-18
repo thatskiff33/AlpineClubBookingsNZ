@@ -92,7 +92,7 @@ vi.mock("@/lib/cancellation", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
-    discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    discount: { adjustmentTargets: [], discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   }),
   calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] }),
@@ -182,6 +182,12 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
 }));
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: vi.fn().mockResolvedValue({ id: "credit1" }),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: vi.fn().mockResolvedValue(undefined),
@@ -197,10 +203,21 @@ vi.mock("@/lib/booking-events", () => ({
  * reads `assertMembershipTypeBookingAllowed` and the policy error class from
  * here, and replacing the module outright would take those with it.
  */
-const shortenPricing = vi.hoisted(() => ({ guestIndex: null as number | null }));
+const shortenPricing = vi.hoisted(() => ({
+  guestIndex: null as number | null,
+  /**
+   * #2801: the OTHER half of the same undeclared relation. `guestIndex` above
+   * shortens one guest's per-night vector; this drops a guest's row from the
+   * breakdown entirely, which is what a producer returning fewer rows than it
+   * was given guests would do. `PriceBreakdown` declares no length relation to
+   * its input either, so that shape type-checks exactly as the disagreeing pair
+   * does, and this seam is the only way to reach the route's refusal.
+   */
+  dropGuestIndex: null as number | null,
+}));
 vi.mock("@/lib/membership-type-policy", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/membership-type-policy")>();
+    (await importOriginal()) as typeof import("@/lib/membership-type-policy");
   return {
     ...actual,
     priceBookingGuestsWithMembershipTypePolicy: async (
@@ -209,6 +226,13 @@ vi.mock("@/lib/membership-type-policy", async (importOriginal) => {
       const breakdown = await actual.priceBookingGuestsWithMembershipTypePolicy(
         ...args,
       );
+      const dropIndex = shortenPricing.dropGuestIndex;
+      if (dropIndex !== null) {
+        return {
+          ...breakdown,
+          guests: breakdown.guests.filter((_, i) => i !== dropIndex),
+        };
+      }
       const index = shortenPricing.guestIndex;
       if (index === null) return breakdown;
       const guest = breakdown.guests[index];
@@ -298,6 +322,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     status: "PAID",
     totalPriceCents: 30000,
     discountCents: 0,
+    promoAdjustmentCents: 0,
     finalPriceCents: 30000,
     hasNonMembers: false,
     nonMemberHoldUntil: null,
@@ -369,6 +394,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     },
     member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
     promoRedemption: null,
+    nightAdjustments: [],
     ...overrides,
   };
 }
@@ -472,7 +498,15 @@ function makeTx(
             : null,
         ),
     },
+    // #3276: the night adjustment build-up writer reads and rewrites these.
+    bookingGuestNightAdjustment: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     bookingGuestNight: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
@@ -496,7 +530,7 @@ function makeTx(
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
     // #1982: default lodge capacity is a self-healed DB override.
     lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
-    promoRedemption: { update: vi.fn().mockResolvedValue({}) },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -550,6 +584,7 @@ beforeEach(() => {
   // #3167: back to the engine's real breakdown for every test that does not ask
   // for a truncated one (`vi.clearAllMocks` does not reset a plain value).
   shortenPricing.guestIndex = null;
+  shortenPricing.dropGuestIndex = null;
 });
 
 afterEach(() => {
@@ -658,6 +693,57 @@ describe("the add-guest route refuses a short per-night vector (#3167)", () => {
   });
 });
 
+/**
+ * #2801 — a MISSING priced guest row, the sibling of the short vector above.
+ *
+ * The route pairs three things by position: the guest the request added, the
+ * `BookingGuest` row it creates, and the breakdown row that priced it. It now
+ * carries all three together through one pass and reads the breakdown through a
+ * single named refusal, because `PriceBreakdown` declares no length relation to
+ * the guests it was given — so a producer returning one row fewer type-checks
+ * cleanly and would otherwise be read past.
+ *
+ * What that would cost, concretely: `priceCents` and `rateMembershipTypeId` are
+ * what the guest is SOLD at and the Xero item code that follows, and the same
+ * rows feed the promo allocation. Pairing the wrong row onto a guest sells a
+ * stay at somebody else's price; a magic zero sells it for nothing. Neither is
+ * an answer this route may give, so it refuses before writing anything.
+ */
+describe("the add-guest route refuses a missing priced guest row (#3031)", () => {
+  it("REFUSAL: writes no guest when the party pass returns no row for the one being added", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    // The added guest is appended after the booking's existing guests, so its
+    // row is the one at that position — and it is the row that goes missing.
+    shortenPricing.dropGuestIndex = booking.guests.length;
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [
+          { firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true },
+        ],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    // #1888: the raw message never reaches the member, so the refusal is read
+    // off the log the route writes before answering.
+    expect(res.status).toBe(400);
+    const logged = vi.mocked(logger.error).mock.calls.at(-1);
+    expect((logged?.[0] as { err: Error }).err.message).toBe(
+      `The add-guest route has no priced guest at breakdown position ${booking.guests.length} of ${booking.guests.length} (#3031).`,
+    );
+
+    // Refused while the create payload was being built: no guest row, no night
+    // row, and no total written back.
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+    expect(tx.booking.update).not.toHaveBeenCalled();
+  });
+});
+
 describe("guest removal prices remaining guests over their stored nights (#1093)", () => {
   it("changes the total by exactly the removed guest's booked price", async () => {
     const booking = makeBooking();
@@ -683,6 +769,12 @@ describe("guest removal prices remaining guests over their stored nights (#1093)
 
     const modification = tx.bookingModification.create.mock.calls[0][0].data;
     expect(modification.priceDiffCents).toBe(-20000);
+    expect(modification.newData).toMatchObject({
+      moneyBuildUpOperation: "GUEST_REMOVAL",
+      moneyBuildUpSource: "STORED",
+      moneyBuildUpStoredCents: -20000,
+      moneyBuildUpDerivedCents: -20000,
+    });
   });
 });
 

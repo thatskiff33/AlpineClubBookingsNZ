@@ -73,8 +73,8 @@ function snowCap(
   t: number,
 ): string {
   const [ax, ay] = apex;
-  const p1 = [ax + (left[0] - ax) * t, ay + (left[1] - ay) * t];
-  const p2 = [ax + (right[0] - ax) * t, ay + (right[1] - ay) * t];
+  const p1: [number, number] = [ax + (left[0] - ax) * t, ay + (left[1] - ay) * t];
+  const p2: [number, number] = [ax + (right[0] - ax) * t, ay + (right[1] - ay) * t];
   return `<polygon points="${p1[0].toFixed(0)},${p1[1].toFixed(0)} ${ax},${ay} ${p2[0].toFixed(0)},${p2[1].toFixed(0)}" fill="${C.snow}"/>`;
 }
 
@@ -119,11 +119,15 @@ function scene(width: number, height: number, variant: Variant): string {
   const capThreshold = variant === "hero" ? 70 : 110;
   const caps = frontAbs
     .slice(1, -1)
-    .map((apex, i) =>
-      horizon - apex[1] > capThreshold
-        ? snowCap(apex, frontAbs[i], frontAbs[i + 2], 0.28)
-        : "",
-    )
+    .map((apex, i) => {
+      if (horizon - apex[1] <= capThreshold) return "";
+      const left = frontAbs[i];
+      const right = frontAbs[i + 2];
+      if (!left || !right) {
+        throw new Error(`front ridge apex ${i} has no neighbour on both sides`);
+      }
+      return snowCap(apex, left, right, 0.28);
+    })
     .join("");
 
   const chips =
@@ -132,12 +136,11 @@ function scene(width: number, height: number, variant: Variant): string {
           const labels = ["MIT open source", "Next.js + PostgreSQL", "Stripe + Xero", "Runs a real club today"];
           const chipH = 40;
           const y = tagY + 52;
-          const widths = labels.map((l) => l.length * 10.4 + 44);
-          const total = widths.reduce((a, b) => a + b, 0) + (labels.length - 1) * 16;
+          const sized = labels.map((label) => ({ label, w: label.length * 10.4 + 44 }));
+          const total = sized.reduce((a, chip) => a + chip.w, 0) + (labels.length - 1) * 16;
           let x = (width - total) / 2;
-          return labels
-            .map((label, i) => {
-              const w = widths[i];
+          return sized
+            .map(({ label, w }) => {
               const el = `<rect x="${x.toFixed(0)}" y="${y}" width="${w.toFixed(0)}" height="${chipH}" rx="${chipH / 2}" fill="${C.chipFill}" stroke="${C.chipStroke}"/>` +
                 `<text x="${(x + w / 2).toFixed(0)}" y="${y + 26}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="19" fill="${C.chipText}">${label}</text>`;
               x += w + 16;

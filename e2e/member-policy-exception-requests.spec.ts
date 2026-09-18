@@ -23,7 +23,12 @@ import {
   cancelOpenExceptionRequests,
   deactivateMinimumStayPolicies,
 } from "./helpers/reset";
-import { stayWindowForAttempt, type StayWindow } from "./helpers/stay-dates";
+import {
+  oneNightCheckOut,
+  stayWindowForAttempt,
+  type StayWindow,
+} from "./helpers/stay-dates";
+import { must } from "../src/lib/indexed-access";
 
 /**
  * #2562 — the MEMBER's own booking-policy exception journey, driven through the
@@ -158,7 +163,7 @@ async function openRequest(): Promise<MemberExceptionRow> {
     open.length,
     `exactly one open request expected, got ${open.length}`,
   ).toBe(1);
-  return open[0];
+  return must(open[0], "no open request to return");
 }
 
 /** Poll the member's own list until one request reaches a state. */
@@ -288,10 +293,10 @@ test.beforeAll(async ({ browser }) => {
 test.beforeAll(async ({}, testInfo) => {
   compliant = stayWindowForAttempt(COMPLIANT_WINDOW_INDEX, testInfo.retry);
   shortStay = stayWindowForAttempt(SHORT_STAY_WINDOW_INDEX, testInfo.retry);
-  // A window's `nights` are its two occupied lodge nights, so `nights[1]` is the
-  // morning after the first night — i.e. a one-night stay's checkout.
-  shortCheckOut = shortStay.nights[1];
-  compliantShortenedCheckOut = compliant.nights[1];
+  // A window's `nights` are its two occupied lodge nights, so the morning after
+  // the first night is a one-night stay's checkout.
+  shortCheckOut = oneNightCheckOut(shortStay);
+  compliantShortenedCheckOut = oneNightCheckOut(compliant);
 
   // Clear this attempt's own leftovers BEFORE creating anything. An open request
   // blocks a new one outright, and a leftover booking on either window holds the
@@ -762,7 +767,10 @@ test("the edit panel offers the same request, with the modification's own capaci
     bookings.length,
     "test 1's two-night booking must still exist for the edit journey",
   ).toBe(1);
-  const bookingId = bookings[0].id;
+  const bookingId = must(
+    bookings[0],
+    "test 1's two-night booking is missing",
+  ).id;
 
   const page = await memberContext.newPage();
   await page.goto(`/bookings/${bookingId}`);

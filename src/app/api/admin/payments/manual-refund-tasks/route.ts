@@ -99,6 +99,7 @@ export async function GET() {
     checkIn: true,
     checkOut: true,
     member: { select: { firstName: true, lastName: true } },
+    organisation: { select: { name: true, email: true } },
   } as const;
 
   /*

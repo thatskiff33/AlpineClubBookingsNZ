@@ -182,6 +182,12 @@ export function builderBodyHtml(model: BuilderModel): string {
   const { skeleton, zones } = model;
   if (skeleton === "side-rail") {
     const [main, ...rail] = zones;
+    // "side-rail needs at least a main cell" is the model's own invariant
+    // (see BuilderModel.zones and the builder above); a missing one here
+    // would be that invariant broken, not a shape this renderer can guess.
+    if (!main) {
+      throw new Error("side-rail model has no main zone");
+    }
     const railCells = rail.map((zone) => zoneCell(zone.key)).join("");
     return (
       `<div class="dlb-root dlb-rail">` +

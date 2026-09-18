@@ -30,9 +30,7 @@ vi.mock("@/lib/admin-modules", () => ({
   isEffectiveModuleEnabled: () => mockModuleEnabled(),
 }));
 vi.mock("@/lib/bed-allocation-approval", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/bed-allocation-approval")
-  >("@/lib/bed-allocation-approval");
+  const actual = (await vi.importActual("@/lib/bed-allocation-approval")) as typeof import("@/lib/bed-allocation-approval");
   return {
     ...actual,
     approveBedAllocations: (...args: unknown[]) =>
@@ -206,7 +204,12 @@ describe("POST /api/admin/bed-allocation/approve", () => {
 
     const response = await post({ bookingId: "booking-1" });
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: "Not found" });
+    // #2931: the status stays 404 (every gated address answers that way), and
+    // the body NAMES the refusal so a screen need not guess it from the status.
+    await expect(response.json()).resolves.toEqual({
+      error: "Not found",
+      code: "MODULE_DISABLED",
+    });
     expect(mockApproveBedAllocations).not.toHaveBeenCalled();
   });
 

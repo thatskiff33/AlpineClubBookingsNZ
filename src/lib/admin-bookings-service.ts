@@ -12,6 +12,7 @@ import {
   type XeroActivitySummary,
   type XeroState,
 } from "@/lib/admin-operational-state";
+import { bookingOwner } from "@/lib/booking-owner";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
 import {
@@ -178,9 +179,13 @@ export type AdminBookingRow = BookingCandidate & {
 async function annotateExclusiveHoldOverlaps(
   rows: AdminBookingRow[]
 ): Promise<void> {
-  if (rows.length === 0) return;
-  let minCheckIn = rows[0].checkIn;
-  let maxCheckOut = rows[0].checkOut;
+  // The first row's own absence is the emptiness check, so its presence
+  // carries through to the initial min/max below with no assumption left
+  // for the type to miss.
+  const [firstRow] = rows;
+  if (!firstRow) return;
+  let minCheckIn = firstRow.checkIn;
+  let maxCheckOut = firstRow.checkOut;
   for (const row of rows) {
     if (row.checkIn < minCheckIn) minCheckIn = row.checkIn;
     if (row.checkOut > maxCheckOut) maxCheckOut = row.checkOut;
@@ -309,7 +314,7 @@ export function getDefaultAdminBookingSortDir(sortBy: BookingSortBy): SortDir {
 }
 
 function memberSortValue(booking: BookingCandidate) {
-  return `${booking.member.lastName} ${booking.member.firstName}`.toLowerCase();
+  return `${bookingOwner(booking).member.lastName} ${bookingOwner(booking).member.firstName}`.toLowerCase();
 }
 
 function compareValues(left: string | number | Date | null, right: string | number | Date | null) {
@@ -465,8 +470,9 @@ export function appliedBookingViewFilters(
   };
 
   let singleStatus: string | undefined;
-  if (statuses.length === 1) {
-    singleStatus = diagnosticsStatusToken(statuses[0]);
+  const [onlyStatus] = statuses;
+  if (statuses.length === 1 && onlyStatus) {
+    singleStatus = diagnosticsStatusToken(onlyStatus);
   } else if (statuses.length > 1) {
     publish("status", statuses.map(diagnosticsStatusToken).join(","));
   } else if (query.status && query.status !== "all") {
@@ -505,9 +511,15 @@ export function appliedBookingViewFilters(
     checkInTo = formatDateOnly(addDaysDateOnly(today, upcomingDays));
   }
   if (query.month && /^\d{4}-\d{2}$/.test(query.month)) {
-    const [year, month] = query.month.split("-").map(Number);
-    checkInFrom = `${year}-${String(month).padStart(2, "0")}-01`;
-    checkInTo = monthEndDateOnly(year, month);
+    // The regex above guarantees exactly two non-empty numeric segments; the
+    // guard names that rather than assuming it past the array's type.
+    const [yearPart, monthPart] = query.month.split("-");
+    if (yearPart && monthPart) {
+      const year = Number(yearPart);
+      const month = Number(monthPart);
+      checkInFrom = `${year}-${String(month).padStart(2, "0")}-01`;
+      checkInTo = monthEndDateOnly(year, month);
+    }
   }
   // `checkInFrom ?? from`: the legacy alias only ever feeds the check-in lower
   // bound, and loses to the explicit one.
@@ -574,9 +586,14 @@ function buildBookingWhere(
   }
 
   if (query.month && /^\d{4}-\d{2}$/.test(query.month)) {
-    const [year, month] = query.month.split("-").map(Number);
-    checkInFilter.gte = parseDateOnly(`${year}-${String(month).padStart(2, "0")}-01`);
-    checkInFilter.lte = parseDateOnly(monthEndDateOnly(year, month));
+    // Same guarantee, and the same explicit guard, as `appliedBookingViewFilters`.
+    const [yearPart, monthPart] = query.month.split("-");
+    if (yearPart && monthPart) {
+      const year = Number(yearPart);
+      const month = Number(monthPart);
+      checkInFilter.gte = parseDateOnly(`${year}-${String(month).padStart(2, "0")}-01`);
+      checkInFilter.lte = parseDateOnly(monthEndDateOnly(year, month));
+    }
   }
 
   if (checkInFrom) checkInFilter.gte = parseDateOnlyFilter(checkInFrom);
@@ -589,19 +606,52 @@ function buildBookingWhere(
   if (query.updatedTo)
     updatedAtFilter.lt = parseDateTimeEnd(query.updatedTo, clubDay.zone);
 
+  /**
+   * The search clause, AND-composed with everything else rather than assigned
+   * to `where.member` — it now spans two relations, so it cannot be one of
+   * them. See the comment where it is built.
+   */
+  const searchFragments: Prisma.BookingWhereInput[] = [];
   if (query.search?.trim()) {
     const queryTerms = query.search.trim().split(/\s+/).filter(Boolean);
-    where.member = {
-      is: {
-        AND: queryTerms.map((term) => ({
-          OR: [
-            { firstName: { contains: term, mode: "insensitive" } },
-            { lastName: { contains: term, mode: "insensitive" } },
-            { email: { contains: term, mode: "insensitive" } },
-          ],
-        })),
-      },
-    };
+    // #3369: EVERY term has to match ONE party — the booking's member, or its
+    // organisation — and the choice of party is made once for the whole search
+    // rather than per term. Written as `where.member = { is: … }` this dropped
+    // every school booking out of the page, the pagination window AND the total
+    // count, because a nullable to-one relation excludes a null-owner row; an
+    // officer typing a school's name got zero results for bookings that display
+    // perfectly with the filter cleared. The typeahead on
+    // /api/admin/bookings/search got this fix at stage 4; the list page's own
+    // search box did not.
+    searchFragments.push({
+      OR: [
+        {
+          member: {
+            is: {
+              AND: queryTerms.map((term) => ({
+                OR: [
+                  { firstName: { contains: term, mode: "insensitive" } },
+                  { lastName: { contains: term, mode: "insensitive" } },
+                  { email: { contains: term, mode: "insensitive" } },
+                ],
+              })),
+            },
+          },
+        },
+        {
+          organisation: {
+            is: {
+              AND: queryTerms.map((term) => ({
+                OR: [
+                  { name: { contains: term, mode: "insensitive" } },
+                  { email: { contains: term, mode: "insensitive" } },
+                ],
+              })),
+            },
+          },
+        },
+      ],
+    });
   }
 
   if (Object.keys(checkInFilter).length > 0) where.checkIn = checkInFilter;
@@ -610,7 +660,7 @@ function buildBookingWhere(
 
   // AND-composed so an explicit status/date choice in the same URL still
   // narrows the result instead of being overwritten by the queue fragment.
-  const andFragments: Prisma.BookingWhereInput[] = [];
+  const andFragments: Prisma.BookingWhereInput[] = [...searchFragments];
   if (query.additionalOwed === "owed") {
     andFragments.push(buildAdditionalOwedWhere());
   }
@@ -711,6 +761,8 @@ async function loadBookingSortRows(where: Prisma.BookingWhereInput) {
       finalPriceCents: true,
       status: true,
       member: { select: { firstName: true, lastName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       _count: { select: { guests: true } },
     },
   });
@@ -726,7 +778,11 @@ type BookingSortRow = Awaited<ReturnType<typeof loadBookingSortRows>>[number];
 function sortRowValue(row: BookingSortRow, sortBy: BookingSortBy) {
   switch (sortBy) {
     case "member":
-      return `${row.member.lastName} ${row.member.firstName}`.toLowerCase();
+      // #3369: `row` here is the LIGHTWEIGHT sort row, whose owner is read
+      // through the accessor below; this branch predates it and is the one
+      // place the raw relation is still in hand. An organisation-owned booking
+      // sorts under its own name, which is what the list shows.
+      return `${bookingOwner(row).member.lastName} ${bookingOwner(row).member.firstName}`.toLowerCase();
     case "checkIn":
       return row.checkIn;
     case "guests":
@@ -773,6 +829,8 @@ async function loadBookingCandidates(
           phoneNumber: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: {
         select: {
           id: true,
@@ -899,8 +957,11 @@ function buildBedWarnings(
 
   for (const group of allocationsByNight.values()) {
     const roomIds = new Set(group.map((allocation) => allocation.roomId));
-    if (roomIds.size > 1) {
-      warnings.push({ stayDate: formatDateOnly(group[0].stayDate) });
+    // `roomIds.size > 1` already means `group` holds at least two
+    // allocations; the type can't carry that, so read the first one once.
+    const [firstAllocation] = group;
+    if (roomIds.size > 1 && firstAllocation) {
+      warnings.push({ stayDate: formatDateOnly(firstAllocation.stayDate) });
     }
 
     for (const allocation of group) {
@@ -1318,7 +1379,11 @@ export async function listAdminBookings(
     }
 
     if (chunk.length < ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE) break;
-    cursorId = chunk[chunk.length - 1].id;
+    // `chunk.length === 0` already broke the loop above, so there is always a
+    // last element here; the type can't carry that loop invariant.
+    const lastCandidate = chunk[chunk.length - 1];
+    if (!lastCandidate) break;
+    cursorId = lastCandidate.id;
   }
 
   const direction = sortDir === "asc" ? 1 : -1;

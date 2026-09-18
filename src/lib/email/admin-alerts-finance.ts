@@ -6,6 +6,7 @@ import {
   adminManualSettlementConflictTemplate,
   adminPaymentFailureTemplate,
   adminRefundRequestTemplate,
+  adminSupersededPaymentRefundTemplate,
   adminXeroRepeatedFailureTemplate,
   adminXeroSyncErrorTemplate,
 } from "@/lib/email-templates/admin-finance";
@@ -264,6 +265,51 @@ export async function sendAdminLateCaptureHandBackConflictAlert(data: {
 // adminPaymentFailure preference as its siblings; NOT delivery-locked (the
 // #1994 adjudication: no direct money loss from muting — the refund already
 // happened or is durably queued for the recovery cron).
+/**
+ * #3340 — the operator notice for a supersede refund. Admin audience, so it is
+ * exempt from the per-booking "No emails" switch: that switch silences the
+ * MEMBER, and money that moved with nobody deciding it should must still reach
+ * an operator.
+ */
+export async function sendAdminSupersededPaymentRefundAlert(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  refundedAmountCents: number;
+  amountOwingCents: number;
+  paymentIntentId: string;
+  bookingId: string;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
+
+  await sendToAdmins({
+    subject: `Superseded payment auto-refunded: ${data.memberName}`,
+    html: await renderEmailHtml(() =>
+      adminSupersededPaymentRefundTemplate({
+        memberName: data.memberName,
+        checkIn: data.checkIn,
+        checkOut: data.checkOut,
+        refundedAmountCents: data.refundedAmountCents,
+        amountOwingCents: data.amountOwingCents,
+        paymentIntentId: data.paymentIntentId,
+        bookingUrl,
+      }),
+    ),
+    templateName: "admin-superseded-payment-refund",
+    templateData: {
+      memberName: data.memberName,
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
+      refundedAmount: formatMoneyCents(data.refundedAmountCents),
+      amountOwing: formatMoneyCents(data.amountOwingCents),
+      paymentIntentId: data.paymentIntentId,
+      bookingUrl,
+    },
+    preferenceKey: "adminPaymentFailure",
+  });
+}
+
 export async function sendAdminDuplicateCaptureRefundAlert(data: {
   memberName: string;
   checkIn: Date;

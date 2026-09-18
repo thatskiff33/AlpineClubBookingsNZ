@@ -442,6 +442,11 @@ export function EditGuestsCard({
                 isNightOn={(rowIndex, nightKey) => {
                   if (rowIndex < remainingGuests.length) {
                     const guest = remainingGuests[rowIndex];
+                    // rowIndex is always in range here by construction — the
+                    // grid renders one row per entry of remainingGuests and
+                    // passes back that entry's own index (same reasoning as
+                    // handleToggleGuestNight in edit-booking-panel.tsx).
+                    if (!guest) return true;
                     const set = dateModes.existingGuestNights[guest.id];
                     return set ? set.includes(nightKey) : true;
                   }

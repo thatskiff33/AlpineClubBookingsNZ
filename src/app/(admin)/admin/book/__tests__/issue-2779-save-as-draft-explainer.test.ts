@@ -31,7 +31,6 @@ const PAGE = "src/app/(admin)/admin/book/page.tsx";
 
 function readPageSource(): string {
   // Test helper: a fixed repo file under process.cwd(), not user input.
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), PAGE), "utf8");
 }
 

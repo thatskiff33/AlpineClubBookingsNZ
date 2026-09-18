@@ -49,7 +49,7 @@ vi.mock("@/components/admin-booking-calendar", () => ({
   AdminBookingCalendar: () => null,
 }));
 vi.mock("@/lib/module-settings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/module-settings");
   return {
     ...actual,
     loadEffectiveModuleFlags: vi.fn(),
@@ -95,6 +95,7 @@ const MODULES_OFF = {
   maintenanceReports: true,
   alpineCentralServer: false,
   commsPortal: false,
+  memberLodgeRoster: false,
 };
 
 /** Depth-first walk for the publisher element, wherever the page puts it. */

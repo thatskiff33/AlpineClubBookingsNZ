@@ -21,6 +21,7 @@ const mockValidateAndCalculatePromoDiscount = vi.fn(async () => {
   const discount = mockCalculatePromoDiscountForGuestRates();
   return {
     discount: {
+      adjustmentTargets: [],
       discountCents: discount?.discountCents ?? 0,
       priceAdjustmentCents:
         discount?.priceAdjustmentCents ?? -(discount?.discountCents ?? 0),
@@ -134,7 +135,7 @@ vi.mock("@/lib/booking-policies", () => ({
 
 vi.mock("@/lib/adult-member-hosting-review", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/adult-member-hosting-review")>();
+    (await importOriginal()) as typeof import("@/lib/adult-member-hosting-review");
   return {
     ...actual,
     reconcileAdultMemberHostingReviewWithSiblings: (...args: unknown[]) =>
@@ -370,14 +371,11 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
  * Give every fixture guest stored night rows that reconcile with their total
  * (#3166), unless the case supplied its own.
  *
- * Every edit path is now judged on exact stored sold-price evidence, so a guest
- * with no `BookingGuestNight` rows PARKS the edit for financial review — nothing
- * is repriced, nothing settles, and not one payment assertion in this file can
- * run. That is the gate doing its job; it is not what this suite is about. So
- * the DEFAULT fixture guest is the ordinary readable one, and the cases that
- * genuinely mean to describe unreadable history pass `nights` themselves (the
- * `NO_STORED_NIGHT_PRICES` and `STORED_TOTAL_MISMATCH` cases below), which this
- * leaves untouched.
+ * A whole-guest operation can reconcile these historical rows to the stored
+ * guest total. Since #3277 an operation that consumes individual nights needs
+ * `SOLD` or `OFFICER_PRICED` provenance; those tests opt in explicitly through
+ * `withSoldNightProvenance`. Cases that genuinely mean unreadable history pass
+ * `nights` themselves, which this leaves untouched.
  *
  * The rows are an even split with the remainder on the first night, so they sum
  * to the stored total EXACTLY — an approximate split would not reconcile, and a
@@ -418,6 +416,16 @@ function reconcilingNightRows<G extends Record<string, unknown>>(
       })),
     };
   });
+}
+
+function withSoldNightProvenance<T>(booking: T): T {
+  const guests = (booking as {
+    guests: Array<{ nights: Array<{ priceSource: string }> }>;
+  }).guests;
+  for (const guest of guests) {
+    for (const night of guest.nights) night.priceSource = "SOLD";
+  }
+  return booking;
 }
 
 function makeTx(booking: ReturnType<typeof makeBooking>) {
@@ -461,7 +469,15 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       delete: vi.fn().mockResolvedValue(undefined),
     },
     // Per-night stay rows (issue #713) re-synced on every guest write.
+    // #3276: the night adjustment build-up writer reads and rewrites these.
+    bookingGuestNightAdjustment: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     bookingGuestNight: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
@@ -491,6 +507,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       findFirst: vi.fn().mockResolvedValue(null),
     },
     promoRedemption: {
+      findUnique: vi.fn().mockResolvedValue(null),
       delete: vi.fn().mockResolvedValue(undefined),
       update: vi.fn().mockResolvedValue(undefined),
     },
@@ -911,7 +928,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
   }, 10_000);
 
   it("real service path preserves sparse added-guest nights and forwards both hosting approvals", async () => {
-    const booking = makeBooking();
+    const booking = withSoldNightProvenance(makeBooking());
     const tx = makeTx(booking);
     const sparseNight = new Date("2026-08-21T00:00:00.000Z");
     mockCalculateBookingPrice.mockImplementation(
@@ -2174,6 +2191,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
     await Promise.resolve();
     expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("bk1", {
       createdByMemberId: "m1",
+      // #2929: an edit settlement has no creation-time email choice.
+      invoiceEmailDelivery: null,
     });
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
   });
@@ -2431,7 +2450,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
           changeFeeCents: 0,
         },
       });
-      const tx = makeTx(booking);
+      const tx = makeTx(withSoldNightProvenance(booking));
 
       mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
         fn(tx)
@@ -2948,7 +2967,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
           changeFeeCents: 0,
         },
       });
-      const tx = makeTx(booking);
+      const tx = makeTx(withSoldNightProvenance(booking));
 
       mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
         fn(tx)
@@ -4318,7 +4337,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       // Without this, every case above would pass against a gate that parked
       // EVERY pre-check-in edit — which would be a far worse defect than the one
       // being fixed, and invisible from the assertions alone.
-      const tx = makeTx(makeBooking());
+      const tx = makeTx(withSoldNightProvenance(makeBooking()));
 
       const result = await runPreCheckInBatch(tx, { checkOut: "2026-08-23" });
 

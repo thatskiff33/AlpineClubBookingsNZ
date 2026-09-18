@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { bookingOwner } from "@/lib/booking-owner";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 // The create wizard's own prediction + column translation, imported rather than
 // re-implemented (MG4 #2309). The first cut of this panel wrote its own copy of
@@ -675,8 +676,12 @@ export function EditBookingPanel({
         ...rangeAwareAddedGuests.flatMap((guest) => guest.nights ?? []),
       ].filter(Boolean);
       if (allNights.length > 0) {
-        effectiveCheckIn = allNights.reduce((a, b) => (b < a ? b : a), allNights[0]);
-        const lastNight = allNights.reduce((a, b) => (b > a ? b : a), allNights[0]);
+        // `.reduce()` with no seed starts from the array's own first element,
+        // which is exactly the seed the previous `allNights[0]` supplied —
+        // and it does so without indexing, so the non-empty check above is
+        // the only place that fact needs to be true.
+        effectiveCheckIn = allNights.reduce((a, b) => (b < a ? b : a));
+        const lastNight = allNights.reduce((a, b) => (b > a ? b : a));
         effectiveCheckOut = shiftDateKey(lastNight, 1);
       }
       body.guestStayRanges = existingRanges;
@@ -706,15 +711,15 @@ export function EditBookingPanel({
       ].filter((range) => range.stayStart && range.stayEnd);
 
       if (rangeValues.length > 0) {
-        const firstRange = rangeValues[0];
-        effectiveCheckIn = rangeValues.reduce(
-          (earliest, range) => (range.stayStart < earliest ? range.stayStart : earliest),
-          firstRange.stayStart
-        );
-        effectiveCheckOut = rangeValues.reduce(
-          (latest, range) => (range.stayEnd > latest ? range.stayEnd : latest),
-          firstRange.stayEnd
-        );
+        // Reduce over each bound's own values (no initial seed needed, since
+        // the array is non-empty) rather than threading `rangeValues[0]`
+        // in as a seed for a differently-typed accumulator.
+        effectiveCheckIn = rangeValues
+          .map((range) => range.stayStart)
+          .reduce((earliest, stayStart) => (stayStart < earliest ? stayStart : earliest));
+        effectiveCheckOut = rangeValues
+          .map((range) => range.stayEnd)
+          .reduce((latest, stayEnd) => (stayEnd > latest ? stayEnd : latest));
       }
 
       body.guestStayRanges = existingRanges;
@@ -1124,6 +1129,10 @@ export function EditBookingPanel({
         : [...current, nightKey].sort();
     if (rowIndex < remainingGuests.length) {
       const guest = remainingGuests[rowIndex];
+      // rowIndex is always in range here by construction — the grid renders
+      // one row per entry of `remainingGuests` and passes back that entry's
+      // own index — but the type can't see that from the length check above.
+      if (!guest) return;
       setExistingGuestNights((prev) => {
         const base = prev[guest.id] ?? eachNightKey(checkIn, checkOut);
         const next = toggle(base);
@@ -1619,11 +1628,11 @@ export function EditBookingPanel({
   // stale-quote apply 409 (saveOverCapacityNights).
   const overCapacityConfirmActive =
     Boolean(quote?.overCapacityConfirmRequired) || Boolean(saveOverCapacityNights);
-  const overCapacityNightList = (
-    quote?.overCapacityConfirmRequired
-      ? quote.nightDetails ?? []
-      : saveOverCapacityNights ?? []
-  ).filter((night) => night.availableBeds < 0);
+  // #2930: no client re-filter — both sources ARE `overCapacityNights()` output
+  // already, and that one home is what excludes held nights (`INV-SSOT-001`).
+  const overCapacityNightList = quote?.overCapacityConfirmRequired
+    ? quote.nightDetails ?? []
+    : saveOverCapacityNights ?? [];
   const capacityOk = quote
     ? overCapacityConfirmActive
       ? confirmOverCapacity
@@ -1772,7 +1781,7 @@ export function EditBookingPanel({
           getExistingGuestRange={getExistingGuestRange}
           quote={quote}
           forMemberId={
-            booking.viewerRole === "ADMIN" ? booking.memberId : undefined
+            booking.viewerRole === "ADMIN" ? bookingOwner(booking).memberId : undefined
           }
           lodgeId={booking.lodgeId}
           onRemovePromo={() => setPromoAction({ type: "remove" })}

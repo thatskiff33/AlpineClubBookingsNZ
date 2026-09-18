@@ -3,6 +3,7 @@ import {
   membershipTypeAgeExemption,
   type MembershipTypeAgeExemption,
 } from "./membership-types";
+import { bookingOwner } from "@/lib/booking-owner";
 
 // Shared age-tier enforcement (#2106).
 //
@@ -241,7 +242,7 @@ export function summarizeFutureLinkedGuestBookings(
     list: guests.slice(0, LINKED_GUEST_SUMMARY_LIMIT).map((guest) => ({
       bookingGuestId: guest.id,
       bookingId: guest.bookingId,
-      ownerMemberId: guest.booking.memberId,
+      ownerMemberId: bookingOwner(guest.booking).memberId,
       checkIn: formatDate(guest.booking.checkIn),
       checkOut: formatDate(guest.booking.checkOut),
       stayStart: formatDate(guest.stayStart),

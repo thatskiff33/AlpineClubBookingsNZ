@@ -203,7 +203,16 @@ export async function moveBedAllocationsSameDateWithLocksHeld(
     }
 
     const isBulk = rowsToMove.length > 1;
+    // One allocation is written per row to move, and the no-op return above
+    // means there is at least one. An audit entry naming no allocation would be
+    // a record of a write that did not happen, which is the opposite of what
+    // INV-CAP-029 asks of this path (#2800).
     const firstAllocation = allocations[0];
+    if (firstAllocation === undefined) {
+      throw new Error(
+        `Bed allocation moved ${rowsToMove.length} row(s) but recorded none to audit.`,
+      );
+    }
     await createAuditLog(
       {
         action: isBulk

@@ -1,4 +1,10 @@
-import { formatDollarsDisplay } from "@/lib/finance-format";
+import {
+  formatCompactDollarsDisplay,
+  formatDollarsDisplay,
+  formatFinanceNumber,
+  formatFinancePercent,
+  formatFinanceRatio,
+} from "@/lib/finance-format";
 import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 import {
   DEFAULT_CLUB_THEME_VALUES,
@@ -45,31 +51,31 @@ function buildFinanceMixColors(): readonly string[] {
     themeSeedsFromValues(DEFAULT_CLUB_THEME_VALUES),
     "light",
   );
-  return CHART_FINANCE_8SLOT.map(
-    ({ scale, step }) => light.scales[scale].hex[step - 1],
-  );
+  return CHART_FINANCE_8SLOT.map(({ scale, step }) => {
+    const hex = light.scales[scale]?.hex[step - 1];
+    if (hex === undefined) {
+      // Every CHART_FINANCE_8SLOT entry names a real categorical scale and a
+      // real step that buildThemeSubstrate always populates (12 hexes per
+      // scale; CHART_FINANCE_8SLOT only ever asks for step 7 or 9). `scale`
+      // is typed as plain `string`, so the type can't see that closed-set
+      // fact — but this runs once at module load, so a contract break here
+      // fails loudly at startup rather than shipping a silently wrong chart
+      // colour.
+      throw new Error(
+        `finance-chart-theme: no built colour for scale "${scale}" step ${step}`,
+      );
+    }
+    return hex;
+  });
 }
 
 export const FINANCE_MIX_COLORS = buildFinanceMixColors();
 
 export type FinanceValueType = "currency" | "count" | "percent" | "ratio";
 
-const wholeNumber = new Intl.NumberFormat("en-NZ", {
-  maximumFractionDigits: 0,
-});
-
-const percentFormatter = new Intl.NumberFormat("en-NZ", {
-  style: "percent",
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
-});
-
-// Ratios (e.g. the current ratio) are not integers; show two decimal places so
-// values like 1.35 are not rounded to "1".
-const ratioFormatter = new Intl.NumberFormat("en-NZ", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+// Every number shape here comes from `@/lib/finance-format`, which reads the
+// club's configured locale; this file used to hold three hard-coded `en-NZ`
+// instances of its own (#3325).
 
 /** Display value for tooltips and labels (currency: whole dollars). */
 export function formatFinanceValue(
@@ -80,12 +86,12 @@ export function formatFinanceValue(
     case "currency":
       return formatDollarsDisplay(value);
     case "percent":
-      return percentFormatter.format(value);
+      return formatFinancePercent(value);
     case "ratio":
-      return ratioFormatter.format(value);
+      return formatFinanceRatio(value);
     case "count":
     default:
-      return wholeNumber.format(value);
+      return formatFinanceNumber(value);
   }
 }
 
@@ -95,22 +101,18 @@ export function formatFinanceAxisTick(
   valueType: FinanceValueType
 ): string {
   if (valueType === "percent") {
-    return percentFormatter.format(value);
+    return formatFinancePercent(value);
   }
 
   if (valueType === "ratio") {
-    return ratioFormatter.format(value);
+    return formatFinanceRatio(value);
   }
 
   if (valueType === "currency") {
-    const dollars = value / 100;
-    const abs = Math.abs(dollars);
-    if (abs >= 1_000_000) return `$${(dollars / 1_000_000).toFixed(1)}m`;
-    if (abs >= 1_000) return `$${Math.round(dollars / 1_000)}k`;
-    return `$${Math.round(dollars)}`;
+    return formatCompactDollarsDisplay(value);
   }
 
   const abs = Math.abs(value);
   if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return wholeNumber.format(value);
+  return formatFinanceNumber(value);
 }

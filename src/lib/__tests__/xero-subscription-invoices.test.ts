@@ -15,7 +15,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/xero-sync", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/xero-sync")>()),
+  ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
   startXeroSyncOperation: enqueueMocks.startOperation,
 }));
 

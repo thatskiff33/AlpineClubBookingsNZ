@@ -244,10 +244,10 @@ function bookingCreateClientIdentity(
   }
 
   const slotIndex = E2E_BOOKING_CREATE_CENSUS.findIndex((entry) => entry.key === key);
-  if (slotIndex < 0) {
+  const entry = E2E_BOOKING_CREATE_CENSUS[slotIndex];
+  if (slotIndex < 0 || !entry) {
     throw new Error(`unregistered E2E booking-create isolation key: ${key}`);
   }
-  const entry = E2E_BOOKING_CREATE_CENSUS[slotIndex];
   if (entry.classification !== classification) {
     throw new Error(
       `booking-create key ${key} is ${entry.classification}, not ${classification}`,

@@ -22,7 +22,7 @@ const LODGES = [
 let lodgeOptions: LodgeOptionState
 
 vi.mock("@/components/lodge-select", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/components/lodge-select")>()
+  const actual = (await importOriginal()) as typeof import("@/components/lodge-select")
   return {
     ...actual,
     initialLodgeIdFromLocation: () => "lodge-2",
@@ -48,7 +48,7 @@ vi.mock("@/app/(admin)/admin/hut-leaders/_components/assignment-form", () => ({
 }))
 
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>()),
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
 }))
 
@@ -111,7 +111,9 @@ const EDITORS: Array<{
   render: () => ReactElement
   action: RegExp
 }> = [
-  { name: "seasons", render: () => <SeasonsPage />, action: /^edit window$/i },
+  // #2938: the accessible name EXTENDS the visible label with the season's own
+  // name ("Edit window of Winter 2026"), so the visible label stays the prefix.
+  { name: "seasons", render: () => <SeasonsPage />, action: /^edit window of /i },
   { name: "chores", render: () => <ChoresPage />, action: /add chore|create chore|update chore/i },
   { name: "lockers", render: () => <LockersPage />, action: /^create locker$/i },
   { name: "hut fees", render: () => <HutFeesSection canEdit />, action: /add season|save season/i },

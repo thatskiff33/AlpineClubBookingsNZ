@@ -298,31 +298,32 @@ type TrailAreaGroup =
 // any 4+ trail area, stays its own stacked block.
 function groupTrailAreas(areas: WhakapapaTrailArea[]): TrailAreaGroup[] {
   const groups: TrailAreaGroup[] = [];
-  let index = 0;
-  while (index < areas.length) {
-    const current = areas[index];
-    const next = areas[index + 1];
-    const currentIsSmall = current.trails.length <= SMALL_TRAIL_AREA_MAX;
-    const nextIsSmall = Boolean(
-      next && next.trails.length <= SMALL_TRAIL_AREA_MAX,
+  // Walk forward accumulating a run of consecutive small areas, rather than
+  // looking ahead by offset (`areas[index + 1]`) to decide whether to start
+  // one. A run that never grows past one area is exactly the "lone small
+  // area between big neighbours" case, which stays its own block below —
+  // identical to the original's `currentIsSmall && nextIsSmall` lookahead,
+  // without indexing.
+  let smallRun: WhakapapaTrailArea[] = [];
+  const flushSmallRun = () => {
+    const [only, ...rest] = smallRun;
+    if (only === undefined) return;
+    groups.push(
+      rest.length === 0
+        ? { kind: "block", area: only }
+        : { kind: "row", areas: smallRun },
     );
-
-    if (currentIsSmall && nextIsSmall) {
-      const run: WhakapapaTrailArea[] = [current];
-      index += 1;
-      while (
-        index < areas.length &&
-        areas[index].trails.length <= SMALL_TRAIL_AREA_MAX
-      ) {
-        run.push(areas[index]);
-        index += 1;
-      }
-      groups.push({ kind: "row", areas: run });
+    smallRun = [];
+  };
+  for (const area of areas) {
+    if (area.trails.length <= SMALL_TRAIL_AREA_MAX) {
+      smallRun.push(area);
     } else {
-      groups.push({ kind: "block", area: current });
-      index += 1;
+      flushSmallRun();
+      groups.push({ kind: "block", area });
     }
   }
+  flushSmallRun();
   return groups;
 }
 

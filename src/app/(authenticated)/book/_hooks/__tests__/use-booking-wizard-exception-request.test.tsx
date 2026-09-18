@@ -49,7 +49,7 @@ vi.mock("@/components/club-identity-provider", () => ({
 */
 vi.mock("@/components/lodge-select", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/components/lodge-select")>();
+    (await importOriginal()) as typeof import("@/components/lodge-select");
   const options = {
     lodges: [
       { id: "lodge-1", name: "Alpine Lodge" },

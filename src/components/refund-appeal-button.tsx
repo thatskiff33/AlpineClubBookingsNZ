@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { useClubTime } from "@/components/club-time-provider";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
+import { formatCents } from "@/lib/utils"
 
 interface RefundAppealButtonProps {
   bookingId: string
@@ -101,7 +102,7 @@ export function RefundAppealButton({
         */
         if (cents > maxRefundableCents) {
           setError(
-            `That is more than can be refunded on this booking. The most you can ask for is $${(maxRefundableCents / 100).toFixed(2)}.`,
+            `That is more than can be refunded on this booking. The most you can ask for is ${formatCents(maxRefundableCents)}.`,
           )
           return
         }
@@ -163,7 +164,7 @@ export function RefundAppealButton({
                 <p className="text-muted-foreground">{req.reason}</p>
                 {req.approvedAmountCents != null && req.approvedAmountCents > 0 && (
                   <p>
-                    Refunded: <strong>${(req.approvedAmountCents / 100).toFixed(2)}</strong>
+                    Refunded: <strong>{formatCents(req.approvedAmountCents)}</strong>
                   </p>
                 )}
                 {req.adminNotes && (
@@ -233,7 +234,7 @@ export function RefundAppealButton({
                 />
               </div>
               <FieldHint {...amountHint.hintProps}>
-                Example: 0.00 — maximum ${(maxRefundableCents / 100).toFixed(2)}
+                Example: 0.00 — maximum {formatCents(maxRefundableCents)}
               </FieldHint>
             </div>
 

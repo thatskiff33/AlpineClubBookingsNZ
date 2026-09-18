@@ -21,9 +21,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/membership-cancellation-admin", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/lib/membership-cancellation-admin")
-  >()),
+  ...((await importOriginal()) as typeof import("@/lib/membership-cancellation-admin")),
   getAdminMembershipCancellationRequests: mocks.getCancellationQueue,
 }));
 

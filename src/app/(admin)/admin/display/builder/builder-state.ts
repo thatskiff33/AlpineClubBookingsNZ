@@ -121,10 +121,14 @@ export function moveZone(
   if (from === to) return model;
   const lower = model.skeleton === "side-rail" ? 1 : 0;
   if (from < lower || to < lower) return model;
-  if (from < 0 || from >= model.zones.length) return model;
   const clampedTo = Math.max(lower, Math.min(model.zones.length - 1, to));
   const zones = [...model.zones];
   const [moved] = zones.splice(from, 1);
+  // This IS the old `from >= model.zones.length` rejection: a `from` past the
+  // end splices nothing out. Its other half, `from < 0`, is already ruled out
+  // by `from < lower` above (`lower` is 0 or 1), which matters because a
+  // negative index would make `splice` remove from the END instead (#2801).
+  if (moved === undefined) return model;
   zones.splice(clampedTo, 0, moved);
   return normalizeKeys({ skeleton: model.skeleton, zones });
 }
@@ -291,11 +295,15 @@ export function moveChild(
 ): BuilderModel {
   return mapZone(model, zoneIndex, (zone) => {
     if (zone.kind !== "rotator") return zone;
-    if (from < 0 || from >= zone.children.length) return zone;
+    // `from < 0` stays an explicit rejection because a negative index makes
+    // `splice` remove from the END rather than nothing; the upper bound is
+    // then the splice result itself (#2801).
+    if (from < 0) return zone;
     const clampedTo = Math.max(0, Math.min(zone.children.length - 1, to));
     if (from === clampedTo) return zone;
     const children = [...zone.children];
     const [moved] = children.splice(from, 1);
+    if (moved === undefined) return zone;
     children.splice(clampedTo, 0, moved);
     return { ...zone, children };
   });

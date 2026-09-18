@@ -44,7 +44,7 @@ vi.mock("@/lib/observability-bridge", () => ({ reportAiError: vi.fn() }));
 let entry: DiagnosticsToolEntry;
 
 vi.mock("../registry", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../registry")>();
+  const actual = (await importOriginal()) as typeof import("../registry");
   return {
     ...actual,
     // Only the LOOKUP is stubbed. `isValidDiagnosticsToolId` stays real so the id

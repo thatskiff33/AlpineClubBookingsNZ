@@ -80,7 +80,7 @@ const mockPrisma = vi.hoisted(() => {
 });
 
 vi.mock("@prisma/client", async () => {
-  const actual = await vi.importActual<typeof import("@prisma/client")>("@prisma/client");
+  const actual = (await vi.importActual("@prisma/client")) as typeof import("@prisma/client");
 
   return {
     ...actual,
@@ -678,7 +678,7 @@ describe("member delete lifecycle actions", () => {
     // anonymising path fixes. Deleted, not nulled: a row that exists holding
     // `null` reads to `buildXeroContactCompanyNumberPatch` as "we looked, and
     // Xero's NZBN field is empty", which is its permission to write a birthday
-    // into a field Xero still holds a business number in (#2873).
+    // into a field Xero still holds a business number in (#3058).
     expect(mockPrisma.xeroContactCache.deleteMany).toHaveBeenCalledWith({
       where: { contactId: "xero-contact-1" },
     });

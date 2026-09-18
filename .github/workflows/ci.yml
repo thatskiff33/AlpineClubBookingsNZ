@@ -192,10 +192,12 @@ jobs:
               --config p/react \
               --error \
               --metrics=off \
+              --timeout 0 \
               --exclude node_modules \
               --exclude .next \
               --exclude .semgrep/tests \
-              --sarif-output /out/semgrep-results.sarif
+              --sarif-output /out/semgrep-results.sarif \
+              --json-output /out/semgrep-results.json
 
       # The RAW scan output, suppressed results included. This is the audit
       # record, and it is what the #2841 triage measured the `suppressions`
@@ -216,9 +218,47 @@ jobs:
         with:
           node-version: 24
 
+      # `--timeout 0` (#2842) disables the per-rule timeout, and it is a
+      # SECURITY fix rather than a performance tweak. Semgrep's default is 5s
+      # per rule per file with `--timeout-threshold 3`, which abandons ALL
+      # REMAINING RULES on a file after three rule timeouts. Measured on this
+      # tree: a loaded machine produced 7 such files and the run lost a live
+      # `react-dangerouslysetinnerhtml` XSS finding, with `--error` still
+      # exiting 0 and no error attributed to that path - the security rules
+      # stop running on exactly the biggest files and nothing says so.
+      # Measured cost of removing the cliff: 78s wall for the whole tree with
+      # `--timeout 0` versus the same 4,235 targets and 169 partial-parse
+      # files with it on, i.e. no measurable cost here. The job's
+      # `timeout-minutes: 30` remains the backstop against a pathological
+      # rule, and the coverage gate below fails the build if a timeout or an
+      # OOM ever does abandon a file.
+
+      # #2842. The scan above exits 0 on findings-free code even when it could
+      # not PARSE some of that code: parse failures are reported at `warn` level
+      # in the JSON `errors` array and nowhere in the exit status. A file the
+      # scanner cannot read must not be indistinguishable from a file the
+      # scanner read and cleared. The measurement behind this, and the counts,
+      # are in `docs/MAINTENANCE.md` -> "Semgrep parse coverage".
+      #
+      # `if: always()` because a findings failure above must not hide a coverage
+      # regression here - they are independent facts and both need reporting.
+      # This is a STEP condition, never a job one: a job-level `if:` on a
+      # required check reports `skipped`, which GitHub counts as SATISFYING
+      # branch protection.
+      - name: Check Semgrep parse coverage did not shrink
+        if: always()
+        run: |
+          node scripts/ci/check-semgrep-coverage.mjs \
+            "$RUNNER_TEMP/semgrep-output/semgrep-results.json" \
+            .semgrep/unparsed-allowlist.json
+
       # #2841. Semgrep honours a `nosemgrep` comment and marks the result
       # `"suppressions": [{"kind": "inSource"}]`, which is why the blocking scan
-      # above passes with two justified raw-SQL exemptions in the tree. GitHub's
+      # above passes with the justified exemptions in the tree — two raw-SQL
+      # ones and, since #2842, a `react-dangerouslysetinnerhtml` at
+      # `src/components/club-post-editor.tsx`, which is an XSS-class alert this
+      # step keeps off the Security tab and so is named rather than left to a
+      # diff. GitHub's
       # SARIF ingest does not act on that field, so those two were filed as
       # code-scanning alerts that can never be closed and reappear on every scan.
       # `INV-OPS-014`'s own failure message tells contributors to add such a
@@ -289,10 +329,15 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    env:
-      # Pinned, and the same binary for all three scopes.
-      # `deployment-image-contracts` pins this string too.
-      GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.28.0
+    # The pinned image used to be an `env:` here. It moved to
+    # `scripts/ci/gitleaks-image.sh` in #2852, because the scheduled sweep in
+    # `gitleaks-scheduled.yml` needs the SAME binary, and a second copy of a
+    # version string is how #2686's 8.24.3-versus-8.28.0 split happened in the
+    # first place. `scripts/ci/gitleaks-scan.sh` is the one invocation both
+    # workflows call, and it is what turns a scanner that FAILED into a
+    # distinguishable result rather than another non-zero exit. The config and
+    # allowlists are still `.gitleaks.toml` and `.gitleaksignore`, which
+    # gitleaks discovers from the scan root, so neither caller names them.
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -332,14 +377,10 @@ jobs:
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITLEAKS_SCAN_LABEL: this pull request's own commits
         run: |
-          docker run --rm \
-            -v "$PWD:/repo:ro" \
-            "${GITLEAKS_IMAGE}" \
-            git /repo \
-            --log-opts="--diff-merges=first-parent ${PR_BASE_SHA}..${PR_HEAD_SHA}" \
-            --exit-code=1 \
-            --redact
+          GITLEAKS_LOG_OPTS="--diff-merges=first-parent ${PR_BASE_SHA}..${PR_HEAD_SHA}" \
+            bash scripts/ci/gitleaks-scan.sh git
 
       # The history scan is scoped to `main`, and the scope is resolved here so
       # a missing ref fails loudly instead of silently scanning nothing.
@@ -394,14 +435,11 @@ jobs:
       # runner). It stays far inside the ~21m `Playwright E2E` gate, so it adds
       # nothing to time-to-merge.
       - name: Scan the history of main
+        env:
+          GITLEAKS_SCAN_LABEL: the history of main
         run: |
-          docker run --rm \
-            -v "$PWD:/repo:ro" \
-            "${GITLEAKS_IMAGE}" \
-            git /repo \
-            --log-opts="--diff-merges=first-parent ${HISTORY_SCAN_SCOPE}" \
-            --exit-code=1 \
-            --redact
+          GITLEAKS_LOG_OPTS="--diff-merges=first-parent ${HISTORY_SCAN_SCOPE}" \
+            bash scripts/ci/gitleaks-scan.sh git
 
       # Present-tense content, independent of commit topology. The two scans
       # above read PATCHES, so what they see depends on how history was shaped;
@@ -417,17 +455,35 @@ jobs:
       # It costs about 10 seconds. Nothing installs dependencies in this job, so
       # there is no `node_modules` for it to walk.
       - name: Scan the checked-out tree
-        run: |
-          docker run --rm \
-            -v "$PWD:/repo:ro" \
-            "${GITLEAKS_IMAGE}" \
-            dir /repo \
-            --exit-code=1 \
-            --redact
+        env:
+          GITLEAKS_SCAN_LABEL: the checked-out tree
+        run: bash scripts/ci/gitleaks-scan.sh dir
 
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 75 does not mean a
+    # 75-minute run is acceptable; it means a genuinely wedged job is still
+    # killed rather than burning an hour of budget indefinitely.
+    #
+    # Raised from 30 because a timeout that trips on a HEALTHY run is worse than
+    # a slow one: the job is cancelled mid-`Test`, which reports identically to a
+    # real failure AND skips every step after it - the full suite's result, the
+    # production build, the nonce and cached-route checks, the server-only
+    # boundary proof and the file-size ratchet. The most valuable evidence in the
+    # pipeline is the first thing lost, and it is lost quietly.
+    #
+    # Measured 13-14 Sep 2026. The Tokoroa deployment fork, porting 423dcaf94,
+    # was cancelled TWICE IN A ROW at 30m21s and 30m23s with `Test` still
+    # running, and has carried 75 in its own tree since. Upstream has not tripped
+    # it yet but the margin is thin: fourteen consecutive runs of this job
+    # measured 14.8 to 23.4 minutes, so the worst observed run used 78% of the
+    # old cap and a single slow hosted runner closes the remaining 6.6 minutes.
+    # Raising the backstop is cheap; losing the suite and the build to a
+    # stopwatch is not.
+    #
+    # The real cost underneath is a ~30-minute serial test step, which sharding
+    # would cut - deliberately out of scope here and tracked separately.
+    timeout-minutes: 75
     permissions:
       contents: read
       # The concurrency-declaration gate fetches the CURRENT PR body from the
@@ -997,6 +1053,16 @@ jobs:
           DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
         run: npx vitest run src/lib/__tests__/data-migration-verification.realdb.test.ts
 
+      # #3369: the other half of the same proof. The fixture framework above can
+      # say what a migration DOES; it has no way to say that one must REFUSE, so
+      # the school backfill's fail-closed behaviour is proved by its own suite
+      # against the same database. One path per `vitest run`, deliberately: a
+      # multi-path invocation silently drops a path that matches nothing.
+      - name: Prove the school backfill refuses an unclassified row
+        env:
+          DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
+        run: npx vitest run src/lib/__tests__/school-organisation-backfill-fail-closed.realdb.test.ts
+
   # #2686: the CRITICAL half of this job is a REQUIRED status check, so the job
   # carries an explicit `name:` — the required context is
   # `Image security gate (Trivy CRITICAL)`, not the job id.
@@ -1034,6 +1100,15 @@ jobs:
         run: |
           echo "GIT_COMMIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "KNOWLEDGE_BUNDLE_OBSERVED_AT=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
+
+      # Six image builds across three workflows had no reclaim step, and a
+      # hosted runner's ~14 GB no longer fits this image comfortably (#3424).
+      # The script explains what it removes and why nothing it does may fail
+      # the build; it prints `df -h /` either side so the margin is readable
+      # in the log. Immediately before the build, so it also clears whatever
+      # earlier steps in this job left behind.
+      - name: Reclaim runner disk before building
+        run: bash scripts/ci/reclaim-runner-disk.sh
 
       - name: Build Docker image
         run: |
@@ -1144,6 +1219,15 @@ jobs:
       # export could not cover for it either — prepare_application_images()
       # returns early when using prebuilt images, which is the ordinary GHCR path.
       # Slice-1 review finding.
+      # Six image builds across three workflows had no reclaim step, and a
+      # hosted runner's ~14 GB no longer fits this image comfortably (#3424).
+      # The script explains what it removes and why nothing it does may fail
+      # the build; it prints `df -h /` either side so the margin is readable
+      # in the log. Immediately before the build, so it also clears whatever
+      # earlier steps in this job left behind.
+      - name: Reclaim runner disk before building
+        run: bash scripts/ci/reclaim-runner-disk.sh
+
       - name: Build and push app image
         uses: docker/build-push-action@v7
         with:
@@ -1172,6 +1256,15 @@ jobs:
             exit 1
           fi
           echo "RELEASE_ID is readable in the published app image and matches the built commit."
+
+      # Six image builds across three workflows had no reclaim step, and a
+      # hosted runner's ~14 GB no longer fits this image comfortably (#3424).
+      # The script explains what it removes and why nothing it does may fail
+      # the build; it prints `df -h /` either side so the margin is readable
+      # in the log. Immediately before the build, so it also clears whatever
+      # earlier steps in this job left behind.
+      - name: Reclaim runner disk before building
+        run: bash scripts/ci/reclaim-runner-disk.sh
 
       - name: Build and push migrate image
         uses: docker/build-push-action@v7

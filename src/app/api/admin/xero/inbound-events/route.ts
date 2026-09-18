@@ -148,8 +148,13 @@ export async function GET(request: NextRequest) {
       andFilters.push({ OR: linkTargets });
     }
 
+    // "Exactly one filter" said as a first with nothing after it, so the single
+    // filter the branch uses is the one the branch tested for (#2801).
+    const [onlyFilter, ...extraFilters] = andFilters;
     const where: Prisma.XeroInboundEventWhereInput =
-      andFilters.length === 1 ? andFilters[0] : { AND: andFilters };
+      onlyFilter !== undefined && extraFilters.length === 0
+        ? onlyFilter
+        : { AND: andFilters };
     const [events, total] = await Promise.all([
       prisma.xeroInboundEvent.findMany({
         where,

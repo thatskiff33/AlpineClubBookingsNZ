@@ -225,12 +225,18 @@ export function parseMemberGuestSearchQuery(
     };
   }
 
+  // `tokens.length <= 1` returned above, so both ends exist here.
+  const firstPrefix = tokens[0];
+  const lastPrefix = tokens[tokens.length - 1];
+  if (!firstPrefix || !lastPrefix) {
+    return { ok: false };
+  }
   return {
     ok: true,
     terms: {
       kind: "FIRST_AND_LAST",
-      firstPrefix: tokens[0],
-      lastPrefix: tokens[tokens.length - 1],
+      firstPrefix,
+      lastPrefix,
     },
     normalized,
   };

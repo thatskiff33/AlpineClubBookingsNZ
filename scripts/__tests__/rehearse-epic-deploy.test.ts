@@ -69,10 +69,8 @@ function newRepo(): {
   const addMigration = (name: string, file = "migration.sql") => {
     // Test fixture: joins the fixture repo's own migrations directory with a
     // test-controlled name; no user input.
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const dir = path.join(root, "prisma", "migrations", name);
     mkdirSync(dir, { recursive: true });
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     writeFileSync(path.join(dir, file), "SELECT 1;\n", "utf8");
   };
 
@@ -319,6 +317,37 @@ describe("normaliseSchemaForComparison", () => {
   it("still detects a one-field difference", () => {
     const changed = schema.replace("email String?", "emailAddress String?");
     expect(normaliseSchemaForComparison(changed)).not.toBe(normaliseSchemaForComparison(schema));
+  });
+
+  // #3366. Prisma also RE-FLOWS block comments in the copy it emits beside a
+  // generated client: the bare continuation line between two paragraphs is
+  // dropped. Exactly one such line exists in this repository's 7,600-line
+  // schema, and it was enough to make every rehearsal refuse to run and report
+  // the base client as "NOT the base ref's client" — which it was. Measured on
+  // Prisma 7.10.0 against the real schema before this rule was added.
+  const commented = [
+    "/**",
+    " * Why this model exists.",
+    " *",
+    " * A second paragraph.",
+    " */",
+    schema,
+  ].join("\n");
+
+  it("is unchanged when Prisma drops a block comment's blank continuation line", () => {
+    const reflowed = commented
+      .split("\n")
+      .filter((l) => l.trim() !== "*")
+      .join("\n");
+    expect(reflowed).not.toBe(commented);
+    expect(normaliseSchemaForComparison(reflowed)).toBe(normaliseSchemaForComparison(commented));
+  });
+
+  it("still detects a difference in the comment PROSE itself", () => {
+    const changed = commented.replace("A second paragraph.", "A different paragraph.");
+    expect(normaliseSchemaForComparison(changed)).not.toBe(
+      normaliseSchemaForComparison(commented),
+    );
   });
 });
 

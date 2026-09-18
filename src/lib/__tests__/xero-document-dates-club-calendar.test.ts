@@ -144,7 +144,7 @@ vi.mock("@/lib/xero-error-alert", () => ({
 // operation carries the key production would carry — which is what the
 // idempotency analysis on #2834 turns on.
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
   return {
     ...actual,
     startXeroSyncOperation: mocks.startXeroSyncOperation,
@@ -162,7 +162,7 @@ vi.mock("@/lib/xero-api-client", () => ({
 }));
 
 vi.mock("@/lib/xero-mappings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-mappings")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-mappings");
   return {
     ...actual,
     getResolvedAccountMapping: mocks.getResolvedAccountMapping,
@@ -179,6 +179,12 @@ vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
 vi.mock("@/lib/member-credit", () => ({
   lockMemberCreditLedger: mocks.lockMemberCreditLedger,
   deriveBookingAppliedCreditCents: vi.fn(),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 
 vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({

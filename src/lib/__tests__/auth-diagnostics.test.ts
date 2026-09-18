@@ -64,7 +64,6 @@ import { prisma } from "@/lib/prisma";
 
 const SECRET_COOKIE_VALUE =
   // Test fixture: a fake/dummy JWT-shaped string used to verify session-token scrubbing; not a real credential.
-  // nosemgrep: generic.secrets.security.detected-jwt-token.detected-jwt-token
   "eyJhbGciOiJkaXIifQ.super-secret-session-token-payload.tag";
 
 function cookieStore(cookies: Array<{ name: string; value: string }>) {

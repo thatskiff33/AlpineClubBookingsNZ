@@ -203,7 +203,9 @@ export function clubPostImageIds(html: string): string[] {
   const pattern = /\/api\/club-posts\/images\/([0-9a-f]{32})/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(html)) !== null) {
-    if (!ids.includes(match[1])) ids.push(match[1]);
+    // The capture group has no `?` quantifier, so it is always present.
+    const id = match[1];
+    if (id !== undefined && !ids.includes(id)) ids.push(id);
   }
   return ids;
 }

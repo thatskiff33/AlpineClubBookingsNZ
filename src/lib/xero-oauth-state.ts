@@ -30,7 +30,10 @@ export function sanitizeXeroOAuthReturnPath(
   // Reject `..` path-traversal segments (defence in depth — a decoded `..` must
   // not walk the path out of /admin, e.g. `/admin/../login`). Only the PATH is
   // checked; a legitimate query value may contain `..`.
-  const pathOnly = raw.split(/[?#]/, 1)[0];
+  // `split` with a limit of one always yields a first element, even for the
+  // empty string; treating an absent one as an empty path keeps the traversal
+  // check refusing nothing it did not already accept (#2800).
+  const pathOnly = raw.split(/[?#]/, 1)[0] ?? "";
   if (pathOnly.split("/").some((segment) => segment === "..")) return null;
   return raw;
 }

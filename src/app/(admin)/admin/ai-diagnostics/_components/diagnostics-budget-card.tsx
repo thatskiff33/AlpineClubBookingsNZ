@@ -7,7 +7,10 @@ import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
-import { parseDecimalDollarsToCents } from "@/lib/money-input";
+import { APP_CURRENCY } from "@/config/operational";
+import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { formatCents } from "@/lib/utils";
+import { centsToDollars } from "@/app/(admin)/admin/ai-assistant/budget";
 
 /**
  * THE MONTHLY DIAGNOSTICS BUDGET, shown and edited (AID-7, #2378, owner decision 3).
@@ -61,11 +64,6 @@ type BudgetState =
       activeReservedCents: number;
       requestCount: number;
     };
-
-/** Cents to the dollar string the input shows. Money stays in integer cents. */
-function centsToDollars(cents: number): string {
-  return (cents / 100).toFixed(2);
-}
 
 /**
  * Dollars typed by a human to integer cents, or null when it is not an amount.
@@ -226,7 +224,7 @@ export function DiagnosticsBudgetCard({
     }
     if (cents > state.maxMonthlyBudgetCents) {
       setSaveError(
-        `The most that can be set is $${centsToDollars(state.maxMonthlyBudgetCents)}.`,
+        `The most that can be set is ${formatCents(state.maxMonthlyBudgetCents)}.`,
       );
       return;
     }
@@ -264,8 +262,8 @@ export function DiagnosticsBudgetCard({
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
         <dt className="text-muted-foreground">Spent this month</dt>
         <dd className="tabular-nums">
-          ${centsToDollars(state.settledCents)} of $
-          {centsToDollars(state.monthlyBudgetCents)}
+          {formatCents(state.settledCents)} of{" "}
+          {formatCents(state.monthlyBudgetCents)}
         </dd>
         <dt className="text-muted-foreground">Questions asked</dt>
         <dd className="tabular-nums">{state.requestCount}</dd>
@@ -273,7 +271,7 @@ export function DiagnosticsBudgetCard({
           <>
             <dt className="text-muted-foreground">Held for questions in flight</dt>
             <dd className="tabular-nums">
-              ${centsToDollars(state.activeReservedCents)}
+              {formatCents(state.activeReservedCents)}
             </dd>
           </>
         ) : null}
@@ -286,8 +284,7 @@ export function DiagnosticsBudgetCard({
           </label>
           <input
             id={inputId}
-            type="text"
-            inputMode="decimal"
+            {...MONEY_INPUT_PROPS}
             value={draft}
             aria-describedby={hintId}
             onChange={(event) => setDraft(event.target.value)}
@@ -308,9 +305,9 @@ export function DiagnosticsBudgetCard({
       </div>
 
       <p id={hintId} className="mt-2 text-xs text-muted-foreground">
-        In New Zealand dollars, up to $
-        {centsToDollars(state.maxMonthlyBudgetCents)}. Zero switches off every paid
-        Diagnostics question without touching the module.
+        In {APP_CURRENCY}, up to {formatCents(state.maxMonthlyBudgetCents)}.
+        Zero switches off every paid Diagnostics question without touching the
+        module.
       </p>
 
       {/* Gated on `=== false`, never on `!canEdit`, so it does not flash while the

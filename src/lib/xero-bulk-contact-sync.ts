@@ -8,7 +8,7 @@
  * groups lives in xero-member-import.ts.
  */
 
-import type { Contact } from "xero-node";
+import type { Contact, XeroClient } from "xero-node";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { formatXeroPhone } from "./phone";
@@ -18,6 +18,7 @@ import {
   getXeroContactNameOrderRepair,
   type XeroContactLinkMismatchEntry,
 } from "@/lib/xero-contact-link-mismatches";
+import { XeroContactTwoHomesError } from "@/lib/xero-contact-home";
 import { buildXeroContactUrl } from "@/lib/xero-links";
 import { isXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 import {
@@ -180,7 +181,7 @@ async function writeXeroContactSyncAudit(input: {
 // ---------------------------------------------------------------------------
 
 async function repairXeroContactNameOrderIfNeeded(input: {
-  xero: import("xero-node").XeroClient;
+  xero: XeroClient;
   tenantId: string;
   contact: Contact;
   cachedContact: CachedXeroContact;
@@ -698,6 +699,34 @@ export async function syncContactsFromXero(
         report.skippedNoChanges += 1;
       }
     } catch (err) {
+      /*
+        THE TWO-HOMES REFUSAL IS A SKIP, NOT A RETRY (#2939, `INV-INT-018`).
+
+        `applyInboundMemberContactPatch` started taking the refusal in this same
+        change, and this catch had no bucket for it: the contact id went into
+        `nextRetryContactIds`, which is PERSISTED into the sync cursor, so it
+        was re-fetched and re-refused on every subsequent sync, with an error
+        line in every report, for ever. Nothing is corrupted — the refusal is
+        what stopped a person adopting a school's Xero customer — but the state
+        is permanently red, costs a provider read each time, and has no operator
+        remedy here: the fix is in Xero, or in this application's Organisation
+        record, not in re-running the sync.
+
+        So it takes `skippedOther` — the bucket this loop already uses for a
+        contact it can SEE and deliberately will not apply — with a reason
+        written for the person reading the report.
+      */
+      if (err instanceof XeroContactTwoHomesError) {
+        report.skippedOther.push({
+          name: contactName,
+          xeroContactId: contact.contactID,
+          reason:
+            "This Xero contact is already the Xero customer for another " +
+            "record here, so it was left alone. One Xero customer belongs to " +
+            "one record — check in Xero which one this should be.",
+        });
+        continue;
+      }
       nextRetryContactIds.push(contact.contactID);
       report.errors.push({
         name: contactName,

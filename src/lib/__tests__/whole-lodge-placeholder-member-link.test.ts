@@ -24,7 +24,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/booking-guests", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-guests")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-guests");
   return {
     ...actual,
     resolveLinkedBookingMembersWithBoundary:

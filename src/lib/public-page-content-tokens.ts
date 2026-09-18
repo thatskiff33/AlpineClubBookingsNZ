@@ -5,7 +5,7 @@ import {
   formatClubDate,
 } from "@/lib/club-time";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { APP_CURRENCY } from "@/config/operational";
+import { formatCents } from "@/lib/utils";
 import { normalizeCancellationRule } from "@/lib/cancellation-rules";
 import { resolvePolicyRowsForLodge } from "@/lib/lodges";
 import {
@@ -83,13 +83,7 @@ export type PublicCancellationPolicy = {
 type PublicCancellationRuleInput = Parameters<typeof normalizeCancellationRule>[0];
 
 function money(amountCents: number): PublicMoney {
-  return {
-    amountCents,
-    label: new Intl.NumberFormat("en-NZ", {
-      style: "currency",
-      currency: APP_CURRENCY,
-    }).format(amountCents / 100),
-  };
+  return { amountCents, label: formatCents(amountCents) };
 }
 
 type PublicContentGate = "membershipTypes" | "entranceFees" | "hutFees" | "annualFees" | "bookingPolicySummary" | "cancellationPolicy";
@@ -158,8 +152,11 @@ export function describePublicCancellationRules(
     return true;
   });
   const rows = reachableRules.map((rule, index) => {
-    const previous = reachableRules[index - 1];
-    const range = index === 0
+    // `index === 0` is checked before `previous` is used, so a genuine gap
+    // (index > 0 with no previous element) can only mean the type can't see
+    // the loop bound -- it reads as "top band" rather than a guessed range.
+    const previous = index > 0 ? reachableRules[index - 1] : undefined;
+    const range = !previous
       ? `${rule.daysBeforeStay} or more days before check-in`
       : `${rule.daysBeforeStay}–${Math.max(rule.daysBeforeStay, previous.daysBeforeStay - 1)} days before check-in`;
     return { description: `${range}: ${describeCancellationTerms(rule)}` };

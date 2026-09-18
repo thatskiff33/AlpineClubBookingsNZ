@@ -30,7 +30,7 @@ let options = {
 }
 
 vi.mock("@/components/lodge-select", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/components/lodge-select")>()),
+  ...((await importOriginal()) as typeof import("@/components/lodge-select")),
   useLodgeOptions: () => options,
   LodgeSelect: () => <div data-testid="member-lodge-select" />,
 }))

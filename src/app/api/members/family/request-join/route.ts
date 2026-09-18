@@ -118,9 +118,13 @@ export async function POST(req: NextRequest) {
 
   let familyGroupId: string;
 
-  if (target.familyGroupMemberships.length > 0) {
+  // The first membership IS the condition: "the target is already in a group"
+  // and "here is the group to join" are the same fact (#2801).
+  const [firstTargetMembership] = target.familyGroupMemberships;
+
+  if (firstTargetMembership) {
     // Target is in a family group — request to join their first group
-    familyGroupId = target.familyGroupMemberships[0].familyGroupId;
+    familyGroupId = firstTargetMembership.familyGroupId;
   } else {
     // Create a new family group with the target member as lead
     const newGroup = await prisma.$transaction(async (tx) => {

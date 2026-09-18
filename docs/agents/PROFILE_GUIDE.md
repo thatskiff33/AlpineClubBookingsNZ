@@ -27,12 +27,16 @@ or production environment values to profile TOML.
 
 ## Effort Selection
 
-- `xhigh`: security, payment, booking capacity, membership lifecycle, Xero,
-  Stripe, data integrity, broad reviews, and ambiguous planning.
-- `high`: focused bug fixes touching domain logic, tests, provider queues,
-  auth, cron, or risky admin flows.
-- `medium`: docs, UI copy, low-risk UI polish, small test additions, and
-  routine issue grooming.
+Effort follows the shape in `AGENTS.md` → "Model selection" and the dated
+table in `docs/agents/SUBAGENT_GUIDE.md` → "Model routing table"; this list
+only maps the Codex profiles onto it and defines nothing of its own.
+
+- `xhigh`: anything security-shaped, and the reasoning-frontier items the shape
+  names.
+- `high`: gated areas — money, capacity, membership lifecycle, schema, live
+  providers — and broad reviews.
+- `medium`: routine Low/Medium implementation, docs, UI copy, small test
+  additions, routine issue grooming.
 - `low`: trivial formatting, simple file moves, or narrow non-code cleanup.
 
 High and critical risk issues are not unattended coding candidates even if a

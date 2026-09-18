@@ -29,9 +29,12 @@ export function parseMemberRelationOwnerKeys(schemaText: string): string[] {
   // asserts every singular Member field maps to a parsed key (fail-closed).
   const fieldRe = /^\s*(\w+)\s+Member\??\s+(@.*)$/;
   for (const line of lines) {
-    const mm = line.match(modelRe);
-    if (mm) {
-      model = mm[1];
+    // Each capture group is read where it is used, so a pattern that stops
+    // capturing what it names fails here rather than producing a key built
+    // from `undefined` (#2800).
+    const modelName = line.match(modelRe)?.[1];
+    if (modelName !== undefined) {
+      model = modelName;
       continue;
     }
     if (line.trim() === "}") {
@@ -39,10 +42,12 @@ export function parseMemberRelationOwnerKeys(schemaText: string): string[] {
       continue;
     }
     const rm = line.match(fieldRe);
-    if (!rm || !model) continue;
-    const rel = rm[2].match(/@relation\(([^)]*)\)/);
-    if (rel && /fields:\s*\[/.test(rel[1])) {
-      keys.push(`${model}.${rm[1]}`);
+    const fieldName = rm?.[1];
+    const attributes = rm?.[2];
+    if (fieldName === undefined || attributes === undefined || !model) continue;
+    const relationArgs = attributes.match(/@relation\(([^)]*)\)/)?.[1];
+    if (relationArgs !== undefined && /fields:\s*\[/.test(relationArgs)) {
+      keys.push(`${model}.${fieldName}`);
     }
   }
   return keys;
@@ -158,9 +163,13 @@ export function parseFkLessMemberIdColumns(schemaText: string): string[] {
 
   for (const rawLine of schemaText.split(/\r?\n/)) {
     const line = stripPrismaLineComment(rawLine);
-    const mm = line.match(/^model\s+(\w+)\s*\{/);
-    if (mm) {
-      current = { name: mm[1], scalarStrings: [], relationFkColumns: new Map() };
+    const modelName = line.match(/^model\s+(\w+)\s*\{/)?.[1];
+    if (modelName !== undefined) {
+      current = {
+        name: modelName,
+        scalarStrings: [],
+        relationFkColumns: new Map(),
+      };
       models.push(current);
       continue;
     }
@@ -171,11 +180,15 @@ export function parseFkLessMemberIdColumns(schemaText: string): string[] {
     if (!current) continue;
     const fm = line.match(/^\s*(\w+)\s+(\w+)(\[\]|\?)?(\s.*)?$/);
     if (!fm) continue;
+    // Groups 1 and 2 are what the pattern is for; 3 and 4 are genuinely
+    // optional and stay optional. A line that matched without a name or a type
+    // is not a field declaration this scan can classify (#2800).
     const [, fieldName, fieldType, listOrOptional, tail] = fm;
-    const relation = (tail ?? "").match(/@relation\(([^)]*)\)/);
-    const fkFields = relation?.[1].match(/fields:\s*\[([^\]]*)\]/);
-    if (fkFields) {
-      for (const column of fkFields[1].split(",").map((c) => c.trim())) {
+    if (fieldName === undefined || fieldType === undefined) continue;
+    const relationArgs = (tail ?? "").match(/@relation\(([^)]*)\)/)?.[1];
+    const fkFields = relationArgs?.match(/fields:\s*\[([^\]]*)\]/)?.[1];
+    if (fkFields !== undefined) {
+      for (const column of fkFields.split(",").map((c) => c.trim())) {
         if (column) current.relationFkColumns.set(column, fieldType);
       }
     }

@@ -35,6 +35,12 @@ vi.mock("@/lib/member-credit", () => ({
   createCancellationCredit: vi.fn(),
   lockMemberCreditLedger: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 vi.mock("@/lib/waitlist", () => ({ processWaitlistForDates: vi.fn() }));
 vi.mock("@/lib/xero-operation-outbox", () => ({

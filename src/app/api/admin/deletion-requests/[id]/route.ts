@@ -306,7 +306,7 @@ export async function POST(
   }
 
   const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   let completedBookingCancellations = 0;
   let memberAnonymised = false;
 
@@ -607,6 +607,14 @@ export async function POST(
         entityType: "Member",
         entityId: member.id,
         details: body.note ? `Note: ${body.note}` : "No note",
+        // #2695 (`INV-PRIV-018`) — DECLARED INTERNAL, owner decision of 9 August
+        // 2026. This note is typed on the same form as the "do not notify the
+        // member" tick below, and the member used to read it on their own
+        // timeline whenever it was prose rather than JSON — so the tick meant
+        // the opposite of what the administrator ticking it believes. They still
+        // see that their request was declined; the reason reaches them by email,
+        // or deliberately does not.
+        memberDisclosure: { visibility: "internal" },
         ipAddress: ip,
         ...(Object.keys(rejectAuditMetadata).length > 0
           ? { metadata: rejectAuditMetadata }
@@ -998,7 +1006,7 @@ export async function POST(
       //     treats it as one. `buildXeroContactCompanyNumberPatch` reads a row
       //     that exists and holds `null` as "we looked, and Xero's NZBN field
       //     is empty" — which is its permission to write. Nulling here would
-      //     MANUFACTURE that permission about a field that, per #2873, still
+      //     MANUFACTURE that permission about a field that, per #3058, still
       //     holds the value in Xero, and nothing re-observes it: the contact
       //     was not modified so an `ifModifiedSince` sync skips it, no member
       //     links to it any more, and the group repair only fills in MISSING
@@ -1011,13 +1019,13 @@ export async function POST(
       //     address. Clearing one field would leave all of those in place,
       //     which contradicts the privacy argument above.
       //
-      // Removing the value from XERO is a separate question — it conflicts with
-      // the standing rule that this app never blanks that field, because it
-      // cannot tell a birthday it wrote from a business number somebody typed —
-      // and is tracked as #2873. Until that is answered the value survives in
-      // Xero, so a later full resync that observes this contact can cache it
-      // again: this clears what the server holds now, it does not make the
-      // provider forget. Precedent for the shape: `xero-mismatch-resync.ts`.
+      // Removing the value from XERO is SETTLED the other way (#3058,
+      // `INV-INT-024`; #2873 closed `not planned`): erasure makes no Xero
+      // mutation, because this app cannot tell a birthday it wrote from a
+      // business number somebody typed, and the accounting system is the
+      // treasurer's. So the value survives in Xero by decision, and a later
+      // resync can cache it again: this clears what the server holds now, it
+      // does not make the provider forget. Cf. `xero-mismatch-resync.ts`.
       if (fencedMember.xeroContactId) {
         await tx.xeroContactCache.deleteMany({
           where: { contactId: fencedMember.xeroContactId },
@@ -1068,7 +1076,7 @@ export async function POST(
       // `@deleted.invalid` write happens earlier in this transaction against the
       // database row, while `member` is the read taken before it. That ordering
       // is what makes the exact-match safe, so it must not be reordered.
-      const retiredInheritedCopies = await retireInheritedEmailCopies(tx, {
+      await retireInheritedEmailCopies(tx, {
         id: member.id,
         email: member.email,
       });
@@ -1188,6 +1196,9 @@ export async function POST(
       entityType: "Member",
       entityId: member.id,
       details: `Account anonymised. Cancelled ${cancelledBookingIds.length} future bookings.${body.note ? ` Note: ${body.note}` : ""}`,
+      // #2695 - DECLARED INTERNAL, like its rejection sibling above. The default
+      // already denies it; saying so keeps the pair one decision.
+      memberDisclosure: { visibility: "internal" },
       ipAddress: ip,
       metadata: {
         detachedEmailInheritorIds: detachedFamilyLinks.emailInheritors.map(

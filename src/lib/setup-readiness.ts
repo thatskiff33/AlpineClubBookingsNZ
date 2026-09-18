@@ -112,6 +112,14 @@ export interface SetupDatabaseSnapshot {
   stripeWebhookSecretSet?: boolean;
   stripeNeedsReentry?: boolean;
   xeroAccountMappingCount: number;
+  /**
+   * Labels of the mapping keys that have a registered fallback and are still
+   * unset (#2717, `INV-INT-021`). The count above says nothing about them — it
+   * counts any row carrying a code, so an upgrading club reads "configured" on
+   * the very day a new key ships, which is the silence the owner rejected.
+   * Optional for callers that took no database snapshot.
+   */
+  xeroUnsetFallbackMappingLabels?: string[];
   xeroHutFeeItemMappingCount: number;
   xeroEntranceFeeMappingCount: number;
   // Per-membership-type rate gaps (#1930, E4): "TypeName — SeasonName" entries
@@ -182,69 +190,14 @@ export interface SetupDatabaseSnapshot {
   defaultLodgeCapacity?: number | null;
 }
 
-// One membership type × season pair for the rate-gap check (#1930, E4).
-export interface MembershipTypeRateGapType {
-  id: string;
-  name: string;
-  ageGroupsApply: boolean;
-}
-
-export interface MembershipTypeRateGapSeason {
-  id: string;
-  name: string;
-}
-
-export interface MembershipTypeRateGapRow {
-  seasonId: string;
-  membershipTypeId: string;
-  ageTier: string | null;
-}
-
-/**
- * Tier-aware missing-rate readiness (#1930, E4). A (type, season) pair is
- * covered when a booking for ANY bookable age tier can price:
- *   - ageGroupsApply=true: every bookable tier has an exact row, OR a flat
- *     (NULL-ageTier) row exists (the engine falls back exact-tier -> flat);
- *   - ageGroupsApply=false: the single flat row exists (tier rows alone are a
- *     shape anomaly the write surfaces reject — flag them).
- * Anything less means some guest hard-throws at pricing. Callers pass ACTIVE
- * MEMBER_RATE types only — archived types price history and are skipped.
- */
-export function computeMembershipTypeRateGaps(input: {
-  types: MembershipTypeRateGapType[];
-  seasons: MembershipTypeRateGapSeason[];
-  rateRows: MembershipTypeRateGapRow[];
-  bookableAgeTiers?: readonly string[];
-}): string[] {
-  const bookableTiers = input.bookableAgeTiers ?? bookableAgeTierEnum.options;
-  const tiersByPair = new Map<string, Set<string | null>>();
-  for (const row of input.rateRows) {
-    const key = `${row.membershipTypeId}::${row.seasonId}`;
-    const set = tiersByPair.get(key) ?? new Set<string | null>();
-    set.add(row.ageTier);
-    tiersByPair.set(key, set);
-  }
-
-  const gaps: string[] = [];
-  for (const type of input.types) {
-    for (const season of input.seasons) {
-      const tiers = tiersByPair.get(`${type.id}::${season.id}`);
-      const hasFlat = tiers?.has(null) ?? false;
-      if (type.ageGroupsApply) {
-        if (hasFlat) continue;
-        const missingTiers = bookableTiers.filter((tier) => !tiers?.has(tier));
-        if (missingTiers.length === 0) continue;
-        gaps.push(
-          `${type.name} — ${season.name} (missing ${missingTiers.join(", ")})`,
-        );
-      } else {
-        if (hasFlat) continue;
-        gaps.push(`${type.name} — ${season.name} (missing flat all-ages rate)`);
-      }
-    }
-  }
-  return gaps;
-}
+/*
+  The rate-gap computation and the "which types owe rates" rule moved to
+  `@/lib/membership-type-rate-coverage` (#2933). They are one rule
+  (`INV-MOD-007`) that the admin Hut Fees screen now reads too, and this module
+  cannot be imported from a browser bundle — it reads `node:fs`. What arrives
+  here is the RESULT, on `SetupDatabaseSnapshot.membershipTypeRateGaps`, already
+  formatted by `formatMembershipTypeRateGap`.
+*/
 
 interface SetupStepCheck {
   id: SetupStepId;
@@ -1966,7 +1919,6 @@ function buildAddressAutocompleteCheck(
 }
 
 function buildFinanceDashboardCheck(
-  env: Env,
   db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
 ): SetupStepCheck {
@@ -2035,8 +1987,16 @@ function buildXeroMappingCheck(
   const accountMappings = db?.xeroAccountMappingCount ?? 0;
   const hutFeeMappings = db?.xeroHutFeeItemMappingCount ?? 0;
   const entranceFeeMappings = db?.xeroEntranceFeeMappingCount ?? 0;
+  // A mapping that is falling back is a mapping nobody has decided (#2717,
+  // `INV-INT-021`). The owner's decision rejected silence, and the account
+  // count cannot see this: it counts rows with a code, so every upgrading club
+  // would read "configured" while a new key was quietly unset.
+  const unsetFallbackMappings = db?.xeroUnsetFallbackMappingLabels ?? [];
   const complete =
-    accountMappings > 0 && hutFeeMappings > 0 && entranceFeeMappings > 0;
+    accountMappings > 0 &&
+    hutFeeMappings > 0 &&
+    entranceFeeMappings > 0 &&
+    unsetFallbackMappings.length === 0;
 
   return applyProgress(
     {
@@ -2048,9 +2008,17 @@ function buildXeroMappingCheck(
       required: false,
       message: complete
         ? "Xero account and item mappings are configured."
-        : "Map Xero accounts and item codes before using live Xero sync.",
+        : unsetFallbackMappings.length > 0 &&
+            accountMappings > 0 &&
+            hutFeeMappings > 0 &&
+            entranceFeeMappings > 0
+          ? `Choose an account for ${unsetFallbackMappings.join(" and ")} — until you do, those entries keep posting where they did before.`
+          : "Map Xero accounts and item codes before using live Xero sync.",
       details: [
         `Account mappings: ${accountMappings}`,
+        ...(unsetFallbackMappings.length > 0
+          ? [`Not chosen yet, using a fallback: ${unsetFallbackMappings.join(", ")}`]
+          : []),
         `Hut fee item mappings: ${hutFeeMappings}`,
         `Joining fee mappings: ${entranceFeeMappings}`,
       ],
@@ -2098,7 +2066,7 @@ export function buildSetupReadiness(
       buildOperationalXeroCheck(env, input.database, progress),
     ],
     finance: [
-      buildFinanceDashboardCheck(env, input.database, progress),
+      buildFinanceDashboardCheck(input.database, progress),
       buildXeroMappingCheck(input.database, progress),
     ],
   };

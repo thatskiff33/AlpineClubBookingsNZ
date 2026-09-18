@@ -121,7 +121,7 @@ vi.mock("bcryptjs", () => ({
 
 // Partial: `admin-modules` re-exports other members of this module at load time.
 vi.mock("@/lib/module-settings", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/module-settings")>()),
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: mockLoadEffectiveModuleFlags,
 }));
 

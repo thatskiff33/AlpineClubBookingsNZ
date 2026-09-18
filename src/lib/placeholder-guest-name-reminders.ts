@@ -1,4 +1,5 @@
 import { BookingRequestType, BookingStatus, Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import { getBookingRequestSettings } from "@/lib/booking-request";
 import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
@@ -174,6 +175,8 @@ export async function sendPlaceholderGuestNameReminders(
           checkOut: true,
           lodgeId: true,
           member: { select: { email: true, firstName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           // D-12 (#2307): this email PUBLISHES a headcount ("Guests: 6"), so it
           // may only count the people who will actually be at the lodge. A
           // member guest whose consent is still PENDING holds a bed and nothing
@@ -246,9 +249,9 @@ export async function sendPlaceholderGuestNameReminders(
     try {
       await sendWholeLodgeGuestNamesReminderEmail({
         bookingId: booking.id,
-        recipientMemberId: booking.memberId,
-        email: booking.member.email,
-        firstName: booking.member.firstName,
+        recipientMemberId: bookingOwner(booking).memberId,
+        email: bookingOwner(booking).member.email,
+        firstName: bookingOwner(booking).member.firstName,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         guestCount: booking.guests.length,

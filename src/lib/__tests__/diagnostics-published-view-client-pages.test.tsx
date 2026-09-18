@@ -82,9 +82,7 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/hooks/use-admin-area-edit-access")
-  >()),
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
 }));
 vi.mock("@/hooks/use-xero-status", () => ({

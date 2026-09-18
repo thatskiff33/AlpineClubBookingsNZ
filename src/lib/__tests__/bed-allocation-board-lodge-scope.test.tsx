@@ -86,7 +86,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/hooks/use-admin-area-edit-access")>();
+    (await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access");
   return { ...actual, useAdminAreaEditAccess: () => editAccessMock() };
 });
 
@@ -116,15 +116,6 @@ vi.mock("@/app/(admin)/admin/bed-allocation/_components/bucket-board", () => ({
 vi.mock("@/components/admin/bed-range-assign-dialog", () => ({
   BedRangeAssignDialog: () => null,
 }));
-// Its own suite covers it; here it would only add a second endpoint to fake.
-vi.mock(
-  "@/app/(admin)/admin/bed-allocation/_components/allocation-preferences-section",
-  () => ({
-    AllocationPreferencesSection: () => (
-      <div data-testid="allocation-preferences" />
-    ),
-  }),
-);
 
 import AdminBedAllocationPage from "@/app/(admin)/admin/bed-allocation/page";
 
@@ -412,6 +403,74 @@ describe("bed-allocation board — a direct visit settles on a real lodge (#2701
   });
 });
 
+/*
+  #2937: the preferences EDITOR is no longer on this board — it lives in Bookings
+  Setup -> Rooms & Beds. What the board owes is a signpost, and the signpost owes
+  the same discipline as every other lodge-dependent thing here: carry the lodge
+  when there is one, and invent nothing when there is not.
+*/
+describe("bed-allocation board — the allocation preferences signpost (#2937)", () => {
+  function preferencesLink(): HTMLAnchorElement {
+    return screen.getByRole("link", {
+      name: /Bookings Setup . Rooms & Beds/,
+    }) as HTMLAnchorElement;
+  }
+
+  it("carries the board's own lodge to the editor's permanent home", async () => {
+    search.current = "from=2026-07-01&to=2026-07-08&lodgeId=lodge-2";
+    installFakeServer();
+
+    render(<AdminBedAllocationPage />);
+    await screen.findByTestId("room-table");
+
+    expect(preferencesLink().getAttribute("href")).toBe(
+      "/admin/rooms-beds?lodgeId=lodge-2",
+    );
+    // The board no longer edits preferences itself.
+    expect(
+      screen.queryByRole("checkbox", { name: "Auto allocation enabled" }),
+    ).toBeNull();
+  });
+
+  it("links without a lodge rather than naming one it does not have", async () => {
+    search.current = "from=2026-07-01&to=2026-07-08";
+    installFakeServer({ lodges: [] });
+
+    render(<AdminBedAllocationPage />);
+    await screen.findByText("No active lodge");
+
+    expect(preferencesLink().getAttribute("href")).toBe("/admin/rooms-beds");
+  });
+
+  it("drops a DEACTIVATED lodge from the link rather than sending the officer to a different one", async () => {
+    // The board is focused on a booking whose lodge has since been deactivated.
+    // It holds that lodge on purpose (`focusedBookingOwnsLodge`), and the board
+    // itself is correct to: the server scopes from `Booking.lodgeId`. But the
+    // lodge is gone from `/api/admin/lodges`, so Rooms & Beds cannot settle on
+    // it — `LodgeSelect` would normalise it to the one surviving active lodge,
+    // and below two lodges it renders nothing, so the swap would be invisible.
+    // A live Edit and Save on somebody ELSE's preferences is the outcome.
+    search.current = "from=2026-07-01&to=2026-07-08&bookingId=booking-b";
+    const server = installFakeServer({
+      lodges: [{ id: "lodge-1", name: "Alpine Lodge", active: true }],
+    });
+
+    render(<AdminBedAllocationPage />);
+    await screen.findByTestId("room-table");
+
+    // The board really is scoped to the deactivated lodge — otherwise this
+    // asserts the link against a state that never arose.
+    await waitFor(() =>
+      expect(server.boardRequests.at(-1)?.get("lodgeId")).toBe("lodge-2"),
+    );
+    expect(await screen.findByText("Focused booking")).toBeInTheDocument();
+
+    // MUTATION PROBE: replace `preferencesLodgeId` with `lodgeId` in the
+    // signpost and this reads `/admin/rooms-beds?lodgeId=lodge-2`.
+    expect(preferencesLink().getAttribute("href")).toBe("/admin/rooms-beds");
+  });
+});
+
 describe("bed-allocation board — a failed lodge list is not a club-wide view (#2701)", () => {
   it("shows an error with a retry, loads no board, and never looks like All lodges", async () => {
     const server = installFakeServer({ lodgesFailing: true });
@@ -482,7 +541,7 @@ describe("bed-allocation board — a deep-linked booking brings its own lodge (#
       expect(server.boardRequests.at(-1)?.get("lodgeId")).toBe("lodge-2"),
     );
     expect(screen.getByText("River Lodge")).toBeInTheDocument();
-    expect(screen.getByText("Focused booking")).toBeInTheDocument();
+    expect(await screen.findByText("Focused booking")).toBeInTheDocument();
     expect(server.boardRequests.at(-1)?.get("bookingId")).toBe("booking-b");
     expect(server.refusals).toEqual([]);
     // MUTATION PROBE for the adoption effect: delete it and the selection never
@@ -507,7 +566,7 @@ describe("bed-allocation board — a deep-linked booking brings its own lodge (#
 
     expect(server.refusals).toHaveLength(0);
     expect(screen.getByText("River Lodge")).toBeInTheDocument();
-    expect(screen.getByText("Focused booking")).toBeInTheDocument();
+    expect(await screen.findByText("Focused booking")).toBeInTheDocument();
   });
 });
 
@@ -705,7 +764,7 @@ describe("bed-allocation board — the LODGE_MISMATCH backstop (#2701)", () => {
     expect(
       server.boardRequests.some((request) => request.has("lodgeId")),
     ).toBe(false);
-    expect(screen.getByText("Focused booking")).toBeInTheDocument();
+    expect(await screen.findByText("Focused booking")).toBeInTheDocument();
     // Read-only rather than wrong: no lodge is known, so nothing that needs one
     // is offered.
     expect(
@@ -744,7 +803,7 @@ describe("bed-allocation board — the LODGE_MISMATCH backstop (#2701)", () => {
     expect(
       screen.queryByText("This link points at two different lodges"),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Focused booking")).toBeInTheDocument();
+    expect(await screen.findByText("Focused booking")).toBeInTheDocument();
     // Never substituted the surviving active lodge for the booking's own.
     expect(
       server.boardRequests.some(

@@ -28,7 +28,17 @@ vi.mock("@/lib/prisma", () => ({
     season: { findMany: vi.fn() },
     promoCode: { findUnique: vi.fn() },
     promoCodeAssignment: { findMany: vi.fn() },
-    promoRedemption: { count: vi.fn(), aggregate: vi.fn() },
+    promoRedemption: { count: vi.fn(), aggregate: vi.fn(), findUnique: vi.fn().mockResolvedValue(null) },
+    // #3276: the night adjustment build-up writer reads and rewrites these.
+    bookingGuestNightAdjustment: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    bookingGuestNight: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     // #2306: the admin (skipAuthorization) path now READS these rows to compute
     // the member-guest family boundary, even though it still enforces nothing
     // with them — so the mock has to answer with a real array.
@@ -84,6 +94,7 @@ vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
     discount: {
+      adjustmentTargets: [],
       discountCents: 0,
       priceAdjustmentCents: 0,
       freeNightsUsed: 0,
@@ -113,6 +124,12 @@ vi.mock("@/lib/pricing", () => ({
 vi.mock("@/lib/member-credit", () => ({
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),
   applyCreditToBooking: vi.fn().mockResolvedValue(undefined),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 vi.mock("@/lib/audit", () => ({
   logAudit: vi.fn(),
@@ -1088,6 +1105,7 @@ describe("Promo Validate API - forMemberId", () => {
     const { validateAndCalculatePromoDiscount } = await import("@/lib/promo");
     vi.mocked(validateAndCalculatePromoDiscount).mockResolvedValueOnce({
       discount: {
+        adjustmentTargets: [],
         discountCents: 0,
         priceAdjustmentCents: 2000,
         freeNightsUsed: 0,
@@ -1095,6 +1113,7 @@ describe("Promo Validate API - forMemberId", () => {
         allocations: [
           { memberId: "m1", discountCents: 0, priceAdjustmentCents: 2000, freeNightsUsed: 0 },
         ],
+        targets: [],
       },
       beneficiaryMemberIds: ["m1"],
     });

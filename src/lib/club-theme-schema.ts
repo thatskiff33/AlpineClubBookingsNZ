@@ -8,6 +8,7 @@ import {
   serializeWebsiteStepTokens,
   serializeWebsiteRoleTokens,
 } from "@/lib/theme/app-tokens";
+import { must } from "@/lib/theme/index-guards";
 
 export const CLUB_THEME_ID = "default";
 /**
@@ -221,10 +222,10 @@ export function deriveBrandShims(theme: ClubThemeValues): BrandShims {
     gold: theme.brandGold,
     deep: theme.brandDeep,
     safety: theme.brandSafety,
-    snow: n[0],
-    mist: n[2],
-    ridge: n[7],
-    charcoal: n[11],
+    snow: must(n[0], "deriveBrandShims: light neutral ramp has no step 1"),
+    mist: must(n[2], "deriveBrandShims: light neutral ramp has no step 3"),
+    ridge: must(n[7], "deriveBrandShims: light neutral ramp has no step 8"),
+    charcoal: must(n[11], "deriveBrandShims: light neutral ramp has no step 12"),
   };
 }
 
@@ -269,7 +270,9 @@ export function logoDataUrlByteLength(value: string): number | null {
     return null;
   }
 
-  const base64 = match[2];
+  // The pattern's 2nd group is mandatory (no trailing `?`), so a successful
+  // match always captures it.
+  const base64 = must(match[2], "logoDataUrlByteLength: matched data URI has no base64 capture group");
   if (base64.length % 4 !== 0) {
     return null;
   }
@@ -482,12 +485,14 @@ function oklchToLinearRgb(
     return null;
   }
 
-  const lightnessToken = match[1];
+  // All three groups are mandatory (no trailing `?`), so a successful match
+  // always captures them.
+  const lightnessToken = must(match[1], "oklchToLinearRgb: matched oklch() has no lightness capture group");
   const L = lightnessToken.endsWith("%")
     ? Number.parseFloat(lightnessToken) / 100
     : Number.parseFloat(lightnessToken);
-  const C = Number.parseFloat(match[2]);
-  const hueDegrees = Number.parseFloat(match[3]);
+  const C = Number.parseFloat(must(match[2], "oklchToLinearRgb: matched oklch() has no chroma capture group"));
+  const hueDegrees = Number.parseFloat(must(match[3], "oklchToLinearRgb: matched oklch() has no hue capture group"));
   if (
     !Number.isFinite(L) ||
     !Number.isFinite(C) ||
@@ -827,8 +832,14 @@ export function deriveAppMutedForeground(
   // muted text actually lands on (`focus:bg-accent` items), not the step-3 shim.
   const seeds = themeSeedsFromValues(theme);
   const accentIndex = ACCENT_NEUTRAL_STEP - 1;
-  const lightAccent = buildNeutralRamp(seeds, "light")[accentIndex];
-  const darkAccent = buildNeutralRamp(seeds, "dark")[accentIndex];
+  const lightAccent = must(
+    buildNeutralRamp(seeds, "light")[accentIndex],
+    `deriveAppMutedForeground: light neutral ramp has no step ${ACCENT_NEUTRAL_STEP}`,
+  );
+  const darkAccent = must(
+    buildNeutralRamp(seeds, "dark")[accentIndex],
+    `deriveAppMutedForeground: dark neutral ramp has no step ${ACCENT_NEUTRAL_STEP}`,
+  );
 
   return {
     light: deriveMutedTone(s.deep, s.snow, [

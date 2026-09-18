@@ -43,7 +43,7 @@ vi.mock("@/lib/member-partner-lock", () => ({
 }));
 vi.mock("@/lib/custodian-occupancy", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/custodian-occupancy")>();
+    (await importOriginal()) as typeof import("@/lib/custodian-occupancy");
   return { ...actual, findCustodianBedHolds: custodianHoldsMock };
 });
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));

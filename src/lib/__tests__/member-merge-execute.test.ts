@@ -17,6 +17,10 @@ import {
   ADULT_MEMBER_HOSTING_POLICY_SET_LOCK_KEY,
   lockAdultMemberHostingPolicySet,
 } from "@/lib/adult-member-hosting-policy-set";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+} from "@/lib/member-parent-partner-exclusivity";
 
 const MASTER_ID = "master-1";
 const LOSER_ID = "loser-1";
@@ -108,11 +112,44 @@ function reconcileSubjectRows(ids: string[]) {
     }));
 }
 
+/**
+ * `member.findMany` as the merge transaction actually uses it — TWO queries,
+ * not one, and a mock that answers both the same way blocks every merge.
+ *
+ * The email-inheritance reconciler asks for the subject rows by id and reads
+ * five inheritance columns off them. The #3369 merge guard asks a NARROWER
+ * question against the same delegate: which of these two ids is school-SHAPED
+ * (`role: SCHOOL`, a blank surname, cannot sign in), for the rows the cutover
+ * census never reached. Answering that with the reconciler's row list says
+ * "both of them", and `evaluateMemberMergeGuards` then refuses every merge in
+ * this file with `organisation_row`.
+ *
+ * So the filter is honoured rather than ignored. Prisma would have; a mock that
+ * does not is not modelling the database, it is modelling one caller.
+ */
+function memberFindManyForTest(args: unknown) {
+  const where = (args as { where?: Record<string, unknown> }).where ?? {};
+  const ids = (where.id as { in?: string[] } | undefined)?.in;
+  if (!ids) return null;
+  const narrowing = ["role", "lastName", "canLogin", "active"].filter(
+    (key) => key in where,
+  );
+  if (narrowing.length === 0) return reconcileSubjectRows(ids);
+  const rows = [master, loser] as unknown as Array<Record<string, unknown>>;
+  return ids
+    .filter((id) => {
+      const row = rows.find((candidate) => candidate.id === id);
+      if (!row) return false;
+      return narrowing.every((key) => row[key] === where[key]);
+    })
+    .map((id) => ({ id }));
+}
+
 function makeClient(overrides: Record<string, unknown> = {}) {
   const memberDelegate = {
     ...defaultDelegate(),
-    findMany: vi.fn(({ where }: { where?: { id?: { in?: string[] } } }) =>
-      Promise.resolve(reconcileSubjectRows(where?.id?.in ?? [])),
+    findMany: vi.fn((args: unknown) =>
+      Promise.resolve(memberFindManyForTest(args) ?? []),
     ),
     findUnique: vi.fn(({ where }: { where: { id: string } }) =>
       Promise.resolve(where.id === MASTER_ID ? master : where.id === LOSER_ID ? loser : null),
@@ -137,12 +174,8 @@ function makeClient(overrides: Record<string, unknown> = {}) {
       ? {
           ...overriddenMember,
           findMany: vi.fn((args: unknown) => {
-            const ids = (
-              args as { where?: { id?: { in?: string[] } } }
-            ).where?.id?.in;
-            if (ids) {
-              return Promise.resolve(reconcileSubjectRows(ids));
-            }
+            const answered = memberFindManyForTest(args);
+            if (answered) return Promise.resolve(answered);
             return overriddenMember.findMany?.(args) ?? Promise.resolve([]);
           }),
         }
@@ -1170,6 +1203,115 @@ describe("partner-link warnings reach the audit metadata (M3)", () => {
     expect(serialized).toContain("resolutionWarnings");
     expect(serialized).toContain("confirmed partner link dropped");
   });
+
+  it("executes when the only projected overlap belongs to a discarded confirmed link", async () => {
+    const childRow = {
+      id: "former-partner-child",
+      parentMemberId: LOSER_ID,
+      secondaryParentId: null,
+    };
+    const member = {
+      ...defaultDelegate(),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === MASTER_ID
+            ? master
+            : where.id === LOSER_ID
+              ? loser
+              : null,
+        ),
+      ),
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      findMany: vi.fn(
+        (args: { where?: { OR?: Array<Record<string, unknown>> } }) =>
+          args.where?.OR?.some(
+            (clause) =>
+              typeof (clause.id as { in?: unknown } | undefined)?.in !==
+              "undefined",
+          )
+            ? Promise.resolve([childRow])
+            : Promise.resolve([]),
+      ),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    };
+    const loserLink = {
+      id: "L1",
+      memberAId: LOSER_ID,
+      memberBId: childRow.id,
+      status: "CONFIRMED",
+    };
+    const masterLink = {
+      id: "M1",
+      memberAId: MASTER_ID,
+      memberBId: "retained-partner",
+      status: "CONFIRMED",
+    };
+    const memberPartnerLink = {
+      ...defaultDelegate(),
+      findMany: vi.fn(
+        ({ where }: { where?: { OR?: Array<Record<string, unknown>> } }) => {
+          const clauses = where?.OR ?? [];
+          if (
+            clauses.some(
+              (clause) =>
+                typeof (clause.memberAId as { in?: unknown } | undefined)
+                  ?.in !== "undefined" ||
+                typeof (clause.memberBId as { in?: unknown } | undefined)
+                  ?.in !== "undefined",
+            )
+          ) {
+            return Promise.resolve([masterLink, loserLink]);
+          }
+          return Promise.resolve(
+            clauses[0]?.memberAId === LOSER_ID ? [loserLink] : [masterLink],
+          );
+        },
+      ),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      update: vi.fn().mockResolvedValue({}),
+    };
+    const core: MemberMergePreviewCore = {
+      fieldMerge: mergeMemberFields(
+        master as unknown as Record<string, unknown>,
+        loser as unknown as Record<string, unknown>,
+      ).diff,
+      relationMoves: [],
+      collisions: [
+        {
+          model: "MemberPartnerLink.memberA/memberB",
+          resolution: "re-point 0, drop 1 (self-pair/duplicate/confirmed)",
+          count: 1,
+        },
+      ],
+      blockers: [],
+      warnings: [],
+    };
+    const token = buildMemberMergePreviewToken(
+      MASTER_ID,
+      LOSER_ID,
+      master.updatedAt,
+      loser.updatedAt,
+      core,
+    );
+    const { client } = makeClient({ member, memberPartnerLink });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: token,
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).resolves.toMatchObject({ masterId: MASTER_ID, loserId: LOSER_ID });
+    expect(memberPartnerLink.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [loserLink.id] } },
+    });
+  });
 });
 
 describe("member-photo reconciliation at execute time (MP1, #189)", () => {
@@ -1655,6 +1797,148 @@ describe("member-photo reconciliation at execute time (MP1, #189)", () => {
     expect(
       statements.filter((s) => /pg_advisory_xact_lock\(\s*1\s*\)/.test(s)),
     ).toEqual([]);
+  });
+
+  it("409s before writes when a parent/partner participant appears during lock acquisition", async () => {
+    let topologyRead = 0;
+    const memberDelegate = {
+      ...defaultDelegate(),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === MASTER_ID ? master : where.id === LOSER_ID ? loser : null,
+        ),
+      ),
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      findMany: vi.fn(({ where }: { where?: { OR?: Array<Record<string, unknown>> } }) => {
+        const isTopologyRead = where?.OR?.some(
+          (clause) =>
+            typeof (clause.id as { in?: unknown } | undefined)?.in !==
+            "undefined",
+        );
+        if (!isTopologyRead) return Promise.resolve([]);
+        topologyRead += 1;
+        return Promise.resolve(
+          topologyRead === 1
+            ? []
+            : [
+                {
+                  id: "late-child",
+                  parentMemberId: LOSER_ID,
+                  secondaryParentId: null,
+                },
+              ],
+        );
+      }),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    };
+    const { client, auditLog } = makeClient({ member: memberDelegate });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: validToken(),
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "merge_drift_in_transaction",
+      details: {
+        driftFields: ["parentPartnerParticipants", "parentPartnerPairs"],
+      },
+    });
+
+    expect(memberDelegate.update).not.toHaveBeenCalled();
+    expect(memberDelegate.delete).not.toHaveBeenCalled();
+    expectRefusedAudit(
+      (auditLog as { create: ReturnType<typeof vi.fn> }).create,
+      "merge_drift_in_transaction",
+    );
+  });
+
+  it("409s cleanly when the locked final topology gains a parent/partner overlap", async () => {
+    const childRow = {
+      id: "partner-child",
+      parentMemberId: LOSER_ID,
+      secondaryParentId: null,
+    };
+    const memberDelegate = {
+      ...defaultDelegate(),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === MASTER_ID ? master : where.id === LOSER_ID ? loser : null,
+        ),
+      ),
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      findMany: vi.fn(({ where }: { where?: { OR?: Array<Record<string, unknown>> } }) =>
+        Promise.resolve(
+          where?.OR?.some(
+            (clause) =>
+              typeof (clause.id as { in?: unknown } | undefined)?.in !==
+              "undefined",
+          )
+            ? [childRow]
+            : [],
+        ),
+      ),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    };
+    let topologyPartnerRead = 0;
+    const partnerRow = {
+      id: "late-link",
+      memberAId: MASTER_ID,
+      memberBId: childRow.id,
+      status: "CONFIRMED",
+    };
+    const memberPartnerLink = {
+      ...defaultDelegate(),
+      findMany: vi.fn(({ where }: { where?: { OR?: Array<Record<string, unknown>> } }) => {
+        const isTopologyRead = where?.OR?.some(
+          (clause) =>
+            typeof (clause.memberAId as { in?: unknown } | undefined)?.in !==
+              "undefined" ||
+            typeof (clause.memberBId as { in?: unknown } | undefined)?.in !==
+              "undefined",
+        );
+        if (!isTopologyRead) return Promise.resolve([]);
+        topologyPartnerRead += 1;
+        return Promise.resolve(topologyPartnerRead === 1 ? [] : [partnerRow]);
+      }),
+    };
+    const { client, auditLog } = makeClient({
+      member: memberDelegate,
+      memberPartnerLink,
+    });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: validToken(),
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "parent_partner_overlap",
+      details: { conflictingPairCount: 1 },
+    });
+
+    expect(memberDelegate.update).not.toHaveBeenCalled();
+    expect(memberDelegate.delete).not.toHaveBeenCalled();
+    expectRefusedAudit(
+      (auditLog as { create: ReturnType<typeof vi.fn> }).create,
+      "parent_partner_overlap",
+    );
   });
 
   it("409s partner_share_lodge_drift when step 3b finds a bed-night in a lodge it never locked", async () => {
@@ -2808,6 +3092,39 @@ describe("refused member merges are audited (#2498)", () => {
     );
   });
 
+  it("maps a database backstop race to an audited 409 without merge effects", async () => {
+    const { client, member, auditLog } = makeClient();
+    (client as { $transaction: ReturnType<typeof vi.fn> }).$transaction = vi
+      .fn()
+      .mockRejectedValue({
+        cause: {
+          originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+        },
+      });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: validToken(),
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).rejects.toMatchObject({
+      message: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      statusCode: 409,
+      code: "parent_partner_overlap",
+    });
+
+    expect((member as { update: ReturnType<typeof vi.fn> }).update).not.toHaveBeenCalled();
+    expect((member as { delete: ReturnType<typeof vi.fn> }).delete).not.toHaveBeenCalled();
+    expectRefusedAudit(
+      (auditLog as { create: ReturnType<typeof vi.fn> }).create,
+      "parent_partner_overlap",
+    );
+  });
+
   it("audits a confirmation-mismatch refusal (confirmation_mismatch)", async () => {
     const { client, auditLog } = makeClient();
     await expect(
@@ -2892,5 +3209,102 @@ describe("MemberMergeError", () => {
     expect(err.statusCode).toBe(409);
     expect(err.code).toBe("preview_drift");
     expect(err.details).toEqual({ a: 1 });
+  });
+});
+
+describe("promo adjustment rows follow their allocation through a merge (#3276, INV-MONEY-029)", () => {
+  function allocationDelegate(config: {
+    loserRows: Array<Record<string, unknown>>;
+    masterRows: Array<Record<string, unknown>>;
+  }) {
+    return {
+      ...defaultDelegate(),
+      findMany: vi.fn(({ where }: { where: { memberId?: string } }) => {
+        if (where.memberId === LOSER_ID) return Promise.resolve(config.loserRows);
+        if (where.memberId === MASTER_ID) return Promise.resolve(config.masterRows);
+        return Promise.resolve([]);
+      }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    };
+  }
+
+  it("deletes the loser's rows on the redemption whose allocation is dropped, BEFORE dropping it, and moves the rest", async () => {
+    const promoRedemptionAllocation = allocationDelegate({
+      // R1 collides with the master's allocation; R2 is the loser's alone.
+      loserRows: [
+        { id: "LA1", memberId: LOSER_ID, promoRedemptionId: "R1", promoCodeId: "P1", bookingId: "B1" },
+        { id: "LA2", memberId: LOSER_ID, promoRedemptionId: "R2", promoCodeId: "P1", bookingId: "B2" },
+      ],
+      masterRows: [
+        { id: "MA1", memberId: MASTER_ID, promoRedemptionId: "R1", promoCodeId: "P1", bookingId: "B1" },
+      ],
+    });
+    const bookingGuestNightAdjustment = {
+      ...defaultDelegate(),
+      deleteMany: vi.fn().mockResolvedValue({ count: 2 }),
+      updateMany: vi.fn().mockResolvedValue({ count: 3 }),
+    };
+    const { client } = makeClient({ promoRedemptionAllocation, bookingGuestNightAdjustment });
+
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: validToken(),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    // The loser's rows on R1 go with the loser's R1 allocation — and only those:
+    // the master's own R1 rows are selected by neither the member nor the key.
+    expect(bookingGuestNightAdjustment.deleteMany).toHaveBeenCalledWith({
+      where: { beneficiaryMemberId: LOSER_ID, promoRedemptionId: { in: ["R1"] } },
+    });
+    expect(promoRedemptionAllocation.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["LA1"] } },
+    });
+    const rowsDeletedAt = bookingGuestNightAdjustment.deleteMany.mock.invocationCallOrder[0];
+    const allocationDroppedAt = promoRedemptionAllocation.deleteMany.mock.invocationCallOrder[0];
+    expect(rowsDeletedAt).toBeLessThan(allocationDroppedAt);
+    // The surviving rows (R2) then move with their allocation, after the drop.
+    expect(bookingGuestNightAdjustment.updateMany).toHaveBeenCalledWith({
+      where: { beneficiaryMemberId: LOSER_ID },
+      data: { beneficiaryMemberId: MASTER_ID },
+    });
+    expect(bookingGuestNightAdjustment.updateMany.mock.invocationCallOrder[0]).toBeGreaterThan(
+      allocationDroppedAt,
+    );
+  });
+
+  it("deletes no adjustment rows when nothing collides: the rows simply move with their allocation", async () => {
+    const promoRedemptionAllocation = allocationDelegate({
+      loserRows: [
+        { id: "LA2", memberId: LOSER_ID, promoRedemptionId: "R2", promoCodeId: "P1", bookingId: "B2" },
+      ],
+      masterRows: [],
+    });
+    const bookingGuestNightAdjustment = {
+      ...defaultDelegate(),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    };
+    const { client } = makeClient({ promoRedemptionAllocation, bookingGuestNightAdjustment });
+
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: validToken(),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    expect(bookingGuestNightAdjustment.deleteMany).not.toHaveBeenCalled();
+    expect(promoRedemptionAllocation.deleteMany).not.toHaveBeenCalled();
+    expect(bookingGuestNightAdjustment.updateMany).toHaveBeenCalledWith({
+      where: { beneficiaryMemberId: LOSER_ID },
+      data: { beneficiaryMemberId: MASTER_ID },
+    });
   });
 });

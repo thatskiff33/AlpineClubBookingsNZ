@@ -18,7 +18,7 @@ import { authorizeDiagnosticsToolCall } from "../authorize";
 
 vi.mock("../../page-context/authorize", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../../page-context/authorize")>();
+    (await importOriginal()) as typeof import("../../page-context/authorize");
   return {
     // The AND/missing-area predicates stay REAL — mocking them would be mocking
     // the thing under test. Only the database read is stubbed.

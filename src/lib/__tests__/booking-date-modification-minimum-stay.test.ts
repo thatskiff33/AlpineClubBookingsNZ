@@ -19,7 +19,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return {
     ...actual,
     acquireLodgeCapacityLock: h.acquireLodgeCapacityLock,
@@ -29,7 +29,7 @@ vi.mock("@/lib/capacity", async (importOriginal) => {
 });
 
 vi.mock("@/lib/booking-modify", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking-modify")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-modify");
   return {
     ...actual,
     assertBookingNotQuotePriced: h.assertBookingNotQuotePriced,

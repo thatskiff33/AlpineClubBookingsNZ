@@ -86,7 +86,7 @@ vi.mock("@/lib/lodges", () => ({
   getDefaultLodgeId: (...a: unknown[]) => mocks.getDefaultLodgeId(...a),
 }));
 vi.mock("@/lib/admin-permissions", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/admin-permissions")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/admin-permissions");
   return {
     ...actual,
     bookingManagementAuthorizationRole: (...a: unknown[]) => mocks.authzRole(...a),
@@ -96,7 +96,7 @@ vi.mock("@/lib/booking-edit-policy", () => ({
   getBookingEditPolicy: (...a: unknown[]) => mocks.editPolicy(...a),
 }));
 vi.mock("@/lib/capacity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
   return {
     ...actual,
     checkCapacityForGuestRanges: (...a: unknown[]) => mocks.checkCapacity(...a),
@@ -115,7 +115,7 @@ vi.mock("@/lib/prisma", () => ({
 */
 vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/booking-exception-request-service")>();
+    (await importOriginal()) as typeof import("@/lib/booking-exception-request-service");
   return {
     ...actual,
     createModificationExceptionRequest: (...a: unknown[]) => mocks.createMod(...a),
