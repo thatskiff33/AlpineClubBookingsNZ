@@ -36,8 +36,19 @@ idempotent — retrying the same work never double-charges.
 
 1. Go to **Admin → Finance → Xero Sync**. The **Connection Status** panel shows
    whether Xero is connected (and the tenant/token), and the **Health Snapshot**
-   summarises unlinked members, failed issues, pending operations, group/link
-   mismatches, and API budget.
+   summarises unlinked members, failed issues, pending operations, paid bookings
+   missing invoices, group/link mismatches, and API budget.
+
+   > **Missing invoices** lists a paid booking only when the club's own records
+   > hold no invoice for it — no invoice id stamped on its payment and no active
+   > primary-invoice link. That is the same test the booking's own page and the
+   > invoice queue use (#3001, #3467), so a booking whose invoice operation
+   > **Failed** *after* Xero had accepted the invoice is not listed: the accounts
+   > already hold it, and raising it again from here would duplicate it. Such a
+   > booking shows under **Failed** operations instead, and its own page says
+   > what did and did not reach Xero. A booking that genuinely has no invoice —
+   > including one whose invoice was later voided — is listed, and **Trigger All
+   > Missing** raises one for it.
 
    > The whole Xero area (`/admin/xero`, `/admin/xero/*`, `/admin/internet-banking`)
    > is gated by the **Xero integration** module (`src/config/feature-routes.ts`)
@@ -273,6 +284,7 @@ one button that reaches Xero at all only asks it a question.
 | The Connect step shows the organisation as **"the last organisation we saw"** rather than a green tick | The name came from cache because the live re-check failed — most often because the club revoked this app inside Xero's own **Connected apps** screen, which leaves the stored connection looking healthy | Treat the name as unconfirmed. Follow the warning above it: usually disconnect and connect again, re-authorising the app in Xero |
 | Operations/events are read-only ("… can view Xero operations but cannot retry…") | Your finance role is view-only | Ask a finance-edit admin |
 | An outbound operation is stuck **Failed** | A push failed and needs a replay (or was fixed directly in Xero) | **Retry in background**, or **Resolve (fixed in Xero)** with a reason |
+| A booking is under **Failed** operations but not under **Missing invoices** | Its invoice reached Xero before a later step of the same operation failed; the list reads the club's invoice records, not the operation's status | Nothing to raise — do not **Trigger All Missing** for it. Open the booking to see which step is outstanding, then **Retry in background** or **Resolve (fixed in Xero)** on the operation |
 | A booking-invoice operation here is **Failed**, part-finished, or stuck **Running**, and you want to know which booking it belongs to | These rows are stored against the payment, not the booking, so the booking is not obvious from this screen | The booking says it itself: a full admin opening that booking sees a warning naming what Xero does and does not have, with a link back to this screen. **Retry in background** or **Resolve (fixed in Xero)** on the operation clears the warning, without touching the booking, the payment or the invoice |
 | A member's grouping looks wrong | The mode/rules changed but existing members were not re-grouped automatically | Run the **dry-run diff**, then **bulk re-sync** per the [runbook](../XERO_MEMBER_GROUPING_RUNBOOK.md) |
 | A bulk re-sync halted | The daily Xero API limit was reached | Use **Resume re-sync** the next day |
