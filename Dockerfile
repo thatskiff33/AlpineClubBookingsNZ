@@ -87,6 +87,33 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV TZ=Pacific/Auckland
+# DEFENCE IN DEPTH ONLY (#3252). `TZ` above was pinned and the COLLATION was not,
+# which is the whole of #3252 in one line: the environment-dependent thing
+# somebody thought about is controlled, and the one nobody thought about is not.
+# Bare `localeCompare` resolves its collation from these variables, and a stored
+# booking-exception fingerprint used to depend on it - so a base-image bump could
+# have made approval report an untouched member request as tampered with.
+#
+# `en_US.UTF-8` is deliberate and is NOT a preference: it is what this container
+# resolves TODAY with nothing set, measured inside the running image (node
+# 24.17.0, ICU 78.3, `Intl.Collator().resolvedOptions().locale` -> `en-US`).
+# Pinning anything else would quietly re-sort every admin list, email and CSV in
+# the product, because those orderings are locale-aware ON PURPOSE. So this
+# changes no behaviour; it stops the behaviour changing by itself.
+#
+# BOTH VARIABLES, because they are not the same lever: `LANG` is the fallback and
+# `LC_ALL` overrides everything, so setting only `LANG` leaves an inherited
+# `LC_ALL` in charge. Verified on `node:24.17-alpine` that Node really honours
+# them despite musl having no locale support of its own - `LANG=da_DK.UTF-8`
+# resolves `da-DK` and reverses `Aaberg` against `Zylstra`, while `en_US.UTF-8`
+# resolves `en-US` exactly as the unset default does.
+#
+# It is defence in depth and nothing more. Every path where an order becomes part
+# of a stored or re-derived identity now goes through `compareOrdinal`
+# (`src/lib/ordinal-order.ts`), which has no ICU dependency at all, so those are
+# locale-proof whatever these variables say.
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 RUN apk add --no-cache aws-cli postgresql16-client
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \

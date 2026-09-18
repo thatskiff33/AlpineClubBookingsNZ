@@ -14,6 +14,8 @@
  * broken fixture and prove it actually bites.
  */
 
+import { compareOrdinal } from "@/lib/ordinal-order";
+
 export interface EmailTemplateDefaults {
   defaultSubject: string;
   defaultBody: string;
@@ -369,13 +371,12 @@ function escapeForBothRegexEngines(value: string): string {
  * the assertion rather than reliant on it. Ties break by CODE POINT, not
  * `localeCompare`, because this exact byte sequence is also written into the
  * migration SQL and a locale-dependent order would make that parity depend on
- * the machine the generator ran on.
+ * the machine the generator ran on. That rule now has ONE home
+ * (`compareOrdinal`, `INV-SSOT-001`) instead of a copy here (#3252).
  */
 export const SHIPPED_ANNOTATION_PATTERN = `(?:${[...SHIPPED_ANNOTATIONS]
   .sort(
-    (left, right) =>
-      right.length - left.length ||
-      (left < right ? -1 : left > right ? 1 : 0),
+    (left, right) => right.length - left.length || compareOrdinal(left, right),
   )
   .map(escapeForBothRegexEngines)
   .join("|")})`;
