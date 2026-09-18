@@ -1848,3 +1848,35 @@ the recomputed result wins through a classified compatibility fallback, and the
 source, reason, and both cents figures are copied into the existing audit
 metadata and any `PRICE_REBASE` history row. No inexact input moves any of the
 four booking money columns.
+
+## INV-MOD-057
+
+**Which bookings may be cancelled has one home, and the member-facing doors
+read a named subset of it** (#3497; owner decision Option B, 19 September
+2026).
+
+`CANCELLABLE_BOOKING_STATUSES` in `src/lib/booking-cancel-eligibility.ts` is
+the one answer to "may this booking be cancelled?"; the cancel service reads it
+at its outer guard and its single-flight re-check, and every internal or officer
+caller (request decline, hold release, review reject, account deletion) cancels
+from that full set. `MEMBER_CANCELLABLE_BOOKING_STATUSES` is derived from it —
+never restated — as the service set minus `AWAITING_REVIEW`, and governs every
+member-facing door: the booking page's Cancel button (`canCancel`), the
+cancel-preview route, the member cancel route's `enforceMemberCancelDoor` guard,
+and the notes editor that `canCancel` draws. No door states a status list of its
+own.
+
+The one exclusion exists because `cancelBooking` never touches
+`adminReviewStatus`: a member self-cancel of a booking under review would leave
+a `CANCELLED` row sitting as a `PENDING` item in the officers' Approvals queue.
+Withdrawing a booking under review is the reviewing officer's Reject, which
+cancels through the service and closes the review. The member is told so in the
+one refusal sentence (`memberCancelRefusal`), which the preview and the cancel
+route share.
+
+Pinned by `src/lib/__tests__/booking-cancel-eligibility.test.ts` (every
+`BookingStatus` at every door, as one table, plus the subset and the exact
+derivation) and the #3245 census in
+`booking-edit-eligibility-one-home.test.ts`, which refuses a hand-written
+status list near a booking door. Member guide:
+[`changing-or-cancelling-a-booking.md`](../user-guide/changing-or-cancelling-a-booking.md).
