@@ -44,7 +44,7 @@ reason: the anchor defect. `canonicalizeProposalParty` is the sort whose order
   re-derives them.
 
 file: src/lib/policies/adult-member-hosting.ts
-lines: 999
+lines: 1002
 reason: seven lines, all one comment. This sort's result is stored VERBATIM in
   `frozenEvidence` and string-joined at approval into a violation fingerprint
   compared against a freshly evaluated one, so fixing the proposal hash without
@@ -53,7 +53,7 @@ reason: seven lines, all one comment. This sort's result is stored VERBATIM in
   two modules away from this line and there is nowhere else to put it.
 
 file: src/lib/membership-subscription-billing.ts
-lines: 1561
+lines: 1573
 reason: the largest, and it holds two separate records. The ordering comment
   explains why a divergence here is CONSTRUCTIBLE rather than theoretical:
   `entry.key` is `<year>:<id>:family:<id>`, and `:` is punctuation, which locale
@@ -68,7 +68,7 @@ reason: the largest, and it holds two separate records. The ordering comment
   note would reasonably suspect a defect.
 
 file: src/lib/xero-sync.ts
-lines: 901
+lines: 930
 reason: the whole growth is a docblock that adds no code at all, and it is the
   most load-bearing text in this change. `buildXeroPayloadHash` is DELIBERATELY
   excluded from the unification: it preserves insertion order and feeds
@@ -80,7 +80,7 @@ reason: the whole growth is a docblock that adds no code at all, and it is the
   test rather than only a review.
 
 file: src/lib/xero-member-grouping-resync.ts
-lines: 808
+lines: 812
 reason: #3250's own file. The private `stableDigest` that shadowed the canonical
   one is deleted, so the executable content shrinks; the growth is the import
   comment recording that the swap moves no fingerprint and naming the test that
@@ -97,7 +97,7 @@ reason: three lines. The comparator swap plus one sentence saying this order
   compares as an optimistic-concurrency check.
 
 file: src/lib/induction-baseline.ts
-lines: 899
+lines: 907
 reason: one line — the import. The four comparator swaps are like-for-like.
 
 file: src/lib/email-message-token-contract.ts

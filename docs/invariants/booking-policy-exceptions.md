@@ -515,40 +515,29 @@ invariants hold in addition to every #2365/#2524/#2525 invariant above:
 
 - **A stored proposal identity is ordered by code unit, never by the server's
   locale.** `proposalHash` proves a waiting request was not altered, and it is
-  built over the party SORTED BY NAME. Until #3252 that sort used bare
-  `localeCompare`, whose collation the runtime resolves from its environment — so
-  the stored fingerprint depended on a setting nothing in this repository pins,
-  and a base-image bump was enough to move it. Nothing would fail at the moment
-  of the change; the damage appears later, on approval, and reads as a member
-  having tampered with their own request rather than as a configuration having
-  moved. The evidence that this is not theoretical: production runs ICU 78.3 and
-  a development machine ran ICU 78.2, and `"de la Cruz"` vs `"Delacruz"` orders
-  one way under `localeCompare` and the other ordinally, measured on the live
-  server.
+  built over the party sorted by name. A bare `localeCompare` there made the
+  stored fingerprint depend on the collation the runtime resolves from its
+  environment, which nothing in this repository pins; the failure would surface
+  at approval as tampering rather than as configuration drift (#3252).
 
   Three orders are covered, because fixing one alone moves the failure rather
-  than removing it: the proposal party
-  (`canonicalizeProposalParty`), the `uncovered` array frozen into
-  `frozenEvidence` and re-fingerprinted at approval
+  than removing it: the proposal party (`canonicalizeProposalParty`), the
+  `uncovered` array frozen into `frozenEvidence` and re-fingerprinted at approval
   (`policies/adult-member-hosting.ts`), and the frozen violation and policy-ref
-  orders. All of them go through the one `compareOrdinal`
-  (`src/lib/ordinal-order.ts`, `INV-SSOT-001`); `identity-ordering-census.test.ts`
-  refuses a bare `localeCompare` in any of these modules. The party comparator is
-  also TOTAL, so a tie cannot be resolved by the order a caller happened to build
-  the array in — it was not before #3252, which made the hash depend on exactly
-  the input order it exists to erase.
+  orders. All go through the one `compareOrdinal` (`src/lib/ordinal-order.ts`,
+  `INV-SSOT-001`), whose docblock carries the reasoning and the measurements.
+  The party comparator is total, so a tie can never fall back to input order.
 
-  **The comparator change moved stored values, and
-  `20260912010000_relocale_proof_exception_request_identities` re-derived them**
-  for rows in `REQUESTED` state: both tables' `proposalHash`, the `nbpe:`
-  `openStateKey` that embeds it (whose unique index is the duplicate-open-request
-  cap, silently disarmed if the hash moves without it), and the sorted `uncovered`
-  array. That migration rewrites a column this file and both schema comments
-  otherwise call frozen and never rewritten. **It is a deliberate one-off and not
-  a general licence**: what it rewrites is a DERIVATION of the frozen proposal —
-  the same guests, nights and dates in a different array order — never the
-  proposal itself, and terminal rows are excluded because they never reach the
-  hash gate. A migration that changed what was proposed would be forging a
-  member's request. Its production effect was measured at zero rows before it
-  shipped, which is what allowed the comparator and the rewrite to travel in one
-  release rather than two.
+  **Pin:** `identity-ordering-census.test.ts` refuses a bare `localeCompare` or a
+  hand-rolled comparator in any identity module, and
+  `booking-exception-requests.test.ts` pins the digest of a party that orders
+  differently under the two comparators.
+
+  **Recorded one-off exception:**
+  `20260912010000_relocale_proof_exception_request_identities` re-derived the
+  stored values of `REQUESTED` rows — both tables' `proposalHash`, the `nbpe:`
+  `openStateKey` that embeds it (the duplicate-open-request cap), and the sorted
+  `uncovered` array — a column this file and both schema comments otherwise call
+  frozen. It rewrote a derivation of the frozen proposal, never the proposal, and
+  it is not a licence to rewrite frozen rows. The decision, the production
+  measurement (zero affected rows) and the rejected alternatives are on #3252.
