@@ -165,11 +165,10 @@ export function formatClubLongWeekdayDate(date: CalendarDate): string {
  * a booking-period edge: any `@db.Date`), whether it is still the `Date` Prisma
  * returned or the string it became crossing a JSON boundary.
  *
- * THE ONE HOME of a two-call composition that was written out about a dozen
- * times across `src/` (#3507) — `calendarDateOfSerialisedDbDate` then
- * `formatClubDate`, or the `calendarDateOfDateOnlyInstant` decoder for a value
- * still held as a `Date` — each copy carrying its own docblock of why the pair
- * must stay a pair. The reason is a defect that shipped once (CT-4, #2870;
+ * THE ONE HOME of the SERIALISED composition — `calendarDateOfSerialisedDbDate`
+ * then `formatClubDate` — which fifteen production files spelled out for
+ * themselves before #3507, each with its own docblock of why the pair must stay
+ * a pair. The reason is a defect that shipped once (CT-4, #2870;
  * `INV-DATE-010`): a `@db.Date` is encoded as UTC MIDNIGHT, so reading its day
  * THROUGH A TIMEZONE is the identity for a club east of Greenwich and THE DAY
  * BEFORE for any club west of it — a stay on the 16th renders as the 15th in
@@ -184,9 +183,20 @@ export function formatClubLongWeekdayDate(date: CalendarDate): string {
  * client render that must survive a malformed stored value takes
  * {@link formatStayDateOrNull}.
  *
- * `stay-date-format-census.test.ts` (`INV-SSOT-001`) refuses the composition
- * anywhere else in `src/`, so the next surface imports the rule rather than
- * re-spelling it.
+ * `stay-date-format-census.test.ts` (`INV-SSOT-001`) refuses THAT pair — the
+ * serialised decoder beside `formatClubDate` — anywhere else in `src/`, so the
+ * next surface imports the rule rather than re-spelling it.
+ *
+ * WHAT IS NOT YET CONVERGED, so nobody reads the census as covering it: the
+ * `Date`-form spelling, `formatClubDate(calendarDateOfDateOnlyInstant(x))`,
+ * is still written out in about a dozen server-side files (several behind a
+ * local `formatStayDay`), and `formatPayloadCalendarDay` in
+ * `src/app/(admin)/admin/_lib/calendar-day.ts` is a sibling shared helper for
+ * the same job with its OWN, pinned rejection semantics — it refuses a
+ * time-bearing string this helper's prefix read would accept. The `Instant`
+ * arm of the signature exists for the one server caller converted here
+ * (`xero-record-activity`); sweeping the rest, and deciding which rejection
+ * semantics survive, is #3511 rather than this change.
  */
 export function formatStayDate(value: string | Instant): string {
   return formatClubDate(

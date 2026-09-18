@@ -14,7 +14,8 @@ import { stripComments } from "./support/strip-comments";
  * through a zone names the day before for any club west of Greenwich (CT-4,
  * #2870; `INV-DATE-010`). The correct decode-then-format pair —
  * `calendarDateOfSerialisedDbDate` then `formatClubDate` — was spelled out in
- * fourteen files, each with its own docblock of why the pair must stay a pair.
+ * fifteen production files, each with its own docblock of why the pair must
+ * stay a pair.
  * `formatStayDate` / `formatStayDateOrNull` in `src/lib/club-time/format.ts`
  * are now the one statement of it (`INV-SSOT-001`), and every one of those
  * files imports it.
@@ -27,6 +28,15 @@ import { stripComments } from "./support/strip-comments";
  * holds both is composing them, however many lines apart — and a second
  * declaration under the helper's own name, which is how the #3498 reopen card
  * grew its local copy.
+ *
+ * ## What it does NOT cover
+ *
+ * Only the SERIALISED decoder is matched. The `Date`-form spelling,
+ * `formatClubDate(calendarDateOfDateOnlyInstant(x))`, is still written out in
+ * about a dozen server-side files, and `formatPayloadCalendarDay` in
+ * `admin/_lib/calendar-day.ts` is a sibling helper with its own pinned
+ * rejection semantics. Converging those is #3511; widening
+ * `DECODER_CALL` before it lands would simply red this suite on main.
  *
  * ## This suite is unreachable by `vitest related`
  *

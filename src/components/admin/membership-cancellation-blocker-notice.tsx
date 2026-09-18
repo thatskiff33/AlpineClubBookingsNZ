@@ -37,8 +37,6 @@ const CANCELLATION_SETTINGS_PATH = "/admin/membership-cancellation";
  */
 const PANEL_BLOCKER_LIMIT = 20;
 
-// A blocker's dates - a booking's `@db.Date` lodge nights and an invoice due
-// date - are CALENDAR DAYS, so `formatStayDate` serves both (#3507).
 /** Stable list key across every blocker kind. */
 function blockerKey(blocker: MembershipCancellationBlocker) {
   if (blocker.type === "unpaid_invoice") {
@@ -56,6 +54,9 @@ function blockerKey(blocker: MembershipCancellationBlocker) {
  * what makes a bill or an unnumbered invoice findable at all: the link is
  * computed server-side and was, until this fix, shipped to the browser and
  * never rendered (#2392 review, H1).
+ *
+ * A blocker's dates - a booking's `@db.Date` lodge nights and an invoice due
+ * date - are CALENDAR DAYS, so `formatStayDate` serves both (#3507).
  */
 function BlockerLine({ blocker }: { blocker: MembershipCancellationBlocker }) {
   if (!isUnpaidInvoiceBlocker(blocker)) {
