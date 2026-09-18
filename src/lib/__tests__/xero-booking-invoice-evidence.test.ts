@@ -4,6 +4,7 @@ import {
   findActivePrimaryInvoiceLink,
   readBookingInvoiceEvidence,
   readBookingInvoiceEvidenceForPayment,
+  readBookingInvoiceEvidenceForPayments,
 } from "@/lib/xero-booking-invoice-evidence";
 
 /**
@@ -19,11 +20,13 @@ import {
 function db(overrides: {
   payment?: unknown;
   link?: unknown;
+  links?: unknown[];
 }) {
   return {
     payment: { findUnique: vi.fn().mockResolvedValue(overrides.payment ?? null) },
     xeroObjectLink: {
       findFirst: vi.fn().mockResolvedValue(overrides.link ?? null),
+      findMany: vi.fn().mockResolvedValue(overrides.links ?? []),
     },
   };
 }
@@ -116,5 +119,52 @@ describe("reading it from the payment id the operation row carries", () => {
     await expect(
       readBookingInvoiceEvidenceForPayment("pay_6", { deps }),
     ).resolves.toEqual({ exists: true, invoiceNumber: "INV-0010" });
+  });
+});
+
+describe("reading it for many payments at once (#3467)", () => {
+  // The set form the club-wide "missing invoices" list asks. Same two signals,
+  // same order: the field settles what it can, ONE link query covers the rest.
+  it("settles stamped payments from the field and asks the link table once for the others", async () => {
+    const deps = {
+      db: db({ links: [{ localId: "pay_8", xeroObjectNumber: "INV-0012" }] }),
+    };
+
+    const evidence = await readBookingInvoiceEvidenceForPayments(
+      [
+        { id: "pay_7", xeroInvoiceId: "inv_7", xeroInvoiceNumber: "INV-0011" },
+        { id: "pay_8", xeroInvoiceId: null },
+        { id: "pay_9", xeroInvoiceId: null },
+      ],
+      { deps },
+    );
+
+    expect([...evidence.entries()]).toEqual([
+      ["pay_7", { exists: true, invoiceNumber: "INV-0011" }],
+      ["pay_8", { exists: true, invoiceNumber: "INV-0012" }],
+      ["pay_9", { exists: false, invoiceNumber: null }],
+    ]);
+    expect(deps.db.xeroObjectLink.findMany).toHaveBeenCalledTimes(1);
+    expect(deps.db.xeroObjectLink.findMany.mock.calls[0]?.[0]).toMatchObject({
+      where: {
+        localModel: "Payment",
+        localId: { in: ["pay_8", "pay_9"] },
+        xeroObjectType: "INVOICE",
+        role: "PRIMARY_INVOICE",
+        active: true,
+      },
+    });
+  });
+
+  it("makes no link query when every payment is already stamped", async () => {
+    const deps = { db: db({}) };
+
+    const evidence = await readBookingInvoiceEvidenceForPayments(
+      [{ id: "pay_10", xeroInvoiceId: "inv_10" }],
+      { deps },
+    );
+
+    expect(evidence.get("pay_10")).toEqual({ exists: true, invoiceNumber: null });
+    expect(deps.db.xeroObjectLink.findMany).not.toHaveBeenCalled();
   });
 });
