@@ -3,10 +3,31 @@ import { expect, test } from "@playwright/test";
 import { storageStatePath } from "./helpers/auth";
 import {
   E2E_ADMIN,
+  PAID_PROMO_BOOKING_ID,
   UNRECONCILED_BOOKING_ID,
 } from "./helpers/fixtures";
 
 test.use({ storageState: storageStatePath(E2E_ADMIN.email) });
+
+test("the ordinary paid FREE_NIGHTS fixture is reconciled and needs no warning", async ({
+  page,
+}) => {
+  await page.goto(`/bookings/${PAID_PROMO_BOOKING_ID}`);
+
+  const bookingDetail = page.getByTestId("booking-detail-content");
+  const historyState = bookingDetail.getByTestId(
+    "booking-history-money-reconciliation",
+  );
+  await expect(historyState).toBeVisible();
+  await expect(historyState).toHaveAttribute(
+    "data-reconciliation-state",
+    "RECONCILED",
+  );
+  await expect(historyState).toHaveAttribute("data-reconciliation-reasons", "");
+  await expect(
+    bookingDetail.getByTestId("booking-money-unreconciled"),
+  ).toHaveCount(0);
+});
 
 test("an officer sees the complete derived booking-money warning on synthetic data", async ({
   page,

@@ -343,6 +343,11 @@ export const PAID_CANCEL_WINDOW = relWindow(300, 2);
 // a run and steal the cooldown the spec's manual re-send depends on.
 export const ADDITIONAL_OWED_BOOKING_ID = "e2e-additional-owed";
 export const ADDITIONAL_OWED_WINDOW = relWindow(320, 2);
+
+// The ordinary PAID FREE_NIGHTS booking in the demo seed. Its four stored
+// money identities are deliberately reconciled, unlike the explicit bad
+// fixture below that proves the officer warning.
+export const PAID_PROMO_BOOKING_ID = "e2e-paid-promo";
 export const UNRECONCILED_BOOKING_ID = "e2e-unreconciled-booking";
 export const UNRECONCILED_BOOKING_WINDOW = relWindow(340, 1);
 export const ADDITIONAL_OWED_AMOUNT_CENTS = 21_000;

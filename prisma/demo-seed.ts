@@ -54,6 +54,7 @@ import {
   ADDITIONAL_OWED_AMOUNT_CENTS,
   ADDITIONAL_OWED_BOOKING_ID,
   ADDITIONAL_OWED_WINDOW,
+  PAID_PROMO_BOOKING_ID,
   UNRECONCILED_BOOKING_ID,
   UNRECONCILED_BOOKING_WINDOW,
   LOCKED_OUT_MEMBER,
@@ -606,6 +607,7 @@ async function main() {
   const paidPromoAdjustmentCents = -NIGHTLY;
   const bPaid = await prisma.booking.create({
     data: {
+      id: PAID_PROMO_BOOKING_ID,
       memberId: erin.id,
       checkIn: d(W.erinPaid.checkIn),
       checkOut: d(W.erinPaid.checkOut),

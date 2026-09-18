@@ -697,21 +697,6 @@ describe("INV-MONEY-031 booking money writer census", () => {
   });
 
   it("mechanically derives typed classifier mutations from every money writer", () => {
-    expect(reconcileBookingMoney(RECONCILED_FIXTURE)).toEqual({
-      state: "RECONCILED",
-      reasons: [],
-    });
-    const deliberatelyBadFixture: BookingMoneyReconciliationProjection = {
-      ...RECONCILED_FIXTURE,
-      promoAdjustmentCents: -1_499,
-      discountCents: 1_499,
-      finalPriceCents: 8_501,
-    };
-    expect(reconcileBookingMoney(deliberatelyBadFixture)).toMatchObject({
-      state: "UNRECONCILED",
-      reasons: ["PROMO_BUILD_UP_MISMATCH"],
-    });
-
     for (const writer of DISCOVERED_WRITERS) {
       const key = writerKey(writer);
       const nonMoney = REVIEWED_NON_MONEY_OPAQUE_WRITERS.has(key);
