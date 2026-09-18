@@ -196,6 +196,7 @@ one of these, there is a function.
 | You are about to write | Use instead |
 | --- | --- |
 | `requireCalendarDate(v.slice(0, 10))`, or `calendarDateOfDateOnlyInstant(new Date(v))`, over a serialised `@db.Date` | `calendarDateOfSerialisedDbDate(v)` — and the `…OrNull` sibling inside a client render, where a throw blanks the screen |
+| `formatClubDate(calendarDateOfSerialisedDbDate(v))` — a stay date to SHOW, `checkIn`/`checkOut`, a join deadline, a period edge | `formatStayDate(v)`, which also takes the `Date` Prisma returned; `formatStayDateOrNull(v) ?? fallback` inside a client render. The pair was written out in fourteen files before #3507 and `stay-date-format-census.test.ts` now refuses it anywhere but `format.ts` (`INV-SSOT-001`) |
 | `new Date(endOfClubDayExclusive(d, zone).getTime() - 1)` | `endOfClubDayInclusive(d, zone)` — but prefer the half-open bound wherever a `lt` will do |
 | `dateOnlyInstantOf((await clubTime()).today())` | `clubTodayDateOnlyInstant()` from `club-time/server` |
 | `dateOnlyInstantOf(date).getUTCDay()` | `calendarDayOfWeek(date)` — no `Date` is constructed, so the `getDay()` typo has nowhere to happen |
