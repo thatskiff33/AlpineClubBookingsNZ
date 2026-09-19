@@ -54,6 +54,12 @@ const REDEMPTION_WRITE =
   /promoRedemption(?:Allocation|GuestTarget)?\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\b/;
 const REDEMPTION_RAW_SQL_WRITE =
   /\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|DELETE\s+FROM)\b[\s\S]{0,500}["'`]PromoRedemption(?:Allocation|GuestTarget)?["'`]/i;
+const DEMO_SEED = "prisma/demo-seed.ts";
+const DEMO_SEED_RESET_WRITES = [
+  "promoRedemptionGuestTarget.deleteMany",
+  "promoRedemptionAllocation.deleteMany",
+  "promoRedemption.deleteMany",
+] as const;
 /**
  * The member merge reaches Prisma delegates by NAME (`delegates[args.delegate]`),
  * which no property-access scan can see. So the delegate names themselves are
@@ -173,6 +179,14 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
     expect(precedes(code, /\bawait applyGuestChanges\(/, RESTORE)).toBe(true);
     expect(code).toMatch(/promoEngineRan: false as const,\s*\}\s*:\s*await applyPromoCodeChanges\(/);
   },
+  "prisma/demo-seed.ts": (code) => {
+    // The paid FREE_NIGHTS fixture is a real canonical promotion write, even
+    // though its guarded demo-only input is never a live booking path. Keep it
+    // in the paired set: exempting it after it began using the canonical writer
+    // would let the fixture drift from the build-up invariant unnoticed.
+    expect(everyWriteIsFollowedBy(code, /\bawait redeemPromoCode\(/, RECORD)).toBe(true);
+    expect(precedes(code, /\bawait redeemPromoCode\(/, RECORD)).toBe(true);
+  },
 };
 
 /**
@@ -190,7 +204,6 @@ const NIGHT_WRITERS_WITHOUT_PROMOTION = new Map<string, string>([
   ],
   ["src/lib/booking-create-guests.ts", "nested create helper; its callers in booking-create.ts record"],
   ["e2e/setup/seed-second-lodge.ts", "test seed"],
-  ["prisma/demo-seed.ts", "demo seed"],
 ]);
 
 /** Every file allowed to import the writer module, and why. */
@@ -204,6 +217,8 @@ const MODULE_IMPORTERS = new Set([
   // Stage 4's booking-headline reconciliation consumes the same canonical
   // derived adjustment state; it never writes or supplies a second classifier.
   "src/lib/booking-money-reconciliation.ts",
+  // The guarded demo-only PAID FREE_NIGHTS fixture calls the canonical writer.
+  "prisma/demo-seed.ts",
 ]);
 
 const SOURCE = sourceFiles();
@@ -275,13 +290,10 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
   });
 
   it("keeps every direct PromoRedemption / allocation / guest-target write inside src/lib/promo.ts", () => {
-    // A seed is not a runtime path: no member is charged by it and no recorder
-    // can pair with it. Named so a second seed, or a runtime file, still fails.
-    const SEEDS = new Set(["prisma/demo-seed.ts"]);
     const offenders: string[] = [];
     for (const file of SOURCE) {
       const relative = relativeSource(file);
-      if (relative === "src/lib/promo.ts" || SEEDS.has(relative)) continue;
+      if (relative === "src/lib/promo.ts" || relative === DEMO_SEED) continue;
       const code = stripComments(readFileSync(file, "utf8"));
       if (REDEMPTION_WRITE.test(code) || REDEMPTION_RAW_SQL_WRITE.test(code)) offenders.push(relative);
     }
@@ -292,9 +304,15 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
     // The one indirect route is the member merge, which moves or drops
     // allocation rows by delegate NAME (censused above) and writes no amount.
     expect(read(INDIRECT_WRITER)).toMatch(/delegate: "promoRedemptionAllocation"/);
-    for (const seed of SEEDS) {
-      expect(read(seed), `${seed} is listed as a seed that writes a promotion; it no longer does`).toMatch(REDEMPTION_WRITE);
-    }
+    // The demo seed is resettable fixture input, not a second promotion
+    // writer: its only direct accesses delete prior demo rows before the PAID
+    // fixture uses redeemPromoCode above. Pin every allowed reset write so an
+    // insert, update, or a new delegate cannot hide under that narrow reset.
+    const demoSeed = read(DEMO_SEED);
+    const directDemoWrites = [...demoSeed.matchAll(new RegExp(REDEMPTION_WRITE.source, "g"))].map(
+      (match) => match[0].replace(/\s+/g, ""),
+    );
+    expect(directDemoWrites.sort()).toEqual([...DEMO_SEED_RESET_WRITES].sort());
     // The control: promo.ts really is where those writes live.
     expect(read("src/lib/promo.ts")).toMatch(REDEMPTION_WRITE);
   });
@@ -323,7 +341,13 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
     for (const file of SOURCE) {
       const relative = relativeSource(file);
       if (relative === MODULE) continue;
-      if (/from "@\/lib\/night-adjustment-write"/.test(readFileSync(file, "utf8"))) importers.push(relative);
+      if (
+        /from ["'](?:@\/lib\/night-adjustment-write|\.\.\/src\/lib\/night-adjustment-write)["']/.test(
+          readFileSync(file, "utf8"),
+        )
+      ) {
+        importers.push(relative);
+      }
     }
     expect(importers.sort()).toEqual([...MODULE_IMPORTERS].sort());
   });
