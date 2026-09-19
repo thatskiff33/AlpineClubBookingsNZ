@@ -1,0 +1,30 @@
+-- #3471: a composite index for the erased-member Xero contact review (#3058,
+-- INV-INT-024), which reads every RETIRED member contact link from the
+-- provider-object link ledger:
+--
+--   WHERE "localModel" = 'Member' AND "xeroObjectType" = 'CONTACT'
+--     AND "active" = false
+--
+-- Until now the only index that could serve it was the prefix of
+-- ("localModel", "localId", "active") on "localModel" = 'Member', which is not
+-- selective -- most rows in the table carry it -- so the planner read most of
+-- that index plus a heap fetch per row and discarded nearly all of them, and
+-- the discarded set grows for the life of an installation. This index matches
+-- all three predicates exactly.
+--
+-- EXPAND ONLY, no DML: one plain btree index on an existing table. No row of
+-- any table changes. The old colour's generated client neither knows nor needs
+-- an index, so it keeps working unchanged through the whole window.
+--
+-- NOT CONCURRENTLY, deliberately. PostgreSQL forbids CREATE INDEX CONCURRENTLY
+-- inside a transaction block and Prisma always wraps a migration in one, so it
+-- cannot be used here (precedent: 20260731120100_add_booking_guest_consent).
+-- A plain CREATE INDEX takes a SHARE lock on "XeroObjectLink": reads continue,
+-- writes wait for the build. The table holds a handful of rows per invoice,
+-- payment, credit note and contact over the life of one club -- thousands, not
+-- millions -- so the build is sub-second and the deploy guard's lock timeout
+-- is the backstop. If a very large installation ever needs it, build the index
+-- out of band with CONCURRENTLY rather than editing this file.
+
+-- CreateIndex
+CREATE INDEX "XeroObjectLink_localModel_xeroObjectType_active_idx" ON "XeroObjectLink"("localModel", "xeroObjectType", "active");
