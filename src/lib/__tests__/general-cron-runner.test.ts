@@ -112,6 +112,7 @@ describe("general cron runner", () => {
         runMirrorSync: vi.fn(async () => ({
           skipped: "not-configured" as const,
           upserted: 0,
+          unchanged: 0,
           removed: 0,
           pages: 0,
         })),
@@ -385,6 +386,7 @@ describe("general cron runner", () => {
           runMirrorSync: vi.fn(async () => ({
             skipped: "not-configured" as const,
             upserted: 0,
+            unchanged: 0,
             removed: 0,
             pages: 0,
           })),
