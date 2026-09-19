@@ -18,6 +18,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
+import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   endOfDateOnlyForTimeZone,
@@ -487,7 +488,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     });
 
     const candidatePaymentIds = candidates.map((payment) => payment.id);
-    const [activityOperations, primaryInvoiceLinks] = await Promise.all([
+    const [activityOperations, invoiceEvidence] = await Promise.all([
       candidatePaymentIds.length
         ? prisma.xeroSyncOperation.findMany({
             where: {
@@ -504,23 +505,11 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
             orderBy: { createdAt: "desc" },
           })
         : Promise.resolve([]),
-      candidatePaymentIds.length
-        ? prisma.xeroObjectLink.findMany({
-            where: {
-              localModel: "Payment",
-              localId: { in: candidatePaymentIds },
-              xeroObjectType: "INVOICE",
-              role: "PRIMARY_INVOICE",
-              active: true,
-            },
-            select: {
-              localId: true,
-            },
-          })
-        : Promise.resolve([]),
+      // #3467: "is there an invoice" is the one evidence rule, read in its set
+      // form — the payment's stored id, else an active PRIMARY_INVOICE link.
+      readBookingInvoiceEvidenceForPayments(candidates),
     ]);
     const activityByRecord = buildXeroActivityByRecord(activityOperations);
-    const invoiceLinkedPaymentIds = new Set(primaryInvoiceLinks.map((link) => link.localId));
 
     const filteredCandidates = candidates
       .map((payment): EnrichedPaymentCandidate => {
@@ -533,8 +522,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
             latestOperationStatus: null,
             latestOperationAt: null,
           };
-        const invoiceLinked =
-          Boolean(payment.xeroInvoiceId) || invoiceLinkedPaymentIds.has(payment.id);
+        const invoiceLinked = invoiceEvidence.get(payment.id)?.exists ?? false;
 
         return {
           ...payment,
