@@ -23,9 +23,70 @@ import {
   callXeroApi,
   getAuthenticatedXeroClient,
 } from "./xero-api-client";
-import { getAccountMapping } from "./xero-mappings";
+import { getAccountMapping, getResolvedAccountMapping } from "./xero-mappings";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
+import {
+  buildRefundPaymentReference,
+  refundSettlementMappingKey,
+  type CashRefundMethod,
+} from "@/lib/xero-refund-method";
+
+export type { CashRefundMethod } from "@/lib/xero-refund-method";
+
+/**
+ * Whether a cash refund note gets a settling payment at all, and from which
+ * account (`INV-PAY-101`, #3529; owner decision 20 September 2026).
+ *
+ * XERO RECORDS A PAYMENT ONLY WHERE THE MONEY VERIFIABLY MOVED. A payment
+ * recorded against the wrong account does not merely mis-post: it marks the
+ * note PAID, which hides it from the outstanding credits a treasurer works
+ * from and makes it hard to find when the real bank line arrives. So:
+ *
+ * - A CARD refund settles from the Stripe account, exactly as it always has.
+ *   The note's amount is capped by provider-backed cash evidence
+ *   (`INV-PAY-050`), so the money left Stripe by construction.
+ * - A BANK-TRANSFER refund the caller RECORDED as such settles from the club's
+ *   `bankTransferRefundAccount` when the treasurer has chosen one, and is left
+ *   UNSETTLED otherwise — never from the Stripe account, which is the one
+ *   place a bank transfer did not come from. The unsettled note stays visibly
+ *   outstanding for the bank-feed match.
+ * - A bank-transfer method the caller did NOT record — a legacy queued row,
+ *   read off the payment's source — is left unsettled whatever is configured:
+ *   nothing in the ledger says a transfer was made.
+ *
+ * The one reading, shared by the inline leg in `createXeroCreditNote` and the
+ * repair leg in `xero-operation-retry`, so the two cannot disagree.
+ */
+export type RefundSettlementDecision =
+  | { kind: "record"; bankCode: string }
+  | { kind: "unsettled"; reason: string };
+
+export const REFUND_UNSETTLED_NO_ACCOUNT_REASON =
+  "Refund sent by internet banking: no Bank Transfer Refunds Account is configured, so the credit note is left unsettled for the treasurer to match to the bank line.";
+export const REFUND_UNSETTLED_METHOD_NOT_RECORDED_REASON =
+  "The refund method was not recorded on this note and there is no provider evidence a payment was made, so the credit note is left unsettled for the treasurer to match to the bank line.";
+
+export async function resolveRefundSettlement(input: {
+  method: CashRefundMethod;
+  /** Whether a caller SAID the method, rather than the executor reading the payment's source. */
+  methodRecorded: boolean;
+}): Promise<RefundSettlementDecision> {
+  if (input.method === "card") {
+    return {
+      kind: "record",
+      bankCode: (await getAccountMapping(refundSettlementMappingKey("card"))) ?? "606",
+    };
+  }
+  if (!input.methodRecorded) {
+    return { kind: "unsettled", reason: REFUND_UNSETTLED_METHOD_NOT_RECORDED_REASON };
+  }
+  const configured = await getResolvedAccountMapping(refundSettlementMappingKey("internet-banking"));
+  if (!configured.code) {
+    return { kind: "unsettled", reason: REFUND_UNSETTLED_NO_ACCOUNT_REASON };
+  }
+  return { kind: "record", bankCode: configured.code };
+}
 
 export const REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON =
   "Refund credit notes are settled via a credit-note payment instead of invoice allocation.";
@@ -125,6 +186,12 @@ interface CreateXeroRefundPaymentParams {
   creditNoteId: string;
   refundAmountCents: number;
   createdByMemberId?: string;
+  /**
+   * How the money went back (`INV-PAY-101`). The repair leg reads it off the
+   * operation it is repairing; absent means the row predates the field, and
+   * the caller has already defaulted it from the payment's source.
+   */
+  refundMethod?: CashRefundMethod;
 }
 
 /**
@@ -142,13 +209,19 @@ export function buildRefundCreditNotePayment(params: {
   refundAmountCents: number;
   bankCode: string;
   paymentDate: string;
+  /** Defaults to a card refund, which is what every caller before #3529 was. */
+  refundMethod?: CashRefundMethod;
 }): XeroPayment {
   return {
     creditNote: { creditNoteID: params.creditNoteId },
     account: { code: params.bankCode },
     amount: params.refundAmountCents / 100,
     date: params.paymentDate,
-    reference: `Stripe Refund - ${CLUB_NAME} payment ${params.paymentId.slice(0, 8)}`,
+    reference: buildRefundPaymentReference({
+      method: params.refundMethod ?? "card",
+      clubName: CLUB_NAME,
+      paymentId: params.paymentId,
+    }),
     isReconciled: false,
   };
 }
@@ -158,13 +231,21 @@ export async function createXeroRefundPaymentForInvoice(
   params: CreateXeroRefundPaymentParams
 ): Promise<string> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const bankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+  const refundMethod = params.refundMethod ?? "card";
+  // The caller has already decided this note IS settled (`resolveRefundSettlement`),
+  // so a decision that comes back unsettled here is a programming error, not a
+  // treasurer's configuration gap.
+  const settlement = await resolveRefundSettlement({ method: refundMethod, methodRecorded: true });
+  if (settlement.kind !== "record") {
+    throw new Error(`Refund payment requested for a note that is not settled: ${settlement.reason}`);
+  }
   const payment = buildRefundCreditNotePayment({
     paymentId: params.paymentId,
     creditNoteId: params.creditNoteId,
     refundAmountCents: params.refundAmountCents,
-    bankCode,
+    bankCode: settlement.bankCode,
     paymentDate: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
+    refundMethod,
   });
   // Key on the credit note id (#1162): equal-amount refund deltas each settle a
   // distinct credit note, so amount alone would collide onto one payment key.

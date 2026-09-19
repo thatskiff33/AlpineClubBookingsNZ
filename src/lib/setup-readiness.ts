@@ -120,6 +120,14 @@ export interface SetupDatabaseSnapshot {
    * Optional for callers that took no database snapshot.
    */
   xeroUnsetFallbackMappingLabels?: string[];
+  /**
+   * `INV-INT-021`, #3529: one sentence per unset asking key — "Label: what the
+   * system does without it" — so the checklist can say WHY a choice is waiting
+   * for a key that has no fallback (a bank-transfer refund note raised without
+   * a settling payment) as well as for one that does. Same population as the
+   * labels above, in the same order.
+   */
+  xeroUnsetMappingConsequences?: string[];
   xeroHutFeeItemMappingCount: number;
   xeroEntranceFeeMappingCount: number;
   // Per-membership-type rate gaps (#1930, E4): "TypeName — SeasonName" entries
@@ -1992,11 +2000,19 @@ function buildXeroMappingCheck(
   // count cannot see this: it counts rows with a code, so every upgrading club
   // would read "configured" while a new key was quietly unset.
   const unsetFallbackMappings = db?.xeroUnsetFallbackMappingLabels ?? [];
+  // A key with no fallback that says what happens without it (#3529) is the
+  // same undecided state, and is named separately so it is never called a
+  // fallback. The label is the text before the first ": ".
+  const unsetMappingConsequences = db?.xeroUnsetMappingConsequences ?? [];
+  const unsetConsequenceLabels = unsetMappingConsequences.map(
+    (sentence) => sentence.split(": ")[0] ?? sentence,
+  );
+  const unsetMappings = [...unsetFallbackMappings, ...unsetConsequenceLabels];
   const complete =
     accountMappings > 0 &&
     hutFeeMappings > 0 &&
     entranceFeeMappings > 0 &&
-    unsetFallbackMappings.length === 0;
+    unsetMappings.length === 0;
 
   return applyProgress(
     {
@@ -2008,17 +2024,20 @@ function buildXeroMappingCheck(
       required: false,
       message: complete
         ? "Xero account and item mappings are configured."
-        : unsetFallbackMappings.length > 0 &&
+        : unsetMappings.length > 0 &&
             accountMappings > 0 &&
             hutFeeMappings > 0 &&
             entranceFeeMappings > 0
-          ? `Choose an account for ${unsetFallbackMappings.join(" and ")} — until you do, those entries keep posting where they did before.`
+          ? unsetConsequenceLabels.length === 0
+            ? `Choose an account for ${unsetMappings.join(" and ")} — until you do, those entries keep posting where they did before.`
+            : `Choose an account for ${unsetMappings.join(" and ")} — the details say what happens until you do.`
           : "Map Xero accounts and item codes before using live Xero sync.",
       details: [
         `Account mappings: ${accountMappings}`,
         ...(unsetFallbackMappings.length > 0
           ? [`Not chosen yet, using a fallback: ${unsetFallbackMappings.join(", ")}`]
           : []),
+        ...unsetMappingConsequences.map((sentence) => `Not chosen yet — ${sentence}`),
         `Hut fee item mappings: ${hutFeeMappings}`,
         `Joining fee mappings: ${entranceFeeMappings}`,
       ],

@@ -113,6 +113,46 @@ describe("xero operation outbox payload parsing", () => {
     });
   });
 
+  it("carries the refund method through the two cash credit-note payloads, and drops one it does not recognise (INV-PAY-101)", () => {
+    expect(
+      readQueuedOutboxPayload({
+        queueType: "REFUND_CREDIT_NOTE",
+        refundAmountCents: 2275,
+        watermarkCents: 2275,
+        refundMethod: "internet-banking",
+      })
+    ).toEqual({
+      queueType: "REFUND_CREDIT_NOTE",
+      refundAmountCents: 2275,
+      watermarkCents: 2275,
+      refundMethod: "internet-banking",
+    });
+    expect(
+      readQueuedOutboxPayload({
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        bookingId: "booking_1",
+        refundAmountCents: 2500,
+        bookingModificationId: "mod_1",
+        refundMethod: "cheque",
+      })
+    ).toEqual({
+      queueType: "MODIFICATION_CREDIT_NOTE",
+      bookingId: "booking_1",
+      refundAmountCents: 2500,
+      bookingModificationId: "mod_1",
+      refundMethod: undefined,
+    });
+    // A row queued before the field existed parses exactly as it did.
+    expect(
+      readQueuedOutboxPayload({ queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 100 })
+    ).toEqual({
+      queueType: "REFUND_CREDIT_NOTE",
+      refundAmountCents: 100,
+      watermarkCents: undefined,
+      refundMethod: undefined,
+    });
+  });
+
   it("maps queued payload types to guarded sync operation claims", () => {
     expect(getQueuedOutboxExpectedOperation("BOOKING_INVOICE_UPDATE")).toEqual({
       entityType: "INVOICE",

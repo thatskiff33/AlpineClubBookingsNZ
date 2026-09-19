@@ -19,6 +19,24 @@ import { shouldRepairXeroContactNameOrder } from "@/lib/xero-contact-sync";
 import { parseXeroContactDateOfBirth } from "@/lib/xero-contact-date-of-birth";
 import { buildXeroIdempotencyKey, completeXeroSyncOperation } from "@/lib/xero-sync";
 import { CLUB_NAME } from "@/config/club-identity";
+import {
+  defaultRefundMethodForPaymentSource,
+  parseRefundMethod,
+} from "@/lib/xero-refund-method";
+import type { CashRefundMethod } from "@/lib/xero-refund-method";
+import { resolveRefundSettlement } from "@/lib/xero-invoice-payments";
+
+/**
+ * `INV-PAY-101`: the refund method a stored payload carries, as the cash-refund
+ * builders take it. Both the enqueue-time shape and the execution-time shape
+ * record it under the same key; account credit never reaches a cash builder, so
+ * it reads as "not carried" here and the builder falls back to the payment's
+ * source.
+ */
+function readCashRefundMethod(payload: Record<string, unknown> | null): CashRefundMethod | undefined {
+  const method = parseRefundMethod(payload?.refundMethod);
+  return method && method !== "account-credit" ? method : undefined;
+}
 
 /**
  * The `@/lib/xero` module namespace, named because an `import()` type written
@@ -241,6 +259,8 @@ function parsePaymentCreditNoteRetryInput(
 ): {
   amountCents: number;
   kind: "refund" | "unapplied";
+  /** `INV-PAY-101`: carried on both payload shapes; absent on pre-#3529 rows. */
+  refundMethod?: CashRefundMethod;
   /**
    * F4 (#1354): present when the operation is a per-delta Stripe refund note.
    * The retry MUST re-enter delta mode — pre-#1354 it dropped the watermark,
@@ -268,6 +288,7 @@ function parsePaymentCreditNoteRetryInput(
       amountCents: Math.round(queuedRefundAmount),
       kind: "refund",
       watermarkCents: queuedWatermark !== null ? Math.round(queuedWatermark) : 0,
+      refundMethod: readCashRefundMethod(payload),
     };
   }
   if (queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {
@@ -283,6 +304,7 @@ function parsePaymentCreditNoteRetryInput(
     return {
       amountCents: allocationAmountCents,
       kind: "refund",
+      refundMethod: readCashRefundMethod(payload),
     };
   }
 
@@ -504,7 +526,13 @@ function parsePartialInvoiceRepairInput(
 
 function parseRefundCreditNoteRepairInput(
   operation: Pick<RetryableOperation, "localModel" | "localId" | "requestPayload" | "responsePayload" | "xeroObjectId">
-): { creditNoteId: string; invoiceId: string; amountCents: number; needsRefundPaymentRepair: boolean } | null {
+): {
+  creditNoteId: string;
+  invoiceId: string;
+  amountCents: number;
+  needsRefundPaymentRepair: boolean;
+  refundMethod?: CashRefundMethod;
+} | null {
   if (operation.localModel !== "Payment" || !operation.localId || !operation.xeroObjectId) {
     return null;
   }
@@ -527,7 +555,13 @@ function parseRefundCreditNoteRepairInput(
     creditNoteId: operation.xeroObjectId,
     invoiceId,
     amountCents,
-    needsRefundPaymentRepair: !asRecord(responsePayload?.refundPayment),
+    // `INV-PAY-101`: a note left unsettled BY DESIGN (no verifiable settlement
+    // account) is complete, not a payment leg that failed — repairing it would
+    // mint the very Stripe-account payment the design declined.
+    needsRefundPaymentRepair:
+      !asRecord(responsePayload?.refundPayment) &&
+      responsePayload?.refundPaymentSkipped !== true,
+    refundMethod: readCashRefundMethod(payload),
   };
 }
 
@@ -539,6 +573,7 @@ async function repairRefundCreditNoteFollowUpActions(
     invoiceId: string;
     amountCents: number;
     needsRefundPaymentRepair: boolean;
+    refundMethod?: CashRefundMethod;
   },
   createdByMemberId?: string
 ) {
@@ -549,14 +584,36 @@ async function repairRefundCreditNoteFollowUpActions(
     },
   });
 
+  // `INV-PAY-101`: the SAME decision the inline leg makes. A row that recorded
+  // its method settles as it said; a row from before #3529 carries none, so
+  // the payment's source decides — Stripe money is a card refund, anything
+  // else is a bank transfer nobody vouched for, and that note stays unsettled.
+  let refundPaymentSkipReason: string | null = null;
   if (repair.needsRefundPaymentRepair) {
-    await xero.createXeroRefundPaymentForInvoice({
-      paymentId: operation.localId!,
-      invoiceId: repair.invoiceId,
-      creditNoteId: repair.creditNoteId,
-      refundAmountCents: repair.amountCents,
-      createdByMemberId,
-    });
+    const methodRecorded = repair.refundMethod !== undefined;
+    const method =
+      repair.refundMethod ??
+      defaultRefundMethodForPaymentSource(
+        (
+          await prisma.payment.findUnique({
+            where: { id: operation.localId! },
+            select: { source: true },
+          })
+        )?.source,
+      );
+    const settlement = await resolveRefundSettlement({ method, methodRecorded });
+    if (settlement.kind === "record") {
+      await xero.createXeroRefundPaymentForInvoice({
+        paymentId: operation.localId!,
+        invoiceId: repair.invoiceId,
+        creditNoteId: repair.creditNoteId,
+        refundAmountCents: repair.amountCents,
+        createdByMemberId,
+        refundMethod: method,
+      });
+    } else {
+      refundPaymentSkipReason = settlement.reason;
+    }
   }
 
   const existingResponsePayload = asRecord(operation.responsePayload);
@@ -568,6 +625,9 @@ async function repairRefundCreditNoteFollowUpActions(
       allocationSkipped: true,
       allocationSkipReason: REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON,
       refundPaymentError: null,
+      ...(refundPaymentSkipReason
+        ? { refundPaymentSkipped: true, refundPaymentSkipReason }
+        : {}),
     },
     xeroObjectType: "CREDIT_NOTE",
     xeroObjectId: repair.creditNoteId,
@@ -1321,6 +1381,7 @@ export async function retryXeroSyncOperation(
           ...(deltaWatermarkCents !== undefined
             ? { watermarkCents: deltaWatermarkCents }
             : {}),
+          ...(retryInput.refundMethod ? { refundMethod: retryInput.refundMethod } : {}),
         });
         return { message: "Retried Xero refund credit note creation." };
       }
@@ -1392,12 +1453,16 @@ export async function retryXeroSyncOperation(
         return { message: "Retried Xero modification account-credit note creation." };
       }
 
+      // `INV-PAY-101`: both payload shapes carry the method under one key; the
+      // execution-time shape is not the typed queued payload, so it is read raw.
+      const modificationRefundMethod = readCashRefundMethod(asRecord(operation.requestPayload));
       await xero.createXeroCreditNoteForModification({
         bookingId: modification.bookingId,
         refundAmountCents,
         bookingModificationId: operation.localId!,
         createdByMemberId,
         repairExistingLink: true,
+        ...(modificationRefundMethod ? { refundMethod: modificationRefundMethod } : {}),
       });
       return { message: "Retried Xero modification credit note creation." };
     }
