@@ -259,11 +259,88 @@ function resolveLocalVariableDeclaration(
   return undefined;
 }
 
+/**
+ * Whether a local binding is ever assigned to after it is declared.
+ *
+ * Deliberately crude, and deliberately crude in the SAFE direction: any
+ * assignment or increment anywhere in the declaring scope counts, whether or
+ * not it can reach the use being certified. A census that has to decide
+ * "does this name still hold that value" cannot answer yes for a name that
+ * anything reassigns, because the thing it is certifying is a value.
+ */
+function reassignmentsAfterDeclaration(
+  declaration: ts.VariableDeclaration,
+  source: ts.SourceFile,
+): readonly ts.Node[] | undefined {
+  // `undefined` means "cannot tell", which callers treat exactly as they treat
+  // a reassignment. An empty array means "looked, and there are none".
+  if (!ts.isIdentifier(declaration.name)) return undefined;
+  const name = declaration.name.text;
+  const scope = enclosingScope(declaration);
+  if (!scope) return undefined;
+  const found: ts.Node[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name &&
+      node.getStart(source) > declaration.getStart(source)
+    ) {
+      found.push(node);
+      return;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) ||
+        ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(node.operand) &&
+      node.operand.text === name &&
+      node.getStart(source) > declaration.getStart(source)
+    ) {
+      found.push(node);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  return found;
+}
+
+function isReassignedAfterDeclaration(
+  declaration: ts.VariableDeclaration,
+  source: ts.SourceFile,
+): boolean {
+  const reassignments = reassignmentsAfterDeclaration(declaration, source);
+  return reassignments === undefined || reassignments.length > 0;
+}
+
+/**
+ * What a local name binds to, or NOTHING if the name can change under us.
+ *
+ * Returning the declaration's initializer and stopping was how every
+ * certificate resolved through this function stayed claimable by writing
+ * `let` instead of `const`:
+ *
+ *     let newTotalPriceCents = booking.totalPriceCents;
+ *     newTotalPriceCents = legacyQuote.totalPriceCents;   // certified
+ *
+ * The `const` spelling of that same write was correctly refused, which is the
+ * tell: the guard was reading the declaration and not the variable. A name
+ * anything reassigns resolves to `undefined` now, so the certificate is not
+ * granted and the writer is refused — the fail-closed direction, and the same
+ * rule `sameParkedCondition` was already applying ten lines below.
+ */
 function resolveLocalBinding(
   use: ts.Identifier,
   source: ts.SourceFile,
 ): ts.Expression | undefined {
-  return resolveLocalVariableDeclaration(use, source)?.initializer;
+  const declaration = resolveLocalVariableDeclaration(use, source);
+  if (!declaration) return undefined;
+  if (isReassignedAfterDeclaration(declaration, source)) return undefined;
+  return declaration.initializer;
 }
 
 /**
@@ -512,11 +589,136 @@ function sameParkedCondition(
   if (leftBinding || rightBinding) {
     return leftBinding !== undefined && leftBinding === rightBinding;
   }
+  // The comment above says only a `const` is demonstrably the same value at
+  // both ternaries — but the rule was enforced only when at least one side
+  // WAS one. With two `let` identifiers neither side produced a binding, and
+  // the text compare below then accepted them as one parked edit although the
+  // name was reassigned in between. An identifier that names a local this
+  // census can see, and did not qualify as a const above, therefore resolves
+  // to nothing rather than falling through to its own spelling.
+  for (const side of [left, right]) {
+    if (
+      ts.isIdentifier(side) &&
+      resolveLocalVariableDeclaration(side, source) !== undefined
+    ) {
+      return false;
+    }
+  }
   return (
     left.getText(source) === right.getText(source) &&
     isReReadableExpression(left) &&
     isReReadableExpression(right)
   );
+}
+
+/**
+ * Whether an assignment provably cannot have run on the branch being certified.
+ *
+ * This is what lets the census stay sound AND keep a correct writer. The real
+ * shape in the tree is:
+ *
+ *     let newTotalPriceCents = booking.totalPriceCents;
+ *     if (!parkedFinancialReview) { newTotalPriceCents = repriced.totalPriceCents; }
+ *     const newFinalPriceCents = parkedFinancialReview ? booking.finalPriceCents : ...;
+ *
+ * On the parked branch the guard is false, so the reassignment cannot have
+ * happened and the name still holds `booking.totalPriceCents` — which is what
+ * makes the parked receiver check pass. Refusing every reassigned name
+ * outright would report that writer, and the issue is explicit that a repair
+ * which starts reporting correct callers is a false positive needing a
+ * different answer. This is that answer.
+ *
+ * It only ever DISCOUNTS an assignment, and only when the guard is the parked
+ * condition itself (resolved, not spelled) with a polarity the branch
+ * excludes. Anything it cannot read that way still counts, so the unreadable
+ * case stays refused.
+ */
+function assignmentReachabilityOnBranch(
+  assignment: ts.Node,
+  conditional: ts.ConditionalExpression,
+  branchIndex: number,
+  source: ts.SourceFile,
+): "excluded" | "certain" | "unknown" {
+  // "excluded": the guards say this assignment cannot have run on this branch.
+  // "certain": they say it definitely did, and nothing else guards it.
+  // "unknown": anything this cannot read that way, which callers refuse.
+  let sawMatchingGuard = false;
+  for (
+    let cursor: ts.Node | undefined = assignment;
+    cursor;
+    cursor = cursor.parent
+  ) {
+    const parent = cursor.parent;
+    if (!parent || !ts.isIfStatement(parent)) continue;
+    const inThen = parent.thenStatement === cursor;
+    const inElse = parent.elseStatement === cursor;
+    if (!inThen && !inElse) continue;
+    let guard: ts.Expression = parent.expression;
+    let guardRequiresTrue = inThen;
+    while (
+      ts.isPrefixUnaryExpression(guard) &&
+      guard.operator === ts.SyntaxKind.ExclamationToken
+    ) {
+      guard = guard.operand;
+      guardRequiresTrue = !guardRequiresTrue;
+    }
+    // An enclosing `if` on something OTHER than the parked condition makes the
+    // assignment conditional on a question this census cannot answer, so the
+    // whole thing is unknown however the parked guards read.
+    if (!sameParkedCondition(guard, conditional.condition, source)) {
+      return "unknown";
+    }
+    // Branch 0 is `whenTrue`, where the condition holds.
+    if (guardRequiresTrue !== (branchIndex === 0)) return "excluded";
+    sawMatchingGuard = true;
+  }
+  return sawMatchingGuard ? "certain" : "unknown";
+}
+
+/**
+ * What a local name binds to on one branch of a parked ternary.
+ *
+ * Same fail-closed rule as `resolveLocalBinding`, minus the assignments this
+ * branch provably excludes.
+ */
+function branchAwareBinding(
+  use: ts.Identifier,
+  conditional: ts.ConditionalExpression,
+  branchIndex: number,
+  source: ts.SourceFile,
+): ts.Expression | undefined {
+  const declaration = resolveLocalVariableDeclaration(use, source);
+  if (!declaration) return undefined;
+  const reassignments = reassignmentsAfterDeclaration(declaration, source);
+  if (reassignments === undefined) return undefined;
+  const live = reassignments.filter(
+    (assignment) =>
+      assignmentReachabilityOnBranch(
+        assignment,
+        conditional,
+        branchIndex,
+        source,
+      ) !== "excluded",
+  );
+  // Nothing this branch does not exclude: the declaration still stands.
+  if (live.length === 0) return declaration.initializer;
+  // Exactly one, and this branch is the one that runs it: the name holds what
+  // that assignment put there. Any other shape — two live assignments, or one
+  // whose reachability cannot be read — is refused, because a census that
+  // guesses between two values is not certifying anything.
+  if (
+    live.length === 1 &&
+    ts.isBinaryExpression(live[0]) &&
+    assignmentReachabilityOnBranch(
+      live[0],
+      conditional,
+      branchIndex,
+      source,
+    ) === "certain"
+  ) {
+    return live[0].right;
+  }
+  return undefined;
 }
 
 /**
@@ -536,7 +738,12 @@ function parkedBranchValue(
 ): ts.Expression | undefined {
   if (depth > 4) return undefined;
   if (ts.isIdentifier(expression)) {
-    const binding = resolveLocalBinding(expression, source);
+    const binding = branchAwareBinding(
+      expression,
+      conditional,
+      branchIndex,
+      source,
+    );
     return binding
       ? parkedBranchValue(binding, conditional, branchIndex, source, depth + 1)
       : undefined;
@@ -625,6 +832,15 @@ function isStoredHeadlineBranch(
  * database read — and reconciling the two is what the build-up programme's own
  * reader census and D3 decision cover.
  */
+/**
+ * The one selector whose result the D3 exemption is granted to, and the module
+ * it must be imported from. Named here rather than inline so the D3 check and
+ * the helper dispatch below cannot drift to different spellings of the same
+ * module path.
+ */
+const CANONICAL_BUILD_UP_MODULE = "src/lib/booking-money-build-up";
+const CANONICAL_BUILD_UP_SELECTOR = "selectLoadedBookingMoneyBuildUp";
+
 function d3SelectionProvesCanonicalFinalPrice(
   selection: ts.Expression | undefined,
   source: ts.SourceFile,
@@ -647,6 +863,30 @@ function d3SelectionProvesCanonicalFinalPrice(
     );
   }
   if (!ts.isCallExpression(selection)) return false;
+  // WHO produced the selection, not just what it was handed. This accepted any
+  // call at all whose arguments contained an object literal with a canonical
+  // `derivedCents`, so the exemption was claimable by argument shape:
+  //
+  //     const selection = whateverIWant(loaded, { derivedCents: derived });
+  //     const verified = d3CompatibleBookingMoneyBuildUpCents(selection);
+  //
+  // and that is exploitable rather than merely untidy, because
+  // `BookingMoneyBuildUpSelection` is a plain structural union — a helper
+  // returning an arbitrary `selectedCents` type-checks, and the canonical
+  // `derived` exists only to satisfy this scanner. The selection must come
+  // from the one canonical selector, resolved as an import of the build-up
+  // module rather than matched by name.
+  if (
+    !ts.isIdentifier(selection.expression) ||
+    selection.expression.text !== CANONICAL_BUILD_UP_SELECTOR ||
+    !importedCanonicalBinding(
+      selection.expression,
+      source,
+      CANONICAL_BUILD_UP_MODULE,
+    )
+  ) {
+    return false;
+  }
   for (const argument of selection.arguments) {
     if (!ts.isObjectLiteralExpression(argument)) continue;
     for (const property of argument.properties) {
@@ -706,15 +946,20 @@ function withBranchOperands(
     if (!accepted || accepted.length === 0) return accepted;
     const widened = [...accepted];
     for (const candidate of accepted) {
-      const resolved = ts.isIdentifier(candidate)
-        ? (resolveLocalBinding(candidate, source) ?? candidate)
-        : candidate;
-      if (
-        ts.isConditionalExpression(resolved) &&
-        sameParkedCondition(resolved.condition, conditional.condition, source)
-      ) {
-        widened.push(branchIndex === 0 ? resolved.whenTrue : resolved.whenFalse);
-      }
+      // Route through the ONE resolver for "what is this expression on the
+      // parked branch". This used to do its own single hop while
+      // `parkedBranchValue` — called from the other half of the very same
+      // conjunction — recursed and resolved the branch it picked. Two answers
+      // to one question, and the disagreement was reachable: one extra local
+      // between the declaration and the ternary flipped a CORRECT writer to
+      // refused.
+      const onBranch = parkedBranchValue(
+        candidate,
+        conditional,
+        branchIndex,
+        source,
+      );
+      if (onBranch && onBranch !== candidate) widened.push(onBranch);
     }
     return widened;
   };
@@ -742,7 +987,7 @@ function expressionUsesCanonicalFinalPrice(
       source,
       helper.text === "bookingFinalPriceCents"
         ? "src/lib/booking-final-price"
-        : "src/lib/booking-money-build-up",
+        : CANONICAL_BUILD_UP_MODULE,
     );
     if (!imported) return false;
     if (helper.text === "d3CompatibleBookingMoneyBuildUpCents") {

@@ -905,6 +905,128 @@ describe("INV-MONEY-031 booking money writer census", () => {
         ),
       ),
     ).not.toEqual([]);
+    // #3544 review round. Each of these is a writer that GOT THROUGH the first
+    // attempt at these repairs, reduced to its smallest form. The first is the
+    // one that mattered: every certificate resolved through a local name was
+    // claimable by writing `let` instead of `const`, because the resolver read
+    // the declaration and ignored every later assignment — while the parked
+    // condition check ten lines above refused exactly that. The `const`
+    // spelling of this same write was correctly refused, which is the tell.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "parked-reassigned-operand.ts",
+        parkedWriter.replace(
+          "const newTotalPriceCents = parked ? booking.totalPriceCents : priced.totalPriceCents;",
+          `let newTotalPriceCents = booking.totalPriceCents;
+           newTotalPriceCents = legacyQuote.totalPriceCents;`,
+        ),
+      ),
+    ).not.toEqual([]);
+
+    // But a reassignment the branch being certified PROVABLY EXCLUDES is not
+    // evidence of anything, and refusing it would report a correct writer —
+    // this is the real shape in `booking-guest-removal-service.ts`, where the
+    // reprice happens only when the booking is NOT parked, so on the parked
+    // branch the name still holds the booking's own stored total. The whole
+    // point of the repair is to resolve rather than to match, and a resolver
+    // that ignores the guard is matching again.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "parked-guarded-reassignment.ts",
+        parkedWriter.replace(
+          "const newTotalPriceCents = parked ? booking.totalPriceCents : priced.totalPriceCents;",
+          `let newTotalPriceCents = booking.totalPriceCents;
+           if (!parked) { newTotalPriceCents = priced.totalPriceCents; }`,
+        ),
+      ),
+    ).toEqual([]);
+
+    // Two `let` identifiers produced no binding at all, so neither side
+    // qualified as a const and the source-text fallback below accepted them as
+    // one parked edit — enforcing the const rule only in the case it was not
+    // about. An identifier naming a local this census can see never reaches
+    // that fallback now.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "parked-let-condition.ts",
+        `let parked = evidence !== null;
+         ${parkedWriter}
+         parked = false;`,
+      ),
+    ).not.toEqual([]);
+
+    // One extra local between the declaration and the ternary used to flip a
+    // CORRECT writer to refused, because the two halves of one conjunction
+    // resolved the same expression differently — one hop on one side, four and
+    // a branch resolution on the other. There is one resolver now.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "parked-indirect-operand.ts",
+        parkedWriter.replace(
+          "await database.booking.update({ data: { totalPriceCents: newTotalPriceCents,",
+          `const alsoNewTotalPriceCents = newTotalPriceCents;
+           await database.booking.update({ data: { totalPriceCents: alsoNewTotalPriceCents,`,
+        ),
+      ),
+    ).toEqual([]);
+
+    // The D3 exemption was claimable by ARGUMENT SHAPE: any call at all whose
+    // arguments carried a canonical `derivedCents` was accepted, so a helper
+    // returning an arbitrary `selectedCents` — which type-checks, because the
+    // selection is a plain structural union — took the exemption with the
+    // canonical figure present only to satisfy this scanner. The fixture above
+    // misses this because it deletes the argument too, and is therefore
+    // refused by the wrong path.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "d3-foreign-selector.ts",
+        d3Writer.replace(
+          "const selection = selectLoadedBookingMoneyBuildUp(loaded,",
+          "const selection = whateverIWant(loaded,",
+        ),
+      ),
+    ).not.toEqual([]);
+
+    // A guard on some OTHER question tells this census nothing, and nesting one
+    // inside the parked guard is where that bites: the outer `if` matches the
+    // branch, so reading only the outermost guard would call the assignment
+    // CERTAIN when `someOtherFlag` may have skipped it. Here the name would
+    // then be certified as the booking's own total while it may still hold a
+    // foreign one — accepted under that reading, refused under this one.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "parked-nested-unrelated-guard.ts",
+        // Built out rather than patched from `parkedWriter`, because the
+        // false branch has to be certifiable on its own or the case is
+        // refused for a reason that has nothing to do with the guard under
+        // test — a fixture passing for the wrong reason, which is the failure
+        // this whole file keeps having.
+        `import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+         let newTotalPriceCents = somethingForeign.totalPriceCents;
+         if (parked) { if (someOtherFlag) { newTotalPriceCents = booking.totalPriceCents; } }
+         const newFinalPriceCents = parked
+           ? booking.finalPriceCents
+           : bookingFinalPriceCents({ totalPriceCents: newTotalPriceCents, promoAdjustmentCents: promo });
+         await database.booking.update({ data: { totalPriceCents: newTotalPriceCents, discountCents: Math.max(0, -promo), promoAdjustmentCents: promo, finalPriceCents: newFinalPriceCents } });
+        `,
+      ),
+    ).not.toEqual([]);
+
+    // The `let` bypass again, on the D3 path, which resolves its selection
+    // through the general binding resolver rather than the parked-branch one.
+    // Pinned separately because the two resolvers are different code: proving
+    // one closed says nothing about the other.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "d3-reassigned-selection.ts",
+        d3Writer.replace(
+          "const selection = selectLoadedBookingMoneyBuildUp(loaded, { derivedCents: derived, mismatchClassification: \"STORED_SIDE_DEFECT\" });",
+          `let selection = selectLoadedBookingMoneyBuildUp(loaded, { derivedCents: derived, mismatchClassification: "STORED_SIDE_DEFECT" });
+           selection = loadWhateverSelection(loaded);`,
+        ),
+      ),
+    ).not.toEqual([]);
+
     expect(
       DISCOVERED_EQUALITY_ESCAPES,
       "INV-MONEY-031: a complete Booking headline write bypasses the canonical final-price relation.",
