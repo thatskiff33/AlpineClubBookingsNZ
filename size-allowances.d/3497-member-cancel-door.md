@@ -6,7 +6,7 @@ member-door opt-in the cancel route passes, sitting beside the started-stay
 opt-in it mirrors, and the guard that honours it.
 
 file: src/lib/booking-cancel.ts
-lines: 2506
+lines: 2505
 reason: `enforceMemberCancelDoor` is a second opt-in of exactly the shape of
   `enforceStartedStayBlock` — an option, a positional parameter, and one guard
   inside `performBookingCancellation` that must run after the authorization

@@ -214,11 +214,13 @@ describe("#3497: the cancellable sets", () => {
     const refusal = memberCancelRefusal("AWAITING_REVIEW");
     expect(refusal).toMatch(/with the club for review/);
     expect(refusal).toMatch(/contact the club/);
-    // And a status the service itself cannot cancel gets the plain set, not the
-    // review sentence — the member is not told to contact anyone about a booking
-    // that is already cancelled.
-    expect(memberCancelRefusal("CANCELLED")).not.toMatch(/review/);
-    expect(memberCancelRefusal("CANCELLED")).toContain("WAITLISTED");
+    // And a status the service itself cannot cancel gets a plain-English
+    // sentence with no status codes in it, not the review sentence — the member
+    // is not told to contact anyone about a booking that is already cancelled.
+    const plain = memberCancelRefusal("CANCELLED");
+    expect(plain).not.toMatch(/review/);
+    expect(plain).toBe("This booking can no longer be cancelled from here.");
+    for (const status of ALL_STATUSES) expect(plain).not.toContain(status);
   });
 });
 

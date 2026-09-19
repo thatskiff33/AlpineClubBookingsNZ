@@ -73,6 +73,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // #3497: the cancellable sets live in `booking-cancel-eligibility.ts`, a leaf
 // module the member-facing doors also read — one home, no copy.
 import {
+  cancellableStatusRefusal,
   isCancellableBookingStatus,
   memberCancelRefusal,
 } from "@/lib/booking-cancel-eligibility";
@@ -538,10 +539,8 @@ async function performBookingCancellation(
   }
 
   if (!isCancellableBookingStatus(booking.status)) {
-    return {
-      status: 400,
-      error: "Only PENDING, PAYMENT_PENDING, CONFIRMED, PAID, WAITLISTED, WAITLIST_OFFERED, or AWAITING_REVIEW bookings can be cancelled",
-    };
+    // The sentence is derived from the set it names (#3497), so it cannot drift.
+    return { status: 400, error: cancellableStatusRefusal() };
   }
 
   // ── #1406: opt-in caller guard for the two "release a held request" paths ──

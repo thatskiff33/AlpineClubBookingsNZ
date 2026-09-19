@@ -79,10 +79,28 @@ export function isMemberCancellableBookingStatus(
   return (MEMBER_CANCELLABLE_BOOKING_STATUSES as readonly string[]).includes(status);
 }
 
+/** "A, B, or C" — the prose shape the service's refusal has always used. */
+function listInProse(items: readonly string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+
+/**
+ * The cancel SERVICE's refusal for a status outside `CANCELLABLE_BOOKING_STATUSES`,
+ * derived from the set so the sentence can never name a different list from
+ * the one the guard reads. Internal and officer callers see this one; it names
+ * status codes because those callers are the officer screens and the tests.
+ */
+export function cancellableStatusRefusal(): string {
+  return `Only ${listInProse(CANCELLABLE_BOOKING_STATUSES)} bookings can be cancelled`;
+}
+
 /**
  * The sentence a member-facing door answers with when it refuses, or `null`
  * when the booking may be cancelled from that door. One home for the wording
- * too, so the preview and the cancel route can never disagree about WHY.
+ * too, so the preview, the cancel route and the booking page can never
+ * disagree about WHY. Plain English throughout: a member is never shown a
+ * status code.
  */
 export function memberCancelRefusal(status: string): string | null {
   if (isMemberCancellableBookingStatus(status)) return null;
@@ -90,5 +108,5 @@ export function memberCancelRefusal(status: string): string | null {
     // In the service set but not the member set: with the club for review.
     return "This booking is with the club for review, so it cannot be cancelled from here. If you no longer want it, contact the club and the reviewing officer will withdraw it.";
   }
-  return `Only ${MEMBER_CANCELLABLE_BOOKING_STATUSES.join(", ")} bookings can be cancelled`;
+  return "This booking can no longer be cancelled from here.";
 }

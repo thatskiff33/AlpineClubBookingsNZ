@@ -88,11 +88,27 @@ vi.mock("@/lib/capacity", () => ({ acquireLodgeCapacityLock: vi.fn() }));
 // mocked so the real NZ date logic runs against the faked clock.
 
 import { cancelBooking } from "@/lib/booking-cancel";
+import {
+  CANCELLABLE_BOOKING_STATUSES,
+  cancellableStatusRefusal,
+} from "@/lib/booking-cancel-eligibility";
 
 const STARTED_MSG =
   "This stay has already started, so it can no longer be cancelled online. To leave early, edit the booking to shorten your remaining nights, or contact the club for help.";
-const STATUS_MSG =
-  "Only PENDING, PAYMENT_PENDING, CONFIRMED, PAID, WAITLISTED, WAITLIST_OFFERED, or AWAITING_REVIEW bookings can be cancelled";
+// #3497: the status refusal is DERIVED from the set the guard reads, so the pin
+// is the derivation plus a shape check — it must name every cancellable status,
+// in the set's order, as the "A, B, or C" sentence the service has always used.
+const STATUS_MSG = cancellableStatusRefusal();
+describe("the service's status refusal names exactly the set it guards", () => {
+  it("is the cancellable set in prose", () => {
+    expect(STATUS_MSG).toBe(
+      `Only ${CANCELLABLE_BOOKING_STATUSES.slice(0, -1).join(", ")}, or ${
+        CANCELLABLE_BOOKING_STATUSES[CANCELLABLE_BOOKING_STATUSES.length - 1]
+      } bookings can be cancelled`,
+    );
+    for (const status of CANCELLABLE_BOOKING_STATUSES) expect(STATUS_MSG).toContain(status);
+  });
+});
 
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
 const OWNER = "member-1";
