@@ -7,6 +7,36 @@ import {
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import logger from "@/lib/logger";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import {
+  enqueueXeroRefundCreditNoteOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
+import type { RefundMethod } from "@/lib/xero-refund-method";
+
+/**
+ * HOW THE MONEY WENT BACK, as the Xero document will say it (`INV-PAY-101`,
+ * #3529). The route IS the settlement decision, so this is a reading of it and
+ * not a second decision: the card route refunded a card, the account-credit
+ * route kept the money as credit, and the hand-settled route is money the club
+ * sent back itself - by internet banking, which is the only way a club sends
+ * money it holds. Before #3529 the leg collapsed every non-credit route to
+ * `"card"`, which put the card wording on a bank-transfer hand-back.
+ *
+ * A charge has no refund and reaches no credit note; it reads as card so the
+ * type stays total, and the classifier never consults it on that branch.
+ */
+export function refundMethodForEditReviewRoute(
+  route: Pick<EditReviewSettlementRoute, "kind"> | null,
+): RefundMethod {
+  switch (route?.kind) {
+    case "account-credit":
+      return "account-credit";
+    case "local-allocation":
+      return "internet-banking";
+    default:
+      return "card";
+  }
+}
 
 /**
  * #3170 (epic #2797): THE XERO LEG OF A COMPLETED EDIT FINANCIAL REVIEW, and
@@ -76,10 +106,20 @@ export async function dispatchEditReviewXeroSettlement({
   chargeTotalCents,
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
+  cancellationHandBackInvoiceId,
   additionalPaymentIntentId,
 }: {
   bookingId: string;
   taskId: string;
+  /**
+   * The booking's primary Xero invoice id when the task closed is a
+   * `CANCELLED_BOOKING_HAND_BACK`, else null. The hand-back leg reads THIS
+   * rather than `hasIssuedXeroInvoice`, which is false for a CANCELLED booking
+   * by construction and would gate the note shut for the only kind of booking
+   * that raises one. Null for a cash-settled booking (#2262) too, which is the
+   * gate doing its job.
+   */
+  cancellationHandBackInvoiceId: string | null;
   actingMemberId: string;
   route: EditReviewSettlementRoute | null;
   /** This task's own share, which is what a REFUND bills. */
@@ -133,6 +173,46 @@ export async function dispatchEditReviewXeroSettlement({
   });
 
   if (ask === null) {
+    if (
+      route?.kind === "local-allocation" &&
+      cancellationHandBackInvoiceId !== null &&
+      amountCents !== null &&
+      amountCents > 0
+    ) {
+      // THE BANK-TRANSFER REFUND NOTE (`INV-PAY-101`, #3529). This task is
+      // raised twice over: for a booking the club settled in cash (B5, #2262),
+      // which has NO Xero invoice by construction - manual mark-paid is refused
+      // wherever one exists and the invoice builder abandons rather than mint
+      // over it - and for an internet-banking payment that reached Xero for a
+      // booking already cancelled and owned by an organisation (#3369), whose
+      // invoice Xero shows PAID. Only the second has anything to credit, and
+      // until now it got nothing: this leg found no anchor and logged that the
+      // invoice must be corrected by hand. The money HAS gone back - the ledger
+      // allocation was written in the completion transaction - so that paid
+      // invoice takes the same refund note a card refund gets, worded as a bank
+      // transfer and settled only from the club's bank-transfer refund account.
+      // The invoice-id gate is what keeps the cash case out, for the same
+      // reason the hold-expiry note has one (`INV-PAY-017`): a note against no
+      // invoice is a permanently failing outbox row. Keyed on the payment and
+      // the amount by the enqueue, which is one note per hand-back because a
+      // cancelled booking raises one task per payment.
+      await enqueueXeroRefundCreditNoteOperation(route.paymentId, amountCents, {
+        createdByMemberId: actingMemberId,
+        refundMethod: "internet-banking",
+      })
+        .then(async (queued) => {
+          if (queued.queueOperationId) {
+            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+          }
+        })
+        .catch((err) =>
+          logger.error(
+            { err, bookingId, taskId },
+            "Failed to queue the Xero bank-transfer refund note for a completed cancellation hand-back",
+          ),
+        );
+      return;
+    }
     if (route && hasIssuedXeroInvoice) {
       // An edit-review completion that moved money on a booking with an issued
       // invoice but carries no anchor to correct it against. The card,
@@ -194,6 +274,9 @@ export async function dispatchEditReviewXeroSettlement({
     // card refund, but the club DID return the money, so it takes the same
     // ordinary credit note a card refund does.
     settlementMethod: route?.kind === "account-credit" ? "credit" : "card",
+    // ...and this is the claim about the instrument, for the note's wording
+    // (`INV-PAY-101`): the hand-settled route reads as a bank transfer.
+    refundMethod: refundMethodForEditReviewRoute(route),
     // Read only on the reduction branch (`settlementAmountCents ?? Math.abs`),
     // so a charge passes null and lets the positive delta speak for itself
     // rather than handing the credit-note arm an amount it must not use.

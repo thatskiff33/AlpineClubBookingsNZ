@@ -790,6 +790,8 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
         bookingId: "bk1",
         refundAmountCents: 3000,
         bookingModificationId: "mod1",
+        // `INV-PAY-101`: a member's ordinary edit refunds the card.
+        refundMethod: "card",
       },
       {
         createdByMemberId: "m1",
@@ -840,6 +842,8 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
         bookingId: "bk1",
         refundAmountCents: 1500,
         bookingModificationId: "mod1",
+        // `INV-PAY-101`: a member's ordinary edit refunds the card.
+        refundMethod: "card",
       },
       {
         createdByMemberId: "m1",
@@ -887,6 +891,8 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
         bookingId: "bk1",
         refundAmountCents: 3000,
         bookingModificationId: "mod1",
+        // `INV-PAY-101`: nothing was captured by Stripe, so the money the member gets back is sent by the club itself.
+        refundMethod: "internet-banking",
       },
       {
         createdByMemberId: "m1",
@@ -1042,6 +1048,8 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
         bookingId: "bk1",
         refundAmountCents: 3000,
         bookingModificationId: "mod1",
+        // `INV-PAY-101`: an unpaid invoice corrected for the delta refunds nothing through Stripe; until the owner names a wording for a bare correction (#3536) it carries the bank-transfer one, never the card one.
+        refundMethod: "internet-banking",
       },
       {
         createdByMemberId: "m1",
