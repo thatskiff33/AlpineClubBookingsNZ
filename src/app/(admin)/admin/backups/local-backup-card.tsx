@@ -23,9 +23,9 @@ import {
   CONFIG_URL,
   RUN_URL,
   STATUS_URL,
-  readError,
   type BackupStatus,
 } from "@/app/(admin)/admin/backups/backups-client";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 /**
  * Local (on-host) database backups.
@@ -130,7 +130,7 @@ export function LocalBackupCard({
     },
     load: async () => {
       const res = await fetch(STATUS_URL, { cache: "no-store" });
-      if (!res.ok) throw new Error(await readError(res, "Could not load config."));
+      if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not load config."));
       const data = (await res.json()) as BackupStatus;
       return {
         localEnabled: data.localEnabled,
@@ -152,7 +152,7 @@ export function LocalBackupCard({
       });
       if (res.status === 403) throw new ForbiddenSaveError();
       if (!res.ok) {
-        throw new Error(await readError(res, "Could not save local backup settings."));
+        throw new Error(await apiErrorMessageFromResponse(res, "Could not save local backup settings."));
       }
       await onSaved();
       return { localEnabled: draft.localEnabled, localPath: draft.localPath };
@@ -194,7 +194,7 @@ export function LocalBackupCard({
     try {
       const res = await fetch(RUN_URL, { method: "POST" });
       if (!res.ok) {
-        setRunError(await readError(res, "Could not start the backup."));
+        setRunError(await apiErrorMessageFromResponse(res, "Could not start the backup."));
         return;
       }
       setRunMessage("Backup started. Progress appears under Status and Recent runs.");
@@ -217,7 +217,7 @@ export function LocalBackupCard({
         body: JSON.stringify({ filename: selectedFilename, confirm: "RESTORE" }),
       });
       if (!res.ok) {
-        setRestoreError(await readError(res, "The restore failed."));
+        setRestoreError(await apiErrorMessageFromResponse(res, "The restore failed."));
         return;
       }
       const data = (await res.json()) as {

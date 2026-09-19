@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 
 const mocks = vi.hoisted(() => ({
   updateMany: vi.fn(),
@@ -88,52 +89,29 @@ function archiveRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// #2506: a tiny in-memory evaluator for the subset of Prisma `where` predicates
-// `pruneExpiredAuditLogs` uses, so a prune test can assert WHICH rows actually
-// survive — not merely the query shape. Removing the archive gate then reddens a
-// test by showing an unarchived row genuinely deleted (the data loss the gate
-// exists to prevent).
+// #2506: the prune test asserts WHICH rows actually survive — not merely the
+// query shape — by applying the real `where` to an in-memory table through the
+// shared `matchesWhere` (#3434). Removing the archive gate then reddens a test
+// by showing an unarchived row genuinely deleted (the data loss the gate exists
+// to prevent).
+//
+// `severity` is REQUIRED on a fixture row, not optional as it once was. The
+// prune's unclassified branch is `NOT: { severity: "critical" }` and
+// `AuditLog.severity` is nullable: PostgreSQL evaluates `NOT (NULL = 'critical')`
+// to unknown and RETAINS a null-severity row, where the hand-rolled evaluator this
+// replaced (`value !== cond`) would have deleted it. The shared evaluator throws
+// on that negation rather than answer either way, so every row here names its
+// severity explicitly; whether the production predicate in `audit-retention.ts`
+// should prune a null-severity unclassified row is a question for that module and is filed as #3524,
+// not for this fixture.
 type PruneRow = {
   id: string;
   retentionClass: string | null;
-  severity?: string | null;
+  severity: string | null;
   createdAt: Date;
   expiresAt: Date | null;
   archivedAt: Date | null;
 };
-
-function matchScalarCond(cond: unknown, value: unknown): boolean {
-  if (cond === null) {
-    return value === null || value === undefined;
-  }
-  if (typeof cond === "object") {
-    const c = cond as Record<string, unknown>;
-    if ("in" in c) {
-      return (c.in as unknown[]).includes(value);
-    }
-    if ("lt" in c) {
-      return value != null && (value as Date) < (c.lt as Date);
-    }
-    if ("not" in c) {
-      return c.not === null ? value != null : value !== c.not;
-    }
-  }
-  return value === cond;
-}
-
-function matchWhere(where: Record<string, unknown>, row: PruneRow): boolean {
-  if (Array.isArray(where.OR)) {
-    return (where.OR as Record<string, unknown>[]).some((clause) =>
-      matchWhere(clause, row)
-    );
-  }
-  return Object.entries(where).every(([key, cond]) => {
-    if (key === "NOT") {
-      return !matchWhere(cond as Record<string, unknown>, row);
-    }
-    return matchScalarCond(cond, (row as Record<string, unknown>)[key]);
-  });
-}
 
 function makeFakeAuditDb(rows: PruneRow[]) {
   const state = [...rows];
@@ -143,7 +121,7 @@ function makeFakeAuditDb(rows: PruneRow[]) {
         updateMany: async () => ({ count: 0 }),
         findMany: async () => [],
         deleteMany: async ({ where }: { where: Record<string, unknown> }) => {
-          const doomed = state.filter((row) => matchWhere(where, row));
+          const doomed = state.filter((row) => matchesWhere(row, where));
           for (const row of doomed) {
             state.splice(state.indexOf(row), 1);
           }

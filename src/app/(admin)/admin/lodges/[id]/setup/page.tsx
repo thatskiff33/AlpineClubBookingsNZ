@@ -24,6 +24,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 // New-lodge setup wizard (ADR-003 follow-up, implementation-plan "Future
 // Enhancements"): a guided flow over the existing hub building blocks —
@@ -95,15 +96,6 @@ type CopyState =
   | { status: "idle" }
   | { status: "copying" }
   | { status: "done"; copied: number; failed: string[] };
-
-async function readError(res: Response, fallback: string): Promise<string> {
-  try {
-    const data = await res.json();
-    return data.error || fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 export default function LodgeSetupWizardPage() {
   const params = useParams<{ id: string }>();
@@ -249,7 +241,7 @@ export default function LodgeSetupWizardPage() {
         setError(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
-      if (!res.ok) throw new Error(await readError(res, "Failed to save lodge"));
+      if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Failed to save lodge"));
       const data = await res.json();
       setLodge(data.lodge);
       goNext();
@@ -278,7 +270,7 @@ export default function LodgeSetupWizardPage() {
         setError(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
-      if (!res.ok) throw new Error(await readError(res, "Failed to create rooms"));
+      if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Failed to create rooms"));
       const data = await res.json();
       setRoomsSeeded(
         `Created ${data.createdRoomCount} rooms with ${data.createdBedCount} beds.`,
@@ -309,7 +301,7 @@ export default function LodgeSetupWizardPage() {
         setError(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
-      if (!res.ok) throw new Error(await readError(res, "Failed to create lockers"));
+      if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Failed to create lockers"));
       const data = await res.json();
       setLockersSeeded(`Created ${data.createdCount} lockers.`);
     } catch (err) {
@@ -357,7 +349,7 @@ export default function LodgeSetupWizardPage() {
           copied += 1;
         } else {
           failed.push(
-            `${season.name}: ${await readError(createRes, "failed")}`,
+            `${season.name}: ${await apiErrorMessageFromResponse(createRes, "failed")}`,
           );
         }
       }
@@ -418,7 +410,7 @@ export default function LodgeSetupWizardPage() {
         if (createRes.ok) {
           copied += 1;
         } else {
-          failed.push(`${chore.name}: ${await readError(createRes, "failed")}`);
+          failed.push(`${chore.name}: ${await apiErrorMessageFromResponse(createRes, "failed")}`);
         }
       }
       setChoreCopy({ status: "done", copied, failed });

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 
 /**
  * #2674 — cancelling a policy-exception request must not be writable on a
@@ -81,41 +82,6 @@ function freshRow(deletedAt: Date | null): ChangeRequestRow {
   };
 }
 
-/**
- * Evaluate one `where` clause against the fixture row. Scalars compare by
- * equality; `booking` is Prisma's to-one relation filter, accepted in either the
- * shorthand (`{ deletedAt: null }`) or the explicit (`{ is: { deletedAt: null } }`)
- * spelling so the test pins the BEHAVIOUR rather than one syntax.
- */
-function matchesWhere(where: Record<string, unknown>): boolean {
-  for (const [key, expected] of Object.entries(where)) {
-    if (key === "booking") {
-      const filter = expected as Record<string, unknown>;
-      const inner = (
-        "is" in filter ? (filter.is as Record<string, unknown>) : filter
-      ) as { deletedAt?: unknown };
-      if (!("deletedAt" in inner)) {
-        throw new Error(
-          `Unsupported booking relation filter in the claim: ${JSON.stringify(expected)}`,
-        );
-      }
-      if (inner.deletedAt === null) {
-        if (row.booking.deletedAt !== null) return false;
-      } else if (
-        (row.booking.deletedAt?.getTime() ?? null) !==
-        ((inner.deletedAt as Date | null)?.getTime() ?? null)
-      ) {
-        return false;
-      }
-      continue;
-    }
-    if ((row as unknown as Record<string, unknown>)[key] !== expected) {
-      return false;
-    }
-  }
-  return true;
-}
-
 const updateManyCalls: { where: Record<string, unknown> }[] = [];
 
 function updateMany(args: {
@@ -123,7 +89,10 @@ function updateMany(args: {
   data: Record<string, unknown>;
 }) {
   updateManyCalls.push({ where: args.where });
-  if (!matchesWhere(args.where)) return Promise.resolve({ count: 0 });
+  // The shared evaluator (#3434) accepts `booking` in either the shorthand
+  // (`{ deletedAt: null }`) or the explicit (`{ is: { deletedAt: null } }`)
+  // spelling, so the test pins the BEHAVIOUR rather than one syntax.
+  if (!matchesWhere(row, args.where)) return Promise.resolve({ count: 0 });
   // The claim landed: apply it, exactly as the real statement would.
   row.status = args.data.status as string;
   row.openStateKey = args.data.openStateKey as string | null;

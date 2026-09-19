@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildMemberMergePreviewToken,
   executeMemberMerge,
+  MEMBER_SELF_RELATION_COLUMNS,
   MemberMergeError,
   type MemberMergePreviewCore,
 } from "@/lib/member-merge";
@@ -21,6 +22,7 @@ import {
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
   MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
 } from "@/lib/member-parent-partner-exclusivity";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 
 const MASTER_ID = "master-1";
 const LOSER_ID = "loser-1";
@@ -2230,52 +2232,21 @@ describe("family-link drift under the lock (#2437)", () => {
     return { memberDelegate, xeroObjectLink };
   }
 
-  /**
-   * A tiny predicate interpreter over an in-memory Member store, so the
-   * interleaving tests exercise the merge against QUERY SEMANTICS rather than
-   * canned per-call return values: step 1's value-conditional null, the
-   * id-bounded sweep and the step-5 re-reads all evaluate their real
-   * predicates against the same mutable rows, and a concurrent write injected
-   * mid-merge propagates — or is refused — exactly as it would in Postgres
-   * under READ COMMITTED. Supports the operators the merge actually issues:
-   * scalar equality, in / notIn / not, OR and AND.
-   */
-  function rowMatches(
-    row: Record<string, unknown>,
-    where: Record<string, unknown>,
-  ): boolean {
-    for (const [key, cond] of Object.entries(where)) {
-      if (cond === undefined) continue;
-      if (key === "OR") {
-        if (!(cond as Record<string, unknown>[]).some((c) => rowMatches(row, c))) {
-          return false;
-        }
-        continue;
-      }
-      if (key === "AND") {
-        const clauses = (Array.isArray(cond) ? cond : [cond]) as Record<string, unknown>[];
-        if (!clauses.every((c) => rowMatches(row, c))) return false;
-        continue;
-      }
-      const value = row[key] ?? null;
-      if (cond !== null && typeof cond === "object") {
-        const f = cond as { in?: unknown[]; notIn?: unknown[]; not?: unknown };
-        if (f.in !== undefined && !f.in.includes(value)) return false;
-        if (f.notIn !== undefined && f.notIn.includes(value)) return false;
-        if (f.not !== undefined && value === f.not) return false;
-        continue;
-      }
-      if (value !== cond) return false;
-    }
-    return true;
-  }
-
+  // The interleaving tests below run the merge against QUERY SEMANTICS rather
+  // than canned per-call return values: step 1's value-conditional null, the
+  // id-bounded sweep and the step-5 re-reads all evaluate their real predicates
+  // (through the shared `matchesWhere`, #3434) against the same mutable rows,
+  // so a concurrent write injected mid-merge propagates — or is refused —
+  // exactly as it would in Postgres under READ COMMITTED.
+  // Every self-relation column the merge sweeps is present on the row, derived
+  // from the same list the sweep reads, so a link column the fixture never
+  // carried cannot read as "no rows point here" by accident. Before #3434 the
+  // list here was hand-written and one column short (`inheritEmailChoiceId`);
+  // the shared evaluator throws on a column the row lacks, which is how the
+  // gap surfaced.
   function storeMember(id: string, overrides: Record<string, unknown> = {}) {
     return makeMember(id, {
-      parentMemberId: null,
-      secondaryParentId: null,
-      inheritEmailFromId: null,
-      detailsConfirmedByMemberId: null,
+      ...Object.fromEntries(MEMBER_SELF_RELATION_COLUMNS.map((column) => [column, null])),
       ...overrides,
     });
   }
@@ -2299,7 +2270,7 @@ describe("family-link drift under the lock (#2437)", () => {
         (args: { where?: Record<string, unknown>; take?: number } = {}) => {
           hooks.onFindMany?.(args);
           const rows = [...store.values()].filter((r) =>
-            rowMatches(r, args.where ?? {}),
+            matchesWhere(r, args.where ?? {}),
           );
           const limited =
             typeof args.take === "number" ? rows.slice(0, args.take) : rows;
@@ -2314,7 +2285,7 @@ describe("family-link drift under the lock (#2437)", () => {
         ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
           let count = 0;
           for (const row of store.values()) {
-            if (rowMatches(row, where)) {
+            if (matchesWhere(row, where)) {
               Object.assign(row, data);
               count += 1;
             }

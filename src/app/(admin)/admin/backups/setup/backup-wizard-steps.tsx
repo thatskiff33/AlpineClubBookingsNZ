@@ -17,19 +17,11 @@ import {
   MAX_BACKUP_RETENTION_DAYS,
 } from "@/lib/backup-config-shared";
 import type { BackupWizardContext } from "./use-backup-wizard-context";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 const CREDENTIALS_ENDPOINT = "/api/admin/integrations/credentials";
 const CONFIG_ENDPOINT = "/api/admin/backups/config";
 const RUN_ENDPOINT = "/api/admin/backups/run";
-
-async function readError(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 /** Human-readable size for the verified backup object (base-1024). */
 function formatBytes(bytes: number): string {
@@ -52,7 +44,7 @@ async function writeCredential(key: string, value: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider: "backup", key, value }),
   });
-  if (!res.ok) throw new Error(await readError(res, `Could not save ${key}.`));
+  if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, `Could not save ${key}.`));
 }
 
 /** Write non-secret backup configuration through the backups config route. */
@@ -64,7 +56,7 @@ async function writeConfig(payload: Record<string, unknown>): Promise<void> {
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    throw new Error(await readError(res, "Could not save the configuration."));
+    throw new Error(await apiErrorMessageFromResponse(res, "Could not save the configuration."));
   }
 }
 
@@ -555,7 +547,7 @@ export function VerificationStep({
         credentials: "same-origin",
       });
       if (!res.ok && res.status !== 202) {
-        setError(await readError(res, "Could not start a verification backup."));
+        setError(await apiErrorMessageFromResponse(res, "Could not start a verification backup."));
         return;
       }
       helpers.refresh();
