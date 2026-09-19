@@ -145,7 +145,7 @@ describe("matchesWhere — relations", () => {
     );
   });
 
-  it("evaluates a compound-unique key as its columns", () => {
+  it("evaluates a compound-unique key as its columns, and only that shape", () => {
     const row = { memberId: "m-1", seasonYear: 2026, status: "PAID" };
     expect(
       matchesWhere(row, { memberId_seasonYear: { memberId: "m-1", seasonYear: 2026 } }),
@@ -153,6 +153,16 @@ describe("matchesWhere — relations", () => {
     expect(
       matchesWhere(row, { memberId_seasonYear: { memberId: "m-1", seasonYear: 2025 } }),
     ).toBe(false);
+    // A nested key that is not one of the parts is not this shape.
+    expect(() =>
+      matchesWhere(row, { memberId_seasonYear: { memberId: "m-1", status: "PAID" } }),
+    ).toThrow(/"memberId_seasonYear"/);
+    // A relation the fixture never carried must not be re-read against the
+    // row's own columns: `member: { id }` here is neither `false` (m-1 is the
+    // member's id) nor `true` (b-1 is the booking's own id) — it is an error.
+    const bare = { id: "b-1", memberId: "m-1" };
+    expect(() => matchesWhere(bare, { member: { id: "m-1" } })).toThrow(/"member"/);
+    expect(() => matchesWhere(bare, { member: { id: "b-1" } })).toThrow(/"member"/);
   });
 
   it("lets a store resolve relations through foreign keys and check nested rows its own way", () => {
@@ -229,6 +239,42 @@ describe("matchesWhere — refuses what it does not model", () => {
     );
     expect(() => matchesWhere(booking(), { member: { some: {} } })).toThrow(/to-many/);
     expect(() => matchesWhere(booking(), { guests: { is: {} } })).toThrow(/to-one/);
+  });
+
+  it("throws on a negation over a NULL column, where PostgreSQL excludes and two-valued logic includes", () => {
+    const row = booking({ deletedAt: null, notes: null });
+    expect(() => matchesWhere(row, { deletedAt: { not: JULY } })).toThrow(
+      /`not` on deletedAt met a NULL column/,
+    );
+    expect(() => matchesWhere(row, { deletedAt: { notIn: [JULY] } })).toThrow(
+      /`notIn` on deletedAt met a NULL column/,
+    );
+    expect(() => matchesWhere(row, { notes: { not: { in: ["x"] } } })).toThrow(
+      /`not` on notes met a NULL column/,
+    );
+    expect(() => matchesWhere(row, { NOT: { deletedAt: JULY } })).toThrow(
+      /`NOT` on deletedAt met a NULL column/,
+    );
+    expect(() => matchesWhere(row, { NOT: { notes: { contains: "x" } } })).toThrow(
+      /`NOT` on notes met a NULL column/,
+    );
+    expect(() => matchesWhere(row, { NOT: [{ status: "PAID" }, { deletedAt: { lt: JULY } }] })).toThrow(
+      /`NOT` on deletedAt met a NULL column/,
+    );
+    expect(() => matchesWhere(row, { NOT: { AND: [{ deletedAt: { in: [JULY] } }] } })).toThrow(
+      /`NOT` on deletedAt met a NULL column/,
+    );
+    // IS NULL / IS NOT NULL are two-valued in SQL and stay ordinary.
+    expect(matchesWhere(row, { NOT: { deletedAt: null } })).toBe(false);
+    expect(matchesWhere(booking({ deletedAt: JULY }), { NOT: { deletedAt: null } })).toBe(true);
+    expect(matchesWhere(row, { deletedAt: { not: null } })).toBe(false);
+    // A negation over a non-null value is ordinary.
+    expect(matchesWhere(row, { NOT: { status: "PAID" } })).toBe(true);
+    expect(matchesWhere(row, { status: { not: "PAID" } })).toBe(true);
+    // A relation under NOT is NOT EXISTS, a subquery of its own: the related
+    // rows are evaluated un-negated, so a null guest column is an ordinary miss.
+    expect(matchesWhere(row, { NOT: { guests: { some: { memberId: "m-9" } } } })).toBe(true);
+    expect(matchesWhere(row, { guests: { none: { memberId: "m-9" } } })).toBe(true);
   });
 
   it("names the caller when a label is given", () => {

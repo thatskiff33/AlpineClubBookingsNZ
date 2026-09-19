@@ -23,16 +23,29 @@
  *   evaluated as the nested conditions on the same row;
  * - a condition of `undefined`, which Prisma drops and so does this.
  *
- * Comparisons follow SQL: a NULL column never satisfies `lt`/`lte`/`gt`/`gte`,
- * `startsWith` or `contains`, so `{ checkOut: { gt: d } }` on a row whose
- * `checkOut` is null is false rather than a coerced-number accident.
+ * NULL is where a two-valued evaluator and PostgreSQL part company, and this
+ * one follows PostgreSQL as far as it can and throws where it cannot. A NULL
+ * column never satisfies a positive comparison — a literal, `equals`, `in`,
+ * `lt`/`lte`/`gt`/`gte`, `startsWith`, `contains` — so `{ checkOut: { gt: d } }`
+ * on a null `checkOut` is false, as SQL's unknown is excluded at the top of a
+ * `WHERE`. Under a NEGATION that unknown is still excluded by PostgreSQL, but a
+ * two-valued `!false` would include the row; so `not` / `notIn` with a non-null
+ * operand, and any comparison inside a logical `NOT`, THROW when they meet a
+ * NULL column rather than answer either way. `null` / `not: null` (IS NULL / IS
+ * NOT NULL) and the relation negations `isNot` / `none` (NOT EXISTS) are
+ * two-valued in SQL too and stay ordinary.
  *
- * WHAT IT REFUSES, LOUDLY. Anything else THROWS, naming the operator and the
- * column: a filter operator it does not implement (`mode`, `every`, `has`, …),
- * a column the row does not carry, a relation filter on a scalar value. A fake
+ * WHAT IT REFUSES, LOUDLY. It THROWS, naming the operator and the column, on: a
+ * filter operator it does not implement (`mode`, `every`, `has`, …), a column
+ * the row does not carry, a relation filter on a scalar value, a compound-unique
+ * key whose parts are not all columns, and the negations over NULL above. A fake
  * row that omits a column the production query filters on is the exact
  * vacuous-pass hazard this helper exists to remove, so it is an error, not a
- * NULL. That guard is mutation-verified by the unit test.
+ * NULL. Those guards are mutation-verified by the unit test. The one shape it
+ * cannot refuse: a misspelt operator that is NOT one of Prisma's, on a scalar
+ * column whose value is NULL, reads as the to-one shorthand on an absent
+ * relation and answers false — the operators Prisma does have are named in
+ * `UNMODELLED_OPERATORS` so that at least those throw there too.
  *
  * Relations live on the row by default (`row.guests` is the list `guests: { some }`
  * inspects). A store that resolves relations through foreign keys instead — the
@@ -143,38 +156,74 @@ function toList(condition: unknown): WhereInput[] {
   return (Array.isArray(condition) ? condition : [condition]) as WhereInput[];
 }
 
-/** One scalar column against one condition: a literal, `null`, or a filter object. */
+function nullUnderNegation(label: string, operator: string, at: string): never {
+  throw new Error(
+    `${label}: \`${operator}\` on ${at} met a NULL column. PostgreSQL evaluates a ` +
+      "negated comparison over NULL to unknown and EXCLUDES the row, where a " +
+      "two-valued evaluator would include it; give the fixture row an explicit " +
+      "value, or compare with `null` / `not: null` (IS NULL / IS NOT NULL), which " +
+      "are two-valued in SQL too.",
+  );
+}
+
+/**
+ * One scalar column against one condition: a literal, `null`, or a filter
+ * object. `negated` is true inside a logical `NOT`, where a comparison over a
+ * NULL column has no two-valued answer and throws instead.
+ */
 function matchesScalar(
   actual: unknown,
   condition: unknown,
   at: string,
   label: string,
+  negated: boolean,
 ): boolean {
   if (condition === null) return isNull(actual);
-  if (condition instanceof Date) return comparable(actual) === condition.getTime();
-  if (!isPlainObject(condition)) return actual === condition;
+  if (!isPlainObject(condition)) {
+    if (isNull(actual)) {
+      if (negated) nullUnderNegation(label, "NOT", at);
+      return false;
+    }
+    if (condition instanceof Date) return comparable(actual) === condition.getTime();
+    return actual === condition;
+  }
   for (const [operator, operand] of Object.entries(condition)) {
     if (operand === undefined) continue;
     switch (operator) {
       case "equals":
-        if (!matchesScalar(actual, operand, at, label)) return false;
+        if (!matchesScalar(actual, operand, at, label, negated)) return false;
         break;
       case "not":
-        if (matchesScalar(actual, operand, at, label)) return false;
+        if (operand === null) {
+          if (isNull(actual)) return false;
+          break;
+        }
+        if (isNull(actual)) nullUnderNegation(label, "not", at);
+        if (matchesScalar(actual, operand, at, label, true)) return false;
         break;
       case "in":
-        if (!(operand as unknown[]).some((v) => matchesScalar(actual, v, at, label)))
+        if (isNull(actual)) {
+          if (negated) nullUnderNegation(label, "NOT", at);
+          return false;
+        }
+        if (
+          !(operand as unknown[]).some((v) => matchesScalar(actual, v, at, label, negated))
+        )
           return false;
         break;
       case "notIn":
-        if ((operand as unknown[]).some((v) => matchesScalar(actual, v, at, label)))
+        if (isNull(actual)) nullUnderNegation(label, "notIn", at);
+        if ((operand as unknown[]).some((v) => matchesScalar(actual, v, at, label, true)))
           return false;
         break;
       case "lt":
       case "lte":
       case "gt":
       case "gte": {
-        if (isNull(actual)) return false;
+        if (isNull(actual)) {
+          if (negated) nullUnderNegation(label, "NOT", at);
+          return false;
+        }
         const left = comparable(actual) as number;
         const right = comparable(operand) as number;
         const holds =
@@ -189,13 +238,19 @@ function matchesScalar(
         break;
       }
       case "startsWith":
-        if (typeof actual !== "string" || !actual.startsWith(operand as string))
+      case "contains": {
+        if (isNull(actual)) {
+          if (negated) nullUnderNegation(label, "NOT", at);
           return false;
+        }
+        if (typeof actual !== "string") return false;
+        const holds =
+          operator === "startsWith"
+            ? actual.startsWith(operand as string)
+            : actual.includes(operand as string);
+        if (!holds) return false;
         break;
-      case "contains":
-        if (typeof actual !== "string" || !actual.includes(operand as string))
-          return false;
-        break;
+      }
       default:
         unsupported(label, `filter operator "${operator}" on ${at}`);
     }
@@ -212,9 +267,11 @@ function matchesRelation(
   options: MatchesWhereOptions,
 ): boolean {
   const related = lookup.related;
+  // A nested where runs as its own subquery: NOT EXISTS is two-valued, so the
+  // related rows are evaluated un-negated whatever surrounds the relation.
   const nested =
     lookup.matches ??
-    ((relatedRow: WhereRow, where: WhereInput) => matchesWhere(relatedRow, where, options));
+    ((relatedRow: WhereRow, where: WhereInput) => evaluate(relatedRow, where, options, false));
   const toOne = (): WhereRow | null => {
     if (isNull(related)) return null;
     if (!isPlainObject(related)) {
@@ -290,24 +347,32 @@ export function matchesWhere(
   where: WhereInput | undefined | null,
   options: MatchesWhereOptions = {},
 ): boolean {
+  return evaluate(row as WhereRow, where, options, false);
+}
+
+function evaluate(
+  record: WhereRow,
+  where: WhereInput | undefined | null,
+  options: MatchesWhereOptions,
+  negated: boolean,
+): boolean {
   if (where === undefined || where === null) return true;
   const label = options.label ?? "prisma-where test evaluator";
-  const record = row as WhereRow;
   const hasColumn = options.column ?? ((r: WhereRow, key: string) => key in r);
   for (const [key, condition] of Object.entries(where)) {
     if (condition === undefined) continue;
     if (key === "AND") {
-      if (!toList(condition).every((clause) => matchesWhere(record, clause, options)))
+      if (!toList(condition).every((clause) => evaluate(record, clause, options, negated)))
         return false;
       continue;
     }
     if (key === "OR") {
-      if (!toList(condition).some((clause) => matchesWhere(record, clause, options)))
+      if (!toList(condition).some((clause) => evaluate(record, clause, options, negated)))
         return false;
       continue;
     }
     if (key === "NOT") {
-      if (toList(condition).some((clause) => matchesWhere(record, clause, options)))
+      if (toList(condition).some((clause) => evaluate(record, clause, options, true)))
         return false;
       continue;
     }
@@ -340,17 +405,23 @@ export function matchesWhere(
           continue;
         }
       }
-      if (!matchesScalar(value, condition, key, label)) return false;
+      if (!matchesScalar(value, condition, key, label, negated)) return false;
       continue;
     }
-    // A compound-unique key names its columns joined by `_`, and its value is
-    // those columns' conditions.
+    // A compound-unique key names its columns joined by `_`
+    // (`memberId_seasonYear`), and its value is conditions on THOSE columns
+    // only. Anything looser — say `member: { id }` on a row that never carried
+    // its `member` relation — must not be re-read against the row's own
+    // columns, which is how an absent relation would answer vacuously.
+    const parts = key.split("_");
     if (
+      parts.length > 1 &&
       isPlainObject(condition) &&
+      parts.every((part) => hasColumn(record, part)) &&
       Object.keys(condition).length > 0 &&
-      Object.keys(condition).every((part) => hasColumn(record, part))
+      Object.keys(condition).every((nestedKey) => parts.includes(nestedKey))
     ) {
-      if (!matchesWhere(record, condition, options)) return false;
+      if (!evaluate(record, condition, options, negated)) return false;
       continue;
     }
     unsupported(
