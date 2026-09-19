@@ -116,10 +116,7 @@ const settingFields: Array<{
 // explanations onto it — every rule the server enforces already carries a
 // plain-English message.
 export function templateErrorMessage(responseBody: unknown, fallback: string): string {
-  const body = responseBody as
-    | { issues?: Array<{ message?: string }> }
-    | null
-    | undefined;
+  const body = responseBody as { issues?: Array<{ message?: string }> } | null | undefined;
   const headline = apiErrorMessageFromBody(body, fallback);
   const details = Array.isArray(body?.issues)
     ? Array.from(
