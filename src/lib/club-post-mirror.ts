@@ -140,7 +140,12 @@ async function upsertMirror(post: SyncPost): Promise<MirrorUpsertOutcome> {
       originClubName: true,
       content: true,
       bodyHtml: true,
-      images: { select: { publicId: true, storageKey: true, sha256: true } },
+      // In position order, because sameness below is judged image-by-image
+      // against the server's list, which is positional.
+      images: {
+        select: { publicId: true, storageKey: true, sha256: true },
+        orderBy: { position: "asc" },
+      },
     },
   });
 
@@ -410,11 +415,17 @@ export async function ensurePushRegistration(): Promise<void> {
  * everything from that instant on, which is the whole of the window.
  *
  * ONLY THE FIRST PAGE. Later pages in the same pass continue from the cursor
- * the server just returned, which is a position inside this pass's own read
- * and not a watermark left by an earlier one. Stepping every page back would
- * re-fetch the tail of each page on the next, and a page whose two hundred
- * changes all fall inside one window would be re-served identically until the
- * page cap — a pass that never progresses.
+ * the server just returned, VERBATIM — a position inside this pass's own
+ * read, not a watermark left by an earlier one. Stepping every page back
+ * would re-fetch the tail of each page on the next, and a page whose two
+ * hundred changes all fall inside one window would be re-served identically
+ * until the page cap — a pass that never progresses. And the in-pass request
+ * position is NOT the guarded durable one: when the window holds more than
+ * one page, the server's next cursor sits INSIDE the window, earlier than the
+ * stored position, and the never-backwards guard refuses to persist it.
+ * Requesting from the guarded value instead would re-ask from the stored
+ * position and step over the rest of the window — every pass, so permanently;
+ * the defect this exists to close, re-created one page in.
  */
 function overlappedMirrorCursor(
   since: string | null | undefined,
@@ -475,7 +486,7 @@ export async function runMirrorSync(
   try {
     await ensurePushRegistration();
 
-    let cursor = await prisma.serverNzSettings.findUnique({
+    const cursor = await prisma.serverNzSettings.findUnique({
       where: { id: "default" },
       select: {
         commsCursorSince: true,
@@ -486,13 +497,19 @@ export async function runMirrorSync(
     });
     let poisonId = cursor?.commsPoisonChangeId ?? null;
     let poisonCount = cursor?.commsPoisonCount ?? 0;
+    // TWO POSITIONS, kept apart on purpose (#3449). `durable` is what the row
+    // holds and only ever moves forward. `request` is where the NEXT page asks
+    // from: the overlapped position first, then whatever the server returned,
+    // verbatim, even when that is earlier than `durable` — see
+    // `overlappedMirrorCursor` for why conflating them re-creates the skip.
+    let durable = {
+      since: cursor?.commsCursorSince ?? null,
+      sinceId: cursor?.commsCursorSinceId ?? null,
+    };
+    let request = overlappedMirrorCursor(durable.since, durable.sinceId);
 
     for (let page = 0; page < MAX_PAGES_PER_PASS; page++) {
-      const envelope = await pullSharedPostSync(
-        page === 0
-          ? overlappedMirrorCursor(cursor?.commsCursorSince, cursor?.commsCursorSinceId)
-          : { since: cursor?.commsCursorSince, sinceId: cursor?.commsCursorSinceId },
-      );
+      const envelope = await pullSharedPostSync(request);
       result.pages += 1;
 
       for (const change of envelope.changes) {
@@ -563,27 +580,13 @@ export async function runMirrorSync(
       // kept whole: the server's `sinceId` belongs with the server's `since`,
       // so a refused step keeps BOTH stored halves.
       if (envelope.cursor) {
-        const since = advancedDownloadCursor(
-          cursor?.commsCursorSince ?? null,
-          envelope.cursor.since,
-        );
-        const next =
-          since === envelope.cursor.since
-            ? envelope.cursor
-            : {
-                since: cursor?.commsCursorSince ?? null,
-                sinceId: cursor?.commsCursorSinceId ?? null,
-              };
+        const since = advancedDownloadCursor(durable.since, envelope.cursor.since);
+        if (since === envelope.cursor.since) durable = envelope.cursor;
         await prisma.serverNzSettings.update({
           where: { id: "default" },
-          data: { commsCursorSince: next.since, commsCursorSinceId: next.sinceId },
+          data: { commsCursorSince: durable.since, commsCursorSinceId: durable.sinceId },
         });
-        cursor = {
-          commsCursorSince: next.since,
-          commsCursorSinceId: next.sinceId,
-          commsPoisonChangeId: poisonId,
-          commsPoisonCount: poisonCount,
-        };
+        request = envelope.cursor;
       }
 
       if (!envelope.hasMore) break;

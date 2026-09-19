@@ -561,6 +561,79 @@ describe("runMirrorSync cursor overlap", () => {
     expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2026/07/duplicate.webp");
   });
 
+  it("reads the existing pictures in position order, so a many-picture repeat compares unchanged", async () => {
+    // Sameness is judged image-by-image against the server's list, which is
+    // positional. Without an order on the read, Postgres returns the rows in
+    // whatever order it likes, and an identical two-picture post can compare
+    // "updated" — re-downloading and re-writing its files every pass inside
+    // the window. The order is pinned on the query, and a two-picture repeat
+    // is proved unchanged end to end.
+    storedPosition();
+    const second = "b".repeat(32);
+    mocks.pullSharedPostSync.mockResolvedValue(
+      envelope([
+        visiblePost({
+          bodyHtml:
+            `<p>Road</p><img src="/api/images/posts/${SERVER_IMAGE}.webp" alt="">` +
+            `<img src="/api/images/posts/${second}.webp" alt="">`,
+          images: [
+            { url: `/api/images/posts/${SERVER_IMAGE}.webp` },
+            { url: `/api/images/posts/${second}.webp` },
+          ],
+          updatedAt: "2026-06-30T00:59:30.000Z",
+        }),
+      ]),
+    );
+    mocks.fetchSharedPostImage.mockResolvedValue(new Uint8Array([1]));
+    const stored = (publicId: string, storageKey: string, sha: string) => ({
+      publicId,
+      storageKey,
+      mimeType: "image/webp",
+      sha256: sha,
+      width: 100,
+      height: 80,
+      bytes: 1,
+    });
+    mocks.writePostImage
+      .mockResolvedValueOnce(stored("1".repeat(32), "posts/2026/06/one.webp", "a".repeat(64)))
+      .mockResolvedValueOnce(stored("2".repeat(32), "posts/2026/06/two.webp", "b".repeat(64)));
+    const first = await runMirrorSync(NOW);
+    expect(first.upserted).toBe(1);
+    const created = mocks.postCreate.mock.calls[0][0].data;
+
+    mocks.writePostImage
+      .mockResolvedValueOnce(stored("3".repeat(32), "posts/2026/07/one-again.webp", "a".repeat(64)))
+      .mockResolvedValueOnce(stored("4".repeat(32), "posts/2026/07/two-again.webp", "b".repeat(64)));
+    mocks.postFindUnique.mockResolvedValue(
+      mirroredCopy({
+        bodyHtml: created.bodyHtml,
+        images: [
+          { publicId: "1".repeat(32), storageKey: "posts/2026/06/one.webp", sha256: "a".repeat(64) },
+          { publicId: "2".repeat(32), storageKey: "posts/2026/06/two.webp", sha256: "b".repeat(64) },
+        ],
+      }),
+    );
+
+    const again = await runMirrorSync(NOW);
+
+    expect(again.unchanged).toBe(1);
+    expect(again.upserted).toBe(0);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.deletePostImage.mock.calls.map(([key]) => key)).toEqual([
+      "posts/2026/07/one-again.webp",
+      "posts/2026/07/two-again.webp",
+    ]);
+    // The order the comparison depends on is asked of the database, not
+    // assumed of it.
+    expect(mocks.postFindUnique).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          images: expect.objectContaining({ orderBy: { position: "asc" } }),
+        }),
+      }),
+    );
+  });
+
   it("still applies a re-delivered post whose words changed, and counts it", async () => {
     // The counterweight: idempotent on a repeat must not become blind to an
     // edit that happens to land inside the window.
@@ -610,6 +683,29 @@ describe("runMirrorSync cursor overlap", () => {
     await expect(runMirrorSync(NOW)).rejects.toThrow("write failed");
 
     expect(cursorWrites()).toEqual([]);
+  });
+
+  it("keeps the first page's position when the second page fails, and writes no later one", async () => {
+    // A multi-page pass persists after EACH applied page, so a failure on page
+    // two keeps page one — nothing applied is lost, nothing unapplied is
+    // stepped past. What must not happen is a write for the failed page.
+    storedPosition();
+    const pageOne = { since: "2026-06-30T01:30:00.000Z", sinceId: "srv-5" };
+    mocks.pullSharedPostSync
+      .mockResolvedValueOnce({ changes: [visiblePost()], cursor: pageOne, hasMore: true })
+      .mockResolvedValueOnce(
+        envelope([visiblePost({ id: "srv-2" })], {
+          since: "2026-06-30T02:00:00.000Z",
+          sinceId: "srv-9",
+        }),
+      );
+    mocks.postCreate.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error("write failed"));
+
+    await expect(runMirrorSync(NOW)).rejects.toThrow("write failed");
+
+    expect(cursorWrites()).toEqual([
+      { commsCursorSince: pageOne.since, commsCursorSinceId: pageOne.sinceId },
+    ]);
   });
 
   it("never lets the durable position rewind when the server echoes the overlapped request", async () => {
@@ -663,6 +759,55 @@ describe("runMirrorSync cursor overlap", () => {
       sinceId: null,
     });
     expect(mocks.pullSharedPostSync).toHaveBeenNthCalledWith(2, pageOne);
+  });
+
+  it("keeps asking from the server's cursor when the window itself spans more than one page", async () => {
+    // Review probe (#3449). Page 1 asks from T-60s; when the window holds more
+    // than a page the server's next cursor is INSIDE it — earlier than the
+    // stored position — and the never-backwards guard rightly refuses to
+    // PERSIST it. Requesting page 2 from the guarded value would re-ask from
+    // the stored position and step over the rest of the window, every pass:
+    // the original defect re-created one page in. The request position is the
+    // server's cursor verbatim; only the durable write is guarded.
+    storedPosition();
+    const insideWindow = { since: "2026-06-30T00:59:20.000Z", sinceId: "srv-Y" };
+    mocks.pullSharedPostSync
+      .mockResolvedValueOnce({ changes: [], cursor: insideWindow, hasMore: true })
+      .mockResolvedValueOnce(
+        envelope([], { since: "2026-06-30T01:00:00.000Z", sinceId: "srv-1" }),
+      );
+
+    await runMirrorSync(NOW);
+
+    expect(mocks.pullSharedPostSync).toHaveBeenNthCalledWith(2, insideWindow);
+    // Persisted: never the inside-window cursor, only the stored pair and then
+    // the server's final answer.
+    expect(cursorWrites()).toEqual([
+      { commsCursorSince: STORED.since, commsCursorSinceId: STORED.sinceId },
+      { commsCursorSince: STORED.since, commsCursorSinceId: STORED.sinceId },
+    ]);
+  });
+
+  it("applies a late-committed post that sits on the second page of the window", async () => {
+    storedPosition();
+    mocks.pullSharedPostSync
+      .mockResolvedValueOnce({
+        changes: [],
+        cursor: { since: "2026-06-30T00:59:20.000Z", sinceId: "srv-Y" },
+        hasMore: true,
+      })
+      .mockResolvedValueOnce(
+        envelope(
+          [visiblePost({ id: "srv-late", updatedAt: "2026-06-30T00:59:30.000Z" })],
+          { since: "2026-06-30T01:00:00.000Z", sinceId: "srv-1" },
+        ),
+      );
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.pages).toBe(2);
+    expect(result.upserted).toBe(1);
+    expect(mocks.postCreate.mock.calls[0][0].data.serverPostId).toBe("srv-late");
   });
 
   it("passes an opaque position through untouched and says the overlap is not applied", async () => {
