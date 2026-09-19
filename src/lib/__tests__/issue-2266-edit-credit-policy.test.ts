@@ -309,7 +309,6 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
           adminReviewedById: null,
           adminReviewedAt: null,
           parkForReview: true,
-          releaseFromReview: false,
         } as never,
       },
     );
@@ -349,7 +348,6 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
           adminReviewedById: null,
           adminReviewedAt: null,
           parkForReview: true,
-          releaseFromReview: false,
         } as never,
       },
     );

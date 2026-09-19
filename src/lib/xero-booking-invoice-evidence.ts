@@ -83,7 +83,10 @@ type PaymentInvoiceFields = {
 
 type BookingInvoiceEvidenceDb = {
   payment: { findUnique(args: unknown): Promise<unknown> };
-  xeroObjectLink: { findFirst(args: unknown): Promise<unknown> };
+  xeroObjectLink: {
+    findFirst(args: unknown): Promise<unknown>;
+    findMany(args: unknown): Promise<unknown>;
+  };
 };
 
 export interface BookingInvoiceEvidenceDependencies {
@@ -138,6 +141,63 @@ export async function readBookingInvoiceEvidence(
     exists: Boolean(link),
     invoiceNumber: link?.xeroObjectNumber ?? null,
   };
+}
+
+/**
+ * The same evidence for MANY payments the caller has already loaded — the shape
+ * the club-wide "paid bookings missing invoices" list has (#3467).
+ *
+ * It is the set form of {@link readBookingInvoiceEvidence}, not a third rule:
+ * the payment field settles a payment on its own, and the active
+ * `PRIMARY_INVOICE` link is asked for — in ONE query — only for the payments
+ * the field leaves open. A list of several hundred paid bookings therefore
+ * costs one round trip rather than one per booking, which is the only reason
+ * this exists beside the per-payment reader.
+ *
+ * Every payment handed in gets an entry, so a caller can never mistake "not
+ * looked up" for "no evidence".
+ */
+export async function readBookingInvoiceEvidenceForPayments(
+  payments: readonly PaymentInvoiceFields[],
+  input?: { deps?: Partial<BookingInvoiceEvidenceDependencies> },
+): Promise<Map<string, BookingInvoiceEvidence>> {
+  const deps = { ...defaultDependencies, ...input?.deps };
+  const evidence = new Map<string, BookingInvoiceEvidence>();
+  const unsettled: string[] = [];
+
+  for (const payment of payments) {
+    if (payment.xeroInvoiceId) {
+      evidence.set(payment.id, {
+        exists: true,
+        invoiceNumber: payment.xeroInvoiceNumber ?? null,
+      });
+    } else {
+      evidence.set(payment.id, { exists: false, invoiceNumber: null });
+      unsettled.push(payment.id);
+    }
+  }
+
+  if (unsettled.length === 0) return evidence;
+
+  const links = (await deps.db.xeroObjectLink.findMany({
+    where: {
+      localModel: "Payment",
+      localId: { in: unsettled },
+      xeroObjectType: "INVOICE",
+      role: "PRIMARY_INVOICE",
+      active: true,
+    },
+    select: { localId: true, xeroObjectNumber: true },
+  })) as Array<{ localId: string; xeroObjectNumber: string | null }>;
+
+  for (const link of links) {
+    evidence.set(link.localId, {
+      exists: true,
+      invoiceNumber: link.xeroObjectNumber ?? null,
+    });
+  }
+
+  return evidence;
 }
 
 /**

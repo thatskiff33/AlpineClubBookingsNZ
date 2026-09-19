@@ -1,6 +1,5 @@
 import {
   AdminReviewStatus,
-  BookingStatus,
   type AgeTier,
   type Prisma,
 } from "@prisma/client";
@@ -193,7 +192,6 @@ type RemovalReviewUpdate = {
   adminReviewedById: string | null;
   adminReviewedAt: Date | null;
   parkForReview: boolean;
-  releaseFromReview: boolean;
 };
 
 /**
@@ -227,7 +225,13 @@ function resolveRemovalReviewUpdate({
 }): RemovalReviewUpdate {
   if (!nowFlagged) {
     // Rule cleared (or never tripped): wipe review state so the booking
-    // returns to the normal lifecycle; release a parked booking.
+    // returns to the normal lifecycle, in place — the status is untouched. A
+    // self-removal CAN reach an AWAITING_REVIEW booking (it is in
+    // `SELF_REMOVABLE_GUEST_BOOKING_STATUSES`), but it can never clear the
+    // review there: a no-adult park is all-minor, so any surviving subset
+    // stays flagged, and a request hold is refused first by
+    // `assertBookingNotQuotePriced`. Only the officer review route releases
+    // AWAITING_REVIEW (#3500, `INV-MOD-013`).
     return {
       requiresAdminReview: false,
       adminReviewReason: null,
@@ -237,7 +241,6 @@ function resolveRemovalReviewUpdate({
       adminReviewedById: null,
       adminReviewedAt: null,
       parkForReview: false,
-      releaseFromReview: booking.status === BookingStatus.AWAITING_REVIEW,
     };
   }
 
@@ -253,7 +256,6 @@ function resolveRemovalReviewUpdate({
       adminReviewedById: booking.adminReviewedById,
       adminReviewedAt: booking.adminReviewedAt,
       parkForReview: booking.adminReviewStatus === AdminReviewStatus.PENDING,
-      releaseFromReview: false,
     };
   }
 
@@ -269,7 +271,6 @@ function resolveRemovalReviewUpdate({
       adminReviewedById: actorMemberId,
       adminReviewedAt: new Date(),
       parkForReview: false,
-      releaseFromReview: false,
     };
   }
 
@@ -282,7 +283,6 @@ function resolveRemovalReviewUpdate({
     adminReviewedById: null,
     adminReviewedAt: null,
     parkForReview: true,
-    releaseFromReview: false,
   };
 }
 

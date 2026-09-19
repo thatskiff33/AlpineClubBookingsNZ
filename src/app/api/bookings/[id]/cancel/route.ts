@@ -126,6 +126,11 @@ export async function POST(
         // through the same route is exempted inside the service; every
         // internal/admin caller leaves this false.
         enforceStartedStayBlock: true,
+        // #3497: the same surface is the member-facing cancel DOOR, so refuse the
+        // statuses a member may not cancel from (a booking under club review),
+        // before the service's wider set admits it. Internal and officer callers
+        // leave this false.
+        enforceMemberCancelDoor: true,
       }
     );
 

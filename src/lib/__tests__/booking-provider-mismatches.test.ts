@@ -43,7 +43,7 @@ function bookingRecord(overrides: Record<string, unknown> = {}) {
 
 function makeDeps(overrides: {
   booking?: Record<string, unknown> | null;
-  succeededInvoiceOps?: number;
+  invoiceExists?: boolean;
   modules?: Record<string, unknown>;
   needsOperatorAction?: boolean;
   /**
@@ -68,10 +68,12 @@ function makeDeps(overrides: {
   return {
     db: {
       booking: { findUnique: vi.fn().mockResolvedValue(booking) },
-      xeroSyncOperation: {
-        count: vi.fn().mockResolvedValue(overrides.succeededInvoiceOps ?? 1),
-      },
     },
+    // #3467: the row reads the one invoice-evidence rule, not an operation count.
+    readBookingInvoiceEvidence: vi.fn().mockResolvedValue({
+      exists: overrides.invoiceExists ?? true,
+      invoiceNumber: null,
+    }),
     loadEffectiveModuleFlags: vi
       .fn()
       .mockResolvedValue({ ...baseModules, ...overrides.modules }),
@@ -83,8 +85,8 @@ function makeDeps(overrides: {
 }
 
 describe("getBookingProviderMismatches", () => {
-  it("flags a paid booking with no succeeded Xero invoice operation", async () => {
-    const deps = makeDeps({ succeededInvoiceOps: 0 });
+  it("flags a paid booking whose records hold no Xero invoice", async () => {
+    const deps = makeDeps({ invoiceExists: false });
 
     const mismatches = await getBookingProviderMismatches("booking-1", { deps });
 
@@ -94,8 +96,8 @@ describe("getBookingProviderMismatches", () => {
     expect(mismatches[0].href).toBe("/admin/xero/records/Payment/payment-1");
   });
 
-  it("stays quiet for a paid booking with completed invoice evidence", async () => {
-    const deps = makeDeps({ succeededInvoiceOps: 1 });
+  it("stays quiet for a paid booking with invoice evidence", async () => {
+    const deps = makeDeps({ invoiceExists: true });
 
     const mismatches = await getBookingProviderMismatches("booking-1", { deps });
 
@@ -177,7 +179,7 @@ describe("getBookingProviderMismatches", () => {
 
   it("suppresses Xero mismatches when the module is disabled", async () => {
     const deps = makeDeps({
-      succeededInvoiceOps: 0,
+      invoiceExists: false,
       modules: { xeroIntegration: false },
     });
 
@@ -189,7 +191,7 @@ describe("getBookingProviderMismatches", () => {
   it("returns nothing for deleted or missing bookings", async () => {
     const deletedDeps = makeDeps({
       booking: { deletedAt: new Date("2026-07-01T00:00:00.000Z") },
-      succeededInvoiceOps: 0,
+      invoiceExists: false,
     });
     const missingDeps = makeDeps({ booking: null });
 
@@ -250,7 +252,7 @@ describe("the money-waiting-for-review warning (#3033)", () => {
     hasOpenFinancialReview.mockResolvedValue(true);
 
     const mismatches = await getBookingProviderMismatches("booking-1", {
-      deps: makeDeps({ succeededInvoiceOps: 1 }),
+      deps: makeDeps({ invoiceExists: true }),
     });
 
     expect(mismatches.map((row) => row.id)).not.toContain(
@@ -315,7 +317,7 @@ describe("a failed Xero invoice operation, on the booking (#3001)", () => {
     // and the older row says the outbox "normally catches up on its own" — true
     // of a booking still waiting, false of one already failed.
     const deps = makeDeps({
-      succeededInvoiceOps: 0,
+      invoiceExists: false,
       invoiceSyncFault: syncFault(),
     });
 
