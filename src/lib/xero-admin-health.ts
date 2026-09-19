@@ -217,10 +217,8 @@ export async function getMissingXeroInvoiceBookings(options?: {
      - The operation row is not read at all, so "should only CREATE operations
        count?" no longer arises. A succeeded UPDATE was evidence only because
        it ran against an invoice the payment already carried the id of — and
-       that id is the first signal. A succeeded row whose invoice has since
-       been voided (id cleared, link deactivated) used to HIDE a booking that
-       genuinely has no invoice; it no longer does, which is the second
-       acceptance criterion read the other way round.
+       that id is the first signal. A booking is listed only when the club's
+       records hold NEITHER an invoice id NOR an active primary-invoice link.
      - It never needed the booking's correlation key. #3001 finds ONE booking's
        operation by that key because a booking whose payment row does not exist
        yet would otherwise match nothing. Here the candidate set is selected BY

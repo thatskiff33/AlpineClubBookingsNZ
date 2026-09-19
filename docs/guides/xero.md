@@ -46,9 +46,8 @@ idempotent — retrying the same work never double-charges.
    > **Failed** *after* Xero had accepted the invoice is not listed: the accounts
    > already hold it, and raising it again from here would duplicate it. Such a
    > booking shows under **Failed** operations instead, and its own page says
-   > what did and did not reach Xero. A booking that genuinely has no invoice —
-   > including one whose invoice was later voided — is listed, and **Trigger All
-   > Missing** raises one for it.
+   > what did and did not reach Xero. A booking whose records hold neither is
+   > listed, and **Trigger All Missing** raises an invoice for it.
 
    > The whole Xero area (`/admin/xero`, `/admin/xero/*`, `/admin/internet-banking`)
    > is gated by the **Xero integration** module (`src/config/feature-routes.ts`)

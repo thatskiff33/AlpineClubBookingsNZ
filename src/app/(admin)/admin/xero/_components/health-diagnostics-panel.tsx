@@ -379,7 +379,7 @@ export function HealthAndDiagnosticsPanels({
                       <ToneChip tone="success" icon={CheckCircle2}>{health.missingInvoices.count}</ToneChip>
                     )}
                   </div>
-                  <p className="text-sm text-muted-foreground">Paid bookings whose records hold no Xero invoice: no invoice id on the payment and no active invoice link (#3467).</p>
+                  <p className="text-sm text-muted-foreground">Paid bookings for which the club&apos;s records hold no Xero invoice.</p>{/* #3467: the club's invoice records decide this, never the operation's status */}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={() => void toggleMissingInvoices()}>

@@ -1082,8 +1082,8 @@ non-replayable), the health snapshot lists paid bookings missing invoices
 (decided by the one invoice-evidence rule in `xero-booking-invoice-evidence.ts`
 — the payment's stored invoice id or an active `PRIMARY_INVOICE` link — read in
 its set form, never by the invoice operation's status, so a create that failed
-after Xero accepted the invoice is not listed while a voided invoice is;
-#3001/#3467) and
+after Xero accepted the invoice is not listed, and a booking is listed only
+when its records hold neither; #3001/#3467) and
 refunds missing credit notes (flagged when the provider-backed CASH refund
 evidence — never the refunded-amount mirror, #2902/INV-PAY-050 — still exceeds
 the cents already covered by active refund credit notes, so multi-note refunds

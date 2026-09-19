@@ -11,9 +11,8 @@
   queue ask (#3001): does the club's record of this booking carry an invoice id
   or an active primary-invoice link? A booking whose invoice reached Xero stays
   off the list and shows under **Failed** operations instead, where its own
-  page says which step is outstanding. A booking that genuinely has no invoice
-  is still listed — and so, now, is a paid booking whose invoice was later
-  voided, which the old test hid behind the earlier success. The finance
+  page says which step is outstanding. A booking whose records hold neither an
+  invoice id nor an active primary-invoice link is still listed. The finance
   dashboard's "Bookings missing invoices" figure and the stuck-state
   dashboard's "Paid bookings missing Xero invoices" item read the same count
   and move with it. The list's `hasLinkedInvoice` field, which the change made
