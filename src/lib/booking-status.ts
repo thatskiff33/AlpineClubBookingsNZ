@@ -59,8 +59,9 @@ export const IMMEDIATE_PAYMENT_BOOKING_STATUSES = [
 // somebody is about to ask. Ask `canModifyBookingInActiveLifecycle`.
 //
 // The one thing its comment recorded that the edit policy does NOT capture —
-// why the guest-add route carries an unreachable AWAITING_REVIEW branch — is
-// filed as #3500 rather than lost with it.
+// why the guest-add route carried an unreachable AWAITING_REVIEW branch — was
+// filed as #3500, which deleted that branch and its three `releaseFromReview`
+// siblings: only the officer review route releases AWAITING_REVIEW.
 
 export const OPERATIONAL_STAY_BOOKING_STATUSES = [
   BookingStatus.PAID,

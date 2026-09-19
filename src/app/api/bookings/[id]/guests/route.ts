@@ -1065,10 +1065,12 @@ export async function POST(
         additionalAmountCents = priceDiffCents;
       }
 
-      // This route only adds guests, so the no-adult rule can only
-      // change from flagged → cleared (by adding an adult). When that
-      // happens, wipe the review state and release the booking from
-      // AWAITING_REVIEW. The rule cannot newly trip through this route.
+      // This route only adds guests, so the no-adult rule can only change
+      // from flagged → cleared (by adding an adult). When that happens, wipe
+      // the review state IN PLACE: the booking keeps its status. It cannot be
+      // parked in AWAITING_REVIEW here — the edit door above refuses that
+      // status — so the only release from review is the officer review route
+      // (#3500, `INV-MOD-013`). The rule cannot newly trip through this route.
       const reviewCleared = booking.requiresAdminReview && !requiresAdminReview;
       const reviewFieldUpdates = reviewCleared
         ? {
@@ -1085,13 +1087,6 @@ export async function POST(
             adminReviewReason,
           };
 
-      // #3500: this first arm is UNREACHABLE — the gate above refuses
-      // AWAITING_REVIEW. #3245 deleted the last record of what it is for.
-      const newStatus =
-        reviewCleared && booking.status === "AWAITING_REVIEW"
-          ? "PAYMENT_PENDING"
-          : holdAdjustedStatus;
-
       const updatedBooking = await tx.booking.update({
         where: { id: bookingId },
         data: {
@@ -1101,7 +1096,7 @@ export async function POST(
           finalPriceCents: newFinalPriceCents,
           hasNonMembers,
           nonMemberHoldUntil,
-          status: newStatus,
+          status: holdAdjustedStatus,
           ...reviewFieldUpdates,
         },
         include: { guests: true, payment: true },
