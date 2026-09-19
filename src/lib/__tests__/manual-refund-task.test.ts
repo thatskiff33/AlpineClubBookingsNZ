@@ -1511,7 +1511,9 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     // A legacy hand-back carries no `BookingModification` anchor, so no
     // edit-settlement dispatch is made for it. Its Xero side is the
     // bank-transfer refund note below (`INV-PAY-101`), and only when the
-    // booking has an issued invoice to refund against - this fixture has none.
+    // booking has an issued invoice to refund against - this fixture has none,
+    // which is every cash-settled booking (#2262): the cash never reached Xero,
+    // so neither does the refund of it.
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
@@ -1519,12 +1521,14 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     );
   });
 
-  it("raises the bank-transfer refund note for a completed cancellation hand-back on a booking with an issued invoice (INV-PAY-101)", async () => {
-    // Before #3529 a cash-settled cancellation reached Xero nowhere: the cancel
-    // path writes nothing for a manual settlement, and this completion found
-    // no anchor and logged that the invoice must be corrected by hand. The
-    // money HAS gone back - the allocation above is written in this
-    // transaction - so the invoice it was paid against gets the same refund
+  it("raises the bank-transfer refund note for a completed cancellation hand-back on a booking with an issued invoice (INV-PAY-101, #3369)", async () => {
+    // The hand-back with an invoice is #3369's: an internet-banking payment
+    // reached Xero for a booking already cancelled and owned by an
+    // organisation, so Xero shows the invoice PAID and the club owes the money
+    // back by hand. Before #3529 completing that task reached Xero nowhere:
+    // this completion found no anchor and logged that the invoice must be
+    // corrected by hand. The money HAS gone back - the allocation above is
+    // written in this transaction - so the paid invoice gets the same refund
     // note a card refund gets, worded as a bank transfer.
     mocks.manualRefundTaskFindUnique.mockResolvedValue({
       id: "task-1",

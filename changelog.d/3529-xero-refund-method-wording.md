@@ -25,10 +25,13 @@
   never recorded as leaving the Stripe account again — including for older
   refund notes the system repairs.
 
-  Also new: a cancelled booking that was settled in cash or by bank transfer
-  and then paid back by hand now gets a Xero credit note at all — before,
-  completing the hand-back reached Xero nowhere and the invoice had to be
-  corrected by hand.
+  Also new: when an internet-banking payment arrives in Xero for a booking
+  that was already cancelled and belongs to a school or other organisation,
+  and the club pays it back by hand, completing that hand-back now raises the
+  credit note against the paid invoice — before, it reached Xero nowhere and
+  the invoice had to be corrected by hand. A booking settled in cash has no
+  Xero invoice at all, so its hand-back still writes nothing to Xero: the
+  money never went through the books there.
 
   Nothing about cancellation policy changed: a booking paid by internet
   banking and then cancelled still returns account credit.

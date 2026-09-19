@@ -1,6 +1,5 @@
 import "server-only";
 
-import { ManualRefundTaskKind } from "@prisma/client";
 import {
   recordShortEditReviewChargeInvoice,
   restateEditReviewChargeSupplementaryInvoice,
@@ -101,27 +100,26 @@ export function editReviewSettlementIssuesXeroDocument(
 export async function dispatchEditReviewXeroSettlement({
   bookingId,
   taskId,
-  taskKind,
   actingMemberId,
   route,
   amountCents,
   chargeTotalCents,
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
-  bookingXeroInvoiceId,
+  cancellationHandBackInvoiceId,
   additionalPaymentIntentId,
 }: {
   bookingId: string;
   taskId: string;
-  /** See `executeEditReviewSettlement`: needed for the hand-back leg below. */
-  taskKind: ManualRefundTaskKind | null;
   /**
-   * The booking's primary Xero invoice id, whatever the booking's status. The
-   * hand-back leg reads THIS rather than `hasIssuedXeroInvoice`, which is
-   * false for a CANCELLED booking by construction and would gate the note
-   * shut for the only kind of booking that raises one.
+   * The booking's primary Xero invoice id when the task closed is a
+   * `CANCELLED_BOOKING_HAND_BACK`, else null. The hand-back leg reads THIS
+   * rather than `hasIssuedXeroInvoice`, which is false for a CANCELLED booking
+   * by construction and would gate the note shut for the only kind of booking
+   * that raises one. Null for a cash-settled booking (#2262) too, which is the
+   * gate doing its job.
    */
-  bookingXeroInvoiceId: string | null;
+  cancellationHandBackInvoiceId: string | null;
   actingMemberId: string;
   route: EditReviewSettlementRoute | null;
   /** This task's own share, which is what a REFUND bills. */
@@ -177,24 +175,27 @@ export async function dispatchEditReviewXeroSettlement({
   if (ask === null) {
     if (
       route?.kind === "local-allocation" &&
-      taskKind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK &&
-      bookingXeroInvoiceId !== null &&
+      cancellationHandBackInvoiceId !== null &&
       amountCents !== null &&
       amountCents > 0
     ) {
-      // THE BANK-TRANSFER REFUND NOTE (`INV-PAY-101`, #3529). A cancelled
-      // booking the club settled by hand raises this task and, until now, no
-      // Xero document at all: the cancel path writes nothing to Xero for a
-      // manual settlement, and this leg found no anchor and logged that the
+      // THE BANK-TRANSFER REFUND NOTE (`INV-PAY-101`, #3529). This task is
+      // raised twice over: for a booking the club settled in cash (B5, #2262),
+      // which has NO Xero invoice by construction - manual mark-paid is refused
+      // wherever one exists and the invoice builder abandons rather than mint
+      // over it - and for an internet-banking payment that reached Xero for a
+      // booking already cancelled and owned by an organisation (#3369), whose
+      // invoice Xero shows PAID. Only the second has anything to credit, and
+      // until now it got nothing: this leg found no anchor and logged that the
       // invoice must be corrected by hand. The money HAS gone back - the ledger
-      // allocation was written in the completion transaction - so the invoice
-      // it was paid against needs the same refund note a card refund gets,
-      // worded as a bank transfer and settled against the club's bank-transfer
-      // refund account. Gated on the invoice's existence for the same reason
-      // the hold-expiry note is (`INV-PAY-017`): a note against no invoice is
-      // a permanently failing outbox row. Keyed on the payment and the amount
-      // by the enqueue, which is one note per hand-back because a cancelled
-      // booking raises one task.
+      // allocation was written in the completion transaction - so that paid
+      // invoice takes the same refund note a card refund gets, worded as a bank
+      // transfer and settled only from the club's bank-transfer refund account.
+      // The invoice-id gate is what keeps the cash case out, for the same
+      // reason the hold-expiry note has one (`INV-PAY-017`): a note against no
+      // invoice is a permanently failing outbox row. Keyed on the payment and
+      // the amount by the enqueue, which is one note per hand-back because a
+      // cancelled booking raises one task per payment.
       await enqueueXeroRefundCreditNoteOperation(route.paymentId, amountCents, {
         createdByMemberId: actingMemberId,
         refundMethod: "internet-banking",

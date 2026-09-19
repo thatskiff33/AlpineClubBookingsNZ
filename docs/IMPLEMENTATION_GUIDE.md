@@ -181,9 +181,10 @@ account. Leaving the new mapping unset is safe: goodwill keeps going to the
 hut-fee-refund account, the screen says so, and nothing already in Xero is
 reclassified when you do set it. The same screen offers a **Bank Transfer
 Refunds Account** (#3529): a refund the club sends back by internet banking —
-a cancelled cash-settled booking's hand-back, or an edit review settled by
-hand — is recorded in Xero as a credit note worded "Refund requested via
-internet banking", settled from that account, so the treasurer can tell it
+an edit review settled by hand, or the hand-back of an internet-banking payment
+that reached Xero for a booking already cancelled — is recorded in Xero as a
+credit note worded "Refund requested via internet banking", settled from that
+account, so the treasurer can tell it
 from a card refund ("Refund against original credit card", settled from the
 Stripe account when Stripe reports the refund) and from credit left on the
 member's account ("Account Credit"). Until you choose the account, those
