@@ -193,7 +193,6 @@ type RemovalReviewUpdate = {
   adminReviewedById: string | null;
   adminReviewedAt: Date | null;
   parkForReview: boolean;
-  releaseFromReview: boolean;
 };
 
 /**
@@ -227,7 +226,9 @@ function resolveRemovalReviewUpdate({
 }): RemovalReviewUpdate {
   if (!nowFlagged) {
     // Rule cleared (or never tripped): wipe review state so the booking
-    // returns to the normal lifecycle; release a parked booking.
+    // returns to the normal lifecycle, in place — the status is untouched. A
+    // removal never meets AWAITING_REVIEW (the edit door refuses it), and only
+    // the officer review route releases it (#3500, `INV-MOD-013`).
     return {
       requiresAdminReview: false,
       adminReviewReason: null,
@@ -237,7 +238,6 @@ function resolveRemovalReviewUpdate({
       adminReviewedById: null,
       adminReviewedAt: null,
       parkForReview: false,
-      releaseFromReview: booking.status === BookingStatus.AWAITING_REVIEW,
     };
   }
 
@@ -253,7 +253,6 @@ function resolveRemovalReviewUpdate({
       adminReviewedById: booking.adminReviewedById,
       adminReviewedAt: booking.adminReviewedAt,
       parkForReview: booking.adminReviewStatus === AdminReviewStatus.PENDING,
-      releaseFromReview: false,
     };
   }
 
@@ -269,7 +268,6 @@ function resolveRemovalReviewUpdate({
       adminReviewedById: actorMemberId,
       adminReviewedAt: new Date(),
       parkForReview: false,
-      releaseFromReview: false,
     };
   }
 
@@ -282,7 +280,6 @@ function resolveRemovalReviewUpdate({
     adminReviewedById: null,
     adminReviewedAt: null,
     parkForReview: true,
-    releaseFromReview: false,
   };
 }
 

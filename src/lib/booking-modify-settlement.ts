@@ -404,9 +404,10 @@ export async function applyLifecycleTransitions(
   if (reviewUpdate?.parkForReview && canParkForReview) {
     clearDraftExpiresAt = newStatus === BookingStatus.DRAFT;
     newStatus = "AWAITING_REVIEW";
-  } else if (reviewUpdate?.releaseFromReview && newStatus === "AWAITING_REVIEW") {
-    newStatus = "PAYMENT_PENDING";
   }
+  // No release arm here: an edit never reaches AWAITING_REVIEW (every edit
+  // door refuses it), so the only writer of AWAITING_REVIEW -> PAYMENT_PENDING
+  // is the officer review route (#3500, `INV-MOD-013`).
 
   // #2266: a DRAFT never carries a hold — it holds no capacity and owes no
   // money until the pay step (or $0 confirm-draft) makes it real, and THAT
