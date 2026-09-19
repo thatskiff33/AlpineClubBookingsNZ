@@ -23,7 +23,10 @@
  * and the provider-test route. `email-delivery-boundary-census.test.ts` asserts
  * `nodemailer.createTransport` now appears in this file alone.
  */
-import nodemailer from "nodemailer";
+import nodemailer, {
+  type SentMessageInfo,
+  type Transporter,
+} from "nodemailer";
 import logger from "@/lib/logger";
 import {
   CAPTURE_TRANSPORT_MODE_LABEL,
@@ -37,13 +40,31 @@ import {
   type DeliveryGrounds,
 } from "@/lib/environment-delivery-policy";
 
+/**
+ * What a provider hands back once it has accepted a message.
+ *
+ * Re-exported through this module rather than imported from `nodemailer` at the
+ * call site, because this file is the one door to the mail library
+ * (INV-CONFIG-004) and a type is no reason to open a second one.
+ *
+ * Named at all — rather than derived — because deriving it does not survive.
+ * `cron-email-retry.ts` used to write
+ * `Awaited<ReturnType<typeof transporter.sendMail>>`, which silently resolved to
+ * `void` the moment nodemailer 10 landed: `sendMail` is overloaded, and v10
+ * declares the callback form (which returns `void`) LAST, so `ReturnType` picks
+ * that one. Under the old `@types/nodemailer` the promise form happened to come
+ * last and the derivation happened to work. An overloaded signature is not a
+ * stable thing to derive a type from, in either direction.
+ */
+export type { SentMessageInfo };
+
 export type EmailAttachment = {
   filename: string;
   content: Buffer;
   contentType?: string;
 };
 
-let cachedTransporter: nodemailer.Transporter | null = null;
+let cachedTransporter: Transporter | null = null;
 let cachedTransportSignature: string | null = null;
 
 /**
