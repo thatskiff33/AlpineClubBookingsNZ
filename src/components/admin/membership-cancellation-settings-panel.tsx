@@ -13,6 +13,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 interface XeroGroup {
   groupId: string;
@@ -48,18 +49,6 @@ function toEditableSettings(
   };
 }
 
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
-}
-
 export function MembershipCancellationSettingsPanel() {
   const [settings, setSettings] =
     useState<EditableMembershipCancellationSettings | null>(null);
@@ -81,7 +70,7 @@ export function MembershipCancellationSettingsPanel() {
         | { error?: string };
       if (!response.ok || !("settings" in body)) {
         throw new Error(
-          responseErrorMessage(body, "Failed to load membership cancellation settings"),
+          apiErrorMessageFromBody(body, "Failed to load membership cancellation settings"),
         );
       }
       setSettings(toEditableSettings(body.settings));
@@ -166,7 +155,7 @@ export function MembershipCancellationSettingsPanel() {
         // error, not only a transient toast (#1940).
         if (response.status === 403) setForbiddenSave(true);
         throw new Error(
-          responseErrorMessage(body, "Failed to save membership cancellation settings"),
+          apiErrorMessageFromBody(body, "Failed to save membership cancellation settings"),
         );
       }
       if (body?.settings) {

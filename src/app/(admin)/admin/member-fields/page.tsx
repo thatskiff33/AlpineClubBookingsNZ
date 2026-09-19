@@ -26,23 +26,12 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 interface FieldsResponse {
   settings: MemberFieldsSettingsValues;
   updatedAt: string | null;
   updatedByMemberId: string | null;
-}
-
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
 }
 
 function cloneSettings(
@@ -79,7 +68,7 @@ export default function AdminMemberFieldsPage() {
         | FieldsResponse
         | { error?: string };
       if (!response.ok || !("settings" in body)) {
-        throw new Error(responseErrorMessage(body, "Failed to load settings"));
+        throw new Error(apiErrorMessageFromBody(body, "Failed to load settings"));
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
@@ -143,7 +132,7 @@ export default function AdminMemberFieldsPage() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
-        throw new Error(responseErrorMessage(body, "Failed to save settings"));
+        throw new Error(apiErrorMessageFromBody(body, "Failed to save settings"));
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));

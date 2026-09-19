@@ -6,6 +6,7 @@ import {
   apiErrorMessageFromResponse,
   readApiErrorBody,
 } from "@/lib/api-error-message";
+import { templateErrorMessage } from "@/components/admin/email-settings/email-message-settings-panel";
 
 const FALLBACK = "Failed to save";
 
@@ -60,9 +61,66 @@ describe("apiErrorMessageFromBody", () => {
     expect(
       apiErrorMessageFromBody({ error: "Lodge not found or not active" }, FALLBACK),
     ).toBe("Lodge not found or not active");
-    expect(apiErrorMessageFromBody({ error: "" }, FALLBACK)).toBe(FALLBACK);
     expect(apiErrorMessageFromBody(null, FALLBACK)).toBe(FALLBACK);
     expect(apiErrorMessageFromBody(["nope"], FALLBACK)).toBe(FALLBACK);
+  });
+
+  /**
+   * #3445 — the two divergences the private copies had drifted into, settled
+   * on every admin surface. Most copies used `?? fallback`, which rendered an
+   * EMPTY red alert for a blank message; none checked the message was text, so
+   * an object rendered as "[object Object]". Each case here is one of those
+   * screens' failed saves, and each must explain itself.
+   */
+  describe("the two answers every converged screen now gives (#3445)", () => {
+    it.each([
+      ["an empty string", ""],
+      ["whitespace only", "   \n\t"],
+    ])("a blank message (%s) falls back to the screen's fixed sentence", (_case, error) => {
+      expect(apiErrorMessageFromBody({ error }, FALLBACK)).toBe(FALLBACK);
+    });
+
+    it.each([
+      ["an object", { code: 7, message: "Invalid input" }],
+      ["an array of strings", ["Invalid input"]],
+      ["a number", 500],
+      ["a boolean", false],
+      ["null", null],
+    ])("a non-text message (%s) falls back rather than being stringified", (_case, error) => {
+      const message = apiErrorMessageFromBody({ error }, FALLBACK);
+      expect(message).toBe(FALLBACK);
+      expect(message).not.toContain("[object Object]");
+    });
+
+    it("a real string passes through untouched", () => {
+      expect(
+        apiErrorMessageFromBody({ error: "This membership type is still in use" }, FALLBACK),
+      ).toBe("This membership type is still in use");
+    });
+  });
+});
+
+/**
+ * The readers that are DELIBERATELY different keep their extension and hand
+ * only the sentence to the shared rule, so the two answers above hold there
+ * too. Pin the one that is easiest to state as a contract: a validation
+ * error's issue list is joined onto the headline, and the headline is still the
+ * shared rule's sentence — never an empty headline with a list hanging off it.
+ */
+describe("a deliberately different reader stays different, on top of the shared rule", () => {
+  it("prefers the validation issue list the email template panel appends", () => {
+    expect(
+      templateErrorMessage(
+        { error: "Invalid email template", issues: [{ message: "Subject is required" }] },
+        FALLBACK,
+      ),
+    ).toBe("Invalid email template: Subject is required");
+    expect(
+      templateErrorMessage({ error: "", issues: [{ message: "Subject is required" }] }, FALLBACK),
+    ).toBe(`${FALLBACK}: Subject is required`);
+    expect(
+      templateErrorMessage({ error: { code: 7 }, issues: [] }, FALLBACK),
+    ).toBe(FALLBACK);
   });
 });
 

@@ -33,6 +33,7 @@ import type {
   MemberDetail,
   SeasonalMembershipAssignmentSummary,
 } from "../_types";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
 type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED" | "BASED_ON_AGE_TIER";
@@ -113,18 +114,6 @@ const subscriptionBehaviorLabels: Record<SubscriptionBehavior, string> = {
 };
 
 const EMPTY_SEASONAL_ASSIGNMENTS: SeasonalMembershipAssignmentSummary[] = [];
-
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
-}
 
 /**
  * A CALENDAR DATE from a `@db.Date` column — a lodge night, an assignment's
@@ -251,7 +240,7 @@ export function MemberSeasonalMembershipCard({
         | { error?: string };
       if (!response.ok || !("membershipTypes" in body)) {
         throw new Error(
-          responseErrorMessage(body, "Failed to load membership types"),
+          apiErrorMessageFromBody(body, "Failed to load membership types"),
         );
       }
       setMembershipTypes(body.membershipTypes);
@@ -326,7 +315,7 @@ export function MemberSeasonalMembershipCard({
         | { error?: string };
       if (!response.ok || !("preview" in body)) {
         throw new Error(
-          responseErrorMessage(body, "Failed to preview membership change"),
+          apiErrorMessageFromBody(body, "Failed to preview membership change"),
         );
       }
       setPreview(body.preview);
@@ -373,7 +362,7 @@ export function MemberSeasonalMembershipCard({
       const body = (await response.json()) as { error?: string };
       if (!response.ok) {
         throw new Error(
-          responseErrorMessage(body, "Failed to save membership change"),
+          apiErrorMessageFromBody(body, "Failed to save membership change"),
         );
       }
       setPreview(null);
