@@ -3,6 +3,8 @@
 import { render } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it } from "vitest";
 
+import type { BookingDetailEditAccess } from "@/app/(authenticated)/bookings/[id]/_lib/booking-detail-edit-access";
+import type { BookingDetailViewer } from "@/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer";
 import { BookingReviewNotices } from "@/app/(authenticated)/bookings/[id]/_components/booking-review-notices";
 
 /**
@@ -34,6 +36,44 @@ function booking(overrides: Record<string, unknown>) {
   } as never;
 }
 
+// The component takes the page's whole access object and its viewer since #3497
+// added the owner-cancel notice; these cases turn only `canModify`, so the rest is
+// built once with every flag off. A missing field is a compile error, which is what
+// keeps this fixture honest when the real shape grows.
+const baseAccess: BookingDetailEditAccess = {
+  isDraft: false,
+  isWaitlisted: false,
+  isWaitlistOffered: false,
+  isDeleted: false,
+  canCancel: false,
+  showArrivalTime: false,
+  showRequestedRoom: false,
+  bedAllocationLocked: false,
+  showBedAllocationPanel: false,
+  bookingCanHoldBeds: false,
+  editPolicy: {
+    canModify: false,
+    mode: null,
+    today: new Date("2026-07-01T00:00:00.000Z"),
+    editableFrom: null,
+    checkInEditable: false,
+    reason: null,
+  },
+  canModify: false,
+  canAdminOverride: false,
+  canEditRequestedRoom: false,
+  canEditNonMemberGuestNames: false,
+  canFixNonMemberGuestNameTypos: false,
+};
+
+const accessWith = (canModify: boolean): BookingDetailEditAccess => ({
+  ...baseAccess,
+  canModify,
+});
+
+// Not the owner, so the #3497 owner-cancel notice never renders in these cases.
+const viewer = { isBookingOwner: false } as BookingDetailViewer;
+
 // `club` is only read for change-request dates, and every case renders none.
 const club = {} as never;
 
@@ -43,7 +83,8 @@ describe("BookingReviewNotices pending-review copy (#3500)", () => {
       <BookingReviewNotices
         booking={booking({ status: "AWAITING_REVIEW" })}
         club={club}
-        access={{ canModify: false }}
+        viewer={viewer}
+        access={accessWith(false)}
       />,
     );
     expect(container.textContent).toContain(NO_PAYMENT);
@@ -56,7 +97,8 @@ describe("BookingReviewNotices pending-review copy (#3500)", () => {
       <BookingReviewNotices
         booking={booking({ status: "PAID" })}
         club={club}
-        access={{ canModify: true }}
+        viewer={viewer}
+        access={accessWith(true)}
       />,
     );
     expect(container.textContent).toContain(AMEND);
@@ -68,7 +110,8 @@ describe("BookingReviewNotices pending-review copy (#3500)", () => {
       <BookingReviewNotices
         booking={booking({ status: "PAID" })}
         club={club}
-        access={{ canModify: false }}
+        viewer={viewer}
+        access={accessWith(false)}
       />,
     );
     expect(container.textContent).toContain("Awaiting admin review.");
@@ -81,7 +124,8 @@ describe("BookingReviewNotices pending-review copy (#3500)", () => {
       <BookingReviewNotices
         booking={booking({ status: "PAID", adminReviewStatus: "APPROVED" })}
         club={club}
-        access={{ canModify: true }}
+        viewer={viewer}
+        access={accessWith(true)}
       />,
     );
     expect(container.textContent).toContain("Approved by admin.");
