@@ -521,12 +521,12 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   "src/lib/member-guest-consent-service.ts:1156",
   "src/lib/payment-recovery.ts:2497",
   "src/lib/payment-recovery.ts:2548",
-  "src/lib/xero-admin-health.ts:331",
+  "src/lib/xero-admin-health.ts:324",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const MEMBER_KEYED_HELPER_SITES: readonly string[] = [
-  "src/lib/diagnostics/tools/packs/finance-evidence.ts:562",
+  "src/lib/diagnostics/tools/packs/finance-evidence.ts:558",
 ];
 
 /* -------------------------------------------------------------------------- */

@@ -285,7 +285,6 @@ interface MissingInvoiceBooking {
   checkIn: string
   checkOut: string
   createdAt: string
-  hasLinkedInvoice: boolean
 }
 
 export interface MissingInvoicesResponse {
