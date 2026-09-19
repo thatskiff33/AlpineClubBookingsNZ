@@ -178,6 +178,42 @@ describe("getXeroMemberGroupingSnapshot", () => {
     expect(ids).toEqual(["m1", "m3"]);
   });
 
+  it("PINS plannedDigest against the pre-#3250 private hasher, proving the swap moved no fingerprint", async () => {
+    // #3250: this module used to define a private `stableDigest` that shadowed
+    // the canonical one while doing LESS — plain `JSON.stringify`, no recursive
+    // key sort, no explicit "utf8". Adopting the canonical helper had to be
+    // PROVEN a no-op rather than argued, because this digest is stored on a
+    // dry-run row and re-derived when a chunked resync resumes: a fingerprint
+    // that moved would reject every in-flight resume as stale.
+    //
+    // The replica below is the OLD implementation, spelled out. It is a stronger
+    // pin than a literal because it fails if either side changes, and the reason
+    // it is a no-op is visible in it: the value is an array of primitives and
+    // arrays, where sorting keys recursively is the identity, and Node's
+    // `update(text)` already defaults to utf8.
+    seedTwoMismatchesOneCorrectOneNoContact();
+    const snap = await getXeroMemberGroupingSnapshot();
+    const legacyOps = snap.mismatches
+      .map(
+        (entry) =>
+          [
+            entry.memberId,
+            entry.addGroupId,
+            [...entry.removeGroupIds].sort(),
+          ] as const,
+      )
+      .sort((left, right) =>
+        left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0,
+      );
+    const legacyDigest = createHash("sha256")
+      .update(JSON.stringify(legacyOps))
+      .digest("hex");
+    expect(snap.plannedDigest).toBe(legacyDigest);
+    // And it is a real digest of real content, not two empty values agreeing.
+    expect(snap.plannedDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(snap.mismatches.length).toBeGreaterThan(1);
+  });
+
   it("reads staleness from the CONTACT_GROUP_FULL_REFRESH cursor, not the per-contact cache cursor", async () => {
     seedTwoMismatchesOneCorrectOneNoContact();
     const snap = await getXeroMemberGroupingSnapshot();

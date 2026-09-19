@@ -44,8 +44,8 @@ import {
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTasks,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -1879,17 +1879,22 @@ export async function modifyBookingBatch({
      * there rather than four times across the four parked doors (#3166,
      * `INV-SSOT`).
      */
-    await raiseParkedEditFinancialReviewTasks({
-      booking,
-      guests: booking.guests,
-      // A batch edit can add guests in the same request. They are priced and
-      // written normally while the booking's own total is frozen, so the money
-      // is owed and only their rows record it.
-      addedGuests: createdGuests,
-      occurrences: parked?.occurrences ?? [],
-      bookingModificationId: bookingModification.id,
-      store: tx,
-    });
+    if (parked) {
+      await raiseParkedEditFinancialReviewTasks({
+        booking,
+        guests: booking.guests,
+        // A batch edit can add guests in the same request. They are priced and
+        // written normally while the booking's own total is frozen, so the money
+        // is owed and only their rows record it.
+        addedGuests: createdGuests,
+        // #3498: the whole edit's work items - ONE whatever the party size
+        // while at most one strand's nights moved, and one per recorded strand
+        // once two or more did (`parkedEditWorkItems`).
+        occurrences: parked.occurrences,
+        bookingModificationId: bookingModification.id,
+        store: tx,
+      });
+    }
 
     if (payments.accountCreditAmountCents > 0) {
       await createBookingModificationCredit(

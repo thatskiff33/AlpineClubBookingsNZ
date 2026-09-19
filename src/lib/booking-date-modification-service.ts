@@ -40,8 +40,8 @@ import {
 } from "@/lib/booking-modification-settlement";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTasks,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import {
   preCheckInEditEvidence,
   preCheckInEditStrands,
@@ -726,7 +726,7 @@ export async function modifyBookingDates({
      * because the booking's money genuinely did not move, NOT because 0 was
      * chosen as the adjustment.
      */
-    const parked = dateEditEvidence.occurrences.length > 0;
+    const parked = dateEditEvidence.occurrences !== null;
 
     const newTotalPriceCents = parked
       ? booking.totalPriceCents
@@ -1312,15 +1312,21 @@ export async function modifyBookingDates({
      * `raiseParkedEditFinancialReviewTasks`, stated once there (#3166,
      * `INV-SSOT`).
      */
-    await raiseParkedEditFinancialReviewTasks({
-      booking,
-      guests: booking.guests,
-      // A date change adds nobody.
-      addedGuests: [],
-      occurrences: dateEditEvidence.occurrences,
-      bookingModificationId: bookingModification.id,
-      store: tx,
-    });
+    if (dateEditEvidence.occurrences !== null) {
+      await raiseParkedEditFinancialReviewTasks({
+        booking,
+        guests: booking.guests,
+        // A date change adds nobody.
+        addedGuests: [],
+        // #3498: the whole date change's work items. ONE where at most one
+        // strand's nights moved; one per recorded strand where a date change
+        // moved several guests' nights at once, which is the shape that needs
+        // an amount each (`parkedEditWorkItems`).
+        occurrences: dateEditEvidence.occurrences,
+        bookingModificationId: bookingModification.id,
+        store: tx,
+      });
+    }
 
     if (accountCreditAmountCents > 0) {
       await createBookingModificationCredit(

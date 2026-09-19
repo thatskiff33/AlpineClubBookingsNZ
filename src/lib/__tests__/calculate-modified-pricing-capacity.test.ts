@@ -39,6 +39,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { calculateModifiedPricing } from "@/lib/booking-modify-plan";
+import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
 import { eachDateOnlyInRange } from "@/lib/date-only";
 import {
   resolveGuestRateMembershipTypes,
@@ -62,14 +63,23 @@ async function pricedPricing(
   if (result.kind !== "priced") {
     throw new Error(
       `Expected a priced modification, got financial review: ${result.occurrences
-        .map((occurrence) => occurrence.cause)
+        .flatMap((occurrence) => editFinancialReviewStrandRecords(occurrence))
+        .map((strand) => strand.cause)
         .join(", ")}`,
     );
   }
   return result;
 }
 
-/** The review verdict, insisting the edit was NOT priced (#3031). */
+/**
+ * The review verdict, insisting the edit was NOT priced (#3031).
+ *
+ * #3498 moved the grain: a parked edit raises ONE occurrence carrying every
+ * strand it recorded, where it used to raise one per strand. The strand records
+ * are what these cases have always asserted about, so they are what this hands
+ * back - read through `editFinancialReviewStrandRecords`, the one place that
+ * list is assembled.
+ */
 async function reviewPricing(
   ...args: Parameters<typeof calculateModifiedPricing>
 ) {
@@ -79,7 +89,9 @@ async function reviewPricing(
       "Expected financial review, got a priced modification - an amount was invented",
     );
   }
-  return result.occurrences;
+  return result.occurrences.flatMap((occurrence) =>
+    editFinancialReviewStrandRecords(occurrence),
+  );
 }
 
 function baseArgs() {
@@ -1155,10 +1167,11 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
     // No amount anywhere on the occurrence: not the clamped zero, not 2 x HIGH.
     // Asserted as the WHOLE key set rather than as the absence of one name,
     // which nothing could have added anyway.
+    // #3498: `bookingId` belongs to the EDIT and lives once on the occurrence,
+    // so it is no longer on a strand's own record. Everything else is unmoved.
     expect(Object.keys(occurrences[0]).sort()).toEqual([
       "addedNightDates",
       "bookingGuestId",
-      "bookingId",
       "cause",
       "storedEvidence",
       "surrenderedNightDates",

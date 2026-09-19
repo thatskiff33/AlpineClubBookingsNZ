@@ -1807,8 +1807,14 @@ OPEN -> COMPLETED   (#3032: and the confirmed amount now MOVES, down whichever o
                      crash in the commit-to-Stripe window is replayed by the
                      recovery cron rather than lost. The prefix and the recovery
                      operation are keyed to the TASK and not to the
-                     `BookingModification`, because one edit can raise two review
-                     tasks against one modification row. A Xero modification
+                     `BookingModification`, because ONE BOOKING can hold two
+                     review tasks against one modification row - a consent
+                     removal exempted from the pending-review fence raises its own
+                     beside an open one. (Until #3498 one EDIT could raise
+                     several, one per guest strand; since then it raises one
+                     per EDIT, except where the edit moved two or more guests'
+                     nights - then one per recorded strand again, because a row
+                     holds one amount. `INV-PAY-100`.) A Xero modification
                      credit note for the same amount is queued on the same anchor
                      after the commit, through `queueXeroBookingEditSettlement`.)
 OPEN -> DISMISSED   (#3030: for an `EDIT_FINANCIAL_REVIEW` task this means
@@ -1823,7 +1829,35 @@ OPEN -> DISMISSED   (#3030: for an `EDIT_FINANCIAL_REVIEW` task this means
                      NO settlement route - no allocation, no credit, no Stripe
                      call, no Xero note and no booking event - so nothing
                      downstream can read a dismissal as money having moved.)
+DISMISSED -> OPEN   (#3498, owner decision D2: an officer with finance:edit puts
+                     a dismissal back on the queue. A dismissal is a DECISION and
+                     a decision can be wrong; a COMPLETED row is a MOVEMENT and
+                     stays terminal, refused by status before anything is
+                     claimed, because its money settled against an anchor that
+                     can only pay out once. A dismissal with NO
+                     `completedByMemberId` is refused as well - those are the
+                     webhook's own arm above, recording a capture Stripe had
+                     already refunded, so putting one in the hand-settle queue
+                     would invite a second refund. The transition is the same
+                     status-fenced conditional update as every arm above, in the
+                     other direction; it moves no money and calls no provider; it
+                     clears `completedAt` and `completedByMemberId` and leaves the
+                     dismissal's own `note` exactly as it was written. A note is
+                     REQUIRED and goes to the audit entry
+                     `booking-payment.manual-refund-task.reopen`, which carries
+                     who dismissed the row, when, and what they said - the claim
+                     clears all three off the row, so that entry is the only
+                     place they survive. Everything the OPEN status governs
+                     re-arms with it: the pending-review fence, and the
+                     member-facing banner. See `INV-PAY-099`.)
 ```
+
+**#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
+row can be put back OPEN by an officer, which is the arm above; a COMPLETED row
+cannot. Nothing about the RAISE changed with it - the raise still never reopens,
+amends or re-keys a settled row, and the recurrence walk below is untouched -
+because reopening is an officer's own audited act rather than something a later
+edit does.
 
 **#3030/#3166: terminal is terminal FOR THE ROW, and for nothing after it.** An
 `EDIT_FINANCIAL_REVIEW` task carries an `occurrenceKey` - the identity of the

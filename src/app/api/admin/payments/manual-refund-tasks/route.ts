@@ -2,16 +2,20 @@ import { NextResponse } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import logger from "@/lib/logger";
 import {
   AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS,
   automaticallyRefundedManualRefundTaskFilter,
 } from "@/lib/deleted-booking-modification-payment";
 import {
   toAutoRefundedManualRefundTaskPayload,
+  toDismissedManualRefundTaskPayload,
   toOpenManualRefundTaskPayload,
 } from "@/lib/manual-refund-task-queue-payload";
 import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair-queue";
+import {
+  readDismissedManualRefundTasks,
+  readOrDegrade,
+} from "@/lib/manual-refund-task-queue-reads";
 
 /**
  * GET /api/admin/payments/manual-refund-tasks
@@ -42,32 +46,6 @@ import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair
  * The flag matters as much as the fallback: an empty list means "no automatic
  * refunds", and a degraded read must not be allowed to say that.
  */
-/**
- * An informational list that degrades to "unavailable" rather than rejecting the
- * batch carrying the actionable queue beside it (#2750 review).
- *
- * Generic over the row so the empty fallback keeps the query's own type — a bare
- * `[]` in a `.catch` widens to `never[]` and makes the result unmappable — and
- * returning the flag beside the rows is what stops the caller forgetting it: an
- * empty list and a failed read look identical on screen, and on a refund notice
- * that difference is the entire point of the card.
- */
-function readOrDegrade<T>(
-  query: Promise<T[]>,
-  what: string,
-): Promise<{ rows: T[]; unavailable: boolean }> {
-  return query.then(
-    (rows) => ({ rows, unavailable: false }),
-    (err: unknown) => {
-      logger.error(
-        { err },
-        `Failed to read the ${what} for the finance queue; the hand-back queue is answered without them`,
-      );
-      return { rows: [], unavailable: true };
-    },
-  );
-}
-
 export async function GET() {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "view" },
@@ -150,7 +128,7 @@ export async function GET() {
     Date.now() - AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  const [tasks, autoRefundedRead] = await Promise.all([
+  const [tasks, autoRefundedRead, dismissedRead] = await Promise.all([
     prisma.manualRefundTask.findMany({
       where: { status: "OPEN" },
       orderBy: { createdAt: "asc" },
@@ -210,6 +188,15 @@ export async function GET() {
       }),
       "automatically refunded late-capture notices",
     ),
+    // #3498 (owner decision D2): recently dismissed rows an officer could put
+    // back. Degrades on its own, exactly like the notices beside it - losing a
+    // correction surface must never take the OPEN queue, which is money the
+    // club owes members by hand, off the screen with it. Both bounds on what it
+    // lists are argued where the query is.
+    readOrDegrade(
+      readDismissedManualRefundTasks(prisma, new Date()),
+      "recently dismissed money tasks",
+    ),
   ]);
 
   // #3191: which reviews have unpriced nights the settle screen can offer to fill
@@ -235,7 +222,7 @@ export async function GET() {
       toOpenManualRefundTaskPayload(
         task,
         guard.session.user.id,
-        unpricedNights.get(task.id) ?? null,
+        unpricedNights.get(task.id) ?? [],
       ),
     ),
     // True only when the notices read itself failed. The surface says so in a
@@ -246,5 +233,10 @@ export async function GET() {
     autoRefunded: autoRefundedRead.rows.map(
       toAutoRefundedManualRefundTaskPayload,
     ),
+    // #3498: and the same honesty about a degraded read. "Nothing has been
+    // dismissed lately" is a claim about money decisions, and a failed query is
+    // not entitled to make it.
+    dismissedUnavailable: dismissedRead.unavailable,
+    dismissed: dismissedRead.rows.map(toDismissedManualRefundTaskPayload),
   });
 }

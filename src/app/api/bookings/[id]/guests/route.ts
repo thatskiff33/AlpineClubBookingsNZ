@@ -59,9 +59,9 @@ import {
 } from "@/lib/stored-sold-price-evidence";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTasks,
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   NO_ADDITIONAL_ASK,
@@ -664,8 +664,8 @@ export async function POST(
        *
        * It PARKS, exactly as the batch edit, the date change and the guest
        * removal do: the guests are created and charged nothing, the booking's
-       * own totals do not move, and one OPEN task per unreadable strand asks a
-       * person what this booking is really worth.
+       * own totals do not move, and ONE OPEN task for the whole add (#3498) asks
+       * a person what this booking is really worth.
        */
       const addEvidence = preCheckInEditEvidence({
         bookingId,
@@ -690,7 +690,7 @@ export async function POST(
        * is known. What does not happen is a reprice of the booking, a promotion
        * recalculation, or an additional charge.
        */
-      const parked = addEvidence.occurrences.length > 0;
+      const parked = addEvidence.occurrences !== null;
 
       /**
        * The breakdown row for one position of the party pass.
@@ -1183,19 +1183,27 @@ export async function POST(
        * The raise ITSELF - the settlement payment id, the strand's member, the
        * null amount - is `raiseParkedEditFinancialReviewTasks`, stated once
        * there rather than four times across the four parked doors (`INV-SSOT`).
-       * A no-op when this add priced normally.
+       * Skipped entirely when this add priced normally.
+       *
+       * A PURE ADD moves no existing strand's nights, so it always composes to
+       * ONE item however large the party (`parkedEditWorkItems`).
        */
-      await raiseParkedEditFinancialReviewTasks({
-        booking,
-        guests: booking.guests,
-        // The whole point of this door: the guests just added, priced at what
-        // they are genuinely being sold for, against a booking total that is
-        // written back unchanged. That money is owed and nothing else records it.
-        addedGuests: createdGuests,
-        occurrences: addEvidence.occurrences,
-        bookingModificationId: bookingModification.id,
-        store: tx,
-      });
+      if (addEvidence.occurrences !== null) {
+        await raiseParkedEditFinancialReviewTasks({
+          booking,
+          guests: booking.guests,
+          // The whole point of this door: the guests just added, priced at what
+          // they are genuinely being sold for, against a booking total that is
+          // written back unchanged. That money is owed and nothing else records
+          // it - and on a PURE ADD no existing strand gives back or gains a
+          // night, so the item is raised on strands the edit did not touch and
+          // this figure is the only thing on it naming the money (#3498).
+          addedGuests: createdGuests,
+          occurrences: addEvidence.occurrences,
+          bookingModificationId: bookingModification.id,
+          store: tx,
+        });
+      }
 
       return {
         booking: updatedBooking,

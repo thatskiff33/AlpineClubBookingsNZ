@@ -69,13 +69,14 @@ import {
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTasks,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import {
-  counterpartStrandReviewOccurrence,
-  editFinancialReviewOccurrence,
-  storedSoldPriceEvidenceForGuest,
-} from "@/lib/stored-sold-price-evidence";
+  counterpartStrandRecord,
+  parkedEditWorkItems,
+  unpriceableStrandRecord,
+} from "@/lib/parked-edit-occurrence";
+import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 import {
   createBookingModificationCredit,
   requireMemberCreditRecipient,
@@ -162,11 +163,20 @@ export type RemoveBookingGuestResult = {
    */
   financialReviewPending: boolean;
   /**
-   * The tasks this removal raised or found already on file, in occurrence order.
-   * Empty on every priced removal. One entry per unpriceable strand - see the
-   * raise itself for why that is one task per strand and not one per removal.
+   * The task this removal raised or found already on file, or null on every
+   * priced removal. ONE, since #3498 - see the raise itself for why a parked
+   * removal is one work item however many strands it records.
    */
-  financialReviewTaskIds: string[];
+  /**
+   * The review tasks this removal raised, lead item first, or EMPTY when it
+   * priced normally.
+   *
+   * A list since the #3498 fix round, where `parkedEditWorkItems` gained a
+   * second grain. A removal moves exactly one strand's nights - the departing
+   * guest's - so in practice it raises one, and the first entry is that item;
+   * the list is what stops that practice being an assumption nothing checks.
+   */
+  financialReviewTaskIds: readonly string[];
   zeroDollarAutoPaid: boolean;
   supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[];
   // #1372: this removal newly dropped a paid (capacity-holding) booking into the
@@ -474,7 +484,8 @@ export async function removeBookingGuestInTransaction({
    * consent removal, because it no longer refuses one. So an exempted removal can
    * raise a SECOND review task beside the one already open, and that is the
    * intended shape: two occurrences, two keys, two amounts, each settled on its
-   * own evidence. This exemption's only remaining effect is that such a removal
+   * own evidence - two EDITS, which is a different thing from the per-strand
+   * fan-out #3498 removed. This exemption's only remaining effect is that such a removal
    * is not turned away by the fence while an earlier review is unresolved.
    *
    * DELIBERATELY BELOW THE AUTHORISATION CHECKS. A caller with no business
@@ -637,7 +648,7 @@ export async function removeBookingGuestInTransaction({
    * Its evidence is exact, so the number IS knowable and is preserved on the
    * task: the real per-night prices, the stored guest total, and the nights this
    * removal surrenders. `COUNTERPART_STRAND_UNREADABLE` says which of the two
-   * situations an admin is looking at, and `counterpartStrandReviewOccurrence`
+   * situations an admin is looking at, and `counterpartStrandRecord`
    * carries the rest of the reasoning - including why no AMOUNT is written even
    * though the rows add up.
    */
@@ -653,8 +664,7 @@ export async function removeBookingGuestInTransaction({
             : [];
         if (evidence.kind === "unusable") {
           return [
-            editFinancialReviewOccurrence({
-              bookingId,
+            unpriceableStrandRecord({
               bookingGuestId: guest.id,
               evidence,
               guestTotalCents: guest.priceCents,
@@ -665,8 +675,7 @@ export async function removeBookingGuestInTransaction({
         }
         if (guest.id !== guestId) return [];
         return [
-          counterpartStrandReviewOccurrence({
-            bookingId,
+          counterpartStrandRecord({
             bookingGuestId: guest.id,
             evidence,
             guestTotalCents: guest.priceCents,
@@ -1141,7 +1150,7 @@ export async function removeBookingGuestInTransaction({
    * booking row, the `BookingModification` anchor and these tasks either all
    * commit or none of them do - which is the first of the two failure modes the
    * issue names ("saving the booking change but losing the fact that money still
-   * needs review"). `raiseParkedEditFinancialReviewTasks` re-takes
+   * needs review"). `raiseParkedEditFinancialReviewTask` re-takes
    * `pg_advisory_xact_lock(1)`, which this function took as its FIRST lock at the
    * top; a transaction-scoped advisory lock is re-entrant, so that costs nothing
    * and adds no ordering edge (`INV-LOCK-002` still reads global -> lodge here).
@@ -1154,10 +1163,11 @@ export async function removeBookingGuestInTransaction({
    * the headline requirement, and it is the reason the raise is shaped that way
    * rather than as a bare `create`.
    *
-   * ONE TASK PER PARKED STRAND, not one per removal, and the difference is
-   * deliberate. The occurrence key is minted per strand, so per-strand is what
-   * "exactly one" can mean idempotently: a replay of this removal re-derives the
-   * same keys and creates nothing.
+   * ONE TASK PER PARKED REMOVAL since #3498 (owner decision D1), where it used
+   * to be one per parked STRAND. The occurrence key is minted over the whole
+   * edit now - every recorded strand's evidence is in the hash - so "exactly
+   * one" still means what it meant: a replay of this removal re-derives the same
+   * key and creates nothing.
    *
    * THE DEPARTING STRAND IS ALWAYS ONE OF THEM when this removal parks - see
    * `unpriceableStrands` above, where dropping it because its own rows read
@@ -1165,29 +1175,38 @@ export async function removeBookingGuestInTransaction({
    * carrying the surrendered nights, and therefore the money, is raised on every
    * parked removal.
    *
-   * Where a REMAINING strand is unreadable it gets its own task beside it,
-   * because it is a separate question for the admin: that one carries no
-   * surrendered nights, and its honest resolution is often DISMISSED ("reviewed,
-   * nothing to adjust"), which is a state this feature already has and does not
-   * pretend is a payment. Dismissing it no longer discards anything, because the
-   * departing guest's money is on its own task.
+   * Where a REMAINING strand is unreadable its evidence rides on the SAME task,
+   * as supporting detail rather than as a second thing to settle. That is what
+   * #3498 changed and why: on the live booking that prompted it, six such
+   * strands each became a work item indistinguishable from the one carrying the
+   * departing guest's real money, and dismissing the wrong one was silent and
+   * permanent.
    *
    * The raise ITSELF - the settlement payment id, the strand's member, the null
-   * amount - is `raiseParkedEditFinancialReviewTasks`, and is stated once there
+   * amount - is `raiseParkedEditFinancialReviewTask`, and is stated once there
    * rather than four times across the four parked doors (#3166, `INV-SSOT`).
    */
-  const financialReviewTaskIds = await raiseParkedEditFinancialReviewTasks({
-    booking,
-    // The DEPARTING strand is raised for too, and its row is not in the
-    // booking's remaining guest list - so it is named here explicitly.
-    guests: [guestToRemove, ...booking.guests],
-    // A removal adds nobody.
-    addedGuests: [],
-    // Already empty when this removal did not park (see its own comment).
-    occurrences: unpriceableStrands,
-    bookingModificationId: bookingModification.id,
-    store: tx,
-  });
+  // Composed here rather than inside the raise, because WHICH strands a removal
+  // records is this service's rule (see `unpriceableStrands` above) while the
+  // lead-strand ordering is the shared one. Null exactly when the removal priced
+  // normally, which is when the raise below does not happen at all.
+  const [leadUnpriceableStrand, ...restUnpriceableStrands] = unpriceableStrands;
+  const financialReviewTaskIds = leadUnpriceableStrand
+    ? await raiseParkedEditFinancialReviewTasks({
+        booking,
+        // The DEPARTING strand is raised for too, and its row is not in the
+        // booking's remaining guest list - so it is named here explicitly.
+        guests: [guestToRemove, ...booking.guests],
+        // A removal adds nobody.
+        addedGuests: [],
+        occurrences: parkedEditWorkItems({
+          bookingId,
+          strands: [leadUnpriceableStrand, ...restUnpriceableStrands],
+        }),
+        bookingModificationId: bookingModification.id,
+        store: tx,
+      })
+    : [];
 
   if (paymentImpact.accountCreditAmountCents > 0) {
     await createBookingModificationCredit(

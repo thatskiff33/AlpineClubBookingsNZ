@@ -168,7 +168,7 @@ const AUTO_ROW_CANCELLED_ONLY = {
   booking: { ...AUTO_ROW.booking, deletedAt: null },
 };
 
-/** The route's two `findMany` calls, in the order it issues them. */
+/** The route's three `findMany` calls, in the order it issues them. */
 function calls() {
   return mocks.manualRefundTaskFindMany.mock.calls.map(
     (call) => call[0] as Record<string, unknown>,
@@ -186,7 +186,18 @@ beforeEach(() => {
   mocks.hasAdminAreaAccess.mockReturnValue(true);
   mocks.manualRefundTaskFindMany
     .mockResolvedValueOnce([OPEN_ROW])
-    .mockResolvedValueOnce([AUTO_ROW]);
+    .mockResolvedValueOnce([AUTO_ROW])
+    // #3498: the reopen card's list. Empty by default, which is the ordinary
+    // shape - most days nothing has been dismissed.
+    .mockResolvedValueOnce([]);
+  /*
+    #3498: and a FALLBACK for every call past the queue above, so a case that
+    pins only the two lists it is about does not hand `readOrDegrade` an
+    `undefined` and fail on the list it was not testing. A chain of `Once`s that
+    has to be lengthened every time the route reads one more list is a fixture
+    that breaks for reasons nothing to do with what it asserts.
+  */
+  mocks.manualRefundTaskFindMany.mockResolvedValue([]);
   // #3191: no strand has a blank night unless a case says otherwise, which is
   // the ordinary shape — most rows in this queue offer nothing to fill in.
   mocks.bookingGuestFindMany.mockResolvedValue([]);
@@ -302,6 +313,7 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
     */
     mocks.manualRefundTaskFindMany
       .mockReset()
+      .mockResolvedValue([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([AUTO_ROW, AUTO_ROW_CANCELLED_ONLY]);
 
@@ -337,6 +349,7 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
     // date it made up.
     mocks.manualRefundTaskFindMany
       .mockReset()
+      .mockResolvedValue([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ ...AUTO_ROW, completedAt: null }]);
 
@@ -347,9 +360,10 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
     expect(body.autoRefunded[0].refundedAt).toBeNull();
   });
 
-  it("returns two empty lists rather than failing when there is nothing to show", async () => {
+  it("returns empty lists rather than failing when there is nothing to show", async () => {
     mocks.manualRefundTaskFindMany
       .mockReset()
+      .mockResolvedValue([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
 
@@ -365,10 +379,113 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
       tasks: [],
       autoRefunded: [],
       autoRefundedUnavailable: false,
+      // #3498: and the same for the reopen card's list, for the same reason -
+      // "nothing has been dismissed lately" is a claim about money decisions
+      // that a failed read has not earned.
+      dismissed: [],
+      dismissedUnavailable: false,
       // #3033: whether the booking link is offered at all. Part of the answer
       // for the same reason as the flag above — the card must not have to guess.
       viewerCanViewBookings: true,
     });
+  });
+});
+
+describe("the rows an officer could put back (#3498, owner decision D2)", () => {
+  const DISMISSED_ROW = {
+    id: "task-dismissed",
+    bookingId: "booking-edit",
+    amountCents: null,
+    kind: "EDIT_FINANCIAL_REVIEW",
+    reason: "A change to this booking could not be priced from stored history.",
+    note: "Nothing owed either way.",
+    completedAt: new Date("2026-06-25T02:00:00.000Z"),
+    booking: {
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      deletedAt: null,
+      member: { firstName: "Ada", lastName: "Lovelace" },
+      organisation: null,
+    },
+  };
+
+  beforeEach(() => {
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValue([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([DISMISSED_ROW]);
+  });
+
+  it("asks only for dismissals an OFFICER took, inside the reopen window", async () => {
+    /*
+      THE FENCE IS IN THE QUERY, and it is the safety half rather than the tidy
+      half. `completedByMemberId: { not: null }` excludes the Stripe webhook's
+      own dismissals, which record a capture it had ALREADY refunded - offering
+      one a "put back on the queue" button would invite a second refund of money
+      that has gone back. The window excludes nothing but old rows, and the
+      reopen door itself refuses on neither age nor anything this query decides.
+    */
+    await GET();
+    const dismissedQuery = calls()[2];
+    expect(dismissedQuery.where).toMatchObject({
+      status: "DISMISSED",
+      completedByMemberId: { not: null },
+    });
+    expect(dismissedQuery.orderBy).toEqual({ completedAt: "desc" });
+  });
+
+  it("sends what the card needs to decide, and nothing it does not", async () => {
+    const body = (await (await GET()).json()) as {
+      dismissed: Array<Record<string, unknown>>;
+      dismissedUnavailable: boolean;
+    };
+    expect(body.dismissedUnavailable).toBe(false);
+    // The WHOLE object: no review evidence, no unpriced nights, and no
+    // identifier the card has no use for. This list offers one action, so it
+    // carries what is needed to decide on that action and stops.
+    expect(body.dismissed).toEqual([
+      {
+        id: "task-dismissed",
+        bookingId: "booking-edit",
+        amountCents: null,
+        kind: "EDIT_FINANCIAL_REVIEW",
+        reason:
+          "A change to this booking could not be priced from stored history.",
+        note: "Nothing owed either way.",
+        dismissedAt: "2026-06-25T02:00:00.000Z",
+        bookingDeleted: false,
+        memberName: "Ada Lovelace",
+        checkIn: CHECK_IN.toISOString(),
+        checkOut: CHECK_OUT.toISOString(),
+      },
+    ]);
+  });
+
+  it("degrades on its own rather than taking the money queue down with it", async () => {
+    // The same asymmetry #2750 drew for the notices beside it: losing a
+    // correction surface must never remove the list of money the club owes
+    // members by hand, and an empty list is a claim a failed read has not
+    // earned - hence the flag.
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValue([])
+      .mockResolvedValueOnce([OPEN_ROW])
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error("statement timeout"));
+
+    const response = await GET();
+    const body = (await response.json()) as {
+      tasks: { id: string }[];
+      dismissed: unknown[];
+      dismissedUnavailable: boolean;
+    };
+    expect(response.status).toBe(200);
+    expect(body.tasks.map((task) => task.id)).toEqual(["task-open"]);
+    expect(body.dismissed).toEqual([]);
+    expect(body.dismissedUnavailable).toBe(true);
+    expect(mocks.loggerError).toHaveBeenCalled();
   });
 });
 
@@ -387,6 +504,7 @@ describe("a failed notices read must not take the work queue with it (#2750 revi
   it("answers 200 with the hand-back queue intact when the notices query fails", async () => {
     mocks.manualRefundTaskFindMany
       .mockReset()
+      .mockResolvedValue([])
       .mockResolvedValueOnce([OPEN_ROW])
       .mockRejectedValueOnce(new Error("statement timeout"));
 
@@ -412,6 +530,7 @@ describe("a failed notices read must not take the work queue with it (#2750 revi
     // to pay back" when the truth is unknown, so that one propagates.
     mocks.manualRefundTaskFindMany
       .mockReset()
+      .mockResolvedValue([])
       .mockRejectedValueOnce(new Error("statement timeout"))
       .mockResolvedValueOnce([AUTO_ROW]);
 
@@ -436,6 +555,7 @@ describe("financial-review evidence: what may cross the wire (#3033)", () => {
   beforeEach(() => {
     mocks.manualRefundTaskFindMany
       .mockReset()
+      .mockResolvedValue([])
       .mockResolvedValueOnce([REVIEW_ROW])
       .mockResolvedValueOnce([]);
   });
@@ -507,6 +627,17 @@ describe("financial-review evidence: what may cross the wire (#3033)", () => {
       // #3166: what the same edit added to the party, as a count and a figure.
       // Null on this fixture, whose edit added nobody.
       guestsAddedByEdit: null,
+      // #3498: the other strands the same parked edit recorded, as supporting
+      // detail on this one item. EMPTY on this fixture, which is a row written
+      // before the grain moved - and the empty list, rather than an absent
+      // field, is what stops the card branching on whether the row is old.
+      //
+      // MUTATION PROOF, like the redaction above: add `bookingGuestId` to a
+      // strand in `toEditFinancialReviewEvidence` and this deep-equal fails,
+      // because the projection is the only thing keeping a guest-strand
+      // identifier off a `finance:view` payload - and a list of strands is the
+      // same leak in a loop.
+      otherStrands: [],
     });
   });
 
@@ -520,6 +651,7 @@ describe("financial-review evidence: what may cross the wire (#3033)", () => {
     */
     mocks.manualRefundTaskFindMany
       .mockReset()
+      .mockResolvedValue([])
       .mockResolvedValueOnce([
         { ...REVIEW_ROW, reviewContext: { version: 99, nonsense: true } },
         { ...REVIEW_ROW, id: "task-review-none", reviewContext: null },
@@ -600,6 +732,7 @@ describe("the booking link an owner holds regardless of admin access (#3033)", (
     mocks.hasAdminAreaAccess.mockReturnValue(canViewBookings);
     mocks.manualRefundTaskFindMany
       .mockReset()
+      .mockResolvedValue([])
       .mockResolvedValueOnce([row])
       .mockResolvedValueOnce([]);
     const response = await GET();
@@ -681,6 +814,7 @@ describe("unpriced nights on a review row (#3191)", () => {
   beforeEach(() => {
     mocks.manualRefundTaskFindMany
       .mockReset()
+      .mockResolvedValue([])
       .mockResolvedValueOnce([REVIEW_ROW])
       .mockResolvedValueOnce([]);
   });
@@ -689,14 +823,28 @@ describe("unpriced nights on a review row (#3191)", () => {
     mocks.bookingGuestFindMany.mockResolvedValue([STRAND]);
 
     const body = (await (await GET()).json()) as {
-      tasks: { unpricedNights: Record<string, unknown> | null }[];
+      tasks: { unpricedNights: Record<string, unknown>[] }[];
     };
 
-    expect(body.tasks[0].unpricedNights).toEqual({
-      dates: ["2026-08-11"],
-      knownNightTotalCents: 6000,
-      storedGuestTotalCents: 12000,
-    });
+    // #3498: a LIST, one entry per repairable strand of the item, because one
+    // item now covers the whole parked edit. This review names one strand.
+    expect(body.tasks[0].unpricedNights).toEqual([
+      {
+        summary: {
+          dates: ["2026-08-11"],
+          knownNightTotalCents: 6000,
+          storedGuestTotalCents: 12000,
+        },
+        // #3498: the strand the settled amount moves the stored worth of. This
+        // review names one strand and it leads, so it is this one - and the
+        // browser reads the answer rather than guessing it from the position.
+        absorbsSettlement: true,
+        // The ITEM's ordinal, which the card numbers both its evidence blocks
+        // and its price boxes from, and which the officer's figures come back
+        // naming - one ordinal, one binding (#3498 fix round).
+        strandIndex: 0,
+      },
+    ]);
   });
 
   it("keeps the guest-strand id off the wire even while sending its nights", async () => {
@@ -725,7 +873,7 @@ describe("unpriced nights on a review row (#3191)", () => {
     const body = (await (await GET()).json()) as {
       tasks: { unpricedNights: unknown }[];
     };
-    expect(body.tasks[0].unpricedNights).toBeNull();
+    expect(body.tasks[0].unpricedNights).toEqual([]);
   });
 
   it("answers the queue without them when the strand read fails", async () => {
@@ -743,7 +891,7 @@ describe("unpriced nights on a review row (#3191)", () => {
 
     expect(response.status).toBe(200);
     expect(body.tasks).toHaveLength(1);
-    expect(body.tasks[0].unpricedNights).toBeNull();
+    expect(body.tasks[0].unpricedNights).toEqual([]);
     expect(mocks.loggerError).toHaveBeenCalled();
   });
 });

@@ -3,12 +3,13 @@ import "server-only";
 import type { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
 import logger from "@/lib/logger";
+import type { EditFinancialReviewStrandRecord } from "@/lib/edit-financial-review-context";
 import {
   GUEST_SELECT,
-  reviewTaskGuestId,
-  unpricedNightsSummaryForGuest,
-} from "@/lib/stored-night-price-repair-store";
-import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
+  repairableStrands,
+  reviewTaskStrands,
+  type RepairableStrand,
+} from "@/lib/stored-night-price-repair-plan";
 
 /**
  * #3191 (epic #2797): reading the unpriced-night summaries for a WHOLE FINANCE
@@ -23,11 +24,20 @@ import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
  * second of them deliberately degrades rather than failing. Different job,
  * different reason to change.
  *
- * They still read through the store's own `GUEST_SELECT` and
- * `unpricedNightsSummaryForGuest`, so there is exactly one definition of what a
- * repairable strand looks like (`INV-SSOT-001`); this file holds no rule of its
- * own.
+ * They still read through `GUEST_SELECT` and `repairableStrands` - which moved
+ * to `stored-night-price-repair-plan.ts` with the rest of the reads in #3498 -
+ * so there is exactly one definition of what a repairable strand looks like,
+ * and one answer to which strand a settlement moves (`INV-SSOT-001`). This file
+ * holds no rule of its own.
  */
+
+/**
+ * One repairable strand as the finance queue sends it, which is
+ * {@link RepairableStrand} MINUS the guest id: the browser never names a strand
+ * (see `UnpricedNightsSummary`), and the server re-derives the ids from the
+ * task's own stored context when the figures come back.
+ */
+export type QueueRepairableStrand = Omit<RepairableStrand, "bookingGuestId">;
 
 /**
  * The summaries for a whole queue load, keyed by TASK id.
@@ -48,25 +58,50 @@ export async function unpricedNightsSummariesByTaskId({
     reviewContext: unknown;
   }>;
   store: Prisma.TransactionClient;
-}): Promise<Map<string, UnpricedNightsSummary>> {
-  const guestIdByTaskId = new Map<string, string>();
+}): Promise<Map<string, QueueRepairableStrand[]>> {
+  // #3498: a LIST per task, because one item now names every strand of the
+  // parked edit and each of them may have blanks to fill. The order is the
+  // task's own strand order, which is what the settle path binds the officer's
+  // figures to positionally - so it must survive this read unchanged.
+  const strandsByTaskId = new Map<
+    string,
+    readonly EditFinancialReviewStrandRecord[]
+  >();
   for (const task of tasks) {
-    const guestId = reviewTaskGuestId(task);
-    if (guestId !== null) guestIdByTaskId.set(task.id, guestId);
+    const strands = reviewTaskStrands(task);
+    if (strands.length > 0) strandsByTaskId.set(task.id, strands);
   }
-  const summaries = new Map<string, UnpricedNightsSummary>();
-  if (guestIdByTaskId.size === 0) return summaries;
+  const summaries = new Map<string, QueueRepairableStrand[]>();
+  if (strandsByTaskId.size === 0) return summaries;
 
   const guests = await store.bookingGuest.findMany({
-    where: { id: { in: [...new Set(guestIdByTaskId.values())] } },
+    where: {
+      id: {
+        in: [
+          ...new Set(
+            [...strandsByTaskId.values()]
+              .flat()
+              .map((strand) => strand.bookingGuestId),
+          ),
+        ],
+      },
+    },
     select: GUEST_SELECT,
   });
   const byGuestId = new Map(guests.map((guest) => [guest.id, guest]));
-  for (const [taskId, guestId] of guestIdByTaskId) {
-    const guest = byGuestId.get(guestId);
-    if (!guest) continue;
-    const summary = unpricedNightsSummaryForGuest(guest);
-    if (summary) summaries.set(taskId, summary);
+  for (const [taskId, strands] of strandsByTaskId) {
+    // Through the SAME function the settle path uses, so the answer the browser
+    // is given and the answer the server will check against are one definition
+    // rather than two that agree today (`INV-SSOT`). The guest id is dropped
+    // here and nowhere else: the browser never names a strand.
+    const forTask = repairableStrands(strands, byGuestId).map(
+      ({ summary, absorbsSettlement, strandIndex }) => ({
+        summary,
+        absorbsSettlement,
+        strandIndex,
+      }),
+    );
+    if (forTask.length > 0) summaries.set(taskId, forTask);
   }
   return summaries;
 }
@@ -89,7 +124,7 @@ export async function unpricedNightsSummariesForQueue(args: {
     reviewContext: unknown;
   }>;
   store: Prisma.TransactionClient;
-}): Promise<Map<string, UnpricedNightsSummary>> {
+}): Promise<Map<string, QueueRepairableStrand[]>> {
   try {
     return await unpricedNightsSummariesByTaskId(args);
   } catch (err) {
@@ -97,6 +132,6 @@ export async function unpricedNightsSummariesForQueue(args: {
       { err },
       "Failed to read unpriced night summaries for the finance queue; its rows are answered without them",
     );
-    return new Map<string, UnpricedNightsSummary>();
+    return new Map<string, QueueRepairableStrand[]>();
   }
 }

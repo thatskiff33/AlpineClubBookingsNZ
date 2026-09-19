@@ -251,7 +251,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-093` | Withdrawal fires at the last failure; it never writes off the debt |
 | `INV-PAY-094` | It withdraws the ask only when a duplicate genuinely exists |
 | `INV-PAY-095` | The cancel is idempotent and never throws; its reason states abandonment |
-| `INV-PAY-067` | One review task per parked strand; departing strand always recorded |
+| `INV-PAY-067` | One review task per parked edit, carrying every strand it records |
 | `INV-PAY-060` | Settled occurrences never suppress the next; stored prices are not proof |
 | `INV-PAY-068` | A completion at zero is refused; the refusal names the way out |
 | `INV-PAY-096` | A share mid-send for its invoice becomes a dismiss-only queue item |
@@ -260,6 +260,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
+| `INV-PAY-099` | A dismissed money task can be reopened; a completed one cannot |
+| `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
 | `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |
 | `INV-PAY-071` | Both shortfall endings audited with opposite instructions; repair reads settled shares |
@@ -615,6 +617,7 @@ Prefix `INV-EXCEPT`.
 | `INV-EXCEPT-032` | One algorithm decides both request tables, so the flavours cannot drift apart |
 | `INV-EXCEPT-033` | A new booking is authorised as the requesting member, not merely created |
 | `INV-EXCEPT-034` | A supersede carries the predecessor's attempt count forward |
+| `INV-EXCEPT-036` | Stored proposal identities sort by code unit, never by server locale |
 
 ### Additional-payment chasing, request holds and refund settlement
 
