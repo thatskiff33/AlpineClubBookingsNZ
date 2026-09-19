@@ -104,22 +104,102 @@ export function bookingMoneyReviewSuffix(
   view: BookingMoneyReconciliationView,
 ): string {
   return bookingMoneyNeedsOfficerReview(view)
-    ? ` · ${BOOKING_MONEY_RECONCILIATION_COPY.amountQualifier}`
+    ? ` · ${bookingMoneyUnreconciledCopy(view.reconciliation.reasons).amountQualifier}`
     : "";
+}
+
+/**
+ * WHICH OF TWO SITUATIONS AN UNRECONCILED VERDICT DESCRIBES (#3278).
+ *
+ * `UNRECONCILED` was one label over two things that call for opposite
+ * responses, and an officer was being asked to tell them apart unaided:
+ *
+ * - **A DISAGREEMENT.** Every part is recorded and the numbers do not add up.
+ *   An officer can read the parts, find the discrepancy and fix or explain it.
+ *   This is the finding the feature exists to surface.
+ * - **EVIDENCE_ABSENT.** The records needed to check were never kept, so the
+ *   question cannot be answered by looking — today or ever. It is a property
+ *   of the era the booking comes from, not a task.
+ *
+ * Both stay `UNRECONCILED`: unknown evidence is never turned into a pass
+ * (#2797), nothing is suppressed, and no population is hidden by status. What
+ * changes is only what the screen ASKS OF THE READER. Telling an officer to
+ * review a booking whose records were never kept is a to-do they cannot close,
+ * on a population that only grows as bookings age — and an officer who meets a
+ * dozen of those learns to skim the banner, which is how the one that matters
+ * gets missed. The owner named that risk on 20 September 2026; this is the
+ * answer to it, chosen over suppressing historical bookings by status, which
+ * would have turned unknown evidence into a pass.
+ *
+ * MIXED SETS RESOLVE TO `DISAGREEMENT`, deliberately. A booking can carry both
+ * kinds at once, and the actionable one must not be muted by an unactionable
+ * sibling. So this reads "is there anything here an officer could act on?",
+ * and only a verdict whose every reason is evidence-absent gets the quieter
+ * wording.
+ */
+export type BookingMoneyUnreconciledKind = "DISAGREEMENT" | "EVIDENCE_ABSENT";
+
+/**
+ * The reasons that mean the records were never kept, rather than that the
+ * recorded numbers disagree. Exhaustive by construction: the kind function
+ * below treats every reason NOT named here as a disagreement, so a reason
+ * added later is actionable until somebody deliberately says otherwise — which
+ * is the fail-loud direction.
+ */
+const BOOKING_MONEY_EVIDENCE_ABSENT_REASONS: ReadonlySet<BookingMoneyReconciliationReason> =
+  new Set<BookingMoneyReconciliationReason>([
+    "NO_SURVIVING_STRANDS",
+    "STRAND_EVIDENCE_UNREADABLE",
+    "PROMO_BUILD_UP_NOT_KNOWN",
+  ]);
+
+/** Which kind a set of reasons describes. See the type's docblock for the rule. */
+export function bookingMoneyUnreconciledKind(
+  reasons: readonly BookingMoneyReconciliationReason[],
+): BookingMoneyUnreconciledKind {
+  return reasons.every((reason) => BOOKING_MONEY_EVIDENCE_ABSENT_REASONS.has(reason))
+    ? "EVIDENCE_ABSENT"
+    : "DISAGREEMENT";
+}
+
+/**
+ * The wording for a verdict, picked by kind. One call so no surface decides
+ * the question locally — which is how the single spelling was lost last time.
+ */
+export function bookingMoneyUnreconciledCopy(
+  reasons: readonly BookingMoneyReconciliationReason[],
+) {
+  return bookingMoneyUnreconciledKind(reasons) === "EVIDENCE_ABSENT"
+    ? BOOKING_MONEY_RECONCILIATION_COPY.evidenceAbsent
+    : BOOKING_MONEY_RECONCILIATION_COPY.disagreement;
 }
 
 /** Everything this feature calls itself, in one place. */
 export const BOOKING_MONEY_RECONCILIATION_COPY = {
   /** Heading or panel title for the feature itself. */
   featureName: "Booking money reconciliation",
-  /** The short chip, where it sits in a row of other chips. */
-  chipLabel: "Money review",
-  /** Follows an amount inline — see `bookingMoneyReviewSuffix`. */
-  amountQualifier: "recorded amount needs review",
-  /** The banner above the booking. */
-  noticeTitle: "Recorded booking money needs officer review",
-  noticeBody:
-    "Do not treat the stored total as reconciled until an officer has checked the recorded parts. No amount has been changed automatically.",
+  /**
+   * The two kinds, worded for what each asks of the reader. A disagreement is
+   * a task; absent evidence is a statement of fact with nothing to action, and
+   * saying so is the whole point of the split.
+   */
+  disagreement: {
+    /** The short chip, where it sits in a row of other chips. */
+    chipLabel: "Money review",
+    /** Follows an amount inline — see `bookingMoneyReviewSuffix`. */
+    amountQualifier: "recorded amount needs review",
+    /** The banner above the booking. */
+    noticeTitle: "Recorded booking money needs officer review",
+    noticeBody:
+      "Do not treat the stored total as reconciled until an officer has checked the recorded parts. No amount has been changed automatically.",
+  },
+  evidenceAbsent: {
+    chipLabel: "Not checkable",
+    amountQualifier: "recorded amount cannot be checked",
+    noticeTitle: "This booking's money cannot be checked",
+    noticeBody:
+      "The records needed to check the stored total were not kept when this booking was made. There is nothing to action here: no amount has been changed, and reviewing the booking cannot resolve it.",
+  },
   /** The transaction-history panel, where both states are shown. */
   currentStateLabel: "Current money reconciliation",
   reconciledDetail:
@@ -129,6 +209,8 @@ export const BOOKING_MONEY_RECONCILIATION_COPY = {
   stateLabel: {
     RECONCILED: "Reconciled",
     UNRECONCILED: "Unreconciled",
+    /** Still unreconciled — this names WHY, where there is room to. */
+    UNRECONCILED_EVIDENCE_ABSENT: "Unreconciled — records not kept",
   },
 } as const satisfies Record<string, string | Record<string, string>>;
 

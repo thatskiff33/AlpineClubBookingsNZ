@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { formatCents } from "@/lib/utils";
 import {
-  BOOKING_MONEY_RECONCILIATION_COPY,
+  bookingMoneyUnreconciledCopy,
   bookingMoneyNeedsOfficerReview,
   bookingMoneyReviewSuffix,
   type BookingMoneyReconciliationView,
@@ -158,7 +158,11 @@ function BookingSummary({
         ) : null}
         {bookingMoneyNeedsOfficerReview(booking.moneyReconciliation) ? (
           <MiniChip tone="info" icon={Scale}>
-            {BOOKING_MONEY_RECONCILIATION_COPY.chipLabel}
+            {
+              bookingMoneyUnreconciledCopy(
+                booking.moneyReconciliation.reconciliation.reasons,
+              ).chipLabel
+            }
           </MiniChip>
         ) : null}
       </div>

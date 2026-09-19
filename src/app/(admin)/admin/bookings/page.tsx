@@ -47,6 +47,8 @@ import { auth } from "@/lib/auth";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import {
   BOOKING_MONEY_RECONCILIATION_COPY,
+  bookingMoneyUnreconciledCopy,
+  bookingMoneyUnreconciledKind,
   bookingMoneyNeedsOfficerReview,
   bookingMoneyReconciliationForViewer,
   bookingMoneyReviewReasonText,
@@ -755,8 +757,21 @@ export default async function AdminBookingsPage({
                           <span
                             title={`${BOOKING_MONEY_RECONCILIATION_COPY.featureName}: ${bookingMoneyReviewReasonText(moneyReconciliationView.reconciliation.reasons)}`}
                           >
-                            <MiniChip tone="danger" icon={AlertTriangle}>
-                              {BOOKING_MONEY_RECONCILIATION_COPY.chipLabel}
+                            <MiniChip
+                              tone={
+                                bookingMoneyUnreconciledKind(
+                                  moneyReconciliationView.reconciliation.reasons,
+                                ) === "EVIDENCE_ABSENT"
+                                  ? "neutral"
+                                  : "danger"
+                              }
+                              icon={AlertTriangle}
+                            >
+                              {
+                                bookingMoneyUnreconciledCopy(
+                                  moneyReconciliationView.reconciliation.reasons,
+                                ).chipLabel
+                              }
                             </MiniChip>
                           </span>
                         ) : null}

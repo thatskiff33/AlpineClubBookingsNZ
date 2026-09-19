@@ -1,5 +1,6 @@
 import {
-  BOOKING_MONEY_RECONCILIATION_COPY,
+  bookingMoneyUnreconciledCopy,
+  bookingMoneyUnreconciledKind,
   BOOKING_MONEY_RECONCILIATION_REASON_TEXT,
   bookingMoneyNeedsOfficerReview,
   type BookingMoneyReconciliationView,
@@ -22,18 +23,30 @@ export function BookingMoneyReconciliationNotice({
   // could come to disagree with it.
   if (!bookingMoneyNeedsOfficerReview(view)) return null;
   const { reconciliation } = view;
+  // Wording, and the weight the banner carries, both follow the kind: a
+  // discrepancy is a task, absent records are a fact with nothing to action.
+  const kind = bookingMoneyUnreconciledKind(reconciliation.reasons);
+  const copy = bookingMoneyUnreconciledCopy(reconciliation.reasons);
+  const evidenceAbsent = kind === "EVIDENCE_ABSENT";
   return (
     <div
-      role="alert"
+      // An unactionable statement is not an alert; announcing it as one is
+      // what trains an officer to skim the banner that IS actionable.
+      role={evidenceAbsent ? "note" : "alert"}
       data-testid="booking-money-unreconciled"
       data-reconciliation-state={reconciliation.state}
       data-reconciliation-reasons={reconciliation.reasons.join(",")}
-      className="space-y-1 rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11"
+      data-reconciliation-kind={kind}
+      className={`space-y-1 rounded-md border px-4 py-3 text-sm ${
+        evidenceAbsent
+          ? "border-border bg-muted text-muted-foreground"
+          : "border-danger-6 bg-danger-3 text-danger-11"
+      }`}
     >
       <p className="font-medium">
-        {BOOKING_MONEY_RECONCILIATION_COPY.noticeTitle}
+        {copy.noticeTitle}
       </p>
-      <p>{BOOKING_MONEY_RECONCILIATION_COPY.noticeBody}</p>
+      <p>{copy.noticeBody}</p>
       <ul className="list-disc pl-5">
         {reconciliation.reasons.map((reason) => (
           <li key={reason}>
