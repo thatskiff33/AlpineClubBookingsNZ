@@ -4,12 +4,14 @@
 // The owner's decision is almost entirely about a RELATIONSHIP, so most of these
 // tests are about which bookings are and are not related. A test double that
 // ignored the `where` clauses would pass every one of them for the wrong reason, so
-// the fake store below really applies them — see `matchesWhere`. That is the whole
+// the fake store below really applies them through the shared `matchesWhere`
+// (#3434), which THROWS on an operator it does not model. That is the whole
 // reason this file does not reuse the single-row `makeDb` in
 // adult-member-hosting-review.test.ts.
 import { bookingsOverlap } from "@/lib/booking-night-overlap";
 import { AgeTier, type MemberGuestConsentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 
 vi.mock("server-only", () => ({}));
 
@@ -153,81 +155,6 @@ function booking(overrides: FakeBooking = {}): FakeBooking {
     guests: [],
     ...overrides,
   };
-}
-
-/**
- * Apply a Prisma-shaped `where` to a plain row.
- *
- * Supports exactly the operators the coverage predicates use — equality, `not`,
- * `in`, `notIn`, `lt`, `gt`, `gte`, the `guests: { some: ... }` relation filter, and
- * a top-level `OR` — and THROWS on anything else. Throwing rather than ignoring is
- * deliberate: a clause this fake silently skipped would make a "not related" test
- * pass while the production query related the two bookings.
- *
- * `gte` and `some` are here for the §8 member fan-out, which asks a different
- * question from the coverage predicates: not "which of this owner's bookings overlap"
- * but "which live current-or-future bookings does this PERSON attend".
- */
-function matchesWhere(row: FakeBooking, where: Record<string, unknown>): boolean {
-  for (const [key, condition] of Object.entries(where)) {
-    if (key === "OR") {
-      const clauses = condition as Array<Record<string, unknown>>;
-      if (!clauses.some((clause) => matchesWhere(row, clause))) return false;
-      continue;
-    }
-    // #3232: the union dependent envelope composes its two night-overlap tests as
-    // `AND: [{ OR: [ ... ] }]`, because a flat spread of two objects that both set
-    // `checkIn` and `checkOut` would silently keep only one of them. Before this
-    // arm the fake THREW on the array, which is the behaviour that matters most —
-    // an unknown clause must never be silently skipped, or a "not related" test
-    // would pass while the real query related the two bookings.
-    if (key === "AND") {
-      const clauses = condition as Array<Record<string, unknown>>;
-      if (!clauses.every((clause) => matchesWhere(row, clause))) return false;
-      continue;
-    }
-    const value = row[key];
-    if (condition === null || typeof condition !== "object") {
-      if (value !== condition) return false;
-      continue;
-    }
-    // `guests: { some: { memberId } }` — the relation filter the member fan-out uses
-    // to find the bookings one person actually ATTENDS. Ownership is a different
-    // column and deliberately not consulted here (#2576 §2: ownership is never
-    // attendance evidence).
-    if (key === "guests" && "some" in (condition as Record<string, unknown>)) {
-      const some = (condition as { some: Record<string, unknown> }).some;
-      const guests = (value ?? []) as Array<Record<string, unknown>>;
-      if (!guests.some((guest) => matchesWhere(guest, some))) return false;
-      continue;
-    }
-    const operators = condition as Record<string, unknown>;
-    for (const [operator, operand] of Object.entries(operators)) {
-      switch (operator) {
-        case "gte":
-          if (!((value as Date) >= (operand as Date))) return false;
-          break;
-        case "not":
-          if (value === operand) return false;
-          break;
-        case "in":
-          if (!(operand as unknown[]).includes(value)) return false;
-          break;
-        case "notIn":
-          if ((operand as unknown[]).includes(value)) return false;
-          break;
-        case "lt":
-          if (!((value as Date) < (operand as Date))) return false;
-          break;
-        case "gt":
-          if (!((value as Date) > (operand as Date))) return false;
-          break;
-        default:
-          throw new Error(`fake store cannot apply operator ${operator}`);
-      }
-    }
-  }
-  return true;
 }
 
 /**

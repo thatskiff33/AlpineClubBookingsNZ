@@ -1007,6 +1007,27 @@ module says why, and names the four surfaces that still hand-roll their
 attention. It scans the tree from disk, so `npm run test:related` cannot reach
 it; run it by name when an admin file gains a scroll or a focus.
 
+## A fake store applies `where` through one evaluator
+
+A fake `prisma.model.findMany({ where })` has to answer the way PostgreSQL
+would, or the test driving it passes for a reason unrelated to its claim: a
+`where` clause the double silently skips makes a "not related" test green while
+the production query relates the two rows. The one home for that interpretation
+is
+[`src/lib/__tests__/support/prisma-where.ts`](../src/lib/__tests__/support/prisma-where.ts)
+— `matchesWhere(row, where)` — and a suite that needs a fake store imports it
+rather than writing its own (#3434 retired nine hand-rolled copies, each
+supporting a different slice of the grammar). It models the scalar operators,
+`AND`/`OR`/`NOT`, the to-one and to-many relation filters and a compound-unique
+key, and it **throws**, naming the operator and the column, on anything it does
+not — including a column the fake row never carried, which is how a
+`storeMember` fixture one self-relation column short of the merge's sweep was
+found. Teach it a new operator in that file, with a case in
+`prisma-where.test.ts`, never in the suite that needed it; a store that
+resolves relations through foreign keys or a model spec passes the `relation`
+and `column` options instead of forking the evaluator (the booking-evidence
+double is the worked example).
+
 ## A mutation probe is a change you have to undo
 
 `AGENTS.md` requires every new guard to be mutation-verified: break the thing
