@@ -1,24 +1,32 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { stripComments } from "./support/strip-comments";
 
 /**
- * How many private "turn a failed response into a message" helpers survive, and
- * exactly where (#2931, `INV-SSOT`).
+ * No private "turn a failed response into a message" helper exists outside
+ * `src/lib/api-error-message.ts` (#2931, #3445, `INV-SSOT`).
  *
- * `src/lib/api-error-message.ts` is the one home for that rule. It is NOT yet
- * the one way the tree does it, and a docblock that claimed it was would be
- * false — which is why this census exists: the figure the module and the pull
- * request quote is whatever this test measures, and a NEW private copy makes it
- * fail rather than quietly making the claim staler.
+ * #2931 wrote the one home and MEASURED that twenty-one private copies of the
+ * rule survived across `src/`, listing each by path so a new one would trip the
+ * census rather than quietly staling the figure. #3445 converged every one of
+ * them: seventeen straight copies deleted, three sites that EXTEND the rule now
+ * hand only the sentence to the shared module and keep their extension, and one
+ * deliberately different reader left alone and named below with its reason.
+ * The census is therefore no longer "these copies exist"; it is "none exists",
+ * and a new private copy fails it with its own path.
  *
- * Converging the survivors is deliberately not this issue's work. They sit on
- * surfaces other lanes are editing, and several are not straight copies at all:
- * `servernz-api.ts` strips control characters and caps the length,
- * `email-message-settings-panel.tsx` appends zod issues to the headline, and
- * `admin-member-xero-actions.ts` returns an error object carrying recovery
- * hints. Each of those needs a judgement about what the shared helper should
- * grow, not a sweep.
+ * FAILING CLOSED: a source-scanning guard's real failure mode is passing
+ * vacuously, because a matcher that stops recognising the shape it polices
+ * measures an empty tree and every assertion below goes green over nothing. Two
+ * things hold that shut. The matcher is pinned on a fixture of every writable
+ * form, and the one allowlisted reader must STILL be measured on the live tree —
+ * so the matcher is proven against real code on every run, and an allowlist
+ * entry whose copy was converged is reported as stale rather than kept.
+ *
+ * Comments are blanked before matching, through the one shared stripper, so a
+ * docblock that quotes the old rule as a worked example — this tree records a
+ * defect at the site it removed it from — cannot be counted as a live copy.
  *
  * This test reads the source tree from disk, so it has no import edge to the
  * files it scans and `npm run test:related` cannot reach it. Run it by name.
@@ -30,53 +38,19 @@ const SCANNED_DIR = "src";
 const CANONICAL_MODULE = "src/lib/api-error-message.ts";
 
 /**
- * Every surviving private copy, `path:name`, measured on this branch.
+ * The readers that are deliberately NOT the shared rule, by path, each with the
+ * reason it stays. `src/lib/api-error-message.ts` names the same set in its
+ * docblock; this is the list a run checks, that is the list a reader reads.
  *
- * Eleven of them are called `responseErrorMessage` and take a PARSED BODY —
- * the same rule one step later. That is why the canonical module's own exports
- * say which shape they take in their names: an export called
- * `responseErrorMessage` taking a `Response` would sit beside eleven functions
- * of that name taking a body, and an auto-import would collide in silence.
+ * An entry here must still be measured on the tree. When its copy is converged
+ * or moved, the assertion below reports the entry as stale and it comes out.
  */
-const SURVIVING_PRIVATE_COPIES = [
-  "src/app/(admin)/admin/ai-assistant/ai-assistant-client.tsx:readError",
-  "src/app/(admin)/admin/backups/backups-client.tsx:readError",
-  "src/app/(admin)/admin/backups/setup/backup-wizard-steps.tsx:readError",
-  "src/app/(admin)/admin/committee/page.tsx:responseErrorMessage",
-  "src/app/(admin)/admin/lodges/[id]/setup/page.tsx:readError",
-  "src/app/(admin)/admin/member-fields/page.tsx:responseErrorMessage",
-  "src/app/(admin)/admin/members/[id]/_components/member-committee-assignments-card.tsx:responseErrorMessage",
-  "src/app/(admin)/admin/members/[id]/_components/member-seasonal-membership-card.tsx:responseErrorMessage",
-  "src/app/(admin)/admin/membership-types/page.tsx:responseErrorMessage",
-  "src/app/(admin)/admin/modules/page.tsx:responseErrorMessage",
-  "src/app/(admin)/admin/setup/setup-page-client.tsx:responseErrorMessage",
-  "src/app/(admin)/admin/site-style/site-style-wizard.tsx:responseErrorMessage",
-  "src/app/(admin)/admin/waitlist/page.tsx:getErrorMessage",
-  "src/app/(admin)/admin/xero/_components/api.ts:readErrorMessage",
-  "src/app/(public)/login/two-factor-panels.tsx:readJsonError",
-  "src/components/admin/email-settings/email-message-settings-panel.tsx:templateErrorMessage",
-  "src/components/admin/finance-report-mappings-panel.tsx:responseErrorMessage",
-  "src/components/admin/membership-cancellation-settings-panel.tsx:responseErrorMessage",
-  "src/components/admin/security/password-policy-card.tsx:responseErrorMessage",
-  "src/lib/admin-member-xero-actions.ts:readActionError",
-  "src/lib/servernz-api.ts:readError",
-];
-
-/**
- * The surfaces this change converged, which must therefore NOT appear above.
- * Listing them by name is what stops a later revert from passing silently: a
- * restored private copy fails the census AND fails this second assertion with
- * the surface named.
- */
-const CONVERGED_BY_THIS_CHANGE = [
-  "src/app/(admin)/admin/bed-allocation/page.tsx",
-  "src/components/admin/allocation-preferences-section.tsx",
-  "src/components/admin/bed-allocation-removal-dialog.tsx",
-  "src/components/admin/booking-bed-allocation-panel.tsx",
-  "src/components/admin/rooms-beds-manager.tsx",
-  "src/components/admin/booking-policies/adult-member-hosting-section.tsx",
-  "src/components/admin/booking-policies/minimum-night-stay-section.tsx",
-];
+const DELIBERATELY_DIFFERENT_BY_PATH: Record<string, string> = {
+  "src/lib/servernz-api.ts":
+    "a server-side read of a REMOTE provider's error text, whose fallback " +
+    "carries the HTTP status and whose sentence is stripped of control " +
+    "characters and capped in length before it is written to the audit log",
+};
 
 const DECLARATION =
   /^(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(|^(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)[^=]*=>/;
@@ -125,7 +99,7 @@ function functionBody(lines: string[], start: number): string[] | null {
  * all is still counted.
  */
 function privateCopies(source: string): string[] {
-  const lines = source.split(/\r?\n/);
+  const lines = stripComments(source).split(/\r?\n/);
   const found: string[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     const match = DECLARATION.exec(lines[i] ?? "");
@@ -154,7 +128,12 @@ const measured = sources
   )
   .sort();
 
-describe("private failed-response readers (#2931, INV-SSOT)", () => {
+const allowedPaths = Object.keys(DELIBERATELY_DIFFERENT_BY_PATH);
+const privateCopiesFound = measured.filter(
+  (entry) => !allowedPaths.some((file) => entry.startsWith(`${file}:`)),
+);
+
+describe("private failed-response readers (#2931, #3445, INV-SSOT)", () => {
   /**
    * A source-scanning guard's real failure mode is passing VACUOUSLY: the
    * matcher stops recognising the shape it polices, the measured list empties,
@@ -200,31 +179,53 @@ describe("private failed-response readers (#2931, INV-SSOT)", () => {
     ).toEqual([]);
   });
 
-  it("still finds a population at all", () => {
-    expect(measured.length).toBeGreaterThan(0);
+  /**
+   * The allowlist is the guard's proof of life. One reader is deliberately
+   * different and still written in the private shape, so a healthy matcher
+   * finds it on every run; a matcher that finds nothing has broken, not won.
+   * The same assertion retires a stale entry: an allowlisted path whose copy
+   * has since been converged is reported here rather than kept for ever.
+   */
+  it("still measures every deliberately different reader on the live tree", () => {
+    const stillMeasured = allowedPaths.filter((file) =>
+      measured.some((entry) => entry.startsWith(`${file}:`)),
+    );
+    expect(
+      stillMeasured,
+      "an allowlisted reader is no longer measured: either the matcher has " +
+        "stopped recognising the shape (this census is now vacuous) or the " +
+        "reader was converged and its allowlist entry must come out",
+    ).toEqual(allowedPaths);
   });
 
   /**
-   * The measured figure is what the canonical module's docblock and the pull
-   * request quote. A new private copy fails here with its own path, which is
-   * the reminder to import the shared helper instead.
+   * The rule itself. A new private copy fails here with its own path, which is
+   * the reminder to import `apiErrorMessageFromBody` or
+   * `apiErrorMessageFromResponse` from the one home instead of writing a
+   * twenty-second reading of the same rule. A reader that is DELIBERATELY
+   * different — one that reads a second key, appends a validation error's
+   * issue list, or bounds a remote provider's text — still hands the sentence
+   * itself to the shared module and keeps only its extension, the way
+   * `xero/_components/api.ts`, `email-message-settings-panel.tsx` and
+   * `admin-member-xero-actions.ts` do; it is allowlisted above only when even
+   * that is not the right shape, with the reason written beside the path.
    */
-  it("names every surviving copy, so the count is measured and not claimed", () => {
-    expect(measured).toEqual(SURVIVING_PRIVATE_COPIES);
-  });
-
-  it("leaves none behind on the surfaces this change converged", () => {
-    const regressions = measured.filter((entry) =>
-      CONVERGED_BY_THIS_CHANGE.some((file) => entry.startsWith(`${file}:`)),
-    );
-    expect(regressions).toEqual([]);
+  it("finds no private copy outside src/lib/api-error-message.ts", () => {
+    expect(
+      privateCopiesFound,
+      "a private failed-response reader exists outside src/lib/api-error-message.ts " +
+        "(INV-SSOT-001): route it to apiErrorMessageFromBody / " +
+        "apiErrorMessageFromResponse, or allowlist its path with the reason",
+    ).toEqual([]);
   });
 
   it("keeps the canonical module's two shapes distinguishable by name", () => {
     const canonical = sources.find(({ rel }) => rel === CANONICAL_MODULE);
     expect(canonical).toBeDefined();
-    // An export named `responseErrorMessage` would collide with the eleven
-    // body-shaped locals above; both canonical readers must say their shape.
+    // Eleven of the copies #3445 deleted were body-shaped locals called
+    // `responseErrorMessage`. A branch that predates the sweep still declares
+    // them, so a canonical export of that name would collide with them at
+    // merge, in silence; both canonical readers keep saying their shape.
     expect(canonical?.text).not.toMatch(/export (async )?function responseErrorMessage\b/);
     expect(canonical?.text).toMatch(/export function apiErrorMessageFromBody\b/);
     expect(canonical?.text).toMatch(/export async function apiErrorMessageFromResponse\b/);
