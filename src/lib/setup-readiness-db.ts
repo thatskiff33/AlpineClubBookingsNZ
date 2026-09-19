@@ -17,20 +17,19 @@ import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
 import {
-  ACCOUNT_MAPPING_FALLBACK_KEYS,
+  ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET,
+  describeMappingWhileUnset,
   isCodeExplicitlyConfigured,
   MAPPING_LABELS,
-  type AccountMappingKey,
 } from "@/lib/xero-account-mapping-keys";
 
 /**
- * The mapping keys that keep working off another key's mapping while they are
- * unset (`INV-INT-021`). Straight off the registry, so a second such key is
- * surfaced in the setup checklist without anybody remembering to add it.
+ * The mapping keys that are asking to be decided while they are unset
+ * (`INV-INT-021`): one working off another key's mapping, or one that declares
+ * what the system does without it. Straight off the registry, so a new such
+ * key is surfaced in the setup checklist without anybody remembering to add it.
  */
-const ACCOUNT_MAPPING_KEYS_WITH_FALLBACK = Object.keys(
-  ACCOUNT_MAPPING_FALLBACK_KEYS,
-) as AccountMappingKey[];
+const ACCOUNT_MAPPING_KEYS_WITH_FALLBACK = ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET;
 
 /**
  * The sentinel a failed `ClubTimeSettings` read resolves to, so "the read did
@@ -488,6 +487,12 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
           xeroFallbackMappingRows.find((row) => row.key === key) ?? null,
         ),
     ).map((key) => MAPPING_LABELS[key] ?? key),
+    xeroUnsetMappingConsequences: ACCOUNT_MAPPING_KEYS_WITH_FALLBACK.filter(
+      (key) =>
+        !isCodeExplicitlyConfigured(
+          xeroFallbackMappingRows.find((row) => row.key === key) ?? null,
+        ),
+    ).map((key) => `${MAPPING_LABELS[key] ?? key}: ${describeMappingWhileUnset(key)}`),
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     membershipTypeRateGaps,
