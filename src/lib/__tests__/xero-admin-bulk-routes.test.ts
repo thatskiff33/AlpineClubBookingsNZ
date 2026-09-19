@@ -224,7 +224,6 @@ describe("Xero admin bulk routes", () => {
           checkIn: "2026-05-01T00:00:00.000Z",
           checkOut: "2026-05-02T00:00:00.000Z",
           createdAt: "2026-04-24T00:00:00.000Z",
-          hasLinkedInvoice: false,
         },
         {
           bookingId: "booking-2",
@@ -236,7 +235,6 @@ describe("Xero admin bulk routes", () => {
           checkIn: "2026-05-03T00:00:00.000Z",
           checkOut: "2026-05-04T00:00:00.000Z",
           createdAt: "2026-04-24T00:00:00.000Z",
-          hasLinkedInvoice: false,
         },
       ],
     });

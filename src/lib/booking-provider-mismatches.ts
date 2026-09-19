@@ -3,6 +3,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import { getWaitlistOfferEmailDeliveries } from "@/lib/waitlist-offer-email-visibility";
+import { readBookingInvoiceEvidence } from "@/lib/xero-booking-invoice-evidence";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import {
   getBookingInvoiceSyncFault,
@@ -91,9 +92,6 @@ type BookingProviderMismatchDb = {
   booking: {
     findUnique(args: unknown): Promise<unknown>;
   };
-  xeroSyncOperation: {
-    count(args: unknown): Promise<number>;
-  };
 };
 
 export interface BookingProviderMismatchDependencies {
@@ -101,6 +99,7 @@ export interface BookingProviderMismatchDependencies {
   loadEffectiveModuleFlags: typeof loadEffectiveModuleFlags;
   getWaitlistOfferEmailDeliveries: typeof getWaitlistOfferEmailDeliveries;
   getBookingInvoiceSyncFault: typeof getBookingInvoiceSyncFault;
+  readBookingInvoiceEvidence: typeof readBookingInvoiceEvidence;
 }
 
 const defaultDependencies: BookingProviderMismatchDependencies = {
@@ -108,6 +107,7 @@ const defaultDependencies: BookingProviderMismatchDependencies = {
   loadEffectiveModuleFlags,
   getWaitlistOfferEmailDeliveries,
   getBookingInvoiceSyncFault,
+  readBookingInvoiceEvidence,
 };
 
 /**
@@ -322,21 +322,20 @@ export async function getBookingProviderMismatches(
       something is. The precise row wins.
     */
     if (booking.status === "PAID" && !invoiceSyncFault) {
-      const succeededInvoiceOperations = await deps.db.xeroSyncOperation.count({
-        where: {
-          entityType: "INVOICE",
-          status: "SUCCEEDED",
-          localModel: "Payment",
-          localId: booking.payment.id,
-        },
-      });
+      /*
+        #3467: "is there an invoice" is the one evidence rule — the payment's
+        stored id or an active PRIMARY_INVOICE link — not a count of SUCCEEDED
+        operations, which answered "no" for an invoice Xero accepted before a
+        later step of the same operation failed.
+      */
+      const evidence = await deps.readBookingInvoiceEvidence(booking.payment);
 
-      if (succeededInvoiceOperations === 0) {
+      if (!evidence.exists) {
         mismatches.push({
           id: "xero-invoice-pending",
           label: "Paid, Xero invoice pending",
           description:
-            "The money is received, but no completed Xero invoice operation exists for this payment yet. The outbox normally catches up on its own; if it stays pending, check the operation queue for a failure.",
+            "The money is received, but the club's records hold no Xero invoice for this payment yet. The outbox normally catches up on its own; if it stays pending, check the operation queue for a failure.",
           href: buildXeroRecordActivityUrl("Payment", booking.payment.id),
           linkLabel: "Review Xero activity",
         });

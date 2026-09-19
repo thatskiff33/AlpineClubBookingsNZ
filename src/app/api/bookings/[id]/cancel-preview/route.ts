@@ -8,6 +8,7 @@ import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import { clubTime } from "@/lib/club-time/server";
 import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
+import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
@@ -53,11 +54,12 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
-      return NextResponse.json(
-        { error: "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be cancelled" },
-        { status: 400 }
-      );
+    // #3497: this is a member-facing door, so it answers from the member set
+    // (`MEMBER_CANCELLABLE_BOOKING_STATUSES`) and with the same sentence the
+    // cancel route refuses with — derived, never restated here.
+    const refusal = memberCancelRefusal(booking.status);
+    if (refusal) {
+      return NextResponse.json({ error: refusal }, { status: 400 });
     }
 
     // PENDING bookings — no payment taken. #1491: paid-path eligibility is

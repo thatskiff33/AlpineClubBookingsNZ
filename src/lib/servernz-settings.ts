@@ -159,7 +159,7 @@ export async function recordOtherLodgesUpload(at: Date = new Date()): Promise<vo
  * IT MUST ALSO NEVER MOVE BACKWARDS. A server that echoes `since` when a page is
  * empty hands the overlapped request value straight back as its answer, so
  * persisting the response uncritically has the same effect by a different route.
- * `advancedDownloadCursor` in `servernz-other-lodges-sync.ts` is where that
+ * `advancedDownloadCursor` in `servernz-cursor-overlap.ts` is where that
  * comparison is made — it holds both the stored and the returned value, which
  * this writer does not — and it is the reason nothing here needs to re-read the
  * row. Do not "tidy up" either rule by storing whatever the caller had in hand.

@@ -445,21 +445,6 @@ const statusSetExpressions = (source: string): string[] => [
  * invisible. A new set in an exempted file now trips the census like any other.
  */
 const PERMITTED_STATUS_SETS: Record<string, { reason: string; expressions: string[] }> = {
-  "src/app/api/bookings/[id]/cancel-preview/route.ts": {
-    reason:
-      "answers 'can this be CANCELLED?', a different and wider question " +
-      "(CANCELLABLE_BOOKING_STATUSES in booking-cancel.ts admits three more). " +
-      "Its list is itself a divergence from that one — filed as #3497 — but " +
-      "converging it widens a member-facing cancellation path and belongs in " +
-      "that issue, not in #3245's behaviour-preserving convergence.",
-    expressions: ['["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"]'],
-  },
-  "src/app/api/bookings/[id]/notes/route.ts": {
-    reason:
-      "answers 'may a note be edited on this booking?', a third question " +
-      "again, and its set omits PAID. Same shape, same follow-up (#3497).",
-    expressions: ['["PAYMENT_PENDING", "CONFIRMED", "PENDING"]'],
-  },
   "src/app/api/bookings/[id]/arrival-time/route.ts": {
     reason:
       "answers 'may an arrival time still be set?' as a NEGATIVE pair — a " +
@@ -500,11 +485,12 @@ const PERMITTED_STATUS_SETS: Record<string, { reason: string; expressions: strin
   },
   "src/lib/booking-cancel.ts": {
     reason:
-      "the cancellation sets — the one home for 'can this be cancelled?' and " +
-      "its no-money subset. A different question from editing; #3497 is the " +
-      "issue for giving IT one home across its own three doors.",
+      "the cancel service's no-money subset of the cancellable set, and its " +
+      "paid-path statuses. 'Can this be cancelled?' itself has ONE home since " +
+      "#3497 — booking-cancel-eligibility.ts, a leaf outside this population " +
+      "that the service and every member-facing door import; the cancel-preview " +
+      "and notes routes no longer hold a list of their own.",
     expressions: [
-      '[ "PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "WAITLISTED", "WAITLIST_OFFERED", "AWAITING_REVIEW", ]',
       '[ "WAITLISTED", "WAITLIST_OFFERED", "AWAITING_REVIEW", ]',
       '["PAYMENT_PENDING", "CONFIRMED", "PAID"]',
       "[ BookingStatus.PAYMENT_PENDING, BookingStatus.CONFIRMED, BookingStatus.PAID, ]",
