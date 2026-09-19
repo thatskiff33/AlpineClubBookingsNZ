@@ -6,17 +6,50 @@
  * ## Why this module exists
  *
  * Every admin surface that writes through `fetch` has to turn a non-OK reply
- * into a message, and the rule is always the same. Measured on this branch by
- * `api-error-message-census.test.ts`, **21 private copies of it survive across
- * `src/`** — a figure that test prints and pins, so it is measured rather than
- * claimed. This module is not yet "the one way the tree does this"; it is the
- * one home the copies can move to, and this change moves the six in the
- * booking-policy and bed-allocation surfaces it touches. Converging the rest is
- * separate work across surfaces other lanes are editing, and some survivors are
- * not straight copies at all — `servernz-api.ts` strips control characters,
- * `email-message-settings-panel.tsx` appends zod issues, `admin-member-xero-actions.ts`
- * returns an error object rather than a string. Those need a judgement, not a
- * sweep. The census names each survivor by path so a NEW private copy trips it.
+ * into a message, and the rule is always the same. #2931 wrote this one home
+ * and measured that **21 private copies** of the rule survived across `src/`,
+ * drifted into three behaviours: most rendered an EMPTY red alert on a blank
+ * message (`?? fallback`), one fell back correctly (`|| fallback`), and none
+ * checked the message was text, so an object rendered as `[object Object]`.
+ * #3445 converged every one of them, and `api-error-message-census.test.ts`
+ * now asserts that **no private copy exists** outside this file — failing
+ * closed, so a twenty-second reading of the rule is reported with its path.
+ *
+ * ## The two answers #3445 settled, on every admin surface
+ *
+ *  - **A blank message falls back to the screen's own fixed sentence.**
+ *    `{ error: "" }` and `{ error: "   " }` are the fallback, never an empty
+ *    alert.
+ *  - **A non-text message falls back rather than being stringified.**
+ *    `{ error: { code: 7 } }` is the fallback, never `[object Object]`.
+ *
+ * Both are pinned by `api-error-message.test.ts`, with a real string passing
+ * through, so a copy that drifts back is a failing test and not a screen an
+ * officer has to report.
+ *
+ * ## Deliberately different readers, and why
+ *
+ * Three surfaces EXTEND the rule. Each hands the sentence itself to
+ * {@link apiErrorMessageFromBody} and keeps only its extension, so the two
+ * answers above hold there too:
+ *
+ *  - `src/app/(admin)/admin/xero/_components/api.ts` — the Xero routes
+ *    sometimes answer with a `message` key rather than `error`; that second key
+ *    is read once and handed to the shared rule as the fallback.
+ *  - `src/components/admin/email-settings/email-message-settings-panel.tsx` —
+ *    prefers a validation error's issue list, joined onto the headline (#2267);
+ *    the headline is the shared rule's sentence.
+ *  - `src/lib/admin-member-xero-actions.ts` — returns an error OBJECT carrying
+ *    recovery hints beside the sentence; the sentence is the shared rule's.
+ *
+ * One reader stays in the private shape and is allowlisted by path in the
+ * census with its reason:
+ *
+ *  - `src/lib/servernz-api.ts` — a server-side read of a REMOTE provider's
+ *    error text. Its fallback carries the HTTP status, and its sentence is
+ *    stripped of control characters and capped in length before
+ *    `respondToSyncError` writes it to the audit log. That bounding is the
+ *    point of the reader, not an accident of where it lives.
  *
  * ## The rule these functions own
  *
@@ -31,16 +64,17 @@
  *    object, or carries no usable `error` falls back to the caller's own safe
  *    sentence.
  *  - **Blank counts as absent.** `{ error: "" }` renders an empty alert, which
- *    reads as a UI bug rather than as a refusal; the fallback is better. Three
+ *    reads as a UI bug rather than as a refusal; the fallback is better. Most
  *    of the copies converged here used `?? fallback`, which renders the blank.
  *
  * ## Two shapes, named so they cannot be confused
  *
- * Eleven files still declare a local `responseErrorMessage(body, fallback)` —
- * the same rule one step later, after the caller has already awaited `.json()`.
- * An export called `responseErrorMessage` that took a `Response` would sit
- * beside eleven functions of that name taking a body, and an auto-import would
- * collide in silence. So both shapes live here and both say which they take:
+ * Eleven of the copies #3445 deleted were a local
+ * `responseErrorMessage(body, fallback)` — the same rule one step later, after
+ * the caller has already awaited `.json()`. A branch cut before the sweep still
+ * declares them, so an export called `responseErrorMessage` here would collide
+ * with them at merge, in silence. So both shapes live here and both say which
+ * they take:
  * {@link apiErrorMessageFromBody} for a parsed body, and
  * {@link apiErrorMessageFromResponse} for a `Response` it parses itself.
  */

@@ -115,7 +115,7 @@ const settingFields: Array<{
 // generic line left an admin guessing what to change (#2267), so join the
 // explanations onto it — every rule the server enforces already carries a
 // plain-English message.
-function templateErrorMessage(responseBody: unknown, fallback: string): string {
+export function templateErrorMessage(responseBody: unknown, fallback: string): string {
   const body = responseBody as
     | { issues?: Array<{ message?: string }> }
     | null
