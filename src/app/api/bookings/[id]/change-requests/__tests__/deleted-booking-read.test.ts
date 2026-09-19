@@ -11,7 +11,7 @@ import { NextRequest } from "next/server";
  * itself. One of the two reads `INV-ADDPAY-033` tracked. (The issue body named
  * three; a later correction on the thread established that `cancel-preview`
  * GET is not one, because its status gate already rejects every deleted
- * booking with a 400 before any payload is built — see `INV-ADDPAY-030`.)
+ * booking with a 400 before any payload is built — see `INV-ADDPAY-040`.)
  *
  * WHAT THE OWNER DECIDED (10 Aug 2026). Refuse, using the SAME sentence as the
  * consent write and the refund-appeal read rather than three variants that
@@ -68,7 +68,7 @@ const DELETED_AT = new Date("2026-06-01T00:00:00.000Z");
  * The only shape production can emit. `softDeleteCancelledBooking` is
  * `deletedAt`'s one writer and refuses anything not already CANCELLED, nothing
  * moves a booking back out of CANCELLED, and `deletedAt` is never cleared
- * (`INV-ADDPAY-030`) — so a deleted booking is always a CANCELLED one.
+ * (`INV-ADDPAY-040`) — so a deleted booking is always a CANCELLED one.
  */
 function booking(deletedAt: Date | null) {
   return { memberId: "member-1", deletedAt };

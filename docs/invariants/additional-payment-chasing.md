@@ -1526,3 +1526,32 @@ for one capture is the property every lookup here protects. The hand-back's amou
 is carried into the audit row and the mail so a person can see whether it covered
 the whole capture, but nothing computes or sends a difference: that is a new money
 decision and would need its own owner decision.
+
+### INV-ADDPAY-040
+
+- **An unpaid additional-payment request a completed financial review raised
+  can always be withdrawn, and withdrawal retires every instrument it minted**
+  (#3528, stage 0 of #3527). One service, `additional-payment-withdraw.ts`, one
+  route (`finance:edit`), one button on the admin booking page. In order: the
+  Stripe PaymentIntent is cancelled at the provider FIRST, outside any lock
+  (`INV-LOCK-001`; idempotent — an already-cancelled intent makes no call); then,
+  under the global money key, the `Payment` summary columns are zeroed behind a
+  fence re-asserting the exact values retired (count 0 → 409, nothing changes),
+  the `ADDITIONAL` row is FAILED and stamped `withdrawnAt`, any
+  `SUPPLEMENTARY_INVOICE` operation parked `WAITING_PAYMENT` on that intent is
+  CANCELLED (`ADDITIONAL_ASK_WITHDRAWN`), and any PENDING intent-mint recovery
+  is failed terminally. The source task stays COMPLETED (`INV-PAY-099`); the
+  `booking.additionalPayment.withdrawn` audit row is the record.
+- **`withdrawnAt` is the durable fact; the columns are a projection.**
+  `reconcilePaymentAggregates` derives the additional columns from the latest
+  ADDITIONAL row WITHOUT a stamp, so the `payment_intent.canceled` webhook the
+  cancel triggers cannot put the ask back. A FAILED row still projects as owed
+  by design (a declined card is retried), which is why FAILED alone cannot mean
+  withdrawn. `findEditReviewChargeRequest` and the repair pass's
+  `planEditReviewChargeInvoicePayment` (`withdrawn` outcome, no finding) read
+  past it too, so no fresh invoice is parked on a cancelled intent.
+- **Only a review-raised request** (D-3528-2): an ordinary price-increase ask is
+  the price itself (`INV-PAY-047`); the door for a wrong price is editing the
+  booking. A paid request is a refund, refused. Pinned by
+  `additional-payment-withdraw.test.ts`, `payment-transactions-refunds.test.ts`,
+  `xero-booking-repair.test.ts`.

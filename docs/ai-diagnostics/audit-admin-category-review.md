@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  484
+row-producing sites:  485
 uncategorised:        0
-category values: admin 107, booking 104, xero 37, family 35, payment 46,
+category values: admin 107, booking 104, xero 37, family 35, payment 47,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -697,6 +697,16 @@ nobody has to act - but an officer opening the earlier change finds its request
 gone with no explanation on it, and a member sees one larger figure where they
 expected two. `payment` for the same audience reason as the review-charge rows
 beside it.
+
+#3528 then added one more (`payment` 46 -> 47, 484 -> 485, MEASURED with
+`npm run audit:census` on that branch rather than added to the literal):
+`booking.additionalPayment.withdrawn`, the record that a finance officer withdrew
+an unpaid payment request a completed financial review had raised. `payment` for
+the same audience reason as the request it reverses, and `important` rather than
+`info` because it is the only place the withdrawal shows: the review task stays
+COMPLETED and the booking's columns read as if no request had existed, so the
+row carries who withdrew it, how much, the card request and its provider status
+after the cancel, the review task it came from, and what was retired.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

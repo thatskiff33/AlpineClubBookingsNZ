@@ -35,7 +35,7 @@ import { prisma } from "@/lib/prisma";
  * payment on a CANCELLED booking through
  * `handleCancelledBookingAdditionalPaymentSucceeded`, which refunds it
  * automatically. A soft-deleted booking is ALWAYS `CANCELLED`
- * (`INV-ADDPAY-030`), so that path covers deleted bookings too, and the two
+ * (`INV-ADDPAY-040`), so that path covers deleted bookings too, and the two
  * orderings must not be allowed to pay the member twice:
  *
  * - **Webhook first.** It records and refunds; the confirm endpoint then finds
@@ -181,7 +181,7 @@ export function cancelledBookingPrimaryPaymentRefundReason(
  *
  * THE KEY MUST NOT DEPEND ON THE POPULATION, and that is the whole reason this
  * exists. A booking can be deleted BETWEEN two Stripe deliveries of the same
- * capture — deletion is one-way (`INV-ADDPAY-030`), but it can arrive at any
+ * capture — deletion is one-way (`INV-ADDPAY-040`), but it can arrive at any
  * moment — so a redelivery would see the deleted population where the first
  * delivery saw the cancelled one. Keyed per population, that redelivery finds no
  * row and writes a SECOND one for a single refund. Matching both sentences makes
