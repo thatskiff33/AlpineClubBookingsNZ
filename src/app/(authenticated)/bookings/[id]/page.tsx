@@ -335,6 +335,7 @@ export default async function BookingDetailPage({
       <BookingReviewNotices
         booking={booking}
         club={club}
+        access={access}
       />
 
       <BookingStayPreferences
