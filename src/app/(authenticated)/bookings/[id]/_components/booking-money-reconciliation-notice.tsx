@@ -1,4 +1,5 @@
 import {
+  bookingMoneyEvidenceAbsentReasons,
   bookingMoneyUnreconciledCopy,
   bookingMoneyUnreconciledKind,
   BOOKING_MONEY_RECONCILIATION_REASON_TEXT,
@@ -48,11 +49,18 @@ export function BookingMoneyReconciliationNotice({
       </p>
       <p>{copy.noticeBody}</p>
       <ul className="list-disc pl-5">
-        {reconciliation.reasons.map((reason) => (
-          <li key={reason}>
-            {BOOKING_MONEY_RECONCILIATION_REASON_TEXT[reason]}.
-          </li>
-        ))}
+        {evidenceAbsent
+          ? // Each line says WHY this booking cannot be checked, not just what
+            // is missing — without the cause the reader cannot tell whether it
+            // is theirs to fix.
+            bookingMoneyEvidenceAbsentReasons(reconciliation.reasons).map(
+              ({ reason, why }) => <li key={reason}>{why}</li>,
+            )
+          : reconciliation.reasons.map((reason) => (
+              <li key={reason}>
+                {BOOKING_MONEY_RECONCILIATION_REASON_TEXT[reason]}.
+              </li>
+            ))}
       </ul>
     </div>
   );

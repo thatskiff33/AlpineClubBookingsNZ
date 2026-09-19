@@ -83,11 +83,14 @@ describe("BookingMoneyReconciliationNotice", () => {
     expect(note.getAttribute("data-reconciliation-reasons")).toBe(
       "STRAND_EVIDENCE_UNREADABLE,PROMO_BUILD_UP_NOT_KNOWN",
     );
+    // And it says WHY, per reason — without the cause the reader cannot tell
+    // whether it is theirs to fix.
     expect(note.textContent).toContain(
-      "incomplete or inexact stored price evidence",
+      "not stored in a form that can be added up",
     );
+    expect(note.textContent).toContain("even share of a total");
     expect(note.textContent).toContain(
-      "promotion build-up is missing or not knowable",
+      "stored as a single figure, without the per-night breakdown",
     );
   });
 
@@ -108,5 +111,31 @@ describe("BookingMoneyReconciliationNotice", () => {
     const alert = screen.getByRole("alert");
     expect(alert.getAttribute("data-reconciliation-kind")).toBe("DISAGREEMENT");
     expect(alert.textContent).toContain("needs officer review");
+  });
+
+  // Every not-checkable reason must carry a cause. A reason that reached this
+  // note with no sentence of its own would read as a blank bullet, so the
+  // helper falls back rather than rendering nothing — and this pins that every
+  // reason in the set has real wording today.
+  it("gives a cause for every reason that means the records were not kept", () => {
+    for (const reason of [
+      "NO_SURVIVING_STRANDS",
+      "STRAND_EVIDENCE_UNREADABLE",
+      "PROMO_BUILD_UP_NOT_KNOWN",
+    ] as const) {
+      const { unmount } = render(
+        <BookingMoneyReconciliationNotice
+          view={{
+            visibility: "VISIBLE",
+            reconciliation: { state: "UNRECONCILED", reasons: [reason] },
+          }}
+        />,
+      );
+      const note = screen.getByRole("note");
+      const bullet = note.querySelector("li")?.textContent ?? "";
+      expect(bullet.length, reason).toBeGreaterThan(40);
+      expect(bullet, reason).toMatch(/\.$/);
+      unmount();
+    }
   });
 });

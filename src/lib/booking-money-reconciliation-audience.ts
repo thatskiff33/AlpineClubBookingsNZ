@@ -215,6 +215,51 @@ export const BOOKING_MONEY_RECONCILIATION_COPY = {
 } as const satisfies Record<string, string | Record<string, string>>;
 
 /**
+ * WHY a booking cannot be checked, one sentence per reason.
+ *
+ * The other reason text below says WHAT is wrong, in the vocabulary of the
+ * records. That is right for a discrepancy, where the officer is going to go
+ * and look. It is not enough here: if the screen tells somebody a booking
+ * cannot be checked and does not say why, the only thing they can do is wonder
+ * whether it is their problem. These sentences name the cause and are written
+ * so the answer to "can I do something about this?" is plainly no.
+ *
+ * Each one states the condition the code actually tests, not a guess at
+ * history. `NO_SURVIVING_STRANDS` is `guests.length === 0`;
+ * `STRAND_EVIDENCE_UNREADABLE` is a guest whose stored night prices come back
+ * unusable, which covers an even-share price source, no stored night rows at
+ * all, and rows that do not sum to that guest's own total;
+ * `PROMO_BUILD_UP_NOT_KNOWN` is a promotion whose per-night rows carry a null
+ * amount.
+ */
+export const BOOKING_MONEY_EVIDENCE_ABSENT_WHY: Partial<
+  Record<BookingMoneyReconciliationReason, string>
+> = {
+  NO_SURVIVING_STRANDS:
+    "No guests remain on this booking, so there are no per-guest amounts left to add up.",
+  STRAND_EVIDENCE_UNREADABLE:
+    "At least one guest's nightly prices were not stored in a form that can be added up: recorded as an even share of a total rather than what that guest was charged, or not stored at all, or not matching that guest's own total.",
+  PROMO_BUILD_UP_NOT_KNOWN:
+    "The discount on this booking was stored as a single figure, without the per-night breakdown needed to check it.",
+};
+
+/**
+ * The reasons a booking cannot be checked, each with its cause, ready to list.
+ * Falls back to the general reason text if a reason ever reaches here without
+ * its own sentence — visible and wrong-looking rather than silently blank.
+ */
+export function bookingMoneyEvidenceAbsentReasons(
+  reasons: readonly BookingMoneyReconciliationReason[],
+): readonly { reason: BookingMoneyReconciliationReason; why: string }[] {
+  return reasons.map((reason) => ({
+    reason,
+    why:
+      BOOKING_MONEY_EVIDENCE_ABSENT_WHY[reason] ??
+      `${BOOKING_MONEY_RECONCILIATION_REASON_TEXT[reason]}.`,
+  }));
+}
+
+/**
  * One plain-English sentence per reason, for every surface that explains a
  * verdict rather than merely marking one. The raw reason tokens stay the
  * stored/exported vocabulary; nothing renders them to a person.
