@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * WHICH PAID BOOKINGS HAVE NO INVOICE IN XERO (#3467).
  *
@@ -220,12 +222,17 @@ describe("the club-wide count moves with the same rule", () => {
       "src/lib/stuck-state-dashboard.ts",
       "src/lib/finance-sync-health.ts",
     ]) {
-      const source = readFileSync(
-        path.join(process.cwd(), relativePath),
-        "utf8",
+      const source = stripComments(
+        readFileSync(path.join(process.cwd(), relativePath), "utf8"),
       );
-      expect(source, relativePath).toMatch(/\.missingInvoices\.count/);
-      expect(source, relativePath).not.toMatch(/xeroSyncOperation|PRIMARY_INVOICE/);
+      expect(
+        source,
+        `${relativePath} must take the count from the health snapshot (INV-SSOT-001, #3467)`,
+      ).toMatch(/\.missingInvoices\.count/);
+      expect(
+        source,
+        `${relativePath} must not re-derive the missing-invoice rule (INV-SSOT-001, #3467)`,
+      ).not.toMatch(/xeroSyncOperation|PRIMARY_INVOICE/);
     }
   });
 });
