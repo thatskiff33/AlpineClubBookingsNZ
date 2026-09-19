@@ -4303,6 +4303,15 @@ model XeroObjectLink {
 
   @@unique([localModel, localId, xeroObjectType, xeroObjectId, role], map: "XeroObjectLink_local_xero_role_key")
   @@index([localModel, localId, active])
+  // #3471: serves the erased-member contact review's read of every RETIRED
+  // member contact link (localModel = 'Member', xeroObjectType = 'CONTACT',
+  // active = false). All three are equality predicates, so any column order
+  // gives the same index range; `active` goes last so the (localModel,
+  // xeroObjectType) prefix stays usable for per-type reads that do not filter
+  // on `active`. The [localModel, localId, active] index above is NOT redundant
+  // and stays: it is the by-local-id lookup (~40 callers) and this one cannot
+  // serve a query that names `localId` without `xeroObjectType`.
+  @@index([localModel, xeroObjectType, active])
   @@index([xeroObjectType, xeroObjectId])
   @@index([role, active])
 }
