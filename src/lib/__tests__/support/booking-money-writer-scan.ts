@@ -196,6 +196,26 @@ function enclosingScope(node: ts.Node): ts.Node | undefined {
   return undefined;
 }
 
+/**
+ * Does a declaration's name bind `text`?
+ *
+ * A declaration name is an identifier OR a destructuring pattern, and a pattern
+ * nests, so the answer is recursive. This is the one home for it: the shadow
+ * walk in `importedCanonicalBinding` and the local-declaration walk in the
+ * delegate scan both read it. They each used to decide it themselves, and the
+ * money-side spelling was the weaker of the two — it tested only
+ * `ts.isIdentifier`, so `function run({ bookingFinalPriceCents }) {}` shadowed
+ * the canonical import invisibly and any call at all certified the write
+ * (`INV-SSOT`).
+ */
+function bindingDeclaresName(name: ts.BindingName, text: string): boolean {
+  if (ts.isIdentifier(name)) return name.text === text;
+  return name.elements.some(
+    (element) =>
+      ts.isBindingElement(element) && bindingDeclaresName(element.name, text),
+  );
+}
+
 function isNestedScope(node: ts.Node): boolean {
   return (
     ts.isFunctionLike(node) ||
@@ -258,11 +278,15 @@ function importsCanonicalModule(
   importingFile: string,
   canonicalPath: string,
 ): boolean {
-  const normalise = (path: string): string => {
+  const normalise = (path: string): string | undefined => {
     const segments: string[] = [];
     for (const segment of path.split("/")) {
       if (segment === "" || segment === ".") continue;
-      if (segment === ".." ) {
+      if (segment === "..") {
+        // `pop()` on an empty array is a no-op, so a specifier that climbs
+        // above the repository root wrapped back onto the canonical path and
+        // certified a writer that imports nothing this repository can spell.
+        if (segments.length === 0) return undefined;
         segments.pop();
         continue;
       }
@@ -319,9 +343,8 @@ function importedCanonicalBinding(
   for (let cursor: ts.Node | undefined = use.parent; cursor; cursor = cursor.parent) {
     if (
       ts.isFunctionLike(cursor) &&
-      cursor.parameters.some(
-        (parameter) =>
-          ts.isIdentifier(parameter.name) && parameter.name.text === use.text,
+      cursor.parameters.some((parameter) =>
+        bindingDeclaresName(parameter.name, use.text),
       )
     ) {
       return false;
@@ -329,16 +352,27 @@ function importedCanonicalBinding(
   }
   for (let scope = enclosingScope(use); scope; scope = enclosingScope(scope)) {
     if (ts.isSourceFile(scope)) break;
+    // A catch clause binds its variable ON THE CLAUSE, not inside the block it
+    // guards, so walking the block's children never reaches it and the scope
+    // walk then climbs straight to the source file and stops.
+    if (
+      ts.isCatchClause(scope.parent) &&
+      scope.parent.block === scope &&
+      scope.parent.variableDeclaration &&
+      bindingDeclaresName(scope.parent.variableDeclaration.name, use.text)
+    ) {
+      return false;
+    }
     let shadowed = false;
     const visit = (node: ts.Node) => {
       if (shadowed || (node !== scope && isNestedScope(node))) return;
       if (
-        (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) ||
-        (ts.isFunctionDeclaration(node) && node.name) ||
-        (ts.isParameter(node) && ts.isIdentifier(node.name))
+        ((ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+          bindingDeclaresName(node.name, use.text)) ||
+        (ts.isFunctionDeclaration(node) && node.name?.text === use.text)
       ) {
-        const name = ts.isIdentifier(node.name) ? node.name.text : "";
-        if (name === use.text) shadowed = true;
+        shadowed = true;
+        return;
       }
       ts.forEachChild(node, visit);
     };
@@ -365,31 +399,23 @@ function acceptedOperand(
 }
 
 /**
- * A hard-coded number cannot be the row's existing value except by accident, so
- * it is never evidence that an unwritten column was fed to the relation.
- */
-function isLiteralOperand(operand: ts.Expression): boolean {
-  if (
-    ts.isPrefixUnaryExpression(operand) &&
-    (operand.operator === ts.SyntaxKind.MinusToken ||
-      operand.operator === ts.SyntaxKind.PlusToken)
-  ) {
-    return isLiteralOperand(operand.operand);
-  }
-  return ts.isNumericLiteral(operand) || ts.isStringLiteral(operand);
-}
-
-/**
  * Compare one operand of the canonical relation against the payload value for
  * the same column.
  *
- * A payload need not write every column it derives from: an update that clears
- * the promotion recomputes `finalPriceCents` from the total it is NOT changing.
- * There is no payload expression to compare that operand against, and demanding
- * one reported the writer as an escape for using the canonical helper
- * correctly. The census can still insist the operand exists and reads something
- * rather than being a hard-coded number; whether the value it reads equals the
- * stored column is a runtime identity, which the reconciliation projection owns.
+ * Every operand must be the payload's own spelling of the column it names. A
+ * relation fed a total this write is not storing computes a headline for some
+ * other row: the stored pair then fails the relation, and the difference is
+ * what every settlement decision and Xero line reads. Reconciliation notices
+ * the mismatch when someone next renders the booking, which is after the write,
+ * the settlement and the invoice; preventing the write is this census's job.
+ *
+ * Accepting an unwritten operand "as long as it is not a hard-coded number" was
+ * tried (`ec3c1fb86`) and reverted: it admitted
+ * `bookingFinalPriceCents({ totalPriceCents: someOtherBooking.totalPriceCents,
+ * ... })` and every variant of it, on `update`, `updateMany` and both branches
+ * of an `upsert`, and no writer in this tree needed it — all thirteen booking
+ * writers that store `finalPriceCents` store `totalPriceCents` with it, and a
+ * `create` takes the new-booking exemption before reaching here.
  */
 function canonicalOperandMatches(
   operand: ts.Expression | undefined,
@@ -398,7 +424,7 @@ function canonicalOperandMatches(
 ): boolean {
   // The relation takes both operands; a call missing one is not that relation.
   if (!operand) return false;
-  if (!accepted || accepted.length === 0) return !isLiteralOperand(operand);
+  if (!accepted || accepted.length === 0) return false;
   return accepted.some(
     (candidate) => candidate.getText(source) === operand.getText(source),
   );
@@ -1121,18 +1147,11 @@ export function scanBookingMoneyWriterEscapes(
 
   const hasLocalDeclaration = (identifier: ts.Identifier): boolean => {
     let declared = false;
-    const bindingContains = (name: ts.BindingName): boolean => {
-      if (ts.isIdentifier(name)) return name.text === identifier.text;
-      return name.elements.some(
-        (element) =>
-          ts.isBindingElement(element) && bindingContains(element.name),
-      );
-    };
     const visitDeclaration = (node: ts.Node) => {
       if (declared) return;
       if (
         (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
-        bindingContains(node.name)
+        bindingDeclaresName(node.name, identifier.text)
       ) {
         declared = true;
         return;

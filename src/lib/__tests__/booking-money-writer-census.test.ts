@@ -612,6 +612,42 @@ describe("INV-MONEY-031 booking money writer census", () => {
         ),
       ),
     ).not.toEqual([]);
+    // A name can be rebound by a DESTRUCTURING PATTERN as well as by a plain
+    // identifier, and every one of these shapes typechecks against the real
+    // module. The shadow walk used to look only for an identifier, so each of
+    // them hid the canonical import and let any call at all certify the write.
+    // A catch clause is the same hole from the other side: it binds its
+    // variable on the clause rather than inside the block it guards.
+    const shadowedByPattern = (declaration: string, close: string): string =>
+      `import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+      ${declaration}
+      const final = bookingFinalPriceCents({ totalPriceCents: total, promoAdjustmentCents: promo });
+      await database.booking.update({ data: { totalPriceCents: total, discountCents: Math.max(0, -promo), promoAdjustmentCents: promo, finalPriceCents: final } });
+      ${close}`;
+    for (const [declaration, close] of [
+      ["function run({ bookingFinalPriceCents }) {", "}"],
+      ["const run = ({ bookingFinalPriceCents }) => {", "};"],
+      ["function run([bookingFinalPriceCents]) {", "}"],
+      ["function run(deps) { const { bookingFinalPriceCents } = deps;", "}"],
+      ["function run(deps) { const { helper: bookingFinalPriceCents } = deps;", "}"],
+      ["for (const { bookingFinalPriceCents } of list) {", "}"],
+      ["try { noop(); } catch (bookingFinalPriceCents) {", "}"],
+    ] as const) {
+      expect(
+        scanBookingMoneyWriterEqualityEscapes(
+          "shadowed-by-pattern.ts",
+          shadowedByPattern(declaration, close),
+        ),
+        `a rebinding spelled \`${declaration}\` must not certify the write`,
+      ).not.toEqual([]);
+    }
+    // The control: the same writer with nothing rebinding the helper.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "unshadowed-control.ts",
+        shadowedByPattern("", ""),
+      ),
+    ).toEqual([]);
     expect(
       scanBookingMoneyWriterEqualityEscapes(
         "wrong-helper-constant.ts",
@@ -705,18 +741,42 @@ describe("INV-MONEY-031 booking money writer census", () => {
         "await database.booking.update({ data: { totalPriceCents: total, promoAdjustmentCents: 0, finalPriceCents: total } });",
       ),
     ).toEqual(["update-zero-missing-discount.ts:1|discountCents"]);
+    // Every operand the relation is fed must be the payload's own spelling of
+    // the column it names. This payload never writes `totalPriceCents`, so the
+    // headline it stores is computed from a figure this write does not own —
+    // refused, and refused whatever that figure is spelled as. Accepting an
+    // unwritten operand "as long as it is not a hard-coded number" was tried
+    // and reverted; no writer in this tree needs it, and it admitted a relation
+    // fed another row's total.
     expect(
       scanBookingMoneyWriterEqualityEscapes(
         "update-zero-helper.ts",
         'import { bookingFinalPriceCents } from "@/lib/booking-final-price"; await database.booking.update({ data: { promoAdjustmentCents: 0, finalPriceCents: bookingFinalPriceCents({ totalPriceCents, promoAdjustmentCents: 0 }) } });',
       ),
-    ).toEqual(["update-zero-helper.ts:1|discountCents"]);
+    ).toEqual([
+      "update-zero-helper.ts:1|discountCents",
+      "update-zero-helper.ts:1|finalPriceCents",
+    ]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "unwritten-total-operand.ts",
+        'import { bookingFinalPriceCents } from "@/lib/booking-final-price"; await database.booking.update({ data: { promoAdjustmentCents: promo, discountCents: Math.max(0, -promo), finalPriceCents: bookingFinalPriceCents({ totalPriceCents: someOtherBooking.totalPriceCents, promoAdjustmentCents: promo }) } });',
+      ),
+    ).toEqual(["unwritten-total-operand.ts:1|finalPriceCents"]);
     expect(
       scanBookingMoneyWriterEqualityEscapes(
         "update-zero-literal-total.ts",
         'import { bookingFinalPriceCents } from "@/lib/booking-final-price"; await database.booking.update({ data: { promoAdjustmentCents: 0, discountCents: 0, finalPriceCents: bookingFinalPriceCents({ totalPriceCents: 0, promoAdjustmentCents: 0 }) } });',
       ),
     ).toEqual(["update-zero-literal-total.ts:1|finalPriceCents"]);
+    // The same refusal, spelled as a named constant rather than a bare literal,
+    // so the fixture cannot be satisfied by one spelling of a wrong operand.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "update-zero-constant-total.ts",
+        'import { bookingFinalPriceCents } from "@/lib/booking-final-price"; const ZERO_TOTAL = 0; await database.booking.update({ data: { promoAdjustmentCents: 0, discountCents: 0, finalPriceCents: bookingFinalPriceCents({ totalPriceCents: ZERO_TOTAL, promoAdjustmentCents: 0 }) } });',
+      ),
+    ).toEqual(["update-zero-constant-total.ts:1|finalPriceCents"]);
     // The census reads seeds and fixtures outside `src/`, which have no `@/`
     // alias to import the one canonical relation by.
     expect(
@@ -734,6 +794,19 @@ describe("INV-MONEY-031 booking money writer census", () => {
         cleanWriter.replace(
           '"@/lib/booking-final-price"',
           '"../src/lib/booking-final-price-copy"',
+        ),
+      ),
+    ).not.toEqual([]);
+    // A specifier that climbs above the repository root names no module this
+    // repository can spell. Resolving it used to `pop()` an already-empty
+    // segment list, which is a no-op, so the path wrapped back onto the
+    // canonical one and certified the write.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "src/lib/climbing-import.ts",
+        cleanWriter.replace(
+          '"@/lib/booking-final-price"',
+          '"../../../../src/lib/booking-final-price"',
         ),
       ),
     ).not.toEqual([]);
