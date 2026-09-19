@@ -352,7 +352,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 88 test files, three test
+  `stripComments`, and since #3164 a lint rule enforces it.** 92 test files, three test
   helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
@@ -368,14 +368,13 @@ are permanent: never renumbered, never reused.
 - **Count that figure by IMPORT SPECIFIER, not by path text**, which is what the
   pin does — the two statements of it can only agree if they are measured the
   same way, which is this ID applied to itself again. The module is reached
-  through three spellings (`./support/strip-comments`,
-  `@/lib/__tests__/support/strip-comments`, and the CI script's relative path
-  with its `.ts` extension), and three further files name that path as DATA
-  rather than importing it: `eslint.config.mjs` inside the rule's own message,
-  `ssot-comment-stripper-guard.test.ts` as the lint target it feeds ESLint, and
-  `support/member-merge-family.ts` in prose. A grep for the path text counts all
-  three, and the module's own docblock as well. **Measure it; never increment
-  it.**
+  through four spellings (`@/lib/__tests__/support/strip-comments`,
+  `./support/strip-comments`, `./strip-comments`, and the CI script's relative
+  path with its `.ts` extension), and two further files name that path as DATA
+  rather than importing it: `eslint.config.mjs` inside the rule's own message
+  and `ssot-comment-stripper-guard.test.ts` as the lint target it feeds ESLint.
+  A grep for the path text counts both, and the module's own docblock as well.
+  **Measure it; never increment it.**
 - **A population measured by NAME is not the population**, and the count above
   is the evidence. #3132 converged the copies spelled `stripComments` and closed;
   seven more were alive that day under the name `withoutComments`, and #3164

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSchoolAttendeeConfirmation } from "@/lib/school-attendee-confirmation";
-import { calendarDateOfSerialisedDbDate, formatClubDate } from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 import { SchoolAttendeeConfirmForm } from "./school-attendee-confirm-form";
 
 // The attendee-confirmation link carries a one-time token and must never be
@@ -61,9 +61,7 @@ export default async function SchoolAttendeeConfirmationPage({
                 Check-in
               </p>
               <p className="mt-1 text-sm">
-                {formatClubDate(
-                  calendarDateOfSerialisedDbDate(details.booking.checkIn),
-                )}
+                {formatStayDate(details.booking.checkIn)}
               </p>
             </div>
             <div>
@@ -71,9 +69,7 @@ export default async function SchoolAttendeeConfirmationPage({
                 Check-out
               </p>
               <p className="mt-1 text-sm">
-                {formatClubDate(
-                  calendarDateOfSerialisedDbDate(details.booking.checkOut),
-                )}
+                {formatStayDate(details.booking.checkOut)}
               </p>
             </div>
           </div>

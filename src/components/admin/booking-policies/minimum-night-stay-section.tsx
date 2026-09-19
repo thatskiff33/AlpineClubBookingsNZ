@@ -25,30 +25,8 @@ import {
 } from "@/components/admin/view-only-action"
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
 import { dateOnlyFromIsoString } from "@/lib/date-only"
-import {
-  calendarDateOfSerialisedDbDateOrNull,
-  formatClubDate,
-} from "@/lib/club-time"
+import { formatStayDateOrNull } from "@/lib/club-time"
 import { DAY_LABELS, type MinStayPolicy } from "./types"
-
-/**
- * A minimum-stay boundary is an NZ date-only lodge date (#2264). It reaches the
- * browser as the JSON form of a Prisma `@db.Date`, i.e. a full ISO timestamp at
- * UTC midnight, so the calendar day is taken from the string and handed over as
- * UTC midnight rather than parsed in the viewer's own zone — a local parse
- * slides the day for anyone at UTC+13/+14. The NaN guard keeps a malformed
- * value from throwing and taking the whole panel down.
- * Deliberately the twin of `formatPeriodDate` in `booking-period-draft`. *
- * CT-4 (#2870), epic #2988: the value is a CALENDAR DAY and now takes no
- * timezone at all. The kernel's calendar-date formatter pins UTC over the
- * UTC-midnight encoding, so the projection is provably the identity - where the
- * zoned formatter this replaces was the identity only for a club east of
- * Greenwich, and a day early for any club west of it.
- */
-function formatPolicyDate(value: string): string {
-  const day = calendarDateOfSerialisedDbDateOrNull(value)
-  return day === null ? value : formatClubDate(day)
-}
 
 /**
  * One open minimum-stay editor's draft. Like the booking-periods section, the
@@ -795,8 +773,8 @@ export function MinimumNightStaySection() {
                               </Badge>
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              {formatPolicyDate(policy.startDate)} &mdash;{" "}
-                              {formatPolicyDate(policy.endDate)}
+                              {formatStayDateOrNull(policy.startDate) ?? policy.startDate} &mdash;{" "}
+                              {formatStayDateOrNull(policy.endDate) ?? policy.endDate}
                             </p>
                           </div>
                           <div className="flex space-x-2">

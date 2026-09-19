@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { isMemberCancellableBookingStatus } from "@/lib/booking-cancel-eligibility";
 
 const notesSchema = z.object({
   notes: z
@@ -51,7 +52,11 @@ export async function PUT(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!["PAYMENT_PENDING", "CONFIRMED", "PENDING"].includes(booking.status)) {
+  // #3497: the notes editor on the booking page is drawn by `canCancel`, so the
+  // statuses it saves for are the member-door cancel set — derived from the one
+  // home rather than a third list (which used to omit PAID, so a paid member saw
+  // the editor and was refused on save).
+  if (!isMemberCancellableBookingStatus(booking.status)) {
     return NextResponse.json(
       { error: "Notes can only be edited on active bookings" },
       { status: 400 }

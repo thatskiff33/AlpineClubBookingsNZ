@@ -2,7 +2,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { humanizeStatus } from "@/lib/status-colors";
 import type { BookingDetailRecord } from "../_lib/load-booking-detail";
+import type { BookingDetailViewer } from "../_lib/booking-detail-viewer";
+import type { BookingDetailEditAccess } from "../_lib/booking-detail-edit-access";
 import type { BoundClubTime } from "@/lib/club-time";
+import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 
 /**
  * WHO MADE IT AND WHAT WAS ASKED (#2958): the created-on-behalf note, the
@@ -13,10 +16,27 @@ import type { BoundClubTime } from "@/lib/club-time";
 export function BookingReviewNotices({
   booking,
   club,
+  viewer,
+  access,
 }: {
   booking: BookingDetailRecord;
   club: BoundClubTime;
+  viewer: BookingDetailViewer;
+  access: BookingDetailEditAccess;
 }) {
+  // #3497: the one place the OWNER is told why there is no Cancel button on a
+  // booking under review, and what to do instead. The sentence is drawn from
+  // `memberCancelRefusal`, the same home the preview and cancel routes refuse
+  // with, so the page can never say something the API would contradict. Only
+  // for the owner (an officer's door is their own review queue), only while
+  // the status is the one the member set excludes, and only while `canCancel`
+  // really is false — so the line disappears if the rule is ever widened.
+  const ownerCancelNotice =
+    viewer.isBookingOwner &&
+    booking.status === "AWAITING_REVIEW" &&
+    !access.canCancel
+      ? memberCancelRefusal(booking.status)
+      : null;
   return (
     <>
       {booking.createdBy && (
@@ -57,6 +77,15 @@ export function BookingReviewNotices({
             </p>
           )}
         </div>
+      )}
+
+      {ownerCancelNotice && (
+        <p
+          data-testid="owner-cancel-notice"
+          className="rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground"
+        >
+          {ownerCancelNotice}
+        </p>
       )}
 
       {booking.changeRequests.length > 0 && (

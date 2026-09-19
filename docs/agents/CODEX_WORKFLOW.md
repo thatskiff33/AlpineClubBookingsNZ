@@ -1,5 +1,7 @@
 # Codex Workflow
 
+**Audience: agent.**
+
 Use this workflow for future Codex work in AlpineClubBookingsNZ. It is designed
 for issue-scoped, auditable changes in a public repository with payment,
 accounting, membership, and booking risk.
@@ -23,7 +25,8 @@ accounting, membership, and booking risk.
     Low/Medium-risk PRs with a merge commit once CI is green, and hand off every
     Critical/High-risk PR for explicit owner approval. Never squash or
     force-push. Delete the branch after merge; a linked issue closes only when
-    its PR is eligible and merged.
+    its PR is eligible and merged. Then confirm `main` stayed green with the
+    filtered command in "Checking `main` after a merge" below.
 13. Tear down any Docker infrastructure this lane created — on an abandoned or
     failed lane too, not only a merged one. See "Lane-owned Docker
     infrastructure" below for the naming convention, the teardown commands, and
@@ -272,6 +275,46 @@ The `agent-workflow-contract.test.ts` verification test pins these entry-point
 links and PR evidence fields. A change that removes or contradicts the shared
 workflow must update the canonical contract deliberately instead of allowing
 agent-specific guidance to drift silently.
+
+## Checking `main` after a merge
+
+`AGENTS.md` -> "Completion and Merge" step 6 asks every lane to confirm that
+`main`'s CI is still green after its merge lands. The command is:
+
+```bash
+gh run list --branch main --event push --limit 6
+```
+
+The `--event push` filter is the whole point. Without it, `gh run list --branch
+main` matches on a run's **head branch**, and `epic-branch-sync.yml` opens its
+`main` -> `epic/**` sync pull requests with `main` itself as the head. Their
+`pull_request` runs therefore carry `head_branch: main` and are listed as if they
+were `main`'s own. They are also usually red: a clean sync auto-merges seconds
+after it opens (only `main` carries branch protection), so its queued runs start
+after `refs/pull/<n>/merge` is gone and fail at startup with zero jobs, and a
+conflicted sync fails deliberately. Measured on 15 Sep 2026, **26 of the last 30**
+`pull_request` runs with head `main` had failed while `main`'s own push runs on
+the same SHA were all green; re-measured on 19 Sep 2026, 24 of 30. That is the
+normal background rate, not an incident — which is exactly why it is dangerous:
+a lane that learns to wave the reds away is being trained to ignore the list a
+genuine `main` breakage would appear in.
+
+Read the filtered list as follows:
+
+- **`--event push`** is `main`'s own CI: `CI`, `E2E`, `Docs link check`,
+  `Wiki sync` and the `Clock rollover canary`'s per-push run. A red here on the
+  current head is a real `main` red. Compare against the previous head before
+  calling it pre-existing.
+- **`--event schedule`** holds the nightly `Clock rollover canary`, the weekly
+  `Scheduled secret sweep` and the six-hourly `Epic branch sync` job itself. None
+  of these is a pull-request check, so a red there is investigated on its own
+  terms, never used to declare `main` red or green.
+- **`--event pull_request`** with head `main` is only ever the sync pull
+  requests described above. Judge a sync by the `push` run on the epic branch
+  it merged into, not by these rows.
+
+To see everything at once with the event visible, use
+`gh run list --branch main --limit 30 --json event,conclusion,name`.
 
 ## Lane-owned Docker infrastructure
 

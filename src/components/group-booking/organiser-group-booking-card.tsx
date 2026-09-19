@@ -22,10 +22,7 @@ import {
   type BookingMessageClubTokens,
 } from "@/lib/booking-message-definitions";
 import { formatCents } from "@/lib/utils";
-import {
-  calendarDateOfSerialisedDbDate,
-  formatClubDate,
-} from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 import { bookingStatusLabel } from "@/lib/status-colors";
 
 type PaymentMode = "EACH_PAYS_OWN" | "ORGANISER_PAYS";
@@ -402,7 +399,7 @@ export function OrganiserGroupBookingCard({
           {group.joinDeadline ? (
             <div>
               <span className="text-muted-foreground">Closes to joins:</span>{" "}
-              {formatClubDate(calendarDateOfSerialisedDbDate(group.joinDeadline))}
+              {formatStayDate(group.joinDeadline)}
             </div>
           ) : null}
           {group.maxJoiners != null ? (

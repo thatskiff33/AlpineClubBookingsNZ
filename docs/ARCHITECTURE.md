@@ -1076,7 +1076,7 @@ link stay for every support admin (#2823). Both callers (the page and
 matrix and default it to `false`, so a caller that omits it fails closed to no
 names.
 `src/lib/booking-provider-mismatches.ts` answers the same provider-divergence
-questions for a single booking (paid with no completed Xero invoice operation,
+questions for a single booking (paid while the club's records hold no Xero invoice,
 Stripe refund with no Xero credit note, waitlist offer whose email needs
 operator action) and feeds the amber "Provider state out of step" block on the
 booking detail Admin tools card — read-only detection mirroring the

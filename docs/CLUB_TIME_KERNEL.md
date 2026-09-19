@@ -196,6 +196,7 @@ one of these, there is a function.
 | You are about to write | Use instead |
 | --- | --- |
 | `requireCalendarDate(v.slice(0, 10))`, or `calendarDateOfDateOnlyInstant(new Date(v))`, over a serialised `@db.Date` | `calendarDateOfSerialisedDbDate(v)` — and the `…OrNull` sibling inside a client render, where a throw blanks the screen |
+| `formatClubDate(calendarDateOfSerialisedDbDate(v))` — a stay date to SHOW, `checkIn`/`checkOut`, a join deadline, a period edge | `formatStayDate(v)`, which also takes the `Date` Prisma returned; `formatStayDateOrNull(v) ?? fallback` inside a client render. Fifteen production files spelled the serialised pair out before #3507 and `stay-date-format-census.test.ts` now refuses THAT pair anywhere but `format.ts` (`INV-SSOT-001`). Not yet converged, and not guarded: the `Date`-form `formatClubDate(calendarDateOfDateOnlyInstant(x))` in about a dozen server files, and `admin/_lib/calendar-day.ts`'s `formatPayloadCalendarDay`, a sibling with its own pinned rejection semantics — #3511 |
 | `new Date(endOfClubDayExclusive(d, zone).getTime() - 1)` | `endOfClubDayInclusive(d, zone)` — but prefer the half-open bound wherever a `lt` will do |
 | `dateOnlyInstantOf((await clubTime()).today())` | `clubTodayDateOnlyInstant()` from `club-time/server` |
 | `dateOnlyInstantOf(date).getUTCDay()` | `calendarDayOfWeek(date)` — no `Date` is constructed, so the `getDay()` typo has nowhere to happen |
@@ -492,3 +493,8 @@ rather than reaching for a module kept alive for that purpose.
 - That census is **disk-scanning**, so `vitest related` cannot reach it — there
   is no import edge to a file it merely reads. Run it explicitly when you change
   the kernel; CI catches it either way.
+- `src/lib/__tests__/stay-date-format-census.test.ts` (#3507) refuses
+  `calendarDateOfSerialisedDbDate` beside `formatClubDate` in any production
+  file but `format.ts`, and a local `formatStayDate` declaration anywhere. It is
+  **disk-scanning** too — run it by name (`npm run test:named`) when you touch a
+  stay-date surface; it fails closed on an empty scan.

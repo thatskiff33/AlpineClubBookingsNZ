@@ -128,6 +128,21 @@ message board mirror sync** (the pull) and **Club message board share retry**
 first time the sync runs; installations without a public https address simply
 stay on polling.
 
+Each pull remembers how far it got and asks the central server only for what
+changed since then — and it deliberately starts a minute **before** that point.
+That is not wasted work: two posts saved at the central server at almost the
+same moment do not always become visible in the order they were stamped, and
+without the re-ask a post caught on the wrong side of that gap would be stepped
+over and never asked for again, with no gap on the board to notice. A post the
+re-ask brings back that is already on your board exactly as delivered is
+recognised and written nowhere — it does not count as a change in the job's
+result — and the remembered position only ever moves forward, to where the
+server says the pull got to. The one-minute window is the same setting the
+[Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)
+download uses, and like that download, a server that marks its place with a
+reference rather than a timestamp gets no re-ask; the application log says so
+on each such pull.
+
 ## Good to know
 
 - **Members cannot edit or delete their own posts.** Every request comes to you.

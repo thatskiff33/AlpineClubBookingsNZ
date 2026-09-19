@@ -687,9 +687,10 @@ describe("booking finance state: blockers and their order (#2377)", () => {
   });
 
   it("queries the primary-invoice link with the same predicate every other surface uses", async () => {
+    // #3467: the one reader asks the link only when the column is empty.
     setup({
       booking: { finalPriceCents: 10_000 },
-      payment: { amountCents: 10_000 },
+      payment: { amountCents: 10_000, xeroInvoiceId: null },
     });
     await readRow();
     const call = vi.mocked(prisma.xeroObjectLink.findFirst).mock.calls[0]?.[0];
