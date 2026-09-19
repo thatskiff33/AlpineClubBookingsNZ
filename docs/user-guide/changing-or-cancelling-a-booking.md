@@ -167,9 +167,11 @@ you. See [Booking a stay](booking-a-stay.md#a-booking-the-club-saved-for-you).
      refund. A waitlisted booking, or one holding a waitlist offer, cancels the
      same way.
    - If the booking is **with the club for review** (for example a request the
-     club is still pricing or approving), the Cancel button is not offered and
-     the page says so. Contact the club: the officer reviewing it will withdraw
-     it, which also clears it from their review queue.
+     club is still pricing or approving), there is no Cancel button. Instead the
+     booking page shows: *"This booking is with the club for review, so it
+     cannot be cancelled from here. If you no longer want it, contact the club
+     and the reviewing officer will withdraw it."* Withdrawing it that way also
+     clears it from the officer's review queue.
 3. The booking footer reminds you that the booking page is the **live source of
    truth** if a confirmation, payment, or cancellation email goes missing.
 
@@ -227,7 +229,7 @@ account-deletion rights in [Managing your account](your-account.md#privacy-and-d
 | A date change is rejected mentioning a locked period | The booking has an issued invoice in a locked accounting period | Contact an administrator, as the message says |
 | You expected a card refund but got account credit (or vice versa) | The outcome depends on how the booking was paid and club settings | Check the **Account Credit** section on your profile; contact the office if it looks wrong |
 | Cancelling shows "no refund" | The booking was never paid | Nothing to refund — the booking is simply cancelled |
-| You cannot cancel, and the page says the booking is with the club for review | A booking under review is withdrawn by the officer reviewing it, so that it also leaves their review queue | Contact the club office and ask them to withdraw it |
+| There is no Cancel button, and the page says the booking is with the club for review | A booking under review is withdrawn by the officer reviewing it, so that it also leaves their review queue | Contact the club office and ask them to withdraw it |
 | Your change saved but no refund or credit appeared, and the page says the club is checking | The club's stored record of what those nights were sold for is not clear enough to work the amount out automatically | Nothing to do about that part — somebody at the club is working it out and will confirm it with you. Contact the office if you would like to know where it is up to |
 | The page says the club is checking an amount, but also asks you to pay | The change gave back nights that could not be priced and added nights that priced normally, so the stay is going ahead. The amount asked for is the booking's own total from **before** your change — the club leaves it alone while they work the adjustment out | Pay it as you normally would, rather than waiting: a payment link that expires can cost you the booking. The club settles the difference when they finish the check, and anything you overpaid by card goes back to that card |
 | **Transaction History** shows a minus figure for the change but nothing came back | That figure is how much the booking's total moved, not a refund that has been paid | Nothing to do — the row says while the adjustment is still being worked out; the refund or credit follows once the club confirms it |
