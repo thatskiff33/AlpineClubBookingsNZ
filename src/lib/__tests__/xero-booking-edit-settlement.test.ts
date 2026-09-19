@@ -165,6 +165,37 @@ describe("classifyXeroBookingEditSettlement", () => {
     });
   });
 
+  it("words a card-elected reduction as a bank transfer when Stripe captured nothing (INV-PAY-101, review of #3537)", () => {
+    // An internet-banking-paid booking can be reduced "to card" - the member's
+    // choice is money back rather than credit - but no Stripe refund runs
+    // (`hasSucceededPayment` is false), so the club returns the money itself.
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -2500,
+      settlementMethod: "card",
+      settlementAmountCents: 2500,
+      refundedThroughStripe: false,
+    });
+
+    expect(decision.financialAction).toMatchObject({
+      type: "modification-credit-note",
+      refundMethod: "internet-banking",
+    });
+
+    // MUTATION: a Stripe-captured payment reduced to card IS a card refund.
+    expect(
+      classifyXeroBookingEditSettlement({
+        hasIssuedXeroInvoice: true,
+        originalPaymentStatus: "SUCCEEDED",
+        priceDiffCents: -2500,
+        settlementMethod: "card",
+        settlementAmountCents: 2500,
+        refundedThroughStripe: true,
+      }).financialAction,
+    ).toMatchObject({ refundMethod: "card" });
+  });
+
   it("uses unapplied account-credit notes for credit-settled negative deltas", () => {
     const decision = classifyXeroBookingEditSettlement({
       hasIssuedXeroInvoice: true,

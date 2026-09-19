@@ -33,10 +33,10 @@ import {
   ACCOUNT_MAPPING_KEYS,
   ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET,
   accountsForMappingKey,
-  describeMappingWhileUnset,
   MAPPING_DESCRIPTIONS,
   MAPPING_LABELS,
   describeMappingAccountFilter,
+  describeMappingOwnWhileUnset,
   MAPPING_ACCOUNT_FILTERS,
   XERO_ACCOUNT_MAPPING_DEFINITIONS,
   XERO_ITEM_ONLY_MAPPING_DEFINITIONS,
@@ -238,15 +238,16 @@ describe("bankTransferRefundAccount — the second INV-INT-021 instance (#3529, 
   it("still asks to be decided while unset, on the setup checklist and the row (INV-INT-021)", () => {
     expect(ACCOUNT_MAPPING_KEYS).toContain("bankTransferRefundAccount");
     expect(ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET).toContain("bankTransferRefundAccount");
-    // ...and the fallback-carrying key is on the same list, so the checklist
-    // reads one list for both kinds.
+    // ...and the fallback-carrying key is on the same list, so the snapshot
+    // reads one list to find both kinds - and tells them apart by whether the
+    // key has its OWN sentence (no fallback) or a fallback key (no sentence).
     expect(ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET).toContain("goodwillWriteOffs");
-    expect(describeMappingWhileUnset("bankTransferRefundAccount")).toMatch(
+    expect(describeMappingOwnWhileUnset("bankTransferRefundAccount")).toMatch(
       /raised in Xero without a settling payment/,
     );
-    expect(describeMappingWhileUnset("goodwillWriteOffs")).toMatch(
-      /goodwill entries keep posting to the Hut Fee Refunds mapping/,
-    );
+    expect(ACCOUNT_MAPPING_FALLBACK_KEYS.bankTransferRefundAccount).toBeUndefined();
+    expect(describeMappingOwnWhileUnset("goodwillWriteOffs")).toBeNull();
+    expect(ACCOUNT_MAPPING_FALLBACK_KEYS.goodwillWriteOffs).toBe("hutFeeRefunds");
   });
 });
 

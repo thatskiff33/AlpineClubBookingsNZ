@@ -74,6 +74,16 @@ describe("where the method comes from when nobody said", () => {
     expect(refundMethodForSettlementMethod(null)).toBe("card");
   });
 
+  it("calls 'money back' a bank transfer when Stripe refunded nothing, and a card refund when it did", () => {
+    expect(refundMethodForSettlementMethod("card", false)).toBe("internet-banking");
+    expect(refundMethodForSettlementMethod(null, false)).toBe("internet-banking");
+    expect(refundMethodForSettlementMethod("card", true)).toBe("card");
+    expect(refundMethodForSettlementMethod("credit", false)).toBe("account-credit");
+    // Unknown is what every pre-#3529 row was: a card refund.
+    expect(refundMethodForSettlementMethod("card", undefined)).toBe("card");
+    expect(refundMethodForSettlementMethod("card", null)).toBe("card");
+  });
+
   it("accepts only the three from a stored payload", () => {
     expect(parseRefundMethod("internet-banking")).toBe("internet-banking");
     expect(parseRefundMethod("bank")).toBeNull();
@@ -113,8 +123,11 @@ describe("nobody else spells the wording (INV-SSOT)", () => {
     const root = join(process.cwd(), "src", "lib");
     const files = walk(root);
     for (const wording of Object.values(REFUND_METHOD_WORDING)) {
+      // Any quoting counts: no lint rule pins double quotes, so a copy in
+      // single quotes or a template literal is still a copy.
+      const spelled = new RegExp(`['"\`]${wording}['"\`]`);
       const homes = files
-        .filter((file) => readFileSync(file, "utf8").includes(`"${wording}"`))
+        .filter((file) => spelled.test(readFileSync(file, "utf8")))
         .map((file) => relative(root, file));
       expect(homes, `"${wording}" is spelled outside its home`).toEqual([
         "xero-refund-method.ts",

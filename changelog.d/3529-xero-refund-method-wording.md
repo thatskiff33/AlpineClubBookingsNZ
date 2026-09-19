@@ -13,7 +13,10 @@
   Stripe account), **Refund requested via internet banking** (the club sent
   the money back itself), or **Account Credit** (nothing moved — the member
   keeps the credit). The wording follows the decision that was actually made
-  when the money was settled, not a guess from how the booking was paid.
+  when the money was settled, not a guess from how the booking was paid — and
+  a booking change that reduces a booking Stripe never captured (paid by
+  internet banking, or an unpaid invoice corrected) is never worded as a card
+  refund.
 
   Xero now records a settling payment against a refund note only where the
   money verifiably moved. A card refund is still recorded against the Stripe

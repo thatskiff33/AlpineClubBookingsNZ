@@ -275,7 +275,7 @@ describe("setup-readiness", () => {
       configDir: makeConfigDir(),
       database: {
         ...completeDatabase,
-        xeroUnsetFallbackMappingLabels: ["Bank Transfer Refunds Account"],
+        xeroUnsetFallbackMappingLabels: [],
         xeroUnsetMappingConsequences: [
           "Bank Transfer Refunds Account: refund credit notes for money sent back by internet banking are raised in Xero without a settling payment, for the treasurer to match to the bank line by hand",
         ],
@@ -289,6 +289,10 @@ describe("setup-readiness", () => {
     expect(step?.details?.join(" ")).toContain(
       "Not chosen yet — Bank Transfer Refunds Account: refund credit notes for money sent back by internet banking are raised in Xero without a settling payment",
     );
+    // MUTATION (review of #3537): the key has NO fallback, so the checklist
+    // must never call it one, in the message or the details.
+    expect(step?.message).not.toContain("keep posting where they did before");
+    expect(step?.details?.join(" ")).not.toContain("using a fallback");
   });
 
   it("reports the mappings step complete once every fallback key is chosen (#2717)", () => {

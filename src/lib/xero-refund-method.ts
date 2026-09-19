@@ -68,13 +68,19 @@ export function defaultRefundMethodForPaymentSource(
 /**
  * The booking-edit services' two-way `settlementMethod` ("card" | "credit") is
  * the MEMBER's choice between money back and credit kept; this is what it
- * means on the document. A caller that knows the money went back by transfer
- * passes the method explicitly instead of going through here.
+ * means on the document. "Money back" is a card refund only where the payment
+ * is a captured Stripe payment (`refundedThroughStripe`, the services' own
+ * `hasSucceededPayment`); a booking paid another way and reduced "to card"
+ * has its money returned by the club itself, so the note says a bank transfer
+ * (review of #3537). Unknown reads as card, which every pre-#3529 row was. A
+ * caller that knows the route outright passes the method instead.
  */
 export function refundMethodForSettlementMethod(
   settlementMethod: "card" | "credit" | null | undefined,
+  refundedThroughStripe?: boolean | null,
 ): RefundMethod {
-  return settlementMethod === "credit" ? "account-credit" : "card";
+  if (settlementMethod === "credit") return "account-credit";
+  return refundedThroughStripe === false ? "internet-banking" : "card";
 }
 
 /** The two methods that settle a cash refund note: money actually left. */

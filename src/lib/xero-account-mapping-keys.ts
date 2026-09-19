@@ -274,19 +274,6 @@ export const ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET: readonly AccountMappingKey
   ).map((definition) => definition.key);
 
 /**
- * The sentence the setup checklist writes for an unset key on that list: the
- * key's own `whileUnset` where it declares one, else the fallback sentence.
- */
-export function describeMappingWhileUnset(key: AccountMappingKey): string {
-  const own = MAPPING_WHILE_UNSET[key];
-  if (own) return own;
-  const fallbackKey = ACCOUNT_MAPPING_FALLBACK_KEYS[key];
-  return fallbackKey
-    ? `${describeMappingUnsetEntries(key)} keep posting to the ${MAPPING_LABELS[fallbackKey]} mapping, exactly as they did before this setting existed`
-    : "entries post to the application default";
-}
-
-/**
  * The key's OWN while-unset sentence, or null for a key that declares none —
  * the mapping row shows it beside an unset key the way it shows the fallback
  * notice, and must not invent one for a key that simply has a default.

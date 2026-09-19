@@ -100,6 +100,13 @@ export interface ClassifyXeroBookingEditSettlementInput {
    * rather than to a card. Omitted, it follows `settlementMethod`.
    */
   refundMethod?: RefundMethod | null;
+  /**
+   * Whether the reduction's "money back" is a Stripe refund — the services'
+   * `hasSucceededPayment`. False means the club returns the money itself, and
+   * the note must not say a card was refunded (review of #3537). Read only
+   * when `refundMethod` is omitted.
+   */
+  refundedThroughStripe?: boolean | null;
 }
 
 export interface QueueXeroBookingEditSettlementInput
@@ -169,7 +176,8 @@ export function classifyXeroBookingEditSettlement(
         type: "modification-credit-note",
         refundAmountCents,
         refundMethod:
-          input.refundMethod ?? refundMethodForSettlementMethod(input.settlementMethod),
+          input.refundMethod ??
+          refundMethodForSettlementMethod(input.settlementMethod, input.refundedThroughStripe),
         reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
       };
     }

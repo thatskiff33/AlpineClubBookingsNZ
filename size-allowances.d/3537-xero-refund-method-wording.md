@@ -43,9 +43,27 @@ reason: `refundMethod` joins the two enqueue signatures and the two executor
   else would be a field the outbox contract test could not see.
 
 file: src/lib/setup-readiness.ts
-lines: 2172
+lines: 2181
 reason: the Setup Completeness snapshot gains one optional field and the
   detail line that says what happens while the bank-transfer refund account is
-  unset. The snapshot is the single shape every readiness surface reads; the
-  sentence itself is owned by the mapping registry
-  (`describeMappingWhileUnset`), so these lines are the field and its render.
+  unset, and (review of #3537) keeps that key OUT of the "using a fallback"
+  message it does not belong in. The snapshot is the single shape every
+  readiness surface reads; the sentence itself is owned by the mapping
+  registry (`describeMappingOwnWhileUnset`), so these lines are the field,
+  its render, and the distinction between the two kinds of undecided key.
+
+file: src/lib/booking-date-modification-service.ts
+lines: 2245
+reason: one field at the one Xero queue site - `refundedThroughStripe:
+  result.hasSucceededPayment` - so a reduction on a booking Stripe never
+  captured is not worded as a card refund (review of #3537). The queue call
+  is where every other fact about the edit is handed over, and the flag is
+  the service's own, already computed beside it.
+
+file: src/lib/booking-batch-modification-service.ts
+lines: 2528
+reason: the same one field at the same one queue site, for the batch edit.
+
+file: src/app/api/bookings/[id]/guests/[guestId]/route.ts
+lines: 553
+reason: the same one field at the same one queue site, for a guest removal.

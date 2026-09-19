@@ -17,19 +17,28 @@ import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
 import { getStripeSetupState } from "@/lib/stripe-config";
 import {
+  ACCOUNT_MAPPING_FALLBACK_KEYS,
   ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET,
-  describeMappingWhileUnset,
+  describeMappingOwnWhileUnset,
   isCodeExplicitlyConfigured,
   MAPPING_LABELS,
+  type AccountMappingKey,
 } from "@/lib/xero-account-mapping-keys";
 
 /**
  * The mapping keys that are asking to be decided while they are unset
- * (`INV-INT-021`): one working off another key's mapping, or one that declares
- * what the system does without it. Straight off the registry, so a new such
- * key is surfaced in the setup checklist without anybody remembering to add it.
+ * (`INV-INT-021`), in two kinds the checklist must NOT conflate: one working
+ * off another key's mapping (`ACCOUNT_MAPPING_FALLBACK_KEYS`, "using a
+ * fallback"), and one that declares what the system does without it and has
+ * no fallback (#3529: its own `whileUnset` sentence). Both straight off the
+ * registry, so a new key of either kind is surfaced without anybody
+ * remembering to add it — and a key of the second kind is never described as
+ * falling back, which its registry entry says it does not.
  */
-const ACCOUNT_MAPPING_KEYS_WITH_FALLBACK = ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET;
+const ACCOUNT_MAPPING_KEYS_ASKING = ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET;
+const ACCOUNT_MAPPING_KEYS_WITH_FALLBACK = Object.keys(
+  ACCOUNT_MAPPING_FALLBACK_KEYS,
+) as AccountMappingKey[];
 
 /**
  * The sentinel a failed `ClubTimeSettings` read resolves to, so "the read did
@@ -158,7 +167,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     // key. Codes are compared after normalisation, because blank is not a
     // choice.
     prisma.xeroAccountMapping.findMany({
-      where: { key: { in: [...ACCOUNT_MAPPING_KEYS_WITH_FALLBACK] } },
+      where: { key: { in: [...ACCOUNT_MAPPING_KEYS_ASKING] } },
       select: { key: true, code: true },
     }),
     prisma.xeroItemCodeMapping.count({
@@ -487,12 +496,15 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
           xeroFallbackMappingRows.find((row) => row.key === key) ?? null,
         ),
     ).map((key) => MAPPING_LABELS[key] ?? key),
-    xeroUnsetMappingConsequences: ACCOUNT_MAPPING_KEYS_WITH_FALLBACK.filter(
-      (key) =>
-        !isCodeExplicitlyConfigured(
-          xeroFallbackMappingRows.find((row) => row.key === key) ?? null,
-        ),
-    ).map((key) => `${MAPPING_LABELS[key] ?? key}: ${describeMappingWhileUnset(key)}`),
+    xeroUnsetMappingConsequences: ACCOUNT_MAPPING_KEYS_ASKING.flatMap((key) => {
+      const own = describeMappingOwnWhileUnset(key);
+      if (own === null) return [];
+      return isCodeExplicitlyConfigured(
+        xeroFallbackMappingRows.find((row) => row.key === key) ?? null,
+      )
+        ? []
+        : [`${MAPPING_LABELS[key] ?? key}: ${own}`];
+    }),
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     membershipTypeRateGaps,
