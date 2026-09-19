@@ -19,10 +19,12 @@ import type {
  * not another member's to read, and "is this stored total provable" is an
  * officer's question in any case.
  *
- * The gate is applied HERE, at the data boundary, and never in JSX: three of
- * the four readers are client components, so a verdict a component declines to
- * render has still been serialised into that browser's payload. Withholding it
- * from the projection is the only version of this that is true.
+ * The gate is applied HERE, at the data boundary, and never in JSX. Two of the
+ * readers — the bookings list and the organiser group card — are `"use client"`
+ * components, so a verdict one of them declines to render has still been
+ * serialised into that browser's payload, reasons and all; the rest render it
+ * into the HTML the same page returns. Withholding it from the projection is
+ * the only version of this that is true for both.
  *
  * ## The absence
  *

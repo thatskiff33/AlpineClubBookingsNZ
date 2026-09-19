@@ -69,8 +69,9 @@ export function resolveBookingDetailLinkedParty({
         finalPriceCents: linked.finalPriceCents,
         // #3278: a split child is ANOTHER BOOKING, and this section renders to
         // the member paying for the party. The verdict is officer-only, so it
-        // is gated here at the projection rather than in the client component
-        // that prints it — otherwise every reason ships in the page payload.
+        // is gated here at the projection rather than in the component that
+        // prints it — a component that declines to render it has still been
+        // handed every reason.
         moneyReconciliation: bookingMoneyReconciliationForViewer(
           reconcileStoredBookingMoney(linked),
           { canSeeAdminTools },

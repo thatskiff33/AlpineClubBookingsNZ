@@ -406,9 +406,14 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   reason, never zero or a present-day reprice. Account credit remains solely in
   `MemberCredit`.
 
-  Booking detail and lists, officer history, finance metrics, reports and
-  exports, member data export, and per-booking Xero reconciliation input carry
-  the same state and complete ordered reasons. The Xero invoice shape and every
+  **The verdict is officer-only** (owner decision, 20 September 2026): a member
+  sees their amounts unmarked, and their data export carries no verdict, since
+  it is the club's current assessment of its own records rather than data held
+  about them. `booking-money-reconciliation-audience.ts` is the one home for
+  that gate, for the named `WITHHELD` state that replaces a nullable absence,
+  and for the wording. Behind it, booking detail and lists, officer history,
+  finance metrics, reports and exports, and per-booking Xero reconciliation
+  input carry the same state and complete ordered reasons. The Xero invoice shape and every
   displayed or settled amount remain unchanged. A read-only repeatable-read
   census (`npm run booking-money:census`) reports all state/reason counts from
   one ordered snapshot and writes nothing. The mutation-verified

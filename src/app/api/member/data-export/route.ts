@@ -14,7 +14,6 @@ import logger from "@/lib/logger";
 import { formatDateOnly } from "@/lib/date-only";
 import { clubTime } from "@/lib/club-time/server";
 import { seasonSelectLabel } from "@/lib/season-label";
-import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import { readDeclaredMemberText } from "@/lib/audit-member-disclosure";
 
 export async function GET() {
@@ -89,7 +88,6 @@ export async function GET() {
         status: true,
         totalPriceCents: true,
         discountCents: true,
-        promoAdjustmentCents: true,
         finalPriceCents: true,
         hasNonMembers: true,
         nonMemberHoldUntil: true,
@@ -115,15 +113,6 @@ export async function GET() {
             ageTier: true,
             isMember: true,
             priceCents: true,
-            stayStart: true,
-            stayEnd: true,
-            nights: {
-              select: {
-                stayDate: true,
-                priceCents: true,
-                priceSource: true,
-              },
-            },
             consentStatus: true,
           },
         },
@@ -138,15 +127,8 @@ export async function GET() {
         promoRedemption: {
           select: {
             discountCents: true,
-            priceAdjustmentCents: true,
             createdAt: true,
-            allocations: {
-              select: { memberId: true, priceAdjustmentCents: true },
-            },
           },
-        },
-        nightAdjustments: {
-          select: { beneficiaryMemberId: true, amountCents: true },
         },
       },
     });
@@ -276,7 +258,6 @@ export async function GET() {
         totalPriceCents: b.totalPriceCents,
         discountCents: b.discountCents,
         finalPriceCents: b.finalPriceCents,
-        moneyReconciliation: reconcileBookingMoney(b),
         hasNonMembers: b.hasNonMembers,
         nonMemberHoldUntil: b.nonMemberHoldUntil
           ? b.nonMemberHoldUntil.toISOString()

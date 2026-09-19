@@ -13,9 +13,11 @@ reason: two explicit zero components belong in the existing atomic school-bookin
   the four-column money identity without reducing lifecycle complexity.
 
 file: src/app/(admin)/admin/bookings/page.tsx
-lines: 799
+lines: 818
 reason: the compact status-cell chip belongs beside the existing booking and
-  operational review signals; extracting nine lines would split one row.
+  operational review signals; extracting it would split one row. Re-measured
+  after the chip was routed through the shared audience helper, which moved its
+  wording and its "only when unreconciled" rule into one home.
 
 file: src/app/(admin)/admin/reports/page.tsx
 lines: 773
@@ -27,10 +29,12 @@ lines: 361
 reason: the route classifies the same coherent booking projection already used
   for its aggregate, avoiding a second read or a divergent report cohort.
 
-file: src/app/api/member/data-export/route.ts
-lines: 371
-reason: the existing booking export query must carry the complete canonical
-  projection so the exported state describes the same stored record.
+file: src/lib/admin-permissions.ts
+lines: 983
+reason: the booking-officer predicate belongs beside the booking-authority
+  helper it composes with (`bookingManagementAuthorizationRole`) and the area
+  check it calls; a second permissions module for one predicate is the split
+  `INV-SSOT` warns about, where "who is a booking officer" gains a second home.
 
 file: src/lib/admin-bookings-service.ts
 lines: 1438

@@ -12,10 +12,12 @@
   member's money", which is what shipped before the gate and what nothing
   exercised.
 
-  The gate is asserted at the PROJECTION rather than at the components, because
-  the components are client components: one that declines to render a verdict
-  has still had it serialised into that browser's payload, reasons and all. A
-  render assertion would have passed on the broken code.
+  The gate is asserted at the PROJECTION rather than at the components. The
+  organiser group card is a `"use client"` component, so a verdict it declines
+  to render has still been serialised into that browser's payload, reasons and
+  all — a render assertion would have passed on the broken code. The component
+  tests are the other half: that each one renders what it is handed and decides
+  nothing itself.
 */
 import { describe, expect, it } from "vitest";
 

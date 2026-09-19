@@ -168,57 +168,50 @@ describe("the member data export names a season the way the screen does", () => 
     expect(text).not.toContain("2025/2026");
   });
 
-  it("exports the canonical booking-money state and complete ordered reasons", async () => {
-    const checkIn = new Date("2026-08-01T00:00:00.000Z");
-    const checkOut = new Date("2026-08-02T00:00:00.000Z");
+
+  /*
+    #3278 — THE MEMBER EXPORT CARRIES NO VERDICT, and this is the guard on it.
+
+    The reconciliation verdict is OFFICER-ONLY (owner decision, 20 September
+    2026). This export briefly carried it, which read as reasonable — it is the
+    member's own booking, and the export is "the data we hold about you". It is
+    not: the verdict is not stored data about the member at all, it is the
+    club's current integrity assessment of its OWN records, derived fresh on
+    every read. That is the same reason the booking page withholds it, in the
+    same words, and a subject-access export is not an exception to a rule about
+    who the assessment is for.
+
+    The member's amounts are exported exactly as they were before the feature
+    existed.
+  */
+  it("does not put the officer-only money verdict in a member's own export", async () => {
     mocks.bookingFindMany.mockResolvedValue([
       {
-        checkIn,
-        checkOut,
+        checkIn: new Date("2026-08-01T00:00:00.000Z"),
+        checkOut: new Date("2026-08-02T00:00:00.000Z"),
         status: "CONFIRMED",
         totalPriceCents: 10_000,
         discountCents: 1,
-        promoAdjustmentCents: 0,
         finalPriceCents: 9_999,
         hasNonMembers: false,
         nonMemberHoldUntil: null,
         notes: null,
         createdAt: new Date("2026-07-01T00:00:00.000Z"),
-        guests: [
-          {
-            firstName: "Mere",
-            lastName: "Member",
-            ageTier: "ADULT",
-            isMember: true,
-            priceCents: 10_000,
-            stayStart: null,
-            stayEnd: null,
-            nights: [
-              {
-                stayDate: checkIn,
-                priceCents: 10_000,
-                priceSource: "SOLD",
-              },
-            ],
-            consentStatus: null,
-          },
-        ],
+        guests: [],
         payment: null,
         promoRedemption: null,
-        nightAdjustments: [],
       },
     ]);
 
     const response = await dataExportGet();
-    const body = (await response.json()) as {
-      bookings: Array<{ moneyReconciliation: unknown }>;
+    const text = await response.text();
+    const body = JSON.parse(text) as {
+      bookings: Array<Record<string, unknown>>;
     };
-    expect(body.bookings[0]!.moneyReconciliation).toEqual({
-      state: "UNRECONCILED",
-      reasons: [
-        "DISCOUNT_COMPONENT_MISMATCH",
-        "FINAL_PRICE_RELATION_MISMATCH",
-      ],
-    });
+
+    expect(body.bookings[0]!.finalPriceCents).toBe(9_999);
+    expect(body.bookings[0]).not.toHaveProperty("moneyReconciliation");
+    // Nor any reason token, anywhere in the payload.
+    expect(text).not.toContain("MISMATCH");
   });
 });

@@ -80,10 +80,11 @@ export function BookingStatusBanners({
   return (
     <>
       {/* #3278: the audience gate is the LOADER's, not this component's. It
-          used to be a `viewer.canViewAsAdmin` test right here, which both
-          disagreed with the officer predicate the history loader applies to the
-          same verdict and left the reasons in this page's client payload for a
-          member to read. `history.moneyReconciliation` is already gated. */}
+          used to be a `viewer.canViewAsAdmin` test right here — a THIRD answer
+          to "who is an officer for this verdict", wider than the one the
+          history loader applies to the same booking's same verdict on the same
+          page. `history.moneyReconciliation` arrives already gated, so the two
+          can no longer disagree. */}
       <BookingMoneyReconciliationNotice view={history.moneyReconciliation} />
       {showCompletePaymentCard && (
         <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
