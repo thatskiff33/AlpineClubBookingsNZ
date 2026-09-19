@@ -869,12 +869,9 @@ CI-green → evidence**.
   silently drops one that matches nothing (#3120).
 
   Running all 186 locally instead was measured and **rejected on evidence**:
-  ~3 minutes natively on Windows, with false failures.
-  `public-page-content-published-contract.test.ts` and
-  `booking-no-emails-ui-contract.test.ts` both time out at 5000 ms under
-  parallel load and both pass in isolation — the gate would red-light the very
-  test it exists to protect, so a fast gate with a stated blind spot is the
-  honest arrangement.
+  ~3 minutes natively on Windows, with false failures from suites that time out
+  under parallel load and pass alone — listed, with the rule for classifying
+  one, in `docs/TESTING.md` → "Suites that time out under load and pass alone".
 - **Validation traps that have produced confident false results here.** Every one
   of these has already cost a wave real time; treat a clean result that skipped
   them as unverified.

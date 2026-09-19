@@ -1207,6 +1207,76 @@ Like every disk-scanning test here it has no import edge to the `.tsx` files it
 reads, so `npm run test:related` cannot select it from a diff. Run it by name
 when a change adds or edits a numeric input.
 
+### Suites that time out under load and pass alone
+
+Running the whole suite natively on Windows was measured and rejected in
+`AGENTS.md` (§5, "Per-issue pipeline") because a few suites hit vitest's
+5,000ms `testTimeout` under parallel load and pass the moment they run alone —
+a gate that red-lights the test it exists to protect is not a gate. The same
+suites can go red inside a by-name batch of disk-scanning censuses, which is
+how a lane meets them. This is the one home for that list (`INV-SSOT`);
+`AGENTS.md` points here and carries no copy. It exists so that a lane seeing
+one of these go red locally classifies it as environmental instead of spending
+a diagnosis on a defect that is not there — or, worse, loosening a census to
+make it pass. A list that is incomplete reads as complete, which is why the
+first entry below was added (#3395) rather than left to be rediscovered.
+
+**A suite is in this class only when both of these hold**, and an entry that
+cannot show both is a claim rather than evidence:
+
+1. The failure text is vitest's own `Test timed out in Nms` — the per-test
+   budget, 5,000ms unless the `it()` carries an inline one. Nothing else
+   qualifies. A suite that fails on an **assertion** is never in this class,
+   whatever the machine: `page-content-starter-backfill.test.ts` (seed-copy
+   drift, the "known-environmental failure" in `AGENTS.md`) is a different
+   class, and #2886 removed two suites that had been excused as
+   "load-sensitive" when they were failing deterministically on Windows for
+   real reasons (the shell-out section above).
+2. An isolated re-run of that one file — `npx vitest run <path>` — passes.
+
+When both hold: record the red as environmental in your evidence, naming the
+suite and the isolated re-run that passed, and move on. Do not raise
+`testTimeout` globally — "A test that launches a process needs its own budget"
+above says why — and do not touch the census. A suite that keeps grazing the
+limit under an ordinary batch is a candidate for an inline per-test budget,
+measured and reasoned where it is written; that is a change with its own issue.
+
+**The entries.** Every one carries a figure measured on this repository, not an
+inherited assertion. Isolated means `npx vitest run <that file>`; "under load"
+means one vitest invocation over a by-name batch of every test file that reads
+the tree from disk, on a machine doing nothing else. Measured 19 September 2026
+on #3395 at `706a80a91` (vitest 4.1.11, Node 24, a 20-core Windows 11 host)
+across two batches: 244 files that read `src/` through `process.cwd()`, which
+ran 5,014 tests in 204s; and the 303 files that call `readFile`/`readdir` at
+all, which ran 7,040 tests in 172s. Re-measure rather than copy when you add or
+re-verify an entry.
+
+- [`src/lib/__tests__/client-server-boundary-census.test.ts`](../src/lib/__tests__/client-server-boundary-census.test.ts)
+  — isolated 2.55s wall, 1.59s in tests, 5 passed. Under load its transitive
+  walk ("has no path from any client module to prisma, auth, or a Node
+  built-in") ran for **4,472ms** and **4,330ms** in the two batches, within
+  530ms of the budget each time. The orchestrator saw that test exceed 5,000ms
+  on 19 September 2026 in three separate lanes (the #3497, #3500 and #3467
+  branches), and pass alone each time.
+- [`src/app/__tests__/public-page-content-published-contract.test.ts`](../src/app/__tests__/public-page-content-published-contract.test.ts)
+  — isolated 865ms wall, 476ms in tests, 1 passed. It was absent from the
+  244-file batch (it walks from `__dirname`, not `process.cwd()`); in the
+  303-file batch its one test ran for **3,488ms**, seven times its isolated
+  figure.
+- [`src/components/__tests__/booking-no-emails-ui-contract.test.ts`](../src/components/__tests__/booking-no-emails-ui-contract.test.ts)
+  — isolated 1.04s wall, 404ms in tests, 11 passed. **Not reproduced here:**
+  its slowest test took 518ms and 626ms in the two batches, nowhere near the
+  budget. It is carried over from the earlier `AGENTS.md` list on that list's
+  unmeasured observation, and stays because a suite that has timed out under
+  load once is still one to re-run alone before diagnosing. The next lane that
+  measures it and finds the same should remove it rather than let the list
+  assert something it cannot show.
+
+Neither batch produced a timeout, so the figures show how close each suite runs
+to the budget under a batch of this size, not a red; the three-lane observation
+is the evidence of the limit being crossed, and a lane running the batch beside
+another lane's tests, a build, or a typecheck is where it will be crossed again.
+
 ## Mocking `requireAdmin`: reference the helper, never wrap it
 
 A fourth convention in the same family — written the obvious way, a suite that
