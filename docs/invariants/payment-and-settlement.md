@@ -1127,6 +1127,42 @@ one, check the other.
   `stored-night-price-repair-multi-strand.test.ts` and
   `edit-financial-review-strand-census.test.ts`.
 
+## INV-PAY-101
+
+- **A Xero refund or credit document names how the money went back, from the
+  settlement decision — never inferred from the payment's source** (#3529;
+  owner wording, 20 September 2026). Exactly three wordings exist, each the
+  line description's and the reference's head: *Refund against original credit
+  card*, *Refund requested via internet banking*, *Account Credit*. The one
+  home is `src/lib/xero-refund-method.ts`; `xero-refund-method.test.ts`
+  censuses `src/lib` so nothing else spells them.
+- **The method travels with the decision.** The cancel path's `refundMethod`,
+  the edit-review route (`refundMethodForEditReviewRoute`: card route → card,
+  hand-settled route → internet banking, credit route → account credit) and
+  the hand-back completion carry it into the outbox payload and the builder
+  records it on the operation, so a retry or repair settles the same way.
+  Only a row that carries none reads the source
+  (`defaultRefundMethodForPaymentSource`); the unapplied-note builder is
+  account credit by construction.
+- **Xero records a settling payment only where the money verifiably moved**
+  (owner decision, 20 September 2026). A card refund's credit-note payment
+  posts to `stripeBankAccount`, capped by provider cash evidence
+  (`INV-PAY-050`). A recorded bank-transfer refund posts to
+  `bankTransferRefundAccount` (an `INV-INT-021` key whose while-unset answer
+  is a behaviour, not a fallback key) when the treasurer has chosen one and is
+  otherwise left UNSETTLED, visibly outstanding for the bank-feed match; a
+  method nobody recorded is left unsettled whatever is configured. Never the
+  Stripe account for a transfer: a wrong-account payment hides the note as
+  paid. `resolveRefundSettlement` is the one reading, shared by the
+  inline and repair legs; a note skipped by design (`refundPaymentSkipped`)
+  is never re-repaired.
+- **A completed `CANCELLED_BOOKING_HAND_BACK` raises the bank-transfer note**
+  against the cancelled booking's invoice — gated on that invoice's id, not
+  `hasIssuedPrimaryXeroInvoice`, which is false for every cancelled booking.
+  Cancellation policy is untouched (owner decision D2, #3527). Pinned by
+  `xero-refund-method-documents.test.ts`, `manual-refund-task.test.ts`,
+  `xero-operation-retry.test.ts`.
+
 ## INV-PAY-060
 
 - **A SETTLED occurrence does not suppress the next one of the same identity**

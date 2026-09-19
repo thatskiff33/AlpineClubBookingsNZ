@@ -179,7 +179,19 @@ Credit a member had already paid for — a cancellation or reprice refund sittin
 on their account — is not goodwill and still posts to the hut-fee-refund
 account. Leaving the new mapping unset is safe: goodwill keeps going to the
 hut-fee-refund account, the screen says so, and nothing already in Xero is
-reclassified when you do set it. Cancellation approval only disables
+reclassified when you do set it. The same screen offers a **Bank Transfer
+Refunds Account** (#3529): a refund the club sends back by internet banking —
+a cancelled cash-settled booking's hand-back, or an edit review settled by
+hand — is recorded in Xero as a credit note worded "Refund requested via
+internet banking", settled from that account, so the treasurer can tell it
+from a card refund ("Refund against original credit card", settled from the
+Stripe account when Stripe reports the refund) and from credit left on the
+member's account ("Account Credit"). Until you choose the account, those
+credit notes are raised **without** a settling payment — they stay visibly
+outstanding in Xero for you to match to the bank line by hand — and the
+Setup Completeness checklist and the mapping row both say so. A bank
+transfer is never recorded as leaving the Stripe account. Cancellation
+approval only disables
 the local member and queues Xero operations; archive and hard delete do not
 remove Xero contacts.
 
