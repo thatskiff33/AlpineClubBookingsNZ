@@ -2840,6 +2840,12 @@ if ! reload_caddy; then
   restore_previous_upstream_file "$PREVIOUS_UPSTREAM_CONTENTS"
   reload_caddy >/dev/null 2>&1 || true
   echo "Failed to reload Caddy after writing the target upstream." >&2
+  # An explicit `exit` does NOT fire the ERR trap, so `fail` never runs and this
+  # one path - a post-migrate failure, which is exactly the class the record
+  # exists for - would leave none. Written here rather than by moving the exit
+  # into the trap, because the upstream file has already been restored above and
+  # the record should say so.
+  write_deploy_failure_record || true
   exit 1
 fi
 SWITCHED_TRAFFIC=1

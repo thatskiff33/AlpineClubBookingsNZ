@@ -250,6 +250,22 @@ describe("guard 3: a deploy that dies after migrating leaves a record", () => {
     expect(failBody).toContain("write_deploy_failure_record || true");
   });
 
+  it("covers the one post-migrate failure that exits without the ERR trap", () => {
+    // `exit` does not fire an ERR trap, so the Caddy-reload failure at step 17
+    // would leave no record at all — and it is a post-migrate failure, which is
+    // the class the record exists for.
+    const cutover = code.slice(
+      code.indexOf('step "17/20" "Switching Caddy upstream to target web service"'),
+      code.indexOf("SWITCHED_TRAFFIC=1"),
+    );
+
+    const write = cutover.indexOf("write_deploy_failure_record || true");
+    const exit = cutover.indexOf("exit 1");
+
+    expect(write).toBeGreaterThan(0);
+    expect(exit).toBeGreaterThan(write);
+  });
+
   it("tells the operator where the record went", () => {
     expect(code).toContain(
       'DEPLOY_FAILURE_RECORD_DIR="${DEPLOY_FAILURE_RECORD_DIR:-$HOME/tacbookings-deploy-failures}"',
