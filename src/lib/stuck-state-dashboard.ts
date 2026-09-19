@@ -411,10 +411,10 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     owner: "Finance",
     count: snapshot.missingInvoices.count,
     href: "/admin/xero",
-    summary: `${snapshot.missingInvoices.count} paid ${plural(
+    summary: `The club's records hold no Xero invoice for ${snapshot.missingInvoices.count} paid ${plural(
       snapshot.missingInvoices.count,
       "booking",
-    )} have no completed Xero invoice evidence.`,
+    )}.`,
   });
   addItem(items, {
     id: "xero-refunds-missing-credit-notes",

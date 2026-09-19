@@ -17,6 +17,11 @@ WAITLISTED -> WAITLIST_OFFERED -> CONFIRMED/PAID or WAITLISTED/CANCELLED
 AWAITING_REVIEW -> PENDING (quote accepted, #1254) or PAYMENT_PENDING (officer approval, the only writer of this transition, #3500) or CONFIRMED/PAID or CANCELLED
 ```
 
+`AWAITING_REVIEW -> CANCELLED` is an officer's or the system's arc (review
+reject, request decline, hold release), never a member self-cancel: the
+member-facing cancel doors read `MEMBER_CANCELLABLE_BOOKING_STATUSES`, which
+excludes it (`INV-MOD-057`, #3497).
+
 ### Minimum-stay exception foundation (#2363)
 
 A minimum-stay violation causes **no booking-state transition** in this release.
