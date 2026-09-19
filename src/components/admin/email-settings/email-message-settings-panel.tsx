@@ -30,6 +30,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 // Lodge identity (lodge name, travel note, door code) is no longer edited here;
 // it comes from each lodge's own settings (Admin → Lodges).
@@ -116,10 +117,10 @@ const settingFields: Array<{
 // plain-English message.
 function templateErrorMessage(responseBody: unknown, fallback: string): string {
   const body = responseBody as
-    | { error?: string; issues?: Array<{ message?: string }> }
+    | { issues?: Array<{ message?: string }> }
     | null
     | undefined;
-  const headline = body?.error ?? fallback;
+  const headline = apiErrorMessageFromBody(body, fallback);
   const details = Array.isArray(body?.issues)
     ? Array.from(
         new Set(

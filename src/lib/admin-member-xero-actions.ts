@@ -14,6 +14,7 @@
  */
 import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card";
 import type { XeroPartialSuccessKind } from "@/lib/xero-partial-success";
+import { apiErrorMessageFromBody, readApiErrorBody } from "@/lib/api-error-message";
 
 interface XeroEntranceFeeInvoicePushOptions {
   createEntranceFeeInvoice: boolean;
@@ -92,16 +93,11 @@ async function readActionError(
   res: Response,
   fallback: string,
 ): Promise<AdminMemberXeroActionError> {
-  try {
-    const data = (await res.json()) as XeroActionRecovery & { error?: unknown };
-    const message =
-      typeof data.error === "string" && data.error.length > 0
-        ? data.error
-        : fallback;
-    return new AdminMemberXeroActionError(message, readRecovery(data));
-  } catch {
-    return new AdminMemberXeroActionError(fallback);
-  }
+  const data = await readApiErrorBody(res);
+  const message = apiErrorMessageFromBody(data, fallback);
+  return typeof data === "object" && data !== null
+    ? new AdminMemberXeroActionError(message, readRecovery(data as XeroActionRecovery))
+    : new AdminMemberXeroActionError(message);
 }
 
 function readRecovery(data: XeroActionRecovery): XeroActionRecovery {

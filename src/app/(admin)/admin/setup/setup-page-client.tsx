@@ -37,6 +37,7 @@ import type {
   AdminPermissionArea,
   AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
 type ProgressStatus = "open" | "completed" | "skipped";
@@ -166,18 +167,6 @@ const setupHubCards: SetupHubCard[] = [
   },
 ];
 
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
-}
-
 function statusVariant(status: SetupStatus): BadgeProps["variant"] {
   if (status === "complete") return "success";
   if (status === "blocked") return "destructive";
@@ -292,7 +281,7 @@ export function SetupPageClient({
       });
       const body = (await response.json()) as SetupResponse | { error?: string };
       if (!response.ok || !("readiness" in body)) {
-        throw new Error(responseErrorMessage(body, "Failed to load setup readiness"));
+        throw new Error(apiErrorMessageFromBody(body, "Failed to load setup readiness"));
       }
       setReadiness(body.readiness);
       setProgress(body.progress);
@@ -394,7 +383,7 @@ export function SetupPageClient({
       });
       const body = (await response.json()) as ProviderTestResult | { error?: string };
       if (!response.ok || !("ok" in body)) {
-        throw new Error(responseErrorMessage(body, "Provider test failed"));
+        throw new Error(apiErrorMessageFromBody(body, "Provider test failed"));
       }
       setProviderResults((current) => ({
         ...current,

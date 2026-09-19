@@ -59,6 +59,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 // Type-only reference to the lazy-loaded zod schema. `typeof import(...)` in a
 // type position emits no runtime import, so naming the schema's type here never
@@ -91,18 +92,6 @@ const steps = [
 ] as const;
 
 type StepId = (typeof steps)[number]["id"];
-
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
-}
 
 function themePayload(values: ClubThemeValues, completeSetup: boolean) {
   return {
@@ -374,7 +363,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
       if (!response.ok || !body?.theme) {
         if (response.status === 403) setForbidden(true);
         throw new Error(
-          responseErrorMessage(body, "Failed to save site style"),
+          apiErrorMessageFromBody(body, "Failed to save site style"),
         );
       }
 

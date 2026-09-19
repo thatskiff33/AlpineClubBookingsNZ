@@ -1,5 +1,7 @@
 "use client"
 
+import { apiErrorMessageFromBody } from "@/lib/api-error-message"
+
 type ErrorBody = {
   error?: string
   message?: string
@@ -21,9 +23,15 @@ async function readOptionalJson<T>(res: Response, fallback: T): Promise<T> {
   }
 }
 
+// The Xero routes are the one admin surface whose refusals sometimes carry a
+// `message` key rather than `error`. That second key is read here, once, and
+// only as the fallback the shared rule is handed: a blank or non-text `error`
+// then lands on `message`, and a blank or non-text `message` on the caller's
+// own sentence — never on an empty alert or "[object Object]" (#3445).
 async function readErrorMessage(res: Response, fallback: string): Promise<string> {
   const data = await readOptionalJson<ErrorBody | null>(res, null)
-  return data?.error || data?.message || fallback
+  const message = typeof data?.message === "string" ? data.message.trim() : ""
+  return apiErrorMessageFromBody(data, message === "" ? fallback : message)
 }
 
 export async function fetchJson<T>(url: string, options?: RequestInit, fallbackMessage = "Request failed"): Promise<T> {

@@ -26,6 +26,7 @@ import type {
   CommitteeRoleSummary,
   MemberDetail,
 } from "../_types";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 interface RolesResponse {
   roles: CommitteeRoleSummary[];
@@ -51,18 +52,6 @@ const emptyForm = {
 
 async function readJson(response: Response) {
   return response.json().catch(() => null);
-}
-
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
 }
 
 function VisibilityBadge({ visible }: { visible: boolean }) {
@@ -143,7 +132,7 @@ export function MemberCommitteeAssignmentsCard({
         | null;
       if (!response.ok || !body || !("roles" in body)) {
         throw new Error(
-          responseErrorMessage(body, "Failed to load committee roles"),
+          apiErrorMessageFromBody(body, "Failed to load committee roles"),
         );
       }
       setRoles(body.roles);
@@ -278,7 +267,7 @@ export function MemberCommitteeAssignmentsCard({
       const body = await readJson(response);
       if (!response.ok) {
         throw new Error(
-          responseErrorMessage(body, "Failed to save committee assignment"),
+          apiErrorMessageFromBody(body, "Failed to save committee assignment"),
         );
       }
       setMessage("Committee assignment saved");
@@ -315,7 +304,7 @@ export function MemberCommitteeAssignmentsCard({
       const body = await readJson(response);
       if (!response.ok) {
         throw new Error(
-          responseErrorMessage(body, "Failed to remove committee assignment"),
+          apiErrorMessageFromBody(body, "Failed to remove committee assignment"),
         );
       }
       setMessage("Committee assignment removed");
