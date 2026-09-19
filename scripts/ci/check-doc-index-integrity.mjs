@@ -37,6 +37,9 @@
  *  - **No tracked text file is mojibake or carries a byte-order mark.** One
  *    invariant file was committed double-encoded and every other gate stayed
  *    green. See {@link auditEncoding}.
+ *  - **No tracked text file carries a byte that is not valid UTF-8.** The
+ *    decode replaces one with U+FFFD before every other check here sees it,
+ *    so it needs the raw buffer. See {@link findInvalidUtf8Bytes}.
  *
  *   npm run docs:indexcheck                       # check, non-zero on any problem
  *   node scripts/ci/check-doc-index-integrity.mjs  # same
@@ -2783,6 +2786,7 @@ export function auditDocs(
     baselineLabel = "the base revision",
     stableIndexHeadings = null,
     hiddenFilesWithEarlyNul = [],
+    invalidUtf8Files = [],
   } = {},
 ) {
   return [
@@ -2798,6 +2802,7 @@ export function auditDocs(
     ...auditEncoding(files),
     ...auditControlCharacters(files),
     ...auditInvisibleCharacters(files),
+    ...auditInvalidUtf8Bytes(invalidUtf8Files),
     ...auditTextScanCoverage(hiddenFilesWithEarlyNul),
     ...auditNumberSequences(files),
     ...(baselineFiles
@@ -2818,7 +2823,16 @@ export function auditDocs(
  * files are absent because grep has no line to return; they cannot contain an
  * invariant token, a byte-order mark, mojibake, a link or a definition.
  */
-export function loadTrackedFiles(repoRoot) {
+/**
+ * The tracked text files this script looks at, as `[relative, absolute]` pairs.
+ *
+ * Git decides what "text" means here, through `git grep -I`; this is the one
+ * home for that decision, so {@link loadTrackedFiles} and
+ * {@link findInvalidUtf8Bytes} cannot come to look at different file sets. A
+ * file Git classifies as binary is invisible to both, which is the gap
+ * {@link auditTextScanCoverage} covers.
+ */
+function listTrackedTextFiles(repoRoot) {
   const listed = spawnSync("git", ["grep", "-Il", "-z", "-e", "", "--"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -2833,20 +2847,92 @@ export function loadTrackedFiles(repoRoot) {
     );
   }
 
-  const trackedText = listed.stdout
-    .split("\0")
-    .filter(Boolean);
-
-  const files = new Map();
-  for (const entry of trackedText) {
+  const pairs = [];
+  for (const entry of listed.stdout.split("\0").filter(Boolean)) {
     const rel = entry.replace(/\\/g, "/");
     const absolute = path.join(repoRoot, rel);
     // A tracked-but-deleted path in a dirty working tree is not this check's
     // business; git status reports it and reading it would throw here.
     if (!fs.existsSync(absolute)) continue;
+    pairs.push([rel, absolute]);
+  }
+  return pairs;
+}
+
+export function loadTrackedFiles(repoRoot) {
+  const files = new Map();
+  for (const [rel, absolute] of listTrackedTextFiles(repoRoot)) {
     files.set(rel, fs.readFileSync(absolute, "utf8"));
   }
   return files;
+}
+
+
+/**
+ * Every tracked text file whose bytes are not valid UTF-8.
+ *
+ * ## Why {@link auditEncoding} cannot do this
+ *
+ * That check reads what {@link loadTrackedFiles} already decoded, and the decode
+ * is where the evidence is destroyed: `fs.readFileSync(path, "utf8")` replaces
+ * an invalid byte with U+FFFD rather than refusing it. U+FFFD is not a control
+ * character and not a double-encoded sequence, so the byte-order-mark, mojibake
+ * and control-character checks all pass a file no UTF-8 reader can render, and
+ * the black diamond ships. Measured on #3445, where a lone `0x97` — the cp1252
+ * em dash, pasted from a Windows tool — sat in a source comment through a green
+ * `docs:indexcheck`; both review lenses found it only by decoding the changed
+ * files themselves.
+ *
+ * So this reads the BYTES, and it is the one check in this script that must.
+ *
+ * ## How the detection is exact
+ *
+ * A decode followed by a re-encode round-trips byte for byte if and only if the
+ * original was valid UTF-8, so `Buffer.equals` answers the question outright —
+ * no hand-rolled validator, and no guessing from the presence of U+FFFD, which
+ * a file may legitimately contain as a character in its own right. Only once a
+ * file is known to be damaged does the first U+FFFD locate it, and the offset is
+ * the length in bytes of everything decoded before it. That offset is the part
+ * worth reporting: an invalid byte is invisible in every editor, and without it
+ * the only way to find one is to decode the file by hand.
+ */
+export function findInvalidUtf8Bytes(repoRoot) {
+  const findings = [];
+  for (const [rel, absolute] of listTrackedTextFiles(repoRoot)) {
+    const raw = fs.readFileSync(absolute);
+    const text = raw.toString("utf8");
+    if (Buffer.from(text, "utf8").equals(raw)) continue;
+    const damaged = text.indexOf("�");
+    const byteOffset = Buffer.byteLength(text.slice(0, damaged), "utf8");
+    findings.push({ path: rel, byteOffset, byte: raw[byteOffset] });
+  }
+  return findings;
+}
+
+/**
+ * No tracked text file carries a byte that is not valid UTF-8.
+ *
+ * Kept apart from {@link auditEncoding} because its evidence is the raw buffer
+ * rather than the decoded text; {@link findInvalidUtf8Bytes} explains why that
+ * distinction is forced rather than chosen.
+ */
+export function auditInvalidUtf8Bytes(invalidUtf8Files) {
+  return [...invalidUtf8Files]
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .map(({ path: rel, byteOffset, byte }) => {
+      const hex = byte === undefined ? "??" : `0x${byte.toString(16).padStart(2, "0")}`;
+      return (
+        `${rel} is not valid UTF-8: byte ${byteOffset} is ${hex}, which no UTF-8 ` +
+        "reader can decode, so it renders as a black diamond in GitHub's diff and " +
+        "in every editor. The usual cause is a character pasted from a Windows tool " +
+        `that writes cp1252 — ${hex} is an em dash there, and a curly quote and an ` +
+        "ellipsis have their own single bytes. Nothing in this repository wants one: " +
+        "write the real UTF-8 character, or plain ASCII. The other encoding checks " +
+        "here cannot see this, because they read the file after the decode has " +
+        "already replaced the byte (#3445, #3525), which is why it has its own check " +
+        "and why that check reads bytes."
+      );
+    });
 }
 
 /** Resolve a git ref to a commit, returning null when it does not exist. */
@@ -3199,6 +3285,7 @@ if (invokedPath === import.meta.url) {
       baselineLabel: baselineRef.slice(0, 12),
       stableIndexHeadings: STABLE_INDEX_HEADINGS,
       hiddenFilesWithEarlyNul: textScan.hiddenWithEarlyNul,
+      invalidUtf8Files: findInvalidUtf8Bytes(repoRoot),
     });
 
     if (problems.length > 0) {
