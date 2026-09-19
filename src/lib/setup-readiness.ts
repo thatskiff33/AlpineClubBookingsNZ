@@ -120,6 +120,14 @@ export interface SetupDatabaseSnapshot {
    * Optional for callers that took no database snapshot.
    */
   xeroUnsetFallbackMappingLabels?: string[];
+  /**
+   * `INV-INT-021`, #3529: one sentence per unset asking key — "Label: what the
+   * system does without it" — so the checklist can say WHY a choice is waiting
+   * for a key that has no fallback (a bank-transfer refund note raised without
+   * a settling payment) as well as for one that does. Same population as the
+   * labels above, in the same order.
+   */
+  xeroUnsetMappingConsequences?: string[];
   xeroHutFeeItemMappingCount: number;
   xeroEntranceFeeMappingCount: number;
   // Per-membership-type rate gaps (#1930, E4): "TypeName — SeasonName" entries
@@ -1992,6 +2000,7 @@ function buildXeroMappingCheck(
   // count cannot see this: it counts rows with a code, so every upgrading club
   // would read "configured" while a new key was quietly unset.
   const unsetFallbackMappings = db?.xeroUnsetFallbackMappingLabels ?? [];
+  const unsetMappingConsequences = db?.xeroUnsetMappingConsequences ?? [];
   const complete =
     accountMappings > 0 &&
     hutFeeMappings > 0 &&
@@ -2019,6 +2028,7 @@ function buildXeroMappingCheck(
         ...(unsetFallbackMappings.length > 0
           ? [`Not chosen yet, using a fallback: ${unsetFallbackMappings.join(", ")}`]
           : []),
+        ...unsetMappingConsequences.map((sentence) => `Not chosen yet — ${sentence}`),
         `Hut fee item mappings: ${hutFeeMappings}`,
         `Joining fee mappings: ${entranceFeeMappings}`,
       ],

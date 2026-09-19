@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  // `INV-PAY-101`: the settlement decision the repair leg shares with the
+  // inline leg reads the Stripe account and the bank-transfer refund account
+  // through these.
+  getAccountMapping: vi.fn(),
+  getResolvedAccountMapping: vi.fn(),
   findUniqueOperation: vi.fn(),
   updateManyOperation: vi.fn(),
   findUniquePayment: vi.fn(),
@@ -60,6 +65,15 @@ vi.mock("@/lib/xero-contact-sync", () => ({
   buildXeroContactUpdatePayload: mocks.buildXeroContactUpdatePayload,
   shouldRepairXeroContactNameOrder: mocks.shouldRepairXeroContactNameOrder,
 }));
+
+vi.mock("@/lib/xero-mappings", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-mappings");
+  return {
+    ...actual,
+    getAccountMapping: mocks.getAccountMapping,
+    getResolvedAccountMapping: mocks.getResolvedAccountMapping,
+  };
+});
 
 vi.mock("@/lib/xero", () => ({
   findOrCreateXeroContact: mocks.findOrCreateXeroContact,
@@ -368,6 +382,13 @@ describe("getXeroOperationRetryMeta", () => {
 describe("retryXeroSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getAccountMapping.mockResolvedValue("606");
+    // Unset by default: a bank-transfer refund note is left unsettled.
+    mocks.getResolvedAccountMapping.mockResolvedValue({
+      code: null,
+      itemCode: null,
+      codeExplicitlyConfigured: false,
+    });
     mocks.findUniqueMember.mockResolvedValue(null);
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
     // No SUCCEEDED ADDITIONAL capture exists unless a test says so (#1882).
@@ -424,6 +445,31 @@ describe("retryXeroSyncOperation", () => {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
       watermarkCents: 8000,
+    });
+  });
+
+  it("carries a queued refund method into the replay (INV-PAY-101)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: "REFUND_CREDIT_NOTE",
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 3000,
+          watermarkCents: 8000,
+          refundMethod: "internet-banking",
+        },
+      })
+    );
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      watermarkCents: 8000,
+      refundMethod: "internet-banking",
     });
   });
 
@@ -1589,7 +1635,126 @@ describe("retryXeroSyncOperation", () => {
     );
   });
 
+  it("repairs the refund payment leg against the account the original leg recorded (INV-PAY-101)", async () => {
+    mocks.getResolvedAccountMapping.mockResolvedValue({
+      code: "090",
+      itemCode: null,
+      codeExplicitlyConfigured: true,
+    });
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        xeroObjectId: "cn_123",
+        requestPayload: {
+          allocation: { invoiceId: "inv_123", amount: 12.34 },
+          refundMethod: "internet-banking",
+        },
+        responsePayload: {},
+      })
+    );
+    mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroRefundPaymentForInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay_123",
+        creditNoteId: "cn_123",
+        refundAmountCents: 1234,
+        refundMethod: "internet-banking",
+      })
+    );
+  });
+
+  it("leaves a recorded bank-transfer note unsettled on repair while no refund account is chosen (INV-PAY-101)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        xeroObjectId: "cn_123",
+        requestPayload: {
+          allocation: { invoiceId: "inv_123", amount: 12.34 },
+          refundMethod: "internet-banking",
+        },
+        responsePayload: {},
+      })
+    );
+    mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroRefundPaymentForInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_123",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        responsePayload: expect.objectContaining({
+          refundPaymentSkipped: true,
+          refundPaymentSkipReason: expect.stringContaining("no Bank Transfer Refunds Account is configured"),
+        }),
+      })
+    );
+  });
+
+  it("never settles a legacy note for a non-Stripe payment from the Stripe account on repair (INV-PAY-101)", async () => {
+    // A pre-#3529 row carries no method. Its payment was internet banking, so
+    // nothing in the ledger says a transfer was made; the old repair would
+    // have marked the note paid from the Stripe account.
+    mocks.getResolvedAccountMapping.mockResolvedValue({
+      code: "090",
+      itemCode: null,
+      codeExplicitlyConfigured: true,
+    });
+    mocks.findUniquePayment.mockResolvedValue({ id: "pay_123", source: "INTERNET_BANKING" });
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        xeroObjectId: "cn_123",
+        requestPayload: { allocation: { invoiceId: "inv_123", amount: 12.34 } },
+        responsePayload: {},
+      })
+    );
+    mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroRefundPaymentForInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_123",
+      expect.objectContaining({
+        responsePayload: expect.objectContaining({ refundPaymentSkipped: true }),
+      })
+    );
+  });
+
+  it("does not re-repair a note that was left unsettled by design (INV-PAY-101)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        xeroObjectId: "cn_123",
+        requestPayload: {
+          allocation: { invoiceId: "inv_123", amount: 12.34 },
+          refundMethod: "internet-banking",
+        },
+        responsePayload: { refundPaymentSkipped: true, refundPaymentSkipReason: "unset" },
+      })
+    );
+    mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroRefundPaymentForInvoice).not.toHaveBeenCalled();
+  });
+
   it("repairs partial refund credit note follow-up actions", async () => {
+    mocks.findUniquePayment.mockResolvedValue({ id: "pay_123", source: "STRIPE" });
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
         status: "PARTIAL",
@@ -1628,6 +1793,9 @@ describe("retryXeroSyncOperation", () => {
       creditNoteId: "cn_123",
       refundAmountCents: 1234,
       createdByMemberId: "admin_1",
+      // `INV-PAY-101`: a pre-#3529 row carries no method, and this payment's
+      // source is Stripe, so the repair settles it as the card refund it was.
+      refundMethod: "card",
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "op_123",
@@ -1647,6 +1815,7 @@ describe("retryXeroSyncOperation", () => {
   });
 
   it("repairs failed refund credit note creates from the existing Xero credit note", async () => {
+    mocks.findUniquePayment.mockResolvedValue({ id: "pay_123", source: "STRIPE" });
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
         status: "FAILED",
@@ -1683,6 +1852,7 @@ describe("retryXeroSyncOperation", () => {
       creditNoteId: "cn_legacy_123",
       refundAmountCents: 10,
       createdByMemberId: "admin_1",
+      refundMethod: "card",
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "op_123",

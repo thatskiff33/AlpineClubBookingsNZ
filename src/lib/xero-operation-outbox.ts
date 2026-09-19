@@ -34,6 +34,8 @@ import {
   createUnappliedXeroCreditNoteForModification,
   createXeroCreditNote,
 } from "@/lib/xero-credit-notes";
+import type { CashRefundMethod } from "@/lib/xero-refund-method";
+import type { RefundMethod } from "@/lib/xero-refund-method";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
@@ -849,7 +851,16 @@ export async function enqueueXeroBookingInvoiceUpdateOperation(
 export async function enqueueXeroRefundCreditNoteOperation(
   paymentId: string,
   refundAmountCents: number,
-  options?: { createdByMemberId?: string; store?: Prisma.TransactionClient }
+  options?: {
+    createdByMemberId?: string;
+    store?: Prisma.TransactionClient;
+    /**
+     * How the money went back (`INV-PAY-101`, #3529), from the caller that
+     * made the settlement decision. Omitted, the executor reads the payment's
+     * source: Stripe money can only have left through Stripe.
+     */
+    refundMethod?: CashRefundMethod;
+  }
 ) {
   // Optional transaction client (#1357) so callers (e.g. the Internet Banking
   // hold-expiry cron) can enqueue the outbox row inside the same transaction
@@ -989,6 +1000,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
       queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
       refundAmountCents: noteAmountCents,
       watermarkCents,
+      ...(options?.refundMethod ? { refundMethod: options.refundMethod } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -2227,6 +2239,8 @@ export async function enqueueXeroModificationCreditNoteOperation(
     bookingId: string;
     refundAmountCents: number;
     bookingModificationId?: string;
+    /** `INV-PAY-101`: the wording the note carries; card when omitted. */
+    refundMethod?: RefundMethod;
   },
   options?: { createdByMemberId?: string }
 ) {
@@ -2234,6 +2248,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
     bookingId,
     refundAmountCents,
     bookingModificationId,
+    refundMethod,
   } = params;
 
   if (refundAmountCents <= 0) {
@@ -2333,6 +2348,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
       bookingId,
       refundAmountCents,
       bookingModificationId: bookingModificationId ?? null,
+      ...(refundMethod ? { refundMethod } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
@@ -3014,6 +3030,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
             createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
             syncOperationId: queuedOperation.id,
             watermarkCents: payload.watermarkCents,
+            ...(payload.refundMethod && payload.refundMethod !== "account-credit"
+              ? { refundMethod: payload.refundMethod }
+              : {}),
           }
         );
       } else if (
@@ -3058,6 +3077,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           bookingId: payload.bookingId,
           refundAmountCents: payload.refundAmountCents,
           bookingModificationId: payload.bookingModificationId,
+          refundMethod: payload.refundMethod,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
         });
