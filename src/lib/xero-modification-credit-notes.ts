@@ -31,6 +31,11 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
+import {
+  buildRefundDocumentDescription,
+  buildRefundDocumentReference,
+  type RefundMethod,
+} from "@/lib/xero-refund-method";
 
 export async function createXeroCreditNoteForModification(params: {
   bookingId: string;
@@ -39,6 +44,14 @@ export async function createXeroCreditNoteForModification(params: {
   createdByMemberId?: string;
   repairExistingLink?: boolean;
   syncOperationId?: string;
+  /**
+   * How the reduction went back to the member (`INV-PAY-101`, #3529) — the
+   * wording on the note. This note is allocated against the original invoice
+   * rather than settled by a payment, so the method changes no account here;
+   * it is what the treasurer reads. Absent on rows queued before the field
+   * existed, which were all card refunds by this builder's own history.
+   */
+  refundMethod?: RefundMethod;
 }): Promise<string | null> {
   const {
     bookingId,
@@ -48,6 +61,7 @@ export async function createXeroCreditNoteForModification(params: {
     repairExistingLink,
     syncOperationId,
   } = params;
+  const refundMethod: RefundMethod = params.refundMethod ?? "card";
 
   if (refundAmountCents <= 0) {
     if (syncOperationId) {
@@ -93,7 +107,11 @@ export async function createXeroCreditNoteForModification(params: {
   const accountCode = refundMapping.code ?? "200";
 
   const modRefundLineItem: LineItem = {
-    description: `Booking modification refund (Booking ${bookingId.slice(0, 8)})`,
+    description: buildRefundDocumentDescription({
+      method: refundMethod,
+      bookingId,
+      modificationId: bookingModificationId ?? null,
+    }),
     quantity: 1,
     unitAmount: refundAmountCents / 100,
     taxType: "OUTPUT2",
@@ -117,7 +135,7 @@ export async function createXeroCreditNoteForModification(params: {
     date: modificationCreditNoteDate,
     lineAmountTypes: LineAmountTypes.Inclusive,
     lineItems: [modRefundLineItem],
-    reference: `Modification refund - Booking ${bookingId.slice(0, 8)}`,
+    reference: buildRefundDocumentReference({ method: refundMethod, bookingId }),
     status: CreditNote.StatusEnum.AUTHORISED,
   });
 
@@ -135,6 +153,7 @@ export async function createXeroCreditNoteForModification(params: {
     creditNotes: [buildCreditNote(contactId)],
     invoiceId: originalInvoiceId,
     refundAmountCents,
+    refundMethod,
   };
 
   if (operationId) {
@@ -175,6 +194,7 @@ export async function createXeroCreditNoteForModification(params: {
         creditNotes: [buildCreditNote(resolvedContactId)],
         invoiceId: originalInvoiceId,
         refundAmountCents,
+        refundMethod,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
