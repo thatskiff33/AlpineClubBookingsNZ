@@ -6,6 +6,7 @@ import {
   isBookingBedAllocationLocked,
 } from "@/lib/bed-allocation-approval";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
+import { isMemberCancellableBookingStatus } from "@/lib/booking-cancel-eligibility";
 import type { BookingDetailRecord } from "./load-booking-detail";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
 
@@ -54,11 +55,16 @@ export async function resolveBookingDetailEditAccess({
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) may cancel any
   // booking; the /api/bookings/[id]/cancel route authorizes bookings:edit and the
   // notes editor below is gated on this same predicate.
+  //
+  // #3497: the STATUS half is the member-door cancel set, read from its one home
+  // (`MEMBER_CANCELLABLE_BOOKING_STATUSES`, which records why AWAITING_REVIEW is
+  // not in it). The deleted check and the started-stay block are genuinely extra
+  // conditions of this door — the route enforces both too — not a second list.
   const canCancel =
     (canManageBooking || canAdminEditBookings) &&
     !isDeleted &&
     (isAdmin || !stayHasStarted) &&
-    ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
+    isMemberCancellableBookingStatus(booking.status);
   const showArrivalTime = !isDeleted && !["CANCELLED", "COMPLETED"].includes(booking.status);
   const showRequestedRoom =
     !isDeleted && (modules.bedAllocation || Boolean(booking.requestedRoomId));

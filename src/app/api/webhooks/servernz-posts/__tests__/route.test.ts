@@ -81,7 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.loadEffectiveModuleFlags.mockResolvedValue({ commsPortal: true });
   mocks.getIntegrationCredentialValue.mockResolvedValue(SECRET);
-  mocks.runMirrorSync.mockResolvedValue({ upserted: 0, removed: 0, pages: 1 });
+  mocks.runMirrorSync.mockResolvedValue({ upserted: 0, unchanged: 0, removed: 0, pages: 1 });
 });
 
 describe("POST /api/webhooks/servernz-posts", () => {

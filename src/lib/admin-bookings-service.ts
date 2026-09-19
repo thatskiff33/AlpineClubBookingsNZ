@@ -47,6 +47,7 @@ import {
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
 import { prisma } from "@/lib/prisma";
+import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 
 export type BookingSortBy = "member" | "lastUpdated" | "checkIn" | "guests" | "total" | "status";
 export type SortDir = "asc" | "desc";
@@ -1108,9 +1109,11 @@ function deriveBookingOperationalState(
   const invoiceExpected = booking.payment
     ? ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"].includes(booking.payment.status)
     : false;
-  const invoiceLinked =
-    Boolean(booking.payment?.xeroInvoiceId) ||
-    (booking.payment ? invoiceLinkedPaymentIds.has(booking.payment.id) : false);
+  // #3467: the set already applies the one evidence rule (stored id OR active
+  // PRIMARY_INVOICE link), so the field is not OR'd in a second time here.
+  const invoiceLinked = booking.payment
+    ? invoiceLinkedPaymentIds.has(booking.payment.id)
+    : false;
   const hasPerGuestDates = booking.guests.some(
     (guest) =>
       formatDateOnly(guest.stayStart) !== formatDateOnly(booking.checkIn) ||
@@ -1158,9 +1161,10 @@ function deriveBookingOperationalState(
 
 async function loadXeroStateInputs(bookings: BookingCandidate[]) {
   const bookingIds = bookings.map((booking) => booking.id);
-  const paymentIds = bookings
-    .map((booking) => booking.payment?.id)
-    .filter((id): id is string => Boolean(id));
+  const payments = bookings.flatMap((booking) =>
+    booking.payment ? [booking.payment] : []
+  );
+  const paymentIds = payments.map((payment) => payment.id);
   const modificationIds = bookings.flatMap((booking) =>
     booking.modifications.map((modification) => modification.id)
   );
@@ -1172,7 +1176,7 @@ async function loadXeroStateInputs(bookings: BookingCandidate[]) {
       : []),
   ];
 
-  const [activityOperations, primaryInvoiceLinks] = await Promise.all([
+  const [activityOperations, invoiceEvidence] = await Promise.all([
     operationScope.length
       ? prisma.xeroSyncOperation.findMany({
           where: { OR: operationScope },
@@ -1186,23 +1190,18 @@ async function loadXeroStateInputs(bookings: BookingCandidate[]) {
           orderBy: { createdAt: "desc" },
         })
       : Promise.resolve([]),
-    paymentIds.length
-      ? prisma.xeroObjectLink.findMany({
-          where: {
-            localModel: "Payment",
-            localId: { in: paymentIds },
-            xeroObjectType: "INVOICE",
-            role: "PRIMARY_INVOICE",
-            active: true,
-          },
-          select: { localId: true },
-        })
-      : Promise.resolve([]),
+    // #3467: the one evidence rule in its set form — stored id, else an
+    // active PRIMARY_INVOICE link — rather than a second spelling of it here.
+    readBookingInvoiceEvidenceForPayments(payments),
   ]);
 
   return {
     activityByRecord: buildXeroActivityByRecord(activityOperations),
-    invoiceLinkedPaymentIds: new Set(primaryInvoiceLinks.map((link) => link.localId)),
+    invoiceLinkedPaymentIds: new Set(
+      [...invoiceEvidence].flatMap(([paymentId, evidence]) =>
+        evidence.exists ? [paymentId] : []
+      )
+    ),
   };
 }
 

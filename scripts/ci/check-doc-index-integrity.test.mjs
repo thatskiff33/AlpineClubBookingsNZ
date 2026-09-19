@@ -1453,7 +1453,9 @@ describe("tracked citation source extensions", () => {
     // its own id, INV-MOD-055, so the planted id had been taken. Stage 3 then
     // allocated INV-MOD-056 for stored build-up selection. One above the
     // maximum, and no further, exactly as the note above requires.
-    const planted = "INV-MOD-057";
+    // Moved up again by #3497, which shipped INV-MOD-057: cancellable statuses
+    // have one home and the member-facing doors read a named subset of it.
+    const planted = "INV-MOD-058";
     // The precondition the fixture rests on. When this fails, `planted` has been
     // taken by a real invariant: move it up one, and no further.
     expect(files.get("docs/DOMAIN_INVARIANTS.md")).not.toContain(planted);
