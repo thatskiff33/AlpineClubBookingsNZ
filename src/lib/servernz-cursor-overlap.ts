@@ -112,7 +112,7 @@ export function overlappedRequestCursor(
     // API response and the admin screen.
     logger.warn(
       { cursor: stored },
-      `ServerNZ ${sync}: the stored cursor is not an ISO instant, so the commit-order overlap (#2995) is NOT being applied to this pull`,
+      `ServerNZ ${sync}: the stored cursor is not an ISO instant, so the commit-order overlap (#2995, #3449) is NOT being applied to this pull`,
     );
     return stored;
   }
@@ -164,6 +164,18 @@ export function overlappedRequestCursor(
  * both read the same stored value can still write in either order. Each sync
  * closes that race with its own single-flight claim; what this comparison
  * stops is the single-runner rewind the overlap introduced.
+ *
+ * A KNOWN LIMIT, ACCEPTED: A SERVER WHOSE CLOCK GOES BACKWARDS IS NEVER
+ * FOLLOWED. Before the guard both syncs stored the server's answer verbatim,
+ * so a central server restored from a backup, or whose clock was set back,
+ * healed itself on the next pull. Now the stored watermark stays ahead of
+ * every answer such a server gives until the server's clock catches up — and
+ * every row it stamps in between is behind the watermark. There is no reset
+ * path in the application: nothing in `src/` clears `otherLodgesCursor` or
+ * `commsCursorSince`, so today it takes an operator nulling the column by
+ * hand. That is a deliberate trade — the guard closes a rewind that happens
+ * on every quiet night, the skew it cannot follow needs the server to have
+ * gone wrong first — and it is stated in the operator guide.
  */
 export function advancedDownloadCursor(
   stored: string | null,

@@ -183,6 +183,17 @@ mirror — the pull that brings other clubs' shared posts onto your board — us
 the same re-ask, from the same one-minute setting, for the same reason. It is
 one setting in one place, so the two cannot drift apart.
 
+One limit comes with the re-ask, for both pulls. Because the remembered
+position only ever moves forward, a central server whose clock has gone
+**backwards** — restored from a backup, or with its time set back — is not
+followed: your position stays ahead of everything it now says, and entries or
+posts it stamps in the meantime are not fetched until its clock catches up
+with where you got to. There is no button for this. Resetting the position
+means an operator clearing the stored value in the database by hand
+(`otherLodgesCursor` for the download, `commsCursorSince` and
+`commsCursorSinceId` for the mirror, on the `ServerNzSettings` row), after
+which the next pull starts again from the beginning.
+
 **Who can do what.** Enabling an item and running a sync needs finance **edit**.
 The server address and the API key additionally need **Full Admin**, because
 between them they decide where a credential is sent.
