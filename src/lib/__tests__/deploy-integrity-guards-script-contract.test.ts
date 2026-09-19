@@ -162,11 +162,53 @@ describe("guard 2: the previous release's rollback images survive the prune", ()
     expect(imagePrep).toBeGreaterThan(firstPrune);
   });
 
+  // Asserting that the function EXISTS proves nothing: deleting the call left
+  // this green while holds accumulated one per release. The call site is the
+  // contract, so the call site is what is pinned.
   it("does not let placeholders accumulate one per release", () => {
-    expect(code).toContain("release_stale_rollback_holds");
     expect(code).toContain(
       'docker ps -a --filter "label=$ROLLBACK_HOLD_LABEL"',
     );
+
+    const holder = code.slice(
+      code.indexOf("hold_rollback_images() {"),
+      code.indexOf("run_prune_command() {"),
+    );
+    expect(holder).toContain("release_stale_rollback_holds");
+    expect(holder.indexOf("release_stale_rollback_holds")).toBeLessThan(
+      holder.indexOf("docker create --name"),
+    );
+  });
+
+  // The failure this guard is FOR, inverted. An empty capture used to compute
+  // an empty keep-list and remove every hold on the host - and the capture is
+  // empty exactly when an operator is redeploying to recover from an outage,
+  // which is when the previous release's image is the one thing they cannot
+  // afford to lose.
+  it("releases nothing when it identified nothing to protect", () => {
+    const release = code.slice(
+      code.indexOf("release_stale_rollback_holds() {"),
+      code.indexOf("hold_rollback_images() {"),
+    );
+    const guard = release.indexOf('if [ -z "$ROLLBACK_IMAGE_IDS" ]; then');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(release.indexOf("docker rm -f"));
+  });
+
+  // Stopped containers count. `ps -q` reports only running ones, so on a host
+  // whose app is down the capture would come back empty and the prune would
+  // take the rollback image.
+  // Scoped to the capture function on purpose: `ps -a -q` appears at two
+  // unrelated call sites further down, so a tree-wide `toContain` passed with
+  // the running-only form restored here - a guard satisfied by somebody else's
+  // code, which is no guard at all.
+  it("identifies the previous release from stopped containers too", () => {
+    const capture = code.slice(
+      code.indexOf("capture_rollback_image_ids() {"),
+      code.indexOf("release_stale_rollback_holds() {"),
+    );
+    expect(capture).toContain('docker compose ps -a -q "$service"');
+    expect(capture).not.toContain('docker compose ps -q "$service"');
   });
 
   // The script is clean here - the label is defined once and only ever used
@@ -280,12 +322,87 @@ describe("guard 3: a deploy that dies after migrating leaves a record", () => {
     expect(exit).toBeGreaterThan(write);
   });
 
+  // The record has to describe what the script ACTUALLY does next. The restore
+  // is skipped once the new colour has been verified healthy from outside, so
+  // reading SWITCHED_TRAFFIC alone told the operator a restore was in progress
+  // when the new colour was serving and nothing was being restored.
+  it("does not promise a restore that the script will not attempt", () => {
+    const record = code.slice(
+      code.indexOf("write_deploy_failure_record() {"),
+      code.indexOf("# Warnings that must outlive"),
+    );
+    expect(record).toContain(
+      'if [ "$SWITCHED_TRAFFIC" = "1" ] && [ "$EXTERNAL_HEALTH_VERIFIED" = "1" ]; then',
+    );
+    expect(record).toContain("no restore is attempted");
+  });
+
+  // "Release attempted: unidentifiable" on the one path this PR exists to
+  // unblock: the engine runs from a `git archive` workspace with no history,
+  // and the commit arrives in DEPLOY_COMMIT_SHA.
+  it("can name the release on the host-build path", () => {
+    const resolver = code.slice(
+      code.indexOf("resolve_expected_release() {"),
+      code.indexOf("WARMUP_WARNINGS="),
+    );
+    const fromEnv = resolver.indexOf('DEPLOY_COMMIT_SHA:-');
+    expect(fromEnv).toBeGreaterThan(-1);
+    expect(fromEnv).toBeLessThan(resolver.indexOf("git rev-parse HEAD"));
+  });
+
+  // The recorder runs BEFORE the traffic restore, so a database that hangs
+  // rather than refusing - which is a state a half-applied migration can leave
+  // it in - would hold the rollback open while the script tried to write a
+  // record about it.
+  it("cannot hold the rollback open on a hanging database", () => {
+    // Sliced to the function's own body: `write_deploy_failure_record` is
+    // defined ABOVE this one, so slicing to it yields nothing and the
+    // assertion would pass on an empty string.
+    const start = code.indexOf("query_started_migrations() {");
+    const query = code.slice(start, code.indexOf("\n}", start));
+    expect(query).toContain("timeout 30 docker compose exec -T");
+  });
+
   it("tells the operator where the record went", () => {
     expect(code).toContain(
       'DEPLOY_FAILURE_RECORD_DIR="${DEPLOY_FAILURE_RECORD_DIR:-$HOME/tacbookings-deploy-failures}"',
     );
     expect(code).toContain(
       'warn "Deploy failed after the migrate step. Record written to: ${record_path}"',
+    );
+  });
+});
+
+describe("guard 1, second half: a remote-tracking ref is not the remote", () => {
+  // `git fetch --prune origin main` prunes only that refspec, so a branch
+  // deleted on the remote leaves its remote-tracking ref on this disk - and
+  // `branch -r --contains` would then answer "published" for a commit no
+  // remote holds. Reproduced in a scratch repo before this was written.
+  it("confirms the branch with the remote rather than with the local cache", () => {
+    const guard = code.slice(
+      code.indexOf("validate_deploy_commit_is_published() {"),
+      code.indexOf("resolve_image_refs() {"),
+    );
+    expect(guard).toContain("git -C \"$SOURCE_REPO\" ls-remote --heads");
+    expect(guard.indexOf("ls-remote --heads")).toBeLessThan(
+      guard.indexOf('info "Deploy commit'),
+    );
+  });
+
+  // And an unreachable remote is not a refusal. A registry or GitHub outage is
+  // exactly when a deploy is most urgent, and the commit may be perfectly well
+  // published - so a remote that never answered downgrades to a warning, while
+  // a remote that answered and does not have the branch is a real refusal.
+  it("warns rather than refusing when no remote could be reached", () => {
+    const guard = code.slice(
+      code.indexOf("validate_deploy_commit_is_published() {"),
+      code.indexOf("resolve_image_refs() {"),
+    );
+    expect(guard).toContain('[ "$remote_answered" = "0" ]');
+    const downgrade = guard.indexOf("Proceeding on that basis");
+    expect(downgrade).toBeGreaterThan(-1);
+    expect(downgrade).toBeLessThan(
+      guard.indexOf("ALLOW_UNPUBLISHED_DEPLOY_COMMIT=1 together with"),
     );
   });
 });

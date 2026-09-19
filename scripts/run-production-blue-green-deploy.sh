@@ -149,17 +149,57 @@ resolve_ref() {
 # ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS and DEPLOY_WARMUP_ENABLED.
 validate_deploy_commit_is_published() {
   local remote_branches
+  local branch_on_remote
+  local remote_ref
+  local remote_name
+  local branch_name
+  local live_branch=""
+  local remote_answered=0
 
-  remote_branches="$(git -C "$SOURCE_REPO" branch -r --contains "$RESOLVED_REF" 2>/dev/null || true)"
-  remote_branches="$(printf '%s' "$remote_branches" | tr -d '[:space:]')"
+  remote_branches="$(git -C "$SOURCE_REPO" branch -r --contains "$RESOLVED_REF" --format '%(refname:short)' 2>/dev/null || true)"
 
-  if [ -n "$remote_branches" ]; then
-    info "Deploy commit ${RESOLVED_REF} is published on at least one remote branch."
+  # A remote-tracking ref is a LOCAL CACHE, and the fetch above is refspec
+  # scoped (`--prune origin main`), which prunes only what it fetched. So
+  # `origin/feature`, deleted on the remote months ago, survives on this disk
+  # and would answer "published" for a commit no remote holds - measured in a
+  # scratch repo, not assumed. Confirm with the remote itself.
+  #
+  # But a remote that cannot be REACHED must not turn into a refusal: a GitHub
+  # outage is not a reason to block a deploy whose commit really is pushed. So
+  # an unreachable remote downgrades to a warning, while a remote that answers
+  # and does not have the branch is treated as the stale ref it is.
+  while IFS= read -r remote_ref; do
+    [ -n "$remote_ref" ] || continue
+    case "$remote_ref" in
+      *" -> "*|*"->"*) continue ;;
+    esac
+    remote_name="${remote_ref%%/*}"
+    branch_name="${remote_ref#*/}"
+    [ -n "$branch_name" ] && [ "$branch_name" != "$remote_ref" ] || continue
+    if branch_on_remote="$(git -C "$SOURCE_REPO" ls-remote --heads "$remote_name" "$branch_name" 2>/dev/null)"; then
+      remote_answered=1
+      if [ -n "$branch_on_remote" ]; then
+        live_branch="$remote_ref"
+        break
+      fi
+    fi
+  done <<EOF
+$remote_branches
+EOF
+
+  if [ -n "$live_branch" ]; then
+    info "Deploy commit ${RESOLVED_REF} is published on ${live_branch}, confirmed against the remote."
+    return 0
+  fi
+
+  if [ -n "$(printf '%s' "$remote_branches" | tr -d '[:space:]')" ] && [ "$remote_answered" = "0" ]; then
+    warn "Could not reach any remote to confirm that ${RESOLVED_REF} is still published."
+    warn "This host's remote-tracking refs say it is, and those refs can be stale. Proceeding on that basis."
     return 0
   fi
 
   if ! env_flag_is_true "$ALLOW_UNPUBLISHED_DEPLOY_COMMIT"; then
-    echo "Deploy commit ${RESOLVED_REF} exists on no remote branch of ${SOURCE_REPO}." >&2
+    echo "Deploy commit ${RESOLVED_REF} exists on no remote branch of ${SOURCE_REPO} that the remote still has." >&2
     echo "Production would then be running code that only this disk holds: it could not be rebuilt from the repository, reviewed, or reasoned about by the next release." >&2
     echo "Push the commit, or set ALLOW_UNPUBLISHED_DEPLOY_COMMIT=1 together with a non-empty UNPUBLISHED_DEPLOY_COMMIT_REASON explaining why." >&2
     return 1
@@ -789,10 +829,17 @@ write_deploy_failure_record() {
     migration_state="UNKNOWN. The database could not be reached, so whether a migration started could NOT be determined. This is not the same as nothing having happened - treat the schema as possibly changed and check it before retrying or rolling back."
   fi
 
-  if [ "$SWITCHED_TRAFFIC" = "1" ]; then
+  # This has to describe what `rollback_traffic_if_needed` ACTUALLY does, not
+  # what the switch flag alone suggests. It returns early once the new colour
+  # has been verified healthy from outside, so a failure at a later step leaves
+  # the new colour serving with no restore attempted - and telling an operator
+  # a restore is in progress when it is not is worse than telling them nothing.
+  if [ "$SWITCHED_TRAFFIC" = "1" ] && [ "$EXTERNAL_HEALTH_VERIFIED" = "1" ]; then
+    traffic_state="YES, AND IT STAYS THERE. Caddy is pointed at ${TARGET_SERVICE}, which was verified healthy from outside, so no restore is attempted. ${TARGET_SERVICE} is serving."
+  elif [ "$SWITCHED_TRAFFIC" = "1" ]; then
     traffic_state="YES. Caddy was pointed at ${TARGET_SERVICE}. The script attempts to restore ${ACTIVE_SERVICE}; confirm which colour is serving before doing anything else."
   else
-    traffic_state="NO. Caddy was never repointed, so ${ACTIVE_SERVICE:-the previous colour} kept serving throughout."
+    traffic_state="NO, NOT BY THE SCRIPT'S OWN ACCOUNTING. ${ACTIVE_SERVICE:-The previous colour} should still be serving - but if the deploy died between writing the upstream file and recording the switch, the file on disk may already name ${TARGET_SERVICE:-the target colour}. Read ${ACTIVE_UPSTREAM_FILE_REL} before acting."
   fi
 
   mkdir -p "$DEPLOY_FAILURE_RECORD_DIR" 2>/dev/null || {
@@ -859,6 +906,21 @@ EOF
   if [ -z "$in_list" ]; then
     printf ''
     return 0
+  fi
+
+  # Bounded, because this runs on the failure path BEFORE the traffic
+  # restore. A database that is hanging rather than refusing - which is a
+  # state a half-applied migration can leave it in - would otherwise hold the
+  # restore open indefinitely while the script tried to write a record about
+  # it. A timeout costs the record's migration section, which then reads
+  # UNKNOWN; the alternative costs the rollback. `timeout` is coreutils and
+  # present on any host this runs on, but it is used only when it exists,
+  # because degrading to no record beats degrading to no deploy.
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 30 docker compose exec -T "$POSTGRES_SERVICE" \
+      psql -U tac -d tacbookings -Atqc \
+      "SELECT migration_name || ' | started_at=' || COALESCE(started_at::text, 'NULL') || ' | finished_at=' || COALESCE(finished_at::text, 'NULL') || ' | rolled_back_at=' || COALESCE(rolled_back_at::text, 'NULL') FROM \"_prisma_migrations\" WHERE started_at IS NOT NULL AND migration_name IN (${in_list}) ORDER BY started_at"
+    return $?
   fi
 
   docker compose exec -T "$POSTGRES_SERVICE" \
@@ -1652,23 +1714,35 @@ rollback_hold_container_name() {
 capture_rollback_image_ids() {
   local service
   local container_id
+  local container_ids
   local image_id
 
   ROLLBACK_IMAGE_IDS=""
   for service in "$ACTIVE_SERVICE" "$CRON_SERVICE"; do
     [ -n "$service" ] || continue
-    container_id="$(docker compose ps -q "$service" 2>/dev/null || true)"
-    [ -n "$container_id" ] || continue
-    image_id="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null || true)"
-    [ -n "$image_id" ] || continue
-    case " $ROLLBACK_IMAGE_IDS " in
-      *" $image_id "*) continue ;;
-    esac
-    ROLLBACK_IMAGE_IDS="${ROLLBACK_IMAGE_IDS}${ROLLBACK_IMAGE_IDS:+ }${image_id}"
+    # `-a`, deliberately: STOPPED containers count. The moment this guard
+    # matters most is an operator running the deploy to recover from an
+    # incident, with the site already down - and `ps -q` reports nothing then,
+    # so the previous release's image would look unreferenced and the prune
+    # would take exactly the image the rollback needs. A stopped container
+    # still names the image it was created from, which is the whole question.
+    container_ids="$(docker compose ps -a -q "$service" 2>/dev/null || true)"
+    [ -n "$container_ids" ] || continue
+    while IFS= read -r container_id; do
+      [ -n "$container_id" ] || continue
+      image_id="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null || true)"
+      [ -n "$image_id" ] || continue
+      case " $ROLLBACK_IMAGE_IDS " in
+        *" $image_id "*) continue ;;
+      esac
+      ROLLBACK_IMAGE_IDS="${ROLLBACK_IMAGE_IDS}${ROLLBACK_IMAGE_IDS:+ }${image_id}"
+    done <<EOF
+$container_ids
+EOF
   done
 
   if [ -z "$ROLLBACK_IMAGE_IDS" ]; then
-    info "No running app containers, so there is no previous release for the prune to evict."
+    info "No app containers exist for this project, so there is no previous release for the prune to evict."
     return 0
   fi
 
@@ -1681,6 +1755,16 @@ release_stale_rollback_holds() {
   local keep=""
   local image_id
   local name
+
+  # An empty capture means this deploy learned NOTHING about what needs
+  # protecting - not that nothing does. Falling through would compute an empty
+  # keep-list and remove every hold on the host, which is this guard inverted
+  # into the exact damage it exists to prevent: the last good deploy's hold
+  # destroyed, and the image pruned behind it. Release nothing instead.
+  if [ -z "$ROLLBACK_IMAGE_IDS" ]; then
+    info "No rollback image was identified, so no existing hold is released."
+    return 0
+  fi
 
   for image_id in $ROLLBACK_IMAGE_IDS; do
     keep="${keep} $(rollback_hold_container_name "$image_id")"
@@ -2349,6 +2433,15 @@ warmup_services() {
 # `prepare_application_images` exports as RELEASE_ID for that path anyway.
 resolve_expected_release() {
   local tag
+
+  # The host-build recovery path this PR unblocks runs the engine from a
+  # workspace with no `.git`, and passes the commit in DEPLOY_COMMIT_SHA.
+  # Without this the gate warns it cannot identify the release, and the failure
+  # record says "unidentifiable", while the answer sits in a variable.
+  if [ -n "${DEPLOY_COMMIT_SHA:-}" ]; then
+    printf '%s' "$DEPLOY_COMMIT_SHA"
+    return 0
+  fi
 
   if [ -n "$APP_IMAGE" ] && [ "${APP_IMAGE#*@}" = "$APP_IMAGE" ]; then
     tag="${APP_IMAGE##*:}"

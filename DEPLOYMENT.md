@@ -583,6 +583,14 @@ The flag on its own is refused: without a non-empty reason the deploy stops. The
 reason is printed in the deploy log. Push the commit as soon as the reason no
 longer holds.
 
+The check asks the remote, not this host's copy of it. A remote-tracking ref
+such as `origin/feature` is a local cache, and the deploy's fetch prunes only
+the branch it fetched — so a branch deleted on the remote can leave a ref here
+that would vouch for a commit nobody else has. If **no** remote can be reached
+at all, the deploy does not refuse on that ground: it warns that it could not
+confirm, says the local refs may be stale, and continues. An outage is not a
+reason to block a deploy whose commit really is pushed.
+
 ### Building the images on the host (#3539)
 
 When CI cannot build the images — a depleted Actions budget, a registry you
@@ -633,7 +641,10 @@ naming:
 - what the database says about them — selected on `started_at`, so a migration
   that began and did **not** finish is reported as exactly that rather than as
   "nothing applied";
-- whether traffic had already moved to the new colour.
+- whether traffic had already moved to the new colour — and, when it had and
+  the new colour was already verified healthy from outside, that it **stays**
+  there and no restore is attempted, because that is what the script really
+  does.
 
 If the database could not be reached, the record says `UNKNOWN.` as its own
 state. It does not say `NONE STARTED.`, because a database that is down after a
