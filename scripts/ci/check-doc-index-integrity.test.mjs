@@ -19,6 +19,7 @@ import {
   auditDocReachability,
   auditDocs,
   auditEncoding,
+  auditInvalidUtf8Bytes,
   auditTextScanCoverage,
   auditWordBudgets,
   auditIndexCatalogueRows,
@@ -2494,6 +2495,50 @@ describe("auditEncoding", () => {
     ].join("\n");
 
     expect(auditEncoding(repo({ "docs/example.md": prose }))).toEqual([]);
+  });
+});
+
+// The findings this takes are produced by `findInvalidUtf8Bytes`, which reads
+// the raw buffer; these cases exercise the MESSAGE, and the scan itself is
+// covered by the repository-wide run in the integration test below. Byte values
+// are written as numbers, never as characters, so this file stays valid UTF-8
+// while describing text that is not — the same discipline the control-character
+// cases above follow.
+describe("auditInvalidUtf8Bytes", () => {
+  it("says nothing when every tracked file decoded cleanly", () => {
+    expect(auditInvalidUtf8Bytes([])).toEqual([]);
+  });
+
+  it("names the file, the byte offset and the byte, because none of them is visible", () => {
+    const problems = auditInvalidUtf8Bytes([
+      { path: "src/lib/example.ts", byteOffset: 412, byte: 0x97 },
+    ]);
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("src/lib/example.ts");
+    expect(problems[0]).toContain("byte 412");
+    expect(problems[0]).toContain("0x97");
+    expect(problems[0]).toContain("cp1252");
+  });
+
+  it("explains why the other encoding checks cannot see it", () => {
+    const [problem] = auditInvalidUtf8Bytes([
+      { path: "docs/example.md", byteOffset: 0, byte: 0xff },
+    ]);
+
+    expect(problem).toContain("0xff");
+    expect(problem).toContain("after the decode");
+  });
+
+  it("reports one file per finding, in path order", () => {
+    const problems = auditInvalidUtf8Bytes([
+      { path: "src/z.ts", byteOffset: 1, byte: 0x91 },
+      { path: "src/a.ts", byteOffset: 2, byte: 0x92 },
+    ]);
+
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("src/a.ts");
+    expect(problems[1]).toContain("src/z.ts");
   });
 });
 
