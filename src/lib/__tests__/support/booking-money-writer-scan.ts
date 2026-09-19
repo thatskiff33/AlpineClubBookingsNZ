@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import ts from "typescript";
 
 import {
@@ -49,6 +49,72 @@ export type BookingMoneyWriterSite = {
 // a component-money data migration must be classified in the reviewed manifest.
 const MONEY_MIGRATION_CENSUS_START = "20260914000000";
 
+let capabilityProgram: ts.Program | undefined;
+
+/** Contextual callback parameters need their real type, not a name heuristic. */
+function typedDelegateCapability(
+  node: ts.Expression,
+  source: ts.SourceFile,
+): boolean | undefined {
+  const file = resolve(source.fileName);
+  if (!ts.sys.fileExists(file)) return undefined;
+  if (!capabilityProgram) {
+    const config = ts.readConfigFile(resolve("tsconfig.json"), ts.sys.readFile);
+    if (config.error) {
+      throw new Error("Cannot read money census TypeScript config");
+    }
+    const parsed = ts.parseJsonConfigFileContent(
+      config.config,
+      ts.sys,
+      process.cwd(),
+    );
+    capabilityProgram = ts.createProgram(parsed.fileNames, parsed.options);
+  }
+  const typedSource = capabilityProgram.getSourceFile(file);
+  // Synthetic mutations must never borrow evidence from the unmutated file.
+  if (!typedSource || typedSource.text !== source.text) return undefined;
+  let equivalent: ts.Node | undefined;
+  const start = node.getStart(source);
+  const find = (candidate: ts.Node) => {
+    if (candidate.pos > start || candidate.end < node.end) return;
+    if (
+      candidate.kind === node.kind &&
+      candidate.getStart(typedSource) === start &&
+      candidate.end === node.end
+    ) {
+      equivalent = candidate;
+      return;
+    }
+    ts.forEachChild(candidate, find);
+  };
+  find(typedSource);
+  if (!equivalent) return undefined;
+  const checker = capabilityProgram.getTypeChecker();
+  const inspect = (type: ts.Type): boolean | undefined => {
+    if (
+      type.flags &
+      (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter)
+    ) {
+      return undefined;
+    }
+    if (type.isUnion()) {
+      const parts = type.types.map(inspect);
+      return parts.includes(true) ? true : parts.includes(undefined) ? undefined : false;
+    }
+    return [...WRITE_METHODS].some((method) => {
+      const property = checker.getPropertyOfType(type, method);
+      return (
+        property !== undefined &&
+        checker.getSignaturesOfType(
+          checker.getTypeOfSymbolAtLocation(property, equivalent!),
+          ts.SignatureKind.Call,
+        ).length > 0
+      );
+    });
+  };
+  return inspect(checker.getTypeAtLocation(equivalent));
+}
+
 function delegateName(
   node: ts.Expression,
   source?: ts.SourceFile,
@@ -57,6 +123,9 @@ function delegateName(
   if (seen.has(node)) return null;
   seen.add(node);
   if (ts.isPropertyAccessExpression(node)) {
+    if (source && isProvenOrdinaryLocalObject(node.expression, source)) {
+      return null;
+    }
     return Object.prototype.hasOwnProperty.call(TRACKED_FIELDS, node.name.text)
       ? (node.name.text as keyof typeof TRACKED_FIELDS)
       : null;
@@ -69,6 +138,7 @@ function delegateName(
       node.argumentExpression.text,
     )
   ) {
+    if (source && isProvenOrdinaryLocalObject(node.expression, source)) return null;
     return node.argumentExpression.text as keyof typeof TRACKED_FIELDS;
   }
   // A delegate is a capability, not a spelling convention.  In particular,
@@ -78,6 +148,25 @@ function delegateName(
     return binding ? delegateName(binding, source, seen) : null;
   }
   return null;
+}
+
+/** A local object literal is data, not an untyped database capability. */
+function isProvenOrdinaryLocalObject(
+  expression: ts.Expression,
+  source: ts.SourceFile,
+  seen = new Set<ts.Node>(),
+): boolean {
+  if (seen.has(expression)) return false;
+  seen.add(expression);
+  if (ts.isObjectLiteralExpression(expression)) return true;
+  if (ts.isIdentifier(expression)) {
+    const binding = resolveLocalBinding(expression, source);
+    return (
+      binding !== undefined &&
+      isProvenOrdinaryLocalObject(binding, source, seen)
+    );
+  }
+  return false;
 }
 
 function propertyName(name: ts.PropertyName): string | undefined {
@@ -266,14 +355,67 @@ function isPairedPromoVariables(
     return false;
   }
 
-  type Assignment = { value: ts.Expression; scope: ts.Node; position: number };
+  type Assignment = {
+    value: ts.Expression;
+    path: string;
+    position: number;
+  };
+  const containsIdentifier = (node: ts.Node, name: string): boolean => {
+    let found = false;
+    const visit = (child: ts.Node) => {
+      if (ts.isIdentifier(child) && child.text === name) found = true;
+      if (!found) ts.forEachChild(child, visit);
+    };
+    visit(node);
+    return found;
+  };
+  const controlFlowPath = (node: ts.Node): string => {
+    const path: string[] = [];
+    for (
+      let cursor: ts.Node | undefined = node.parent;
+      cursor;
+      cursor = cursor.parent
+    ) {
+      if (ts.isIfStatement(cursor)) {
+        const branch =
+          cursor.thenStatement.pos <= node.pos &&
+          node.end <= cursor.thenStatement.end
+            ? "then"
+            : cursor.elseStatement &&
+                cursor.elseStatement.pos <= node.pos &&
+                node.end <= cursor.elseStatement.end
+              ? "else"
+              : "condition";
+        path.push(`${cursor.expression.getStart(source)}:${branch}`);
+      } else if (
+        ts.isCaseClause(cursor) ||
+        ts.isDefaultClause(cursor) ||
+        ts.isForStatement(cursor) ||
+        ts.isForOfStatement(cursor) ||
+        ts.isForInStatement(cursor) ||
+        ts.isWhileStatement(cursor) ||
+        ts.isDoStatement(cursor) ||
+        ts.isCatchClause(cursor) ||
+        ts.isConditionalExpression(cursor) ||
+        (ts.isBinaryExpression(cursor) &&
+          (cursor.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+            cursor.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+            cursor.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken))
+      ) {
+        // Distinct guarded expressions/loop bodies are not paired writes.
+        path.push(`${cursor.kind}:${cursor.getStart(source)}`);
+      }
+    }
+    return path.reverse().join("/");
+  };
   const assignmentsBefore = (
     use: ts.Identifier,
     declaration: ts.VariableDeclaration,
-  ): Assignment[] => {
+  ): { assignments: Assignment[]; unsupportedMutation: boolean } => {
     const scope = enclosingScope(declaration);
-    if (!scope) return [];
+    if (!scope) return { assignments: [], unsupportedMutation: true };
     const assignments: Assignment[] = [];
+    let unsupportedMutation = false;
     const declaresShadow = (block: ts.Block): boolean => {
       let shadow = false;
       const inspect = (node: ts.Node) => {
@@ -305,25 +447,51 @@ function isPairedPromoVariables(
       }
       if (
         ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(node.left) &&
-        node.left.text === use.text &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+        containsIdentifier(node.left, use.text) &&
         node.getStart(source) > declaration.getStart(source)
       ) {
-        assignments.push({
-          value: node.right,
-          scope: enclosingScope(node) ?? scope,
-          position: node.getStart(source),
-        });
+        if (
+          node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isIdentifier(node.left) &&
+          node.left.text === use.text
+        ) {
+          assignments.push({
+            value: node.right,
+            path: controlFlowPath(node),
+            position: node.getStart(source),
+          });
+        } else {
+          unsupportedMutation = true;
+        }
+      }
+      if (
+        (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken ||
+          node.operator === ts.SyntaxKind.MinusMinusToken) &&
+        containsIdentifier(node.operand, use.text) &&
+        node.getStart(source) > declaration.getStart(source)
+      ) {
+        unsupportedMutation = true;
       }
       ts.forEachChild(node, visit);
     };
     visit(scope);
-    return assignments.sort((left, right) => left.position - right.position);
+    return {
+      assignments: assignments.sort(
+        (left, right) => left.position - right.position,
+      ),
+      unsupportedMutation,
+    };
   };
 
-  const discountAssignments = assignmentsBefore(discount, discountDeclaration);
-  const promoAssignments = assignmentsBefore(promo, promoDeclaration);
+  const discountHistory = assignmentsBefore(discount, discountDeclaration);
+  const promoHistory = assignmentsBefore(promo, promoDeclaration);
+  if (discountHistory.unsupportedMutation || promoHistory.unsupportedMutation)
+    return false;
+  const discountAssignments = discountHistory.assignments;
+  const promoAssignments = promoHistory.assignments;
   if (discountAssignments.length !== promoAssignments.length) return false;
 
   const propertyPair = (
@@ -352,7 +520,7 @@ function isPairedPromoVariables(
     const promoAssignment = promoAssignments[index];
     return (
       promoAssignment !== undefined &&
-      assignment.scope === promoAssignment.scope &&
+      assignment.path === promoAssignment.path &&
       (propertyPair(assignment.value, promoAssignment.value) ||
         expressionUsesCanonicalDiscount(
           assignment.value,
@@ -447,6 +615,15 @@ export function scanBookingMoneyWriterEqualityEscapes(
       escapes.push(`${file}:${finalLine}|finalPriceCents`);
     }
     const discount = values.get("discountCents");
+    // Creation keeps the schema's zero default for a no-promo headline. An
+    // update has an existing component and must prove it was cleared too.
+    if (
+      !createsNewBooking &&
+      isZeroPromo &&
+      !discount
+    ) {
+      escapes.push(`${file}:${line}|discountCents`);
+    }
     if (
       discount &&
       !expressionUsesCanonicalDiscount(
@@ -597,13 +774,15 @@ export function scanBookingMoneyWriterEscapes(
         priorAlias?.delegate ??
         (ts.isIdentifier(node.initializer)
           ? null
-          : delegateName(node.initializer));
+          : delegateName(node.initializer, source));
       if (delegate) {
         aliases.set(node.name.text, {
           delegate,
           // Once a local is assigned a tracked delegate, its spelling carries
           // no authority.  The capability itself is what may escape.
-          forwardsCapability: priorAlias?.forwardsCapability ?? true,
+          forwardsCapability:
+            priorAlias?.forwardsCapability ??
+            receiverCouldHoldDelegate(node.initializer),
         });
       }
     }
@@ -625,14 +804,13 @@ export function scanBookingMoneyWriterEscapes(
         ) {
           destructured.set(element.name.text, {
             delegate: key as keyof typeof TRACKED_FIELDS,
-            forwardsCapability: true,
+            forwardsCapability: clientCouldHoldDelegate(node.initializer),
           });
         }
       }
     }
     ts.forEachChild(node, collect);
   };
-  collect(source);
 
   const isDirectCall = (
     node: ts.Expression,
@@ -674,10 +852,7 @@ export function scanBookingMoneyWriterEscapes(
     )
       return false;
     const receiver = node.expression;
-    if (ts.isObjectLiteralExpression(receiver)) return true;
-    if (!ts.isIdentifier(receiver)) return false;
-    const binding = resolveLocalBinding(receiver, source);
-    return binding !== undefined && ts.isObjectLiteralExpression(binding);
+    return isProvenOrdinaryLocalObject(receiver, source);
   };
 
   const parameterFor = (
@@ -727,21 +902,17 @@ export function scanBookingMoneyWriterEscapes(
     return declared;
   };
 
-  const receiverCouldHoldDelegate = (node: ts.Expression): boolean => {
-    if (
-      !ts.isPropertyAccessExpression(node) &&
-      !ts.isElementAccessExpression(node)
-    )
-      return false;
-    if (!ts.isIdentifier(node.expression)) return false;
-
-    const receiver = node.expression;
+  const clientCouldHoldDelegate = (receiver: ts.Expression): boolean => {
+    if (isProvenOrdinaryLocalObject(receiver, source)) return false;
+    if (!ts.isIdentifier(receiver)) return false;
     const binding = resolveLocalBinding(receiver, source);
     if (binding !== undefined) return false;
 
     const parameter = parameterFor(receiver);
     if (parameter) {
-      if (!parameter.type) return false;
+      // Parameters are caller-provided capabilities unless their declaration
+      // proves otherwise. An untyped Prisma client must not bypass the census.
+      if (!parameter.type) return true;
       const type = parameter.type.getText(source);
       return /(?:^|\W)(?:any|PrismaClient|TransactionClient)(?:\W|$)/.test(
         type,
@@ -749,6 +920,12 @@ export function scanBookingMoneyWriterEscapes(
     }
     return !hasLocalDeclaration(receiver);
   };
+
+  const receiverCouldHoldDelegate = (node: ts.Expression): boolean =>
+    (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    clientCouldHoldDelegate(node.expression);
+
+  collect(source);
 
   const visit = (node: ts.Node, parent?: ts.Node, grandparent?: ts.Node) => {
     if (
@@ -770,12 +947,16 @@ export function scanBookingMoneyWriterEscapes(
       // A destructured property becomes proven delegate capability only when
       // it is invoked as one. Bare `const { booking } = pageData` is an
       // ordinary domain projection and must not become a false escape.
-      if (directWrite) {
+      if (
+        directWrite ||
+        ((typedDelegateCapability(node, source) ??
+          binding.forwardsCapability) &&
+          isEscapingUse(node, parent))
+      ) {
         escapes.add(`${file}|${binding.delegate}`);
       }
     }
-    const candidateIdentifier =
-      ts.isIdentifier(node) && isDirectCall(node, parent, grandparent);
+    const candidateIdentifier = ts.isIdentifier(node) && aliases.has(node.text);
     if (
       candidateIdentifier ||
       ts.isPropertyAccessExpression(node) ||
@@ -791,8 +972,10 @@ export function scanBookingMoneyWriterEscapes(
         !isLocalAliasInitializer(node, parent) &&
         isEscapingUse(node, parent) &&
         !isOrdinaryObjectProperty(node) &&
-        receiverCouldHoldDelegate(node) &&
-        (ts.isIdentifier(node) ? (alias?.forwardsCapability ?? false) : true)
+        (typedDelegateCapability(node, source) ??
+          (ts.isIdentifier(node)
+            ? (alias?.forwardsCapability ?? false)
+            : receiverCouldHoldDelegate(node)))
       ) {
         escapes.add(`${file}|${delegate}`);
       }
@@ -835,6 +1018,33 @@ export function scanBookingMoneyWriterSites(
     site.methods.add(method);
     fields.forEach((field) => site.fields.add(field));
     found.set(delegate, site);
+  };
+  const resolveObjectProperties = (
+    expression: ts.Expression | undefined,
+    seen = new Set<ts.Node>(),
+  ): { properties: ts.ObjectLiteralElementLike[]; opaque: boolean } => {
+    if (!expression || seen.has(expression)) {
+      return { properties: [], opaque: true };
+    }
+    seen.add(expression);
+    if (ts.isIdentifier(expression)) {
+      return resolveObjectProperties(resolveLocalBinding(expression, source), seen);
+    }
+    if (!ts.isObjectLiteralExpression(expression)) {
+      return { properties: [], opaque: true };
+    }
+    const properties: ts.ObjectLiteralElementLike[] = [];
+    let opaque = false;
+    for (const property of expression.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        const spread = resolveObjectProperties(property.expression, seen);
+        properties.push(...spread.properties);
+        opaque ||= spread.opaque;
+      } else {
+        properties.push(property);
+      }
+    }
+    return { properties, opaque };
   };
   const mutationPayloads = (
     call: ts.CallExpression,
@@ -961,14 +1171,15 @@ export function scanBookingMoneyWriterSites(
           undefined,
           new Set(),
         );
-        const relationValue = ts.isIdentifier(value)
-          ? resolveLocalBinding(value, source)
-          : value;
-        if (!relationValue || !ts.isObjectLiteralExpression(relationValue)) {
+        const relationObject = resolveObjectProperties(value);
+        if (relationObject.opaque && relationObject.properties.length > 0) {
+          record(relation, "opaquePayload", []);
+        }
+        if (relationObject.properties.length === 0) {
           record(relation, "opaquePayload", []);
           continue;
         }
-        for (const entry of relationValue.properties) {
+        for (const entry of relationObject.properties) {
           const method =
             ts.isPropertyAssignment(entry) && propertyName(entry.name);
           if (!method || !WRITE_METHODS.has(method)) continue;
@@ -1013,7 +1224,10 @@ export function scanBookingMoneyWriterSites(
             },
             {
               fields: new Set<string>(relationPayload.fields),
-              opaque: relationPayload.opaque || payloads.length === 0,
+              opaque:
+                relationPayload.opaque ||
+                relationObject.opaque ||
+                payloads.length === 0,
             },
           );
           record(relation, method, [...child.fields]);
@@ -1115,7 +1329,7 @@ function rawSqlWriterSites(
         "i",
       ).exec(executable);
       const insert = new RegExp(
-        String.raw`\bINSERT\s+INTO\s+${table}\s*\(([\s\S]*?)\)\s*(?:VALUES|SELECT)\b`,
+        String.raw`\bINSERT\s+INTO\s+(?:ONLY\s+)?${table}\s*\(([\s\S]*?)\)`,
         "i",
       ).exec(executable);
       const deleted = new RegExp(
@@ -1123,7 +1337,7 @@ function rawSqlWriterSites(
         "i",
       ).test(executable);
       const merged = new RegExp(
-        String.raw`\bMERGE\s+INTO\s+${table}\b`,
+        String.raw`\bMERGE\s+INTO\s+(?:ONLY\s+)?${table}(?=\s|$)`,
         "i",
       ).test(executable);
       const written = tracked.filter((field) => {
@@ -1273,7 +1487,7 @@ export function scanBookingMoneyRawSqlEscapes(
     const splitStatements = splitSqlStatements(sql);
     const statements = splitStatements.length > 0 ? splitStatements : [sql];
     const mergePattern = new RegExp(
-      String.raw`\bMERGE\s+INTO\s+${table}(?=\s|$)`,
+      String.raw`\bMERGE\s+INTO\s+(?:ONLY\s+)?${table}(?=\s|$)`,
       "i",
     );
     if (mergePattern.test(sql)) {
@@ -1294,33 +1508,31 @@ export function scanBookingMoneyRawSqlEscapes(
       }
 
       const insertPattern = new RegExp(
-        String.raw`\bINSERT\s+INTO\s+${table}\s*\(`,
+        String.raw`\bINSERT\s+INTO\s+(?:ONLY\s+)?${table}\s*\(`,
         "gi",
       );
       for (const insert of statement.matchAll(insertPattern)) {
         const columnsOpen = insert.index + insert[0].lastIndexOf("(");
         const columns = parenthesizedSql(statement, columnsOpen);
         if (!columns) continue;
-        const valuesMatch = /\bVALUES\s*\(/gi;
-        valuesMatch.lastIndex = columns.end;
-        const valuesToken = valuesMatch.exec(statement);
+        const valuesToken = /^\s*VALUES\s*\(/i.exec(statement.slice(columns.end));
         if (!valuesToken) {
           // An INSERT ... SELECT has no positional VALUES tuple we can prove
           // against. A tracked column is a post-boundary mutation and must be
           // reviewed rather than silently treated as reconciled.
-          const afterColumns = statement.slice(columns.end);
-          if (/^\s*SELECT\b/i.test(afterColumns)) {
-            for (const name of splitTopLevelSqlList(columns.body).map((name) =>
-              name.replace(/["`\s]/g, ""),
-            )) {
-              if (fields.includes(name)) {
-                escapes.push(`${file}|rawSql:${delegate}.${name}`);
-              }
+          const names = splitTopLevelSqlList(columns.body).map((name) =>
+            name.replace(/["`\s]/g, ""),
+          );
+          // SELECT/WITH forms and any unsupported INSERT modifier (including
+          // OVERRIDING SYSTEM VALUE) have no VALUES tuple to validate.
+          for (const name of names) {
+            if (fields.includes(name)) {
+              escapes.push(`${file}|rawSql:${delegate}.${name}`);
             }
           }
           continue;
         }
-        const valuesOpen = valuesToken.index + valuesToken[0].lastIndexOf("(");
+        const valuesOpen = columns.end + valuesToken[0].lastIndexOf("(");
         const values = parenthesizedSql(statement, valuesOpen);
         if (!values) continue;
         const names = splitTopLevelSqlList(columns.body).map((name) =>

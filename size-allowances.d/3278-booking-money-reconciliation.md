@@ -1,5 +1,17 @@
 # File-size allowances for #3278
 
+file: src/lib/booking-request.ts
+lines: 2970
+reason: two explicit zero components belong in the existing atomic held-booking
+  approval payload beside its total and final price; extracting them would hide
+  the four-column money identity without reducing lifecycle complexity.
+
+file: src/lib/school-booking-request.ts
+lines: 2903
+reason: two explicit zero components belong in the existing atomic school-booking
+  approval payload beside its total and final price; extracting them would hide
+  the four-column money identity without reducing lifecycle complexity.
+
 file: src/app/(admin)/admin/bookings/page.tsx
 lines: 799
 reason: the compact status-cell chip belongs beside the existing booking and
