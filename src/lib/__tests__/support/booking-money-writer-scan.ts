@@ -431,6 +431,235 @@ function canonicalOperandMatches(
 }
 
 /**
+ * Can this expression be read a second time and answer the same both times?
+ *
+ * Only a read of state something else already computed qualifies. A call, a
+ * `new`, an `await`, a tagged template, an assignment or an increment may
+ * answer differently on the second reading, so two identically-spelled copies
+ * of one of those are two conditions rather than one.
+ */
+function isReReadableExpression(expression: ts.Node): boolean {
+  let stable = true;
+  const visit = (node: ts.Node) => {
+    if (!stable) return;
+    if (
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node) ||
+      ts.isAwaitExpression(node) ||
+      ts.isYieldExpression(node) ||
+      ts.isTaggedTemplateExpression(node) ||
+      ts.isPostfixUnaryExpression(node) ||
+      (ts.isPrefixUnaryExpression(node) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken ||
+          node.operator === ts.SyntaxKind.MinusMinusToken)) ||
+      (ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment)
+    ) {
+      stable = false;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(expression);
+  return stable;
+}
+
+/**
+ * Are two parked ternaries turning on ONE value?
+ *
+ * They have to be, because the write stores one branch's total beside the same
+ * branch's final price: if the two ternaries can disagree, the stored pair is
+ * a total from one world and a headline from the other, which is exactly the
+ * pair this census exists to refuse. Comparing the two conditions as SOURCE
+ * TEXT asserted that without being able to see it — `isParked()` here and
+ * `isParked()` there are the same eleven characters and two evaluations of a
+ * call, which may answer differently.
+ *
+ * So resolve the condition rather than reading it. A name that binds a local
+ * `const` is identified by the declaration it resolves to: the same value
+ * however it is spelled, and a different value however alike it is spelled.
+ * Only when neither side names a binding the census can resolve does the text
+ * carry any weight at all, and then only for an expression that cannot answer
+ * differently the second time it is read — which is what the one real site
+ * needing that fallback (`pricingResult.kind === "priced"`) is.
+ */
+function sameParkedCondition(
+  left: ts.Expression,
+  right: ts.Expression,
+  source: ts.SourceFile,
+): boolean {
+  const constantBinding = (
+    expression: ts.Expression,
+  ): ts.VariableDeclaration | undefined => {
+    if (!ts.isIdentifier(expression)) return undefined;
+    const declaration = resolveLocalVariableDeclaration(expression, source);
+    if (!declaration || !ts.isVariableDeclarationList(declaration.parent)) {
+      return undefined;
+    }
+    // A `let` can be reassigned between the two ternaries, so only a `const`
+    // is demonstrably the same value at both of them.
+    return declaration.parent.flags & ts.NodeFlags.Const
+      ? declaration
+      : undefined;
+  };
+  const leftBinding = constantBinding(left);
+  const rightBinding = constantBinding(right);
+  if (leftBinding || rightBinding) {
+    return leftBinding !== undefined && leftBinding === rightBinding;
+  }
+  return (
+    left.getText(source) === right.getText(source) &&
+    isReReadableExpression(left) &&
+    isReReadableExpression(right)
+  );
+}
+
+/**
+ * The expression a parked payload value takes ON the branch being certified.
+ *
+ * Resolves a name to what it binds and a ternary on the same parked condition
+ * to that condition's matching branch, so the caller compares values rather
+ * than spellings. A ternary on a DIFFERENT condition yields nothing: the value
+ * on this branch is then unknown, and an unknown is not evidence.
+ */
+function parkedBranchValue(
+  expression: ts.Expression,
+  conditional: ts.ConditionalExpression,
+  branchIndex: number,
+  source: ts.SourceFile,
+  depth = 0,
+): ts.Expression | undefined {
+  if (depth > 4) return undefined;
+  if (ts.isIdentifier(expression)) {
+    const binding = resolveLocalBinding(expression, source);
+    return binding
+      ? parkedBranchValue(binding, conditional, branchIndex, source, depth + 1)
+      : undefined;
+  }
+  if (ts.isConditionalExpression(expression)) {
+    if (
+      !sameParkedCondition(expression.condition, conditional.condition, source)
+    ) {
+      return undefined;
+    }
+    const branch =
+      branchIndex === 0 ? expression.whenTrue : expression.whenFalse;
+    return ts.isIdentifier(branch)
+      ? (parkedBranchValue(branch, conditional, branchIndex, source, depth + 1) ??
+          branch)
+      : branch;
+  }
+  return expression;
+}
+
+/**
+ * Is this branch of the ternary the row's OWN stored headline?
+ *
+ * Certify it by the receiver it reads, not by the column name it spells.
+ * `? legacyQuote.finalPriceCents :` is a property access named
+ * `finalPriceCents` and is some other row's money; stored beside this row's
+ * total it writes a pair that satisfies the relation for neither row, and the
+ * difference is what every settlement decision then reads.
+ *
+ * The write supplies the proof. On the same branch the payload's own total must
+ * be read off the same object, so what gets stored is one row's already-agreed
+ * pair and the relation it satisfied before the write survives it. All four
+ * parked writers in this tree store `booking.totalPriceCents` beside
+ * `booking.finalPriceCents`, which is what that rule says out loud.
+ */
+function isStoredHeadlineBranch(
+  branch: ts.Expression,
+  conditional: ts.ConditionalExpression,
+  branchIndex: number,
+  expectedTotals: readonly ts.Expression[] | undefined,
+  source: ts.SourceFile,
+): boolean {
+  if (
+    !ts.isPropertyAccessExpression(branch) ||
+    branch.name.text !== "finalPriceCents"
+  ) {
+    return false;
+  }
+  const receiver = branch.expression.getText(source);
+  return (expectedTotals ?? []).some((candidate) => {
+    const total = parkedBranchValue(candidate, conditional, branchIndex, source);
+    return (
+      total !== undefined &&
+      ts.isPropertyAccessExpression(total) &&
+      total.name.text === "totalPriceCents" &&
+      total.expression.getText(source) === receiver
+    );
+  });
+}
+
+/**
+ * The D3 build-up helper is not the certificate; the selection handed to it is.
+ *
+ * `d3CompatibleBookingMoneyBuildUpCents` yields the recorded build-up amount,
+ * or the derived one when the stored base is unknown, so the money it returns
+ * is THIS write's money only when the derived figure the selection was made
+ * against is the canonical relation over the very operands this payload stores.
+ * Certifying the call by its NAME made the exemption something a writer grants
+ * itself: any later function taking that name left the census altogether, next
+ * to a hard-coded total. Resolve the selection's `derivedCents` instead and put
+ * it through the same relation check every other headline goes through, so the
+ * exemption is earned by the argument rather than claimed by the name.
+ *
+ * What this does NOT prove: that the recorded build-up the selection prefers
+ * equals that derived figure. Nothing visible in the syntax could — it is a
+ * database read — and reconciling the two is what the build-up programme's own
+ * reader census and D3 decision cover.
+ */
+function d3SelectionProvesCanonicalFinalPrice(
+  selection: ts.Expression | undefined,
+  source: ts.SourceFile,
+  expectedOperands: ExpectedOperands | undefined,
+  seen: Set<ts.Node>,
+  depth = 0,
+): boolean {
+  if (!selection || depth > 4) return false;
+  if (ts.isIdentifier(selection)) {
+    const binding = resolveLocalBinding(selection, source);
+    return (
+      binding !== undefined &&
+      d3SelectionProvesCanonicalFinalPrice(
+        binding,
+        source,
+        expectedOperands,
+        seen,
+        depth + 1,
+      )
+    );
+  }
+  if (!ts.isCallExpression(selection)) return false;
+  for (const argument of selection.arguments) {
+    if (!ts.isObjectLiteralExpression(argument)) continue;
+    for (const property of argument.properties) {
+      let derived: ts.Expression | undefined;
+      if (
+        ts.isPropertyAssignment(property) &&
+        propertyName(property.name) === "derivedCents"
+      ) {
+        derived = property.initializer;
+      } else if (
+        ts.isShorthandPropertyAssignment(property) &&
+        property.name.text === "derivedCents"
+      ) {
+        derived = property.name;
+      }
+      if (
+        derived &&
+        expressionUsesCanonicalFinalPrice(derived, source, expectedOperands, seen)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Follow a parked edit into the branch being checked.
  *
  * A parked writer stores its four columns from parallel ternaries on the one
@@ -463,8 +692,7 @@ function withBranchOperands(
         : candidate;
       if (
         ts.isConditionalExpression(resolved) &&
-        resolved.condition.getText(source) ===
-          conditional.condition.getText(source)
+        sameParkedCondition(resolved.condition, conditional.condition, source)
       ) {
         widened.push(branchIndex === 0 ? resolved.whenTrue : resolved.whenFalse);
       }
@@ -498,7 +726,14 @@ function expressionUsesCanonicalFinalPrice(
         : "src/lib/booking-money-build-up",
     );
     if (!imported) return false;
-    if (helper.text === "d3CompatibleBookingMoneyBuildUpCents") return true;
+    if (helper.text === "d3CompatibleBookingMoneyBuildUpCents") {
+      return d3SelectionProvesCanonicalFinalPrice(
+        expression.arguments[0],
+        source,
+        expectedOperands,
+        seen,
+      );
+    }
     const argument = expression.arguments[0];
     if (!argument || !ts.isObjectLiteralExpression(argument)) return false;
     const operands = new Map<string, ts.Expression>();
@@ -543,10 +778,14 @@ function expressionUsesCanonicalFinalPrice(
           seen,
         ),
       ) &&
-      branches.some(
-        (branch) =>
-          ts.isPropertyAccessExpression(branch) &&
-          branch.name.text === "finalPriceCents",
+      branches.some((branch, index) =>
+        isStoredHeadlineBranch(
+          branch,
+          expression,
+          index,
+          expectedOperands?.totalPriceCents,
+          source,
+        ),
       )
     );
   }
