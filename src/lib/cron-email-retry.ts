@@ -2,7 +2,10 @@ import { prisma } from "./prisma";
 import { EMAIL_FROM, formatEmailFromAddress } from "./email-sender";
 import { htmlToPlainText } from "./email-text";
 import logger from "@/lib/logger";
-import { getEmailTransporter } from "@/lib/email/internal";
+import {
+  getEmailTransporter,
+  type SentMessageInfo,
+} from "@/lib/email/internal";
 import {
   describeDeliveryDecision,
   resolveDeliveryPolicy,
@@ -546,7 +549,7 @@ export async function retryFailedEmails(): Promise<{
       continue;
     }
 
-    let result: Awaited<ReturnType<typeof transporter.sendMail>>;
+    let result: SentMessageInfo;
     try {
       result = await transporter.sendMail({
         from: formatEmailFromAddress(EMAIL_FROM),
