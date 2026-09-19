@@ -67,6 +67,13 @@ export function resolveBookingDetailViewer({
   });
   // Full Admins and Booking Officers both see the admin-operational tooling.
   const canSeeAdminTools = isAdmin || canAdminEditBookings;
+  // #3528: withdrawing an additional-payment request retires money
+  // instruments, which is the payments board's authority (`finance:edit`),
+  // not the booking officer's. The route re-checks the same permission.
+  const canEditFinance = hasAdminAreaAccess(session.user, {
+    area: "finance",
+    level: "edit",
+  });
   // Issue #1313 (option A2): a non-owner Full Admin OR Booking Officer cancels /
   // modifies on behalf of the member. Both flow through the SAME admin-on-behalf
   // semantics (suppress owner second-person framing, policy wording, and the
@@ -87,6 +94,7 @@ export function resolveBookingDetailViewer({
     canViewAsAdmin,
     canAdminEditBookings,
     canSeeAdminTools,
+    canEditFinance,
     actingOnBehalf,
     nonOwnerAdminViewer,
   };
