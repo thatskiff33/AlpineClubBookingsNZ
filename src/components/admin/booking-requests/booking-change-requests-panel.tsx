@@ -20,7 +20,7 @@ import {
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
-import { calendarDateOfSerialisedDbDate, formatClubDate } from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
@@ -109,17 +109,6 @@ interface BookingChangeRequestData {
       xeroInvoiceNumber: string | null;
     } | null;
   };
-}
-
-/**
- * A lodge night as the calendar day it IS - no timezone, because a calendar day
- * has none (CT-4, #2870; INV-DATE-010). A `@db.Date` crosses the wire as UTC
- * midnight and the kernel's calendar-date formatter pins UTC over that encoding,
- * so the projection is the identity. What this replaces read the day through a
- * ZONE: the identity east of Greenwich, the PREVIOUS DAY west of it.
- */
-function formatDate(value: string) {
-  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 /**
@@ -454,7 +443,7 @@ export function BookingChangeRequestsPanel({
                   <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <span className="text-muted-foreground">Dates:</span>{" "}
-                      {formatDate(request.booking.checkIn)} to {formatDate(request.booking.checkOut)}
+                      {formatStayDate(request.booking.checkIn)} to {formatStayDate(request.booking.checkOut)}
                     </div>
                     <div>
                       <span className="text-muted-foreground">Status:</span>{" "}

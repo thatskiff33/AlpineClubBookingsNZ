@@ -540,10 +540,9 @@ At the successful end of a meaningful piece of work:
    the checks pass, closing the window in which `main` can move underneath and
    force another conflict-resolve plus a full CI cycle. Polling for green and
    merging by hand reliably loses that race when several sessions are active.
-   Note that another session may also merge a PR you built the moment the owner
-   approves it — so post the §5 close-out comment on the linked issue as soon as
-   you see it merged, whoever merged it, rather than assuming you will be the one
-   to do it.
+   Another session may merge a PR you built the moment the owner approves it,
+   so post the §5 close-out comment as soon as you see it merged, whoever
+   merged it.
 5. Close the linked issue at merge time (owner directive, 30 Jul 2026) with a
    plain-English close-out comment on the issue: what shipped, the delivering
    PR, what the review rounds found and how it was fixed (a sentence or two),
@@ -557,7 +556,9 @@ At the successful end of a meaningful piece of work:
    lane started — see
    [`agents/CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md) →
    "Lane-owned Docker infrastructure", and `npm run stale-containers` names what
-   earlier lanes left behind — and confirm `main` CI stays green.
+   earlier lanes left behind — and confirm `main` CI stays green:
+   `gh run list --branch main --event push` (unfiltered, epic-sync pull
+   requests read as `main`'s; "Checking `main` after a merge" there).
 
 ### Pre-authorisation and attributability
 

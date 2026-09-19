@@ -30,8 +30,8 @@ import {
 } from "@/lib/edit-financial-review-context";
 import { useClubTime } from "@/components/club-time-provider";
 import {
-  calendarDateOfSerialisedDbDate,
   formatClubDate,
+  formatStayDate,
   type CalendarDate,
 } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
@@ -642,18 +642,6 @@ interface AutoRefundedNotice {
  * text instead, which is what a Full Admin needs to look the booking up and what a
  * finance operator needs to quote it to somebody who can.
  */
-/**
- * A lodge night as the calendar day it IS - no timezone, because a calendar day
- * has none (CT-4, #2870; INV-DATE-010). `checkIn`/`checkOut` are `@db.Date`
- * columns and cross the wire as UTC midnight; the kernel's calendar-date
- * formatter pins UTC over that encoding, so the projection is the identity.
- * What this replaces read the day through a zone - correct east of Greenwich, a
- * day early west of it.
- */
-function formatStayDate(value: string): string {
-  return formatClubDate(calendarDateOfSerialisedDbDate(value));
-}
-
 function AutomaticRefundNoticeRow({ notice }: { notice: AutoRefundedNotice }) {
   /**
    * `refundedAt` is the payment task's `completedAt` - a real INSTANT, not a

@@ -28,12 +28,12 @@ import {
 } from "@/components/admin/view-only-action"
 import {
   draftsEqual,
-  formatPeriodDate,
   NEW_PERIOD_DRAFT,
   toDraft,
   UNLOADED_SCOPE,
   type PeriodDraft,
 } from "./booking-period-draft"
+import { formatStayDateOrNull } from "@/lib/club-time"
 import type { BookingPeriod, PolicyRule } from "./types"
 
 function PeriodForm({
@@ -595,8 +595,8 @@ export function BookingPeriodsSection() {
                               </Badge>
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              {formatPeriodDate(period.startDate)} &mdash;{" "}
-                              {formatPeriodDate(period.endDate)}
+                              {formatStayDateOrNull(period.startDate) ?? period.startDate} &mdash;{" "}
+                              {formatStayDateOrNull(period.endDate) ?? period.endDate}
                               <span className="ml-3">
                                 Non-member hold:{" "}
                                 <strong>

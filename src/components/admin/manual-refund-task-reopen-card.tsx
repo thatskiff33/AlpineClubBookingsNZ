@@ -18,10 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useClubTime } from "@/components/club-time-provider";
-import {
-  calendarDateOfSerialisedDbDate,
-  formatClubDate,
-} from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   REOPENABLE_DISMISSAL_LIST_MAX,
@@ -80,23 +77,6 @@ const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 */
 type DismissedManualRefundTask = DismissedManualRefundTaskPayload;
 export type { DismissedManualRefundTask };
-
-/**
- * One serialised lodge night, as this card prints it.
- *
- * A CALENDAR DATE and not an instant, so it needs no timezone at all - which is
- * exactly why the two-call idiom is worth naming rather than repeating: the pair
- * has to stay a pair, and a later reader dropping
- * `calendarDateOfSerialisedDbDate` would be formatting a raw string.
- *
- * Deliberately local. The same two calls appear in about a dozen admin
- * components across this tree and hoisting all of them is a change of its own
- * (`INV-SSOT` says move it when two places need it - here two places do, and
- * they are both on this card).
- */
-function formatStayDate(serialised: string): string {
-  return formatClubDate(calendarDateOfSerialisedDbDate(serialised));
-}
 
 export function ManualRefundTaskReopenCard({
   dismissed,

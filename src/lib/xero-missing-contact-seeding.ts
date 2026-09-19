@@ -53,6 +53,7 @@
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import { stableDigest } from "@/lib/stable-digest";
 import { isDeletedAccountMarker } from "@/lib/xero-contact-create-recovery";
 import {
@@ -144,7 +145,9 @@ function computePlannedDigest(rows: PushableMemberRow[]): string {
   return stableDigest(
     rows
       .map((row) => [row.memberId, row.evidence, row.cachedXeroContactId])
-      .sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+      // An IDENTITY order: this digest is the confirm token the admin posts back,
+      // so it must not follow the runtime locale (INV-EXCEPT-036).
+      .sort((left, right) => compareOrdinal(String(left[0]), String(right[0]))),
   );
 }
 
