@@ -17,6 +17,10 @@ import {
   recordSkippedXeroBookingInvoiceUpdateOperation,
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
+import {
+  refundMethodForSettlementMethod,
+  type RefundMethod,
+} from "@/lib/xero-refund-method";
 
 type XeroBookingEditFinancialAction =
   | { type: "none"; reason: string }
@@ -35,6 +39,8 @@ type XeroBookingEditFinancialAction =
   | {
       type: "modification-credit-note";
       refundAmountCents: number;
+      /** `INV-PAY-101`: how the reduction went back, as the note will say. */
+      refundMethod: RefundMethod;
       reason: string;
     }
   | {
@@ -86,6 +92,14 @@ export interface ClassifyXeroBookingEditSettlementInput {
   additionalPaymentIntentId?: string | null;
   settlementMethod?: "card" | "credit" | null;
   settlementAmountCents?: number | null;
+  /**
+   * `INV-PAY-101` (#3529): how the money went back, for the wording on the
+   * credit note. `settlementMethod` is the member's two-way choice (money back
+   * or credit kept) and still picks WHICH note is raised; this says what the
+   * note reads, for the caller that knows the money went back by bank transfer
+   * rather than to a card. Omitted, it follows `settlementMethod`.
+   */
+  refundMethod?: RefundMethod | null;
 }
 
 export interface QueueXeroBookingEditSettlementInput
@@ -154,6 +168,8 @@ export function classifyXeroBookingEditSettlement(
       financialAction = {
         type: "modification-credit-note",
         refundAmountCents,
+        refundMethod:
+          input.refundMethod ?? refundMethodForSettlementMethod(input.settlementMethod),
         reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
       };
     }
@@ -254,6 +270,7 @@ export async function queueXeroBookingEditSettlement(
         bookingId: input.bookingId,
         refundAmountCents: decision.financialAction.refundAmountCents,
         bookingModificationId: input.bookingModificationId,
+        refundMethod: decision.financialAction.refundMethod,
       },
       {
         createdByMemberId: input.createdByMemberId,

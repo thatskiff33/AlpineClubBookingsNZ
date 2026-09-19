@@ -659,6 +659,13 @@ export async function resolveManualRefundTask(
        */
       hasIssuedXeroInvoice,
       bookingPaymentStatus: task.booking.payment?.status ?? null,
+      /**
+       * `INV-PAY-101` (#3529): the invoice a cancellation hand-back refunds
+       * against. Read separately from `hasIssuedXeroInvoice`, which is false
+       * for every CANCELLED booking by construction (`isSettledBookingStatus`)
+       * and so can never gate a document raised for one.
+       */
+      bookingXeroInvoiceId: task.booking.payment?.xeroInvoiceId ?? null,
       status:
         resolution === "completed"
           ? ManualRefundTaskStatus.COMPLETED
@@ -688,11 +695,13 @@ export async function resolveManualRefundTask(
     await executeEditReviewSettlement({
       bookingId: result.bookingId,
       taskId: result.taskId,
+      taskKind: result.kind,
       actingMemberId,
       route: result.settlementRoute,
       amountCents: result.settlementAmountCents,
       hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
       bookingPaymentStatus: result.bookingPaymentStatus,
+      bookingXeroInvoiceId: result.bookingXeroInvoiceId,
     });
 
   return { ...result, stripeRefundId, additionalPaymentIntentId };

@@ -548,19 +548,30 @@ export async function chooseEditReviewSettlementRoute({
 export async function executeEditReviewSettlement({
   bookingId,
   taskId,
+  taskKind,
   actingMemberId,
   route,
   amountCents,
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
+  bookingXeroInvoiceId,
 }: {
   bookingId: string;
   taskId: string;
+  /**
+   * `INV-PAY-101` (#3529): which kind of task this completion closed. The Xero
+   * leg needs it for the one route whose anchor is null by design - a cancelled
+   * cash-settled booking's hand-back - so it can raise the bank-transfer refund
+   * note that route never had.
+   */
+  taskKind: ManualRefundTaskKind | null;
   actingMemberId: string;
   route: EditReviewSettlementRoute | null;
   amountCents: number | null;
   hasIssuedXeroInvoice: boolean;
   bookingPaymentStatus: string | null;
+  /** `INV-PAY-101`: the cancelled booking's invoice, for the hand-back leg. */
+  bookingXeroInvoiceId: string | null;
 }): Promise<{
   stripeRefundId: string | null;
   additionalPaymentIntentId: string | null;
@@ -685,12 +696,14 @@ export async function executeEditReviewSettlement({
   await dispatchEditReviewXeroSettlement({
     bookingId,
     taskId,
+    taskKind,
     actingMemberId,
     route,
     amountCents,
     chargeTotalCents,
     hasIssuedXeroInvoice,
     bookingPaymentStatus,
+    bookingXeroInvoiceId,
     additionalPaymentIntentId,
   });
 
