@@ -7,13 +7,25 @@
  *
  * Every admin surface that writes through `fetch` has to turn a non-OK reply
  * into a message, and the rule is always the same. #2931 wrote this one home
- * and measured that **21 private copies** of the rule survived across `src/`,
- * drifted into three behaviours: most rendered an EMPTY red alert on a blank
- * message (`?? fallback`), one fell back correctly (`|| fallback`), and none
- * checked the message was text, so an object rendered as `[object Object]`.
- * #3445 converged every one of them, and `api-error-message-census.test.ts`
- * now asserts that **no private copy exists** outside this file — failing
- * closed, so a twenty-second reading of the rule is reported with its path.
+ * and measured that **21 private function-shaped copies** of the rule survived
+ * across `src/`, and that they had drifted. Measured copy by copy at #3445's
+ * review: twelve checked the message was text and nine did not, so on nine an
+ * object rendered as `[object Object]`; five used `?? fallback` and eleven
+ * returned the value bare, and both of those shapes render an EMPTY red alert
+ * on a blank message; three fell back correctly. #3445 converged all
+ * twenty-one, plus eight inline `body?.error ?? "…"` sites in four of the
+ * same files, so that no screen answers the question two ways.
+ *
+ * ## What the census guarantees, exactly
+ *
+ * `api-error-message-census.test.ts` asserts that **no private
+ * function-shaped copy exists** outside this file — a small named function
+ * that reads `error` and returns a `fallback` — failing closed, so a
+ * twenty-second such function is reported with its path. It does NOT count the
+ * inline form, `body?.error ?? "sentence"` written straight into a handler,
+ * and that form survives tree-wide in the hundreds beyond the four files
+ * above. Sweeping those is a filed follow-up; until it lands, an inline read
+ * is a screen the settled answers below do not yet cover.
  *
  * ## The two answers #3445 settled, on every admin surface
  *
@@ -29,7 +41,7 @@
  *
  * ## Deliberately different readers, and why
  *
- * Three surfaces EXTEND the rule. Each hands the sentence itself to
+ * Four surfaces EXTEND the rule. Each hands the sentence itself to
  * {@link apiErrorMessageFromBody} and keeps only its extension, so the two
  * answers above hold there too:
  *
@@ -41,6 +53,9 @@
  *    the headline is the shared rule's sentence.
  *  - `src/lib/admin-member-xero-actions.ts` — returns an error OBJECT carrying
  *    recovery hints beside the sentence; the sentence is the shared rule's.
+ *  - `src/components/admin/finance-report-mappings-panel.tsx` — the save
+ *    handler appends the route's `details` list to the shared sentence, so an
+ *    officer sees which mapping was refused and not only that one was.
  *
  * One reader stays in the private shape and is allowlisted by path in the
  * census with its reason:
@@ -64,8 +79,9 @@
  *    object, or carries no usable `error` falls back to the caller's own safe
  *    sentence.
  *  - **Blank counts as absent.** `{ error: "" }` renders an empty alert, which
- *    reads as a UI bug rather than as a refusal; the fallback is better. Most
- *    of the copies converged here used `?? fallback`, which renders the blank.
+ *    reads as a UI bug rather than as a refusal; the fallback is better.
+ *    Sixteen of the copies converged here rendered the blank, five through
+ *    `?? fallback` and eleven by returning the value bare.
  *
  * ## Two shapes, named so they cannot be confused
  *
