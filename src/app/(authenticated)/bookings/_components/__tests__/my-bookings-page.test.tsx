@@ -31,11 +31,12 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
-// This page test owns the list's nesting discriminator. Its Prisma mock returns
-// the list shape for both reads, so keep stored-money classification outside
-// that unrelated fixture contract; reconciliation has its own reader tests.
-vi.mock("@/lib/booking-money-reconciliation-store", () => ({
-  BOOKING_MONEY_RECONCILIATION_SELECT: {},
+// This page test owns the list's nesting discriminator, so the classifier is
+// stubbed and reconciliation keeps its own reader tests. The canonical SELECT
+// is the REAL one: since #3278 the page composes its relation shapes out of it,
+// and a `{}` stand-in would be asserting against a query shape nothing builds.
+vi.mock("@/lib/booking-money-reconciliation-store", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-money-reconciliation-store")),
   reconcileStoredBookingMoney: vi.fn(() => ({ state: "RECONCILED", reasons: [] })),
 }));
 
@@ -60,6 +61,7 @@ vi.mock("@/components/ui/select", () => ({
 }));
 
 import MyBookingsPage from "@/app/(authenticated)/bookings/page";
+import { reconcileStoredBookingMoney } from "@/lib/booking-money-reconciliation-store";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 
@@ -190,5 +192,42 @@ describe("MyBookingsPage split-child nesting discriminator (#1975/#796)", () => 
     const html = await renderPage();
     expect(html).toContain("You are listed as a guest on this booking");
     expect(html).not.toContain("Provisional non-member guests");
+  });
+
+  /*
+    #3278 — the page classifies THE ROW IT RENDERS, from one read.
+
+    It used to read the list, then issue a second `booking.findMany` for the
+    same ids and classify that. Two things followed, both only in the harmful
+    direction: a commit landing between the reads made the card show one read's
+    `finalPriceCents` under the other read's verdict, and a booking that
+    vanished in the gap — a DRAFT deleted, say — was missing from the second
+    result, which threw and took the member's whole bookings page down.
+
+    Counting the reads is what makes the second read unrepresentable; asserting
+    the classifier saw the very object the list mapped is what makes "the
+    verdict belongs to this number" true rather than likely.
+  */
+  it("classifies the rows it renders from a single booking read (#3278)", async () => {
+    const own = booking({ id: "A" });
+    const other = booking({ id: "B" });
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([own, other] as never);
+
+    await renderPage();
+
+    expect(prisma.booking.findMany).toHaveBeenCalledTimes(1);
+    expect(reconcileStoredBookingMoney).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(reconcileStoredBookingMoney).mock.calls[0]![0]).toBe(own);
+    expect(vi.mocked(reconcileStoredBookingMoney).mock.calls[1]![0]).toBe(other);
+  });
+
+  // The other half of the same defect: with one read there is no gap for a
+  // booking to disappear in, so the list renders instead of throwing.
+  it("renders rather than throwing when the classifier is driven straight off the list (#3278)", async () => {
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      booking({ id: "A" }),
+    ] as never);
+
+    await expect(renderPage()).resolves.toContain("/bookings/A");
   });
 });

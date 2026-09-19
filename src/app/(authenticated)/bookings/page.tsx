@@ -68,7 +68,20 @@ export default async function MyBookingsPage() {
       ],
     },
     include: {
-      guests: true,
+      // #3278: the stored-money classification below is derived from THIS read,
+      // so the per-night and adjustment evidence it needs rides along here
+      // rather than arriving from a second query. The relation shapes are the
+      // canonical `BOOKING_MONEY_RECONCILIATION_SELECT`'s own, spread rather
+      // than retyped (`INV-SSOT`); the Booking scalars it names come with the
+      // `include`. A second read would let a commit land between the two and
+      // have the page render one read's total wearing the other read's verdict.
+      guests: {
+        include: {
+          nights: BOOKING_MONEY_RECONCILIATION_SELECT.guests.select.nights,
+        },
+      },
+      promoRedemption: BOOKING_MONEY_RECONCILIATION_SELECT.promoRedemption,
+      nightAdjustments: BOOKING_MONEY_RECONCILIATION_SELECT.nightAdjustments,
       // #796 discriminator: a group joiner also links to its organiser via
       // parentBookingId, so the list needs the join row to tell it apart from a
       // genuine #738 split child. Mirrors [id]/page.tsx's nonMemberGuestChildren
@@ -99,24 +112,13 @@ export default async function MyBookingsPage() {
   const bookingsUnderFinancialReview = await bookingsWithOpenFinancialReview(
     bookings.map((booking) => booking.id),
   );
-  const storedMoneyRows = await prisma.booking.findMany({
-    where: { id: { in: bookings.map((booking) => booking.id) } },
-    select: BOOKING_MONEY_RECONCILIATION_SELECT,
-  });
-  const moneyReconciliationByBookingId = new Map(
-    storedMoneyRows.map((booking) => [
-      booking.id,
-      reconcileStoredBookingMoney(booking),
-    ]),
-  );
 
   const items: MyBookingItem[] = bookings.map((booking) => {
-    const moneyReconciliation = moneyReconciliationByBookingId.get(booking.id);
-    if (!moneyReconciliation) {
-      throw new Error(
-        `Booking ${booking.id} disappeared before its stored-money projection could be read`,
-      );
-    }
+    // #3278: classified from the row this page is about to render, which is the
+    // contract every other reader of the projection keeps. Nothing can commit
+    // between the number and its verdict, and a booking that disappears while
+    // the page renders cannot strand the list looking for a row that is gone.
+    const moneyReconciliation = reconcileStoredBookingMoney(booking);
     // #1975/#796: only a genuine #738 split child (a provisional non-member
     // booking) is nestable. A group joiner also carries parentBookingId but is
     // presented by the organiser group card, not nested here. Mirror the detail
