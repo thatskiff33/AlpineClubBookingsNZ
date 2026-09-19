@@ -31,7 +31,10 @@ function child(overrides: Partial<NonMemberGuestChild> = {}): NonMemberGuestChil
     status: "PENDING" as BookingStatus,
     guestCount: 2,
     finalPriceCents: 9000,
-    moneyReconciliation: { state: "RECONCILED", reasons: [] },
+    moneyReconciliation: {
+      visibility: "VISIBLE",
+      reconciliation: { state: "RECONCILED", reasons: [] },
+    },
     datesDiffer: false,
     checkIn: new Date("2026-08-10T00:00:00.000Z"),
     checkOut: new Date("2026-08-12T00:00:00.000Z"),
@@ -75,14 +78,31 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
     ).not.toBeInTheDocument();
   });
 
+  // #3278: the verdict is officer-only, so the ordinary member who owns this
+  // party is handed a withheld view and the row prints the amount alone.
+  it("says nothing about a child's stored money when the verdict was withheld", () => {
+    render(
+      <NonMemberGuestsSection
+        guests={[child({ moneyReconciliation: { visibility: "WITHHELD" } })]}
+        nonOwnerAdminViewer={false}
+      />,
+    );
+
+    expect(screen.getByRole("link")).toHaveTextContent("$90.00");
+    expect(screen.getByRole("link")).not.toHaveTextContent("needs review");
+  });
+
   it("qualifies an unreconciled child amount without changing it", () => {
     render(
       <NonMemberGuestsSection
         guests={[
           child({
             moneyReconciliation: {
-              state: "UNRECONCILED",
-              reasons: ["HEADLINE_TOTAL_MISMATCH"],
+              visibility: "VISIBLE",
+              reconciliation: {
+                state: "UNRECONCILED",
+                reasons: ["HEADLINE_TOTAL_MISMATCH"],
+              },
             },
           }),
         ]}

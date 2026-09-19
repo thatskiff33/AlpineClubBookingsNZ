@@ -14,10 +14,33 @@ import {
   BOOKING_MONEY_RECONCILIATION_SELECT,
   reconcileStoredBookingMoney,
 } from "@/lib/booking-money-reconciliation-store";
+import { bookingMoneyReconciliationForViewer } from "@/lib/booking-money-reconciliation-audience";
+import { canSeeBookingAdminTools } from "@/lib/admin-permissions";
 
 export default async function MyBookingsPage() {
   const session = await auth();
   if (!session) return null;
+
+  /*
+    WHO IS LOOKING, on a page that had no idea (#3278).
+
+    "My bookings" is a member's own list, so the page never needed a viewer
+    before. The stored-money verdict needs one, for two reasons. It is
+    officer-only (owner decision, 20 September 2026); and this list is not
+    purely the viewer's own bookings — the `where` below also selects bookings
+    the viewer merely appears on as a GUEST, whose figure belongs to another
+    member. Printing an integrity verdict about that member's money to this one
+    is the exposure, and it is not cured by the viewer being a member in good
+    standing.
+
+    The signal is `canSeeBookingAdminTools`, which is the SAME predicate the
+    booking-detail page gates the rest of a booking's private integrity
+    evidence on (`canSeeAdminTools`) rather than a second officer test invented
+    for this page — a Full Admin or a `bookings:edit` holder. An officer who is
+    also a member therefore sees the mark on their own list, and everyone else
+    sees their amounts exactly as they did before this feature existed.
+  */
+  const canSeeAdminTools = canSeeBookingAdminTools(session.user);
 
   // #2263 — the member's own whole-lodge requests. Scoped by
   // requestedByMemberId + exclusivityRequested, and projected through
@@ -118,7 +141,10 @@ export default async function MyBookingsPage() {
     // contract every other reader of the projection keeps. Nothing can commit
     // between the number and its verdict, and a booking that disappears while
     // the page renders cannot strand the list looking for a row that is gone.
-    const moneyReconciliation = reconcileStoredBookingMoney(booking);
+    const moneyReconciliation = bookingMoneyReconciliationForViewer(
+      reconcileStoredBookingMoney(booking),
+      { canSeeAdminTools },
+    );
     // #1975/#796: only a genuine #738 split child (a provisional non-member
     // booking) is nestable. A group joiner also carries parentBookingId but is
     // presented by the organiser group card, not nested here. Mirror the detail

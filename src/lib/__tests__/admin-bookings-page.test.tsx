@@ -748,7 +748,12 @@ describe("AdminBookingsPage", () => {
     const html = renderToStaticMarkup(element);
 
     expect(html).toContain("Money review");
-    expect(html).toContain("Money reconciliation: HEADLINE_TOTAL_MISMATCH");
+    // #3278: the tooltip explains the reason in English from the one shared
+    // dictionary, rather than printing the stored reason token at an officer.
+    expect(html).toContain(
+      "Booking money reconciliation: the stored booking total differs from the recorded guest totals",
+    );
+    expect(html).not.toContain("HEADLINE_TOTAL_MISMATCH");
   });
 
   it("renders pagination controls and preserves the page on sort links (#1738)", async () => {

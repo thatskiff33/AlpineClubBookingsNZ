@@ -16,7 +16,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCents } from "@/lib/utils";
-import type { BookingMoneyReconciliation } from "@/lib/booking-money-reconciliation";
+import {
+  BOOKING_MONEY_RECONCILIATION_COPY,
+  bookingMoneyNeedsOfficerReview,
+  bookingMoneyReviewSuffix,
+  type BookingMoneyReconciliationView,
+} from "@/lib/booking-money-reconciliation-audience";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import {
@@ -31,7 +36,14 @@ export interface MyBookingItem {
   checkOut: string;
   guestCount: number;
   finalPriceCents: number;
-  moneyReconciliation: BookingMoneyReconciliation;
+  /**
+   * #3278: the OFFICER-GATED view of this booking's stored-money verdict, not
+   * the verdict. The list prints bookings the viewer merely appears on as a
+   * guest, so the figure beside this can be another member's; the page decides
+   * who may read a verdict about it and this row only renders what it is
+   * handed. Required, so a caller cannot omit the question.
+   */
+  moneyReconciliation: BookingMoneyReconciliationView;
   /**
    * #3033 (epic #2797): a change to this booking saved and the refund or credit
    * for it has not been worked out yet, so `finalPriceCents` above is not the
@@ -118,8 +130,7 @@ function BookingSummary({
             corrected one is the thing this epic exists to forbid — so the
             figure stays and stops claiming to be the last word.
           */}
-          {booking.moneyReconciliation.state === "UNRECONCILED" &&
-            " · recorded amount needs review"}
+          {bookingMoneyReviewSuffix(booking.moneyReconciliation)}
           {booking.financialReviewPending ? " · being checked" : ""}
         </p>
         {showLinkLabel ? <LinkLabelText linkLabel={booking.linkLabel} /> : null}
@@ -145,9 +156,9 @@ function BookingSummary({
             Adjustment being checked
           </MiniChip>
         ) : null}
-        {booking.moneyReconciliation.state === "UNRECONCILED" ? (
+        {bookingMoneyNeedsOfficerReview(booking.moneyReconciliation) ? (
           <MiniChip tone="info" icon={Scale}>
-            Recorded amount needs review
+            {BOOKING_MONEY_RECONCILIATION_COPY.chipLabel}
           </MiniChip>
         ) : null}
       </div>

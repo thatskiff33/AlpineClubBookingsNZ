@@ -1,4 +1,5 @@
 import type { BookingMoneyReconciliationSummary } from "@/lib/booking-money-reconciliation";
+import { BOOKING_MONEY_RECONCILIATION_COPY } from "@/lib/booking-money-reconciliation-audience";
 import type { FinanceDashboardStatusPanel } from "@/lib/finance-dashboard-page/model";
 
 type FormatNumber = (value: number) => string;
@@ -50,12 +51,13 @@ export function appendBookingMoneyReconciliationDashboardState({
   }
 
   return {
-    title: "Booking money reconciliation",
+    // #3278 (`INV-SSOT`): what this feature is called has one home.
+    title: BOOKING_MONEY_RECONCILIATION_COPY.featureName,
     description:
       "Derived reconciliation state for bookings contributing stored-money metrics. Unreconciled amounts remain visible but require review.",
     badgeLabel: scopes.some(({ summary }) => summary.byState.UNRECONCILED > 0)
       ? "Review"
-      : "Reconciled",
+      : BOOKING_MONEY_RECONCILIATION_COPY.stateLabel.RECONCILED,
     badgeTone: scopes.some(({ summary }) => summary.byState.UNRECONCILED > 0)
       ? "warning"
       : "success",

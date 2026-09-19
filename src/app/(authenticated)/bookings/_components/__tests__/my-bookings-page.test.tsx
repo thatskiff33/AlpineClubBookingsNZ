@@ -231,3 +231,82 @@ describe("MyBookingsPage split-child nesting discriminator (#1975/#796)", () => 
     await expect(renderPage()).resolves.toContain("/bookings/A");
   });
 });
+
+/*
+  #3278 — WHO THE MY-BOOKINGS LIST MARKS AN AMOUNT FOR.
+
+  The verdict is officer-only (owner decision, 20 September 2026), and this
+  page had no viewer concept at all before it: it is "my bookings", so it never
+  needed one. It needs one now for a reason the page's own `where` makes plain
+  — it also selects bookings the viewer merely appears on as a GUEST, whose
+  figure belongs to another member. So the exposure here was one member reading
+  an integrity verdict about another member's money, and the signal chosen is
+  `canSeeBookingAdminTools`, the SAME officer predicate the booking-detail page
+  gates the rest of a booking's private evidence on.
+*/
+describe("MyBookingsPage stored-money verdicts are officer-only (#3278)", () => {
+  const OFFICER = {
+    user: { id: VIEWER_ID, accessRoles: [{ role: "ADMIN" }] },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(reconcileStoredBookingMoney).mockReturnValue({
+      state: "UNRECONCILED",
+      reasons: ["HEADLINE_TOTAL_MISMATCH"],
+    } as never);
+  });
+
+  it("marks nothing for an ordinary member, on their own booking", async () => {
+    vi.mocked(auth).mockResolvedValue({ user: { id: VIEWER_ID } } as never);
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      booking({ id: "A" }),
+    ] as never);
+
+    const html = await renderPage();
+    expect(html).toContain("/bookings/A");
+    expect(html).not.toContain("recorded amount needs review");
+    expect(html).not.toContain("Money review");
+  });
+
+  // The cross-member case, which is the one that mattered: the list carries a
+  // booking OWNED BY SOMEBODY ELSE that this viewer is only a guest on.
+  it("never marks another member's amount for a non-officer viewer", async () => {
+    vi.mocked(auth).mockResolvedValue({ user: { id: VIEWER_ID } } as never);
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      booking({ id: "O", memberId: "organiser-X" }),
+    ] as never);
+
+    const html = await renderPage();
+    expect(html).toContain("/bookings/O");
+    expect(html).not.toContain("recorded amount needs review");
+    // Not merely unrendered: no reason token reaches this browser's payload.
+    expect(html).not.toContain("HEADLINE_TOTAL_MISMATCH");
+  });
+
+  it("marks it for an officer", async () => {
+    vi.mocked(auth).mockResolvedValue(OFFICER as never);
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      booking({ id: "A" }),
+    ] as never);
+
+    const html = await renderPage();
+    expect(html).toContain("recorded amount needs review");
+    expect(html).toContain("Money review");
+  });
+
+  it("marks nothing for an officer when the booking reconciles", async () => {
+    vi.mocked(auth).mockResolvedValue(OFFICER as never);
+    vi.mocked(reconcileStoredBookingMoney).mockReturnValue({
+      state: "RECONCILED",
+      reasons: [],
+    } as never);
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      booking({ id: "A" }),
+    ] as never);
+
+    const html = await renderPage();
+    expect(html).toContain("/bookings/A");
+    expect(html).not.toContain("recorded amount needs review");
+  });
+});

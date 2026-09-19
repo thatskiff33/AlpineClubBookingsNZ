@@ -3,7 +3,10 @@ import type { BookingStatus } from "@prisma/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCents } from "@/lib/utils";
-import type { BookingMoneyReconciliation } from "@/lib/booking-money-reconciliation";
+import {
+  bookingMoneyReviewSuffix,
+  type BookingMoneyReconciliationView,
+} from "@/lib/booking-money-reconciliation-audience";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { calendarDateOfDateOnlyInstant, formatClubDate } from "@/lib/club-time";
 
@@ -14,7 +17,12 @@ export interface NonMemberGuestChild {
   status: BookingStatus;
   guestCount: number;
   finalPriceCents: number;
-  moneyReconciliation: BookingMoneyReconciliation;
+  /**
+   * #3278: the OFFICER-GATED view of the child booking's stored-money verdict.
+   * This section renders to the member paying for the party, so the gate is
+   * applied by the projection and the row prints only what survives it.
+   */
+  moneyReconciliation: BookingMoneyReconciliationView;
   // The child shares the parent's stay dates; only surfaced when they differ.
   datesDiffer: boolean;
   // `@db.Date` LODGE NIGHTS, straight off Prisma — a calendar day encoded at UTC
@@ -76,9 +84,7 @@ export function NonMemberGuestsSection({
                       {child.guestCount} non-member guest
                       {child.guestCount === 1 ? "" : "s"} &middot;{" "}
                       {formatCents(child.finalPriceCents)}
-                      {child.moneyReconciliation.state === "UNRECONCILED"
-                        ? " · recorded amount needs review"
-                        : ""}
+                      {bookingMoneyReviewSuffix(child.moneyReconciliation)}
                     </p>
                     {child.datesDiffer ? (
                       <p className="text-xs text-muted-foreground">

@@ -54,7 +54,7 @@ export function BookingNotesAndHistory({
         </CardHeader>
         <CardContent>
           <BookingMoneyReconciliationHistoryStatus
-            reconciliation={history.moneyReconciliation}
+            view={history.moneyReconciliation}
           />
           <div className="divide-y">
             {bookingHistory.map((item) => (

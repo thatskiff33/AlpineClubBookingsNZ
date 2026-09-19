@@ -7,6 +7,7 @@ import type { BookingDetailRecord } from "./load-booking-detail";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
 import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
 import { reconcileStoredBookingMoney } from "@/lib/booking-money-reconciliation-store";
+import { bookingMoneyReconciliationForViewer } from "@/lib/booking-money-reconciliation-audience";
 
 /**
  * THE REST OF THE PARTY (#2958): the bookings LINKED to this one — the #738
@@ -28,7 +29,7 @@ export function resolveBookingDetailLinkedParty({
   viewer: BookingDetailViewer;
   access: BookingDetailEditAccess;
 }) {
-  const { canManageBooking, isBookingOwner } = viewer;
+  const { canManageBooking, isBookingOwner, canSeeAdminTools } = viewer;
   const { isDeleted } = access;
   // Split-booking group presentation (#738). Genuine split children only:
   // #796 group joiners also link via parentBookingId but are presented by the
@@ -66,7 +67,14 @@ export function resolveBookingDetailLinkedParty({
         status: linked.status,
         guestCount: linked.guests.length,
         finalPriceCents: linked.finalPriceCents,
-        moneyReconciliation: reconcileStoredBookingMoney(linked),
+        // #3278: a split child is ANOTHER BOOKING, and this section renders to
+        // the member paying for the party. The verdict is officer-only, so it
+        // is gated here at the projection rather than in the client component
+        // that prints it — otherwise every reason ships in the page payload.
+        moneyReconciliation: bookingMoneyReconciliationForViewer(
+          reconcileStoredBookingMoney(linked),
+          { canSeeAdminTools },
+        ),
         datesDiffer:
           childCheckIn !== parentCheckInDate ||
           childCheckOut !== parentCheckOutDate,
@@ -104,23 +112,39 @@ export function resolveBookingDetailLinkedParty({
               paidAt: organiserGroup.settlement.paidAt?.toISOString() ?? null,
             }
           : null,
-        joiners: organiserGroup.joins
-          .filter((join) => join.booking)
-          .map((join) => ({
-            id: join.id,
-            name: join.joinerMember
-              ? `${join.joinerMember.firstName} ${join.joinerMember.lastName}`.trim()
-              : [join.contactFirstName, join.contactLastName]
-                  .filter(Boolean)
-                  .join(" ") || "Guest",
-            guestCount: join.booking?.guests.length ?? 0,
-            status: join.booking?.status ?? null,
-            priceCents: join.booking?.finalPriceCents ?? null,
-            moneyReconciliation: join.booking
-              ? reconcileStoredBookingMoney(join.booking)
-              : null,
-            isMember: join.isMember,
-          })),
+        // A `flatMap` rather than `filter().map()` so the joiner's booking
+        // NARROWS (#3278). The old shape left it optional at every read, and a
+        // `join.booking ? … : null` verdict then meant two different things at
+        // once: "this joiner has no booking yet" and "this viewer may not see
+        // it". With the officer gate in place that null would have downgraded
+        // every joiner to unmarked instead of failing visibly — the only
+        // fail-open shape in the feature. There is now no null to read.
+        joiners: organiserGroup.joins.flatMap((join) => {
+          const joinerBooking = join.booking;
+          // A non-member join becomes a roster row only once it verifies and
+          // its child booking exists, which is what the old filter said.
+          if (!joinerBooking) return [];
+          return [
+            {
+              id: join.id,
+              name: join.joinerMember
+                ? `${join.joinerMember.firstName} ${join.joinerMember.lastName}`.trim()
+                : [join.contactFirstName, join.contactLastName]
+                    .filter(Boolean)
+                    .join(" ") || "Guest",
+              guestCount: joinerBooking.guests.length,
+              status: joinerBooking.status,
+              priceCents: joinerBooking.finalPriceCents,
+              // Each joiner is a DIFFERENT MEMBER's booking and this card
+              // renders to the organiser, so the gate matters most here.
+              moneyReconciliation: bookingMoneyReconciliationForViewer(
+                reconcileStoredBookingMoney(joinerBooking),
+                { canSeeAdminTools },
+              ),
+              isMember: join.isMember,
+            },
+          ];
+        }),
       }
     : null;
   const canOpenGroup =

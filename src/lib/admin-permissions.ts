@@ -1,6 +1,7 @@
 import type { FinanceAccessLevel, Role } from "@prisma/client";
 import {
   authorizationRoleFromAccessRoles,
+  hasAdminAccess,
   isAccessRole,
   type AccessRoleDefinitionLevelFields,
   type AccessRoleInput,
@@ -958,4 +959,28 @@ export function bookingManagementAuthorizationRole(input: AdminPermissionInput):
     return "ADMIN";
   }
   return authorizationRoleFromAccessRoles(input);
+}
+
+/**
+ * MAY THIS VIEWER SEE A BOOKING'S ADMIN-OPERATIONAL LAYER — the officer
+ * predicate the booking pages gate their private evidence on.
+ *
+ * A Full Admin or a `bookings:edit` holder (Booking Officer, or any custom
+ * role granting it). The `hasAdminAccess` arm is belt-and-braces: the `ADMIN`
+ * bundle already carries `bookings:edit`, so it changes no live answer, and it
+ * keeps the predicate correct if a club ever edits that bundle.
+ *
+ * It is a function here rather than a line inside the booking-detail viewer
+ * because a SECOND page now needs the same answer (#3278, `INV-SSOT`): the
+ * member bookings list gates its money-reconciliation verdicts on it, and
+ * "who counts as a booking officer" must not get two spellings that can drift.
+ * Read-only admin (`bookings:view`) is deliberately NOT included — it is the
+ * admission to the admin bookings AREA, not standing to read one booking's
+ * private integrity evidence.
+ */
+export function canSeeBookingAdminTools(input: AdminPermissionInput) {
+  return (
+    hasAdminAccess(input) ||
+    hasAdminAreaAccess(input, { area: "bookings", level: "edit" })
+  );
 }

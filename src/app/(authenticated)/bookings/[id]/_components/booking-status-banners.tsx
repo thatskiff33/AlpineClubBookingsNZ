@@ -79,11 +79,12 @@ export function BookingStatusBanners({
     messages;
   return (
     <>
-      {viewer.canViewAsAdmin ? (
-        <BookingMoneyReconciliationNotice
-          reconciliation={booking.moneyReconciliation}
-        />
-      ) : null}
+      {/* #3278: the audience gate is the LOADER's, not this component's. It
+          used to be a `viewer.canViewAsAdmin` test right here, which both
+          disagreed with the officer predicate the history loader applies to the
+          same verdict and left the reasons in this page's client payload for a
+          member to read. `history.moneyReconciliation` is already gated. */}
+      <BookingMoneyReconciliationNotice view={history.moneyReconciliation} />
       {showCompletePaymentCard && (
         <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
           <p className="font-medium">Payment required</p>

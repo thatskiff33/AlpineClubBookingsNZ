@@ -24,7 +24,10 @@ import {
 import { formatCents } from "@/lib/utils";
 import { formatStayDate } from "@/lib/club-time";
 import { bookingStatusLabel } from "@/lib/status-colors";
-import type { BookingMoneyReconciliation } from "@/lib/booking-money-reconciliation";
+import {
+  bookingMoneyReviewSuffix,
+  type BookingMoneyReconciliationView,
+} from "@/lib/booking-money-reconciliation-audience";
 
 type PaymentMode = "EACH_PAYS_OWN" | "ORGANISER_PAYS";
 type GroupStatus = "OPEN" | "CLOSED" | "CANCELLED";
@@ -36,7 +39,13 @@ interface JoinerRow {
   guestCount: number;
   status: string | null;
   priceCents: number | null;
-  moneyReconciliation: BookingMoneyReconciliation | null;
+  /**
+   * #3278: the OFFICER-GATED view of THIS JOINER's booking — a different
+   * member's. Required and non-nullable: the nullable shape it replaced could
+   * not tell "not visible to you" apart from "reconciles fine", and rendered
+   * both as nothing.
+   */
+  moneyReconciliation: BookingMoneyReconciliationView;
   isMember: boolean;
 }
 
@@ -463,9 +472,7 @@ export function OrganiserGroupBookingCard({
                     {j.priceCents != null ? (
                       <span className="text-muted-foreground">
                         {formatCents(j.priceCents)}
-                        {j.moneyReconciliation?.state === "UNRECONCILED"
-                          ? " · recorded amount needs review"
-                          : ""}
+                        {bookingMoneyReviewSuffix(j.moneyReconciliation)}
                       </span>
                     ) : null}
                     {j.status ? (

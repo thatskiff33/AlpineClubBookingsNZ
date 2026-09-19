@@ -3,6 +3,7 @@ import type { auth } from "@/lib/auth";
 import { hasAdminAccess } from "@/lib/access-roles";
 import {
   bookingManagementAuthorizationRole,
+  canSeeBookingAdminTools,
   hasAdminAreaAccess,
 } from "@/lib/admin-permissions";
 import type { BookingDetailRecord } from "./load-booking-detail";
@@ -66,7 +67,10 @@ export function resolveBookingDetailViewer({
     level: "edit",
   });
   // Full Admins and Booking Officers both see the admin-operational tooling.
-  const canSeeAdminTools = isAdmin || canAdminEditBookings;
+  // #3278: the composition moved to `canSeeBookingAdminTools` so the member
+  // bookings list can gate its money verdicts on the SAME predicate rather than
+  // on a second spelling of it (`INV-SSOT`). Same answer as before, one home.
+  const canSeeAdminTools = canSeeBookingAdminTools(session.user);
   // Issue #1313 (option A2): a non-owner Full Admin OR Booking Officer cancels /
   // modifies on behalf of the member. Both flow through the SAME admin-on-behalf
   // semantics (suppress owner second-person framing, policy wording, and the

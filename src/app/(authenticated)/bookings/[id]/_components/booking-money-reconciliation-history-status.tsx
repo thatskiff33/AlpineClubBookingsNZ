@@ -1,11 +1,26 @@
-import type { BookingMoneyReconciliation } from "@/lib/booking-money-reconciliation";
+import {
+  BOOKING_MONEY_RECONCILIATION_COPY,
+  bookingMoneyReviewReasonText,
+  type BookingMoneyReconciliationView,
+} from "@/lib/booking-money-reconciliation-audience";
 
+/**
+ * The transaction-history panel's line for the booking's CURRENT derived money
+ * state (#3278) — the one surface that reports "reconciled" as well as
+ * "unreconciled", because an officer reading a booking's history wants to know
+ * the check ran and passed.
+ *
+ * A `WITHHELD` view renders nothing at all: the loader has already decided
+ * this viewer is not an officer, and there is no null here to mistake for a
+ * booking that simply reconciles.
+ */
 export function BookingMoneyReconciliationHistoryStatus({
-  reconciliation,
+  view,
 }: {
-  reconciliation: BookingMoneyReconciliation | null;
+  view: BookingMoneyReconciliationView;
 }) {
-  if (!reconciliation) return null;
+  if (view.visibility !== "VISIBLE") return null;
+  const { reconciliation } = view;
   const unreconciled = reconciliation.state === "UNRECONCILED";
   return (
     <div
@@ -19,15 +34,20 @@ export function BookingMoneyReconciliationHistoryStatus({
       }`}
     >
       <p className="font-medium">
-        Current money reconciliation: {unreconciled ? "Unreconciled" : "Reconciled"}
+        {BOOKING_MONEY_RECONCILIATION_COPY.currentStateLabel}:{" "}
+        {
+          BOOKING_MONEY_RECONCILIATION_COPY.stateLabel[
+            reconciliation.state
+          ]
+        }
       </p>
       {unreconciled ? (
-        <p>{reconciliation.reasons.join(", ")}</p>
+        <p>{bookingMoneyReviewReasonText(reconciliation.reasons)}.</p>
       ) : (
-        <p>The stored booking headline reconciles with its recorded build-up.</p>
+        <p>{BOOKING_MONEY_RECONCILIATION_COPY.reconciledDetail}</p>
       )}
       <p className="text-xs opacity-80">
-        This is the current derived state, not a historical transaction.
+        {BOOKING_MONEY_RECONCILIATION_COPY.derivedStateNote}
       </p>
     </div>
   );
