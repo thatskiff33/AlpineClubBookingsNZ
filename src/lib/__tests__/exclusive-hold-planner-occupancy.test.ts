@@ -74,6 +74,7 @@ import {
   custodianOccupiedBedNightsForPlanner,
   type CustodianBedHold,
 } from "@/lib/custodian-occupancy";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 
 const LODGE = "lodge-1";
 
@@ -112,50 +113,15 @@ function custodianHold(
 }
 
 // ---------------------------------------------------------------------------
-// A small, GENERIC Prisma `where` interpreter.
-//
-// Generic on purpose: it understands the operator shapes (`in`, `not`, `isNot`,
-// `lt`, `gt`, `some`, `OR`, `AND`, `NOT`) but knows nothing about which
-// statuses hold capacity. The rule under test is whatever
-// `capacityHoldingBookingFilter()` puts in the query at runtime, so these tests
-// cannot quietly re-implement — and then agree with — a stale copy of it.
+// The db doubles apply the Prisma `where` they are given through the shared,
+// GENERIC `matchesWhere` (#3434). Generic on purpose: it understands the
+// operator shapes (`in`, `not`, `isNot`, `lt`, `gt`, `some`, `OR`, `AND`,
+// `NOT`) but knows nothing about which statuses hold capacity. The rule under
+// test is whatever `capacityHoldingBookingFilter()` puts in the query at
+// runtime, so these tests cannot quietly re-implement — and then agree with —
+// a stale copy of it.
 // ---------------------------------------------------------------------------
 type AnyRow = Record<string, any>;
-
-function matchesCondition(value: unknown, condition: any): boolean {
-  if (condition === null) return value === null || value === undefined;
-  if (condition instanceof Date) {
-    return value instanceof Date && value.getTime() === condition.getTime();
-  }
-  if (typeof condition !== "object") return value === condition;
-
-  if ("in" in condition) return (condition.in as unknown[]).includes(value);
-  if ("notIn" in condition) return !(condition.notIn as unknown[]).includes(value);
-  if ("not" in condition) return !matchesCondition(value, condition.not);
-  // Relation filters: `{ isNot: null }` means "the relation is present".
-  if ("isNot" in condition) return !matchesCondition(value, condition.isNot);
-  if ("is" in condition) return matchesCondition(value, condition.is);
-  if ("some" in condition) return Array.isArray(value) && value.length > 0;
-  if ("lt" in condition) return (value as Date) < condition.lt;
-  if ("lte" in condition) return (value as Date) <= condition.lte;
-  if ("gt" in condition) return (value as Date) > condition.gt;
-  if ("gte" in condition) return (value as Date) >= condition.gte;
-  return true;
-}
-
-function matchesWhere(row: AnyRow, where: AnyRow | undefined): boolean {
-  if (!where) return true;
-  return Object.entries(where).every(([key, condition]) => {
-    if (key === "OR") {
-      return (condition as AnyRow[]).some((clause) => matchesWhere(row, clause));
-    }
-    if (key === "AND") {
-      return (condition as AnyRow[]).every((clause) => matchesWhere(row, clause));
-    }
-    if (key === "NOT") return !matchesWhere(row, condition as AnyRow);
-    return matchesCondition(row[key], condition);
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Fixtures. One room, two active beds. Three board nights: 07-01, 07-02, 07-03.

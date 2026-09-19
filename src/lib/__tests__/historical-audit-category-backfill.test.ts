@@ -67,6 +67,7 @@ import {
   WITHHELD_HISTORICAL_NULL_ACTIONS_2581,
 } from "../../../scripts/audit/audit-writer-census-manifest";
 import { stripSqlComments } from "../../../prisma/migration-verification/split-statements";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 
 const BACKFILL_MIGRATION = "20260923010000_backfill_historical_audit_categories";
 
@@ -150,11 +151,11 @@ function literalCategory(site: AuditWriteSite): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// A small evaluator for the Prisma `where` shapes the two reader builders
-// produce, so the member-boundary and filter questions are answered by the REAL
-// builders against a synthetic row rather than by a hand-written truth table.
-// It throws on any operator it does not know, so a new operator in
-// `audit-query.ts` fails here loudly instead of evaluating to false.
+// The member-boundary and filter questions are answered by the REAL builders
+// against a synthetic row rather than by a hand-written truth table, through
+// the shared `matchesWhere` (#3434), which throws on any operator it does not
+// know — so a new operator in `audit-query.ts` fails here loudly instead of
+// evaluating to false.
 // ---------------------------------------------------------------------------
 
 type Row = {
@@ -167,34 +168,6 @@ type Row = {
   entityType: string | null;
   entityId: string | null;
 };
-
-function evalWhere(where: unknown, row: Row): boolean {
-  if (where === null || where === undefined) return true;
-  if (Array.isArray(where)) return where.every((part) => evalWhere(part, row));
-  const clause = where as Record<string, unknown>;
-  return Object.keys(clause).every((key) => {
-    const value = clause[key];
-    const list = Array.isArray(value) ? value : [value];
-    if (key === "AND") return list.every((part) => evalWhere(part, row));
-    if (key === "OR") return list.some((part) => evalWhere(part, row));
-    if (key === "NOT") return !list.some((part) => evalWhere(part, row));
-    if (!(key in row)) throw new Error(`evalWhere: unknown column ${key}`);
-    const actual = row[key as keyof Row];
-    if (value === null) return actual === null;
-    if (typeof value === "string") return actual === value;
-    if (typeof value === "object" && value !== null) {
-      const op = value as Record<string, unknown>;
-      if ("in" in op) return (op.in as unknown[]).includes(actual);
-      if ("startsWith" in op)
-        return typeof actual === "string" && actual.startsWith(op.startsWith as string);
-      if ("contains" in op)
-        return typeof actual === "string" && actual.includes(op.contains as string);
-      if ("equals" in op) return actual === op.equals;
-      throw new Error(`evalWhere: unhandled operator ${JSON.stringify(op)} on ${key}`);
-    }
-    throw new Error(`evalWhere: unhandled value ${JSON.stringify(value)} on ${key}`);
-  });
-}
 
 const MEMBER = "member-under-test";
 
@@ -213,7 +186,7 @@ function rowOf(action: string, category: string | null): Row {
 }
 
 function memberVisible(row: Row): boolean {
-  return evalWhere(buildMemberVisibleAuditLogWhere(MEMBER), row);
+  return matchesWhere(row, buildMemberVisibleAuditLogWhere(MEMBER));
 }
 
 const mapEntries = Object.entries(HISTORICAL_NULL_CATEGORY_MAP_2581);
@@ -527,11 +500,11 @@ describe("the #2581 historical null-category backfill (INV-OPS-012, INV-PRIV-012
 
       // Admin > Audit Log: the stored category wins over the legacy guess. The
       // row answers to its own category filter and to no other.
-      expect(evalWhere(buildAuditCategoryWhere(category), after), `${action} not found under ${category}`).toBe(true);
+      expect(matchesWhere(after, buildAuditCategoryWhere(category)), `${action} not found under ${category}`).toBe(true);
       for (const other of AUDIT_CATEGORIES) {
         if (other === category) continue;
         expect(
-          evalWhere(buildAuditCategoryWhere(other), after),
+          matchesWhere(after, buildAuditCategoryWhere(other)),
           `${action} (${category}) still answers to the ${other} filter after the backfill`,
         ).toBe(false);
       }
