@@ -14,7 +14,7 @@ Known schema statuses: `DRAFT`, `PENDING`, `PAYMENT_PENDING`, `CONFIRMED`,
 DRAFT -> PENDING or PAYMENT_PENDING -> CONFIRMED or PAID -> COMPLETED
 PENDING -> CONFIRMED/PAID or BUMPED/CANCELLED
 WAITLISTED -> WAITLIST_OFFERED -> CONFIRMED/PAID or WAITLISTED/CANCELLED
-AWAITING_REVIEW -> PENDING (quote accepted, #1254) or CONFIRMED/PAID or CANCELLED
+AWAITING_REVIEW -> PENDING (quote accepted, #1254) or PAYMENT_PENDING (officer approval, the only release from review, #3500) or CONFIRMED/PAID or CANCELLED
 ```
 
 ### Minimum-stay exception foundation (#2363)
@@ -186,7 +186,9 @@ the same transaction continues straight to `PAID` with a $0 SUCCEEDED payment
 rather than minting a card intent — as does a draft that was repriced to $0
 while the member was looking at the pay step. Any booking held in
 `AWAITING_REVIEW` keeps its election through review and spends it on the
-`AWAITING_REVIEW -> PAYMENT_PENDING` release instead; that release path claims
+`AWAITING_REVIEW -> PAYMENT_PENDING` release instead — a transition only the
+officer review route (`/api/admin/bookings/[id]/review`) writes, since every
+edit door refuses `AWAITING_REVIEW` (#3500, `INV-MOD-013`); that release path claims
 capacity before it settles, honouring a persisted capacity override (#1771),
 and refuses with a 409 (election intact, nothing charged) when the beds are
 gone. `confirm-draft` only ever settles a $0 booking, where credit has nothing
