@@ -182,6 +182,12 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
 }));
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: vi.fn().mockResolvedValue({ id: "credit1" }),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: vi.fn().mockResolvedValue(undefined),
@@ -316,6 +322,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     status: "PAID",
     totalPriceCents: 30000,
     discountCents: 0,
+    promoAdjustmentCents: 0,
     finalPriceCents: 30000,
     hasNonMembers: false,
     nonMemberHoldUntil: null,
@@ -387,6 +394,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     },
     member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
     promoRedemption: null,
+    nightAdjustments: [],
     ...overrides,
   };
 }
@@ -761,6 +769,12 @@ describe("guest removal prices remaining guests over their stored nights (#1093)
 
     const modification = tx.bookingModification.create.mock.calls[0][0].data;
     expect(modification.priceDiffCents).toBe(-20000);
+    expect(modification.newData).toMatchObject({
+      moneyBuildUpOperation: "GUEST_REMOVAL",
+      moneyBuildUpSource: "STORED",
+      moneyBuildUpStoredCents: -20000,
+      moneyBuildUpDerivedCents: -20000,
+    });
   });
 });
 

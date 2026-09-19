@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 
 /**
  * E14 (#1944): audited manual mark-paid / mark-unpaid for a member subscription,
@@ -51,7 +52,13 @@ export class ManualSubscriptionPaymentError extends Error {
   }
 }
 
-export const MANUAL_PAYMENT_NOTE_MAX = 500;
+/*
+  RE-EXPORTED, not declared: the width has to be readable from a client
+  component (five of them stop a person typing past it) and this module is
+  `server-only`, which is how five copies of the number came to exist.
+  `manual-payment-note.ts` is the one definition now and says why.
+*/
+export { MANUAL_PAYMENT_NOTE_MAX };
 
 /**
  * `ManualRefundTask.reason` is `@db.VarChar(500)`, and every writer that builds

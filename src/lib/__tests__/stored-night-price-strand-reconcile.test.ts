@@ -27,7 +27,7 @@ import {
   STRAND_RECONCILE_WRONG_BOOKING_MESSAGE,
   type RecordedNightPrice,
 } from "@/lib/stored-night-price-repair";
-import { NIGHT_PRICE_REPAIR_RACED_MESSAGE } from "@/lib/stored-night-price-repair-store";
+import { NIGHT_PRICE_REPAIR_RACED_MESSAGE } from "@/lib/stored-night-price-repair-plan";
 import {
   planStrandNightPriceReconcile,
   recordStrandNightPriceReconcile,
@@ -236,7 +236,7 @@ const bookingRange = { checkIn: CHECK_IN, checkOut: CHECK_OUT };
 
 /** What the classifier every edit path consults says about this strand now. */
 const evidenceKind = (row: GuestRow) =>
-  storedSoldPriceEvidenceForGuest(row, bookingRange).kind;
+  storedSoldPriceEvidenceForGuest(row, bookingRange, "WHOLE_GUEST").kind;
 
 /** Beds held on each night of the stay, by the capacity predicate itself. */
 function bedsPerNight(rows: GuestRow[]) {

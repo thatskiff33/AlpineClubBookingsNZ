@@ -73,6 +73,7 @@ const CONTEXT = {
   paymentCustomerId: "cus_1",
   memberEmail: "member@example.test",
   memberName: "Ada Member",
+  memberFirstName: "Ada Member",
   memberId: "member_1",
   bookingModificationId: "mod_1",
 };

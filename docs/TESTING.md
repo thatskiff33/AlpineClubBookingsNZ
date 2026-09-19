@@ -895,7 +895,9 @@ that a failed action populates and then takes focus, so a keyboard or
 screen-reader user is not left on a control that has just been re-enabled while
 the explanation appears elsewhere on the page. Sixteen use
 `src/components/focused-action-error.tsx`; `policy-exception-requests-panel.tsx`
-and `roster-editor.tsx` inline their own copy.
+and `roster-editor.tsx` call the same failure primitive directly through
+`useActionAttention`. Since #2934 every one of them focuses and scrolls through
+`src/hooks/use-scroll-to-feedback.ts` — see "Attention after an action" below.
 
 Assert that contract with the shared helper, never by hand:
 
@@ -960,6 +962,71 @@ mounted: the trap steals it back and the release then hands focus to the control
 that opened the dialog — or to `<body>` under a synthetic click, which does not
 focus its button. `focused-action-error-focus-contract.test.tsx` pins this
 deliberately; so, incidentally, does `deletion-requests-client.test.tsx`.
+
+## Attention after an action: one primitive, and how to test a call site
+
+Where the admin's attention goes after an action — a failure, an editor they
+opened, a save that changed the screen — is decided once, in
+`src/hooks/use-scroll-to-feedback.ts` (#2934). **The rule itself is written out
+in that module's docblock and nowhere else**: which primitive each outcome uses,
+why the reveal key is a required argument, what reduced motion does, and what
+the census does and does not hold. This section is about TESTING a call site,
+and deliberately does not restate it.
+
+Testing a call site is the same three assertions each time, and each is
+discriminated by a named test in the tree already:
+
+- **Failure**: `expectRecoveryAlertToHoldFocus(alert)` above — the element the
+  surface anchors, which is the populated box rather than a permanently mounted
+  wrapper when the two differ (`refusal-reload-order.test.tsx`).
+- **Reveal**: `expectRevealed(spy, region)` from the same helper file, with the
+  spy from `installScrollIntoViewSpy()` — the region holds focus, it is what was
+  scrolled, and the total count is what the assertion pins. Then re-render the
+  open editor (toggle a control) and assert the count did not move
+  (`allocation-preferences-section.test.tsx`). Find the region by its ROLE and
+  NAME, not by reading `document.activeElement`: a reveal target that announces
+  only "group" is the defect, and `getByRole("region", { name })` is what fails
+  when the name goes missing. Do not hand-roll the spy — jsdom implements no
+  layout, so `Element.prototype.scrollIntoView` does not exist, and three files
+  had written the same fixture out verbatim before it moved to the helper.
+- **Success**: `document.activeElement` is the page or card whose top was
+  positioned at, and it contains the confirmation
+  (`lodge-capacity-card.test.tsx`). A card below the top of its scroll container
+  is REVEALED rather than reached by scrolling that container to zero, so assert
+  `scrollIntoView` on the card there and `scrollTo` on the container only for a
+  page wrapper (`use-scroll-to-feedback.test.ts`). A surface whose success closes
+  a Radix dialog cannot assert focus at all — the dialog's focus release wins, by
+  design, and the scroll still happens — so assert the scroll there.
+
+`admin-attention-primitive-contract.test.ts` is the census that keeps the admin
+tree routed through the module: a direct `scrollIntoView` / `scrollTo`, or a
+focus deferred to `requestAnimationFrame`, fails it, and its one exclusion is
+listed beside the primitive in `DIRECT_SCROLL_EXCLUSIONS`. A bare effect-driven
+`.focus()` passes it, which is a stated limit rather than an oversight — the
+module says why, and names the four surfaces that still hand-roll their
+attention. It scans the tree from disk, so `npm run test:related` cannot reach
+it; run it by name when an admin file gains a scroll or a focus.
+
+## A fake store applies `where` through one evaluator
+
+A fake `prisma.model.findMany({ where })` has to answer the way PostgreSQL
+would, or the test driving it passes for a reason unrelated to its claim: a
+`where` clause the double silently skips makes a "not related" test green while
+the production query relates the two rows. The one home for that interpretation
+is
+[`src/lib/__tests__/support/prisma-where.ts`](../src/lib/__tests__/support/prisma-where.ts)
+— `matchesWhere(row, where)` — and a suite that needs a fake store imports it
+rather than writing its own (#3434 retired nine hand-rolled copies, each
+supporting a different slice of the grammar). It models the scalar operators,
+`AND`/`OR`/`NOT`, the to-one and to-many relation filters and a compound-unique
+key, and it **throws**, naming the operator and the column, on anything it does
+not — including a column the fake row never carried, which is how a
+`storeMember` fixture one self-relation column short of the merge's sweep was
+found. Teach it a new operator in that file, with a case in
+`prisma-where.test.ts`, never in the suite that needed it; a store that
+resolves relations through foreign keys or a model spec passes the `relation`
+and `column` options instead of forking the evaluator (the booking-evidence
+double is the worked example).
 
 ## A mutation probe is a change you have to undo
 
@@ -1126,6 +1193,128 @@ those were the same sentence, and after a split they are not. It now walks the
 route directory and asserts the guard on every site it finds, with a vacuity
 check so an empty scan fails rather than passes. A count is not the only thing a
 merge or a move can quietly disarm; a hard-coded path is the other.
+
+### A worked example of binding the walk: the money-box guard
+
+[`money-number-input-guard.test.ts`](../src/lib/__tests__/money-number-input-guard.test.ts)
+is in this family and is worth knowing about **before** you trip it, because it
+polices markup rather than a call site. `INV-MONEY-003` says a box someone types
+dollars into is `type="text"` with `inputMode="decimal"` — `MONEY_INPUT_PROPS`
+from [`money-input.ts`](../src/lib/money-input.ts) — never `type="number"`, and
+this guard is the mechanical half of that rule. It walks every non-test `.tsx`
+under `src/` with the TypeScript parser, decides from each `type="number"`
+control's own `id`, `value`, `placeholder` and bound label whether it holds
+money, and fails naming the file and line. The seventy-three legitimate count,
+percentage and duration boxes stay numeric; that discrimination, not the
+detection, is the deliverable.
+
+Two things it does differently from the censuses above, both deliberate:
+
+- **It binds the walk by NAME, not by a total.** `jsxSourceFiles()` reaching
+  "more than 200 files" was true of a walk that had stopped reading two thirds
+  of a 627-file tree, and one directory name added to the scanner's skip list is
+  all that takes. The suite instead asserts the walk reached every subtree in
+  `REQUIRED_SCANNED_SUBTREES`, so a skipped one fails saying which. That is
+  strictly stronger than a total against the mutation that matters, and it does
+  not have to be re-measured by every lane that adds an admin page — which a
+  pinned control count would, making it exactly the merge hazard above.
+- **It proves itself against the tree BEFORE the change that added it.** The
+  seven boxes #2932 converted are in the suite verbatim as they stood, and each
+  must still be flagged after every helper, state variable and prop name in it
+  has been renamed away. A guard that only shows the tree is quiet today cannot
+  tell you whether it would have caught the defect it was written for.
+
+Like every disk-scanning test here it has no import edge to the `.tsx` files it
+reads, so `npm run test:related` cannot select it from a diff. Run it by name
+when a change adds or edits a numeric input.
+
+### Suites that time out under load and pass alone
+
+Running the whole suite natively on Windows was measured and rejected in
+`AGENTS.md` (§5, "Per-issue pipeline") because a few suites hit vitest's
+5,000ms `testTimeout` under parallel load and pass the moment they run alone —
+a gate that red-lights the test it exists to protect is not a gate. The same
+suites can go red inside a by-name batch of disk-scanning censuses, which is
+how a lane meets them. This is the one home for that list (`INV-SSOT`);
+`AGENTS.md` points here and carries no copy. It exists so that a lane seeing
+one of these go red locally classifies it as environmental instead of spending
+a diagnosis on a defect that is not there — or, worse, loosening a census to
+make it pass. A list that is incomplete reads as complete, which is why the
+first entry below was added (#3395) rather than left to be rediscovered.
+
+**A suite is in this class only when both of these hold**, and an entry that
+cannot show both is a claim rather than evidence:
+
+1. The failure text is vitest's own `Test timed out in Nms` — the per-test
+   budget, 5,000ms unless the `it()` carries an inline one. Nothing else
+   qualifies. A suite that fails on an **assertion** is never in this class,
+   whatever the machine: `page-content-starter-backfill.test.ts` (seed-copy
+   drift, the "known-environmental failure" in `AGENTS.md`) is a different
+   class, and #2886 removed two suites that had been excused as
+   "load-sensitive" when they were failing deterministically on Windows for
+   real reasons (the shell-out section above).
+2. An isolated re-run of that one file — `npx vitest run <path>` — passes.
+
+When both hold: record the red as environmental in your evidence, naming the
+suite and the isolated re-run that passed, and move on. Do not raise
+`testTimeout` globally — "A test that launches a process needs its own budget"
+above says why — and do not touch the census. A suite that keeps grazing the
+limit under an ordinary batch is a candidate for an inline per-test budget,
+measured and reasoned where it is written; that is a change with its own issue.
+
+**The entries.** Every one carries a figure measured on this repository, not an
+inherited assertion. Isolated means `npx vitest run <that file>`; "under load"
+means one vitest invocation over a by-name batch of every test file that reads
+the tree from disk, on a machine doing nothing else. Measured 19 September 2026
+on #3395 at `706a80a91` (vitest 4.1.11, Node 24, a 20-core Windows 11 host)
+across two batches: 244 files that read `src/` through `process.cwd()`, which
+ran 5,014 tests in 204s; and the 303 files that call `readFile`/`readdir` at
+all, which ran 7,040 tests in 172s. Re-measure rather than copy when you add or
+re-verify an entry.
+
+- [`src/lib/__tests__/client-server-boundary-census.test.ts`](../src/lib/__tests__/client-server-boundary-census.test.ts)
+  — isolated 2.55s wall, 1.59s in tests, 5 passed. Under load its transitive
+  walk ("has no path from any client module to prisma, auth, or a Node
+  built-in") ran for **4,472ms** and **4,330ms** in the two batches, within
+  530ms of the budget each time. The orchestrator saw that test exceed 5,000ms
+  on 19 September 2026 in three separate lanes (the #3497, #3500 and #3467
+  branches), and pass alone each time.
+- [`src/app/__tests__/public-page-content-published-contract.test.ts`](../src/app/__tests__/public-page-content-published-contract.test.ts)
+  — isolated 865ms wall, 476ms in tests, 1 passed. It was absent from the
+  244-file batch (it walks from `__dirname`, not `process.cwd()`); in the
+  303-file batch its one test ran for **3,488ms**, seven times its isolated
+  figure.
+- [`src/components/__tests__/booking-no-emails-ui-contract.test.ts`](../src/components/__tests__/booking-no-emails-ui-contract.test.ts)
+  — isolated 1.04s wall, 404ms in tests, 11 passed. **Not reproduced here:**
+  its slowest test took 518ms and 626ms in the two batches, nowhere near the
+  budget. It is carried over from the earlier `AGENTS.md` list on that list's
+  unmeasured observation, and stays because a suite that has timed out under
+  load once is still one to re-run alone before diagnosing. The next lane that
+  measures it and finds the same should remove it rather than let the list
+  assert something it cannot show.
+- [`src/lib/__tests__/identity-ordering-census.test.ts`](../src/lib/__tests__/identity-ordering-census.test.ts)
+  — isolated 2.45s wall, 1.99s in tests, 5 passed; its slowest test, "reaches
+  the comparator by ONE import specifier", ran **1,073ms** alone. Under the
+  smaller batch below it **timed out**, so this entry records a red rather than
+  a margin.
+- [`src/lib/__tests__/in-progress-edit-sold-price-census.test.ts`](../src/lib/__tests__/in-progress-edit-sold-price-census.test.ts)
+  — isolated 5.23s wall, 3.84s in tests, 15 passed; its slowest test, "keeps
+  that mapper the only production season mapping", ran **2,589ms** alone, over
+  half the budget with the machine otherwise idle. Under the smaller batch it
+  **timed out**. This is the entry closest to being a real per-test budget
+  problem rather than a load artefact, and it is the first candidate if the
+  class is ever fixed at the suite rather than in this list.
+
+The two 2026-09-19 batches produced no timeout, so their figures show how close
+each suite runs to the budget under a batch of that size, not a red. The reds
+came later, on 20 September 2026 at `6ca8f179d`, from a smaller and therefore
+harsher-per-file batch: the 141 files vitest selects for the filters `census`,
+`contract` and `guard`, 2,068 tests in 220s, run beside nothing else. All three
+of `client-server-boundary-census`, `identity-ordering-census` and
+`in-progress-edit-sold-price-census` timed out in that one run and all three
+passed alone immediately afterwards. That is the evidence of the limit being
+crossed; a lane running any such batch beside another lane's tests, a build, or
+a typecheck is where it will be crossed again.
 
 ## Mocking `requireAdmin`: reference the helper, never wrap it
 

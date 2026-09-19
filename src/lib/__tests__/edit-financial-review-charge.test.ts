@@ -171,6 +171,12 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: (...a: unknown[]) =>
     mocks.createBookingModificationCredit(...a),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
@@ -216,6 +222,13 @@ const tx = {
   // exactly the one this suite was written against.
   bookingGuest: {
     findUnique: (...a: unknown[]) => mocks.bookingGuestFindUnique(...a),
+    // #3498: the settle path reads every strand the item names, as a list.
+    // Answered from the same fixture, so these cases keep describing the
+    // single-strand review they were written for.
+    findMany: async () => {
+      const guest = await mocks.bookingGuestFindUnique();
+      return guest ? [guest] : [];
+    },
   },
   // #3257: and EVERY edit-review closure now re-prices the booking from its
   // strands, whether or not it recorded a night price - so these fixtures reach
@@ -369,21 +382,27 @@ beforeEach(() => {
     memberId: "member-1",
     lodgeId: null,
     checkIn: new Date("2026-08-20T00:00:00.000Z"),
+    checkOut: new Date("2026-08-21T00:00:00.000Z"),
     totalPriceCents: 15_000,
     discountCents: 0,
     promoAdjustmentCents: 0,
     finalPriceCents: 15_000,
     promoRedemption: null,
+    nightAdjustments: [],
     guests: [
       {
         id: "guest-1",
         priceCents: 15_000,
         memberId: "member-1",
         isMember: true,
+        stayStart: null,
+        stayEnd: null,
         nights: [
           {
+            id: "guest-night-1",
             stayDate: new Date("2026-08-20T00:00:00.000Z"),
             priceCents: 15_000,
+            priceSource: "SOLD",
           },
         ],
       },

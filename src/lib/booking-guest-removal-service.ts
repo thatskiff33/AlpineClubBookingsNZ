@@ -1,6 +1,5 @@
 import {
   AdminReviewStatus,
-  BookingStatus,
   type AgeTier,
   type Prisma,
 } from "@prisma/client";
@@ -22,6 +21,12 @@ import {
   type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
 import {
+  d3CompatibleBookingMoneyBuildUpCents,
+  readBookingMoneyBuildUp,
+  selectBookingMoneyBuildUp,
+  selectLoadedBookingMoneyBuildUp,
+} from "@/lib/booking-money-build-up";
+import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
@@ -38,6 +43,7 @@ import {
   minorsReviewAlertShouldFire,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
+import { bookingOwner } from "@/lib/booking-owner";
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import {
@@ -45,6 +51,7 @@ import {
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
 import {
+  activeLifecycleEditRefusal,
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
@@ -61,14 +68,18 @@ import {
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTasks,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import {
-  counterpartStrandReviewOccurrence,
-  editFinancialReviewOccurrence,
-  storedSoldPriceEvidenceForGuest,
-} from "@/lib/stored-sold-price-evidence";
-import { createBookingModificationCredit } from "@/lib/member-credit";
+  counterpartStrandRecord,
+  parkedEditWorkItems,
+  unpriceableStrandRecord,
+} from "@/lib/parked-edit-occurrence";
+import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
+import {
+  createBookingModificationCredit,
+  requireMemberCreditRecipient,
+} from "@/lib/member-credit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
@@ -127,7 +138,10 @@ export type RemoveBookingGuestResult = {
   paymentCustomerId: string | null;
   memberEmail: string;
   memberName: string;
-  memberId: string;
+  /** The owner's first name, as `bookingOwner()` projects it (#3369). */
+  memberFirstName: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   promoRemoved: boolean;
   // #2390: set only when a usage cap stopped the promotion reaching somebody
   // this edit added; null means everybody the code applies to is covered.
@@ -148,11 +162,20 @@ export type RemoveBookingGuestResult = {
    */
   financialReviewPending: boolean;
   /**
-   * The tasks this removal raised or found already on file, in occurrence order.
-   * Empty on every priced removal. One entry per unpriceable strand - see the
-   * raise itself for why that is one task per strand and not one per removal.
+   * The task this removal raised or found already on file, or null on every
+   * priced removal. ONE, since #3498 - see the raise itself for why a parked
+   * removal is one work item however many strands it records.
    */
-  financialReviewTaskIds: string[];
+  /**
+   * The review tasks this removal raised, lead item first, or EMPTY when it
+   * priced normally.
+   *
+   * A list since the #3498 fix round, where `parkedEditWorkItems` gained a
+   * second grain. A removal moves exactly one strand's nights - the departing
+   * guest's - so in practice it raises one, and the first entry is that item;
+   * the list is what stops that practice being an assumption nothing checks.
+   */
+  financialReviewTaskIds: readonly string[];
   zeroDollarAutoPaid: boolean;
   supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[];
   // #1372: this removal newly dropped a paid (capacity-holding) booking into the
@@ -169,7 +192,6 @@ type RemovalReviewUpdate = {
   adminReviewedById: string | null;
   adminReviewedAt: Date | null;
   parkForReview: boolean;
-  releaseFromReview: boolean;
 };
 
 /**
@@ -203,7 +225,13 @@ function resolveRemovalReviewUpdate({
 }): RemovalReviewUpdate {
   if (!nowFlagged) {
     // Rule cleared (or never tripped): wipe review state so the booking
-    // returns to the normal lifecycle; release a parked booking.
+    // returns to the normal lifecycle, in place — the status is untouched. A
+    // self-removal CAN reach an AWAITING_REVIEW booking (it is in
+    // `SELF_REMOVABLE_GUEST_BOOKING_STATUSES`), but it can never clear the
+    // review there: a no-adult park is all-minor, so any surviving subset
+    // stays flagged, and a request hold is refused first by
+    // `assertBookingNotQuotePriced`. Only the officer review route releases
+    // AWAITING_REVIEW (#3500, `INV-MOD-013`).
     return {
       requiresAdminReview: false,
       adminReviewReason: null,
@@ -213,7 +241,6 @@ function resolveRemovalReviewUpdate({
       adminReviewedById: null,
       adminReviewedAt: null,
       parkForReview: false,
-      releaseFromReview: booking.status === BookingStatus.AWAITING_REVIEW,
     };
   }
 
@@ -229,7 +256,6 @@ function resolveRemovalReviewUpdate({
       adminReviewedById: booking.adminReviewedById,
       adminReviewedAt: booking.adminReviewedAt,
       parkForReview: booking.adminReviewStatus === AdminReviewStatus.PENDING,
-      releaseFromReview: false,
     };
   }
 
@@ -245,7 +271,6 @@ function resolveRemovalReviewUpdate({
       adminReviewedById: actorMemberId,
       adminReviewedAt: new Date(),
       parkForReview: false,
-      releaseFromReview: false,
     };
   }
 
@@ -258,7 +283,6 @@ function resolveRemovalReviewUpdate({
     adminReviewedById: null,
     adminReviewedAt: null,
     parkForReview: true,
-    releaseFromReview: false,
   };
 }
 
@@ -376,6 +400,8 @@ export async function removeBookingGuestInTransaction({
       },
       payment: true,
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
         promoRedemption: {
           include: {
             guestTargets: { select: { bookingGuestId: true } },
@@ -413,7 +439,7 @@ export async function removeBookingGuestInTransaction({
 
   const isOwnerOrAdmin =
     !consentAuthorityApplies &&
-    (booking.memberId === actorMemberId || actorRole === "ADMIN");
+    (bookingOwner(booking).memberId === actorMemberId || actorRole === "ADMIN");
   // A consent removal runs the SELF-REMOVAL gate set on purpose (D-14): the
   // cases in which a never-consented member is trapped on a booking must be
   // exactly the cases in which they could not have taken themselves off, and
@@ -458,7 +484,8 @@ export async function removeBookingGuestInTransaction({
    * consent removal, because it no longer refuses one. So an exempted removal can
    * raise a SECOND review task beside the one already open, and that is the
    * intended shape: two occurrences, two keys, two amounts, each settled on its
-   * own evidence. This exemption's only remaining effect is that such a removal
+   * own evidence - two EDITS, which is a different thing from the per-strand
+   * fan-out #3498 removed. This exemption's only remaining effect is that such a removal
    * is not turned away by the fence while an earlier review is unresolved.
    *
    * DELIBERATELY BELOW THE AUTHORISATION CHECKS. A caller with no business
@@ -472,15 +499,12 @@ export async function removeBookingGuestInTransaction({
     store: tx,
   });
 
-  if (
-    !isSelfRemoval &&
-    !["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)
-  ) {
-    throw new BookingGuestRemovalError(
-      "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-      400
-    );
-  }
+  // #3245: derived, not restated. A self-removal answers a different question
+  // and keeps its own named set (`SELF_REMOVABLE_GUEST_BOOKING_STATUSES`).
+  const editRefusal = isSelfRemoval
+    ? null
+    : activeLifecycleEditRefusal(booking.status, actorRole);
+  if (editRefusal) throw new BookingGuestRemovalError(editRefusal, 400);
   if (
     isSelfRemoval &&
     !SELF_REMOVABLE_GUEST_BOOKING_STATUSES.has(booking.status)
@@ -584,7 +608,7 @@ export async function removeBookingGuestInTransaction({
     )
     .map((guest) => ({
       guest,
-      evidence: storedSoldPriceEvidenceForGuest(guest, booking),
+      evidence: storedSoldPriceEvidenceForGuest(guest, booking, "WHOLE_GUEST"),
     }));
   /**
    * Is this removal's money unknowable from the booking's own history?
@@ -624,7 +648,7 @@ export async function removeBookingGuestInTransaction({
    * Its evidence is exact, so the number IS knowable and is preserved on the
    * task: the real per-night prices, the stored guest total, and the nights this
    * removal surrenders. `COUNTERPART_STRAND_UNREADABLE` says which of the two
-   * situations an admin is looking at, and `counterpartStrandReviewOccurrence`
+   * situations an admin is looking at, and `counterpartStrandRecord`
    * carries the rest of the reasoning - including why no AMOUNT is written even
    * though the rows add up.
    */
@@ -640,8 +664,7 @@ export async function removeBookingGuestInTransaction({
             : [];
         if (evidence.kind === "unusable") {
           return [
-            editFinancialReviewOccurrence({
-              bookingId,
+            unpriceableStrandRecord({
               bookingGuestId: guest.id,
               evidence,
               guestTotalCents: guest.priceCents,
@@ -652,8 +675,7 @@ export async function removeBookingGuestInTransaction({
         }
         if (guest.id !== guestId) return [];
         return [
-          counterpartStrandReviewOccurrence({
-            bookingId,
+          counterpartStrandRecord({
             bookingGuestId: guest.id,
             evidence,
             guestTotalCents: guest.priceCents,
@@ -663,9 +685,15 @@ export async function removeBookingGuestInTransaction({
         ];
       });
 
-  const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
-
-  await tx.bookingGuest.delete({ where: { id: guestId } });
+  // #3277: capture the build-up under the existing global -> lodge locks and
+  // before the chore/guest deletes below can cascade any of its target rows.
+  // Selection waits until today's existing calculation is available; the input
+  // itself is the pre-removal record.
+  const recordedMoneyBuildUp = await readBookingMoneyBuildUp(tx, {
+    bookingId,
+    purpose: "GUEST_REMOVAL",
+    bookingGuestId: guestId,
+  });
 
   const remainingGuests = booking.guests.filter((guest) => guest.id !== guestId);
   const seasonRateData = await loadSeasonRateData(tx, bookingLodgeId);
@@ -688,7 +716,7 @@ export async function removeBookingGuestInTransaction({
   }));
   const seasonYear = seasonYearOfStoredDate(booking.checkIn);
   await assertMembershipTypeBookingAllowed(tx, {
-    ownerMemberId: booking.memberId,
+    ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,
     seasonYear,
     // Finding 2 (privacy re-review of MG3 #2308): a member removing a guest must
@@ -733,7 +761,7 @@ export async function removeBookingGuestInTransaction({
       // owner who removes their OWN guest row would otherwise walk out from under
       // the requirement entirely, leaving a party they still own and still pay for
       // with nobody paid-up on it.
-      bookingOwnerMemberId: booking.memberId,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
       participants: toSubscriptionLockoutParticipants(remainingGuests),
     });
     if (nonMemberPricing?.violation) {
@@ -747,7 +775,7 @@ export async function removeBookingGuestInTransaction({
       // is withheld. See `PaidUpAdultRefusalAudience`.
       throw new PaidUpAdultMemberRequiredError(
         nonMemberPricing.violation,
-        booking.memberId === actorMemberId ? "BOOKER" : "OTHER_PARTY_MEMBER",
+        bookingOwner(booking).memberId === actorMemberId ? "BOOKER" : "OTHER_PARTY_MEMBER",
       );
     }
   }
@@ -803,7 +831,7 @@ export async function removeBookingGuestInTransaction({
       where: { id: "default" },
     });
     priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-      ownerMemberId: booking.memberId,
+      ownerMemberId: bookingOwner(booking).memberId,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       guests: guestsForPricing,
@@ -899,7 +927,34 @@ export async function removeBookingGuestInTransaction({
         totalPriceCents: newTotalPriceCents,
         promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
       });
-  const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+  const derivedPriceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+  const firstUnusableEvidence = strandEvidence.find(
+    (strand) => strand.evidence.kind === "unusable",
+  )?.evidence;
+  const moneyBuildUpSelection = parkedFinancialReview
+    ? selectBookingMoneyBuildUp({
+        ...recordedMoneyBuildUp,
+        baseEvidence: {
+          kind: "UNKNOWN",
+          reason:
+            firstUnusableEvidence?.kind === "unusable"
+              ? firstUnusableEvidence.cause
+              : "STORED_TOTAL_MISMATCH",
+        },
+        derivedCents: derivedPriceDiffCents,
+      })
+    : selectLoadedBookingMoneyBuildUp(recordedMoneyBuildUp, {
+        derivedCents: derivedPriceDiffCents,
+        // A valid old build-up can differ when the surviving promo is re-capped
+        // or redistributed. D3 keeps today's existing result in that case.
+        mismatchClassification: "LEGITIMATE_DIVERGENCE",
+      });
+
+  // The canonical decision is complete while the departing guest and all of
+  // its targets still exist. Only now may the destructive half start.
+  const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
+  await tx.bookingGuest.delete({ where: { id: guestId } });
+  const priceDiffCents = d3CompatibleBookingMoneyBuildUpCents(moneyBuildUpSelection);
   // Owner rule (#1100): a booking left with only non-adults must go through
   // admin approval, even if it was previously paid and approved for a
   // different composition. The self-removing guest is never blocked — the
@@ -1079,6 +1134,7 @@ export async function removeBookingGuestInTransaction({
         ...(promoResult.promoCoverage
           ? { promoCoverageNote: promoResult.promoCoverage.message }
           : {}),
+        ...moneyBuildUpSelection.historyMetadata,
       },
       priceDiffCents,
       changeFeeCents: 0,
@@ -1094,7 +1150,7 @@ export async function removeBookingGuestInTransaction({
    * booking row, the `BookingModification` anchor and these tasks either all
    * commit or none of them do - which is the first of the two failure modes the
    * issue names ("saving the booking change but losing the fact that money still
-   * needs review"). `raiseParkedEditFinancialReviewTasks` re-takes
+   * needs review"). `raiseParkedEditFinancialReviewTask` re-takes
    * `pg_advisory_xact_lock(1)`, which this function took as its FIRST lock at the
    * top; a transaction-scoped advisory lock is re-entrant, so that costs nothing
    * and adds no ordering edge (`INV-LOCK-002` still reads global -> lodge here).
@@ -1107,10 +1163,11 @@ export async function removeBookingGuestInTransaction({
    * the headline requirement, and it is the reason the raise is shaped that way
    * rather than as a bare `create`.
    *
-   * ONE TASK PER PARKED STRAND, not one per removal, and the difference is
-   * deliberate. The occurrence key is minted per strand, so per-strand is what
-   * "exactly one" can mean idempotently: a replay of this removal re-derives the
-   * same keys and creates nothing.
+   * ONE TASK PER PARKED REMOVAL since #3498 (owner decision D1), where it used
+   * to be one per parked STRAND. The occurrence key is minted over the whole
+   * edit now - every recorded strand's evidence is in the hash - so "exactly
+   * one" still means what it meant: a replay of this removal re-derives the same
+   * key and creates nothing.
    *
    * THE DEPARTING STRAND IS ALWAYS ONE OF THEM when this removal parks - see
    * `unpriceableStrands` above, where dropping it because its own rows read
@@ -1118,33 +1175,42 @@ export async function removeBookingGuestInTransaction({
    * carrying the surrendered nights, and therefore the money, is raised on every
    * parked removal.
    *
-   * Where a REMAINING strand is unreadable it gets its own task beside it,
-   * because it is a separate question for the admin: that one carries no
-   * surrendered nights, and its honest resolution is often DISMISSED ("reviewed,
-   * nothing to adjust"), which is a state this feature already has and does not
-   * pretend is a payment. Dismissing it no longer discards anything, because the
-   * departing guest's money is on its own task.
+   * Where a REMAINING strand is unreadable its evidence rides on the SAME task,
+   * as supporting detail rather than as a second thing to settle. That is what
+   * #3498 changed and why: on the live booking that prompted it, six such
+   * strands each became a work item indistinguishable from the one carrying the
+   * departing guest's real money, and dismissing the wrong one was silent and
+   * permanent.
    *
    * The raise ITSELF - the settlement payment id, the strand's member, the null
-   * amount - is `raiseParkedEditFinancialReviewTasks`, and is stated once there
+   * amount - is `raiseParkedEditFinancialReviewTask`, and is stated once there
    * rather than four times across the four parked doors (#3166, `INV-SSOT`).
    */
-  const financialReviewTaskIds = await raiseParkedEditFinancialReviewTasks({
-    booking,
-    // The DEPARTING strand is raised for too, and its row is not in the
-    // booking's remaining guest list - so it is named here explicitly.
-    guests: [guestToRemove, ...booking.guests],
-    // A removal adds nobody.
-    addedGuests: [],
-    // Already empty when this removal did not park (see its own comment).
-    occurrences: unpriceableStrands,
-    bookingModificationId: bookingModification.id,
-    store: tx,
-  });
+  // Composed here rather than inside the raise, because WHICH strands a removal
+  // records is this service's rule (see `unpriceableStrands` above) while the
+  // lead-strand ordering is the shared one. Null exactly when the removal priced
+  // normally, which is when the raise below does not happen at all.
+  const [leadUnpriceableStrand, ...restUnpriceableStrands] = unpriceableStrands;
+  const financialReviewTaskIds = leadUnpriceableStrand
+    ? await raiseParkedEditFinancialReviewTasks({
+        booking,
+        // The DEPARTING strand is raised for too, and its row is not in the
+        // booking's remaining guest list - so it is named here explicitly.
+        guests: [guestToRemove, ...booking.guests],
+        // A removal adds nobody.
+        addedGuests: [],
+        occurrences: parkedEditWorkItems({
+          bookingId,
+          strands: [leadUnpriceableStrand, ...restUnpriceableStrands],
+        }),
+        bookingModificationId: bookingModification.id,
+        store: tx,
+      })
+    : [];
 
   if (paymentImpact.accountCreditAmountCents > 0) {
     await createBookingModificationCredit(
-      booking.memberId,
+      requireMemberCreditRecipient(bookingOwner(booking).memberId),
       paymentImpact.accountCreditAmountCents,
       bookingId,
       bookingModification.id,
@@ -1191,9 +1257,10 @@ export async function removeBookingGuestInTransaction({
     paymentStatus: booking.payment?.status ?? null,
     paymentId: booking.payment?.id ?? null,
     paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-    memberEmail: booking.member.email,
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-    memberId: booking.memberId,
+    memberEmail: bookingOwner(booking).member.email,
+    memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+    memberFirstName: bookingOwner(booking).member.firstName,
+    memberId: bookingOwner(booking).memberId,
     promoRemoved: promoResult.promoRemoved,
     promoCoverage: promoResult.promoCoverage,
     choreWarnings,
@@ -1328,7 +1395,7 @@ export async function recalculateBookingPromo({
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: booking.checkIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,

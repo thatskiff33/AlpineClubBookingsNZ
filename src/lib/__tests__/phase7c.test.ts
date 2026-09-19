@@ -886,6 +886,13 @@ describe("F6: POST /api/lodge/roster/[date]/generate", () => {
         id: "b1",
         checkIn: date,
         checkOut: nextDay,
+        // #3369: the roster query loads BOTH halves of the owner to build its
+        // "Booking for …" group label, so a row Prisma returns always carries
+        // both keys. A fixture omitting them describes a row the query cannot
+        // produce, and the label read throws rather than falling back.
+        memberId: "m1",
+        member: { firstName: "Alice", lastName: "Smith" },
+        organisation: null,
         guests: [
           { id: "g1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT" },
         ],

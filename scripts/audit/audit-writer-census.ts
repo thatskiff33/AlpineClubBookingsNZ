@@ -77,14 +77,38 @@
  * than literal. Those are the reason the TYPE and the RUNTIME assertion in
  * `src/lib/audit.ts` are the primary defences and this census is the backstop.
  *
+ * One boundary is deliberately drawn narrower than the rest. An event object
+ * with a key this walk cannot NAME — a computed key, a getter — fails closed
+ * for `category` and for `memberDisclosure`, which are the two columns a gate
+ * reads (#2695). `omitsRetentionInputs` and `hasEntityIdentifier` still read
+ * such an object as simply lacking the key, which is the behaviour they have
+ * always had: neither decides who may read a row, so widening them would move
+ * pinned sets for no safety gained. No site in the tree uses either shape
+ * today; if one appears, those two booleans are the ones to revisit.
+ *
  * Run it: `npm run audit:census` prints a deterministic TSV of every site.
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative } from "node:path";
 
 import ts from "typescript";
 
 import { must } from "../../src/lib/indexed-access";
+import {
+  collapseWhitespace as collapse,
+  eachNode,
+  findTopLevelProperty,
+  isDeclarationName,
+  listSourceFiles as listSourceFilesIn,
+  literalText,
+  parseSourceFile as parse,
+  resolveObjectLiteral,
+  symbolChain,
+  unwrap,
+  toPosix,
+  type ResolvedObject,
+} from "./ts-call-site-scan";
+import { stripSqlComments } from "../../prisma/migration-verification/split-statements";
 
 /** The module that owns the audit boundary; its own writes are not call sites. */
 export const AUDIT_BOUNDARY_MODULE = "src/lib/audit.ts";
@@ -158,6 +182,73 @@ export type AuditCategoryEvidence =
   | { kind: "forwarded"; expression: string }
   | { kind: "absent" };
 
+/**
+ * What the call site says about what the SUBJECT MEMBER may read (#2695).
+ *
+ *  - `internal`      `memberDisclosure: { visibility: "internal" }` — the member
+ *                    reads no free text from this event.
+ *  - `member-facing` `{ visibility: "member-facing", text: … }` — the site
+ *                    publishes one purpose-written sentence to the member. This
+ *                    is the population the manifest pins, because adding to it
+ *                    widens what a member is shown.
+ *  - `forwarded`     decided somewhere a reviewer cannot see it here.
+ *  - `absent`        no declaration at all, which the reader treats exactly as
+ *                    `internal`. This is the DEFAULT and it is the safe answer,
+ *                    which is why — unlike `category` — it is not a finding.
+ */
+export type AuditMemberDisclosureEvidence =
+  | { kind: "internal" }
+  | { kind: "member-facing" }
+  | { kind: "forwarded"; expression: string }
+  | { kind: "absent" };
+
+/**
+ * The shape of a free-text channel the event object supplies.
+ *
+ * `details` and `summary` are the two columns whose contents used to reach a
+ * member's own timeline without anybody deciding they should (#2695). The
+ * reader is default-deny now, so this is not a gate — it is the MEASUREMENT
+ * that makes "re-census every event currently rendered to members" reproducible
+ * instead of a hand count that goes stale.
+ *
+ *  - `constant`  a string literal, or a template with no substitution: a fixed
+ *                phrase from the vocabulary, carrying no run-time values.
+ *  - `dynamic`   a template with substitutions, or any other expression: the
+ *                shape that carries ids, names and an administrator's typing.
+ */
+export type AuditFreeTextEvidence =
+  | { kind: "absent" }
+  | { kind: "constant" }
+  | { kind: "dynamic" }
+  | { kind: "forwarded" };
+
+/**
+ * WHAT KIND OF THING THE SITE PUTS IN `details` (#2704).
+ *
+ * `detailsText` above answers "does this carry run-time values"; this answers
+ * the different question the structured-detail rule turns on — is the column
+ * holding a JSON PAYLOAD or a sentence? The two populations are governed by
+ * different halves of `audit-structured-detail.ts`: a payload too big for the
+ * column is REDUCED to its whole fields, while prose keeps the honest text clip.
+ *
+ * It is a MEASUREMENT and deliberately not a gate. Every count this census
+ * DOES pin guards a per-site decision a writer can get wrong; this column is a
+ * passive fact about how a payload was spelled, and the reduction at the write
+ * boundary covers all four write forms whatever the spelling. A count of it
+ * would move for a rename or for a hundred-and-fifth payload writer, neither of
+ * which anybody needs to act on — and a number that moves for reasons nobody
+ * acts on teaches its readers to re-baseline it. The reasoning in full is in
+ * `audit-writer-census-scanner.test.ts`.
+ *
+ *  - `payload`  `details: JSON.stringify(…)` — structured evidence.
+ *  - `text`     anything else: a sentence, a template, a variable holding one.
+ *  - `absent`   the event object names no `details` at all.
+ *  - `unknown`  the site's keys could not be read, so neither can this.
+ */
+export type AuditDetailShapeEvidence = {
+  kind: "absent" | "payload" | "text" | "unknown";
+};
+
 export type AuditWriteSite = {
   /** Repo-relative POSIX path. */
   file: string;
@@ -177,6 +268,14 @@ export type AuditWriteSite = {
   /** The `action` value when it is a plain literal, else a description. */
   action: string;
   category: AuditCategoryEvidence;
+  /** What the site declares the subject member may read (#2695). */
+  memberDisclosure: AuditMemberDisclosureEvidence;
+  /** The shape of the `details` free-text channel. */
+  detailsText: AuditFreeTextEvidence;
+  /** Whether `details` holds a JSON payload or a sentence (#2704). */
+  detailsShape: AuditDetailShapeEvidence;
+  /** The shape of the `summary` free-text channel. */
+  summaryText: AuditFreeTextEvidence;
   /** True when the event object also omits `severity` and `retentionClass`. */
   omitsRetentionInputs: boolean;
   /** True when the event object names an `entityType` or `entityId`. */
@@ -184,8 +283,6 @@ export type AuditWriteSite = {
 };
 
 const SCAN_ROOTS = ["src", "scripts", "prisma"] as const;
-
-const SOURCE_EXTENSIONS = /\.(ts|tsx|js|mjs|cjs)$/;
 
 /**
  * Directories that hold no production writer. `__tests__`/`__mocks__` and the
@@ -200,152 +297,6 @@ const SKIP_DIRECTORIES = new Set([
   "fixtures",
   "test-utils",
 ]);
-
-const SKIP_FILES = /(\.test\.|\.spec\.|\.d\.ts$)/;
-
-function toPosix(path: string): string {
-  return path.split(sep).join("/");
-}
-
-function listSourceFiles(dir: string, out: string[]): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (SKIP_DIRECTORIES.has(entry.name)) continue;
-      listSourceFiles(full, out);
-      continue;
-    }
-    if (!SOURCE_EXTENSIONS.test(entry.name)) continue;
-    if (SKIP_FILES.test(entry.name)) continue;
-    out.push(full);
-  }
-  return out;
-}
-
-function parse(file: string): ts.SourceFile {
-  return ts.createSourceFile(
-    file,
-    readFileSync(file, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
-}
-
-function eachNode(node: ts.Node, visit: (node: ts.Node) => void): void {
-  visit(node);
-  node.forEachChild((child) => eachNode(child, visit));
-}
-
-function unwrap(node: ts.Expression): ts.Expression {
-  if (ts.isParenthesizedExpression(node)) return unwrap(node.expression);
-  if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
-    return unwrap(node.expression);
-  }
-  return node;
-}
-
-function literalText(node: ts.Expression): string | null {
-  const inner = unwrap(node);
-  if (ts.isStringLiteral(inner) || ts.isNoSubstitutionTemplateLiteral(inner)) {
-    return inner.text;
-  }
-  return null;
-}
-
-function propertyName(name: ts.PropertyName): string | null {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
-  return null;
-}
-
-type TopLevelProperty =
-  | { kind: "assignment"; value: ts.Expression }
-  | { kind: "opaque"; text: string };
-
-/**
- * A view of an event object's OWN top-level keys, with spreads resolved as far
- * as they can be read at the call site.
- *
- * Spreads matter here for one measured reason: the deletion-rejected writer in
- * `src/app/api/admin/deletion-requests/[id]/route.ts` spreads
- * `...(suppressed ? { metadata } : {})` and passes no category. A census that
- * failed closed on any spread would report that site as "category decided
- * elsewhere" instead of as the omission it is, and the uncategorised count would
- * read 81 rather than 82 — a site quietly moved from the population that has to
- * be fixed into an allowlist. So a spread of INLINE literals (or a conditional /
- * `&&` / `??` between them) contributes its keys, exactly as
- * `exclusivity-request-write-sites.test.ts` reads its own payloads. A spread of
- * anything opaque — an identifier, a call result — still fails closed, because
- * its keys are decided somewhere a reviewer cannot see.
- */
-type ResolvedObject = {
-  keys: Map<string, TopLevelProperty>;
-  opaqueSpread: boolean;
-};
-
-function spreadLiterals(expression: ts.Expression): ts.ObjectLiteralExpression[] | null {
-  const inner = unwrap(expression);
-  if (ts.isObjectLiteralExpression(inner)) return [inner];
-  if (ts.isConditionalExpression(inner)) {
-    const whenTrue = spreadLiterals(inner.whenTrue);
-    const whenFalse = spreadLiterals(inner.whenFalse);
-    return whenTrue && whenFalse ? [...whenTrue, ...whenFalse] : null;
-  }
-  if (ts.isBinaryExpression(inner)) {
-    // `cond && { … }` / `value ?? { … }` — read whichever side is a literal.
-    const left = spreadLiterals(inner.left);
-    const right = spreadLiterals(inner.right);
-    if (left && right) return [...left, ...right];
-    return right ?? left;
-  }
-  return null;
-}
-
-function resolveObjectLiteral(literal: ts.ObjectLiteralExpression): ResolvedObject {
-  const keys = new Map<string, TopLevelProperty>();
-  let opaqueSpread = false;
-
-  for (const property of literal.properties) {
-    if (ts.isPropertyAssignment(property)) {
-      const name = propertyName(property.name);
-      if (name) keys.set(name, { kind: "assignment", value: property.initializer });
-      continue;
-    }
-    if (ts.isShorthandPropertyAssignment(property)) {
-      keys.set(property.name.text, {
-        kind: "opaque",
-        text: property.name.text,
-      });
-      continue;
-    }
-    if (ts.isSpreadAssignment(property)) {
-      const branches = spreadLiterals(property.expression);
-      if (!branches) {
-        opaqueSpread = true;
-        continue;
-      }
-      for (const branch of branches) {
-        const resolved = resolveObjectLiteral(branch);
-        opaqueSpread = opaqueSpread || resolved.opaqueSpread;
-        for (const [name, value] of resolved.keys) {
-          // A key that arrives through a spread may or may not be present at
-          // runtime, so its VALUE is not readable even when its name is.
-          keys.set(name, { kind: "opaque", text: `spread ${name}` });
-          void value;
-        }
-      }
-    }
-  }
-
-  return { keys, opaqueSpread };
-}
-
-function findTopLevelProperty(
-  resolved: ResolvedObject,
-  key: string,
-): TopLevelProperty | null {
-  return resolved.keys.get(key) ?? null;
-}
 
 /**
  * The event/params objects a write site passes, unwrapped through the structured
@@ -445,11 +396,171 @@ function combineCategory(
     : { kind: "conditional", values };
 }
 
+/**
+ * The member-disclosure evidence for one event object (#2695).
+ *
+ * Read from an object LITERAL, which is why the declaration is written as one
+ * at every call site: `{ visibility: "member-facing" }` is readable here
+ * without resolving an imported constant, and a census that had to resolve
+ * imports would fail closed on every re-export.
+ */
+function resolveMemberDisclosure(
+  event: ResolvedObject,
+): AuditMemberDisclosureEvidence {
+  const property = findTopLevelProperty(event, "memberDisclosure");
+  if (!property) {
+    return event.unreadableKeys
+      ? { kind: "forwarded", expression: "unreadable keys" }
+      : { kind: "absent" };
+  }
+  if (property.kind === "opaque") {
+    return { kind: "forwarded", expression: property.text };
+  }
+
+  return resolveDisclosureExpression(property.value);
+}
+
+/**
+ * One declaration expression.
+ *
+ * A CONDITIONAL between two declarations is read rather than failed closed,
+ * because it is the honest shape wherever the text is optional: an officer's
+ * member-facing note exists or it does not, and
+ * `{ visibility: "member-facing", text }` cannot be written without a `text`.
+ * The WIDER branch decides, so a site that publishes on one path is counted as
+ * publishing.
+ */
+function resolveDisclosureExpression(
+  expression: ts.Expression,
+): AuditMemberDisclosureEvidence {
+  const value = unwrap(expression);
+
+  if (ts.isConditionalExpression(value)) {
+    const branches = [value.whenTrue, value.whenFalse].map(
+      resolveDisclosureExpression,
+    );
+    const forwarded = branches.find((branch) => branch.kind === "forwarded");
+    if (forwarded) return forwarded;
+    return branches.some((branch) => branch.kind === "member-facing")
+      ? { kind: "member-facing" }
+      : { kind: "internal" };
+  }
+
+  if (!ts.isObjectLiteralExpression(value)) {
+    return { kind: "forwarded", expression: collapse(value.getText()) };
+  }
+
+  const visibility = findTopLevelProperty(
+    resolveObjectLiteral(value),
+    "visibility",
+  );
+  if (!visibility || visibility.kind === "opaque") {
+    return { kind: "forwarded", expression: collapse(value.getText()) };
+  }
+  const literal = literalText(unwrap(visibility.value));
+  if (literal === "internal") return { kind: "internal" };
+  if (literal === "member-facing") return { kind: "member-facing" };
+  return { kind: "forwarded", expression: collapse(value.getText()) };
+}
+
+/**
+ * Take the WIDEST reading across a multi-row write: one element that publishes
+ * to a member makes the site a member-facing site, because it writes such a
+ * row. `forwarded` outranks the two literals for the same fail-closed reason
+ * the category combiner has.
+ */
+function combineMemberDisclosure(
+  events: readonly ResolvedObject[] | null,
+  fallbackExpression: string,
+): AuditMemberDisclosureEvidence {
+  if (!events || events.length === 0) {
+    return { kind: "forwarded", expression: fallbackExpression };
+  }
+  const each = events.map(resolveMemberDisclosure);
+  const forwarded = each.find((evidence) => evidence.kind === "forwarded");
+  if (forwarded) return forwarded;
+  if (each.some((evidence) => evidence.kind === "member-facing")) {
+    return { kind: "member-facing" };
+  }
+  return each.some((evidence) => evidence.kind === "internal")
+    ? { kind: "internal" }
+    : { kind: "absent" };
+}
+
+function resolveFreeText(
+  event: ResolvedObject,
+  key: "details" | "summary",
+): AuditFreeTextEvidence {
+  const property = findTopLevelProperty(event, key);
+  if (!property) {
+    return event.unreadableKeys ? { kind: "forwarded" } : { kind: "absent" };
+  }
+  if (property.kind === "opaque") return { kind: "forwarded" };
+
+  const value = unwrap(property.value);
+  if (literalText(value) !== null) return { kind: "constant" };
+  return { kind: "dynamic" };
+}
+
+/**
+ * Is this site's `details` a JSON payload or a sentence (#2704)?
+ *
+ * `JSON.stringify(...)` at the top of the expression is the whole test, because
+ * that is how all 104 payload writers spell it today. A site that builds its
+ * payload somewhere else and passes the variable reads as `text` — an
+ * UNDER-count, which is the right direction for a measurement nobody gates on:
+ * it can understate how many payload writers exist and can never invent one.
+ * The reduction at the write boundary does not share this blind spot; it reads
+ * the value, not the spelling.
+ */
+function resolveDetailShape(event: ResolvedObject): AuditDetailShapeEvidence {
+  const property = findTopLevelProperty(event, "details");
+  if (!property) {
+    return { kind: event.unreadableKeys ? "unknown" : "absent" };
+  }
+  if (property.kind === "opaque") return { kind: "unknown" };
+
+  const value = unwrap(property.value);
+  if (
+    ts.isCallExpression(value) &&
+    collapse(value.expression.getText()) === "JSON.stringify"
+  ) {
+    return { kind: "payload" };
+  }
+  return { kind: "text" };
+}
+
+/** A site writing a payload in ANY branch is governed by the reduction. */
+function combineDetailShape(
+  events: readonly ResolvedObject[] | null,
+): AuditDetailShapeEvidence {
+  if (!events || events.length === 0) return { kind: "unknown" };
+  const each = events.map(resolveDetailShape);
+  for (const kind of ["payload", "unknown", "text"] as const) {
+    if (each.some((evidence) => evidence.kind === kind)) return { kind };
+  }
+  return { kind: "absent" };
+}
+
+/** The weakest (most revealing) reading across a multi-row write. */
+function combineFreeText(
+  events: readonly ResolvedObject[] | null,
+  key: "details" | "summary",
+): AuditFreeTextEvidence {
+  if (!events || events.length === 0) return { kind: "forwarded" };
+  const each = events.map((event) => resolveFreeText(event, key));
+  for (const kind of ["forwarded", "dynamic", "constant"] as const) {
+    const hit = each.find((evidence) => evidence.kind === kind);
+    if (hit) return hit;
+  }
+  return { kind: "absent" };
+}
+
 function resolveCategory(event: ResolvedObject): AuditCategoryEvidence {
   const property = findTopLevelProperty(event, "category");
   if (!property) {
-    return event.opaqueSpread
-      ? { kind: "forwarded", expression: "opaque spread" }
+    return event.unreadableKeys
+      ? { kind: "forwarded", expression: "unreadable keys" }
       : { kind: "absent" };
   }
   if (property.kind === "opaque") {
@@ -471,10 +582,6 @@ function resolveCategory(event: ResolvedObject): AuditCategoryEvidence {
   return { kind: "forwarded", expression: collapse(value.getText()) };
 }
 
-function collapse(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
 function resolveOneAction(event: ResolvedObject): string {
   const property = findTopLevelProperty(event, "action");
   if (!property) return "(none)";
@@ -483,41 +590,44 @@ function resolveOneAction(event: ResolvedObject): string {
   return direct ?? `(dynamic) ${collapse(property.value.getText())}`;
 }
 
+/**
+ * Every action NAME a site can write, read back out of `resolveOneAction`'s
+ * rendering: a literal site names one; a `(dynamic)` site names every
+ * double-quoted literal inside its expression (`isBulk ? "A" : "B"` names A
+ * and B). The inverse of the rendering above lives beside it so the two cannot
+ * drift (`INV-SSOT`), and it is what the backfill contract tests compare a
+ * migration's literal list against.
+ *
+ * A DYNAMIC SITE THAT NAMES NO LITERAL (`(dynamic) auditAction`, a template
+ * over an enum) THROWS by default, the behaviour #2751's test decided: silently
+ * contributing nothing would let a whole writer fall out of a comparison. A
+ * caller that is merely SCANNING for corroboration — where such a site simply
+ * cannot corroborate anything — passes `{ onNone: "empty" }` and says so.
+ */
+export function literalActionNamesAt(
+  site: Pick<AuditWriteSite, "id" | "action">,
+  options: { onNone: "throw" | "empty" } = { onNone: "throw" },
+): string[] {
+  if (!site.action.startsWith("(dynamic)")) return [site.action];
+  const literals = [...site.action.matchAll(/"([A-Za-z0-9_.\-]+)"/g)].map(
+    (match) => must(match[1], "literalActionNamesAt: regex group missing"),
+  );
+  if (literals.length === 0 && options.onNone === "throw") {
+    throw new Error(
+      `${site.id}: its action is computed and names no string literal, so a ` +
+        "backfill gate cannot tell whether it covers this writer. Name the " +
+        "actions at the site, or pass { onNone: \"empty\" } deliberately.",
+    );
+  }
+  return literals;
+}
+
 function resolveAction(events: readonly ResolvedObject[] | null): string {
   if (!events || events.length === 0) return "(forwarded)";
   const actions = [...new Set(events.map(resolveOneAction))].sort();
   return actions.length === 1
     ? must(actions[0], "resolveAction: length-1 action list has no first element")
     : `(mixed) ${actions.join("|")}`;
-}
-
-/**
- * The enclosing symbol chain, outermost first. Named function declarations,
- * methods, classes and `const fn = …` initialisers all contribute; an anonymous
- * arrow inside one of them does not, so a reformat that wraps a call in another
- * callback does not change the identity.
- */
-function symbolChain(node: ts.Node): string {
-  const names: string[] = [];
-  let cursor: ts.Node | undefined = node.parent;
-  while (cursor) {
-    if (
-      (ts.isFunctionDeclaration(cursor) ||
-        ts.isMethodDeclaration(cursor) ||
-        ts.isClassDeclaration(cursor)) &&
-      cursor.name &&
-      ts.isIdentifier(cursor.name)
-    ) {
-      names.unshift(cursor.name.text);
-    } else if (
-      ts.isVariableDeclaration(cursor) &&
-      ts.isIdentifier(cursor.name)
-    ) {
-      names.unshift(cursor.name.text);
-    }
-    cursor = cursor.parent;
-  }
-  return names.length ? names.join(".") : "<module>";
 }
 
 /**
@@ -647,11 +757,6 @@ function isBoundaryOwnWrite(file: string, sink: AuditWriteSink): boolean {
   return sink.startsWith("auditLog.") || sink === "createAuditLog";
 }
 
-/** True when the declaration of a helper is being read rather than a call. */
-function isDeclarationName(call: ts.CallExpression): boolean {
-  return ts.isFunctionDeclaration(call.parent) || ts.isMethodDeclaration(call.parent);
-}
-
 function scanFile(file: string, repoRoot: string): AuditWriteSite[] {
   const relativePath = toPosix(relative(repoRoot, file));
   const ast = parse(file);
@@ -668,6 +773,9 @@ function scanFile(file: string, repoRoot: string): AuditWriteSite[] {
     events: readonly ResolvedObject[] | null,
   ) => {
     const symbol = symbolChain(node);
+    const payloadText = ts.isCallExpression(node)
+      ? collapse(node.arguments[0]?.getText() ?? "(no argument)")
+      : "(no argument)";
     const key = `${relativePath}::${symbol}`;
     const ordinal = ordinals.get(key) ?? 0;
     ordinals.set(key, ordinal + 1);
@@ -681,6 +789,12 @@ function scanFile(file: string, repoRoot: string): AuditWriteSite[] {
       producesRow,
       action,
       category,
+      memberDisclosure: producesRow
+        ? combineMemberDisclosure(events, payloadText)
+        : { kind: "absent" },
+      detailsText: producesRow ? combineFreeText(events, "details") : { kind: "absent" },
+      detailsShape: producesRow ? combineDetailShape(events) : { kind: "absent" },
+      summaryText: producesRow ? combineFreeText(events, "summary") : { kind: "absent" },
       // ANY element omitting retention inputs flags the site, and EVERY element
       // must name an entity before the site counts as identified: both take the
       // pessimistic reading of a multi-row write, and both are unchanged for the
@@ -786,77 +900,6 @@ export type AuditSqlStatement = {
   namesCategory: boolean;
 };
 
-/**
- * SQL with `--` line comments and `/* … *​/` blocks blanked out, newlines kept so
- * line numbers survive. Blanking rather than deleting is what keeps the offsets
- * usable; the door-code migration discusses `UPDATE "AuditLog"` in its header
- * comment as well as performing it, so a census that did not strip comments would
- * over-count exactly the way the TypeScript docblock false positive did.
- */
-function stripSqlComments(sql: string): string {
-  let out = "";
-  let index = 0;
-  let inLine = false;
-  let inBlock = false;
-  let inString = false;
-
-  while (index < sql.length) {
-    const char = sql[index];
-    const next = sql[index + 1];
-
-    if (inLine) {
-      if (char === "\n") {
-        inLine = false;
-        out += char;
-      } else {
-        out += " ";
-      }
-      index += 1;
-      continue;
-    }
-    if (inBlock) {
-      if (char === "*" && next === "/") {
-        inBlock = false;
-        out += "  ";
-        index += 2;
-        continue;
-      }
-      out += char === "\n" ? "\n" : " ";
-      index += 1;
-      continue;
-    }
-    if (inString) {
-      // Postgres doubles a quote to escape it; either way the state machine only
-      // has to know it is still inside the literal.
-      if (char === "'") inString = false;
-      out += char;
-      index += 1;
-      continue;
-    }
-    if (char === "'") {
-      inString = true;
-      out += char;
-      index += 1;
-      continue;
-    }
-    if (char === "-" && next === "-") {
-      inLine = true;
-      out += "  ";
-      index += 2;
-      continue;
-    }
-    if (char === "/" && next === "*") {
-      inBlock = true;
-      out += "  ";
-      index += 2;
-      continue;
-    }
-    out += char;
-    index += 1;
-  }
-
-  return out;
-}
 
 /**
  * DML against the audit table, with an OPTIONAL schema qualifier.
@@ -1069,6 +1112,15 @@ export type AuditWriterCensus = {
   forwarded: readonly AuditWriteSite[];
   /** Row-producing sites choosing between category literals. */
   conditional: readonly AuditWriteSite[];
+  /**
+   * Row-producing sites that publish a purpose-written sentence to the subject
+   * member (#2695), sorted by id. This is the population the manifest pins:
+   * adding to it widens what a member is shown, which is a readership decision
+   * rather than a tidy-up (`INV-PRIV-012`).
+   */
+  memberFacing: readonly AuditWriteSite[];
+  /** Row-producing sites whose member disclosure is decided outside the call. */
+  memberDisclosureForwarded: readonly AuditWriteSite[];
   /** Literal category value to the number of sites writing it. */
   categoryCounts: Readonly<Record<string, number>>;
   /** Sink to `{ total, uncategorised }`. */
@@ -1117,7 +1169,7 @@ export function scanAuditWriterCensus(
 ): AuditWriterCensus {
   const files: string[] = [];
   for (const root of SCAN_ROOTS) {
-    listSourceFiles(join(repoRoot, root), files);
+    listSourceFilesIn(join(repoRoot, root), files, SKIP_DIRECTORIES);
   }
   files.sort();
 
@@ -1150,6 +1202,12 @@ export function scanAuditWriterCensus(
     uncategorised: sites.filter((site) => site.category.kind === "absent"),
     forwarded: sites.filter((site) => site.category.kind === "forwarded"),
     conditional: sites.filter((site) => site.category.kind === "conditional"),
+    memberFacing: sites.filter(
+      (site) => site.memberDisclosure.kind === "member-facing",
+    ),
+    memberDisclosureForwarded: sites.filter(
+      (site) => site.memberDisclosure.kind === "forwarded",
+    ),
     categoryCounts,
     sinkCounts,
     sqlStatements,
@@ -1173,7 +1231,32 @@ export function describeCategory(evidence: AuditCategoryEvidence): string {
   }
 }
 
-const TSV_HEADER = [
+/** How a site's member-disclosure declaration reads in the TSV (#2695). */
+export function describeMemberDisclosure(
+  evidence: AuditMemberDisclosureEvidence,
+): string {
+  return evidence.kind === "forwarded"
+    ? `forwarded:${evidence.expression}`
+    : evidence.kind === "absent"
+      ? "(absent)"
+      : evidence.kind;
+}
+
+/**
+ * The column names, IN THE ORDER THE ROW BUILDERS BELOW WRITE THEM.
+ *
+ * A human reads this file to perform "re-census every event currently rendered
+ * to members" (#2695's acceptance criterion), so a header that has drifted from
+ * the rows is worse than no header at all: three columns were added to both row
+ * builders and not to this list, which left the ninth column named
+ * `omitsRetentionInputs` while carrying a disclosure, and three columns with no
+ * name whatever. Nothing tested the renderer, so nothing said so.
+ *
+ * `renderCensusTsv`'s contract test now counts every row's fields against this
+ * list, so the next column added to a builder and not named here fails offline
+ * instead of mislabelling the artifact an acceptance criterion depends on.
+ */
+const TSV_COLUMNS = [
   "id",
   "file",
   "symbol",
@@ -1182,9 +1265,18 @@ const TSV_HEADER = [
   "producesRow",
   "action",
   "category",
+  "memberDisclosure",
+  "detailsText",
+  "detailsShape",
+  "summaryText",
   "omitsRetentionInputs",
   "hasEntityIdentifier",
-].join("\t");
+] as const;
+
+/** The column names, for the contract test that counts them against the rows. */
+export const AUDIT_CENSUS_TSV_COLUMNS: readonly string[] = TSV_COLUMNS;
+
+const TSV_HEADER = TSV_COLUMNS.join("\t");
 
 /** A deterministic TSV of the whole census, newest analysis first in id order. */
 export function renderCensusTsv(census: AuditWriterCensus): string {
@@ -1198,6 +1290,10 @@ export function renderCensusTsv(census: AuditWriterCensus): string {
       String(site.producesRow),
       site.action,
       describeCategory(site.category),
+      describeMemberDisclosure(site.memberDisclosure),
+      site.detailsText.kind,
+      site.detailsShape.kind,
+      site.summaryText.kind,
       String(site.omitsRetentionInputs),
       String(site.hasEntityIdentifier),
     ].join("\t"),
@@ -1218,6 +1314,12 @@ export function renderCensusTsv(census: AuditWriterCensus): string {
           ? "named"
           : "(absent)"
         : "(dml)",
+      "(absent)",
+      // detailsText, detailsShape, summaryText: a migration statement has no
+      // event object to read any of them from.
+      "(sql)",
+      "(sql)",
+      "(sql)",
       "false",
       "false",
     ].join("\t"),
@@ -1236,6 +1338,8 @@ function main(): void {
       `uncategorised:        ${census.uncategorised.length}`,
       `forwarded category:   ${census.forwarded.length}`,
       `conditional category: ${census.conditional.length}`,
+      `member-facing sites:  ${census.memberFacing.length}`,
+      `forwarded disclosure: ${census.memberDisclosureForwarded.length}`,
       `non-producing DML:    ${census.nonProducingDml.length}`,
       `migration SQL on AuditLog: ${census.sqlStatements.length}`,
       `category values:      ${JSON.stringify(census.categoryCounts)}`,

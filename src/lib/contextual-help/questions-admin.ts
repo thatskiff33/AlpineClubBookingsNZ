@@ -195,6 +195,10 @@ export const ADMIN_HELP_QUESTIONS: Record<string, HelpQuestion[]> = {
       q: "What must allocation never do?",
       a: "It must never create more occupants than available beds for a lodge night.",
     },
+    {
+      q: "Where do I turn auto allocation on or change the preference order?",
+      a: "In Bookings Setup -> Rooms & Beds, at the foot of the page, for the lodge chosen at the top. This board links to it for the lodge you are looking at. Changes there apply to the next allocation run and never move a guest who is already placed.",
+    },
   ],
   "/admin/communications": [
     {

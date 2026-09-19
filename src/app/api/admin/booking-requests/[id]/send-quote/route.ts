@@ -10,6 +10,7 @@ import {
   BookingMemberNightConflictError,
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
+import { schoolChildCountsSchema } from "@/lib/school-booking-request";
 import { requireAdmin } from "@/lib/session-guards";
 
 export async function POST(
@@ -27,6 +28,7 @@ export async function POST(
   // the send body. The authoritative guard runs inside the hold transaction.
   const body = (await req.json().catch(() => ({}))) as {
     ownerContactMemberId?: unknown;
+    childCounts?: unknown;
   };
   let ownerContactMemberId: string | undefined;
   if (body.ownerContactMemberId !== undefined && body.ownerContactMemberId !== null) {
@@ -43,11 +45,29 @@ export async function POST(
     ownerContactMemberId = body.ownerContactMemberId;
   }
 
+  // #3412 (review, B1): the school group numbers the officer currently has on
+  // screen. Sending holds beds and emails the school from the party STORED on
+  // the request, so the service refuses the send when these differ from it —
+  // the same defect the issue fixes on Save quote, one button over. Same schema
+  // saving and approving parse, so one shape of numbers reaches all three.
+  let childCounts: ReturnType<typeof schoolChildCountsSchema.parse> | undefined;
+  if (body.childCounts !== undefined && body.childCounts !== null) {
+    const parsedCounts = schoolChildCountsSchema.safeParse(body.childCounts);
+    if (!parsedCounts.success) {
+      return NextResponse.json(
+        { error: "Invalid group numbers" },
+        { status: 422 }
+      );
+    }
+    childCounts = parsedCounts.data;
+  }
+
   try {
     const quote = await sendBookingRequestQuote({
       requestId: id,
       adminMemberId: session.user.id,
       ownerContactMemberId,
+      childCounts,
     });
 
     return NextResponse.json({

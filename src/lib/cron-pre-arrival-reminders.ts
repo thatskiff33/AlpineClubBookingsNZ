@@ -1,4 +1,5 @@
 import { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
 import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -44,6 +45,8 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
     },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       // Owner decision D-12 (#2307): the reminder tells a member how many
       // guests are arriving, so it counts the guests who will actually be
       // there. A member guest whose consent is still PENDING holds a bed under
@@ -100,9 +103,9 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
     try {
       const outcome = await sendPreArrivalReminderEmail({
         bookingId: booking.id,
-        recipientMemberId: booking.memberId,
-        email: booking.member.email,
-        firstName: booking.member.firstName,
+        recipientMemberId: bookingOwner(booking).memberId,
+        email: bookingOwner(booking).member.email,
+        firstName: bookingOwner(booking).member.firstName,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         guestCount: booking.guests.length,

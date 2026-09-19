@@ -19,6 +19,12 @@ vi.mock("@/lib/session-guards", async () => ({
 
 vi.mock("@/lib/member-credit", () => ({
   getAdminAdjustmentRequests: mocks.getAdminAdjustmentRequests,
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 
 import { GET } from "@/app/api/admin/credit-approvals/route";

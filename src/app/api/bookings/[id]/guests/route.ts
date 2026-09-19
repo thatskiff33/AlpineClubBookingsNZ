@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import {
   PaymentSource,
@@ -58,9 +59,9 @@ import {
 } from "@/lib/stored-sold-price-evidence";
 import {
   assertNoPendingEditFinancialReview,
-  raiseParkedEditFinancialReviewTasks,
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
+import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   NO_ADDITIONAL_ASK,
@@ -107,8 +108,15 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { nameField } from "@/lib/zod-helpers";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
-import { hasIssuedPrimaryXeroInvoice, isSettledBookingStatus } from "@/lib/booking-payment-state";
+import {
+  activeLifecycleEditRefusal,
+  getBookingEditPolicy,
+} from "@/lib/booking-edit-policy";
+import {
+  hasIssuedPrimaryXeroInvoice,
+  isCapturedPaymentStatus,
+  isSettledBookingStatus,
+} from "@/lib/booking-payment-state";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
@@ -294,6 +302,8 @@ export async function POST(
           },
           payment: true,
           member: true,
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           promoRedemption: {
             include: {
               guestTargets: { select: { bookingGuestId: true } },
@@ -313,7 +323,7 @@ export async function POST(
       }
 
       if (
-        booking.memberId !== session.user.id &&
+        bookingOwner(booking).memberId !== session.user.id &&
         !isAdmin
       ) {
         throw new ApiError("Forbidden", 403);
@@ -322,15 +332,10 @@ export async function POST(
       // #3200: this door admits no finished stay, which is why the shared
       // invoice test further down — it answers COMPLETED as "invoice issued" —
       // has nothing new to handle here. Widening this gate is a real change.
-      // #3245 proposes routing this list through `canModifyBookingStatusForRole`
-      // rather than restating it; that is a convergence, not a widening, and the
-      // COMPLETED exclusion has to survive it either way.
-      if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
-        throw new ApiError(
-          "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-          400
-        );
-      }
+      // #3245: derived, not restated. `includeFinishedStay` stays off, so the
+      // COMPLETED exclusion survives the convergence unchanged.
+      const editRefusal = activeLifecycleEditRefusal(booking.status, actorRole);
+      if (editRefusal) throw new ApiError(editRefusal, 400);
 
       const editPolicy = getBookingEditPolicy({
         status: booking.status,
@@ -407,7 +412,7 @@ export async function POST(
         const { members: linkedMembers, boundary } =
           await resolveLinkedBookingMembersWithBoundary(
             tx,
-            booking.memberId,
+            bookingOwner(booking).memberId,
             newGuests.map((guest) => guest.memberId),
             {
               skipAuthorization: isAdmin,
@@ -420,7 +425,7 @@ export async function POST(
           session.user.id,
           {
             actorRole,
-            onBehalfOfMemberId: isAdmin ? booking.memberId : null,
+            onBehalfOfMemberId: isAdmin ? bookingOwner(booking).memberId : null,
             // D-8: a blocked cross-family member is refused neutrally.
             crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
           }
@@ -458,7 +463,7 @@ export async function POST(
 
       const seasonYear = seasonYearOfStoredDate(booking.checkIn);
       await assertMembershipTypeBookingAllowed(tx, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         guests: [
           ...booking.guests,
           ...normalizedNewGuests.map((guest) => ({
@@ -473,7 +478,7 @@ export async function POST(
 
       if (!isAdmin) {
         const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
-          bookingMemberId: booking.memberId,
+          bookingMemberId: bookingOwner(booking).memberId,
           checkIn: booking.checkIn,
           guests: normalizedNewGuests,
         });
@@ -504,7 +509,7 @@ export async function POST(
           // Owner decision, 3 Aug 2026: an unfinancial owner triggers the
           // requirement whether or not they hold a bed on the booking they are
           // adding to.
-          bookingOwnerMemberId: booking.memberId,
+          bookingOwnerMemberId: bookingOwner(booking).memberId,
           // D-12 over the whole post-add party. `toSubscriptionLockoutParticipants`
           // reads a persisted row's `consentStatus` and a pre-persist row's planned
           // `memberGuestConsent.consentStatus`, which is exactly the two shapes
@@ -607,7 +612,7 @@ export async function POST(
       let fullPriceBreakdown;
       try {
         fullPriceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-          ownerMemberId: booking.memberId,
+          ownerMemberId: bookingOwner(booking).memberId,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           guests: allGuestsForPricing,
@@ -659,8 +664,8 @@ export async function POST(
        *
        * It PARKS, exactly as the batch edit, the date change and the guest
        * removal do: the guests are created and charged nothing, the booking's
-       * own totals do not move, and one OPEN task per unreadable strand asks a
-       * person what this booking is really worth.
+       * own totals do not move, and ONE OPEN task for the whole add (#3498) asks
+       * a person what this booking is really worth.
        */
       const addEvidence = preCheckInEditEvidence({
         bookingId,
@@ -685,7 +690,7 @@ export async function POST(
        * is known. What does not happen is a reprice of the booking, a promotion
        * recalculation, or an additional charge.
        */
-      const parked = addEvidence.occurrences.length > 0;
+      const parked = addEvidence.occurrences !== null;
 
       /**
        * The breakdown row for one position of the party pass.
@@ -854,7 +859,7 @@ export async function POST(
         const application = await validateAndCalculatePromoDiscount(
           promo,
           {
-            memberId: booking.memberId,
+            memberId: bookingOwner(booking).memberId,
             bookingCheckIn: booking.checkIn,
             totalPriceCents: newTotalPriceCents,
             guests: guestNightRates,
@@ -982,14 +987,39 @@ export async function POST(
        * took its status list from the eligibility gate above instead, omitting
        * COMPLETED. Worked example in `docs/invariants/single-source-of-truth.md`.
        *
-       * The SUCCEEDED-only test below is deliberately left alone rather than
-       * folded into `hasCapturedPayment`: that would newly treat a refunded
-       * payment as settled and charge a card, which is a money decision this
-       * issue does not make.
+       * #3244 finished the job #3200 left: the SUCCEEDED-only test that used to
+       * sit here is now `hasCapturedPayment`, the same predicate the other three
+       * doors reach through `applyPaymentAdjustments`
+       * (`booking-modify-settlement.ts`). All four now answer "has money
+       * already moved through this card?" identically. Owner decision, 17 Sep
+       * 2026, on #3244 — the alternative of treating a fully-refunded booking
+       * as unpaid was rejected because it would have replaced one divergence
+       * with another.
+       *
+       * It WIDENS and does not narrow. `PARTIALLY_REFUNDED` and `REFUNDED` now
+       * count as paid, so the difference is charged instead of collected from
+       * nobody — the reachable defect this issue was filed for.
+       *
+       * It asks `isCapturedPaymentStatus`, the STATUS half, rather than the
+       * full `hasCapturedPayment` the other three doors use. That is deliberate
+       * and it is the one place this door differs from them. The full predicate
+       * also requires `amountCents > 0`, and a ZERO-DOLLAR booking — a stay
+       * fully covered by credit or a 100% promo — carries
+       * `{ amountCents: 0, status: SUCCEEDED }`. Using it here would have made
+       * this door stop asking that member for the added guest's price, because
+       * the Xero arm below cannot cover them at a club with the integration off.
+       * That is a NEW under-collection, at the very door this issue exists to
+       * stop under-collecting at, and it was never put to the owner.
+       *
+       * The money IS collectable: the additional-payment mint creates a FRESH
+       * intent and only reuses the Stripe customer (`findOrCreateCustomer` when
+       * there is none), so a null `stripePaymentIntentId` on the zero-dollar row
+       * is no obstacle. The other three doors share that hole; converging onto
+       * it would have been converging onto a defect. Filed separately.
        */
       const hasSettledPayment =
         isSettledBookingStatus(booking.status) &&
-        booking.payment?.status === "SUCCEEDED";
+        isCapturedPaymentStatus(booking.payment?.status ?? "");
       const hasSucceededPayment =
         hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
       const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
@@ -1035,10 +1065,12 @@ export async function POST(
         additionalAmountCents = priceDiffCents;
       }
 
-      // This route only adds guests, so the no-adult rule can only
-      // change from flagged → cleared (by adding an adult). When that
-      // happens, wipe the review state and release the booking from
-      // AWAITING_REVIEW. The rule cannot newly trip through this route.
+      // This route only adds guests, so the no-adult rule can only change
+      // from flagged → cleared (by adding an adult). When that happens, wipe
+      // the review state IN PLACE: the booking keeps its status. It cannot be
+      // parked in AWAITING_REVIEW here — the edit door above refuses that
+      // status — so the only release from review is the officer review route
+      // (#3500, `INV-MOD-013`). The rule cannot newly trip through this route.
       const reviewCleared = booking.requiresAdminReview && !requiresAdminReview;
       const reviewFieldUpdates = reviewCleared
         ? {
@@ -1055,11 +1087,6 @@ export async function POST(
             adminReviewReason,
           };
 
-      const newStatus =
-        reviewCleared && booking.status === "AWAITING_REVIEW"
-          ? "PAYMENT_PENDING"
-          : holdAdjustedStatus;
-
       const updatedBooking = await tx.booking.update({
         where: { id: bookingId },
         data: {
@@ -1069,7 +1096,7 @@ export async function POST(
           finalPriceCents: newFinalPriceCents,
           hasNonMembers,
           nonMemberHoldUntil,
-          status: newStatus,
+          status: holdAdjustedStatus,
           ...reviewFieldUpdates,
         },
         include: { guests: true, payment: true },
@@ -1151,19 +1178,27 @@ export async function POST(
        * The raise ITSELF - the settlement payment id, the strand's member, the
        * null amount - is `raiseParkedEditFinancialReviewTasks`, stated once
        * there rather than four times across the four parked doors (`INV-SSOT`).
-       * A no-op when this add priced normally.
+       * Skipped entirely when this add priced normally.
+       *
+       * A PURE ADD moves no existing strand's nights, so it always composes to
+       * ONE item however large the party (`parkedEditWorkItems`).
        */
-      await raiseParkedEditFinancialReviewTasks({
-        booking,
-        guests: booking.guests,
-        // The whole point of this door: the guests just added, priced at what
-        // they are genuinely being sold for, against a booking total that is
-        // written back unchanged. That money is owed and nothing else records it.
-        addedGuests: createdGuests,
-        occurrences: addEvidence.occurrences,
-        bookingModificationId: bookingModification.id,
-        store: tx,
-      });
+      if (addEvidence.occurrences !== null) {
+        await raiseParkedEditFinancialReviewTasks({
+          booking,
+          guests: booking.guests,
+          // The whole point of this door: the guests just added, priced at what
+          // they are genuinely being sold for, against a booking total that is
+          // written back unchanged. That money is owed and nothing else records
+          // it - and on a PURE ADD no existing strand gives back or gains a
+          // night, so the item is raised on strands the edit did not touch and
+          // this figure is the only thing on it naming the money (#3498).
+          addedGuests: createdGuests,
+          occurrences: addEvidence.occurrences,
+          bookingModificationId: bookingModification.id,
+          store: tx,
+        });
+      }
 
       return {
         booking: updatedBooking,
@@ -1182,9 +1217,10 @@ export async function POST(
         xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
         paymentId: booking.payment?.id ?? null,
         paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
-        memberEmail: booking.member.email,
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-        memberId: booking.memberId,
+        memberEmail: bookingOwner(booking).member.email,
+        memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
+        memberFirstName: bookingOwner(booking).member.firstName,
+        memberId: bookingOwner(booking).memberId,
         addedGuestNames: normalizedNewGuests.map((guest) => `${guest.firstName} ${guest.lastName}`),
         bookingModificationId: bookingModification.id,
         // MG2 #2307: the cross-family rows to tell about, matched to the guest
@@ -1248,7 +1284,7 @@ export async function POST(
       try {
         await sendFamilyMemberBookingAddNotifications({
           bookingId,
-          bookerMemberId: result.booking.memberId,
+          bookerMemberId: bookingOwner(result.booking).memberId,
           actorMemberId: session.user.id,
           addedMemberIds: result.familyAddMemberIds,
         });
@@ -1281,7 +1317,7 @@ export async function POST(
       action: "booking.modify.guests.add",
       memberId: session.user.id,
       targetId: bookingId,
-      subjectMemberId: result.booking.memberId,
+      subjectMemberId: bookingOwner(result.booking).memberId,
       entityType: "BookingModification",
       entityId: result.bookingModificationId,
       category: "booking",
@@ -1322,10 +1358,20 @@ export async function POST(
     );
 
     // Send email
-    const member = await prisma.member.findUnique({
-      where: { id: result.booking.memberId },
-    });
-    if (member && notifyMember !== false) {
+    // #3369: the OWNER, not a re-read of a member row. A school's booking has no
+    // member to re-read, and the projection carries the same person-shaped name
+    // and address the invented school member used to supply — so the school still
+    // receives the message it received before this stage, at the same address.
+    // The relation was loaded in the same transaction, so this is no staler than
+    // the read it replaces.
+    // #3369: the owner as the transaction already resolved them — a school's
+    // booking has no member row to re-read, and these are the person-shaped
+    // projection the invented school member used to supply.
+    const member = {
+      email: result.memberEmail,
+      firstName: result.memberFirstName,
+    };
+    if (notifyMember !== false) {
       /*
         #3032 (epic #2797): whether the club is still working out an amount on
         this booking as the email is written. The booking's CURRENT state, read
@@ -1347,7 +1393,7 @@ export async function POST(
 
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
-        recipientMemberId: member.id,
+        recipientMemberId: result.memberId,
         email: member.email,
         firstName: member.firstName,
         modificationType: "GUEST_ADD",

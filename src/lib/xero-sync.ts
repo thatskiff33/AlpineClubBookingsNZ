@@ -12,6 +12,7 @@ import {
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import type { XeroInvoiceEmailInstruction } from "@/lib/xero-invoice-email-instruction";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -24,6 +25,18 @@ export interface XeroSyncOperationInput {
   correlationKey?: string | null;
   replayable?: boolean;
   requestPayload?: unknown;
+  /**
+   * The creation-time Xero-invoice-email delivery instruction for this
+   * operation (#2929), or absent where the enqueuer has no such choice to
+   * express — which is every enqueuer but the on-behalf booking create.
+   *
+   * Written once here and NEVER updated afterwards, for the same reason
+   * `queueType` is: the handlers that rewrite `requestPayload` wholesale would
+   * otherwise destroy it on the first provider round-trip. Typed rather than a
+   * bare string so an enqueuer cannot invent a third value, and read back only
+   * through `readXeroInvoiceEmailInstruction`.
+   */
+  invoiceEmailDelivery?: XeroInvoiceEmailInstruction | null;
   createdByMemberId?: string | null;
 }
 
@@ -43,8 +56,19 @@ export interface XeroObjectLinkInput {
    * {status,total,appliedAmount,remainingCredit} onto links whose outbound
    * writer stored {amountCents,watermarkCents} — a replace destroyed the
    * per-delta idempotency/covering inputs minutes after every refund credit
-   * note was created. Only inbound writers should set this; outbound writers
-   * own their metadata shape and keep replace semantics.
+   * note was created.
+   *
+   * THE TEST IS "DOES ONE CALL KNOW THE WHOLE SHAPE?", NOT "IS THIS INBOUND?".
+   * A writer composing its row's metadata in ONE call owns that shape and keeps
+   * replace semantics, which is every outbound writer but one; inbound
+   * reconcile is the original case because it writes half of a shape somebody
+   * else wrote. The one OUTBOUND exception is deliberate (#3367): the school
+   * contact-link writer in `organisation-xero-contact-persons.ts`, whose row
+   * carries `linkedVia` written once at first link and a contact-persons
+   * fingerprint rewritten on every refresh. Replacing would make the FIRST
+   * refresh drop the provenance the adopted-contact reshape depends on, so
+   * "correcting" it back on the strength of the general rule disables that
+   * reshape without failing anything.
    */
   mergeMetadata?: boolean;
 }
@@ -130,6 +154,35 @@ function normalizePayloadHashValue(value: unknown): unknown {
   );
 }
 
+/**
+ * The short hash of an outbound Xero payload, feeding
+ * `XeroSyncOperation.idempotencyKey` — and, through it, the `Idempotency-Key`
+ * header Xero itself deduplicates on.
+ *
+ * ## Deliberately NOT routed through `stableDigest` (#3250/#3251/#3252)
+ *
+ * The sweep that gave deterministic identity one home left this one alone ON
+ * PURPOSE, and this note exists so the next reader does not "finish the job".
+ *
+ * `stableDigest` sorts object keys recursively before hashing. This does not: it
+ * preserves insertion order, deliberately. Every idempotency key already stored
+ * in `XeroSyncOperation` was derived under insertion order, so sorting the keys
+ * would re-derive EVERY one of them. A retry or replay would then present Xero
+ * with a key it has never seen for a document it has already accepted, and Xero
+ * would create a SECOND invoice, credit note or payment. The failure is a
+ * duplicate financial document at the provider, which no later code change can
+ * take back.
+ *
+ * The property `stableDigest` exists to give — "the same data hashes the same
+ * however its keys were ordered" — is not wanted here either. This hash asks a
+ * narrower question: *is the request I am about to send byte-for-byte the
+ * request I sent before?* An outbound payload is built by one code path in one
+ * order, so insertion order is stable in practice, and a change in that order IS
+ * a change in the request.
+ *
+ * `identity-ordering-census.test.ts` records this exclusion by name, so removing
+ * it is a deliberate act rather than a tidy-up.
+ */
 export function buildXeroPayloadHash(payload: unknown): string {
   // Idempotency keys must change when the outbound request changes, including
   // fields that are redacted before storage such as email addresses and phone numbers.
@@ -418,6 +471,11 @@ export async function startXeroSyncOperation(
         replayable: input.replayable ?? true,
         requestPayload,
         queueType,
+        // #2929: immutable after enqueue, exactly like `queueType` above and
+        // for the same reason — the booking-invoice handler rewrites
+        // `requestPayload` wholesale before its first provider call, so the
+        // instruction cannot live there and survive a retry.
+        invoiceEmailDelivery: input.invoiceEmailDelivery ?? null,
         createdByMemberId: input.createdByMemberId ?? null,
         startedAt: input.status === "PENDING" ? null : new Date(),
       },

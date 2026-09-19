@@ -11,7 +11,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 
-import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
+import {
+  describeUniqueConstraintTarget,
+  isPrismaUniqueConstraintError,
+} from "@/lib/prisma-errors";
 import { isLoginEmailUniqueConflict } from "@/lib/member-email";
 import {
   compositeCollisionError,
@@ -376,5 +379,57 @@ describe("createGroupBooking join-code collision retry", () => {
       message: "This booking already has a group",
     });
     expect(prisma.groupBooking.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * THE ONE P2002 PREDICATE (#2723). There used to be three: this one, a copy in
+ * `config-self-heal.ts` that also tested `instanceof
+ * Prisma.PrismaClientKnownRequestError`, and a third written into the credential
+ * claim module with only the duck-typed half. Three copies of one rule is three
+ * places to edit when unique violations start arriving under a second code, and
+ * the copy nobody remembers is the one that then rethrows instead of yielding to
+ * the winner of a race. They are one function now.
+ *
+ * The first case is what the deleted `instanceof` branch used to cover, and it
+ * is why folding that copy in loses nothing: a real
+ * `PrismaClientKnownRequestError` carries `code` as its own property, so the
+ * structural check answers for the class too. It is asserted against the real
+ * class rather than a look-alike, because that is the whole question.
+ */
+describe("isPrismaUniqueConstraintError — the one home (#2723)", () => {
+  it("detects a real PrismaClientKnownRequestError, class and all", () => {
+    expect(
+      isPrismaUniqueConstraintError(
+        new Prisma.PrismaClientKnownRequestError("duplicate key", {
+          code: "P2002",
+          clientVersion: "7.9.0",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("detects a structural P2002, plain object or Error", () => {
+    expect(isPrismaUniqueConstraintError({ code: "P2002" })).toBe(true);
+    expect(
+      isPrismaUniqueConstraintError(
+        Object.assign(new Error("dup"), { code: "P2002" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects everything else, including a neighbouring Prisma code", () => {
+    expect(
+      isPrismaUniqueConstraintError(
+        new Prisma.PrismaClientKnownRequestError("fk", {
+          code: "P2003",
+          clientVersion: "7.9.0",
+        }),
+      ),
+    ).toBe(false);
+    expect(isPrismaUniqueConstraintError(new Error("boom"))).toBe(false);
+    expect(isPrismaUniqueConstraintError({ code: "P2003" })).toBe(false);
+    expect(isPrismaUniqueConstraintError(null)).toBe(false);
+    expect(isPrismaUniqueConstraintError(undefined)).toBe(false);
   });
 });

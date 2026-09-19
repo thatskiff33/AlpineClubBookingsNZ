@@ -96,7 +96,10 @@ export async function POST(request: Request) {
   // left to leak.
   let apiKeyCleared = false;
   if (changingBaseUrl && before.baseUrl !== settings.baseUrl) {
-    await clearServerNzApiKey();
+    await clearServerNzApiKey({
+      kind: "admin",
+      memberId: guard.session.user.id,
+    });
     apiKeyCleared = true;
   }
 

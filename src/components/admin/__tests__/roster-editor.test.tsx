@@ -176,6 +176,24 @@ describe("RosterEditor staged whole-roster editing", () => {
     expect(confirmMock).toHaveBeenCalledTimes(2)
   })
 
+  it("does not pull focus to an invalid row while the admin is fixing a different one (#2934)", () => {
+    renderEditor()
+    fireEvent.click(screen.getByRole("button", { name: "Edit roster" }))
+    const kitchen = screen.getByText("Kitchen").closest("div")?.parentElement?.parentElement
+    fireEvent.click(within(kitchen as HTMLElement).getByRole("button", { name: "+ Add Person" }))
+    const emptySelect = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((select) => select.value === "")!
+    expect(emptySelect).toBe(document.activeElement)
+
+    // The admin leaves the empty row for later and changes a different, valid
+    // row. That re-renders the row errors; it is not a new failure, and focus
+    // stays where the admin put it.
+    const first = screen.getAllByRole("combobox")[0] as HTMLSelectElement
+    first.focus()
+    fireEvent.change(first, { target: { value: "younger" } })
+    expect(document.activeElement).toBe(first)
+    expect(screen.getByText("Choose a person before saving this roster.")).toBeTruthy()
+  })
+
   it("preserves the draft and focuses actionable global and row failures", async () => {
     const stale = "This roster changed while you were editing. Your changes were not saved. Reload the latest roster and try again."
     const fetchMock = vi.fn()

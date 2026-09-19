@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireCalendarDate } from "@/lib/club-time";
+import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -371,14 +372,11 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
  * Give every fixture guest stored night rows that reconcile with their total
  * (#3166), unless the case supplied its own.
  *
- * Every edit path is now judged on exact stored sold-price evidence, so a guest
- * with no `BookingGuestNight` rows PARKS the edit for financial review — nothing
- * is repriced, nothing settles, and not one payment assertion in this file can
- * run. That is the gate doing its job; it is not what this suite is about. So
- * the DEFAULT fixture guest is the ordinary readable one, and the cases that
- * genuinely mean to describe unreadable history pass `nights` themselves (the
- * `NO_STORED_NIGHT_PRICES` and `STORED_TOTAL_MISMATCH` cases below), which this
- * leaves untouched.
+ * A whole-guest operation can reconcile these historical rows to the stored
+ * guest total. Since #3277 an operation that consumes individual nights needs
+ * `SOLD` or `OFFICER_PRICED` provenance; those tests opt in explicitly through
+ * `withSoldNightProvenance`. Cases that genuinely mean unreadable history pass
+ * `nights` themselves, which this leaves untouched.
  *
  * The rows are an even split with the remainder on the first night, so they sum
  * to the stored total EXACTLY — an approximate split would not reconcile, and a
@@ -419,6 +417,16 @@ function reconcilingNightRows<G extends Record<string, unknown>>(
       })),
     };
   });
+}
+
+function withSoldNightProvenance<T>(booking: T): T {
+  const guests = (booking as {
+    guests: Array<{ nights: Array<{ priceSource: string }> }>;
+  }).guests;
+  for (const guest of guests) {
+    for (const night of guest.nights) night.priceSource = "SOLD";
+  }
+  return booking;
 }
 
 function makeTx(booking: ReturnType<typeof makeBooking>) {
@@ -921,7 +929,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
   }, 10_000);
 
   it("real service path preserves sparse added-guest nights and forwards both hosting approvals", async () => {
-    const booking = makeBooking();
+    const booking = withSoldNightProvenance(makeBooking());
     const tx = makeTx(booking);
     const sparseNight = new Date("2026-08-21T00:00:00.000Z");
     mockCalculateBookingPrice.mockImplementation(
@@ -2184,6 +2192,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
     await Promise.resolve();
     expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("bk1", {
       createdByMemberId: "m1",
+      // #2929: an edit settlement has no creation-time email choice.
+      invoiceEmailDelivery: null,
     });
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
   });
@@ -2441,7 +2451,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
           changeFeeCents: 0,
         },
       });
-      const tx = makeTx(booking);
+      const tx = makeTx(withSoldNightProvenance(booking));
 
       mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
         fn(tx)
@@ -2958,7 +2968,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
           changeFeeCents: 0,
         },
       });
-      const tx = makeTx(booking);
+      const tx = makeTx(withSoldNightProvenance(booking));
 
       mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
         fn(tx)
@@ -4300,17 +4310,18 @@ describe("PUT /api/bookings/[id]/modify", () => {
       expect(tx.bookingGuest.delete).toHaveBeenCalledWith({ where: { id: "g2" } });
       expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
 
-      // TWO tasks: the unreadable strand, and the readable one whose evidence this
-      // edit is about to delete.
-      expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
-      const occurrences = tx.manualRefundTask.create.mock.calls.map((call) => {
-        const data = (call[0] as { data: { reviewContext: unknown } }).data;
-        const context = data.reviewContext as {
-          occurrence: { cause: string; bookingGuestId: string };
-        };
-        return context.occurrence;
-      });
-      expect(occurrences).toEqual(
+      // ONE task since #3498 (owner decision D1), carrying BOTH strands: the
+      // unreadable one, and the readable one whose evidence this edit is about
+      // to delete. Which strands are recorded is unchanged; how many things an
+      // officer is handed to price is what moved.
+      expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
+      const data = (
+        tx.manualRefundTask.create.mock.calls[0][0] as {
+          data: { reviewContext: unknown };
+        }
+      ).data;
+      const strands = raisedStrands(data.reviewContext);
+      expect(strands).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             bookingGuestId: "g1",
@@ -4322,13 +4333,17 @@ describe("PUT /api/bookings/[id]/modify", () => {
           }),
         ]),
       );
+      // And the item LEADS with the strand the edit actually moves - the guest
+      // who left, whose nights are the money - rather than with whichever strand
+      // the planner happened to walk first.
+      expect(strands[0]!.bookingGuestId).toBe("g2");
     });
 
     it("CONTROL: the identical edit on a readable booking still prices and settles", async () => {
       // Without this, every case above would pass against a gate that parked
       // EVERY pre-check-in edit — which would be a far worse defect than the one
       // being fixed, and invisible from the assertions alone.
-      const tx = makeTx(makeBooking());
+      const tx = makeTx(withSoldNightProvenance(makeBooking()));
 
       const result = await runPreCheckInBatch(tx, { checkOut: "2026-08-23" });
 

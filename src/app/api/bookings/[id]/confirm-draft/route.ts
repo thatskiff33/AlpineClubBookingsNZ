@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner, bookingOwnerAgeTier } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { auth } from "@/lib/auth";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -79,14 +80,15 @@ export async function POST(
 
   const booking = await prisma.booking.findUnique({
     where: { id },
-    include: { guests: true, member: true, promoRedemption: { include: { promoCode: true } } },
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { guests: true, member: true, organisation: { select: { name: true, email: true } }, promoRedemption: { include: { promoCode: true } } },
   });
 
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && !isAdmin) {
+  if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -117,7 +119,7 @@ export async function POST(
   const seasonYear = seasonYearOfStoredDate(new Date(booking.checkIn));
   try {
     await assertMembershipTypeBookingAllowed(prisma, {
-      ownerMemberId: booking.memberId,
+      ownerMemberId: bookingOwner(booking).memberId,
       guests: booking.guests,
       seasonYear,
       // Finding 2 (privacy re-review of MG3 #2308). These are the booking's
@@ -161,14 +163,23 @@ export async function POST(
   if (
     subscriptionLockoutMode === "HARD_BLOCK" &&
     !isAdmin &&
-    await requiresPaidSubscriptionForMemberForBooking(prisma, {
-      memberId: booking.memberId,
+    // #3369: the lockout gate asks whether the OWNER has paid their own
+    // subscription. An organisation holds none — and the invented school member
+    // held none either, so the gate never bit on a school booking. `false`
+    // keeps that exactly true.
+    bookingOwner(booking).memberId !== null &&
+    (await requiresPaidSubscriptionForMemberForBooking(prisma, {
+      memberId: bookingOwner(booking).memberId as string,
       seasonYear,
-      ageTier: booking.member.ageTier,
-    })
+      ageTier: bookingOwnerAgeTier(booking),
+    }))
   ) {
     const paidSub = await prisma.memberSubscription.findFirst({
-      where: { memberId: booking.memberId, seasonYear, status: "PAID" },
+      where: {
+        memberId: bookingOwner(booking).memberId as string,
+        seasonYear,
+        status: "PAID",
+      },
     });
     if (!paidSub) {
       const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
@@ -196,7 +207,7 @@ export async function POST(
       // Owner decision, 3 Aug 2026: the requirement follows an unfinancial member
       // whether or not they hold a bed on their own draft. The HARD_BLOCK gate
       // directly above refuses this same person as a person.
-      bookingOwnerMemberId: booking.memberId,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
       participants: toSubscriptionLockoutParticipants(booking.guests),
     });
     if (nonMemberPricing?.violation) {
@@ -348,9 +359,9 @@ export async function POST(
 
   // Fire-and-forget: confirmation email + Xero invoice
   sendBookingConfirmedEmail(
-    { bookingId: booking.id, recipientMemberId: booking.memberId },
-    booking.member.email,
-    booking.member.firstName,
+    { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+    bookingOwner(booking).member.email,
+    bookingOwner(booking).member.firstName,
     booking.checkIn,
     booking.checkOut,
     booking.guests.length,
@@ -372,6 +383,7 @@ export async function POST(
 
   void enqueueXeroBookingInvoiceOperation(id, {
     createdByMemberId: session.user.id,
+    invoiceEmailDelivery: null,
   })
     .then(async (queuedInvoice) => {
       if (!queuedInvoice.queueOperationId) {

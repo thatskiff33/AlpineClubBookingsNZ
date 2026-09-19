@@ -102,6 +102,8 @@ Conventions carried through every guide, matching the domain rules in
 - **[Changing or cancelling a booking](changing-or-cancelling-a-booking.md)** —
   changing dates or guests, cancelling, and understanding whether you get a
   refund or account credit.
+- **[Who's at the lodge](whos-at-the-lodge.md)** — the next 30 nights of who
+  is staying, names and nights only, if your club has the roster switched on.
 - **[The message board](the-message-board.md)** — writing to the club and
   reading what other members have written. Club-only for now; the share-with-
   other-clubs option is visible but not yet available.

@@ -1,11 +1,9 @@
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { CalendarEvent } from "@prisma/client";
 
-// buildMeetingJoinUrl now pulls in the server-only mirotalk-token module; the
-// client-boundary guard must be neutralised for this Node test.
-vi.mock("server-only", () => ({}));
+// The MiroTalk join link moved to `mirotalk-config.ts` with #2940, and with it
+// the server-only import this file used to need; its own suite covers the link.
 import {
-  buildMeetingJoinUrl,
   resolveCalendarEventDates,
   serializeCalendarEvent,
 } from "@/lib/calendar-events";
@@ -49,94 +47,6 @@ describe("resolveCalendarEventDates", () => {
       allDay: false,
     });
     expect("error" in result).toBe(true);
-  });
-});
-
-describe("buildMeetingJoinUrl", () => {
-  const savedRuntime = process.env.MIROTALK_URL;
-  const savedPublic = process.env.NEXT_PUBLIC_MIROTALK_URL;
-  const savedNextAuth = process.env.NEXTAUTH_URL;
-
-  afterEach(() => {
-    if (savedRuntime === undefined) delete process.env.MIROTALK_URL;
-    else process.env.MIROTALK_URL = savedRuntime;
-    if (savedPublic === undefined) delete process.env.NEXT_PUBLIC_MIROTALK_URL;
-    else process.env.NEXT_PUBLIC_MIROTALK_URL = savedPublic;
-    if (savedNextAuth === undefined) delete process.env.NEXTAUTH_URL;
-    else process.env.NEXTAUTH_URL = savedNextAuth;
-    // Token vars are never set in the base cases; clear any a test set so the
-    // no-token assertions elsewhere in this file are not affected.
-    delete process.env.MIRO_JWT_KEY;
-    delete process.env.MIRO_MEETING_USERNAME;
-    delete process.env.MIRO_MEETING_PASSWORD;
-    delete process.env.MIRO_MEETING_PRESENTER;
-  });
-
-  it("falls back to the localhost MiroTalk dev instance for a loopback app host", () => {
-    delete process.env.MIROTALK_URL;
-    delete process.env.NEXT_PUBLIC_MIROTALK_URL;
-    delete process.env.NEXTAUTH_URL; // getAppBaseUrl → http://localhost:3000
-    expect(buildMeetingJoinUrl("room-abc")).toBe(
-      "http://localhost:3010/join/room-abc",
-    );
-  });
-
-  it("derives https://meet.<app-domain> from NEXTAUTH_URL when MIROTALK_URL is unset", () => {
-    delete process.env.MIROTALK_URL;
-    delete process.env.NEXT_PUBLIC_MIROTALK_URL;
-    process.env.NEXTAUTH_URL = "https://lwtc.org.nz";
-    expect(buildMeetingJoinUrl("room-abc")).toBe(
-      "https://meet.lwtc.org.nz/join/room-abc",
-    );
-  });
-
-  it("drops a leading www. when deriving the meet.<domain> default", () => {
-    delete process.env.MIROTALK_URL;
-    delete process.env.NEXT_PUBLIC_MIROTALK_URL;
-    process.env.NEXTAUTH_URL = "https://www.lwtc.org.nz";
-    expect(buildMeetingJoinUrl("xyz")).toBe(
-      "https://meet.lwtc.org.nz/join/xyz",
-    );
-  });
-
-  it("uses the runtime MIROTALK_URL (server-only, no rebuild)", () => {
-    process.env.MIROTALK_URL = "https://meet.lwtc.org.nz";
-    expect(buildMeetingJoinUrl("xyz")).toBe(
-      "https://meet.lwtc.org.nz/join/xyz",
-    );
-  });
-
-  it("uses the query-form URL with room + token when JWT access is configured", () => {
-    process.env.MIROTALK_URL = "https://meet.lwtc.org.nz";
-    process.env.MIRO_JWT_KEY = "shared-key";
-    process.env.MIRO_MEETING_USERNAME = "lwtc";
-    process.env.MIRO_MEETING_PASSWORD = "pw";
-    const url = buildMeetingJoinUrl("xyz");
-    // MiroTalk only honours the token on /join?room=…&token=… (not /join/<room>).
-    expect(url.startsWith("https://meet.lwtc.org.nz/join?")).toBe(true);
-    const params = new URL(url).searchParams;
-    expect(params.get("room")).toBe("xyz");
-    // A three-part JWT in token=.
-    expect((params.get("token") ?? "").split(".")).toHaveLength(3);
-  });
-
-  it("assumes https for a bare host with no scheme", () => {
-    process.env.MIROTALK_URL = "meet.lwtc.org.nz";
-    expect(buildMeetingJoinUrl("xyz")).toBe(
-      "https://meet.lwtc.org.nz/join/xyz",
-    );
-  });
-
-  it("ignores the dead build-time NEXT_PUBLIC_MIROTALK_URL (only MIROTALK_URL is honoured)", () => {
-    // NEXT_PUBLIC_MIROTALK_URL is inlined at build time and never reached this
-    // server-only path; with MIROTALK_URL unset we fall back to the app-domain
-    // default, NOT the baked value.
-    delete process.env.MIROTALK_URL;
-    process.env.NEXT_PUBLIC_MIROTALK_URL = "https://baked.example.org";
-    process.env.NEXTAUTH_URL = "https://lwtc.org.nz";
-    expect(buildMeetingJoinUrl("xyz")).toBe(
-      "https://meet.lwtc.org.nz/join/xyz",
-    );
   });
 });
 

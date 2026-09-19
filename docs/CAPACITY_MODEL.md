@@ -79,7 +79,12 @@ ceiling bump:
 - **Resolution:** `getLodgePartnerSharedCapacityStatus`
   (`src/lib/lodge-capacity.ts`) returns the base status plus
   `activeDoubleBedCount` and `partnerSharedHeadroom`. It is a separate
-  resolver so ordinary availability checks pay no extra query.
+  resolver so ordinary availability checks pay no extra query. The formula
+  itself is `resolvePartnerSharedHeadroom` in
+  `src/lib/lodge-effective-capacity.ts` (#2724), beside the effective-capacity
+  rule it is a second reading of; the admin capacity field previews it from
+  there so it can tell an officer what a typed capacity costs or buys in
+  partner spots.
 
 Per-night admission rule (owner decision, #1745): admit if a base slot is
 free, OR the guest is an eligible partner-sharer **and**
@@ -184,12 +189,12 @@ is listed last for exactly that reason.)
 
 | Surface | Terms 1-3 | Whole-lodge hold (term 4) | Why |
 |---|---|---|---|
-| `checkCapacity` | **Yes** | `occupiedBeds` pinned to `lodgeCapacity`, `availableBeds` pinned to 0 | A member reading this payload (#155) must not be able to tell a held night from a genuinely full one (decision 6) |
+| `checkCapacity` | **Yes** | `occupiedBeds` pinned to a full lodge — the hold's represented beds plus the custodian beds it excludes (`INV-CAP-038`) — and `availableBeds` pinned to 0 | A member reading this payload (#155) must not be able to tell a held night from a genuinely full one (decision 6). Composed from the two disjoint sets rather than written as `lodgeCapacity`, so a hold that re-claimed the custodian's bed would break the contract instead of hiding inside it |
 | `checkCapacityForGuestRanges` | **Yes** | `availableBeds` pinned to 0; `occupiedBeds` **not** pinned | Its `occupiedBeds` is existing occupancy *plus the proposal being tested*; pinning would discard the proposal. Every consumer reads `availableBeds` / `wholeLodgeHeld` |
 | `checkCapacityForPartnerSharedAdmission` | **Yes** | `availableBeds` pinned to 0 and surfaced as a refusal `reason` | A hold is not bypassable by any admin override (decision 5) |
-| `getMonthAvailability` | **Yes** | Reported as a full lodge | A held-but-not-full night on the public calendar would otherwise leak the hold |
+| `getMonthAvailability` | **Yes** | Reported as a full lodge, composed the same way | A held-but-not-full night on the public calendar would otherwise leak the hold |
 | Capacity-warnings cron | **Yes** | Reported as a full lodge, so the warning fires | An exclusive hold leaves no bookable bed, however small the holding group is |
-| Custodian bed-hold write path (`validateCustodianBedHold`) | **Yes** | **Deliberately not pinned** | Policy, not arithmetic: a hold and a custodian bed do not block each other in either direction (see "Whole-lodge holds and custodian beds do not block each other" below). Pinning would refuse a hut leader a bed the club intends them to occupy |
+| Custodian bed-hold write path (`validateCustodianBedHold`) | **Yes** | **Deliberately not pinned** | Arithmetic since #2698, not bare policy: a hold does not represent a custodian-held bed-night (`INV-CAP-038`, see "The custodian's bed sits outside the held pool" below), so holding a bed on a held night moves one bed between two disjoint sets and tips nothing over. Pinning would refuse a hut leader a bed the club intends them to occupy |
 | Admin reports `occupancyByDate` | **Term 1 only** | Not counted | Utilisation measures how much the lodge was *booked*; see the custodian table below |
 
 The nightly capacity-warnings cron is the surface this inventory exists for. It
@@ -250,6 +255,37 @@ mechanism exists to prevent.
 Only an **explicit** per-lodge capacity acts as a ceiling. The unconfigured
 fallback (0) is never a ceiling, so enabling Bed Allocation on a lodge keeps
 using the bed count unless a capacity is set.
+
+**Where the arithmetic lives (#2724).** The three steps above are one pure
+function, `resolveEffectiveLodgeCapacity` in
+`src/lib/lodge-effective-capacity.ts` — deliberately free of Prisma, config and
+React imports so both sides can read it (`INV-SSOT-001`). The partner-shared
+headroom formula below is the same capacity-versus-beds relationship and lives
+there too, as `resolvePartnerSharedHeadroom`, alongside the save bounds
+(`parseConfiguredLodgeCapacity`). `getLodgeCapacityStatus` and
+`getLodgePartnerSharedCapacityStatus` resolve the real figures through them,
+`/api/admin/lodge-settings` validates against the same bounds — as do both
+screens that edit the field, the lodge configuration hub and the **Setup**
+screen's lodge settings card — and the admin lodge configuration screen
+(`/admin/lodges/[id]`) previews all three against a capacity the admin has
+typed but not yet saved. That is what stops the
+explanation on screen drifting from what the server will do; an import census
+in `src/lib/__tests__/lodge-effective-capacity.test.ts` records the readers —
+in every import form, and stating plainly that it cannot see a hand
+re-derivation even inside a file it lists.
+
+**Capacity above the bed count is allowed, and explained (#2724).** An admin
+may deliberately set a capacity higher than the beds installed so far, meaning
+to install the rest later. The save is accepted — blocking it would remove a
+useful configuration, and rewriting it would lose the intent — and the screen
+names the figures instead: the configured capacity, the active bed count, the
+effective capacity that governs until more beds are activated, **and the
+partner spots the surplus allows straight away**. Step 1 above is what makes
+accepting it safe: with beds present, no configured value can ever resolve
+above them. The surplus is not inert while the beds are awaited — see the
+ceiling interplay above, and "Admin surface" for what the screen says. The
+existing below-the-beds capping warning is unchanged apart from naming the same
+partner consequence.
 
 ## Scenario table
 
@@ -325,32 +361,123 @@ the last row, the admin utilisation report, still reads the population directly.
    out of that room for the whole season. This is conservative and correct — an
    unrelated adult really does sleep there.
 
-**Whole-lodge holds and custodian beds do not block each other.** This is a
-deliberate policy, and it is worth being exact about *why*, because the obvious
-explanation is wrong.
+**The custodian's bed sits outside the held pool (#2698, `INV-CAP-038`).** A
+whole-lodge hold represents every bed of its lodge **except** the bed-nights a
+custodian holds, night by night.
 
-The custodian's bed is **not** outside the held pool. `getLodgeCapacityStatus`
-resolves capacity from every active bed, the custodian's included — the whole
-#2286 design counts the custodian as an occupant of a capacity bed rather than
-as a smaller ceiling — and `wholeLodgeHoldOccupiedBedNightsForPlanner` (#2317)
-expands a hold across every active bed too, so on the planner the same bed-night
-carries both.
+That sentence was in this document for a long time before it was true. Until
+#2698 the code did the opposite: `wholeLodgeHoldOccupiedBedNightsForPlanner`
+(#2317) expanded a hold across every active bed, so the custodian's bed-night
+was claimed twice — once by the held group and once by the custodian — and PR
+#2696 corrected this page to say so. The owner's answer (9 Aug 2026) was to fix
+the code rather than keep the correction: the two really should not contend, so
+the exclusion is now structural and the original sentence is accurate.
 
-What is true is that neither refuses the other. Setting a hold never lists a
-custodian as a conflict, and a custodian hold can be created over held nights
-and vice versa. On a held night the ADR-001 pin still presents a full lodge to
-every member-facing surface; on the hold's own admission path the group's
-headcount is checked *with* the custodian counted, so an over-size group
-surfaces as over-capacity for explicit admin confirmation instead of silently
-displacing them.
+**What this does and does not change.** It changes who a bed-night belongs to,
+never how many beds there are. The lodge is still full on a held night: the hold
+represents `capacity − custodian beds` and the custodian occupies the rest, so
+every member-facing surface still sees a full lodge (ADR-001 decision 6) and
+`occupiedBeds + availableBeds === lodgeCapacity` still holds on every night (the
+#155 payload contract). It also changes nothing about admission — a held night
+is still hard-blocked at zero beds for everyone else. What it removes is the
+double claim, and with it the contention this section used to describe.
 
-**The gap that leaves, stated rather than implied:** creating a custodian bed
-hold over a night that is already exclusively held raises **no** warning, because
-`validateCustodianBedHold` compares `occupancy + 1` against capacity and the
-holding group's own headcount may be small. The officer is not told the lodge is
-exclusively held for those nights. #2681 did not introduce this and did not
-change it; whether that confirmation should mention held nights is an owner
-decision.
+**The night list a refusal names is part of the same disclosure rule (#2930).**
+A capacity refusal tells the caller which nights did not fit, and for a long
+time it built that list by filtering `availableBeds < 0`. A held night is pinned
+to exactly 0 and never goes negative — the pin above is deliberate and is what
+keeps it out of the admin confirmable set — so a hold-only refusal produced an
+EMPTY list where genuine fullness produced a populated one. The member wizard
+renders whatever it is handed, so this surfaced as "the lodge is at capacity on
+**0 nights**": a tell, in plain sight, in the one place decision 6 is about.
+
+Three member surfaces carried it, not one. The create path said "0 nights"; the
+booking-EDIT quote drew the same "not enough beds" heading over an empty list
+where an ordinary full lodge drew an itemised one, and itemised it with each
+night's SHORTFALL, which a held night has none of; and the group settlement
+refusal handed the organiser an empty `fullNights` the same way. All three now
+name the nights through the one helper, and the member-facing payloads carry
+dates only — the per-night bed numbers survive solely on the admin
+over-capacity confirm, which `adminOverride` gates.
+
+`getCapacityFullNights` (`src/lib/capacity-full-nights.ts`) now counts a held
+night as a full night, so both refusals carry the same list. It is the mirror of
+`overCapacityNights()`, which excludes held nights precisely because an admin
+override may never reach one: never negotiable, and never distinguishable. The
+comparison `availableBeds < 0` was written out in ELEVEN non-test files when the
+defect was found — four byte-identical definitions of this helper reached from
+eight call sites, six more inline under no name at all (the three admin
+overbook routes, group settlement, the member price-summary card's shortfall
+list and the edit panel's over-capacity list), and `overCapacityNights` itself.
+The booking-edit quote route is not among the eleven and never spelled the
+comparison: it leaked by PROJECTING every night's bed numbers and letting that
+card do the filtering. That is how one
+mistake reached every refusal path at once. Two definitions now remain, this one
+and `overCapacityNights`, held there by a census test (`INV-SSOT-001`) that
+matches the comparison rather than the name.
+
+**A member may waitlist over a held night, and cannot be promoted off it.**
+Since #2930 a full future night is selectable in the member calendar — that is
+how the waitlist is reached at all — so an entry can now legitimately sit over a
+held range. Promotion is gated on `checkCapacityForGuestRanges(...).available`,
+which a hold forces false whatever the bed arithmetic says, so the entry keeps
+its queue position until the hold is released rather than being offered or
+dropped.
+
+**Whole-lodge flat pricing is untouched.** `priceWholeLodgeFlat`
+(`src/lib/policies/pricing.ts`) sums a flat per-night season rate and never
+reads a bed count, so a hold whose represented set narrows costs the holding
+group exactly what it did.
+
+**Setting a hold over an existing custodian bed needs no warning.** The
+exclusion is derived at read time from the live custodian holds, so a hold set
+over nights a custodian already covers is correct by construction — it simply
+never represented that bed. `admin-exclusive-hold-controls` is unchanged.
+
+**The other direction is an officer decision, and is asked.** A custodian bed
+hold created or changed over nights an existing whole-lodge hold already covers
+NARROWS somebody else's sole occupancy. That is never done silently: the
+hut-leaders routes return a `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD` naming
+the affected nights and the holding bookings, and the officer either accepts —
+re-sending `amendOverlappingHolds: true`, which writes the assignment and the
+audited acceptance in one transaction under the global cohort key then the
+lodge capacity key — or cancels, in which case nothing on either side changes.
+Because coverage is derived rather than stored, the audited acceptance IS the
+amendment; there is no bed set on the hold row to edit, and no existing hold is
+migrated.
+
+**The acceptance is a boolean, not a fingerprint of what was shown.** The
+refusal names specific nights and holding bookings; the re-send carries only
+`amendOverlappingHolds: true`, so a whole-lodge hold created between the refusal
+and the acceptance would be narrowed without ever having appeared on the
+officer's screen. That is accepted as a stated limit, on both reviewing lenses'
+recommendation over building a confirmation token, because the accept path
+holds the global and per-lodge keys (so the window needs a concurrent hold on
+the same lodge and nights), the audit row records what was actually narrowed
+rather than what was offered, and it mirrors the over-capacity confirmation on
+the same route. **A confirmation token is the fix if any of those three stops
+being true.**
+
+Removing a custodian hold is the mirror image: it widens every overlapping
+hold's represented set, so the hut-leader DELETE takes the lodge capacity key
+too.
+
+**The night-level write-time re-checks are deliberately out of scope.**
+`dropRowsOnWholeLodgeHeldNights` (`bed-allocation-write-rechecks.ts`) and its
+auto-allocation equivalent drop **every** row on a held night, the custodian's
+bed included. That is correct and deliberately stricter than the representation
+rule: nothing may be placed on a custodian's bed anyway, and the sibling
+custodian re-check drops those rows too. They are a third consumer of a
+**different** question — "may this row be written now?", asked at write time —
+not a second inventory of what a hold covers, so they must not be "fixed" into
+subtracting the custodian's bed-night, which would let a booking be written
+onto a held night.
+
+The over-capacity confirmation in `validateCustodianBedHold` still does not pin
+the hold flag, and since #2698 the reason is arithmetic rather than policy:
+holding a bed on a held night moves one bed from the group's set to the
+custodian's and changes the lodge's occupancy by nothing, so there is nothing
+over capacity to confirm.
 
 ### With the bed-allocation module OFF (#2286 review M11)
 
@@ -389,10 +516,34 @@ read custodian rows as orphans and silently delete them.
 On the lodge admin page (`/admin/lodges/[id]`) the **Capacity** card shows the
 resolved figure and its `source` — with any partner-shared headroom broken
 out (`"10 beds + up to 1 partner spot"`, plus a short partner-only
-explainer; #1745) — and the capacity field warns live when the value entered
-is below the active bed count (it will cap the lodge). The allocation board
-still shows all physical beds; a capped lodge simply leaves some beds
-unbooked.
+explainer; #1745). The allocation board still shows all physical beds; a
+capped lodge simply leaves some beds unbooked.
+
+The capacity field itself explains what the value being typed will mean, in
+figures, through the same resolvers the server uses. Two mutually exclusive
+notices, neither of them a validation error (#1653, #2724):
+
+- **Below the active bed count:** it will cap the lodge, and the surplus beds
+  stay allocatable but unbookable. Where the lodge has shareable doubles the
+  notice also says the cap leaves no room for partner spots — a `capped_beds`
+  lodge gets **no** headroom at all.
+- **Above the active bed count:** the save is accepted, only the active beds
+  can be booked for now, and activating more raises the effective capacity up
+  to the configured figure. **The surplus is not inert in the meantime**, and
+  the notice says so: it is the gap the partner-shared headroom is measured
+  against, so it names the partner spots the figure allows and warns that
+  lowering the capacity to the bed count would leave none. Without that
+  sentence the notice reads as "this does nothing until beds arrive", and an
+  officer who lowers the figure to clear it silently zeroes every
+  partner-shared slot the card above is displaying.
+
+A figure outside the save bounds (a whole number from 1 to 100,000) is refused
+by `/api/admin/lodge-settings`; both editors of the field carry the same bounds
+as `min`/`max`, and the notice names the range rather than predicting a save
+that would fail.
+The notice is attached to the field with `aria-describedby` rather than being a
+live region, so it is announced on focus — including to a view-only officer,
+who cannot type at all — and never announces a half-typed figure's sentence.
 
 ## Exceeding the ceiling (admin overbook overrides)
 

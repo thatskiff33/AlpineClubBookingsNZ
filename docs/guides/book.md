@@ -68,6 +68,28 @@ date-only lodge nights. The behaviour and its guardrails are documented in
    the end.
 3. Click **Continue** to price the booking.
 
+**If a guest you type has the same name as one of the member's own dependants,
+you are asked which person it is.** The club records who somebody's dependants
+are, and a dependant belongs on the member side of the party: a bed at the
+member rate. Typed as an ordinary guest they may instead be held provisionally —
+no bed reserved until the booking is confirmed and paid, bumpable if the lodge
+fills, invoiced separately at non-member rates. The person that happens to is
+usually a child, and their parent is not at the screen to notice, so the page
+will not go on until you say which person you mean:
+
+- **This is {name}'s dependant — book them as a member** moves the row onto the
+  member side. It is offered when that dependant is in the member's family
+  group; when they are not, the page says to put them in it under **Membership**
+  first, because that is what this screen adds members from.
+- **This is a different person with the same name** leaves them as a guest. You
+  answer once per dependant, and because the question is about the name,
+  answering once covers every guest on the booking with that name.
+
+Only the **selected member's** own recorded dependants are ever compared, and
+only on an exact name match. Nothing here searches other families or the
+membership list. The answer is checked again when the booking is created, and is
+not kept as a record afterwards — if it matters, put it in the booking notes.
+
 **Member guests are added after saving, from the booking's edit panel.** With
 the **Member guests** module on, a member from outside the owner's family group
 can be put on a booking — but there is no **+ Add Member Guest** button on this
@@ -108,7 +130,19 @@ what that member receives.
    over-capacity button and cannot be saved as drafts.
 5. In the **Email the member about this booking?** dialog, choose **Create and
    email member** or **Create without emailing**. Your choice is recorded in the
-   audit log. (An Internet Banking Xero invoice email still sends regardless.)
+   audit log.
+
+   Choosing **Create without emailing** also stops Xero emailing the invoice
+   for this booking on the Internet Banking path. The invoice is still raised
+   in Xero and the member still owes it — only the email is held back, and the
+   booking page lists it among the messages that were withheld. If you decide
+   the member should have it after all, send that one invoice from Xero;
+   nothing here re-sends it.
+
+   This is a one-off for this booking creation and nothing more. It does not
+   turn on the booking's **No emails** switch, does not change the member's
+   address in Xero, and does not stop any later reminder, change or
+   cancellation email.
 
 ### Leave it for the member to pay: Save as Draft
 
@@ -172,6 +206,8 @@ This is a wizard, not a settings page. The inputs it collects:
 | "Some nights are over lodge capacity" panel | The booking exceeds available beds | Review the per-night list and press **Confirm over-capacity and create**, or reduce guests/dates |
 | Confirm fails with a XERO_PERIOD_LOCKED error | The Xero accounting period for that date is locked | Choose a date outside the locked period, or unlock the period in Xero |
 | Cannot Save as Draft | The booking is retroactive or over-capacity | Confirm it instead — drafts are not allowed for those |
+| Continue refuses with "has the same name as somebody recorded as this member's own dependant" | A typed guest name exactly matches one of the member's recorded dependants | Answer the question on the guest step — book them as a member, or say it is a different person with the same name |
+| The dependant question offers no "book them as a member" button | That dependant is recorded by a parent link but is not in the member's family group, and this screen adds members from the family group | Add them to the family group under **Membership**, then start the booking again |
 | The member says the draft you saved has disappeared | Unpaid drafts are removed 72 hours after they are saved | Make the booking again, and either confirm it yourself or ask them to pay within three days |
 | A locked-out member cannot complete the free booking you saved for them | A $0 draft has no payment step, and the confirm button refuses an unpaid member | Confirm it for them from the booking page, or use **Confirm Booking** instead of **Save as Draft** |
 | You saved a draft for a non-member owner and nothing happened | They have no login, no dashboard and no draft email, so nobody can pay it — and it is deleted after 72 hours | Confirm the booking instead, or open the draft yourself and confirm it within three days |

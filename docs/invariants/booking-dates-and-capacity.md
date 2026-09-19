@@ -313,6 +313,7 @@ derivation).
   Do not cite this rule as permission to read one in a zone, and do not cite it
   as a prohibition on decoding one in UTC; several docblocks have paraphrased it
   as its own inverse and propagated that.
+- **Show one via `formatStayDate` (#3507).**
 
 ## Date handling rules
 
@@ -780,6 +781,15 @@ derivation).
   neither configured beds nor a capacity is unbookable rather than overbookable
   until it is set up (the setup-readiness Club Config check warns on a
   default lodge left at 0).
+- The arithmetic itself has **one home**, `src/lib/lodge-effective-capacity.ts`
+  (`INV-SSOT-001`): the resolver, the partner-headroom formula
+  (`INV-CAP-031`) and the save bounds all live there, and the admin lodge
+  configuration screen previews them against an unsaved value, so what an
+  officer is told cannot drift from what the save does. A configured capacity
+  **above** the active bed count is accepted and explained on that screen —
+  never refused, never silently rewritten — and the explanation must name the
+  partner spots the surplus allows, because the surplus is the gap that
+  headroom is measured against and is therefore never inert (#2724).
 
 ### INV-CAP-004
 
@@ -1248,8 +1258,11 @@ capacity or double-booking violation.
   further capacity from any admission path — the night's `availableBeds` is
   hard-blocked at 0, never negative, so it cannot be bypassed by the admin
   over-capacity override (#1668). To non-admins the held lodge presents
-  exactly as an ordinary full lodge (decision 6); only admin surfaces are told
-  a hold is in effect. Full scenario table in `docs/CAPACITY_MODEL.md`,
+  exactly as an ordinary full lodge (decision 6) — in the wording, in the
+  nights a refusal names, and in the payload shape those reach the member
+  through (#2930) — while a member may join the waitlist over held nights and
+  is never promoted while the hold applies; only admin surfaces are told a hold
+  is in effect. Full scenario table in `docs/CAPACITY_MODEL.md`,
   "Exclusive whole-lodge hold — a non-bypassable block".
 
 ### INV-CAP-022
@@ -1278,16 +1291,16 @@ capacity or double-booking violation.
 - **A held booking's nights ARE occupied as far as both planners are concerned
   (ADR-001 amendment, #2285, resolved by #2317):** a whole-lodge hold's nights
   are synthesised into both bed-allocation planners as **unattributed,
-  non-displaceable** occupancy — every active bed, every held night — while the
-  hold owns no `BedAllocation` row. The rows carry a null booking and a null
-  guest (#1768 "unknown occupant" shape): unattributed and non-displaceable (no row for a `MOVE` or `UNALLOCATE` to
-  target). A tierless unknown occupant counts as an adult for the cross-booking
+  non-displaceable** occupancy — every active bed, every held night, less
+  custodian-held bed-nights (`INV-CAP-038`, #2698) — while the hold owns no
+  `BedAllocation` row. The rows carry a null booking and a null
+  guest (#1768 "unknown occupant" shape), so a `MOVE` or `UNALLOCATE` has
+  nothing to target. A tierless unknown occupant counts as an adult for the cross-booking
   age-mix guard. An officer-kept overlapping booking is therefore never
   auto-placed onto beds the held group is using; those guest-nights surface as
   `NO_BED_AVAILABLE`. Being unattributed is a property of the
-  bed-NIGHT: a real `BedAllocation` row can legitimately share a held bed-night
-  (decision 1 never refuses the overlapping booking), planner occupancy is keyed
-  `bedId:stayDate`, and evicting the co-located booking releases that booking's
+  bed-NIGHT: a real `BedAllocation` row can legitimately share a held bed-night,
+  planner occupancy is keyed `bedId:stayDate`, and evicting the co-located booking releases that booking's
   claim and never the hold's. **The blocking predicate is the capacity engine's
   own** — `wholeLodgeHold` AND `bookingHoldsCapacity` /
   `capacityHoldingBookingFilter()` over the same lodge — so a planner can never
@@ -1506,6 +1519,48 @@ capacity or double-booking violation.
     exact call-site census in `booking-create-requires-lodge.test.ts` fails on
     insertion/deletion drift, indirect argument objects and an explicit
     `undefined`, `null` or `void` value.
+
+### INV-CAP-038
+
+- **A whole-lodge hold excludes custodian-held bed-nights, per overlapping
+  night (#2698, owner decision 9 Aug 2026):** the two sets are disjoint and
+  together are the lodge's capacity for that night, so a held night is still a
+  full lodge (ADR-001 decision 6),
+  `occupiedBeds + availableBeds === lodgeCapacity` still holds (#155), and
+  admission is untouched (`INV-CAP-021`).
+- **NO CAPACITY NUMBER CHANGES, AND THAT IS THE RULE — not a half-built version
+  of it** (owner confirmation, 12 Sep 2026): `wholeLodgeHeldNightOccupiedBeds`
+  is identically `lodgeCapacity` for every input. **A future change that makes a
+  held night's numbers move is a change to this invariant, not an
+  implementation of it.**
+- **Coverage is DERIVED at read time, never stored.** ONE predicate,
+  `isCustodianHeldBedNight` (`custodian-occupancy.ts`), and every view subtracts
+  through it: `wholeLodgeHoldOccupiedBedNightsForPlanner` and
+  `findWholeLodgeHoldAmendments` per bed-night,
+  `wholeLodgeHoldRepresentedBeds` (`capacity.ts`) in count shape. Never a second
+  inventory.
+- **Whole-lodge flat pricing does not change because a represented bed set
+  narrows**: `priceWholeLodgeFlat` never reads a bed count.
+- **Only one direction asks.** Setting a hold over a custodian's nights is
+  correct by construction. A custodian bed landing on an existing hold's nights
+  narrows that booking's sole occupancy, so the hut-leaders `POST` and `PUT`
+  refuse it — `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD`, naming the affected
+  nights and holding bookings and nothing more (`INV-PRIV`) — until the officer
+  re-sends `amendOverlappingHolds: true`. Acceptance and assignment commit in
+  ONE transaction, both or neither; the audited acceptance
+  (`booking.wholeLodgeHold.custodianAmended`, category `booking`) IS the
+  amendment.
+- **Lock order (`INV-LOCK-002`):** the accept path takes global
+  `pg_advisory_xact_lock(1)` and THEN `acquireLodgeCapacityLock`, decided from
+  the request before any lock is taken; the hut-leader `DELETE` takes the lodge
+  key too.
+- Guards: `exclusive-hold-planner-occupancy.test.ts`,
+  `custodian-assignment-validation.test.ts`,
+  `custodian-hut-leaders-route.test.ts`,
+  `lodge-admission-lock-contract.test.ts`. Narrative, the deliberately
+  out-of-scope write-time re-checks, the capped-capacity case and what an
+  acceptance records: `docs/CAPACITY_MODEL.md` "The custodian's bed sits
+  outside the held pool", #2698.
 
 ### INV-LIFE-062
 

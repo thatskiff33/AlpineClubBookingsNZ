@@ -1,11 +1,11 @@
 import "server-only";
 
 import {
-  calendarDateOfDateOnlyInstant,
-  formatClubDate,
   formatClubInstantDate,
+  formatStayDate,
   type ClubTimeZone,
 } from "@/lib/club-time";
+import { bookingOwner } from "@/lib/booking-owner";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { prisma } from "@/lib/prisma";
@@ -30,16 +30,6 @@ interface XeroRecordScope {
   scopeRecords: XeroRecordReference[]
   relatedRecords: XeroRecordReference[]
   backLink: XeroRecordBackLink | null
-}
-
-/**
- * A `@db.Date` lodge night as its own calendar day. NO ZONE, deliberately: a
- * calendar day is never timezone-converted (CT-5, #2869; INV-DATE-010).
- */
-function formatStayDate(value: Date | string): string {
-  return formatClubDate(
-    calendarDateOfDateOnlyInstant(value instanceof Date ? value : new Date(value)),
-  );
 }
 
 /**
@@ -182,6 +172,8 @@ async function getPaymentScope(localId: string): Promise<XeroRecordScope | null>
               lastName: true,
             },
           },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
       },
     },
@@ -194,7 +186,7 @@ async function getPaymentScope(localId: string): Promise<XeroRecordScope | null>
   const rootRecord = createRecordReference(
     "Payment",
     payment.id,
-    `Payment ${formatCents(payment.amountCents)} for ${payment.booking.member.firstName} ${payment.booking.member.lastName}`,
+    `Payment ${formatCents(payment.amountCents)} for ${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`,
     "Payment"
   );
   const relatedBooking = createRecordReference(
@@ -228,6 +220,8 @@ async function getBookingScope(localId: string): Promise<XeroRecordScope | null>
           lastName: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: {
         select: {
           id: true,
@@ -252,7 +246,7 @@ async function getBookingScope(localId: string): Promise<XeroRecordScope | null>
   const rootRecord = createRecordReference(
     "Booking",
     booking.id,
-    `${booking.member.firstName} ${booking.member.lastName} (${formatStayDate(booking.checkIn)} - ${formatStayDate(booking.checkOut)})`,
+    `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} (${formatStayDate(booking.checkIn)} - ${formatStayDate(booking.checkOut)})`,
     "Booking"
   );
   const scopeRecords = [rootRecord];

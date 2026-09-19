@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import type { BoundClubTime } from "@/lib/club-time";
 import type { FeatureFlags } from "@/config/schema";
 import type { EmailMessageSettings } from "@/lib/email-message-settings";
@@ -43,8 +44,8 @@ export function renderBookingDetailMessages({
     internetBankingPayment,
   } = payment;
   const bookingMessageData = {
-    bookerFirstName: booking.member.firstName,
-    bookerFullName: `${booking.member.firstName} ${booking.member.lastName}`,
+    bookerFirstName: bookingOwner(booking).member.firstName,
+    bookerFullName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
     // Member-facing: these two land in the booking messages and the emails
     // built from them, so they keep the long "16 April 2026" form the club has
     // always sent (owner decision, #2264; INV-DATE-016).

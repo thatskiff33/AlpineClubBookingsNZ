@@ -49,6 +49,7 @@ import {
   normalizeAgeTierSettings,
   type AgeTierSettingData,
 } from "@/lib/policies/age-tier";
+import { MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE } from "@/lib/member-parent-partner-exclusivity";
 
 // The configured default boundaries (what an empty AgeTierSetting table
 // resolves to) plus a full-admin actor, used unless a test overrides them.
@@ -121,6 +122,8 @@ function makeTarget(overrides: Partial<MappingTargetRecord> = {}): MappingTarget
     seasonalMembershipAssignments: [],
     financeAccessLevel: null,
     accessRoles: [],
+    partnerLinksAsMemberA: [],
+    partnerLinksAsMemberB: [],
     ...overrides,
   };
 }
@@ -298,6 +301,61 @@ describe("computeApprovalMappingOutcomes — family MAP", () => {
     });
     expect(blockingErrors.join(" ")).toContain("cannot be mapped to more than one person");
   });
+
+  it.each([
+    {
+      orientation: "child is member A",
+      childPartnerLinks: {
+        partnerLinksAsMemberA: [{ memberBId: "applicant-existing" }],
+      },
+    },
+    {
+      orientation: "child is member B",
+      childPartnerLinks: {
+        partnerLinksAsMemberB: [{ memberAId: "applicant-existing" }],
+      },
+    },
+  ])(
+    "keeps a known direct partner visible but blocks using them as a mapped dependant ($orientation)",
+    async ({ childPartnerLinks }) => {
+      const applicant = makeTarget({
+        id: "applicant-existing",
+        canLogin: true,
+        email: "jane@test.com",
+      });
+      const child = makeTarget({
+        id: "child-existing",
+        canLogin: false,
+        ...childPartnerLinks,
+      });
+      const { persons } = await computeApprovalMappingOutcomes({
+        application: familyApp(),
+        decisions: [
+          {
+            ref: { kind: "applicant" },
+            decision: { mode: "MAP", memberId: applicant.id },
+          },
+          {
+            ref: { kind: "family", index: 0 },
+            decision: { mode: "MAP", memberId: child.id },
+          },
+        ],
+        targetsById: new Map([
+          [applicant.id, applicant],
+          [child.id, child],
+        ]),
+        loginHolderId: applicant.id,
+        seasonYear: 2026,
+        actor: FULL_ADMIN,
+        ageTierSettings: DEFAULT_SETTINGS,
+      });
+
+      expect(persons[1].setParentLink).toBe(true);
+      expect(persons[1].errors).toContain(
+        MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      );
+    },
+  );
 });
 
 describe("preview token drift", () => {

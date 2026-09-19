@@ -15,6 +15,9 @@
  *   - EDIT flow resolves the member id SERVER-SIDE from the booking
  *   - CREATE flow resolves the member id from forMemberId (validated)
  *   - a single member's family group is returned (no directory enumeration)
+ *   - #2721: the payload also carries THAT member's own recorded dependants,
+ *     read by the same loader the create route re-runs, so the admin booking
+ *     screen can draw the own-dependant question an officer is now asked
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -24,7 +27,11 @@ import { NextResponse } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { findUnique: vi.fn() },
+    // #2721: `findMany` is `loadBookerDependants`'s seam — the parent-link
+    // query that answers "who are THIS member's dependants?". It is part of the
+    // payload now, so a suite that left it undefined would fail at import of the
+    // widened module graph rather than on an assertion.
+    member: { findUnique: vi.fn(), findMany: vi.fn() },
     familyGroupMember: { findMany: vi.fn() },
     booking: { findUnique: vi.fn() },
     // #1746: the eligible-family payload also lists partner-sharer candidates.
@@ -77,7 +84,10 @@ import { GET as getEditFamily } from "@/app/api/admin/bookings/[id]/eligible-fam
 import { GET as getCreateFamily } from "@/app/api/admin/bookings/eligible-family/route";
 
 const mockPrisma = prisma as unknown as {
-  member: { findUnique: ReturnType<typeof vi.fn> };
+  member: {
+    findUnique: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+  };
   familyGroupMember: { findMany: ReturnType<typeof vi.fn> };
   booking: { findUnique: ReturnType<typeof vi.fn> };
 };
@@ -133,8 +143,12 @@ const OWNER = {
   ],
 };
 
+/** One member recorded as the owner's dependant by a parent link (#2721). */
+const OWN_DEPENDANT = { id: "d1", firstName: "Sam", lastName: "Owner" };
+
 function mockOwnerFamily() {
   mockPrisma.member.findUnique.mockResolvedValue(OWNER);
+  mockPrisma.member.findMany.mockResolvedValue([OWN_DEPENDANT]);
   mockPrisma.familyGroupMember.findMany.mockResolvedValue([
     { member: { id: "p1", firstName: "Pat", lastName: "Owner", ageTier: "ADULT" } },
     { member: { id: "c1", firstName: "Casey", lastName: "Owner", ageTier: "CHILD" } },
@@ -157,6 +171,8 @@ function createReq(forMemberId?: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default for the cases that do not set up a family: no recorded dependants.
+  mockPrisma.member.findMany.mockResolvedValue([]);
 });
 
 // ─── EDIT flow: GET /api/admin/bookings/[id]/eligible-family ──────────────────
@@ -252,6 +268,44 @@ describe("GET /api/admin/bookings/eligible-family", () => {
     expect(mockPrisma.member.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "owner1" } }),
     );
+  });
+
+  /*
+    #2721 — the own-dependant question on the admin booking screen.
+
+    An officer booking on a member's behalf is now asked the same question the
+    member is asked in their own wizard (owner decision, D1 option A,
+    15 Sep 2026). A question the screen cannot draw is a refusal with no way
+    through, so the candidate set has to reach the screen — and it has to be the
+    RIGHT one.
+  */
+  it("carries the target member's own recorded dependants, for the question the officer is now asked", async () => {
+    mockAuth.mockResolvedValue(bookingOfficerNoMembershipView);
+    mockOwnerFamily();
+
+    const res = await getCreateFamily(createReq("owner1"));
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.ownDependants).toEqual([OWN_DEPENDANT]);
+  });
+
+  it("reads the dependants of the member named by forMemberId, never of the signed-in officer", async () => {
+    // The disclosure half of `INV-GUEST-019`. Asking the officer's own parent
+    // links would both miss every real collision on this booking and put the
+    // officer's own children on somebody else's screen.
+    mockAuth.mockResolvedValue(bookingOfficerNoMembershipView);
+    mockOwnerFamily();
+
+    await getCreateFamily(createReq("owner1"));
+
+    expect(mockPrisma.member.findMany).toHaveBeenCalledTimes(1);
+    const where = mockPrisma.member.findMany.mock.calls[0]?.[0]?.where;
+    expect(where).toMatchObject({
+      active: true,
+      OR: [{ parentMemberId: "owner1" }, { secondaryParentId: "owner1" }],
+    });
+    expect(JSON.stringify(where)).not.toContain("officer1");
   });
 
   it("treats a memberless family group as invisible — a group-less member resolves to self only (#1681)", async () => {

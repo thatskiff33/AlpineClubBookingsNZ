@@ -50,7 +50,6 @@ import {
   booking as bookingRow,
   guestRow,
   joinerOf as joinerOfLodge,
-  matchesWhere,
   memberRow,
   organiserOf as organiserOfLodge,
   policyRow as basePolicyRow,
@@ -58,6 +57,7 @@ import {
   orderAndTake,
   type FakeBooking,
 } from "@/lib/__tests__/support/hosting-fake-booking-store";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import {
   GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT,

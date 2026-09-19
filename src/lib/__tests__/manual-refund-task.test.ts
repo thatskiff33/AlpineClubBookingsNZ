@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   // #3191: the guest strand the per-night repair reads and writes, on the same
   // transaction as the claim.
   bookingGuestFindUnique: vi.fn(),
+  bookingGuestFindMany: vi.fn(),
   bookingGuestUpdateMany: vi.fn(),
   bookingGuestNightUpdateMany: vi.fn(),
   // #3219: the booking's own headline totals, re-based from those strands in the
@@ -101,12 +102,45 @@ vi.mock("@/lib/payment-reconciliation", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
-vi.mock("@/lib/member-credit", () => ({
-  createBookingModificationCredit: (...a: unknown[]) =>
-    mocks.createBookingModificationCredit(...a),
-}));
+vi.mock("@/lib/member-credit", () => {
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  //
+  // The CLASS has to be here too, and not as decoration. The module under test
+  // branches on `error instanceof SchoolHasNoCreditAccountError` to tell a
+  // school's missing account from any other allocation failure, so a factory
+  // that stubs only the function leaves that import undefined and vitest kills
+  // the whole file at import time. Throwing a bare `Error` instead would be
+  // worse than the crash: the branch would silently stop matching and every
+  // other failure would start reading as an operator input error, which is the
+  // exact confusion the test below exists to forbid.
+  //
+  // Declared INSIDE the factory, because `vi.mock` is hoisted to the top of the
+  // file and a class declared beside it is not initialised yet when it runs.
+  // `ApiError` in the real module; a plain `Error` carrying the same `status`
+  // here, because this suite asserts on the BRANCH rather than the rendering.
+  class SchoolHasNoCreditAccountError extends Error {
+    status = 400;
+    constructor() {
+      super("This booking belongs to a school, which has no account to credit.");
+      this.name = "SchoolHasNoCreditAccountError";
+    }
+  }
+  return {
+    createBookingModificationCredit: (...a: unknown[]) =>
+      mocks.createBookingModificationCredit(...a),
+    SchoolHasNoCreditAccountError,
+    requireMemberCreditRecipient: (memberId: string | null) => {
+      if (!memberId) throw new SchoolHasNoCreditAccountError();
+      return memberId;
+    },
+  };
+});
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+// The MOCKED class — the same constructor the module under test compares
+// against, so the branch is exercised rather than approximated.
+import { SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { requireCalendarDate } from "@/lib/club-time";
 // NOT mocked: the Stripe key prefix is the exactly-once boundary this suite is
 // about, so it is asserted against the real builder rather than a stub that
@@ -126,6 +160,11 @@ const tx = {
   // #3191: the strand whose blank nights a settle may fill in.
   bookingGuest: {
     findUnique: (...a: unknown[]) => mocks.bookingGuestFindUnique(...a),
+    // #3498: the settle path reads EVERY strand the item names, so it reads the
+    // list rather than one guest. The default below answers from the same
+    // fixture `bookingGuestFindUnique` does, so every existing case here keeps
+    // describing the single-strand review it was written for.
+    findMany: (...a: unknown[]) => mocks.bookingGuestFindMany(...a),
     updateMany: (...a: unknown[]) => mocks.bookingGuestUpdateMany(...a),
   },
   bookingGuestNight: {
@@ -175,6 +214,7 @@ function frozenBooking(overrides?: Record<string, unknown>) {
     memberId: "member-1",
     lodgeId: null,
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    checkOut: new Date("2026-08-03T00:00:00.000Z"),
     totalPriceCents: 24_000,
     discountCents: 0,
     promoAdjustmentCents: 0,
@@ -182,21 +222,31 @@ function frozenBooking(overrides?: Record<string, unknown>) {
     // No promotion on the default booking, so `recalculateBookingPromo` answers
     // zero without reading anything. The promotion cases install their own.
     promoRedemption: null,
+    nightAdjustments: [],
     guests: [
       {
         id: "guest-1",
         priceCents: guestOneTotal,
         memberId: "member-1",
         isMember: true,
+        stayStart: null,
+        stayEnd: null,
         // The strand's rows AS THIS TRANSACTION HAS JUST LEFT THEM: the night
         // that always carried $40.00, and the one the officer has just priced.
         // They reconcile to the strand's total by construction, which is what
         // `INV-MOD-028` requires before the booking may be re-priced from them.
         nights: [
-          { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
           {
+            id: "guest-1-night-1",
+            stayDate: new Date("2026-08-01T00:00:00.000Z"),
+            priceCents: 4_000,
+            priceSource: "SOLD",
+          },
+          {
+            id: "guest-1-night-2",
             stayDate: new Date("2026-08-02T00:00:00.000Z"),
             priceCents: guestOneTotal - 4_000,
+            priceSource: "SOLD",
           },
         ],
       },
@@ -205,9 +255,21 @@ function frozenBooking(overrides?: Record<string, unknown>) {
         priceCents: 8_000,
         memberId: null,
         isMember: false,
+        stayStart: null,
+        stayEnd: null,
         nights: [
-          { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
-          { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 4_000 },
+          {
+            id: "guest-2-night-1",
+            stayDate: new Date("2026-08-01T00:00:00.000Z"),
+            priceCents: 4_000,
+            priceSource: "SOLD",
+          },
+          {
+            id: "guest-2-night-2",
+            stayDate: new Date("2026-08-02T00:00:00.000Z"),
+            priceCents: 4_000,
+            priceSource: "SOLD",
+          },
         ],
       },
     ],
@@ -290,6 +352,10 @@ beforeEach(() => {
       { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
       { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 6_000 },
     ],
+  });
+  mocks.bookingGuestFindMany.mockImplementation(async () => {
+    const guest = await mocks.bookingGuestFindUnique();
+    return guest ? [guest] : [];
   });
   mocks.bookingGuestUpdateMany.mockResolvedValue({ count: 1 });
   mocks.bookingGuestNightUpdateMany.mockResolvedValue({ count: 1 });
@@ -737,6 +803,37 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         recordedNightPrices: null,
       })
     ).rejects.toMatchObject({ message: "connection reset" });
+  });
+
+  it("reaches the officer with the school's refusal instead of a 500 (#3369)", async () => {
+    // Same masking, one class further along. This route's catch tests
+    // `ManualBookingPaymentError` and nothing else, so a school booking whose
+    // reduction an officer chose to settle as ACCOUNT CREDIT reported "Could
+    // not close the refund task" and a 500 — for a correct refusal, on the
+    // screen that had just offered the choice. The message says what to do
+    // instead, so it has to arrive; converting it is what makes it arrive.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.applyLocalRefundAllocation.mockRejectedValueOnce(
+      new SchoolHasNoCreditAccountError(),
+    );
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "credit it",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 9000,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }),
+    ).rejects.toMatchObject({
+      // The officer's own 400, carrying the sentence that says what to do
+      // instead — not the bare class, which this route renders as a 500.
+      name: "ManualBookingPaymentError",
+      status: 400,
+      message: expect.stringContaining("no account to credit"),
+    });
   });
 });
 
@@ -1438,8 +1535,20 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
  * it, so a lost claim writes nothing.
  */
 describe("recording per-night amounts while settling (#3191)", () => {
+  // #3498: one array PER REPAIRABLE STRAND. These reviews name one strand, so
+  // it is one array - which is what every case below already described.
+  /*
+    #3498 fix round: each entry NAMES the strand it is for by the item's own
+    ordinal, so a stale screen cannot bind one guest's figures to another's
+    nights when the two happen to hold the same blanks for the same total.
+  */
   const nightPrices = [
-    { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+    {
+      strandIndex: 0,
+      nightPrices: [
+        { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+      ],
+    },
   ];
 
   it("writes the nights, re-bases the strand, and audits it as its own act", async () => {
@@ -1458,7 +1567,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
       // stored at $100.00, $45.00 of it is going back to the member, and $40.00
       // of it is already on the other night. $15.00.
       recordedNightPrices: [
-        { date: requireCalendarDate("2026-08-02"), priceCents: 1_500 },
+        { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 1_500 }] },
       ],
     });
 
@@ -1482,9 +1591,15 @@ describe("recording per-night amounts while settling (#3191)", () => {
         entityType: "BookingGuest",
         entityId: "guest-1",
         metadata: expect.objectContaining({
-          previousGuestTotalCents: 10_000,
-          newGuestTotalCents: 5_500,
-          nightPrices: [{ date: "2026-08-02", priceCents: 1_500 }],
+          // #3498: per strand, because one closure can repair several.
+          repairedStrands: [
+            {
+              previousGuestTotalCents: 10_000,
+              newGuestTotalCents: 5_500,
+              knownNightTotalCents: 4_000,
+              nightPrices: [{ date: "2026-08-02", priceCents: 1_500 }],
+            },
+          ],
         }),
       }),
       tx,
@@ -1529,7 +1644,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
         recordedNightPrices: [
-          { date: requireCalendarDate("2026-08-02"), priceCents: 5_999 },
+          { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 5_999 }] },
         ],
       }),
     ).rejects.toMatchObject({ status: 400 });
@@ -1614,8 +1729,10 @@ describe("recording per-night amounts while settling (#3191)", () => {
         entityType: "Booking",
         entityId: "booking-1",
         metadata: expect.objectContaining({
-          nightPrices: null,
-          newGuestTotalCents: null,
+          // #3498: null rather than an empty list, so "the officer priced
+          // nothing" stays distinguishable from "the officer priced these at
+          // zero".
+          repairedStrands: null,
           bookingRebased: true,
           bookingPriceMoved: true,
         }),
@@ -1797,7 +1914,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       note: "Nothing owed either way; the nights were already paid for.",
       actingMemberId: "admin-1",
       recordedNightPrices: [
-        { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+        { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
       ],
     });
 
@@ -1875,7 +1992,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       confirmedAmountCents: 4_500,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: [
-        { date: requireCalendarDate("2026-08-02"), priceCents: 1_500 },
+        { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 1_500 }] },
       ],
     });
 
@@ -1939,7 +2056,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
         recordedNightPrices: [
-          { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+          { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
         ],
       }),
     ).rejects.toMatchObject({ status: 409 });
@@ -1977,7 +2094,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
         recordedNightPrices: [
-          { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+          { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
         ],
       }),
     ).rejects.toThrow(/not on this booking/);
@@ -2012,14 +2129,20 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
             priceCents: 8_000,
             memberId: null,
             isMember: false,
+            stayStart: null,
+            stayEnd: null,
             nights: [
               {
+                id: "guest-2-night-1",
                 stayDate: new Date("2026-08-01T00:00:00.000Z"),
                 priceCents: 4_000,
+                priceSource: "SOLD",
               },
               {
+                id: "guest-2-night-2",
                 stayDate: new Date("2026-08-02T00:00:00.000Z"),
                 priceCents: 4_000,
+                priceSource: "SOLD",
               },
             ],
           },

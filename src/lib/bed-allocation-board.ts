@@ -6,6 +6,7 @@
  * the warnings, composed into one response. The queries and serialisers are
  * `bed-allocation-board-records.ts`.
  */
+import { bookingOwner } from "@/lib/booking-owner";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import { buildFirstFitBedAllocationPlan } from "@/lib/bed-allocation";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
@@ -165,7 +166,7 @@ export async function getBedAllocationDashboard(input: {
       );
       return {
         bookingId: booking.id,
-        memberName: memberName(booking.member),
+        memberName: memberName(bookingOwner(booking).member),
         checkIn: formatDateOnly(booking.checkIn),
         checkOut: formatDateOnly(booking.checkOut),
         guestCount: booking.guests.length,
@@ -261,10 +262,14 @@ export async function getBedAllocationDashboard(input: {
           // only ever stops ANOTHER booking's guests being auto-placed onto
           // beds the held group is physically using — the clash surfaces as
           // NO_BED_AVAILABLE in the awaiting-allocation list instead.
+          // #2698 (INV-CAP-038): the SAME hold set the custodian expansion
+          // above was built from, so the hold's represented beds exclude the
+          // bed-nights a custodian holds and no bed-night is claimed twice.
           ...wholeLodgeHoldOccupiedBedNightsForPlanner(
             blockingWholeLodgeHolds,
             rooms,
             rangeNights,
+            custodianBedHolds,
           ),
         ],
       })

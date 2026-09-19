@@ -19,30 +19,19 @@ import {
   type MemberFieldKey,
   type MemberFieldsSettingsValues,
 } from "@/config/member-fields";
-import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 interface FieldsResponse {
   settings: MemberFieldsSettingsValues;
   updatedAt: string | null;
   updatedByMemberId: string | null;
-}
-
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
 }
 
 function cloneSettings(
@@ -62,7 +51,6 @@ export default function AdminMemberFieldsPage() {
   const [savedMessage, setSavedMessage] = useState("");
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
-  const { scrollToError, scrollToTop } = useScrollToFeedback();
   // Member fields live under the membership area (the write route enforces
   // membership:edit), so gate the editor on that area (#1940).
   const canEdit = useAdminAreaEditAccess("membership");
@@ -80,7 +68,7 @@ export default function AdminMemberFieldsPage() {
         | FieldsResponse
         | { error?: string };
       if (!response.ok || !("settings" in body)) {
-        throw new Error(responseErrorMessage(body, "Failed to load settings"));
+        throw new Error(apiErrorMessageFromBody(body, "Failed to load settings"));
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
@@ -99,13 +87,14 @@ export default function AdminMemberFieldsPage() {
     void loadSettings();
   }, []);
 
-  useEffect(() => {
-    if (error) scrollToError(feedbackRef);
-  }, [error, scrollToError]);
-
-  useEffect(() => {
-    if (savedMessage) scrollToTop(pageRef);
-  }, [savedMessage, scrollToTop]);
+  // Failure wins, success positions at the top, and neither runs for a
+  // passive re-render — the shared action-attention rule (#2934).
+  useActionAttention({
+    error: error,
+    errorTarget: feedbackRef,
+    success: savedMessage,
+    successTarget: pageRef,
+  });
 
   const dirty =
     payload !== null &&
@@ -143,7 +132,7 @@ export default function AdminMemberFieldsPage() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
-        throw new Error(responseErrorMessage(body, "Failed to save settings"));
+        throw new Error(apiErrorMessageFromBody(body, "Failed to save settings"));
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));

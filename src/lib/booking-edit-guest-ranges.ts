@@ -22,13 +22,17 @@ import {
 } from "@/lib/booking-guest-stay-ranges";
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
 import type {
-  EditFinancialReviewOccurrence,
+  EditFinancialReviewStrandRecord,
   FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
 import {
+  counterpartStrandRecord,
+  parkedEditWorkItems,
+  unpriceableStrandRecord,
+  type ParkedEditWorkItems,
+} from "@/lib/parked-edit-occurrence";
+import {
   classifyStoredSoldPriceEvidence,
-  counterpartStrandReviewOccurrence,
-  editFinancialReviewOccurrence,
   unusableStoredSoldPriceEvidence,
   type HeldNightPrice,
 } from "@/lib/stored-sold-price-evidence";
@@ -411,11 +415,15 @@ function dateOnlyKey(value: Date): CalendarDate {
  */
 function heldNightPrices(
   heldNightKeys: readonly string[],
-  storedNightPriceByKey: ReadonlyMap<string, number | null>
+  storedNightDetailsByKey: ReadonlyMap<
+    string,
+    { priceCents: number | null; priceSource: BookingGuestNightPriceSource }
+  >
 ): HeldNightPrice[] {
   return heldNightKeys.map((key) => ({
     date: requireCalendarDate(key),
-    priceCents: storedNightPriceByKey.get(key) ?? null,
+    priceCents: storedNightDetailsByKey.get(key)?.priceCents ?? null,
+    priceSource: storedNightDetailsByKey.get(key)?.priceSource,
   }));
 }
 
@@ -1404,7 +1412,7 @@ export function buildInProgressGuestRangePlan(
   // that was never priceable should be reported as unpriceable rather than as a
   // missing rate. It also means an unpriceable edit costs no season lookup at
   // all.
-  const financialReviewOccurrences: EditFinancialReviewOccurrence[] = [];
+  const financialReviewStrands: EditFinancialReviewStrandRecord[] = [];
   /**
    * #3166: exact strands whose stored evidence THIS parked edit destroys.
    *
@@ -1413,7 +1421,7 @@ export function buildInProgressGuestRangePlan(
    * reason to stop. The pre-check-in twin (`preCheckInEditEvidence`) splits its
    * lists the same way and for the same reason.
    */
-  const destroyedButReadable: EditFinancialReviewOccurrence[] = [];
+  const destroyedButReadable: EditFinancialReviewStrandRecord[] = [];
   /**
    * Per existing guest, in booking order: what each night they hold was sold
    * for. Every value is a stored integer — this map is the ONLY source of a
@@ -1424,9 +1432,14 @@ export function buildInProgressGuestRangePlan(
     soldNightPriceByKey: ReadonlyMap<string, number>;
   }> = [];
   for (const entry of existingNightPlans) {
+    const surrendered = surrenderedNightDatesOf(entry);
+    const added = addedNightDatesOf(entry);
     const verdict = classifyStoredSoldPriceEvidence(
-      heldNightPrices(entry.heldNightKeys, entry.storedNightPriceByKey),
-      entry.guest.priceCents
+      heldNightPrices(entry.heldNightKeys, entry.storedNightDetailsByKey),
+      entry.guest.priceCents,
+      surrendered.length === entry.heldNightKeys.length && added.length === 0
+        ? "WHOLE_GUEST"
+        : "INDIVIDUAL_NIGHT",
     );
     const soldNightPriceByKey: ReadonlyMap<string, number> = new Map(
       verdict.kind === "exact"
@@ -1450,12 +1463,9 @@ export function buildInProgressGuestRangePlan(
        * that it ever existed. A strand whose night set does not move keeps every
        * row byte for byte and raises nothing.
        */
-      const surrendered = surrenderedNightDatesOf(entry);
-      const added = addedNightDatesOf(entry);
       if (surrendered.length > 0 || added.length > 0) {
         destroyedButReadable.push(
-          counterpartStrandReviewOccurrence({
-            bookingId: input.booking.id,
+          counterpartStrandRecord({
             bookingGuestId: entry.guest.id,
             evidence: verdict,
             guestTotalCents: entry.guest.priceCents,
@@ -1466,9 +1476,8 @@ export function buildInProgressGuestRangePlan(
       }
       continue;
     }
-    financialReviewOccurrences.push(
-      editFinancialReviewOccurrence({
-        bookingId: input.booking.id,
+    financialReviewStrands.push(
+      unpriceableStrandRecord({
         bookingGuestId: entry.guest.id,
         evidence: verdict,
         guestTotalCents: entry.guest.priceCents,
@@ -1504,20 +1513,39 @@ export function buildInProgressGuestRangePlan(
    * occurrence wins, because it is the one that says why no money moved.
    */
   const parkedOccurrences = (
-    unpriceable: readonly EditFinancialReviewOccurrence[]
-  ): EditFinancialReviewOccurrence[] => {
+    unpriceable: readonly [
+      EditFinancialReviewStrandRecord,
+      ...EditFinancialReviewStrandRecord[],
+    ]
+  ): ParkedEditWorkItems => {
     const alreadyNamed = new Set(
-      unpriceable.map((occurrence) => occurrence.bookingGuestId)
+      unpriceable.map((strand) => strand.bookingGuestId)
     );
-    return [
-      ...unpriceable,
-      // Only when the edit parks — every caller is inside a parked exit. An
-      // exact strand losing or gaining nights is a record of destroyed
-      // evidence, never on its own a reason to withhold money.
-      ...destroyedButReadable.filter(
-        (occurrence) => !alreadyNamed.has(occurrence.bookingGuestId)
-      ),
-    ];
+    /*
+      #3498: the parked edit's work items, composed through the shared
+      `parkedEditWorkItems` so this planner and the pre-check-in twin pick the
+      same lead strand, the same order and the same GRAIN (`INV-SSOT`). Which
+      strands are recorded is exactly what it was; only what they are recorded
+      ON has moved.
+
+      The non-empty parameter type is what makes "a parked exit always records
+      at least one strand" a compile-time fact rather than a runtime throw with
+      a message nobody should ever read.
+    */
+    const [leadUnpriceable, ...restUnpriceable] = unpriceable;
+    return parkedEditWorkItems({
+      bookingId: input.booking.id,
+      strands: [
+        leadUnpriceable,
+        ...restUnpriceable,
+        // Only when the edit parks. An exact strand losing or gaining nights is
+        // a record of destroyed evidence, never on its own a reason to withhold
+        // money.
+        ...destroyedButReadable.filter(
+          (strand) => !alreadyNamed.has(strand.bookingGuestId)
+        ),
+      ],
+    });
   };
 
   /**
@@ -1673,10 +1701,14 @@ export function buildInProgressGuestRangePlan(
       };
   };
 
-  if (financialReviewOccurrences.length > 0) {
+  const [leadReviewStrand, ...restReviewStrands] = financialReviewStrands;
+  if (leadReviewStrand) {
     return {
       kind: "financial_review_required",
-      occurrences: parkedOccurrences(financialReviewOccurrences),
+      occurrences: parkedOccurrences([
+        leadReviewStrand,
+        ...restReviewStrands,
+      ]),
       parkedPlan: composeParkedPlan(),
     };
   }
@@ -1865,7 +1897,28 @@ export function buildInProgressGuestRangePlan(
   },
   );
 
-  if (unreconciledStrands.length > 0) {
+  /*
+    One unreconciled strand's record, named so the exit below can hand
+    `parkedOccurrences` a list it can PROVE is non-empty: `[first, ...rest]` maps
+    to an array, and the compile-time guarantee the composer is built on is the
+    tuple, not a length check nothing re-reads.
+  */
+  const unreconciledStrandRecord = (
+    entry: (typeof unreconciledStrands)[number]
+  ): EditFinancialReviewStrandRecord =>
+    unpriceableStrandRecord({
+      bookingGuestId: entry.guest.id,
+      evidence: unusableStoredSoldPriceEvidence(
+        "STORED_TOTAL_MISMATCH",
+        heldNightPrices(entry.heldNightKeys, entry.storedNightDetailsByKey)
+      ),
+      guestTotalCents: entry.guest.priceCents,
+      surrenderedNightDates: surrenderedNightDatesOf(entry),
+      addedNightDates: addedNightDatesOf(entry),
+    });
+
+  const [leadUnreconciled, ...restUnreconciled] = unreconciledStrands;
+  if (leadUnreconciled) {
     // #3170: this exit parks too. A strand whose composed rows do not add up is
     // unpriceable for the same reason as one the gate caught — the difference is
     // only WHEN it was discovered — so the structural change commits and the
@@ -1879,21 +1932,10 @@ export function buildInProgressGuestRangePlan(
       // Through `parkedOccurrences`, so the exact strands this park destroys
       // the evidence of are recorded here exactly as they are at the gate
       // (#3166) — and a strand named in BOTH lists is recorded once.
-      occurrences: parkedOccurrences(
-        unreconciledStrands.map((entry) => {
-          return editFinancialReviewOccurrence({
-            bookingId: input.booking.id,
-            bookingGuestId: entry.guest.id,
-            evidence: unusableStoredSoldPriceEvidence(
-              "STORED_TOTAL_MISMATCH",
-              heldNightPrices(entry.heldNightKeys, entry.storedNightPriceByKey)
-            ),
-            guestTotalCents: entry.guest.priceCents,
-            surrenderedNightDates: surrenderedNightDatesOf(entry),
-            addedNightDates: addedNightDatesOf(entry),
-          });
-        })
-      ),
+      occurrences: parkedOccurrences([
+        unreconciledStrandRecord(leadUnreconciled),
+        ...restUnreconciled.map(unreconciledStrandRecord),
+      ]),
     };
   }
 

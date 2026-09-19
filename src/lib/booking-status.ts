@@ -43,17 +43,25 @@ export const IMMEDIATE_PAYMENT_BOOKING_STATUSES = [
   BookingStatus.PENDING,
 ] as const;
 
-// test seam
-export const MEMBER_MODIFIABLE_BOOKING_STATUSES = [
-  BookingStatus.PENDING,
-  BookingStatus.PAYMENT_PENDING,
-  BookingStatus.CONFIRMED,
-  BookingStatus.PAID,
-  // While awaiting review, the member may amend guests (e.g. add an adult
-  // to clear the no-adult flag); this is what releases the booking to
-  // PAYMENT_PENDING without an admin decision.
-  BookingStatus.AWAITING_REVIEW,
-] as const;
+// #3245 DELETED `MEMBER_MODIFIABLE_BOOKING_STATUSES`, and the deletion is the
+// point rather than tidying. It was marked "test seam", had NO production
+// reader, and answered "which bookings may a member modify?" — the question
+// #3245 gave one home in `booking-edit-policy.ts`. It answered it DIFFERENTLY:
+// it admitted `AWAITING_REVIEW`, which every edit door refuses, which
+// `INV-MOD-047` leans on being refused, and which `booking-edit-eligibility-
+// one-home.test.ts` now pins as refused for every role.
+//
+// #3245 removed three copies of that answer from the doors so the next door
+// written would have one example to copy. Leaving this one behind would have
+// left the most FINDABLE example — exported, canonically named, in the
+// lifecycle-status module, and blessed by a matrix test — saying the wrong
+// thing. A dead definition is not harmless when its name is the question
+// somebody is about to ask. Ask `canModifyBookingInActiveLifecycle`.
+//
+// The one thing its comment recorded that the edit policy does NOT capture —
+// why the guest-add route carried an unreachable AWAITING_REVIEW branch — was
+// filed as #3500, which deleted that branch and its three `releaseFromReview`
+// siblings: only the officer review route releases AWAITING_REVIEW.
 
 export const OPERATIONAL_STAY_BOOKING_STATUSES = [
   BookingStatus.PAID,

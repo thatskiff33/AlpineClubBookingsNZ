@@ -1,5 +1,11 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { AccessRole, type Member, type Prisma } from "@prisma/client";
+import {
+  AccessRole,
+  Role,
+  SchoolMemberClassificationKind,
+  type Member,
+  type Prisma,
+} from "@prisma/client";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
 import {
   actorIsFullAdmin,
@@ -40,6 +46,14 @@ import {
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import { canonicalPartnerPair } from "@/lib/member-partner-link-shared";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  acquireMemberParentPartnerPairLocks,
+  isMemberParentPartnerExclusionViolation,
+  loadMemberMergeExclusivityTopology,
+} from "@/lib/member-parent-partner-exclusivity";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
 import {
@@ -294,10 +308,6 @@ export type PartnerLinkPlan = {
   warnings: string[];
 };
 
-function canonicalPair(a: string, b: string): [string, string] {
-  return a < b ? [a, b] : [b, a];
-}
-
 /**
  * Re-point the loser's partner links onto the master, honouring the
  * `memberAId < memberBId` CHECK, deleting self-pairs and duplicates, and
@@ -357,8 +367,8 @@ export function planPartnerLinkMerge(
       continue;
     }
 
-    const [a, b] = canonicalPair(masterId, other);
-    updates.push({ id: link.id, memberAId: a, memberBId: b });
+    const pair = canonicalPartnerPair(masterId, other);
+    updates.push({ id: link.id, ...pair });
     masterPartners.add(other);
     if (link.status === "CONFIRMED") masterHasConfirmed = true;
   }
@@ -634,7 +644,102 @@ export async function evaluateMemberMergeGuards(params: {
     });
   }
 
+  // A SCHOOL IS NOT A PERSON, AND A MERGE SAYS TWO ROWS ARE ONE PERSON
+  // (#3369, stage 4 of programme #2912; `INV-LIFE`).
+  //
+  // Every school the club ever took a booking from used to be a Member row with
+  // the school's name in `firstName` and a blank surname. Stage 4 moved those
+  // bookings onto the school's `Organisation` and left the row behind, holding
+  // nothing but its history. Folding one of those rows into a person — in
+  // either direction — would put a school's past under a person's name and
+  // re-create the school-as-person model this whole programme exists to end.
+  //
+  // TWO TESTS, AND THE SECOND IS WHY THIS COVERS THE CLASS RATHER THAN A
+  // POPULATION.
+  //
+  // The first is the RECORDED classification: `SchoolMemberClassification` is
+  // what an officer or the census decided, with its evidence, so the refusal can
+  // say which decision it is acting on. A row classified PERSON is a real
+  // teacher and merges exactly as anyone else does — the common case, and
+  // deliberately not blocked.
+  //
+  // On its own that would have covered only the rows the cutover census reached.
+  // The census asks about members that OWN A BOOKING, and the school approval's
+  // hold-recovery path still mints a school-shaped contact — the school's name,
+  // a blank surname, `role: SCHOOL`, no login — AFTER the census has run. Such a
+  // row is never classified, so a guard reading the table alone would let a
+  // school minted last week merge into a person with no blocker at all.
+  //
+  // So the second test is the SHAPE, and using a shape here is sound where using
+  // one to CLASSIFY would not be. The classification module refuses to call a
+  // blank surname plus no login a proof — quite right, because it is deciding
+  // what a row IS. This is deciding whether to REFUSE, and the shape is exactly
+  // the "cannot tell" the census hands to a person: an unclassified row that
+  // looks like a school is a question, and a merge is not the place to answer
+  // one. An officer who knows it is a teacher records that with
+  // `npm run db:school-classification-census -- --classify <id> --as PERSON`,
+  // which takes any member id, and the merge then proceeds.
+  //
+  // If a school really has been recorded twice, the two `Organisation` records
+  // are what an officer merges — a decision about the school, taken where the
+  // school lives.
+  const classified = await db.schoolMemberClassification.findMany({
+    where: { memberId: { in: [masterId, loserId] } },
+    select: { memberId: true, classification: true },
+  });
+  const classifiedById = new Map(
+    classified.map((row) => [row.memberId, row.classification]),
+  );
+  const schoolShaped = await db.member.findMany({
+    where: {
+      id: { in: [masterId, loserId] },
+      role: Role.SCHOOL,
+      lastName: "",
+      canLogin: false,
+    },
+    select: { id: true },
+  });
+  const schoolShapedIds = new Set(schoolShaped.map((row) => row.id));
+
+  const organisationSides = [masterId, loserId].filter((id) => {
+    const recorded = classifiedById.get(id);
+    if (recorded === SchoolMemberClassificationKind.ORGANISATION) return true;
+    // A recorded PERSON outranks the shape: that is somebody's decision, made
+    // with evidence this function cannot see.
+    if (recorded === SchoolMemberClassificationKind.PERSON) return false;
+    return schoolShapedIds.has(id);
+  });
+  if (organisationSides.length > 0) {
+    const sides = organisationSides.map((id) =>
+      id === masterId ? "master" : "duplicate",
+    );
+    const undecided = organisationSides.some((id) => !classifiedById.has(id));
+    const howToProceed = undecided
+      ? " If it is really a person, record that decision first: npm run db:school-classification-census -- --classify <memberId> --as PERSON --by \"<you>\" --because \"<what you checked>\"."
+      : "";
+    blockers.push({
+      code: "organisation_row",
+      label:
+        sides.length === 2
+          ? `Both records are schools, not people. Merge the two organisation records instead.${howToProceed}`
+          : `The ${sides[0]} record is a school, not a person, and cannot be merged with one. If two records exist for the same school, merge the organisations instead.${howToProceed}`,
+      count: organisationSides.length,
+    });
+  }
+
   blockers.push(...(await evaluateFamilyLinkGraphBlockers(db, masterId, loserId)));
+  const exclusivityTopology = await loadPlannedMemberMergeExclusivityTopology(
+    db,
+    masterId,
+    loserId,
+  );
+  if (exclusivityTopology.conflictingPairCount > 0) {
+    blockers.push({
+      code: "parent_partner_overlap",
+      label: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      count: exclusivityTopology.conflictingPairCount,
+    });
+  }
   blockers.push(
     ...(await evaluateContactCreateRecoveryBlockers(db, masterId, loserId)),
   );
@@ -1166,6 +1271,9 @@ const GENERIC_KEYED_RESOLVERS: readonly {
   { spec: "NotificationPreference.member", delegate: "notificationPreference", memberColumn: "memberId", keys: [[]] },
   { spec: "NoticeReadReceipt.member", delegate: "noticeReadReceipt", memberColumn: "memberId", keys: [["noticeId"]] },
   { spec: "ClubPostReport.reporter", delegate: "clubPostReport", memberColumn: "reporterMemberId", keys: [["postId"]] },
+  // #3366: one association row per (organisation, person), so two people merged
+  // into one keep the master's attachment to a school they were both listed on.
+  { spec: "OrganisationContact.member", delegate: "organisationContact", memberColumn: "memberId", keys: [["organisationId"]] },
 ];
 
 /**
@@ -1195,6 +1303,52 @@ async function loadPartnerLinkPlan(
     }),
   ]);
   return planPartnerLinkMerge(loserLinks, masterLinks, masterId, loserId);
+}
+
+/**
+ * Read all incident links once, then project the exact link set that the
+ * existing PartnerLinkPlan will leave behind. The unprojected set still feeds
+ * the participant locks; only the projected set feeds the overlap check.
+ */
+async function loadPlannedMemberMergeExclusivityTopology(
+  db: MergeDbClient,
+  masterId: string,
+  loserId: string,
+) {
+  const currentLinks = await db.memberPartnerLink.findMany({
+    where: {
+      OR: [
+        { memberAId: { in: [masterId, loserId] } },
+        { memberBId: { in: [masterId, loserId] } },
+      ],
+    },
+    select: { id: true, memberAId: true, memberBId: true, status: true },
+  });
+  const plan = planPartnerLinkMerge(
+    currentLinks.filter(
+      (link) => link.memberAId === loserId || link.memberBId === loserId,
+    ),
+    currentLinks.filter(
+      (link) => link.memberAId === masterId || link.memberBId === masterId,
+    ),
+    masterId,
+    loserId,
+  );
+  const deletedIds = new Set(plan.deleteIds);
+  const updatesById = new Map(
+    plan.updates.map((update) => [update.id, update]),
+  );
+  const projectedLinks = currentLinks
+    .filter((link) => !deletedIds.has(link.id))
+    .map((link) => updatesById.get(link.id) ?? link);
+
+  return loadMemberMergeExclusivityTopology(
+    db,
+    masterId,
+    loserId,
+    currentLinks,
+    projectedLinks,
+  );
 }
 
 async function summariseResolveCollisions(
@@ -1521,9 +1675,14 @@ export async function executeMemberMerge(params: {
     // Dual advisory lock in sorted id order (deadlock-free) on the shared
     // member-lifecycle key space, so a merge serialises with any concurrent
     // delete/archive/merge touching either member.
-    const [lockA, lockB] = [masterId, loserId].sort();
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockA}`}))`;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockB}`}))`;
+    await acquireMemberLifecycleLocks(tx, [masterId, loserId]);
+
+    const exclusivityTopologyBeforeLocks =
+          await loadPlannedMemberMergeExclusivityTopology(
+            tx,
+            masterId,
+            loserId,
+          );
 
     // #2595 — merge is a partner-link WRITER (step 2 re-points the duplicate's
     // links onto the master) and, since this change, a partner-link READER whose
@@ -1550,7 +1709,48 @@ export async function executeMemberMerge(params: {
     // graph — only a second holder of one that already exists. It cannot cycle:
     // the partner-link service takes this key and no other tier, so a holder of
     // it never waits on anything merge holds. Sorted inside the helper.
-    await acquireMemberPartnerLinkLocks(tx, [masterId, loserId]);
+    await acquireMemberPartnerLinkLocks(
+      tx,
+      exclusivityTopologyBeforeLocks.participantIds,
+    );
+    await acquireMemberParentPartnerPairLocks(
+      tx,
+      exclusivityTopologyBeforeLocks.prospectivePairs,
+    );
+    const exclusivityTopologyUnderLocks =
+      await loadPlannedMemberMergeExclusivityTopology(
+        tx,
+        masterId,
+        loserId,
+      );
+    if (
+      exclusivityTopologyUnderLocks.participantIds.join("\u0000") !==
+        exclusivityTopologyBeforeLocks.participantIds.join("\u0000") ||
+      exclusivityTopologyUnderLocks.prospectivePairs
+        .map((pair) => pair.join("\u0000"))
+        .join("\u0001") !==
+        exclusivityTopologyBeforeLocks.prospectivePairs
+          .map((pair) => pair.join("\u0000"))
+          .join("\u0001")
+    ) {
+      throw new MemberMergeError(
+        "Family relationship participants changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
+        409,
+        "merge_drift_in_transaction",
+        { driftFields: ["parentPartnerParticipants", "parentPartnerPairs"] },
+      );
+    }
+    if (exclusivityTopologyUnderLocks.conflictingPairCount > 0) {
+      throw new MemberMergeError(
+        MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+        409,
+        "parent_partner_overlap",
+        {
+          conflictingPairCount:
+            exclusivityTopologyUnderLocks.conflictingPairCount,
+        },
+      );
+    }
 
     const [masterFull, loserFull] = await Promise.all([
       tx.member.findUnique({ where: { id: masterId } }),
@@ -2160,7 +2360,19 @@ export async function executeMemberMerge(params: {
     // stale values and the #2243 fix would silently stop working (#2243).
     timeout: 120_000,
     maxWait: 10_000,
-  }).catch((error) => refuseMergeOrRethrow(client, refusalContext, error));
+  }).catch((error) =>
+    refuseMergeOrRethrow(
+      client,
+      refusalContext,
+      isMemberParentPartnerExclusionViolation(error)
+        ? new MemberMergeError(
+            MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+            409,
+            "parent_partner_overlap",
+          )
+        : error,
+    ),
+  );
   await settleHostingCoverageAfterCommit({ limit: 50 }, client);
 
   if (sweptShares.length > 0) {

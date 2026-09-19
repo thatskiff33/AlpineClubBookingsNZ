@@ -6,11 +6,32 @@ const { findFirst, findMany, updateMany } = vi.hoisted(() => ({
   updateMany: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: { xeroSyncOperation: { findFirst, findMany, updateMany } },
+// #2939: the inbound patch's own transaction, for the two-homes refusal block
+// at the foot of this file. Kept separate from the operation-only mock above so
+// the existing suites are untouched by it.
+const patchMocks = vi.hoisted(() => ({
+  executeRaw: vi.fn(),
+  memberFindUnique: vi.fn(),
+  memberUpdate: vi.fn(),
+  organisationFindFirst: vi.fn(),
+  upsertXeroObjectLink: vi.fn(),
+  transaction: vi.fn(),
 }));
 
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    xeroSyncOperation: { findFirst, findMany, updateMany },
+    $transaction: patchMocks.transaction,
+  },
+}));
+vi.mock("@/lib/xero-sync", () => ({
+  completeXeroSyncOperation: vi.fn(),
+  upsertXeroObjectLink: patchMocks.upsertXeroObjectLink,
+}));
+
+import { XeroContactTwoHomesError } from "@/lib/xero-contact-home";
 import {
+  applyInboundMemberContactPatch,
   ambiguousMemberContactCreateReservationWhere,
   assertNoMemberContactChangeBlockerForDeletion,
   assertNoMemberContactCreateBlockerForDeletion,
@@ -700,5 +721,110 @@ describe("the blocker refusal and the member display read one predicate (#2623 T
     await expect(
       findMemberContactChangeMergeBlocker("member-1"),
     ).resolves.toMatchObject({ operationId: "operation-blocking" });
+  });
+});
+
+describe("the inbound contact patch takes the two-homes refusal (#2939)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    patchMocks.executeRaw.mockResolvedValue(1);
+    patchMocks.memberFindUnique.mockResolvedValue({
+      id: "member-1",
+      email: "teacher@example.com",
+      passwordHash: "hash",
+      xeroContactId: null,
+      dateOfBirth: null,
+      joinedDate: null,
+      phoneNumber: null,
+      streetAddressLine1: null,
+      postalAddressLine1: null,
+    });
+    patchMocks.organisationFindFirst.mockResolvedValue(null);
+    findMany.mockResolvedValue([]);
+    patchMocks.transaction.mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({
+          $executeRaw: patchMocks.executeRaw,
+          member: {
+            findUnique: patchMocks.memberFindUnique,
+            update: patchMocks.memberUpdate,
+          },
+          organisation: { findFirst: patchMocks.organisationFindFirst },
+          xeroSyncOperation: { findMany, updateMany },
+        }),
+    );
+  });
+
+  it("refuses to claim a contact an Organisation already holds", async () => {
+    /*
+      INV-INT-018, and the case that needs no race: a school's organisation
+      contact carries the school's own address, which is routinely the address
+      of the teacher the club corresponds with. An inbound contact sync finding
+      that address on a member would have claimed the school's Xero customer for
+      a person, which is exactly what #2912 settled must never happen.
+    */
+    patchMocks.organisationFindFirst.mockResolvedValue({
+      id: "org-1",
+      name: "Tokoroa Primary School",
+    });
+
+    await expect(
+      applyInboundMemberContactPatch({
+        memberId: "member-1",
+        xeroContactId: "contact-1",
+      }),
+    ).rejects.toBeInstanceOf(XeroContactTwoHomesError);
+
+    // Nothing was written: the refusal precedes the update, and it names the
+    // holder rather than choosing between them.
+    expect(patchMocks.memberUpdate).not.toHaveBeenCalled();
+    expect(patchMocks.upsertXeroObjectLink).not.toHaveBeenCalled();
+  });
+
+  it("claims the link when no other record holds the contact", async () => {
+    const result = await applyInboundMemberContactPatch({
+      memberId: "member-1",
+      xeroContactId: "contact-1",
+    });
+
+    expect(result.linked).toBe(true);
+    expect(patchMocks.memberUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ xeroContactId: "contact-1" }),
+      }),
+    );
+  });
+
+  it("leaves a blank-field backfill onto the holder alone", async () => {
+    /*
+      The narrowness of the refusal, stated as behaviour. A member who already
+      holds this contact is claiming nothing, so a second home — if one somehow
+      exists — was made by another writer, and refusing an unrelated backfill
+      would break a repair without unmaking it.
+    */
+    patchMocks.memberFindUnique.mockResolvedValue({
+      id: "member-1",
+      email: "teacher@example.com",
+      passwordHash: "hash",
+      xeroContactId: "contact-1",
+      dateOfBirth: null,
+      joinedDate: null,
+      phoneNumber: null,
+      streetAddressLine1: null,
+      postalAddressLine1: null,
+    });
+    patchMocks.organisationFindFirst.mockResolvedValue({
+      id: "org-1",
+      name: "Tokoroa Primary School",
+    });
+
+    const result = await applyInboundMemberContactPatch({
+      memberId: "member-1",
+      xeroContactId: "contact-1",
+      patch: { phoneNumber: "021000000" },
+    });
+
+    expect(result.linked).toBe(false);
+    expect(result.appliedFields).toContain("phoneNumber");
   });
 });

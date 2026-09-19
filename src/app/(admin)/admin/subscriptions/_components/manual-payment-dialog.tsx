@@ -29,9 +29,12 @@ import { Textarea } from "@/components/ui/textarea";
  * silence — but it still gets a proper dialog rather than a browser confirm.
  */
 
-// Mirrors MANUAL_PAYMENT_NOTE_MAX in src/lib/manual-subscription-payment.ts,
-// which cannot be imported here: that module is `server-only`.
-const NOTE_MAX_LENGTH = 500;
+// #3498 fix round: imported rather than mirrored. `manual-payment-note.ts` is
+// the one definition and is deliberately import-free, so a client component
+// can reach it without dragging the server module across the boundary.
+import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+
+const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
 export interface ManualPaymentTarget {
   subscriptionId: string;

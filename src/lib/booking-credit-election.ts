@@ -1,4 +1,5 @@
 import { BookingStatus, PaymentStatus, type Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
   applyCreditToBooking,
@@ -7,6 +8,12 @@ import {
   lockMemberCreditLedger,
 } from "@/lib/member-credit";
 import { calculateBookingCreditApplication } from "@/lib/policies/booking-route-decisions";
+import {
+  d3CompatibleBookingMoneyBuildUpCents,
+  readBookingMoneyBuildUp,
+  selectLoadedBookingMoneyBuildUp,
+  type BookingMoneyBuildUpHistoryMetadata,
+} from "@/lib/booking-money-build-up";
 import {
   queueSupersededPrimaryIntentCancellations,
   type SupersededPrimaryPaymentIntent,
@@ -78,6 +85,8 @@ export type StoredCreditElectionOutcome = {
    * Stripe intent (Stripe rejects zero-amount intents).
    */
   fullyCovered: boolean;
+  /** #3277: the component check recorded with this atomic credit application. */
+  moneyBuildUp: BookingMoneyBuildUpHistoryMetadata;
 };
 
 /**
@@ -127,7 +136,14 @@ export async function consumeStoredCreditElection(
 
   if (!lockTarget || lockTarget.creditElectionCents == null) return null;
 
-  await lockMemberCreditLedger(lockTarget.memberId, tx);
+  const creditLedgerMemberId = bookingOwner(lockTarget).memberId;
+  // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
+  // booking has none, so there is no key to take. Passing a null key would
+  // either throw inside the helper or degenerate to a shared advisory key,
+  // which is an `INV-LOCK` hazard that shows up only under concurrency.
+  if (creditLedgerMemberId) {
+    await lockMemberCreditLedger(creditLedgerMemberId, tx);
+  }
 
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
@@ -143,6 +159,21 @@ export async function consumeStoredCreditElection(
   // Defence in depth. Credit belongs to the member until the booking is real;
   // a DRAFT or AWAITING_REVIEW booking keeps its election stored and untouched.
   if (booking.status !== BookingStatus.PAYMENT_PENDING) return null;
+
+  const recordedMoneyBuildUp = await readBookingMoneyBuildUp(tx, {
+    bookingId,
+    purpose: "CREDIT_ELECTION",
+  });
+  const moneyBuildUpSelection = selectLoadedBookingMoneyBuildUp(
+    recordedMoneyBuildUp,
+    {
+      derivedCents: booking.finalPriceCents,
+      mismatchClassification: "STORED_SIDE_DEFECT",
+    },
+  );
+  const verifiedFinalPriceCents = d3CompatibleBookingMoneyBuildUpCents(
+    moneyBuildUpSelection,
+  );
 
   const requestedCents = booking.creditElectionCents;
 
@@ -163,14 +194,19 @@ export async function consumeStoredCreditElection(
 
   if (claimed.count === 0) return null;
 
-  const availableBalanceCents = await getMemberCreditBalance(booking.memberId, tx);
+  // #3369: no member, no ledger, so no balance. Zero is the truth here, not
+  // a fallback: an organisation holds no account credit to elect against.
+  const balanceMemberId = bookingOwner(booking).memberId;
+  const availableBalanceCents = balanceMemberId
+    ? await getMemberCreditBalance(balanceMemberId, tx)
+    : 0;
   // Credit may already have been applied to this booking by another path (an
   // admin, or a legacy flow). The election can only claim the REMAINING price,
   // never re-cover a slice that is already covered.
   const alreadyAppliedCents = await deriveBookingAppliedCreditCents(bookingId, tx);
   const outstandingPriceCents = Math.max(
     0,
-    booking.finalPriceCents - alreadyAppliedCents,
+    verifiedFinalPriceCents - alreadyAppliedCents,
   );
 
   // Which bound ACTUALLY bound? A bound only counts when it is below the
@@ -201,12 +237,20 @@ export async function consumeStoredCreditElection(
     status: BookingStatus.PAYMENT_PENDING,
   });
 
-  if (creditAppliedCents > 0) {
+  // #3369: applying account credit spends a MEMBER's balance. An organisation
+  // has none, so an election can never have been recorded on its booking and
+  // `creditAppliedCents` is zero — but reading the owner rather than asserting
+  // it is what keeps that true if the election path ever widens.
+  const electionMemberId = bookingOwner(booking).memberId;
+  if (electionMemberId && creditAppliedCents > 0) {
     await applyCreditToBooking(
-      booking.memberId,
+      electionMemberId,
       creditAppliedCents,
       bookingId,
       tx,
+      {
+        description: `Applied to booking ${bookingId.slice(0, 8)}; price source ${moneyBuildUpSelection.source} (${moneyBuildUpSelection.reason})`,
+      },
     );
   }
 
@@ -227,8 +271,9 @@ export async function consumeStoredCreditElection(
     shortfallReason,
     availableBalanceCents,
     fullyCovered:
-      booking.finalPriceCents > 0 &&
-      alreadyAppliedCents + creditAppliedCents >= booking.finalPriceCents,
+      verifiedFinalPriceCents > 0 &&
+      alreadyAppliedCents + creditAppliedCents >= verifiedFinalPriceCents,
+    moneyBuildUp: moneyBuildUpSelection.historyMetadata,
   };
 }
 

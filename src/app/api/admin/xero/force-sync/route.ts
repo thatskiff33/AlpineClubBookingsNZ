@@ -1,4 +1,5 @@
 import { after, NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
@@ -255,6 +256,7 @@ export async function POST(request: NextRequest) {
 
     const queueResult = await enqueueXeroBookingInvoiceOperation(booking.id, {
       createdByMemberId: session.user.id,
+      invoiceEmailDelivery: null,
     });
 
     if (queueResult.queueOperationId) {
@@ -274,7 +276,7 @@ export async function POST(request: NextRequest) {
       action: "XERO_FORCE_SYNC_INVOICE",
       memberId: session.user.id,
       targetId: booking.id,
-      subjectMemberId: booking.memberId,
+      subjectMemberId: bookingOwner(booking).memberId,
       entityType: "Booking",
       entityId: booking.id,
       category: "xero",

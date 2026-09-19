@@ -30,6 +30,7 @@ import {
   BookingRequestType,
   BookingStatus,
   HutLeaderAssignmentSource,
+  OrganisationContactRole,
   PaymentSource,
   PaymentStatus,
   Prisma,
@@ -37,6 +38,13 @@ import {
 } from "@prisma/client";
 import { z } from "zod";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
+import {
+  resolveOrCreateSchoolOrganisation,
+  schoolXeroContactName,
+  type ResolvedSchoolOrganisation,
+} from "@/lib/school-organisations";
+import { reconcileOrganisationTeachers } from "@/lib/organisation-xero-contact-persons";
+import { bookingOwner } from "@/lib/booking-owner";
 import { issueActionToken } from "@/lib/action-tokens";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -60,10 +68,10 @@ import {
   splitPriceAcrossGuests,
   type BookingRequestGuest,
 } from "@/lib/booking-request";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import {
   buildApprovalGuestCreates,
   claimAlreadyConvertedBookingRequest,
-  getCapacityFullNights,
   planBookingRequestGuestConsent,
   sendOwnerSubstitutionAdminAlert,
   toPipelineGuestCreateData,
@@ -115,14 +123,46 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { SCHOOL_CHILD_NAME_PREFIX } from "@/lib/placeholder-guest-names";
+import {
+  SCHOOL_CHILD_TIERS,
+  sameSchoolGuestList,
+  unchangedSchoolGuestPrefixLength,
+} from "@/lib/school-booking-constants";
 import { nameField } from "@/lib/zod-helpers";
 
-/** Age tiers a school can request counts for. Teachers are always ADULT. */
-const SCHOOL_CHILD_TIERS = [
-  AgeTier.INFANT,
-  AgeTier.CHILD,
-  AgeTier.YOUTH,
-] as const;
+/**
+ * Bound a school party by the lodge's bed count — `INV-CAP`, and ONE
+ * implementation of it (#3412).
+ *
+ * Three doors apply this rule: the public form's route, the create service, and
+ * the officer's guest-override resolver below. All three resolved the capacity
+ * the same way and built the same sentence, so a club that changed the wording
+ * or the null-lodge fallback in one of them would have changed it in one of
+ * them. The status code is the caller's, because the public door answers 400
+ * for every rejected submission while the two admin doors answer 422 for a body
+ * that parsed but cannot be applied; nothing else differs.
+ *
+ * This is the lodge's STATIC bed count, not a per-night availability read. No
+ * beds are held here and no capacity lock is taken. The per-night check stays
+ * where the reservation is (`holdBookingRequestSlots`, and approval's re-check).
+ */
+export async function assertSchoolGuestsWithinLodgeCapacity(input: {
+  guestCount: number;
+  /** The lodge whose bed count binds. Null means the club's default lodge. */
+  lodgeId: string | null;
+  status: 400 | 422;
+}): Promise<number> {
+  const lodgeCapacity = input.lodgeId
+    ? await getLodgeCapacity(input.lodgeId)
+    : await getDefaultLodgeCapacity();
+  if (input.guestCount > lodgeCapacity) {
+    throw new BookingRequestError(
+      `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
+      input.status
+    );
+  }
+  return lodgeCapacity;
+}
 
 // ---------------------------------------------------------------------------
 // Input shapes
@@ -144,7 +184,7 @@ export const schoolChildCountsSchema = z.object({
   YOUTH: z.number().int().min(0).max(200).optional(),
 });
 
-type SchoolChildCounts = z.infer<typeof schoolChildCountsSchema>;
+export type SchoolChildCounts = z.infer<typeof schoolChildCountsSchema>;
 
 interface CreateSchoolBookingRequestInput {
   schoolName: string;
@@ -174,7 +214,7 @@ interface CreateSchoolBookingRequestInput {
   lodgeId?: string | null;
 }
 
-interface StoredTeacher {
+export interface StoredTeacher {
   firstName: string;
   lastName: string;
   email: string | null;
@@ -233,6 +273,128 @@ function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
     lastName: teacher.lastName,
     email: teacher.email ? teacher.email.toLowerCase() : null,
   }));
+}
+
+/** What a school request's party is, once the officer's numbers are applied. */
+export interface SchoolGuestResolution {
+  /** The preserved named teachers/parent helpers, in stored order. */
+  teachers: StoredTeacher[];
+  /** The stored guest list, strict-read. */
+  storedGuests: BookingRequestGuest[];
+  /** The list to price, hold and convert against: regenerated, or the stored one. */
+  guests: BookingRequestGuest[];
+  /** The caller supplied child counts. */
+  overridden: boolean;
+  /** The resolved list differs from the stored one, so persisting it changes the party. */
+  changed: boolean;
+}
+
+/**
+ * Resolve a school request's guest list against an officer's adjusted child
+ * counts — the ONE implementation, shared by saving a quote (#3412) and
+ * approving. Two call sites, so what the officer typed cannot mean one party at
+ * the price and a different one at the beds, which is exactly the defect #3412
+ * fixes: Save quote priced the STORED list while the panel showed the adjusted
+ * total, so a group agreed down to 20 was quoted for 29.
+ *
+ * What it guarantees, in order:
+ *
+ * - **#2342: the stored guests are strict-read unconditionally**, even when the
+ *   counts replace them. Skipping that parse would make a request whose stored
+ *   list cannot be read back priceable, capacity-checkable and invoiceable from
+ *   admin-typed numbers alone — and the panel prefills those numbers from the
+ *   SALVAGED list, in which an unreadable age tier counts as zero, so a 30-child
+ *   request could be invoiced for two people. A row we cannot read is not
+ *   convertible by any route: decline it, or repair the stored data.
+ * - **The named teachers/parent helpers are preserved** and stay first in the
+ *   list; only the bulk children are regenerated (`generateSchoolGuests`).
+ * - **Lodge capacity binds the new list** — `INV-CAP`, through the one helper
+ *   all three school doors share (`assertSchoolGuestsWithinLodgeCapacity`).
+ *   This is the static bed count of the lodge, not a per-night availability
+ *   read: no beds are held here and no capacity lock is taken, because nothing
+ *   in this function reserves anything. The per-night check stays where the
+ *   reservation is (`holdBookingRequestSlots`, and approval's re-check —
+ *   `INV-ADDPAY-008`).
+ * - **A member linked to a row the regeneration renumbers is refused (422).**
+ *   Children are regenerated as numbered placeholders, so a link stored against
+ *   child #7 would come to mean a DIFFERENT child once the list is renumbered,
+ *   and that member would then be priced as a member, invoiced and emailed onto
+ *   somebody else's bed. It lives HERE, not in one caller, because both callers
+ *   apply the link POSITIONALLY against the regenerated list — approve as much
+ *   as quote — so a refusal in the quote service alone left approve doing by
+ *   design the thing the refusal exists to prevent, with no new condition on
+ *   the Approve button to stop it.
+ *
+ * `changed` is the answer to "does persisting this rewrite the party?", and it
+ * is false for an override that types the current numbers back — which the
+ * panel sends whenever the officer touched a box at all. Nothing is refused
+ * when it is false: an unchanged list renumbers nobody.
+ */
+export async function resolveSchoolGuestOverride(input: {
+  /** The stored request row; only its two guest-shaped columns are read. */
+  request: { teachers: unknown; guests: unknown };
+  /** The officer's adjusted bulk child counts, or undefined for "as submitted". */
+  childCounts?: SchoolChildCounts;
+  /**
+   * The lodge whose bed count bounds the list. Null means the club's default
+   * lodge. Callers converting a held booking pass the hold's immutable concrete
+   * lodge, not the request's selector.
+   */
+  lodgeId: string | null;
+  /**
+   * Which guest positions carry a member link — REQUIRED, with no default, so a
+   * future third caller cannot get the refusal above skipped by forgetting it.
+   * Each caller passes the list that will actually be applied positionally:
+   * approve the STORED blob it is about to convert, saving a quote the POSTED
+   * links it is about to write.
+   */
+  linkedGuestIndexes: readonly number[];
+}): Promise<SchoolGuestResolution> {
+  const teachers = parseSchoolTeachers(input.request.teachers);
+  const storedGuests = parseBookingRequestGuests(input.request.guests);
+  const overridden = input.childCounts !== undefined;
+  const guests = input.childCounts
+    ? generateSchoolGuests({ teachers, childCounts: input.childCounts })
+    : storedGuests;
+  if (guests.length === 0) {
+    throw new BookingRequestError("At least one guest is required", 422);
+  }
+  if (overridden) {
+    await assertSchoolGuestsWithinLodgeCapacity({
+      guestCount: guests.length,
+      lodgeId: input.lodgeId,
+      status: 422,
+    });
+  }
+  const changed = overridden && !sameSchoolGuestList(storedGuests, guests);
+  if (changed) {
+    const unchangedPrefix = unchangedSchoolGuestPrefixLength(storedGuests, guests);
+    const misplacedIndex = input.linkedGuestIndexes
+      .filter((guestIndex) => guestIndex >= unchangedPrefix)
+      .sort((a, b) => a - b)[0];
+    if (misplacedIndex !== undefined) {
+      const row = storedGuests[misplacedIndex];
+      const rowName = row ? `${row.firstName} ${row.lastName}` : `row ${misplacedIndex + 1}`;
+      // #3412 (review round 5, B): the row is NOT always an unnamed child, and
+      // the sentence used to say it was. The boundary is derived from the two
+      // lists, so on a hand-repaired row — a third adult in `guests` that the
+      // `teachers` column does not carry, which is the case the F12 test pins —
+      // this names a teacher or parent helper and told the officer they were
+      // "one of the school's unnamed children". Say what is true of both: the
+      // person on that row changes.
+      throw new BookingRequestError(
+        `A member is linked to ${rowName}, and these group numbers change who is on that row — the member would end up on somebody else's bed. Unlink them, save the new numbers, then link them again to the right row so they keep the member rate.`,
+        422
+      );
+    }
+  }
+  return {
+    teachers,
+    storedGuests,
+    guests,
+    overridden,
+    changed,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -445,15 +607,11 @@ export async function createSchoolBookingRequest(
   }
 
   const requestedLodgeId = input.lodgeId ?? null;
-  const lodgeCapacity = requestedLodgeId
-    ? await getLodgeCapacity(requestedLodgeId)
-    : await getDefaultLodgeCapacity();
-  if (guests.length > lodgeCapacity) {
-    throw new BookingRequestError(
-      `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
-      422
-    );
-  }
+  await assertSchoolGuestsWithinLodgeCapacity({
+    guestCount: guests.length,
+    lodgeId: requestedLodgeId,
+    status: 422,
+  });
 
   const indicativePriceCents = await calculateSchoolIndicativePriceCents({
     checkIn: input.checkIn,
@@ -543,7 +701,8 @@ type ApproveSchoolBookingRequestOutcome =
       type: "approved";
       requestId: string;
       bookingId: string;
-      schoolMemberId: string;
+      /** Null since #3369 when the held booking is owned by an Organisation. */
+      schoolMemberId: string | null;
       priceCents: number;
       invoiceMode: "xero" | "manual";
       teacherCount: number;
@@ -633,41 +792,20 @@ export async function approveSchoolBookingRequest(input: {
   const expectedHeldLodgeId = heldLodgeLocator?.lodgeId ?? null;
   const approvalLodgeId = expectedHeldLodgeId ?? request.lodgeId ?? null;
 
-  const teachers = parseSchoolTeachers(request.teachers);
   const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
-  // #2342: strict-read the STORED guests unconditionally, even when the admin
-  // supplies a count override that replaces them. The override branch used to
-  // skip this parse entirely, which made a request whose stored guest list
-  // cannot be read back approvable, priceable, capacity-checkable and
-  // invoiceable from admin-typed numbers alone — and the admin panel prefills
-  // those numbers from the SALVAGED list, in which an unreadable age tier
-  // counts as zero, so a 30-child request could be invoiced for two people.
-  // A row we cannot read is not convertible by any route: decline it, or
-  // repair the stored data.
-  const storedGuests = parseBookingRequestGuests(request.guests);
-  // When the admin varies the quantity, regenerate the guest list from the
-  // preserved teachers + the new child counts; otherwise use the submitted
-  // snapshot. The new list then drives pricing, capacity and the booking below.
-  const guests = input.guestOverride
-    ? generateSchoolGuests({
-        teachers,
-        childCounts: input.guestOverride.childCounts,
-      })
-    : storedGuests;
-  if (guests.length === 0) {
-    throw new BookingRequestError("At least one guest is required", 422);
-  }
-  if (input.guestOverride) {
-    const lodgeCapacity = approvalLodgeId
-      ? await getLodgeCapacity(approvalLodgeId)
-      : await getDefaultLodgeCapacity();
-    if (guests.length > lodgeCapacity) {
-      throw new BookingRequestError(
-        `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
-        422
-      );
-    }
-  }
+  // One implementation of "what is this school group, given the officer's
+  // numbers" for both moments it is asked — saving a quote (#3412) and
+  // approving. See `resolveSchoolGuestOverride`.
+  const { teachers, guests } = await resolveSchoolGuestOverride({
+    request,
+    childCounts: input.guestOverride?.childCounts,
+    lodgeId: approvalLodgeId,
+    // The STORED blob, because that is the map applied positionally against the
+    // regenerated list a few lines down (`buildApprovalGuestCreates`) — so an
+    // override that renumbers a linked child is refused here rather than
+    // silently moving that member onto another child's bed.
+    linkedGuestIndexes: [...linkedMembers.keys()],
+  });
   const schoolName =
     request.schoolName ?? `${request.contactFirstName} ${request.contactLastName}`;
 
@@ -756,7 +894,11 @@ export async function approveSchoolBookingRequest(input: {
   let conversion: {
     bookingId: string;
     lodgeId: string;
-    schoolMemberId: string;
+    /** Null since #3369 when the booking is owned by an Organisation. */
+    schoolMemberId: string | null;
+    // #3367: the school this approval resolved or created. Null only on the
+    // idempotent replay path, which writes nothing and owes no correspondence.
+    organisation: ResolvedSchoolOrganisation | null;
     teacherAssignments: Array<{
       memberId: string;
       assignmentId: string;
@@ -767,7 +909,7 @@ export async function approveSchoolBookingRequest(input: {
     memberGuestNotificationRows: MemberGuestAddNotificationRow[];
     displacedMemberGuestIds: string[];
     ownerSubstitution:
-      | { invalidMemberId: string; substituteMemberId: string; reason: string }
+      | { invalidMemberId: string | null; substituteMemberId: string; reason: string }
       | null;
     alreadyConverted: boolean;
   };
@@ -829,6 +971,9 @@ export async function approveSchoolBookingRequest(input: {
           bookingId: committedConversion.convertedBookingId,
           lodgeId: bookingLodgeId,
           schoolMemberId: committedConversion.convertedMemberId,
+          // A replay wrote no rows; the first approval already linked the
+          // school and queued its invoice.
+          organisation: null,
           teacherAssignments: [],
           ownerSubstitution: null,
           alreadyConverted: true as const,
@@ -873,7 +1018,8 @@ export async function approveSchoolBookingRequest(input: {
       let held: {
         id: string;
         lodgeId: string;
-        memberId: string;
+        /** Null since #3369 when the held booking is owned by an Organisation. */
+        memberId: string | null;
         status: BookingStatus;
       } | null = null;
       if (request.heldBookingId) {
@@ -953,8 +1099,41 @@ export async function approveSchoolBookingRequest(input: {
         heldBookingId: request.heldBookingId ?? null,
       });
 
+      /*
+        #3367 (stage 2 of programme #2912) — THE SCHOOL BECOMES A RECORD OF ITS
+        OWN, and from this release it is the invoiced and contacted party.
+
+        Resolved or created HERE, inside the approval transaction and under the
+        locks it already holds. The canonical GLOBAL advisory lock taken at the
+        top of this transaction is the unique-name claim: two admins approving
+        two requests for one school are serialised by it, so the
+        read-then-create inside `resolveOrCreateSchoolOrganisation` cannot
+        interleave and mint two schools for one name. A repeat school resolves to
+        the record it already has, and therefore to the Xero customer it already
+        has, which is what stops a returning school spawning a duplicate contact.
+
+        NO PROVIDER CALL HAPPENS HERE. The Xero customer for this organisation is
+        created lazily by the invoice path after this transaction commits, the
+        same way a member's always has been — an F7 (#1355) property that must
+        survive.
+
+        The invented school MEMBER is still created below and still owns the
+        booking. That is deliberate: stage 4 (#3369) removes it, together with the
+        `Role.SCHOOL` literal the teachers below still carry. Stage 2 adds the
+        organisation and the association and changes neither.
+      */
+      const organisation = await resolveOrCreateSchoolOrganisation(tx, {
+        name: schoolName,
+        email: request.contactEmail,
+        phone: request.contactPhone,
+      });
+
       let booking: { id: string };
-      let schoolMember: { id: string };
+      // #3369: THE SCHOOL IS NO LONGER A PERSON. This holds the member an
+      // officer deliberately MAPPED the request to, when they did — that person
+      // becomes one of the organisation's contacts below — and null otherwise.
+      // Either way the booking's owner is the `Organisation`, never this.
+      let schoolMember: { id: string | null };
       // MG4-D-b (#2309): collected in whichever branch runs, dispatched after
       // the commit.
       let memberGuestNotificationRows: MemberGuestAddNotificationRow[] = [];
@@ -973,9 +1152,20 @@ export async function approveSchoolBookingRequest(input: {
         // fail the accept: fall back to a fresh non-login SCHOOL contact (the
         // pre-#1255 default owner) and flag an admin. Auto-created owners always
         // pass, so this is a no-op except for a changed-state mapped contact.
-        let ownerId = held.memberId;
+        let ownerId = bookingOwner(held).memberId;
         try {
-          await assertMappableOwnerContact(tx, held.memberId);
+        // #3369: a held booking with no member is owned by an `Organisation`,
+        // which is not a person and cannot serve as this request's booking
+        // contact. Treated exactly as an unmappable contact is — the recovery
+        // below mints a fresh non-login contact from the request's own details
+        // and flags an admin — rather than failing the requester's accept.
+          if (!ownerId) {
+            throw new BookingRequestError(
+              "The held booking has no member contact",
+              409,
+            );
+          }
+          await assertMappableOwnerContact(tx, ownerId);
         } catch (err) {
           if (!(err instanceof BookingRequestError)) throw err;
           const substitute = await tx.member.create({
@@ -983,7 +1173,11 @@ export async function approveSchoolBookingRequest(input: {
               email: request.contactEmail,
               passwordHash: placeholderPasswordHash,
               emailVerified: true,
-              firstName: schoolName.slice(0, 100),
+              // #3367: through the SHARED helper, so the name this member's
+              // Xero contact is created under is byte-identical to the one the
+              // school's own record sends. Two truncations for one name is how
+              // a returning school ends up with two Xero customers.
+              firstName: schoolXeroContactName(schoolName),
               lastName: "",
               role: "SCHOOL",
               ageTier: AgeTier.ADULT,
@@ -995,7 +1189,7 @@ export async function approveSchoolBookingRequest(input: {
           });
           ownerId = substitute.id;
           ownerSubstitution = {
-            invalidMemberId: held.memberId,
+            invalidMemberId: bookingOwner(held).memberId,
             substituteMemberId: substitute.id,
             reason: err.message,
           };
@@ -1054,10 +1248,13 @@ export async function approveSchoolBookingRequest(input: {
             hasNonMembers: true,
             notes: request.message,
             createdById: input.adminMemberId,
-            // Point the held booking at the (possibly substituted) owner. On the
-            // no-substitution path this rewrites the same id (a no-op); bed
-            // allocations live on guest rows and are unaffected by ownership.
-            memberId: ownerId,
+            // #3369: the held booking changes hands to the SCHOOL. Whoever
+            // held it before — an officer's placeholder contact, or a
+            // substitute minted above when that contact failed re-validation —
+            // stops owning it; bed allocations live on guest rows and are
+            // unaffected by ownership.
+            memberId: null,
+            organisationId: organisation.id,
             // Exclusive whole-lodge hold when the request asked for it (#121).
             ...exclusiveHoldData,
           },
@@ -1083,35 +1280,25 @@ export async function approveSchoolBookingRequest(input: {
         }
 
         if (input.ownerContactMemberId) {
-          // Admin mapped this school request to an existing non-login SCHOOL/
-          // Organisation contact (issue #1255): the confirmed booking — and the
-          // Xero invoice raised after commit — reuse that contact instead of
-          // spawning a duplicate school member (and Xero contact). Teachers are
-          // still created fresh below. The guard rejects any login-capable
-          // target.
+          // An officer MAPPED this request to an existing non-login contact
+          // (#1255). That is a statement about who the club corresponds with at
+          // this school, and #3369 keeps it — as an `OrganisationContact` on the
+          // school below, which is where a person who speaks for a school now
+          // lives. It is no longer the booking's owner; the organisation is.
+          // The guard still rejects any login-capable target.
           const mappedId = await assertMappableOwnerContact(
             tx,
             input.ownerContactMemberId
           );
           schoolMember = { id: mappedId };
         } else {
-          // The school is the invoiced party and Xero contact: name = school,
-          // email = contact email. Owned by a non-login Member (canLogin: false).
-          schoolMember = await tx.member.create({
-            data: {
-              email: request.contactEmail,
-              passwordHash: placeholderPasswordHash,
-              emailVerified: true,
-              firstName: schoolName.slice(0, 100),
-              lastName: "",
-              role: "SCHOOL",
-              ageTier: AgeTier.ADULT,
-              active: true,
-              canLogin: false,
-              phoneNumber: request.contactPhone,
-            },
-            select: { id: true },
-          });
+          // #3369: NOTHING IS INVENTED HERE ANY MORE. Until this stage an
+          // approval minted a surnameless `Member` carrying the school's name,
+          // and that row owned the booking, held the Xero contact and was the
+          // subject of every audit line. The school's own `Organisation` does
+          // all three now, so there is no person to create — which is the whole
+          // point of programme #2912.
+          schoolMember = { id: null };
         }
 
         // CONFIRMED holds capacity (issue #709 locked decision); pay-on-account
@@ -1125,7 +1312,11 @@ export async function approveSchoolBookingRequest(input: {
         });
         const createdBooking = await tx.booking.create({
           data: {
-            memberId: schoolMember.id,
+            // #3369: the SCHOOL owns its booking. `Booking_owner_exactly_one`
+            // is what makes "a member or an organisation, never both and never
+            // neither" unrepresentable rather than policed.
+            memberId: null,
+            organisationId: organisation.id,
             lodgeId: bookingLodgeId,
             checkIn: request.checkIn,
             checkOut: request.checkOut,
@@ -1261,6 +1452,29 @@ export async function approveSchoolBookingRequest(input: {
         },
       });
 
+      // #3369: an officer who MAPPED this request to an existing contact was
+      // saying "this person is who we deal with at that school". Until this
+      // stage that statement was expressed by making them the booking's owner,
+      // which is the school-as-person model. It is kept as what it actually is:
+      // a contact OF the organisation. Upserted, not inserted, because the same
+      // person may already be on the school's list from an earlier approval.
+      if (schoolMember.id) {
+        await tx.organisationContact.upsert({
+          where: {
+            organisationId_memberId: {
+              organisationId: organisation.id,
+              memberId: schoolMember.id,
+            },
+          },
+          create: {
+            organisationId: organisation.id,
+            memberId: schoolMember.id,
+            role: OrganisationContactRole.CONTACT,
+          },
+          update: {},
+        });
+      }
+
       const teacherAssignments: Array<{
         memberId: string;
         assignmentId: string;
@@ -1303,6 +1517,55 @@ export async function approveSchoolBookingRequest(input: {
           select: { id: true },
         });
 
+        /*
+          #3367: the REAL TEACHER, recorded against the school as a person
+          rather than the school being invented as a person.
+
+          This is the row the school's Xero contact reads to name a contact
+          person on it (owner decision, 13 September 2026) — so a treasurer can
+          see who to talk to without leaving Xero. When a school's teacher
+          changes, the next approval writes a new row here and the next Xero
+          contact resolution pushes it; `organisation-xero-contacts.ts` holds the
+          full answer.
+
+          `upsert`, not `create`: the same teacher returning with the same school
+          is the ordinary case, and `@@unique([organisationId, memberId])` would
+          otherwise abort an approval over an association that is already true.
+          A teacher member is created fresh per approval today, so in practice
+          this inserts; the upsert is what keeps that an implementation detail
+          rather than a constraint this code depends on.
+
+          WRITING THE NEW ROWS IS ONLY HALF OF IT. Because a fresh teacher
+          `Member` is minted on every approval — even for the same returning
+          human — an approval that only ever added rows would accumulate one
+          association per approval and never remove one, and the derived contact
+          list would name people who left years ago. The other half is
+          `reconcileOrganisationTeachers` after this loop.
+
+          THE TEACHER STILL CARRIES `Role.SCHOOL` above. That is not an oversight
+          and a reader who notices it deserves the reason: the owner declined
+          changing it in this stage (13 September 2026, choice B) because a
+          teacher's `HutLeaderAssignment` is tied to this area and the schema
+          warns that reclassifying a member can silently remove a live
+          assignment. Stage 4 (#3369) retires the role vocabulary in one step,
+          together with the invented school member. A Xero contact person is a
+          name and an address, not a role, so the two facts do not conflict.
+        */
+        await tx.organisationContact.upsert({
+          where: {
+            organisationId_memberId: {
+              organisationId: organisation.id,
+              memberId: teacherMember.id,
+            },
+          },
+          create: {
+            organisationId: organisation.id,
+            memberId: teacherMember.id,
+            role: OrganisationContactRole.TEACHER,
+          },
+          update: { role: OrganisationContactRole.TEACHER },
+        });
+
         teacherAssignments.push({
           memberId: teacherMember.id,
           assignmentId: teacherAssignment.id,
@@ -1312,12 +1575,75 @@ export async function approveSchoolBookingRequest(input: {
         });
       }
 
+      /*
+        #3367: the school's TEACHER associations are RECONCILED to this
+        booking's teachers, not appended to.
+
+        Without this the rows accumulate one set per approval and nothing in the
+        tree ever removes one — the model has no end-date column — so the
+        school's Xero contact would eventually name five people who have gone
+        and could never be corrected. The owner took decision A (13 September
+        2026) on the stated promise that a departed teacher is corrected on the
+        next invoice; this is what makes that promise true rather than a hope.
+
+        Safe to delete rather than end-date because `OrganisationContact` is
+        pure association and says so in its own schema docblock: "it carries no
+        history of its own". The history a school's teachers DO have lives on
+        `HutLeaderAssignment`, created above, which is a separate record and is
+        never touched here.
+
+        A request that recorded no teachers reconciles nothing — see
+        `reconcileOrganisationTeachers`.
+      */
+      const reconciledTeachers = await reconcileOrganisationTeachers(tx, {
+        organisationId: organisation.id,
+        teacherMemberIds: teacherAssignments.map((row) => row.memberId),
+      });
+      if (reconciledTeachers.removedCount > 0) {
+        await createAuditLog(
+          {
+            action: "organisation.contacts.teachers_reconciled",
+            memberId: input.adminMemberId,
+            actorMemberId: input.adminMemberId,
+            targetId: organisation.id,
+            entityType: "Organisation",
+            entityId: organisation.id,
+            // The same subsystem test the transfer's row answers: this is the
+            // set that reaches Xero as the school's contact persons, so it
+            // correlates with the rest of the contact-identity story rather
+            // than splitting off into `admin` (INV-PRIV-013).
+            category: "xero",
+            severity: "important",
+            outcome: "success",
+            summary:
+              "School contact people replaced by the approved booking's teachers",
+            details:
+              "Approving this school booking made its teachers the school's " +
+              "current contact people. Associations for teachers who are no " +
+              "longer named were removed, so the school's Xero contact stops " +
+              "naming people who have left (#3367).",
+            metadata: {
+              organisationId: organisation.id,
+              bookingId: booking.id,
+              removedCount: reconciledTeachers.removedCount,
+              // The reconcile's own count, not this list's length: a request
+              // naming one teacher twice is two entries and one association.
+              keptCount: reconciledTeachers.keptCount,
+            },
+          },
+          tx,
+        );
+      }
+
       await tx.bookingRequest.update({
         where: { id: request.id },
         data: {
           status: BookingRequestStatus.CONVERTED,
           convertedBookingId: booking.id,
           convertedMemberId: schoolMember.id,
+          // #3367: the request keeps the school it converted into, so #2936's
+          // request editing and stage 4's census both read one answer.
+          organisationId: organisation.id,
           version: { increment: 1 },
           // Keep the request snapshot consistent with what was actually booked
           // when the admin varied the quantity.
@@ -1331,6 +1657,7 @@ export async function approveSchoolBookingRequest(input: {
         bookingId: booking.id,
         lodgeId: bookingLodgeId,
         schoolMemberId: schoolMember.id,
+        organisation,
         teacherAssignments,
         ownerSubstitution,
         alreadyConverted: false as const,
@@ -1429,6 +1756,7 @@ export async function approveSchoolBookingRequest(input: {
       try {
         const queued = await enqueueXeroBookingInvoiceOperation(conversion.bookingId, {
           createdByMemberId: input.adminMemberId,
+          invoiceEmailDelivery: null,
         });
         if (queued.queueOperationId) {
           await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
@@ -1445,15 +1773,26 @@ export async function approveSchoolBookingRequest(input: {
       // mapped), which can differ from the raw request school/contact. On the
       // non-mapped path the owner's name/email equal schoolName/contactEmail, so
       // this resolves to the same values (no behaviour change).
-      const invoiceOwner = await prisma.member.findUnique({
-        where: { id: conversion.schoolMemberId },
-        select: { firstName: true, lastName: true, email: true },
-      });
-      const invoiceName =
+      //
+      // #3367: where an ORGANISATION is linked, IT is the invoiced party, so the
+      // officer is told to invoice the school by its own recorded name rather
+      // than by whatever the invented member row happens to be called. This is
+      // the manual half of the same change the Xero path makes by resolving the
+      // organisation's contact; a booking with no organisation is unchanged.
+      const invoiceOwner = conversion.schoolMemberId
+        ? await prisma.member.findUnique({
+            where: { id: conversion.schoolMemberId },
+            select: { firstName: true, lastName: true, email: true },
+          })
+        : // #3369: an organisation-owned booking has no member row to read; the
+          // organisation's own name is what the invoice carries, resolved below.
+          null;
+      const ownerName =
         [invoiceOwner?.firstName, invoiceOwner?.lastName]
           .filter(Boolean)
           .join(" ")
           .trim() || schoolName;
+      const invoiceName = conversion.organisation?.name ?? ownerName;
       const invoiceEmail = invoiceOwner?.email ?? request.contactEmail;
       sendAdminSchoolManualInvoiceEmail({
         schoolName: invoiceName,
@@ -1485,6 +1824,10 @@ export async function approveSchoolBookingRequest(input: {
         schoolName,
         bookingId: conversion.bookingId,
         schoolMemberId: conversion.schoolMemberId,
+        // #3367: which school record this booking was attached to, and whether
+        // this approval was the one that created it.
+        organisationId: conversion.organisation?.id ?? null,
+        organisationCreated: conversion.organisation?.created ?? false,
         priceCents: totalPriceCents,
         guestCount: guests.length,
         teacherCount: conversion.teacherAssignments.length,
@@ -2403,7 +2746,10 @@ export async function approveMemberWholeLodgeRequest(input: {
       try {
         const queuedInvoice = await enqueueXeroBookingInvoiceOperation(
           conversion.bookingId,
-          { createdByMemberId: input.adminMemberId },
+          {
+            createdByMemberId: input.adminMemberId,
+            invoiceEmailDelivery: null,
+          },
         );
         // #1620 floating-credit parity with the Internet Banking create path
         // (booking-create.ts): allocate the member's existing credit notes

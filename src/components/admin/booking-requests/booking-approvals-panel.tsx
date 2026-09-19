@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { bookingOwner } from "@/lib/booking-owner";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -26,10 +27,7 @@ import {
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import { useClubTime } from "@/components/club-time-provider";
-import {
-  calendarDateOfSerialisedDbDate,
-  formatClubDate,
-} from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
@@ -110,19 +108,6 @@ function buildBookingApprovalsPath(
     recordKey: "bookingId",
     recordId: bookingId,
   });
-}
-
-/**
- * A lodge night as the calendar day it IS - no timezone, because a calendar day
- * has none (CT-4, #2870; INV-DATE-010). `checkIn`/`checkOut` are `@db.Date`
- * columns and reach the browser as UTC midnight; the kernel's calendar-date
- * formatter pins UTC over that encoding, so the projection is the identity.
- *
- * WHAT THIS REPLACES projected the same value through a zone, which is the
- * identity for a club east of Greenwich and the PREVIOUS DAY west of it.
- */
-function formatStayDate(value: string): string {
-  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 export function BookingApprovalsPanel({
@@ -456,7 +441,7 @@ export function BookingApprovalsPanel({
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">
-                        {booking.member.firstName} {booking.member.lastName}
+                        {bookingOwner(booking).member.firstName} {bookingOwner(booking).member.lastName}
                       </CardTitle>
                       <p className="text-sm text-muted-foreground">
                         Created {clubTime.instantDateTime(new Date(booking.createdAt))} —{" "}
@@ -476,7 +461,7 @@ export function BookingApprovalsPanel({
                           the review status, same as the other three lists. */}
                       <DiagnosticsRecordButton
                         recordId={booking.id}
-                        subject={`the booking for ${booking.member.firstName} ${booking.member.lastName} awaiting review`}
+                        subject={`the booking for ${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} awaiting review`}
                       />
                     </div>
                   </div>

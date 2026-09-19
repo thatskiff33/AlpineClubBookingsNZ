@@ -5,6 +5,7 @@ import {
   cleanedLiteralWarning,
   stripCleanedLiterals,
 } from "../cleaned-literals";
+import { holdsHutRateRows } from "@/lib/membership-type-rate-coverage";
 import { serialiseCsv } from "../csv";
 import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
@@ -644,17 +645,19 @@ function parseLodgeFolder(
     const ageTier = nz(raw.ageTier) === null ? null : v.enum("ageTier", "AgeTier", raw.ageTier);
 
     // D2 invariant + shape validation (#1930, E4). Both are blocking errors,
-    // exactly like an unknown membership type: a NON_MEMBER_RATE type (other
-    // than the built-in NON_MEMBER rate holder) or BLOCK_BOOKING type owns
-    // ZERO rate rows, and a row's ageTier must match the type's
-    // ageGroupsApply shape (per-tier rows for age-keyed types, one blank-tier
-    // flat row for flat types).
+    // exactly like an unknown membership type: a NON_MEMBER_RATE or
+    // BLOCK_BOOKING type owns ZERO rate rows unless the engine resolves it BY
+    // KEY (NON_MEMBER, FULL — `holdsHutRateRows`, #2933), and a row's ageTier
+    // must match the type's ageGroupsApply shape (per-tier rows for age-keyed
+    // types, one blank-tier flat row for flat types).
     let rowShapeValid = true;
     if (membershipType) {
-      const rateBearing =
-        membershipType.bookingBehavior === "MEMBER_RATE" ||
-        membershipTypeKey === "NON_MEMBER";
-      if (!rateBearing) {
+      if (
+        !holdsHutRateRows({
+          key: membershipTypeKey,
+          bookingBehavior: membershipType.bookingBehavior,
+        })
+      ) {
         errors.push(
           `${paths.rates}: row ${i + 2}: membership type "${membershipTypeKey}" does not carry its own hut rates (${membershipType.bookingBehavior} types own zero rate rows)`,
         );

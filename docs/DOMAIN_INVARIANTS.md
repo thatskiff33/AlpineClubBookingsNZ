@@ -27,7 +27,7 @@ description, so you can find the right file without opening more than one.
 | [`member-guest-consent.md`](invariants/member-guest-consent.md) | `INV-GUEST` | a member bringing a member as a guest, and consent to do so |
 | [`booking-modifications.md`](invariants/booking-modifications.md) | `INV-MOD` | editing an existing booking's dates, party or price |
 | [`adult-member-hosting.md`](invariants/adult-member-hosting.md) | `INV-HOST` | who may host whom, and what strands cover |
-| [`booking-requests.md`](invariants/booking-requests.md) | `INV-REQ` | booking-request officer notes and the member's own request area |
+| [`booking-requests.md`](invariants/booking-requests.md) | `INV-REQ` | booking-request officer notes, the member's own request area, and correcting a request before conversion |
 | [`subscription-lockout-pricing.md`](invariants/subscription-lockout-pricing.md) | `INV-LOCKOUT` | lapsed-subscription pricing, admin date overrides, retroactive creates, withheld email |
 | [`booking-policy-exceptions.md`](invariants/booking-policy-exceptions.md) | `INV-EXCEPT` | policy-exception requests and officer decisions on them |
 | [`additional-payment-chasing.md`](invariants/additional-payment-chasing.md) | `INV-ADDPAY` | an outstanding additional payment, quote/request holds, refund settlement |
@@ -96,6 +96,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-027` | A `SET_PRICE` application netting to exactly zero counts as no use |
 | `INV-MONEY-028` | Each stored guest-night price records its origin; even splits are not evidence |
 | `INV-MONEY-029` | Promo adjustment rows reconcile to the promo total; unknown is never zero |
+| `INV-MONEY-030` | Stored money readers preserve current amounts and record their source |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |
@@ -171,6 +172,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-031` | Shared doubles: placement rule, planner keys, DB caps, partner-shared headroom |
 | `INV-CAP-036` | A shared double losing its primary auto-promotes the survivor, audited |
 | `INV-CAP-037` | At most one live payment link per booking; never both settle |
+| `INV-CAP-038` | A whole-lodge hold excludes custodian-held bed-nights; the reverse asks, then amends atomically |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |
@@ -248,7 +250,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-093` | Withdrawal fires at the last failure; it never writes off the debt |
 | `INV-PAY-094` | It withdraws the ask only when a duplicate genuinely exists |
 | `INV-PAY-095` | The cancel is idempotent and never throws; its reason states abandonment |
-| `INV-PAY-067` | One review task per parked strand; departing strand always recorded |
+| `INV-PAY-067` | One review task per parked edit, carrying every strand it records |
 | `INV-PAY-060` | Settled occurrences never suppress the next; stored prices are not proof |
 | `INV-PAY-068` | A completion at zero is refused; the refusal names the way out |
 | `INV-PAY-096` | A share mid-send for its invoice becomes a dismiss-only queue item |
@@ -257,6 +259,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
+| `INV-PAY-099` | A dismissed money task can be reopened; a completed one cannot |
+| `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
 | `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |
 | `INV-PAY-071` | Both shortfall endings audited with opposite instructions; repair reads settled shares |
@@ -330,6 +334,7 @@ Prefix `INV-GUEST`.
 | `INV-GUEST-016` | MG4: edit path, admin parity, request pipeline; no address in URLs |
 | `INV-GUEST-017` | Exactly eight column shapes are legal, and the table lists them |
 | `INV-GUEST-018` | That table is generated from the code table by a test |
+| `INV-GUEST-019` | Own dependants leave the guest split at create doors; exact own-family matching |
 
 ## Booking Modifications
 
@@ -384,7 +389,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-036` | A blank is filled only by a person, on four conditions |
 | `INV-MOD-037` | The repair is optional, and four things it deliberately does not repair |
 | `INV-MOD-038` | Three consumers read a re-based strand total; none restates a billed amount |
-| `INV-MOD-039` | Reconciliation, not provenance; an exact strand values every night from its rows |
+| `INV-MOD-039` | Whole-guest evidence may reconcile; individual-night evidence also requires exact provenance |
 | `INV-MOD-040` | A parked edit writes structure, never an amount; prohibited estimate sources |
 | `INV-MOD-041` | It holds on every edit path; a second edit is refused |
 | `INV-MOD-042` | What every parked path does; a dropped promotion is disclosed |
@@ -401,6 +406,8 @@ Prefix `INV-MOD`.
 | `INV-MOD-053` | Where the removal park and the second act are pinned |
 | `INV-MOD-054` | Where the settle-time repair is pinned |
 | `INV-MOD-055` | Closing a parked review re-prices the booking from its strands, or declines |
+| `INV-MOD-056` | Operation-grain provenance governs edits and review re-bases |
+| `INV-MOD-057` | Cancellable statuses have one home; member doors read a named subset |
 
 ### Adult-member hosting
 
@@ -481,6 +488,9 @@ File:
 | `INV-REQ-005` | Private notes never substitute for member-facing ones; drafts kept per request |
 | `INV-REQ-006` | An expand-only nullable column; an older decision reads as "none" |
 | `INV-REQ-007` | The member's projection states only facts: ledger capacity, conflicts reported, no promises |
+| `INV-REQ-008` | A correction re-opens the request; an accepted quote refuses it outright |
+| `INV-REQ-009` | A corrected school name is stored only against the confirmed record |
+| `INV-REQ-010` | A corrected request never keeps beds held for its old shape |
 
 ### Subscription-lockout pricing, admin date overrides and member-facing email
 
@@ -607,6 +617,7 @@ Prefix `INV-EXCEPT`.
 | `INV-EXCEPT-032` | One algorithm decides both request tables, so the flavours cannot drift apart |
 | `INV-EXCEPT-033` | A new booking is authorised as the requesting member, not merely created |
 | `INV-EXCEPT-034` | A supersede carries the predecessor's attempt count forward |
+| `INV-EXCEPT-036` | Stored proposal identities sort by code unit, never by server locale |
 
 ### Additional-payment chasing, request holds and refund settlement
 
@@ -682,6 +693,11 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-014` | Diagnostics filters and typed search reach the provider ungated |
 | `INV-PRIV-015` | A hut leader's PIN session: ten minutes' inactivity, twelve-hour ceiling, Lock control |
 | `INV-PRIV-016` | Kiosk Group Trip disclosure by tier: linkage ordinal only; never `joinCode` |
+| `INV-PRIV-017` | Member lodge roster: off by default, absent keys, no opt-out |
+| `INV-PRIV-018` | Member-visible audit text: declared at the write site, denied by default |
+| `INV-PRIV-019` | An audit row's subject is a person; an organisation-owned booking records none |
+| `INV-PRIV-020` | Credential writes name a person or a named system actor, audited atomically |
+| `INV-PRIV-021` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
 
 ## Membership Lifecycle
 
@@ -816,6 +832,13 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-015` | The bulk re-sync is admin-triggered, dry-run-first, chunked, resumable, never moves the watermark |
 | `INV-INT-016` | The rooms API keeps its no-`lodgeId` mode for external consumers only |
 | `INV-INT-017` | Xero NZBN field carries date of birth via one shared codec |
+| `INV-INT-018` | A Xero contact id has at most one local home |
+| `INV-INT-019` | A Xero link that cannot be made fails loudly and stays replayable |
+| `INV-INT-020` | A school Xero contact transfers once, to its Organisation, on proof |
+| `INV-INT-021` | A new Xero account mapping is type-filtered, falls back, and prompts |
+| `INV-INT-022` | The missing-contact census: read-only, cache-fresh, ambiguity handed back |
+| `INV-INT-023` | The seeding run: funnel-routed, plan-checked, authoritative-or-nothing |
+| `INV-INT-024` | Erasure leaves Xero alone; a read-only notice names what it left |
 
 ## Operations
 
@@ -882,3 +905,4 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-002` | Both sides of a comparison come from one helper; encoding included |
 | `INV-SSOT-003` | Authority-bearing parameters carry no default; lint exclusions judged and stated |
 | `INV-SSOT-004` | Two instruments claiming independence must measure the same way; `stripComments` lives once |
+| `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |

@@ -111,7 +111,9 @@ const EDITORS: Array<{
   render: () => ReactElement
   action: RegExp
 }> = [
-  { name: "seasons", render: () => <SeasonsPage />, action: /^edit window$/i },
+  // #2938: the accessible name EXTENDS the visible label with the season's own
+  // name ("Edit window of Winter 2026"), so the visible label stays the prefix.
+  { name: "seasons", render: () => <SeasonsPage />, action: /^edit window of /i },
   { name: "chores", render: () => <ChoresPage />, action: /add chore|create chore|update chore/i },
   { name: "lockers", render: () => <LockersPage />, action: /^create locker$/i },
   { name: "hut fees", render: () => <HutFeesSection canEdit />, action: /add season|save season/i },

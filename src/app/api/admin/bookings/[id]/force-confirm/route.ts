@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -7,13 +8,19 @@ import { requiresAdultSupervisionReview } from "@/lib/booking-review";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
-  type NightAvailability,
 } from "@/lib/capacity";
-import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
+// #2930: one definition of the confirmable over-capacity set (`INV-SSOT-001`).
+// The private copy this replaces filtered `availableBeds < 0` and relied on a
+// held night's pin to 0 to stay out of it; `overCapacityNights` says so by name
+// (`INV-CAP-021`, ADR-001 decision 5), and held nights are still refused
+// separately below even under `allowOverbook`.
+import {
+  overCapacityNights,
+  wholeLodgeBlockedNights,
+} from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { formatDateOnly } from "@/lib/date-only";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import logger from "@/lib/logger";
@@ -30,19 +37,6 @@ const forceConfirmSchema = z.object({
   // lands PAID). A non-boolean value is rejected with 400.
   notifyMember: z.boolean().optional(),
 });
-
-function formatOverbookDate(night: NightAvailability) {
-  return formatDateOnly(night.date);
-}
-
-function getOverbookedNights(nightDetails: NightAvailability[]) {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => ({
-      date: formatOverbookDate(night),
-      availableBeds: night.availableBeds,
-    }));
-}
 
 export async function POST(
   request: NextRequest,
@@ -77,7 +71,8 @@ export async function POST(
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { guests: { include: { nights: true } }, member: true, promoRedemption: { include: { promoCode: true } } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        include: { guests: { include: { nights: true } }, member: true, organisation: { select: { name: true, email: true } }, promoRedemption: { include: { promoCode: true } } },
       });
 
       if (!booking) {
@@ -100,7 +95,7 @@ export async function POST(
         undefined,
         tx
       );
-      const overbookedNights = getOverbookedNights(nightDetails);
+      const overbookedNights = overCapacityNights({ nightDetails });
       const overbookDates = overbookedNights.map((night) => night.date);
 
       // Exclusive whole-lodge hold (ADR-001 decision 5, issue #118): a held
@@ -228,7 +223,7 @@ export async function POST(
           action: auditAction,
           memberId: session.user.id,
           actorMemberId: session.user.id,
-          subjectMemberId: booking.memberId,
+          subjectMemberId: bookingOwner(booking).memberId,
           targetId: bookingId,
           entityType: "Booking",
           entityId: bookingId,
@@ -328,12 +323,12 @@ export async function POST(
       // charge. Read-only; null on non-split bookings.
       const provisionalGuests = await getProvisionalNonMemberChildSummary({
         id: booking.id,
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
       });
       sendBookingConfirmedEmail(
-        { bookingId: booking.id, recipientMemberId: booking.memberId },
-        booking.member.email,
-        booking.member.firstName,
+        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
+        bookingOwner(booking).member.email,
+        bookingOwner(booking).member.firstName,
         booking.checkIn,
         booking.checkOut,
         booking.guests.length,

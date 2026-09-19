@@ -1,5 +1,6 @@
 import "server-only";
 
+import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
@@ -243,6 +244,8 @@ export async function applyManualBookingPayment(
           discountCents: true,
           promoAdjustmentCents: true,
           member: { select: { email: true, firstName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           promoRedemption: { select: { promoCode: { select: { code: true } } } },
           _count: { select: { guests: true } },
         },
@@ -255,7 +258,10 @@ export async function applyManualBookingPayment(
         return null;
       });
 
-    if (!recipient?.member?.email) {
+    // #3369: ONE home for "is there an address to send to?" — see
+    // `bookingOwnerEmail()`.
+    const recipientEmail = recipient ? bookingOwnerEmail(recipient) : null;
+    if (!recipient || !recipientEmail) {
       logger.warn(
         { bookingId: input.bookingId },
         "Manual booking mark-paid: a confirmation was requested but the member has no address to send it to"
@@ -269,7 +275,7 @@ export async function applyManualBookingPayment(
         // separate later charge. Read-only; null on non-split bookings.
         const provisionalGuests = await getProvisionalNonMemberChildSummary({
           id: input.bookingId,
-          memberId: recipient.memberId,
+          memberId: bookingOwner(recipient).memberId,
         });
         // The SAME message the Xero-inbound settle sends, so a cash-settled
         // member reads exactly what a bank-transfer-settled member reads.
@@ -287,9 +293,9 @@ export async function applyManualBookingPayment(
         // contradiction #2397 exists to remove, stated to the member rather
         // than only to the admin.
         const outcome = await sendBookingConfirmedEmail(
-          { bookingId: input.bookingId, recipientMemberId: recipient.memberId },
-          recipient.member.email,
-          recipient.member.firstName,
+          { bookingId: input.bookingId, recipientMemberId: bookingOwner(recipient).memberId },
+          recipientEmail,
+          bookingOwner(recipient).member.firstName,
           recipient.checkIn,
           recipient.checkOut,
           recipient._count.guests,

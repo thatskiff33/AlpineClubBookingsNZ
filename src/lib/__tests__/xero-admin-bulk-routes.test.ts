@@ -224,7 +224,6 @@ describe("Xero admin bulk routes", () => {
           checkIn: "2026-05-01T00:00:00.000Z",
           checkOut: "2026-05-02T00:00:00.000Z",
           createdAt: "2026-04-24T00:00:00.000Z",
-          hasLinkedInvoice: false,
         },
         {
           bookingId: "booking-2",
@@ -236,7 +235,6 @@ describe("Xero admin bulk routes", () => {
           checkIn: "2026-05-03T00:00:00.000Z",
           checkOut: "2026-05-04T00:00:00.000Z",
           createdAt: "2026-04-24T00:00:00.000Z",
-          hasLinkedInvoice: false,
         },
       ],
     });
@@ -254,11 +252,16 @@ describe("Xero admin bulk routes", () => {
 
     expect(response.status).toBe(202);
     expect(mocks.getMissingXeroInvoiceBookings).toHaveBeenCalledWith({ limit: 200 });
+    // #2929: a sweep has no creation-time email choice to express, so it passes
+    // an explicit null — which inherits whatever the original enqueue for each
+    // of these same invoices recorded, rather than silently emailing.
     expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenNthCalledWith(1, "booking-1", {
       createdByMemberId: "admin-1",
+      invoiceEmailDelivery: null,
     });
     expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenNthCalledWith(2, "booking-2", {
       createdByMemberId: "admin-1",
+      invoiceEmailDelivery: null,
     });
     expect(mocks.processQueuedXeroOutboxOperations).toHaveBeenCalledWith({ limit: 1 });
     expect(mocks.createAuditLog).toHaveBeenCalledWith(

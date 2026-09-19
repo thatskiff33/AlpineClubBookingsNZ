@@ -9,6 +9,7 @@
  * booking across this module, the cron and the `/pay` re-issue path.
  */
 import { BookingStatus, Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { issueActionToken } from "@/lib/action-tokens";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -167,6 +168,8 @@ export async function issueSplitGuestPaymentLink(
     where: { id: childBookingId },
     include: {
       member: true,
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       guests: { select: { id: true } },
       payment: true,
       parentBooking: { include: { payment: true } },
@@ -205,7 +208,7 @@ export async function issueSplitGuestPaymentLink(
       bookingId: booking.id,
       templateName: SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
       subject: "Pay for your guests to confirm their place",
-      to: booking.member.email,
+      to: bookingOwner(booking).member.email,
       detail:
         'Withheld: this booking has the "No emails" switch turned on. No payment link was created.',
       once: true,
@@ -307,10 +310,10 @@ export async function issueSplitGuestPaymentLink(
     emailOutcome = await sendSplitGuestPaymentLinkEmail({
       bookingContext: {
         bookingId: booking.id,
-        recipientMemberId: booking.memberId,
+        recipientMemberId: bookingOwner(booking).memberId,
       },
-      email: booking.member.email,
-      firstName: booking.member.firstName,
+      email: bookingOwner(booking).member.email,
+      firstName: bookingOwner(booking).member.firstName,
       token: minted.token,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,

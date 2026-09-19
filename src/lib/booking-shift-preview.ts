@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { bookingOwner } from "@/lib/booking-owner";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { usesActiveBookingEditLifecycle } from "@/lib/booking-edit-policy";
 import {
@@ -40,7 +41,8 @@ export async function buildShiftPreviewResponse({
   todayAtClub,
 }: {
   booking: {
-    memberId: string;
+    /** The booking OWNER, null when it is owned by an Organisation (#3369). */
+    memberId: string | null;
     status: string;
     checkIn: Date;
     checkOut: Date;
@@ -151,7 +153,7 @@ export async function buildShiftPreviewResponse({
   // WAS above, is still there.
   const translatedRangesForGuard = await markCrossFamilyGuestsOnBooking(
     prisma,
-    booking.memberId,
+    bookingOwner(booking).memberId,
     translatedRanges,
     { skipAuthorization: actorRole === "ADMIN", bookingId },
   );

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
+import { bookingOwner } from "@/lib/booking-owner";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { useClubTime } from "@/components/club-time-provider";
@@ -225,7 +226,7 @@ export function BookingEditor({
           adminReviewStatus: booking.adminReviewStatus,
           noEmails: booking.noEmails,
           credit: booking.credit,
-          memberId: booking.memberId,
+          memberId: bookingOwner(booking).memberId,
           lodgeId: booking.lodgeId,
           memberGuest: booking.memberGuest,
           memberWholeLodge: booking.memberWholeLodge,

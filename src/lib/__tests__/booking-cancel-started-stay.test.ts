@@ -35,6 +35,12 @@ vi.mock("@/lib/member-credit", () => ({
   createCancellationCredit: vi.fn(),
   lockMemberCreditLedger: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
+  // #3369: the one home for the account-credit refusal four settlement paths
+  // share. Real, not stubbed: the mock must not turn a refusal into a pass.
+  requireMemberCreditRecipient: (memberId: string | null) => {
+    if (!memberId) throw new Error("no account to credit (#3369)");
+    return memberId;
+  },
 }));
 vi.mock("@/lib/waitlist", () => ({ processWaitlistForDates: vi.fn() }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -82,11 +88,27 @@ vi.mock("@/lib/capacity", () => ({ acquireLodgeCapacityLock: vi.fn() }));
 // mocked so the real NZ date logic runs against the faked clock.
 
 import { cancelBooking } from "@/lib/booking-cancel";
+import {
+  CANCELLABLE_BOOKING_STATUSES,
+  cancellableStatusRefusal,
+} from "@/lib/booking-cancel-eligibility";
 
 const STARTED_MSG =
   "This stay has already started, so it can no longer be cancelled online. To leave early, edit the booking to shorten your remaining nights, or contact the club for help.";
-const STATUS_MSG =
-  "Only PENDING, PAYMENT_PENDING, CONFIRMED, PAID, WAITLISTED, WAITLIST_OFFERED, or AWAITING_REVIEW bookings can be cancelled";
+// #3497: the status refusal is DERIVED from the set the guard reads, so the pin
+// is the derivation plus a shape check — it must name every cancellable status,
+// in the set's order, as the "A, B, or C" sentence the service has always used.
+const STATUS_MSG = cancellableStatusRefusal();
+describe("the service's status refusal names exactly the set it guards", () => {
+  it("is the cancellable set in prose", () => {
+    expect(STATUS_MSG).toBe(
+      `Only ${CANCELLABLE_BOOKING_STATUSES.slice(0, -1).join(", ")}, or ${
+        CANCELLABLE_BOOKING_STATUSES[CANCELLABLE_BOOKING_STATUSES.length - 1]
+      } bookings can be cancelled`,
+    );
+    for (const status of CANCELLABLE_BOOKING_STATUSES) expect(STATUS_MSG).toContain(status);
+  });
+});
 
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
 const OWNER = "member-1";
@@ -181,5 +203,49 @@ describe("cancelBooking — #2029 started-stay self-service block", () => {
     expect(errorOf(result)).not.toBe(STARTED_MSG);
     expect(result.status).toBe(400);
     expect(errorOf(result)).toBe(STATUS_MSG);
+  });
+});
+
+describe("cancelBooking — #3497 member-door status guard (enforceMemberCancelDoor)", () => {
+  const REVIEW_MSG =
+    "This booking is with the club for review, so it cannot be cancelled from here. If you no longer want it, contact the club and the reviewing officer will withdraw it.";
+
+  it("refuses a member cancelling a booking under review, with the sentence that says what to do instead", async () => {
+    setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30" }); // future
+    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", "card", {
+      enforceStartedStayBlock: true,
+      enforceMemberCancelDoor: true,
+    });
+    expect(result.status).toBe(400);
+    expect(errorOf(result)).toBe(REVIEW_MSG);
+  });
+
+  it("does not exempt a Full Admin on the member route — their door is the review Reject", async () => {
+    setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30" });
+    const result = await cancelBooking("b1", "admin-1", "ADMIN", "127.0.0.1", "card", {
+      enforceStartedStayBlock: true,
+      enforceMemberCancelDoor: true,
+    });
+    expect(result.status).toBe(400);
+    expect(errorOf(result)).toBe(REVIEW_MSG);
+  });
+
+  it("runs AFTER authorization, so a stranger learns nothing about the booking's status", async () => {
+    setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30", memberId: OWNER });
+    const result = await cancelBooking("b1", "stranger-7", "USER", "127.0.0.1", "card", {
+      enforceMemberCancelDoor: true,
+    });
+    expect(result.status).toBe(403);
+    expect(errorOf(result)).not.toBe(REVIEW_MSG);
+  });
+
+  it("leaves every internal/officer caller on the service's full set when the flag is off", async () => {
+    setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30" });
+    // Only the guard is under test: whatever the no-payment cancel path does
+    // with this mocked tx, it must not have been the member-door refusal.
+    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", "card").catch(
+      (error: unknown) => ({ status: -1, error: String(error) }),
+    );
+    expect(result.status === 400 && errorOf(result as never) === REVIEW_MSG).toBe(false);
   });
 });

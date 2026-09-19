@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { clubConfigSource, type ClubConfigSource } from "@/config/club";
 import {
   ageTierSelfHealStepDefinition,
@@ -8,6 +8,7 @@ import {
   lodgeCapacitySelfHealStepDefinition,
 } from "@/lib/config-self-heal-steps";
 import logger from "@/lib/logger";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 /**
  * Boot-time config self-heal (epic #1943, child C2).
@@ -178,22 +179,6 @@ export function stepRequiresPrimaryClubConfig(
   return step.requiresPrimaryClubConfig !== false;
 }
 
-/**
- * True for a Prisma unique-constraint conflict (P2002). Detected both by
- * instance (`PrismaClientKnownRequestError`) and structurally (`code === "P2002"`)
- * so a raced insert is tolerated regardless of how the driver surfaces it.
- */
-export function isUniqueConstraintError(err: unknown): boolean {
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    return err.code === "P2002";
-  }
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: unknown }).code === "P2002"
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Registered steps
@@ -317,7 +302,7 @@ async function runSelfHealSteps(
           `Config self-heal populated absent row: ${step.name}`,
         );
       } catch (err) {
-        if (isUniqueConstraintError(err)) {
+        if (isPrismaUniqueConstraintError(err)) {
           // A concurrent booter (blue/green double-boot) created it first.
           results.push({ name: step.name, outcome: "already-present" });
           continue;

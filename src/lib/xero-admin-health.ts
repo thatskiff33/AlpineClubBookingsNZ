@@ -1,9 +1,11 @@
 import type { BookingStatus } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 import { prisma } from "@/lib/prisma";
 import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
 import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
+import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
 import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
 import {
@@ -18,14 +20,14 @@ const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 interface MissingXeroInvoiceBooking {
   bookingId: string;
   paymentId: string;
-  memberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  memberId: string | null;
   memberName: string;
   memberEmail: string;
   status: "PAID";
   checkIn: string;
   checkOut: string;
   createdAt: string;
-  hasLinkedInvoice: boolean;
 }
 
 export interface MissingXeroInvoicesSnapshot {
@@ -122,7 +124,9 @@ function formatBookingSnapshot(input: {
     firstName: string;
     lastName: string;
     email: string;
-  };
+  } | null;
+  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+  organisation: { name: string; email: string | null } | null;
   payment: {
     id: string;
     xeroInvoiceId: string | null;
@@ -131,14 +135,13 @@ function formatBookingSnapshot(input: {
   return {
     bookingId: input.id,
     paymentId: input.payment.id,
-    memberId: input.member.id,
-    memberName: `${input.member.firstName} ${input.member.lastName}`,
-    memberEmail: input.member.email,
+    memberId: bookingOwner(input).member.id ?? null,
+    memberName: `${bookingOwner(input).member.firstName} ${bookingOwner(input).member.lastName}`,
+    memberEmail: bookingOwner(input).member.email,
     status: input.status as "PAID",
     checkIn: input.checkIn.toISOString(),
     checkOut: input.checkOut.toISOString(),
     createdAt: input.createdAt.toISOString(),
-    hasLinkedInvoice: Boolean(input.payment.xeroInvoiceId),
   };
 }
 
@@ -170,6 +173,8 @@ export async function getMissingXeroInvoiceBookings(options?: {
           email: true,
         },
       },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
       payment: {
         select: {
           id: true,
@@ -180,34 +185,50 @@ export async function getMissingXeroInvoiceBookings(options?: {
     orderBy: [{ checkIn: "desc" }, { createdAt: "desc" }],
   });
 
-  const paymentIds = candidates
-    .map((booking) => booking.payment?.id)
-    .filter((paymentId): paymentId is string => Boolean(paymentId));
+  const payments = candidates.flatMap((booking) =>
+    booking.payment ? [booking.payment] : [],
+  );
 
-  if (paymentIds.length === 0) {
+  if (payments.length === 0) {
     return { count: 0, bookings: [] };
   }
 
-  const succeededInvoiceOperations = await prisma.xeroSyncOperation.findMany({
-    where: {
-      entityType: "INVOICE",
-      status: "SUCCEEDED",
-      localModel: "Payment",
-      localId: { in: paymentIds },
-    },
-    select: {
-      localId: true,
-    },
-  });
+  /*
+    #3467 — "DOES THIS BOOKING HAVE AN INVOICE IN XERO" IS ANSWERED BY ONE RULE,
+    AND THIS IS NOT ITS HOME.
 
-  const succeededPaymentIds = new Set(
-    succeededInvoiceOperations
-      .map((operation) => operation.localId)
-      .filter((localId): localId is string => Boolean(localId))
-  );
+    Until #3467 this list asked a different question — "is there a SUCCEEDED
+    invoice operation against the booking's payment?" — and so listed as missing
+    a booking whose operation FAILED after Xero had accepted the invoice: the
+    payment stamp, the credit settlement or the completion write threw, the row
+    is FAILED, and the accounts hold the invoice all the same. The treasurer
+    chased work that was already done, and a Retry from this list is the
+    duplicate-invoice path #3001 exists to close. The booking's own page had
+    already stopped misreading this in #3001; the club-wide list had not.
+
+    The rule is the one `xero-booking-invoice-evidence.ts` states and every
+    other asker uses (the enqueue fence, the booking page): the payment's stored
+    invoice id, or an active `PRIMARY_INVOICE` object link — the two records the
+    workflow persists BEFORE it can fail. This list asks the set form of that
+    reader, so the two surfaces cannot drift apart again (`INV-SSOT-001`).
+
+    Two things that were true of the old query, and are deliberately gone:
+
+     - The operation row is not read at all, so "should only CREATE operations
+       count?" no longer arises. A succeeded UPDATE was evidence only because
+       it ran against an invoice the payment already carried the id of — and
+       that id is the first signal. A booking is listed only when the club's
+       records hold NEITHER an invoice id NOR an active primary-invoice link.
+     - It never needed the booking's correlation key. #3001 finds ONE booking's
+       operation by that key because a booking whose payment row does not exist
+       yet would otherwise match nothing. Here the candidate set is selected BY
+       having a payment, and the evidence is keyed by that payment's id, so the
+       join the key exists to avoid is not made.
+  */
+  const evidence = await readBookingInvoiceEvidenceForPayments(payments);
 
   const missingBookings = candidates.flatMap((booking) => {
-    if (!booking.payment?.id || succeededPaymentIds.has(booking.payment.id)) {
+    if (!booking.payment?.id || evidence.get(booking.payment.id)?.exists) {
       return [];
     }
 
@@ -272,6 +293,8 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
           member: {
             select: { firstName: true, lastName: true, email: true },
           },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
         },
       },
     },
@@ -293,10 +316,13 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
     formatted.push({
       paymentId: payment.id,
       bookingId: payment.bookingId,
-      memberName: payment.booking?.member
-        ? `${payment.booking.member.firstName} ${payment.booking.member.lastName}`
+      memberName:
+        payment.booking && bookingOwner(payment.booking).member
+        ? `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`
         : "Unknown",
-      memberEmail: payment.booking?.member?.email ?? "",
+      memberEmail: payment.booking
+        ? (bookingOwner(payment.booking).member?.email ?? "")
+        : "",
       refundedAmountCents: payment.refundedAmountCents,
       cashRefundedCents: evidence.cashRefundCents,
       uncoveredCents: evidence.cashRefundCents - coveredCents,

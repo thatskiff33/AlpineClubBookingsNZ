@@ -1,5 +1,6 @@
 import type { AgeTier } from "@prisma/client"
 import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache"
+import type { XeroMappingWritableKey } from "@/lib/xero-account-mapping-keys"
 
 export interface XeroStatus {
   connected: boolean
@@ -38,10 +39,24 @@ export type SectionKey =
   | "operations"
   | "inbound"
   | "contactSync"
+  | "missingContacts"
+  | "erasedMemberContacts"
   | "membershipSync"
   | "usage"
   | "mappings"
   | "setup"
+
+/**
+ * The DOM id of a section card on /admin/xero, minted here because two sides
+ * depend on it agreeing: every panel writes it onto its `SectionCard`, and
+ * `use-xero-connection.ts` reads it back with `getElementById` to reveal the
+ * section a "go to section" link asked for. Retyped at each end, a renamed
+ * section makes the reveal silently do nothing — there is no error, the page
+ * simply does not move (`INV-SSOT-001`).
+ */
+export function xeroSectionId(section: SectionKey): string {
+  return `xero-section-${section}`
+}
 
 export const SECTION_STORAGE_KEY = "admin-xero-section-state-v1"
 
@@ -52,6 +67,12 @@ export const SECTION_DEFAULTS: Record<SectionKey, boolean> = {
   operations: true,
   inbound: true,
   contactSync: true,
+  // #2939: collapsed by default. It is a one-off migration task, not a thing an
+  // operator does weekly, and its dry run reads the whole member table.
+  missingContacts: false,
+  // #3058: collapsed by default. On a healthy installation it is empty, and it
+  // reports work that belongs in Xero rather than work to do here.
+  erasedMemberContacts: false,
   membershipSync: true,
   usage: false,
   mappings: false,
@@ -264,7 +285,6 @@ interface MissingInvoiceBooking {
   checkIn: string
   checkOut: string
   createdAt: string
-  hasLinkedInvoice: boolean
 }
 
 export interface MissingInvoicesResponse {
@@ -449,31 +469,21 @@ type MappingValue = {
   itemCode: string | null
 }
 
-export type AccountMappings = {
-  hutFeesIncome: MappingValue
-  hutFeeRefunds: MappingValue
-  stripeBankAccount: MappingValue
-  stripeFees: MappingValue
-  subscriptionIncome: MappingValue
-  membershipCancellationCredit: MappingValue
-  hutFeeItem: MappingValue
-  hutFeeRefundItem: MappingValue
-  entranceFeeItem: MappingValue
-}
+// One row per writable mapping key, straight off the registry (#2717): the
+// panel's shape can no longer drift from the set of keys the API accepts.
+export type AccountMappings = Record<XeroMappingWritableKey, MappingValue>
 
 export type HutFeeMap = Record<string, { itemCode: string }>
 // Item-code-only since #1931 (E5): joining-fee amounts live in the JoiningFee
 // schedule (fee-configuration page), not on Xero item-code mapping rows.
 export type EntranceFeeMap = Record<string, { itemCode: string | null }>
 
-export type AccountMappingKey =
-  | "hutFeesIncome"
-  | "hutFeeRefunds"
-  | "stripeBankAccount"
-  | "stripeFees"
-  | "subscriptionIncome"
-  | "membershipCancellationCredit"
-
-export type CreditItemMappingKey = "hutFeeRefundItem" | "membershipCancellationCredit"
+// Anchored to the registry (#2717): a key renamed or removed there collapses to
+// `never` here, and the picker's hand-ordered list below stops compiling —
+// rather than quietly drifting from the set of keys the API accepts.
+export type CreditItemMappingKey = Extract<
+  XeroMappingWritableKey,
+  "hutFeeRefundItem" | "membershipCancellationCredit"
+>
 
 export type { XeroAccount, XeroItem }

@@ -54,6 +54,7 @@ in [`STATE_MACHINES.md`](../STATE_MACHINES.md#waitlist-lifecycle).
 | Offer expiry | Each offer expires; accept before then or it may pass on |
 | Cross-lodge offer | Names the lodge and its price (which can differ) and needs explicit confirmation |
 | After accepting | Pay as normal; a cross-lodge accept creates a fresh booking at that lodge |
+| Leaving the waitlist | Open the waitlisted booking (or the one holding an offer) and cancel it — nothing was paid, so there is no refund to work out |
 
 Prices are shown in dollars. The cross-lodge alternate-lodge behaviour follows
 the club's multi-lodge configuration.
@@ -66,13 +67,15 @@ the club's multi-lodge configuration.
 | The offered price is not what you expected | It is a cross-lodge offer at a lodge with different rates | The offer names the lodge and price; confirm only if you are happy with it |
 | You are not getting offers for other lodges | You did not opt into alternate lodges when you joined | Re-join the waitlist and opt into alternate lodges |
 | The offer says a bed is needed but payment is required | Accepting an offer still needs the booking paid | Accept, then pay from the booking's **Complete Payment** card |
+| You no longer want the nights | Plans changed while you were waiting | Open the booking and cancel it — see [Changing or cancelling a booking](changing-or-cancelling-a-booking.md) |
 
 ## Related links
 
 - Back to the [Member & Guest Guide](README.md) and the
   [documentation hub](../README.md).
 - Sibling guides: [Booking a stay](booking-a-stay.md),
-  [Paying for your stay](paying-for-your-stay.md).
+  [Paying for your stay](paying-for-your-stay.md),
+  [Changing or cancelling a booking](changing-or-cancelling-a-booking.md).
 - Reference: the [waitlist lifecycle](../STATE_MACHINES.md#waitlist-lifecycle).
   Operators run the waitlist queue with the
   [Waitlist](../guides/waitlist.md) guide.

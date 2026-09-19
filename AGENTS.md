@@ -540,10 +540,9 @@ At the successful end of a meaningful piece of work:
    the checks pass, closing the window in which `main` can move underneath and
    force another conflict-resolve plus a full CI cycle. Polling for green and
    merging by hand reliably loses that race when several sessions are active.
-   Note that another session may also merge a PR you built the moment the owner
-   approves it — so post the §5 close-out comment on the linked issue as soon as
-   you see it merged, whoever merged it, rather than assuming you will be the one
-   to do it.
+   Another session may merge a PR you built the moment the owner approves it,
+   so post the §5 close-out comment as soon as you see it merged, whoever
+   merged it.
 5. Close the linked issue at merge time (owner directive, 30 Jul 2026) with a
    plain-English close-out comment on the issue: what shipped, the delivering
    PR, what the review rounds found and how it was fixed (a sentence or two),
@@ -557,7 +556,9 @@ At the successful end of a meaningful piece of work:
    lane started — see
    [`agents/CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md) →
    "Lane-owned Docker infrastructure", and `npm run stale-containers` names what
-   earlier lanes left behind — and confirm `main` CI stays green.
+   earlier lanes left behind — and confirm `main` CI stays green:
+   `gh run list --branch main --event push` (unfiltered, epic-sync pull
+   requests read as `main`'s; "Checking `main` after a merge" there).
 
 ### Pre-authorisation and attributability
 
@@ -868,12 +869,9 @@ CI-green → evidence**.
   silently drops one that matches nothing (#3120).
 
   Running all 186 locally instead was measured and **rejected on evidence**:
-  ~3 minutes natively on Windows, with false failures.
-  `public-page-content-published-contract.test.ts` and
-  `booking-no-emails-ui-contract.test.ts` both time out at 5000 ms under
-  parallel load and both pass in isolation — the gate would red-light the very
-  test it exists to protect, so a fast gate with a stated blind spot is the
-  honest arrangement.
+  ~3 minutes natively on Windows, with false failures from suites that time out
+  under parallel load and pass alone — listed, with the rule for classifying
+  one, in `docs/TESTING.md` → "Suites that time out under load and pass alone".
 - **Validation traps that have produced confident false results here.** Every one
   of these has already cost a wave real time; treat a clean result that skipped
   them as unverified.

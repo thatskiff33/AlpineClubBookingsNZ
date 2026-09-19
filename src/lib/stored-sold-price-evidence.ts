@@ -1,7 +1,7 @@
 import {
   isNonNegativeIntegerCents,
   type EditFinancialReviewCause,
-  type EditFinancialReviewOccurrence,
+  type EditFinancialReviewStrandRecord,
   type StoredNightPriceEvidence,
 } from "@/lib/edit-financial-review-context";
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
@@ -11,10 +11,13 @@ import {
   type BookingStayRange,
 } from "@/lib/booking-guest-stay-ranges";
 import type { BookingGuestNightPriceSource } from "@prisma/client";
+import { storedNightPriceDetailsByKey } from "@/lib/stored-night-price-write";
 import {
-  storedNightPriceDetailsByKey,
-  storedNightPricesByKey,
-} from "@/lib/stored-night-price-write";
+  counterpartStrandRecord,
+  parkedEditWorkItems,
+  unpriceableStrandRecord,
+  type ParkedEditWorkItems,
+} from "@/lib/parked-edit-occurrence";
 
 /**
  * #3031 (epic #2797): can this guest strand's stored history price an edit
@@ -23,35 +26,25 @@ import {
  * ## What a stored `BookingGuestNight.priceCents` is, and is not
  *
  * It is the only per-night money this system keeps. Since #3275 each row also
- * records its origin, but this stage deliberately does not use that fact to
- * change a verdict: stage 3 of programme #3272 owns that reader decision.
- * Three historical migrations populated the table with even splits:
- * `20260614090000_add_booking_guest_night` (#713) created the table and divided
- * every existing guest total across its nights;
- * `20260704150000_backfill_booking_guest_nights` (#1098) divided
- * `BookingGuest.priceCents` by the night count for guests with no rows, and
- * `20260810010000_backfill_booking_request_guest_nights` (#2739) did the same
- * for request-derived bookings — its own header says it "deliberately does NOT
- * reprice anything: it reads the stored total and divides it". The new source
- * column distinguishes those migration-authored averages, but stage 1 records
- * that fact without changing a reader decision. This module therefore still
- * tests RECONCILIATION only; stage 3 of programme #3272 owns the deliberate
- * switch to provenance-aware evidence. That is what epic #2797 asks for in as many
- * words — "a deliberate negotiated-flat initial allocation remains valid once
- * stored", and "if required historical amount is missing/unusable or rows do
- * not reconcile … the financial adjustment becomes explicit pending admin
- * review":
+ * records its origin. Stage 3 of programme #3272 uses that origin at the grain
+ * of the operation: reconciliation can prove a whole guest's stored total, but
+ * an individual night is exact only when its row is `SOLD` or
+ * `OFFICER_PRICED`. The two backfill migrations that divided stored guest
+ * totals across nights (`20260704150000`, #1098, and `20260810010000`, #2739)
+ * are therefore distinguishable from live quotes. Their `EVEN_SPLIT` rows may
+ * support a reconciling whole-guest total and never prove one night's sold
+ * price. `UNKNOWN` is treated the same way at individual-night grain and is
+ * never re-derived from the amount, rate table, timestamp, or surrounding
+ * data.
  *
  * > A guest strand is EXACTLY priced when every night it holds carries a stored
  * > non-negative integer price and those prices sum to `BookingGuest.priceCents`
  * > to the cent. Anything else is `financial_review_required`.
  *
- * The visible consequence is deliberate: an evenly-split backfilled booking
- * reconciles, so it prices as exact. The alternative would be refusing to edit
- * a large share of historical bookings, which nothing in the epic asks for. What
- * the rule does buy is that no amount is ever RECONSTRUCTED — every cent this
- * module blesses was read from a row, and a strand whose rows do not add up is
- * handed to a person instead of to arithmetic.
+ * The visible consequence is deliberate: removing an entire evenly-split
+ * guest may use the reconciling guest total, while giving back one of those
+ * nights parks for a person. No amount is reconstructed, and a strand whose
+ * rows do not add up is also handed to a person instead of to arithmetic.
  *
  * ## Why "unusable" rather than "missing"
  *
@@ -82,8 +75,9 @@ import {
 export type HeldNightPrice = {
   date: CalendarDate;
   priceCents: number | null | undefined;
+  priceSource?: BookingGuestNightPriceSource;
 };
-
+export type StoredSoldPriceGrain = "WHOLE_GUEST" | "INDIVIDUAL_NIGHT";
 /**
  * The verdict on one guest strand.
  *
@@ -118,6 +112,7 @@ export type StoredSoldPriceEvidence =
 export function classifyStoredSoldPriceEvidence(
   heldNights: readonly HeldNightPrice[],
   guestTotalCents: number,
+  grain: StoredSoldPriceGrain,
 ): StoredSoldPriceEvidence {
   const usable: Array<{ date: CalendarDate; priceCents: number }> = [];
   const evidence: StoredNightPriceEvidence[] = [];
@@ -144,7 +139,19 @@ export function classifyStoredSoldPriceEvidence(
       nightPrices: evidence,
     };
   }
-
+  if (
+    grain === "INDIVIDUAL_NIGHT" &&
+    heldNights.some(
+      (night) =>
+        night.priceSource === "EVEN_SPLIT" || night.priceSource === "UNKNOWN",
+    )
+  ) {
+    return {
+      kind: "unusable",
+      cause: "INEXACT_STORED_NIGHT_PRICES",
+      nightPrices: evidence,
+    };
+  }
   if (heldNights.length === 0 && guestTotalCents !== 0) {
     // Nothing to reconcile against, and money on the strand. Named as the
     // absence it is rather than as a mismatch: there are no rows to disagree
@@ -196,133 +203,6 @@ export function unusableStoredSoldPriceEvidence(
 }
 
 /**
- * THE ONE BUILDER for an `EditFinancialReviewOccurrence` (#3030), from an
- * unusable verdict and the two halves of the structural change (`INV-SSOT`).
- *
- * Three call sites used to compose this literal by hand — the planner twice and
- * the single-guest removal once — and the identity they build is the material
- * the occurrence key is hashed from, so a field spelled differently at one site
- * is a duplicate task at that site and nowhere else.
- *
- * `guestTotalCents` is recorded as null when the stored total is not usable
- * money, because the review context refuses a negative or fractional one — and a
- * total that cannot be represented is itself part of what the admin needs to
- * know.
- */
-export function editFinancialReviewOccurrence(args: {
-  bookingId: string;
-  bookingGuestId: string;
-  evidence: Extract<StoredSoldPriceEvidence, { kind: "unusable" }>;
-  /** `BookingGuest.priceCents` as stored. */
-  guestTotalCents: number;
-  surrenderedNightDates: readonly CalendarDate[];
-  addedNightDates: readonly CalendarDate[];
-}): EditFinancialReviewOccurrence {
-  return composeOccurrence({
-    ...args,
-    cause: args.evidence.cause,
-    nightPrices: args.evidence.nightPrices,
-  });
-}
-
-/**
- * #3032: the occurrence for a strand whose OWN rows are exact, on an edit that
- * was parked because a DIFFERENT strand on the same booking is unreadable.
- *
- * ## Why this exists rather than "exact strands raise nothing"
- *
- * It closes a hole that silently destroyed money. The single-guest removal
- * settles a DIFFERENCE OF REPRICINGS, so one unreadable strand anywhere parks
- * the whole edit: nothing is settled, `priceDiffCents` is 0 and the booking's
- * stored total does not move. If the strand actually LEAVING is exact, it was
- * skipped by the unreadable-strand filter — and the delete that follows takes
- * its `BookingGuest` row and every `BookingGuestNight` row with it, while
- * `BookingModification.previousData` keeps only name, age tier and membership.
- * The departing member's refund was then a number no longer present anywhere in
- * the database, behind a task that named a REMAINING guest, carried no
- * surrendered nights, and read as "reviewed, nothing to adjust".
- *
- * So a parked edit records the departing strand too, with its real per-night
- * prices, and the invariant is: **a parked edit never destroys a number the
- * system could have known.**
- *
- * ## Not only the departing strand (#3166)
- *
- * A removal is one of three ways a parked edit destroys an exact strand's
- * evidence, and it was the only one this was raised for at first. The other two
- * are the ordinary pre-check-in edit: a strand that gives nights BACK has the
- * price stored against each of them deleted (both night writers delete every row
- * and recreate only the proposed ones), and a strand that GAINS nights against a
- * frozen stored total stops reconciling — it becomes
- * `PARTIAL_STORED_NIGHT_PRICES` and is unpriceable for good. Both destroy real
- * money evidence just as finally as a delete does, and neither is recoverable
- * from `BookingModification.previousData`, which keeps booking-level totals and
- * no per-night price at all. `preCheckInEditEvidence` decides which of the three
- * applies; this builder does not care which.
- *
- * ## Why it is a separate function rather than a `cause` argument
- *
- * The cause is not a choice the caller gets to make. `COUNTERPART_STRAND_UNREADABLE`
- * is true exactly when this strand's evidence is `exact`, and the three other
- * causes are true exactly when it is `unusable` — so the input type decides the
- * value, and neither function can be handed the other's case (`INV-SSOT`'s
- * "prefer unrepresentable over policed"). Both compose the identity through the
- * one body below, so a field spelled differently at one of them is impossible.
- *
- * ## What it deliberately does NOT do
- *
- * It carries no amount. The strand's stored total is on the evidence and an
- * admin can read it, but the money that goes back also depends on the
- * cancellation tier and the promo recalculation this parked path skipped — so
- * writing the gross figure into `amountCents` would be a policy guess dressed as
- * a fact, which is the thing epic #2797 exists to stop. The rows are preserved;
- * the person decides.
- */
-export function counterpartStrandReviewOccurrence(args: {
-  bookingId: string;
-  bookingGuestId: string;
-  evidence: Extract<StoredSoldPriceEvidence, { kind: "exact" }>;
-  /** `BookingGuest.priceCents` as stored. */
-  guestTotalCents: number;
-  surrenderedNightDates: readonly CalendarDate[];
-  addedNightDates: readonly CalendarDate[];
-}): EditFinancialReviewOccurrence {
-  return composeOccurrence({
-    ...args,
-    cause: "COUNTERPART_STRAND_UNREADABLE",
-    nightPrices: args.evidence.nightPrices,
-  });
-}
-
-/** The one body both builders above compose the identity through. */
-function composeOccurrence(args: {
-  bookingId: string;
-  bookingGuestId: string;
-  cause: EditFinancialReviewCause;
-  guestTotalCents: number;
-  surrenderedNightDates: readonly CalendarDate[];
-  addedNightDates: readonly CalendarDate[];
-  nightPrices: readonly { date: CalendarDate; priceCents: number | null }[];
-}): EditFinancialReviewOccurrence {
-  return {
-    bookingId: args.bookingId,
-    bookingGuestId: args.bookingGuestId,
-    cause: args.cause,
-    surrenderedNightDates: args.surrenderedNightDates,
-    addedNightDates: args.addedNightDates,
-    storedEvidence: {
-      guestTotalCents: isNonNegativeIntegerCents(args.guestTotalCents)
-        ? args.guestTotalCents
-        : null,
-      nightPrices: args.nightPrices.map((night) => ({
-        date: night.date,
-        priceCents: night.priceCents,
-      })),
-    },
-  };
-}
-
-/**
  * The strict twin of `lockedNightPricesForGuest` (#3031, E6).
  *
  * That function is LENIENT by design and stays that way: it turns whatever
@@ -368,35 +248,25 @@ export function storedSoldPriceEvidenceForGuest(
     }> | null;
   },
   booking: BookingStayRange,
+  grain: StoredSoldPriceGrain,
 ): StoredSoldPriceEvidence {
-  const priceByKey = storedNightPricesByKey(guest.nights);
+  const detailsByKey = storedNightPriceDetailsByKey(
+    guest.nights?.map((night) => ({
+      ...night,
+      priceSource: night.priceSource ?? "UNKNOWN",
+    })),
+  );
   return classifyStoredSoldPriceEvidence(
     getGuestBedNightKeys(guest, booking).map((key) => ({
       date: requireCalendarDate(key),
-      priceCents: priceByKey.get(key) ?? null,
+      priceCents: detailsByKey.get(key)?.priceCents ?? null,
+      priceSource: detailsByKey.get(key)?.priceSource,
     })),
     guest.priceCents,
+    grain,
   );
 }
 
-/**
- * What is stored against each night a guest already holds, by lodge-night key.
- *
- * `null` means the night carries NO USABLE STORED PRICE: no row, a row loaded
- * without its price, or a row whose value is not non-negative integer cents. The
- * three are one thing to every reader of this map, and the distinction from a
- * stored ZERO is the whole point of the null — zero is a real sold price (a
- * comped night), absence is not a price at all.
- *
- * KEYED THROUGH THE SAME CANONICAL HELPER that builds the night keys, one entry
- * at a time, rather than by re-deriving the key here. A price keyed even
- * slightly differently from its night would never match it, and the failure
- * would be silent — the night would quietly price at today's rate, which is the
- * defect INV-DATE-020 exists for.
- *
- * ONE PROJECTION (`INV-SSOT`). The planner and the removal path both need it and
- * had written it twice, already normalising differently.
- */
 /**
  * One existing guest strand as an edit to a NOT-YET-STARTED booking proposes to
  * leave it (#3166, epic #2797).
@@ -412,7 +282,7 @@ export function storedSoldPriceEvidenceForGuest(
  * A strand the edit REMOVES passes an empty list and sets `rowsDestroyed`, which
  * is what earns it a counterpart occurrence when some other strand parks the
  * edit — its rows are about to be deleted, so a number the system could have
- * known would otherwise be gone (`counterpartStrandReviewOccurrence`).
+ * known would otherwise be gone (`counterpartStrandRecord`).
  */
 export type PreCheckInEditStrand = {
   bookingGuestId: string;
@@ -465,11 +335,17 @@ export type PreCheckInEditStrand = {
  *
  * ## What it returns, and what it deliberately does not
  *
- * `occurrences` is EMPTY when every strand is exact — the edit prices normally.
+ * `occurrence` is NULL when every strand is exact — the edit prices normally.
  * A single unusable strand parks the whole edit, and then every OTHER strand
  * whose own rows were readable and whose evidence this edit destroys is recorded
  * too — removed, shortened or extended — so a parked edit never destroys a
  * number the system could have known. There is no amount anywhere in here.
+ *
+ * #3498: those records used to be returned as one occurrence EACH, which is what
+ * made a seven-guest booking raise seven work items for one edit. How many work
+ * items they compose into is `parkedEditWorkItems`' rule now - one for the whole
+ * edit, or one per strand where two or more strands' nights moved - and nothing
+ * about which strands are RECORDED changed with either.
  *
  * `storedNightPriceByGuestId` carries, per strand, the stored integer and source against each
  * night it holds — usable rows only, from either verdict, so a PARTIAL strand
@@ -482,7 +358,15 @@ export function preCheckInEditEvidence(args: {
   booking: BookingStayRange;
   strands: readonly PreCheckInEditStrand[];
 }): {
-  occurrences: EditFinancialReviewOccurrence[];
+  /**
+   * The work items a parked edit raises, or null when the edit prices normally.
+   *
+   * ONE of them on an edit that moved at most one strand's nights, and one per
+   * recorded strand once two or more moved - `parkedEditWorkItems` owns that
+   * rule and states why. Never an EMPTY list: an edit that recorded no strand
+   * did not park, and that is what `null` says.
+   */
+  occurrences: ParkedEditWorkItems | null;
   storedNightPriceByGuestId: Map<
     string,
     ReadonlyMap<
@@ -491,8 +375,8 @@ export function preCheckInEditEvidence(args: {
     >
   >;
 } {
-  const unusable: EditFinancialReviewOccurrence[] = [];
-  const destroyedButReadable: EditFinancialReviewOccurrence[] = [];
+  const unusable: EditFinancialReviewStrandRecord[] = [];
+  const destroyedButReadable: EditFinancialReviewStrandRecord[] = [];
   const storedNightPriceByGuestId = new Map<
     string,
     ReadonlyMap<
@@ -523,6 +407,10 @@ export function preCheckInEditEvidence(args: {
         nights: strand.nights,
       },
       args.booking,
+      surrenderedNightDates.length === heldKeys.length &&
+        addedNightDates.length === 0
+        ? "WHOLE_GUEST"
+        : "INDIVIDUAL_NIGHT",
     );
     storedNightPriceByGuestId.set(
       strand.bookingGuestId,
@@ -546,8 +434,7 @@ export function preCheckInEditEvidence(args: {
 
     if (evidence.kind === "unusable") {
       unusable.push(
-        editFinancialReviewOccurrence({
-          bookingId: args.bookingId,
+        unpriceableStrandRecord({
           bookingGuestId: strand.bookingGuestId,
           evidence,
           guestTotalCents: strand.guestTotalCents,
@@ -583,8 +470,7 @@ export function preCheckInEditEvidence(args: {
       addedNightDates.length > 0;
     if (evidenceDestroyed) {
       destroyedButReadable.push(
-        counterpartStrandReviewOccurrence({
-          bookingId: args.bookingId,
+        counterpartStrandRecord({
           bookingGuestId: strand.bookingGuestId,
           evidence,
           guestTotalCents: strand.guestTotalCents,
@@ -595,9 +481,27 @@ export function preCheckInEditEvidence(args: {
     }
   }
 
+  const [leadUnusable, ...restUnusable] = unusable;
   return {
-    occurrences:
-      unusable.length > 0 ? [...unusable, ...destroyedButReadable] : [],
+    // Unchanged from before #3498 in the only respect that decides money: a
+    // single unusable strand parks the whole edit, and nothing else does. What
+    // changed is the GRAIN the recorded strands are composed onto.
+    /*
+      The park/do-not-park branch, and the ONE place this module makes it. A
+      single unusable strand parks the whole edit; `destroyedButReadable` alone
+      never does, which is why the destructure is over `unusable` and the rest
+      rides along behind it.
+    */
+    occurrences: leadUnusable
+      ? parkedEditWorkItems({
+          bookingId: args.bookingId,
+          strands: [
+            leadUnusable,
+            ...restUnusable,
+            ...destroyedButReadable,
+          ],
+        })
+      : null,
     storedNightPriceByGuestId,
   };
 }

@@ -1,31 +1,24 @@
 import "server-only";
+import { Prisma } from "@prisma/client";
 
-import { ManualRefundTaskKind, Prisma } from "@prisma/client";
-
-import {
-  dateOnlyInstantOf,
-  requireCalendarDate,
-  type CalendarDate,
-} from "@/lib/club-time";
+import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
+import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
-import {
-  isNonNegativeIntegerCents,
-  parseEditFinancialReviewContext,
-} from "@/lib/edit-financial-review-context";
-import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
-  checkStoredNightPriceRepair,
-  unpricedNightsExplanation,
-  settlementDeltaCents,
-  NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
-  NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE,
   type RecordedNightPrice,
-  type SettlementDirectionValue,
   type UnpricedNightsSummary,
 } from "@/lib/stored-night-price-repair";
+// #3498: WHICH strands this settle may repair, and whether the officer's figures
+// are allowed to be written, moved to their own module when one work item
+// started covering the whole parked edit. Everything there runs before the
+// status claim; everything here runs after it.
+import {
+  NIGHT_PRICE_REPAIR_RACED_MESSAGE,
+  type StoredNightPriceRepairPlan,
+} from "@/lib/stored-night-price-repair-plan";
 import {
   bookingRebaseAuditMetadata,
   rebaseBookingPriceFromStrands,
@@ -35,9 +28,15 @@ import {
 } from "@/lib/booking-review-price-rebase";
 
 /**
- * #3191 (epic #2797): the READS and the WRITES behind recording what an unpriced
- * night sold for. The RULES are in `stored-night-price-repair.ts`, which is
- * client-safe because the settle screen applies them as the officer types.
+ * #3191 (epic #2797): the WRITES behind recording what an unpriced night sold
+ * for, and the audit of them.
+ *
+ * It was the reads AND the writes until #3498 split the reads into
+ * `stored-night-price-repair-plan.ts` - which strands a settle may fill in, and
+ * whether what the officer typed may be written - so everything here now runs
+ * AFTER the completion's status claim. The RULES are in
+ * `stored-night-price-repair.ts`, which is client-safe because the settle
+ * screen applies them as the officer types.
  *
  * ## The one place a blank may become a number
  *
@@ -67,7 +66,7 @@ import {
  *
  * ## Where it runs, and why the halves are apart
  *
- * `loadUnpricedNightsSummary` runs BEFORE the completion's status claim, on the
+ * `loadUnpricedNightsSummaries` runs BEFORE the completion's status claim, on the
  * caller's transaction, so a refusal leaves the task OPEN and still holding its
  * money question - the same boundary `chooseEditReviewSettlementRoute` draws and
  * for the same reason. `applyStoredNightPriceRepair` runs AFTER the claim, on
@@ -78,212 +77,6 @@ import {
  * single-flight guarantee is the task's own status claim; the fences above are
  * what make a concurrent booking edit a loud refusal instead of a lost update.
  */
-
-/** The night rows and the total this module reads off a guest strand. */
-type RepairableGuest = {
-  id: string;
-  priceCents: number;
-  nights: ReadonlyArray<{ stayDate: Date; priceCents: number | null }>;
-};
-
-export const GUEST_SELECT = {
-  id: true,
-  priceCents: true,
-  nights: { select: { stayDate: true, priceCents: true } },
-} as const;
-
-/**
- * Can this strand's blanks be filled in at all, and against what?
- *
- * `null` on every strand where the answer is no, and the settle path then
- * behaves exactly as it did before #3191. The conditions are not defensive
- * padding - each one is a case where filling the blanks would NOT stop the
- * booking parking, so offering the work would be a false promise:
- *
- *  - **no explicit night rows.** `getGuestBedNightKeys` falls back to the stay
- *    envelope for such a strand, so the nights it holds are not rows there is
- *    anything to update. Creating rows is a different act from filling one in,
- *    and it is not what #3191 decided.
- *  - **no blank row.** Nothing to repair. A `COUNTERPART_STRAND_UNREADABLE`
- *    task names a strand whose own rows are complete, and this is what makes the
- *    screen stay silent on one.
- *  - **a row that is neither blank nor usable money** - a negative or fractional
- *    stored price. `INV-MOD-028` classes those as an absence of usable evidence
- *    too, but they are not `NULL`, so this path's fence cannot touch them and
- *    the strand would still not reconcile afterwards. Repairing them is #2745's
- *    audited decision, not this one's.
- *  - **a stored total that is not usable money**, for the same reason: there
- *    would be nothing sound to reconcile against.
- */
-export function unpricedNightsSummaryForGuest(
-  guest: RepairableGuest,
-): UnpricedNightsSummary | null {
-  if (!isNonNegativeIntegerCents(guest.priceCents)) return null;
-  if (guest.nights.length === 0) return null;
-
-  const blanks: CalendarDate[] = [];
-  let knownNightTotalCents = 0;
-  for (const night of guest.nights) {
-    // Keyed through the canonical helper, one row at a time, exactly as
-    // `storedNightPricesByKey` does - a price keyed even slightly differently
-    // from its night would never match it, and the failure would be silent
-    // (INV-DATE-020). The strict NULL test is what that projection deliberately
-    // collapses and this one needs: an absent price and an unusable one are the
-    // same thing to a READER, and completely different things to a writer whose
-    // whole safety rests on a `priceCents: null` fence.
-    //
-    // AND THE KEY IT RETURNS IS THE ONE THAT IS KEPT. It was computed here,
-    // used as a guard and then thrown away, with a second conversion of the
-    // same `stayDate` pushed in its place - two derivations that agree only
-    // because the canonical one happens to run first and throw on a non-midnight
-    // instant. Delete the apparently-unused call, as a later reader reasonably
-    // would, and what is left is an unguarded conversion: exactly the silent
-    // `INV-DATE-020` failure the paragraph above warns about.
-    const [key] = getExplicitGuestBedNightKeys({ nights: [night] }) ?? [];
-    if (key === undefined) return null;
-    if (night.priceCents === null) {
-      blanks.push(requireCalendarDate(key));
-      continue;
-    }
-    if (!isNonNegativeIntegerCents(night.priceCents)) return null;
-    knownNightTotalCents += night.priceCents;
-  }
-
-  if (blanks.length === 0) return null;
-
-  return {
-    dates: blanks.sort(),
-    knownNightTotalCents,
-    storedGuestTotalCents: guest.priceCents,
-  };
-}
-
-/** The strand one review task is about, or null when it names none readably. */
-export function reviewTaskGuestId(task: {
-  kind: ManualRefundTaskKind | string | null;
-  reviewContext: unknown;
-}): string | null {
-  if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) return null;
-  const context = parseEditFinancialReviewContext(task.reviewContext);
-  return context?.occurrence.bookingGuestId ?? null;
-}
-
-/**
- * The summary for one task's strand, read on the caller's own transaction.
- *
- * Read INSIDE the completion transaction rather than trusted from the browser,
- * because what the screen was shown may be minutes old: the blanks it lists are
- * re-derived here and the officer's entries are checked against THESE dates.
- */
-export async function loadUnpricedNightsSummary({
-  bookingGuestId,
-  store,
-}: {
-  bookingGuestId: string;
-  store: Prisma.TransactionClient;
-}): Promise<UnpricedNightsSummary | null> {
-  const guest = await store.bookingGuest.findUnique({
-    where: { id: bookingGuestId },
-    select: GUEST_SELECT,
-  });
-  return guest ? unpricedNightsSummaryForGuest(guest) : null;
-}
-
-/**
- * The race refusal. It is a 409 rather than a 400 because nothing the officer
- * typed is wrong - the booking moved underneath them - and because the caller's
- * transaction rolls back with it, so the task is still OPEN when they retry.
- */
-export const NIGHT_PRICE_REPAIR_RACED_MESSAGE =
-  "This booking's stored night prices changed while you were recording them, so nothing was saved. Reload the page and check the booking before trying again.";
-
-/** One checked repair, ready to write once the task has been claimed. */
-export type StoredNightPriceRepairPlan = {
-  bookingGuestId: string;
-  summary: UnpricedNightsSummary;
-  entries: readonly RecordedNightPrice[];
-};
-
-/**
- * Turn what the officer typed into a plan, or throw the refusal that stops the
- * settle.
- *
- * MUST run BEFORE the caller's status claim and on its transaction - the same
- * boundary `chooseEditReviewSettlementRoute` draws, for the same reason: a
- * refusal from here leaves the task OPEN with its money question intact, where
- * one that fired after the claim would leave a closed task and no prices.
- *
- * The blanks are re-read HERE rather than trusted from the browser, and the
- * officer's dates are checked against those. A screen minutes old is exactly how
- * a figure ends up written against a night the booking no longer holds.
- *
- * `null` in, `null` out: not recording the amounts is an ordinary answer and
- * must reach the strand not at all, so a settle that sends none reads and writes
- * exactly what it did before #3191.
- */
-export async function planStoredNightPriceRepair({
-  task,
-  requested,
-  settled,
-  store,
-}: {
-  task: { kind: ManualRefundTaskKind | string | null; reviewContext: unknown };
-  requested: readonly RecordedNightPrice[] | null;
-  /** What this settle moves, or null on a dismissal, which moves nothing. */
-  settled: { direction: SettlementDirectionValue; amountCents: number } | null;
-  store: Prisma.TransactionClient;
-}): Promise<StoredNightPriceRepairPlan | null> {
-  if (requested === null) {
-    // #3219 D2 (owner, 5 Sep 2026): night prices are MANDATORY where the boxes
-    // are ALREADY OFFERED, on a dismissal as on a completion - the booking's
-    // price re-bases from the strands when the review closes, and one closed
-    // blank leaves a headline still counting a deleted guest (#3257).
-    //
-    // "WHERE THE BOXES ARE OFFERED" IS STRUCTURAL, NOT A CARVE-OUT LIST, which
-    // is what keeps the rule narrow: the boxes appear only for a review naming a
-    // strand whose blanks can be filled against usable money. Everything else
-    // answers `null` from one of the two reads below and closes as it did
-    // before - a legacy hand-back, a total mismatch with no blanks, damaged
-    // rows, a removed guest whose rows the edit deleted, the "different guest"
-    // item, and #3213's withheld-share notice, which reviews no stay.
-    //
-    // The refusal is `unpricedNightsExplanation` verbatim - the sentence the
-    // officer already saw - not a second wording of one rule (`INV-SSOT`).
-    const offeredGuestId = reviewTaskGuestId(task);
-    if (offeredGuestId === null) return null;
-    const offered = await loadUnpricedNightsSummary({
-      bookingGuestId: offeredGuestId,
-      store,
-    });
-    if (offered === null) return null;
-    throw new ManualBookingPaymentError(
-      unpricedNightsExplanation(offered),
-      400,
-    );
-  }
-
-  const bookingGuestId = reviewTaskGuestId(task);
-  if (bookingGuestId === null) {
-    throw new ManualBookingPaymentError(
-      NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE,
-      409,
-    );
-  }
-  const summary = await loadUnpricedNightsSummary({ bookingGuestId, store });
-  if (summary === null) {
-    throw new ManualBookingPaymentError(
-      NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
-      409,
-    );
-  }
-  const check = checkStoredNightPriceRepair({
-    summary,
-    entries: requested,
-    deltaCents: settlementDeltaCents(settled),
-  });
-  if (!check.ok) throw new ManualBookingPaymentError(check.message, 400);
-  return { bookingGuestId, summary, entries: check.entries };
-}
 
 /**
  * Close a parked review's PRICING half, AFTER the caller's claim and inside it:
@@ -304,11 +97,11 @@ export async function planStoredNightPriceRepair({
  * other. The re-price itself lives in `booking-review-price-rebase.ts`, which is
  * where its rules, its refusals and its lock declaration are stated.
  *
- * `plan` IS NULLABLE, AND THAT IS WHAT CLOSES #3257 (owner, 7 September 2026).
+ * `plans` MAY BE EMPTY, AND THAT IS WHAT CLOSES #3257 (owner, 7 September 2026).
  * The re-price used to ride on the repair, so a review offering no price boxes
  * re-priced nothing - and two reachable shapes of a parked guest REMOVAL offer
  * none. This now runs on EVERY parked-review closure, with the repair as its
- * optional half: a `null` plan never reaches `applyStoredNightPriceRepair`, so
+ * optional half: an empty list never reaches `applyStoredNightPriceRepair`, so
  * nothing here can derive a night price nobody stated (`INV-MOD-028`).
  *
  * WHERE THE RE-PRICE DECLINES - a surviving strand whose nights cannot be read
@@ -318,7 +111,7 @@ export async function planStoredNightPriceRepair({
  * ANY close safe rather than reckless.
  */
 export async function recordReviewClosurePricing({
-  plan,
+  plans,
   task,
   actingMemberId,
   resolution,
@@ -329,9 +122,14 @@ export async function recordReviewClosurePricing({
   settlementAmountCents,
   store,
 }: {
-  /** What the officer recorded, or null where the review offered no boxes. */
-  plan: StoredNightPriceRepairPlan | null;
-  task: { id: string; bookingId: string; booking: { memberId: string } };
+  /**
+   * What the officer recorded, one entry per repairable strand, EMPTY where the
+   * review offered no boxes (#3498). It was one plan or null; owner decision D1
+   * put the whole party on one item, so a closure can repair several strands.
+   */
+  plans: readonly StoredNightPriceRepairPlan[];
+  /** The booking OWNER is null when it is owned by an Organisation (#3369). */
+  task: { id: string; bookingId: string; booking: { memberId: string | null } };
   actingMemberId: string;
   resolution: "completed" | "dismissed";
   note: string | null;
@@ -359,14 +157,22 @@ export async function recordReviewClosurePricing({
   settlementAmountCents: number | null;
   store: Prisma.TransactionClient;
 }): Promise<void> {
-  const repaired = plan
-    ? await applyStoredNightPriceRepair({
-        bookingGuestId: plan.bookingGuestId,
-        summary: plan.summary,
-        entries: plan.entries,
-        store,
-      })
-    : null;
+  // Sequentially, on the caller's transaction: each write is its own
+  // compare-and-set, and a refusal from any of them rolls the whole closure back
+  // - so a half-repaired booking is not a reachable state.
+  const repaired: Array<{
+    plan: StoredNightPriceRepairPlan;
+    newGuestTotalCents: number;
+  }> = [];
+  for (const plan of plans) {
+    const applied = await applyStoredNightPriceRepair({
+      bookingGuestId: plan.bookingGuestId,
+      summary: plan.summary,
+      entries: plan.entries,
+      store,
+    });
+    repaired.push({ plan, newGuestTotalCents: applied.newGuestTotalCents });
+  }
   // #3219: and the booking itself comes back into agreement with its strands, in
   // this same transaction, on a dismissal exactly as on a completion - the park
   // froze it and nothing else thaws it.
@@ -374,13 +180,10 @@ export async function recordReviewClosurePricing({
   // of a parked removal that offer no price boxes used to escape it entirely.
   const outcome = await rebaseBookingPriceFromStrands({
     bookingId: task.bookingId,
-    repairedStrand:
-      plan && repaired
-        ? {
-            bookingGuestId: plan.bookingGuestId,
-            totalCents: repaired.newGuestTotalCents,
-          }
-        : null,
+    repairedStrands: repaired.map((entry) => ({
+      bookingGuestId: entry.plan.bookingGuestId,
+      totalCents: entry.newGuestTotalCents,
+    })),
     todayAtClub,
     store,
   });
@@ -411,6 +214,7 @@ export async function recordReviewClosurePricing({
       taskId: task.id,
       resolution,
       rebase,
+      moneyBuildUpSelection: outcome.moneyBuildUpSelection,
       xeroInvoiceDiverged,
       store,
     });
@@ -422,15 +226,26 @@ export async function recordReviewClosurePricing({
       // price?" must not be handed closures that priced nothing. The category,
       // the severity rule and every re-price field below are shared, which is
       // why they are not two writers (`INV-SSOT`).
-      action: plan
-        ? "booking-payment.stored-night-price.record"
-        : "booking-payment.review-closure.reprice",
+      action:
+        repaired.length > 0
+          ? "booking-payment.stored-night-price.record"
+          : "booking-payment.review-closure.reprice",
       memberId: actingMemberId,
       actorMemberId: actingMemberId,
-      subjectMemberId: task.booking.memberId,
+      subjectMemberId: bookingOwner(task.booking).memberId,
       targetId: task.bookingId,
-      entityType: plan ? "BookingGuest" : "Booking",
-      entityId: plan ? plan.bookingGuestId : task.bookingId,
+      /*
+        #3498: one closure can now repair several strands, and an entry naming
+        one of them would read as if the others had not been touched. A
+        single-strand repair is left EXACTLY as it was - the shape every entry
+        already on file has - and anything else is filed against the booking,
+        with every strand's figures in `repairedStrands` below.
+      */
+      entityType: repaired.length === 1 ? "BookingGuest" : "Booking",
+      entityId:
+        repaired.length === 1
+          ? repaired[0]!.plan.bookingGuestId
+          : task.bookingId,
       category: "payment",
       // #3219: CRITICAL exactly when the club's invoice no longer agrees with
       // the booking and nothing in this closure will correct it. That is the one
@@ -440,7 +255,7 @@ export async function recordReviewClosurePricing({
       outcome: "success",
       summary: xeroInvoiceDiverged
         ? "Re-priced a booking while settling a financial review; its issued Xero invoice no longer matches"
-        : plan
+        : repaired.length > 0
           ? "Recorded what a booking's unpriced nights sold for while settling a financial review"
           : "Re-priced a booking from its guests while closing a financial review",
       details: note,
@@ -455,14 +270,22 @@ export async function recordReviewClosurePricing({
         // #3257: null throughout on a closure that recorded none, which is what
         // distinguishes "the officer priced nothing" from "the officer priced
         // these at zero" - the distinction this whole epic exists to keep.
-        nightPrices:
-          plan?.entries.map((entry) => ({
-            date: entry.date,
-            priceCents: entry.priceCents,
-          })) ?? null,
-        previousGuestTotalCents: plan?.summary.storedGuestTotalCents ?? null,
-        newGuestTotalCents: repaired?.newGuestTotalCents ?? null,
-        knownNightTotalCents: plan?.summary.knownNightTotalCents ?? null,
+        // #3498: per strand, because one closure can repair several. Still
+        // null - not an empty array - where nothing was recorded, so "the
+        // officer priced nothing" stays distinguishable from "the officer
+        // priced these at zero".
+        repairedStrands:
+          repaired.length > 0
+            ? repaired.map(({ plan, newGuestTotalCents }) => ({
+                nightPrices: plan.entries.map((entry) => ({
+                  date: entry.date,
+                  priceCents: entry.priceCents,
+                })),
+                previousGuestTotalCents: plan.summary.storedGuestTotalCents,
+                newGuestTotalCents,
+                knownNightTotalCents: plan.summary.knownNightTotalCents,
+              }))
+            : null,
         // #3219/#3257: what the re-price did to every money column, before and
         // after, or why it declined - shaped beside the writer that produced it.
         ...bookingRebaseAuditMetadata({ outcome, xeroInvoiceDiverged }),

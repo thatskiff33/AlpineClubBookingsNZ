@@ -25,8 +25,7 @@ import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
 import { APP_LOCALE } from "@/config/operational";
 import { useClubTime } from "@/components/club-time-provider";
 import {
-  formatClubDate,
-  parseCalendarDate,
+  formatStayDateOrNull,
   parseInstant,
   type BoundClubTime,
 } from "@/lib/club-time";
@@ -83,7 +82,9 @@ interface RedemptionAllocation {
 interface RedemptionRow {
   id: string;
   createdAt: string;
-  member: { id: string; name: string; email: string };
+  // #3369: `id` is a MEMBER id and is null when the booking belongs to a
+  // school, which has no member page to link to.
+  member: { id: string | null; name: string; email: string };
   booking: {
     id: string;
     reference: string;
@@ -147,16 +148,6 @@ interface PromoSummary {
   description: string | null;
   type: string;
   archived: boolean;
-}
-
-// `value` is a yyyy-MM-dd lodge night from the API — a CALENDAR DATE, which
-// takes no timezone at all (CT-4, #2870). The hand-rolled parts-to-UTC-midnight
-// dance existed only to stop the INSTANT formatter shifting the day; the
-// calendar-date formatter has no zone to shift by. A malformed value still
-// renders as itself rather than throwing inside a table row.
-function formatStayDate(value: string): string {
-  const day = parseCalendarDate(value);
-  return day ? formatClubDate(day) : value;
 }
 
 // The truncation notice asks an operator to compare two five-figure counts, so
@@ -675,17 +666,26 @@ export function PromoRedemptionsPanel({
                         {redeemedAtLabel(clubTime, row.createdAt)}
                       </TableCell>
                       <TableCell>
-                        <Link
-                          href={`/admin/members/${row.member.id}`}
-                          className="hover:underline"
-                        >
-                          <div className="font-medium text-primary">
-                            {row.member.name}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {row.member.email}
-                          </div>
-                        </Link>
+                        {row.member.id ? (
+                          <Link
+                            href={`/admin/members/${row.member.id}`}
+                            className="hover:underline"
+                          >
+                            <div className="font-medium text-primary">
+                              {row.member.name}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {row.member.email}
+                            </div>
+                          </Link>
+                        ) : (
+                          <>
+                            <div className="font-medium">{row.member.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {row.member.email}
+                            </div>
+                          </>
+                        )}
                         {row.memberUseIndex > 1 ? (
                           <Badge variant="secondary" className="mt-1 text-xs">
                             Use #{row.memberUseIndex}
@@ -710,9 +710,9 @@ export function PromoRedemptionsPanel({
                       </TableCell>
                       <TableCell>{row.booking.lodgeName}</TableCell>
                       <TableCell>
-                        <div>{formatStayDate(row.booking.checkIn)}</div>
+                        <div>{formatStayDateOrNull(row.booking.checkIn) ?? row.booking.checkIn}</div>
                         <div className="text-xs text-muted-foreground">
-                          to {formatStayDate(row.booking.checkOut)} ·{" "}
+                          to {formatStayDateOrNull(row.booking.checkOut) ?? row.booking.checkOut} ·{" "}
                           {row.booking.nights} night
                           {row.booking.nights === 1 ? "" : "s"}
                         </div>

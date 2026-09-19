@@ -39,7 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { useClubTime } from "@/components/club-time-provider";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { seasonSelectLabel } from "@/lib/season-label";
@@ -49,6 +49,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
 type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED" | "BASED_ON_AGE_TIER";
@@ -164,18 +165,6 @@ function createEmptyDraft(ageTiers: readonly AgeTier[]): DraftMembershipType {
     subscriptionBehavior: "REQUIRED",
     allowedAgeTiers: sortAgeTiers(ageTiers),
   };
-}
-
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
 }
 
 function draftFromType(type: MembershipType): DraftMembershipType {
@@ -1048,7 +1037,6 @@ export default function AdminMembershipTypesPage() {
   const [savedMessage, setSavedMessage] = useState("");
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
-  const { scrollToError, scrollToTop } = useScrollToFeedback();
   const { confirm, confirmDialog } = useConfirm();
   // Membership types resolve to the membership area (their write routes enforce
   // membership:edit), so gate all editors on that area (#1940).
@@ -1096,7 +1084,7 @@ export default function AdminMembershipTypesPage() {
         | { error?: string };
       if (!response.ok || !("membershipTypes" in body)) {
         throw new Error(
-          responseErrorMessage(body, "Failed to load membership types"),
+          apiErrorMessageFromBody(body, "Failed to load membership types"),
         );
       }
       setMembershipTypes(body.membershipTypes);
@@ -1120,13 +1108,14 @@ export default function AdminMembershipTypesPage() {
     void loadMembershipTypes();
   }, []);
 
-  useEffect(() => {
-    if (error) scrollToError(feedbackRef);
-  }, [error, scrollToError]);
-
-  useEffect(() => {
-    if (savedMessage) scrollToTop(pageRef);
-  }, [savedMessage, scrollToTop]);
+  // Failure wins, success positions at the top, and neither runs for a
+  // passive re-render — the shared action-attention rule (#2934).
+  useActionAttention({
+    error: error,
+    errorTarget: feedbackRef,
+    success: savedMessage,
+    successTarget: pageRef,
+  });
 
   function updateEditorDraft(patch: Partial<DraftMembershipType>) {
     if (editorTarget?.mode === "edit" && editingType) {
@@ -1197,7 +1186,7 @@ export default function AdminMembershipTypesPage() {
           return;
         }
         throw new Error(
-          responseErrorMessage(body, "Failed to create membership type"),
+          apiErrorMessageFromBody(body, "Failed to create membership type"),
         );
       }
       setMembershipTypes((current) => [...current, body.membershipType]);
@@ -1247,7 +1236,7 @@ export default function AdminMembershipTypesPage() {
           return false;
         }
         throw new Error(
-          responseErrorMessage(body, "Failed to save membership type"),
+          apiErrorMessageFromBody(body, "Failed to save membership type"),
         );
       }
       setMembershipTypes((current) =>
@@ -1304,7 +1293,7 @@ export default function AdminMembershipTypesPage() {
           return;
         }
         throw new Error(
-          responseErrorMessage(body, "Failed to reorder membership types"),
+          apiErrorMessageFromBody(body, "Failed to reorder membership types"),
         );
       }
       setMembershipTypes(body.membershipTypes);
@@ -1347,7 +1336,7 @@ export default function AdminMembershipTypesPage() {
           return;
         }
         throw new Error(
-          responseErrorMessage(body, "Failed to delete membership type"),
+          apiErrorMessageFromBody(body, "Failed to delete membership type"),
         );
       }
       setMembershipTypes((current) =>
@@ -1425,7 +1414,7 @@ export default function AdminMembershipTypesPage() {
           return;
         }
         throw new Error(
-          responseErrorMessage(body, "Failed to merge membership type"),
+          apiErrorMessageFromBody(body, "Failed to merge membership type"),
         );
       }
       const reassignedCount = body.reassignedCount ?? 0;
@@ -1497,7 +1486,7 @@ export default function AdminMembershipTypesPage() {
           return;
         }
         throw new Error(
-          responseErrorMessage(
+          apiErrorMessageFromBody(
             body,
             dryRun
               ? "Failed to preview seasonal assignment roll-forward"

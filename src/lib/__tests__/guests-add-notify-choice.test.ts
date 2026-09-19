@@ -666,3 +666,38 @@ describe("#3166 adding a guest to a booking whose history cannot be read", () =>
     expect(create).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/bookings/[id]/guests clears a flagged review in place (#3500)", () => {
+  it("adding an adult to a PAID booking under a pending no-adult review clears the review and keeps the status", async () => {
+    // INV-ADDPAY-003 / INV-MOD-013: a paid booking that tripped the no-adult
+    // rule is FLAGGED, never parked, so clearing the rule wipes the review
+    // columns and leaves PAID alone. The release arm this route once carried
+    // (AWAITING_REVIEW -> PAYMENT_PENDING) could never run and is gone;
+    // awaiting-review-release-one-writer.test.ts pins that only the officer
+    // review route writes that transition.
+    const booking = makeBooking({
+      requiresAdminReview: true,
+      adminReviewReason: "No adult guest on the booking",
+      adminReviewStatus: "PENDING",
+    });
+    booking.guests[0].ageTier = "YOUTH";
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const res = await POST(guestsRequest({ guests: [NON_MEMBER_GUEST] }), params);
+
+    expect(res.status).toBe(200);
+    expect(tx.booking.update).toHaveBeenCalledTimes(1);
+    const data = tx.booking.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data).toMatchObject({
+      status: "PAID",
+      requiresAdminReview: false,
+      adminReviewReason: null,
+      adminReviewStatus: null,
+      adminReviewNotes: null,
+      adminReviewedById: null,
+      adminReviewedAt: null,
+    });
+  });
+});

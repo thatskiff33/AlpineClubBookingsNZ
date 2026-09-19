@@ -29,6 +29,7 @@ import { isRosterData, RosterEditor, type RosterData } from "@/components/admin/
 import { useClubTime } from "@/components/club-time-provider"
 import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 import type { RosterDayStatus, RosterDayStatusResult } from "@/lib/roster-status"
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 
@@ -166,11 +167,8 @@ export default function RosterPage() {
     selectedDateRef.current = selectedDate
   }, [selectedDate])
 
-  useEffect(() => {
-    if (!error) return
-    pageAlertRef.current?.focus()
-    pageAlertRef.current?.scrollIntoView?.({ block: "center" })
-  }, [error])
+  // The page-level failure takes focus through the shared primitive (#2934).
+  useActionAttention({ error, errorTarget: pageAlertRef, errorBlock: "center" })
 
   const loadMonthStatus = useCallback(async (month: string) => {
     // #2701: the overlay is the calendar's half of the scope. Leaving it to load

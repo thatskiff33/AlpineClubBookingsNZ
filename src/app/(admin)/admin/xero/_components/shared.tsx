@@ -25,7 +25,6 @@ import { formatRedactedJson } from "@/lib/redact-sensitive-json"
 import { cn } from "@/lib/utils"
 import { CHIP_TONE_CLASSES, type SemanticTone } from "@/lib/chip-tones"
 import type {
-  AccountMappingKey,
   CreditItemMappingKey,
   SectionKey,
   SyncReport,
@@ -52,8 +51,24 @@ export function SectionCard({
   actions?: ReactNode
   children: ReactNode
 }) {
+  // A NAMED region, because this card is a reveal target: "go to section" on
+  // /admin/xero focuses it through the shared attention primitive (#2934), and
+  // focus landing on an unnamed card announces only "group". The name is
+  // `aria-labelledby` on the visible title rather than an `aria-label` repeating
+  // it, and `tabIndex={-1}` is declarative so React owns the attribute instead
+  // of the primitive writing it behind React's back. `scroll-mt-24` (6rem, not
+  // the primitive's default 5rem) is this card's own clearance: its header is a
+  // two-line collapsible button, and the primitive now leaves a declared
+  // clearance alone.
+  const titleId = `${id}-title`
   return (
-    <Card id={id} className="mb-6 scroll-mt-24">
+    <Card
+      id={id}
+      role="region"
+      aria-labelledby={titleId}
+      tabIndex={-1}
+      className="mb-6 scroll-mt-24 focus:outline-none"
+    >
       <CardHeader className="gap-4 md:flex-row md:items-start md:justify-between">
         <button
           type="button"
@@ -62,7 +77,7 @@ export function SectionCard({
           className="flex w-full items-start justify-between gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex-1"
         >
           <div className="space-y-1">
-            <CardTitle>{title}</CardTitle>
+            <CardTitle id={titleId}>{title}</CardTitle>
             <CardDescription>{description}</CardDescription>
           </div>
           {open ? (
@@ -294,6 +309,24 @@ export function formatJson(value: unknown) {
   return formatRedactedJson(value)
 }
 
+/**
+ * "3 hours ago" / "12 days ago", from whole hours (#3058, `INV-SSOT`).
+ *
+ * An ELAPSED-TIME phrase, deliberately not a club-time stamp: it describes how
+ * old the shared Xero contact cache is, which is a duration and carries no
+ * civil date. The two panels that report that cache's age — the missing-contact
+ * census and the erased-member review — sit on the same scrollable page and
+ * render the same number, so a second copy of this function meant two panels
+ * could word one fact differently. That is the duplication the review lifted
+ * the number itself out to prevent, in the sentence rather than the value.
+ */
+export function describeContactCacheAge(hours: number) {
+  if (hours < 1) return "less than an hour ago"
+  if (hours === 1) return "1 hour ago"
+  if (hours < 48) return `${hours} hours ago`
+  return `${Math.floor(hours / 24)} days ago`
+}
+
 // #2256: bare toLocaleString() rendered the cache stamps in the admin's own
 // browser locale and zone ("4/16/2026, 11:30 AM"). Xero cache freshness is
 // judged against the club's clock — which since CT-4 (#2870) means the
@@ -317,46 +350,12 @@ export function formatReferenceCacheLabel(clubTime: BoundClubTime, label: string
   return `${label}: ${sourceLabel}, refreshed ${formatCacheStamp(clubTime, cache.lastRefreshedAt)}, expires ${formatCacheStamp(clubTime, cache.expiresAt)}`
 }
 
-export const ACCOUNT_MAPPING_KEYS: AccountMappingKey[] = [
-  "hutFeesIncome",
-  "hutFeeRefunds",
-  "stripeBankAccount",
-  "stripeFees",
-  "subscriptionIncome",
-  "membershipCancellationCredit",
-]
-
+// The account-mapping key list, labels, descriptions and account-type filters
+// moved to `@/lib/xero-account-mapping-keys` (#2717) — one registry the API
+// route, the runtime resolver, the seed and this picker all read, so a new
+// mapping key cannot land in three of the four. This list is the picker's own
+// ordering of the item-code rows and stays here.
 export const CREDIT_ITEM_MAPPING_KEYS: CreditItemMappingKey[] = ["hutFeeRefundItem", "membershipCancellationCredit"]
-
-export const MAPPING_LABELS: Record<string, string> = {
-  hutFeesIncome: "Hut Fees Income",
-  hutFeeRefunds: "Hut Fee Refunds",
-  stripeBankAccount: "Stripe Bank Account",
-  stripeFees: "Stripe Fees",
-  subscriptionIncome: "Subscription Income",
-  membershipCancellationCredit: "Membership Cancellation Credits",
-  hutFeeRefundItem: "Hut Fee Refund Item",
-}
-
-export const MAPPING_DESCRIPTIONS: Record<string, string> = {
-  hutFeesIncome: "Sales account for booking income line items",
-  hutFeeRefunds: "Account for refund credit notes",
-  stripeBankAccount: "Bank account used to record Stripe payments",
-  stripeFees: "Expense account for Stripe transaction fees (optional)",
-  subscriptionIncome: "Account code used to detect Annual Membership Fee invoices",
-  membershipCancellationCredit:
-    "Credit note account and item used to reverse unpaid Annual Membership Fee invoices when membership cancellation is approved",
-  hutFeeRefundItem: "Xero Item for refund credit note line items",
-}
-
-export const MAPPING_TYPE_FILTER: Record<AccountMappingKey, string> = {
-  hutFeesIncome: "REVENUE",
-  hutFeeRefunds: "REVENUE",
-  stripeBankAccount: "BANK",
-  stripeFees: "EXPENSE",
-  subscriptionIncome: "REVENUE",
-  membershipCancellationCredit: "REVENUE",
-}
 
 function SyncReportSection({
   title,

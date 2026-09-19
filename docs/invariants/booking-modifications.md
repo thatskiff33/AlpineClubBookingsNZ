@@ -434,8 +434,19 @@ the engine prefers an exact tier row and falls back to the flat row. The rate
 resolver classifies every guest as `OWN_TYPE` (a `MEMBER_RATE` member on their
 own rows), `NON_MEMBER_DEFAULT` (a true non-member on the `NON_MEMBER` rows), or
 `TYPE_POLICY_FORCED` (a member whose type forces the non-member rate, priced on
-the `NON_MEMBER` rows). A missing rate for a type × active season is a hard
-throw at pricing plus a setup-readiness warning. The group discount no longer
+the `NON_MEMBER` rows). A missing rate for a type × in-scope season is a hard
+throw at pricing, plus an early warning on the Hut Fees section of Admin > Fees
+and on setup readiness — warnings only: neither invents a rate, substitutes zero
+or inherits another type's amount, and no write surface saves a zero-cent row
+nobody entered. Which types owe rows, and which seasons are in scope, are asked
+in one place, `membership-type-rate-coverage.ts` (#2933);
+`rate-bearing-membership-type-census.test.ts` fails only an inline re-spelling of
+the rate-bearing disjunction. `NON_MEMBER` and `FULL` owe rows whatever their row
+says — the engine resolves them by key, so neither archiving nor a
+booking-behaviour edit retires them; other archived types are out of
+scope. Season scope
+compares calendar dates against the club's today (`INV-DATE-019`), never the
+current instant. The group discount no longer
 flips a boolean: it substitutes `GroupDiscountSetting.rateMembershipTypeId`
 (seeded to `FULL`) **only** for `NON_MEMBER_DEFAULT` guests, so members keep
 their own type's rate and `TYPE_POLICY_FORCED` members are excluded — the two
@@ -541,7 +552,13 @@ Because the clamp only fires in PENDING/PAYMENT_PENDING, a modification parked t
 AWAITING_REVIEW does NOT refund credit or auto-$0-pay before an admin approves it
 (F4, #1887), matching booking-create's under-review block on the zero-dollar
 path; the release-from-review transition lands PAYMENT_PENDING, at which point the
-clamp runs.
+clamp runs. That release has ONE writer, the officer review route. Every edit
+door refuses AWAITING_REVIEW; a linked guest's self-removal does reach a parked
+booking but cannot clear its review, because a no-adult park is all-minor (any
+survivor stays flagged) and a request hold is refused first as quote-priced.
+#3500 deleted the four unreachable `releaseFromReview` arms that said otherwise.
+A flagged PAID/CONFIRMED booking clears its review in place and keeps its
+status. Pin: `awaiting-review-release-one-writer.test.ts`.
 
 ## INV-MOD-014
 
@@ -1268,6 +1285,9 @@ for, under four conditions, none of which is optional:
   (`booking-payment.stored-night-price.record`, category `payment`) rather than
   as metadata on the settlement beside it - it can also happen on a DISMISSAL,
   whose entry says in as many words that nothing moved.
+ #3498
+  moved its four per-strand figures into a `repairedStrands` array, one object
+  per strand - breaking, still `null` not empty, older rows left flat.
 
 ## INV-MOD-037
 
@@ -1321,20 +1341,22 @@ none of them restates an amount already billed:
 
 ## INV-MOD-039
 
-The test is RECONCILIATION and not provenance: two of the three events that populated that table were themselves
-even splits (migrations `20260704150000` #1098 and `20260810010000` #2739), there
-is no provenance column and `createdAt` does not separate a backfilled row from a
-live one — so an evenly-split backfilled strand reconciles and prices as exact,
-which is the intended consequence. A deliberate negotiated-flat allocation is
-valid evidence once stored; equal nightly rows alone are not a defect.
+The test is operation-grain aware (#3275, #3277). Reconciliation proves a
+whole-guest total: a guest whose stored night rows add back to
+`BookingGuest.priceCents` may be removed as one exact strand even when those
+rows came from an `EVEN_SPLIT`. It does not prove what any one night sold for.
+An edit or review re-base that consumes individual nights therefore also
+requires every relevant row to have `SOLD` or `OFFICER_PRICED` provenance.
+`EVEN_SPLIT` and `UNKNOWN` stay inexact at that grain; no amount, timestamp,
+rate table, or surrounding row may be used to infer a better provenance.
 
 Where a strand is exact, an edit values every night it keeps or gives back at the
 integer on the row, and every night it newly buys under current pricing policy
 (INV-MOD-005, INV-MOD-006). Where it is not, the edit produces **no numeric
 result at all** — not zero, not an amount, not an optional a caller can default —
 only a typed cause (`NO_STORED_NIGHT_PRICES`, `PARTIAL_STORED_NIGHT_PRICES`,
-`STORED_TOTAL_MISMATCH`, `COUNTERPART_STRAND_UNREADABLE`) and the evidence as it
-stands.
+`INEXACT_STORED_NIGHT_PRICES`, `STORED_TOTAL_MISMATCH`,
+`COUNTERPART_STRAND_UNREADABLE`) and the evidence as it stands.
 
 ## INV-MOD-040
 
@@ -1807,3 +1829,60 @@ consequences follow and are load-bearing:
   Recalculated" entry recording no change would be noise on a page a member and
   an operator both read. The audit entry records the closure either way, and
   says which of the two happened.
+
+## INV-MOD-056
+
+**Historical price evidence is operation-grain aware, and review re-base
+records the fresh build-up it computes** (#3277, programme #3272;
+owner-approved blueprint, 12 September 2026).
+
+A whole-guest operation may use `BookingGuest.priceCents` when it is valid
+integer cents, so a guest whose historical nights were `EVEN_SPLIT` can still be
+removed using the exact stored guest total. An individual-night operation also
+requires every relevant night to carry `SOLD` or `OFFICER_PRICED` provenance.
+`EVEN_SPLIT`, `UNKNOWN`, missing, partial, or non-reconciling rows yield a typed
+unknown result and make a partial edit park or a review re-base decline. A
+booking-wide headline or promotion-aggregate check never upgrades evidence at a
+finer grain. Every caller must name its grain; there is no default that can turn
+unknown provenance into evidence.
+
+Review re-base remains a writer, not a historical reader conversion. It
+recomputes the promotion from the surviving strands, records a fresh adjustment
+build-up, then compares that build-up before the fenced headline write. Stored
+money may govern only when byte-identical to the recomputed result. Otherwise
+the recomputed result wins through a classified compatibility fallback, and the
+source, reason, and both cents figures are copied into the existing audit
+metadata and any `PRICE_REBASE` history row. No inexact input moves any of the
+four booking money columns.
+
+## INV-MOD-057
+
+**Which bookings may be cancelled has one home, and the member-facing doors
+read a named subset of it** (#3497; owner decision Option B, 19 September
+2026).
+
+`CANCELLABLE_BOOKING_STATUSES` in `src/lib/booking-cancel-eligibility.ts` is
+the one answer to "may this booking be cancelled?"; the cancel service reads it
+at its outer guard and its single-flight re-check, and every internal or officer
+caller (request decline, hold release, review reject, account deletion) cancels
+from that full set. `MEMBER_CANCELLABLE_BOOKING_STATUSES` is derived from it —
+never restated — as the service set minus `AWAITING_REVIEW`, and governs every
+member-facing door: the booking page's Cancel button (`canCancel`), the
+cancel-preview route, the member cancel route's `enforceMemberCancelDoor` guard,
+and the notes editor that `canCancel` draws. No door states a status list of its
+own.
+
+The one exclusion exists because `cancelBooking` never touches
+`adminReviewStatus`: a member self-cancel of a booking under review would leave
+a `CANCELLED` row sitting as a `PENDING` item in the officers' Approvals queue.
+Withdrawing a booking under review is the reviewing officer's Reject, which
+cancels through the service and closes the review. The member is told so in the
+one refusal sentence (`memberCancelRefusal`), which the preview and the cancel
+route share.
+
+Pinned by `src/lib/__tests__/booking-cancel-eligibility.test.ts` (every
+`BookingStatus` at every door, as one table, plus the subset and the exact
+derivation) and the #3245 census in
+`booking-edit-eligibility-one-home.test.ts`, which refuses a hand-written
+status list near a booking door. Member guide:
+[`changing-or-cancelling-a-booking.md`](../user-guide/changing-or-cancelling-a-booking.md).

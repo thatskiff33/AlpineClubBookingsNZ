@@ -14,16 +14,14 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import {
   readHostingCoverageOverridePrompt,
   type HostingCoverageOverridePromptData,
 } from "@/lib/hosting-coverage-override-client";
 import { useClubTime } from "@/components/club-time-provider";
-import {
-  calendarDateOfSerialisedDbDateOrNull,
-  formatClubDate,
-} from "@/lib/club-time";
+import { formatStayDateOrNull } from "@/lib/club-time";
 import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-request-shared";
 import type { PolicyExceptionReasonCode } from "@/lib/booking-policy-exceptions";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
@@ -182,18 +180,6 @@ function statusBadgeClass(status: string) {
   return "border-border bg-muted text-muted-foreground";
 }
 
-/**
- * The proposed lodge nights as the calendar days they ARE - no timezone, because
- * a calendar day has none (CT-4, #2870; INV-DATE-010). `@db.Date` reaches the
- * browser as UTC midnight, and the kernel's calendar-date formatter pins UTC over
- * that encoding, so the projection is the identity. What this replaces read the
- * day through a zone: correct east of Greenwich, a day early west of it.
- */
-function formatDate(value: string | null) {
-  const day = calendarDateOfSerialisedDbDateOrNull(value);
-  return day ? formatClubDate(day) : "—";
-}
-
 export interface PolicyExceptionRequestsPanelProps {
   basePath?: string;
   showHeading?: boolean;
@@ -312,15 +298,9 @@ export function PolicyExceptionRequestsPanel({
     fetchItems();
   }, [fetchItems]);
 
-  useEffect(() => {
-    if (!error) return;
-    const alert = errorRef.current;
-    if (!alert) return;
-    alert.focus({ preventScroll: true });
-    if (typeof alert.scrollIntoView === "function") {
-      alert.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, [error]);
+  // The permanently mounted recovery alert takes focus through the shared
+  // failure primitive (#2934) — the same call `FocusedActionError` makes.
+  useActionAttention({ error, errorTarget: errorRef, errorBlock: "center" });
 
   function resetDecisionForm() {
     setOpenId(null);
@@ -636,8 +616,8 @@ export function PolicyExceptionRequestsPanel({
                         <span className="text-muted-foreground">
                           Proposed dates:
                         </span>{" "}
-                        {formatDate(item.proposedCheckIn)} to{" "}
-                        {formatDate(item.proposedCheckOut)}
+                        {formatStayDateOrNull(item.proposedCheckIn) ?? "—"} to{" "}
+                        {formatStayDateOrNull(item.proposedCheckOut) ?? "—"}
                       </div>
                       <div>
                         <span className="text-muted-foreground">Guests:</span>{" "}

@@ -383,6 +383,16 @@ describe("chore roster print sheet (D-12)", () => {
           id: "booking-1",
           checkIn: dateOnly("2026-07-10"),
           checkOut: dateOnly("2026-07-12"),
+          // #3369: the roster query loads the OWNER — both halves of it — to
+          // build the "Booking for …" group label, so the row it returns
+          // carries both keys. Before stage 4 this fixture could leave them out
+          // and the label read off an optional chain; the chain is gone,
+          // because with the organisation loaded the accessor always has a
+          // projection to hand back. A fixture that omits them is describing a
+          // row Prisma cannot return.
+          memberId: "member-1",
+          member: { firstName: "Ana", lastName: "Reid" },
+          organisation: null,
           // #2628: the print sheet counts off the night rows it loads, so each
           // guest lists the two nights its envelope describes — the 10th and
           // the 11th. The headcount is unchanged; only the branch it comes

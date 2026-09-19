@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 type EnrollMethod = "TOTP" | "EMAIL";
 type VerifyMethod = "TOTP" | "EMAIL" | "RECOVERY";
@@ -24,15 +25,6 @@ type TotpSetup = {
   issuer: string;
   label: string;
 };
-
-async function readJsonError(response: Response, fallback: string) {
-  try {
-    const body = (await response.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function RecoveryCodes({
   callbackUrl,
@@ -99,7 +91,7 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
       });
       if (!response.ok) {
         if (!cancelled) {
-          setError(await readJsonError(response, "Failed to prepare authenticator setup"));
+          setError(await apiErrorMessageFromResponse(response, "Failed to prepare authenticator setup"));
         }
         return;
       }
@@ -122,7 +114,7 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
         credentials: "same-origin",
       });
       if (!response.ok) {
-        throw new Error(await readJsonError(response, "Failed to send code"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Failed to send code"));
       }
       setEmailSent(true);
     } catch (err) {
@@ -144,7 +136,7 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
         body: JSON.stringify({ secret: totpSetup.secret, code: totpCode }),
       });
       if (!response.ok) {
-        throw new Error(await readJsonError(response, "Invalid code"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Invalid code"));
       }
       const body = (await response.json()) as { recoveryCodes: string[] };
       setRecoveryCodes(body.recoveryCodes);
@@ -166,7 +158,7 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
         body: JSON.stringify({ code: emailCode }),
       });
       if (!response.ok) {
-        throw new Error(await readJsonError(response, "Invalid code"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Invalid code"));
       }
       const body = (await response.json()) as { recoveryCodes: string[] };
       setRecoveryCodes(body.recoveryCodes);
@@ -309,7 +301,7 @@ export function TwoFactorVerifyPanel({
         credentials: "same-origin",
       });
       if (!response.ok) {
-        throw new Error(await readJsonError(response, "Failed to send code"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Failed to send code"));
       }
       setEmailSent(true);
     } catch (err) {
@@ -330,7 +322,7 @@ export function TwoFactorVerifyPanel({
         body: JSON.stringify({ method, code }),
       });
       if (!response.ok) {
-        throw new Error(await readJsonError(response, "Invalid code"));
+        throw new Error(await apiErrorMessageFromResponse(response, "Invalid code"));
       }
       router.replace(callbackUrl);
     } catch (err) {

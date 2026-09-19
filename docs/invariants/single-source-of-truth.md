@@ -350,7 +350,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 77 test files, two test
+  `stripComments`, and since #3164 a lint rule enforces it.** 93 test files, two test
   helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
@@ -510,3 +510,36 @@ are permanent: never renumbered, never reused.
   share. **Prefer the broader instrument for the second one**: over-reporting is
   visible and gets fixed, while a second instrument blind in the same place as
   the first is a rubber stamp that reads as corroboration.
+
+## INV-SSOT-005
+
+Who owns a booking is answered by `bookingOwner()` in
+`src/lib/booking-owner.ts`, nowhere else. #2912 stage 3 (#3368); reasoning in
+that module's docblock.
+
+- **One accessor, and a census that keeps it one.** Stage 4 (#3369) makes the
+  member link optional, so the owner is no longer certainly a person nor
+  certainly present. `booking-owner-census.test.ts` reads `src/` and `scripts/`
+  from disk, fails on a direct read, and states its blind spots; the accessor is
+  the single exemption.
+- **While the column was still required the accessor was the IDENTITY**, which
+  is what made a sweep this wide checkable.
+- **A comparison against a signed-in actor stays a comparison against a member,
+  and keeps failing closed.** An organisation never signs in, so "is this my
+  booking?" is correctly "no" for one. The refusal a school liaison meets is a
+  product question this programme does not answer (#3369).
+- **The credit ledger stays a MEMBER ledger.** A booking with no member has none
+  to lock and no balance to read, so stage 4 branches at each member-keyed call
+  site rather than passing an empty key, which degenerates to a shared advisory
+  key (`INV-LOCK`).
+- **Selecting the member WITHOUT the organisation is a defect this census cannot
+  see.** The projection needs both relations, so such a query hands a school
+  booking's member back as `null`, with no read to find. The compiler catches
+  every spelling but an optional chain, which the census enumerates as its third
+  family.
+- **A `where` filtering THROUGH the relation is not covered either.**
+  `member: { is: … }` on a nullable to-one drops every organisation-owned
+  booking from a page, its window and its count, with no read and no type error.
+  A reviewer's job; no guard claims otherwise.
+- **Measure all three site lists by running the census** — one restated by hand
+  has already drifted (`INV-SSOT-004`).

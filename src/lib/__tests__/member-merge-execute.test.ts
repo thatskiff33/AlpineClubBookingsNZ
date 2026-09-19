@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildMemberMergePreviewToken,
   executeMemberMerge,
+  MEMBER_SELF_RELATION_COLUMNS,
   MemberMergeError,
   type MemberMergePreviewCore,
 } from "@/lib/member-merge";
@@ -17,6 +18,11 @@ import {
   ADULT_MEMBER_HOSTING_POLICY_SET_LOCK_KEY,
   lockAdultMemberHostingPolicySet,
 } from "@/lib/adult-member-hosting-policy-set";
+import {
+  MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+  MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+} from "@/lib/member-parent-partner-exclusivity";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 
 const MASTER_ID = "master-1";
 const LOSER_ID = "loser-1";
@@ -108,11 +114,44 @@ function reconcileSubjectRows(ids: string[]) {
     }));
 }
 
+/**
+ * `member.findMany` as the merge transaction actually uses it — TWO queries,
+ * not one, and a mock that answers both the same way blocks every merge.
+ *
+ * The email-inheritance reconciler asks for the subject rows by id and reads
+ * five inheritance columns off them. The #3369 merge guard asks a NARROWER
+ * question against the same delegate: which of these two ids is school-SHAPED
+ * (`role: SCHOOL`, a blank surname, cannot sign in), for the rows the cutover
+ * census never reached. Answering that with the reconciler's row list says
+ * "both of them", and `evaluateMemberMergeGuards` then refuses every merge in
+ * this file with `organisation_row`.
+ *
+ * So the filter is honoured rather than ignored. Prisma would have; a mock that
+ * does not is not modelling the database, it is modelling one caller.
+ */
+function memberFindManyForTest(args: unknown) {
+  const where = (args as { where?: Record<string, unknown> }).where ?? {};
+  const ids = (where.id as { in?: string[] } | undefined)?.in;
+  if (!ids) return null;
+  const narrowing = ["role", "lastName", "canLogin", "active"].filter(
+    (key) => key in where,
+  );
+  if (narrowing.length === 0) return reconcileSubjectRows(ids);
+  const rows = [master, loser] as unknown as Array<Record<string, unknown>>;
+  return ids
+    .filter((id) => {
+      const row = rows.find((candidate) => candidate.id === id);
+      if (!row) return false;
+      return narrowing.every((key) => row[key] === where[key]);
+    })
+    .map((id) => ({ id }));
+}
+
 function makeClient(overrides: Record<string, unknown> = {}) {
   const memberDelegate = {
     ...defaultDelegate(),
-    findMany: vi.fn(({ where }: { where?: { id?: { in?: string[] } } }) =>
-      Promise.resolve(reconcileSubjectRows(where?.id?.in ?? [])),
+    findMany: vi.fn((args: unknown) =>
+      Promise.resolve(memberFindManyForTest(args) ?? []),
     ),
     findUnique: vi.fn(({ where }: { where: { id: string } }) =>
       Promise.resolve(where.id === MASTER_ID ? master : where.id === LOSER_ID ? loser : null),
@@ -137,12 +176,8 @@ function makeClient(overrides: Record<string, unknown> = {}) {
       ? {
           ...overriddenMember,
           findMany: vi.fn((args: unknown) => {
-            const ids = (
-              args as { where?: { id?: { in?: string[] } } }
-            ).where?.id?.in;
-            if (ids) {
-              return Promise.resolve(reconcileSubjectRows(ids));
-            }
+            const answered = memberFindManyForTest(args);
+            if (answered) return Promise.resolve(answered);
             return overriddenMember.findMany?.(args) ?? Promise.resolve([]);
           }),
         }
@@ -1170,6 +1205,115 @@ describe("partner-link warnings reach the audit metadata (M3)", () => {
     expect(serialized).toContain("resolutionWarnings");
     expect(serialized).toContain("confirmed partner link dropped");
   });
+
+  it("executes when the only projected overlap belongs to a discarded confirmed link", async () => {
+    const childRow = {
+      id: "former-partner-child",
+      parentMemberId: LOSER_ID,
+      secondaryParentId: null,
+    };
+    const member = {
+      ...defaultDelegate(),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === MASTER_ID
+            ? master
+            : where.id === LOSER_ID
+              ? loser
+              : null,
+        ),
+      ),
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      findMany: vi.fn(
+        (args: { where?: { OR?: Array<Record<string, unknown>> } }) =>
+          args.where?.OR?.some(
+            (clause) =>
+              typeof (clause.id as { in?: unknown } | undefined)?.in !==
+              "undefined",
+          )
+            ? Promise.resolve([childRow])
+            : Promise.resolve([]),
+      ),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    };
+    const loserLink = {
+      id: "L1",
+      memberAId: LOSER_ID,
+      memberBId: childRow.id,
+      status: "CONFIRMED",
+    };
+    const masterLink = {
+      id: "M1",
+      memberAId: MASTER_ID,
+      memberBId: "retained-partner",
+      status: "CONFIRMED",
+    };
+    const memberPartnerLink = {
+      ...defaultDelegate(),
+      findMany: vi.fn(
+        ({ where }: { where?: { OR?: Array<Record<string, unknown>> } }) => {
+          const clauses = where?.OR ?? [];
+          if (
+            clauses.some(
+              (clause) =>
+                typeof (clause.memberAId as { in?: unknown } | undefined)
+                  ?.in !== "undefined" ||
+                typeof (clause.memberBId as { in?: unknown } | undefined)
+                  ?.in !== "undefined",
+            )
+          ) {
+            return Promise.resolve([masterLink, loserLink]);
+          }
+          return Promise.resolve(
+            clauses[0]?.memberAId === LOSER_ID ? [loserLink] : [masterLink],
+          );
+        },
+      ),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      update: vi.fn().mockResolvedValue({}),
+    };
+    const core: MemberMergePreviewCore = {
+      fieldMerge: mergeMemberFields(
+        master as unknown as Record<string, unknown>,
+        loser as unknown as Record<string, unknown>,
+      ).diff,
+      relationMoves: [],
+      collisions: [
+        {
+          model: "MemberPartnerLink.memberA/memberB",
+          resolution: "re-point 0, drop 1 (self-pair/duplicate/confirmed)",
+          count: 1,
+        },
+      ],
+      blockers: [],
+      warnings: [],
+    };
+    const token = buildMemberMergePreviewToken(
+      MASTER_ID,
+      LOSER_ID,
+      master.updatedAt,
+      loser.updatedAt,
+      core,
+    );
+    const { client } = makeClient({ member, memberPartnerLink });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: token,
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).resolves.toMatchObject({ masterId: MASTER_ID, loserId: LOSER_ID });
+    expect(memberPartnerLink.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [loserLink.id] } },
+    });
+  });
 });
 
 describe("member-photo reconciliation at execute time (MP1, #189)", () => {
@@ -1657,6 +1801,148 @@ describe("member-photo reconciliation at execute time (MP1, #189)", () => {
     ).toEqual([]);
   });
 
+  it("409s before writes when a parent/partner participant appears during lock acquisition", async () => {
+    let topologyRead = 0;
+    const memberDelegate = {
+      ...defaultDelegate(),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === MASTER_ID ? master : where.id === LOSER_ID ? loser : null,
+        ),
+      ),
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      findMany: vi.fn(({ where }: { where?: { OR?: Array<Record<string, unknown>> } }) => {
+        const isTopologyRead = where?.OR?.some(
+          (clause) =>
+            typeof (clause.id as { in?: unknown } | undefined)?.in !==
+            "undefined",
+        );
+        if (!isTopologyRead) return Promise.resolve([]);
+        topologyRead += 1;
+        return Promise.resolve(
+          topologyRead === 1
+            ? []
+            : [
+                {
+                  id: "late-child",
+                  parentMemberId: LOSER_ID,
+                  secondaryParentId: null,
+                },
+              ],
+        );
+      }),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    };
+    const { client, auditLog } = makeClient({ member: memberDelegate });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: validToken(),
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "merge_drift_in_transaction",
+      details: {
+        driftFields: ["parentPartnerParticipants", "parentPartnerPairs"],
+      },
+    });
+
+    expect(memberDelegate.update).not.toHaveBeenCalled();
+    expect(memberDelegate.delete).not.toHaveBeenCalled();
+    expectRefusedAudit(
+      (auditLog as { create: ReturnType<typeof vi.fn> }).create,
+      "merge_drift_in_transaction",
+    );
+  });
+
+  it("409s cleanly when the locked final topology gains a parent/partner overlap", async () => {
+    const childRow = {
+      id: "partner-child",
+      parentMemberId: LOSER_ID,
+      secondaryParentId: null,
+    };
+    const memberDelegate = {
+      ...defaultDelegate(),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === MASTER_ID ? master : where.id === LOSER_ID ? loser : null,
+        ),
+      ),
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      findMany: vi.fn(({ where }: { where?: { OR?: Array<Record<string, unknown>> } }) =>
+        Promise.resolve(
+          where?.OR?.some(
+            (clause) =>
+              typeof (clause.id as { in?: unknown } | undefined)?.in !==
+              "undefined",
+          )
+            ? [childRow]
+            : [],
+        ),
+      ),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    };
+    let topologyPartnerRead = 0;
+    const partnerRow = {
+      id: "late-link",
+      memberAId: MASTER_ID,
+      memberBId: childRow.id,
+      status: "CONFIRMED",
+    };
+    const memberPartnerLink = {
+      ...defaultDelegate(),
+      findMany: vi.fn(({ where }: { where?: { OR?: Array<Record<string, unknown>> } }) => {
+        const isTopologyRead = where?.OR?.some(
+          (clause) =>
+            typeof (clause.memberAId as { in?: unknown } | undefined)?.in !==
+              "undefined" ||
+            typeof (clause.memberBId as { in?: unknown } | undefined)?.in !==
+              "undefined",
+        );
+        if (!isTopologyRead) return Promise.resolve([]);
+        topologyPartnerRead += 1;
+        return Promise.resolve(topologyPartnerRead === 1 ? [] : [partnerRow]);
+      }),
+    };
+    const { client, auditLog } = makeClient({
+      member: memberDelegate,
+      memberPartnerLink,
+    });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: validToken(),
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "parent_partner_overlap",
+      details: { conflictingPairCount: 1 },
+    });
+
+    expect(memberDelegate.update).not.toHaveBeenCalled();
+    expect(memberDelegate.delete).not.toHaveBeenCalled();
+    expectRefusedAudit(
+      (auditLog as { create: ReturnType<typeof vi.fn> }).create,
+      "parent_partner_overlap",
+    );
+  });
+
   it("409s partner_share_lodge_drift when step 3b finds a bed-night in a lodge it never locked", async () => {
     // #2595 — the run-time enforcement of the guest-night derivation, end to
     // end. `acquireMemberMergePartnerSharedLodgeLocks` derives the lodge set
@@ -1946,52 +2232,21 @@ describe("family-link drift under the lock (#2437)", () => {
     return { memberDelegate, xeroObjectLink };
   }
 
-  /**
-   * A tiny predicate interpreter over an in-memory Member store, so the
-   * interleaving tests exercise the merge against QUERY SEMANTICS rather than
-   * canned per-call return values: step 1's value-conditional null, the
-   * id-bounded sweep and the step-5 re-reads all evaluate their real
-   * predicates against the same mutable rows, and a concurrent write injected
-   * mid-merge propagates — or is refused — exactly as it would in Postgres
-   * under READ COMMITTED. Supports the operators the merge actually issues:
-   * scalar equality, in / notIn / not, OR and AND.
-   */
-  function rowMatches(
-    row: Record<string, unknown>,
-    where: Record<string, unknown>,
-  ): boolean {
-    for (const [key, cond] of Object.entries(where)) {
-      if (cond === undefined) continue;
-      if (key === "OR") {
-        if (!(cond as Record<string, unknown>[]).some((c) => rowMatches(row, c))) {
-          return false;
-        }
-        continue;
-      }
-      if (key === "AND") {
-        const clauses = (Array.isArray(cond) ? cond : [cond]) as Record<string, unknown>[];
-        if (!clauses.every((c) => rowMatches(row, c))) return false;
-        continue;
-      }
-      const value = row[key] ?? null;
-      if (cond !== null && typeof cond === "object") {
-        const f = cond as { in?: unknown[]; notIn?: unknown[]; not?: unknown };
-        if (f.in !== undefined && !f.in.includes(value)) return false;
-        if (f.notIn !== undefined && f.notIn.includes(value)) return false;
-        if (f.not !== undefined && value === f.not) return false;
-        continue;
-      }
-      if (value !== cond) return false;
-    }
-    return true;
-  }
-
+  // The interleaving tests below run the merge against QUERY SEMANTICS rather
+  // than canned per-call return values: step 1's value-conditional null, the
+  // id-bounded sweep and the step-5 re-reads all evaluate their real predicates
+  // (through the shared `matchesWhere`, #3434) against the same mutable rows,
+  // so a concurrent write injected mid-merge propagates — or is refused —
+  // exactly as it would in Postgres under READ COMMITTED.
+  // Every self-relation column the merge sweeps is present on the row, derived
+  // from the same list the sweep reads, so a link column the fixture never
+  // carried cannot read as "no rows point here" by accident. Before #3434 the
+  // list here was hand-written and one column short (`inheritEmailChoiceId`);
+  // the shared evaluator throws on a column the row lacks, which is how the
+  // gap surfaced.
   function storeMember(id: string, overrides: Record<string, unknown> = {}) {
     return makeMember(id, {
-      parentMemberId: null,
-      secondaryParentId: null,
-      inheritEmailFromId: null,
-      detailsConfirmedByMemberId: null,
+      ...Object.fromEntries(MEMBER_SELF_RELATION_COLUMNS.map((column) => [column, null])),
       ...overrides,
     });
   }
@@ -2015,7 +2270,7 @@ describe("family-link drift under the lock (#2437)", () => {
         (args: { where?: Record<string, unknown>; take?: number } = {}) => {
           hooks.onFindMany?.(args);
           const rows = [...store.values()].filter((r) =>
-            rowMatches(r, args.where ?? {}),
+            matchesWhere(r, args.where ?? {}),
           );
           const limited =
             typeof args.take === "number" ? rows.slice(0, args.take) : rows;
@@ -2030,7 +2285,7 @@ describe("family-link drift under the lock (#2437)", () => {
         ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
           let count = 0;
           for (const row of store.values()) {
-            if (rowMatches(row, where)) {
+            if (matchesWhere(row, where)) {
               Object.assign(row, data);
               count += 1;
             }
@@ -2805,6 +3060,39 @@ describe("refused member merges are audited (#2498)", () => {
     expectRefusedAudit(
       (auditLog as { create: ReturnType<typeof vi.fn> }).create,
       "preview_drift",
+    );
+  });
+
+  it("maps a database backstop race to an audited 409 without merge effects", async () => {
+    const { client, member, auditLog } = makeClient();
+    (client as { $transaction: ReturnType<typeof vi.fn> }).$transaction = vi
+      .fn()
+      .mockRejectedValue({
+        cause: {
+          originalMessage: MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
+        },
+      });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: validToken(),
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).rejects.toMatchObject({
+      message: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
+      statusCode: 409,
+      code: "parent_partner_overlap",
+    });
+
+    expect((member as { update: ReturnType<typeof vi.fn> }).update).not.toHaveBeenCalled();
+    expect((member as { delete: ReturnType<typeof vi.fn> }).delete).not.toHaveBeenCalled();
+    expectRefusedAudit(
+      (auditLog as { create: ReturnType<typeof vi.fn> }).create,
+      "parent_partner_overlap",
     );
   });
 

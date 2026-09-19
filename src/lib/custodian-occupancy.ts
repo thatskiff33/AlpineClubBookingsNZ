@@ -1,3 +1,4 @@
+import { isMinorAgeTier } from "./display-name-granularity";
 import { prisma } from "./prisma";
 import { formatDateOnly, parseDateOnly } from "./date-only";
 import { lodgeNullTolerantScope } from "./lodges";
@@ -72,6 +73,14 @@ export interface CustodianBedHold {
   assignmentId: string;
   memberId: string;
   memberName: string;
+  /**
+   * The name PARTS, so a caller that must reduce the name to a configured
+   * granularity can do so (`reduceName`). `memberName` above is the composed
+   * convenience form and cannot be reduced without re-splitting it, which is
+   * guesswork on any name with more than two words (#2942).
+   */
+  memberFirstName: string;
+  memberLastName: string;
   /** Minor-age custodians are never individually named on a public surface. */
   memberIsMinor: boolean;
   lodgeId: string;
@@ -84,8 +93,6 @@ export interface CustodianBedHold {
   /** Inclusive last held night, `YYYY-MM-DD`. */
   endDate: string;
 }
-
-const MINOR_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);
 
 /**
  * Truncate a `Date` to its UTC date-only midnight — this module's ONE
@@ -100,14 +107,18 @@ function truncateToDateOnly(date: Date): Date {
 }
 
 /**
- * Is this age tier a minor? Exported because the custodian slot on the lobby
+ * Is this age tier a minor? Re-exported because the custodian slot on the lobby
  * TV must never individually name a minor at ANY granularity (the display
  * contract in lodge-display-state.ts), and the hut-leaders API warns the admin
  * at assignment time rather than letting them assume a name will appear.
+ *
+ * The ANSWER lives in `display-name-granularity.ts` with the rest of the naming
+ * rules (#2942). This module used to carry its own tier set and its own
+ * function of the same name; two exported `isMinorAgeTier`s with identical
+ * lists is exactly the drift INV-SSOT is about, since a club that adds an age
+ * tier would fix one and leave the other quietly answering the old question.
  */
-export function isMinorAgeTier(ageTier: string | null | undefined): boolean {
-  return ageTier ? MINOR_AGE_TIERS.has(ageTier) : false;
-}
+export { isMinorAgeTier };
 
 /**
  * Does a hold cover any night of `[from, toExclusive)`?
@@ -130,6 +141,52 @@ export function holdCoversNight(
   nightKey: string,
 ): boolean {
   return hold.startDate <= nightKey && nightKey <= hold.endDate;
+}
+
+/**
+ * Is this bed-night held by a custodian? (`INV-CAP-038`, #2698.)
+ *
+ * THE predicate a whole-lodge hold subtracts through. ADR-001 says an
+ * exclusive hold gives its group the whole lodge, and until #2698 that was
+ * taken literally: the hold's represented bed set was *every* active bed,
+ * including the one a custodian is sleeping in, so the same bed-night was
+ * claimed twice — once by the hold and once by the custodian term. The owner's
+ * rule (9 Aug 2026) is that the hold's set **excludes** custodian-held
+ * bed-nights for each overlapping night, which makes the two disjoint and
+ * makes `docs/CAPACITY_MODEL.md`'s long-standing claim that the custodian's
+ * bed sits outside the held pool true instead of false.
+ *
+ * The rule is written once, here, and reached from both places that decide
+ * what a hold covers:
+ *
+ * - the bed-allocation planners, through
+ *   `wholeLodgeHoldOccupiedBedNightsForPlanner`
+ *   (`src/lib/exclusive-hold-occupancy.ts`), which skips a bed-night this
+ *   returns true for rather than emitting a hold row for it;
+ * - the custodian write path's ordering-case check
+ *   (`findWholeLodgeHoldAmendments`, `src/lib/custodian-assignment.ts`), which
+ *   asks which nights a NEW custodian hold would take out of an existing
+ *   hold's set — and does not re-ask for a bed-night the same assignment
+ *   already holds, because that one left the set when it was first created.
+ *
+ * The capacity engines work in per-night COUNTS rather than bed sets, so they
+ * subtract the same fact through the same loaded holds in its count shape —
+ * `buildCustodianNightIndex` / `buildLodgeCustodianNightCounter` above, fed to
+ * `wholeLodgeHoldRepresentedBeds` in `capacity.ts`. One source
+ * (`findCustodianBedHolds` + {@link holdCoversNight}), two views of it; never a
+ * second inventory of which beds a custodian has.
+ *
+ * No lodge argument: a bed belongs to exactly one lodge and `bedId` is unique,
+ * so a matching bed id IS a matching lodge. Scoping is the loaders' job.
+ */
+export function isCustodianHeldBedNight(
+  holds: readonly CustodianBedHold[],
+  bedId: string,
+  nightKey: string,
+): boolean {
+  return holds.some(
+    (hold) => hold.bedId === bedId && holdCoversNight(hold, nightKey),
+  );
 }
 
 /**
@@ -196,6 +253,8 @@ export async function findCustodianBedHolds(input: {
       memberId: row.memberId,
       memberName:
         `${row.member.firstName ?? ""} ${row.member.lastName ?? ""}`.trim(),
+      memberFirstName: row.member.firstName ?? "",
+      memberLastName: row.member.lastName ?? "",
       memberIsMinor: isMinorAgeTier(row.member.ageTier),
       lodgeId: row.lodgeId,
       bedId: row.bedId,

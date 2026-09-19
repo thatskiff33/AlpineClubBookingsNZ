@@ -49,6 +49,28 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: vi.fn(),
       createMany: vi.fn(),
     },
+    // #3367 (stage 2 of programme #2912): a school approval resolves or creates
+    // the school's own `Organisation` INSIDE the approval transaction, and
+    // records each teacher against it. The transaction double IS this client,
+    // so both delegates have to be here or the approval throws on an undefined
+    // delegate before it reaches anything these tests assert.
+    //
+    // `findFirst` answering null is the first-sight branch — every fixture here
+    // is a school being approved for the first time — and `create` ECHOES the
+    // name it was given rather than a fixed string, so an assertion about the
+    // name on the manual-invoice notification is testing the approval's own
+    // behaviour and not this double. `vi.clearAllMocks()` keeps
+    // implementations, so these survive the per-test reset.
+    organisation: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi
+        .fn()
+        .mockImplementation(async (args: { data: { name: string } }) => ({
+          id: "org-1",
+          name: args.data.name,
+        })),
+    },
+    organisationContact: { upsert: vi.fn(), deleteMany: vi.fn() },
     payment: { create: vi.fn() },
     // #2263: stubbed so "no PaymentLink is created" is a REAL assertion. Left
     // off the mock it was vacuous — `expect(prisma.paymentLink).toBeUndefined()`
@@ -223,6 +245,7 @@ import {
   approveSchoolBookingRequest,
   createSchoolBookingRequest,
   generateSchoolGuests,
+  resolveSchoolGuestOverride,
 } from "@/lib/school-booking-request";
 // #2739: the night rows this pipeline writes are the #1036 locked prices the
 // #2337 member link then prices against, so the join is asserted here with the
@@ -676,21 +699,34 @@ describe("approveSchoolBookingRequest", () => {
     mockedGroupDiscount.mockResolvedValue(null as never);
     vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "lodge-1" } as never);
 
-    let memberCalls = 0;
-    vi.mocked(prisma.member.create).mockImplementation((async () => {
-      memberCalls += 1;
-      return memberCalls === 1
-        ? ({ id: "school-member" } as never)
-        : ({
-            id: `teacher-member-${memberCalls}`,
-            firstName: "Tana",
-            email: "tana@school.test",
-          } as never);
+    // #3369: keyed on the DATA rather than on the call index. Approval no
+    // longer invents a school member, so a mock that numbered by call order
+    // silently renamed every teacher the moment that create went away. The only
+    // surnameless row this can still be asked for is the held-conversion
+    // SUBSTITUTE contact, which is what the empty `lastName` identifies.
+    let teacherCalls = 1;
+    vi.mocked(prisma.member.create).mockImplementation((async (args: {
+      data?: { lastName?: unknown };
+    }) => {
+      if (args?.data?.lastName === "") {
+        return { id: "school-member" } as never;
+      }
+      teacherCalls += 1;
+      return {
+        id: `teacher-member-${teacherCalls}`,
+        firstName: "Tana",
+        email: "tana@school.test",
+      } as never;
     }) as never);
     vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
     vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
     vi.mocked(prisma.hutLeaderAssignment.create).mockResolvedValue({} as never);
+    // #3367: the teacher RECONCILE. Nothing removed by default, so a test that
+    // does not opt in sees the ordinary steady state.
+    vi.mocked(prisma.organisationContact.deleteMany).mockResolvedValue({
+      count: 0,
+    } as never);
     vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
     // Default to no member-night conflict; individual tests override to reject.
     mockedAssertNoConflicts.mockResolvedValue(undefined);
@@ -970,21 +1006,29 @@ describe("approveSchoolBookingRequest", () => {
     expect(result).toMatchObject({
       type: "approved",
       bookingId: "booking-1",
-      schoolMemberId: "school-member",
+      // #3369: no invented person, so nothing to name here. The school's own
+      // record is what owns the booking.
+      schoolMemberId: null,
       invoiceMode: "xero",
       teacherCount: 1,
     });
     // 1 adult @ 5000 x2 nights + 2 children @ 2500 x2 nights = 20000.
     expect(result).toMatchObject({ priceCents: 20000 });
 
-    // School is the non-login Xero contact: name = school, email = contact.
-    const schoolMemberArgs = vi.mocked(prisma.member.create).mock.calls[0][0]
-      .data as Record<string, unknown>;
-    expect(schoolMemberArgs.firstName).toBe("New Plymouth Primary School");
-    expect(schoolMemberArgs.email).toBe("office@school.test");
-    expect(schoolMemberArgs.canLogin).toBe(false);
-    // Non-member category so the school contact is not counted as a paying member.
-    expect(schoolMemberArgs.role).toBe("SCHOOL");
+    // #3369: NOTHING SURNAMELESS IS CREATED. This used to assert the shape of
+    // the invented school member — school name in `firstName`, blank surname,
+    // the request's contact address, `canLogin: false`. The assertion is
+    // inverted rather than deleted, because "no person is invented" is the
+    // whole point of the stage and is exactly what a future edit could undo by
+    // accident. The only member created here is the teacher, below.
+    const createdMembers = vi
+      .mocked(prisma.member.create)
+      .mock.calls.map(({ 0: call }) => call.data as Record<string, unknown>);
+    expect(createdMembers).toHaveLength(1);
+    expect(
+      createdMembers.some((data) => data.lastName === ""),
+      "approval must invent no surnameless person",
+    ).toBe(false);
 
     // Booking is CONFIRMED (capacity held) and pays on account via Xero invoice.
     const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<
@@ -1002,7 +1046,7 @@ describe("approveSchoolBookingRequest", () => {
     expect(paymentArgs.status).toBe(PaymentStatus.PENDING);
 
     // Teacher becomes a non-login member with a hut leader assignment + PIN email.
-    const teacherMemberArgs = vi.mocked(prisma.member.create).mock.calls[1][0].data as Record<
+    const teacherMemberArgs = vi.mocked(prisma.member.create).mock.calls[0][0].data as Record<
       string,
       unknown
     >;
@@ -1021,6 +1065,171 @@ describe("approveSchoolBookingRequest", () => {
     expect(mockedSendManualInvoice).not.toHaveBeenCalled();
     // No substitution on a normal conversion → no owner-substitution alert (#1377).
     expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
+  });
+
+  /*
+    #3367 (stage 2 of programme #2912). Approval is where a school stops being
+    only an invented person and gains a record of its own. Four properties, and
+    each is one of the issue's acceptance criteria.
+  */
+  it("gives the school a record of its own, and links it from the booking and the request (#3367)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    // The school itself, resolved from the request's own school name and
+    // carrying the contact details the request supplied.
+    expect(prisma.organisation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          name: "New Plymouth Primary School",
+          email: "office@school.test",
+        }),
+      }),
+    );
+
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(bookingArgs.organisationId).toBe("org-1");
+    // #3369: the SCHOOL owns its booking, and there is no member on it at all.
+    // `Booking_owner_exactly_one` is what makes the pair unrepresentable rather
+    // than policed.
+    expect(bookingArgs.memberId).toBeNull();
+
+    const requestUpdate = vi.mocked(prisma.bookingRequest.update).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(requestUpdate.organisationId).toBe("org-1");
+  });
+
+  it("records the REAL teacher against the school, not another invented person (#3367)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(prisma.organisationContact.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organisationId_memberId: {
+            organisationId: "org-1",
+            memberId: "teacher-member-2",
+          },
+        },
+        create: expect.objectContaining({
+          organisationId: "org-1",
+          memberId: "teacher-member-2",
+          role: "TEACHER",
+        }),
+      }),
+    );
+  });
+
+  it("REPLACES the school's teachers rather than adding to them (#3367)", async () => {
+    /*
+      A fresh teacher `Member` is minted on every approval, even for the same
+      returning human, and nothing in the tree ever removed an
+      `OrganisationContact` row — the model has no end-date column. So an
+      approval that only added rows would accumulate one association per
+      approval for ever, and once five existed the school's Xero contact would
+      be frozen naming people who had left.
+
+      The owner took decision A (13 September 2026) on the stated promise that a
+      departed teacher is corrected on the next invoice, and three published
+      statements now say so. This is what makes the promise true.
+    */
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(prisma.organisationContact.deleteMany).toHaveBeenCalledWith({
+      where: {
+        organisationId: "org-1",
+        role: "TEACHER",
+        // Exactly this booking's teachers survive; anybody else's TEACHER row
+        // for this school is an association that is no longer true.
+        memberId: { notIn: ["teacher-member-2"] },
+      },
+    });
+  });
+
+  it("records a teacher departure, rather than removing people silently", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    vi.mocked(prisma.organisationContact.deleteMany).mockResolvedValue({
+      count: 2,
+    } as never);
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    const reconcileAudit = vi
+      .mocked(createAuditLog)
+      .mock.calls.map(([params]) => params as Record<string, unknown>)
+      .find(
+        (row) => row.action === "organisation.contacts.teachers_reconciled",
+      );
+    expect(reconcileAudit, "a removal must leave a record").toBeDefined();
+    expect(reconcileAudit?.category).toBe("xero");
+    expect(reconcileAudit?.entityId).toBe("org-1");
+    expect(reconcileAudit?.metadata).toMatchObject({ removedCount: 2 });
+    // INV-PRIV: counts and ids, never the names of the people removed.
+    expect(JSON.stringify(reconcileAudit?.metadata)).not.toContain("@");
+  });
+
+  it("attaches a RETURNING school to the record it already has (#3367)", async () => {
+    // The unique-name claim in practice: the second approval of one school
+    // finds the first one's record rather than minting a second, so the school
+    // keeps one identity and therefore one Xero customer.
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    // ONCE: `vi.clearAllMocks()` clears calls but KEEPS implementations, so a
+    // persistent override here would make every later test in this file see a
+    // school that already exists.
+    vi.mocked(prisma.organisation.findFirst).mockResolvedValueOnce({
+      id: "org-existing",
+      name: "New Plymouth Primary School",
+    } as never);
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(prisma.organisation.create).not.toHaveBeenCalled();
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(bookingArgs.organisationId).toBe("org-existing");
+  });
+
+  it("resolves the school INSIDE the approving transaction, and calls no provider there (#3367)", async () => {
+    // The unique-name claim is the global lock this transaction already holds
+    // for its whole life, so the read-then-create must happen inside it. And
+    // the Xero customer is created lazily by the invoice path after commit —
+    // a provider call inside the transaction is the F7 (#1355) failure this
+    // area was restructured to remove.
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    const transactionOrder = mockedTransaction.mock.invocationCallOrder[0];
+    const resolveOrder =
+      vi.mocked(prisma.organisation.create).mock.invocationCallOrder[0];
+    expect(resolveOrder).toBeGreaterThan(transactionOrder);
+    // The invoice — and therefore the Xero contact — is queued after commit.
+    expect(mockedEnqueueInvoice.mock.invocationCallOrder[0]).toBeGreaterThan(
+      resolveOrder,
+    );
   });
 
   it("records the adult-member hosting review on the approved school booking (#2364)", async () => {
@@ -1484,14 +1693,35 @@ describe("approveSchoolBookingRequest", () => {
 
     expect(result).toMatchObject({
       type: "approved",
+      // Still reported, because the officer's mapping is still recorded — as a
+      // CONTACT of the school rather than as the booking's owner (#3369).
       schoolMemberId: "existing-school",
       invoiceMode: "xero",
       teacherCount: 1,
     });
-    // The booking is owned by the mapped contact, reusing its Xero contact.
+    // #3369: the SCHOOL owns the booking. The officer's mapping said "this
+    // person is who we deal with at that school", and that is kept as exactly
+    // that — an `OrganisationContact` — rather than by putting a person back in
+    // the owner column, which is the model this programme ends.
+    expect(prisma.organisationContact.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organisationId_memberId: {
+            organisationId: "org-1",
+            memberId: "existing-school",
+          },
+        },
+        create: expect.objectContaining({
+          organisationId: "org-1",
+          memberId: "existing-school",
+          role: "CONTACT",
+        }),
+      }),
+    );
     const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
       .data as Record<string, unknown>;
-    expect(bookingArgs.memberId).toBe("existing-school");
+    expect(bookingArgs.memberId).toBeNull();
+    expect(bookingArgs.organisationId).toBe("org-1");
     // member.create ran ONLY for the teacher, never for the school owner.
     expect(prisma.member.create).toHaveBeenCalledTimes(1);
     const onlyMemberArgs = vi.mocked(prisma.member.create).mock.calls[0][0]
@@ -1529,7 +1759,8 @@ describe("approveSchoolBookingRequest", () => {
     expect(first).toMatchObject({
       type: "approved",
       bookingId: "booking-1",
-      schoolMemberId: "school-member",
+      // #3369: no invented person to name.
+      schoolMemberId: null,
       invoiceMode: "xero",
     });
     expect(prisma.booking.create).toHaveBeenCalledTimes(1);
@@ -1631,6 +1862,9 @@ describe("approveSchoolBookingRequest", () => {
     expect(mockedEnqueueInvoice).not.toHaveBeenCalled();
     expect(mockedSendManualInvoice).toHaveBeenCalledWith(
       expect.objectContaining({
+        // #3367: the SCHOOL's own record names the invoice. For a first-sight
+        // school that is the request's own `schoolName`, so the officer sees
+        // exactly what they saw before this stage.
         schoolName: "New Plymouth Primary School",
         contactEmail: "office@school.test",
         totalCents: 20000,
@@ -1665,11 +1899,23 @@ describe("approveSchoolBookingRequest", () => {
       invoiceMode: "manual",
       schoolMemberId: "mapped-school",
     });
-    // The notification names the party actually being invoiced (the mapped
-    // contact), not request.schoolName / request.contactEmail.
+    /*
+      The notification names the party actually being invoiced — which is what
+      #1255 decision 3 asked for, and #3367 changes the ANSWER rather than the
+      rule.
+
+      Before this stage the invoiced party was a Member row, so the mapped
+      contact's name was the best available stand-in for the school. The school
+      now has a record of its own, and that record is the invoiced party, so it
+      names the notification. The mapping still decides who OWNS the booking
+      locally, and that is unchanged and asserted above.
+
+      The contact ADDRESS still comes from the booking owner, because that is
+      who the club actually writes to about this booking.
+    */
     expect(mockedSendManualInvoice).toHaveBeenCalledWith(
       expect.objectContaining({
-        schoolName: "Mapped College",
+        schoolName: "New Plymouth Primary School",
         contactEmail: "accounts@mappedcollege.test",
       })
     );
@@ -1711,16 +1957,21 @@ describe("approveSchoolBookingRequest", () => {
     // (first member.create → "school-member" per the beforeEach impl).
     expect(result).toMatchObject({
       type: "approved",
+      // The substitute contact is still minted and still recorded — an officer
+      // has to be able to see who the accept fell back to — but #3369 makes it
+      // a contact OF the school rather than the booking's owner.
       schoolMemberId: "school-member",
     });
     const substituteArgs = vi.mocked(prisma.member.create).mock.calls[0][0]
       .data as Record<string, unknown>;
     expect(substituteArgs.role).toBe("SCHOOL");
     expect(substituteArgs.canLogin).toBe(false);
-    // The held booking is repointed at the substitute owner.
+    // #3369: the held booking changes hands to the SCHOOL, not to the
+    // substitute. Whoever held it before stops owning it.
     const updateArgs = vi.mocked(prisma.booking.update).mock.calls[0][0]
       .data as Record<string, unknown>;
-    expect(updateArgs.memberId).toBe("school-member");
+    expect(updateArgs.memberId).toBeNull();
+    expect(updateArgs.organisationId).toBe("org-1");
     // The #1352 capacity re-check runs on the held-reuse path even WITHOUT a
     // guestOverride (submitted snapshot), excluding the hold's own beds —
     // guards against a future regression gating the check behind the
@@ -1992,6 +2243,40 @@ describe("approveSchoolBookingRequest", () => {
       guests: { create: unknown[] };
     };
     expect(bookingArgs.guests.create).toHaveLength(5);
+  });
+
+  /*
+   * #3412 review (B3): APPROVE IS THE OTHER DOOR, AND IT WAS LEFT OPEN.
+   *
+   * Approve builds its linked-member map from the STORED blob and applies it
+   * POSITIONALLY against the regenerated list — so before this, an officer who
+   * could not save a quote with a member linked to a school child could simply
+   * press Approve instead, and that member was priced as a member, invoiced and
+   * emailed onto a different child's bed. The refusal now sits in the shared
+   * resolver, so it covers both.
+   */
+  it("refuses an override that would move a linked member onto another child's row", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({
+        // Index 2 is the second school child: a row the regeneration renumbers.
+        linkedGuestMembers: [{ guestIndex: 2, memberId: "member-1" }],
+      }) as never
+    );
+
+    const refusal = (await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+      guestOverride: { childCounts: { YOUTH: 2 } },
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    )) as { status?: number; message?: string };
+
+    expect(refusal.status).toBe(422);
+    expect(refusal.message).toContain("School Child 2");
+    // Refused before anything was created.
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+    expect(prisma.member.create).not.toHaveBeenCalled();
   });
 
   it("rejects a quantity override that exceeds the lodge capacity", async () => {
@@ -2728,6 +3013,8 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
 
     expect(mockedEnqueueInvoice).toHaveBeenCalledWith("booking-wl", {
       createdByMemberId: "admin-1",
+      // #2929: a request conversion has no creation-time email choice.
+      invoiceEmailDelivery: null,
     });
     // #1620 parity with the Internet Banking create path: the owner here is a
     // real member who may be carrying floating credit notes, so they must be
@@ -3134,5 +3421,242 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
 
       expect(bookingData().totalPriceCents).toBe(100000);
     });
+  });
+});
+
+/*
+ * #3412 — the ONE resolver both moments share.
+ *
+ * Saving a quote and approving now ask the same function what the school group
+ * is, given the officer's numbers, so the price and the beds cannot be computed
+ * from different lists. That divergence is the defect: a group agreed down from
+ * 29 to 20 was quoted fourteen times at the stored 29 while the panel read
+ * "= 20 total".
+ */
+describe("resolveSchoolGuestOverride (#3412)", () => {
+  const TEACHERS = [
+    { firstName: "Tui", lastName: "Teacher", email: "tui@school.test" },
+    { firstName: "Rimu", lastName: "Helper", email: null },
+  ];
+  const STORED_GUESTS = [
+    { firstName: "Tui", lastName: "Teacher", ageTier: "ADULT" },
+    { firstName: "Rimu", lastName: "Helper", ageTier: "ADULT" },
+    { firstName: "School Child", lastName: "1", ageTier: "YOUTH" },
+    { firstName: "School Child", lastName: "2", ageTier: "YOUTH" },
+    { firstName: "School Child", lastName: "3", ageTier: "YOUTH" },
+  ];
+
+  function storedRequest(overrides: Record<string, unknown> = {}) {
+    return { teachers: TEACHERS, guests: STORED_GUESTS, ...overrides };
+  }
+
+  beforeEach(() => {
+    // These assertions are about WHICH bound was read, so the counts have to
+    // start at zero here — the approval tests above call the same two mocks.
+    vi.mocked(getLodgeCapacity).mockClear();
+    vi.mocked(getLodgeCapacity).mockResolvedValue(40);
+    vi.mocked(getDefaultLodgeCapacity).mockClear();
+    vi.mocked(getDefaultLodgeCapacity).mockResolvedValue(40);
+  });
+
+  it("leaves the submitted list alone when no counts are given", async () => {
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [],
+    });
+
+    expect(resolution.guests).toEqual(STORED_GUESTS);
+    expect(resolution.overridden).toBe(false);
+    expect(resolution.changed).toBe(false);
+    // Nothing is being varied, so no capacity bound is read at all.
+    expect(vi.mocked(getLodgeCapacity)).not.toHaveBeenCalled();
+    expect(vi.mocked(getDefaultLodgeCapacity)).not.toHaveBeenCalled();
+  });
+
+  it("keeps the named teachers and regenerates the children across tiers", async () => {
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      childCounts: { INFANT: 1, CHILD: 2, YOUTH: 0 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [],
+    });
+
+    expect(resolution.guests).toEqual([
+      { firstName: "Tui", lastName: "Teacher", ageTier: "ADULT" },
+      { firstName: "Rimu", lastName: "Helper", ageTier: "ADULT" },
+      { firstName: "School Child", lastName: "1", ageTier: "INFANT" },
+      { firstName: "School Child", lastName: "2", ageTier: "CHILD" },
+      { firstName: "School Child", lastName: "3", ageTier: "CHILD" },
+    ]);
+    expect(resolution.teachers).toHaveLength(2);
+    expect(resolution.changed).toBe(true);
+    expect(vi.mocked(getLodgeCapacity)).toHaveBeenCalledWith("lodge-1");
+  });
+
+  it("reports no change when the officer types the stored numbers back", async () => {
+    // The panel posts the override whenever a box was touched, so "an override
+    // arrived" is not "the party is different" — and only the latter may
+    // rewrite the request or be refused under a hold.
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      childCounts: { YOUTH: 3 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [],
+    });
+
+    expect(resolution.guests).toEqual(STORED_GUESTS);
+    expect(resolution.overridden).toBe(true);
+    expect(resolution.changed).toBe(false);
+  });
+
+  it("binds the adjusted list to the lodge's bed count", async () => {
+    vi.mocked(getLodgeCapacity).mockResolvedValue(40);
+
+    await expect(
+      resolveSchoolGuestOverride({
+        request: storedRequest(),
+        childCounts: { YOUTH: 39 },
+        lodgeId: "lodge-1",
+        linkedGuestIndexes: [],
+      })
+    ).rejects.toMatchObject({ status: 422 });
+    // Asserted as a STRING, and separately: `toMatchObject` does NOT match a
+    // RegExp against a string, so `{ message: /capacity of 40/ }` asserted
+    // nothing at all and any 422 satisfied it (#3412 review, F6).
+    await expect(
+      resolveSchoolGuestOverride({
+        request: storedRequest(),
+        childCounts: { YOUTH: 39 },
+        lodgeId: "lodge-1",
+        linkedGuestIndexes: [],
+      })
+    ).rejects.toThrow("A school booking cannot exceed the lodge capacity of 40 guests");
+  });
+
+  it("bounds against the club's default lodge when the request names none", async () => {
+    vi.mocked(getDefaultLodgeCapacity).mockResolvedValue(4);
+
+    await expect(
+      resolveSchoolGuestOverride({
+        request: storedRequest(),
+        childCounts: { YOUTH: 3 },
+        lodgeId: null,
+        linkedGuestIndexes: [],
+      })
+    ).rejects.toMatchObject({ status: 422 });
+    expect(vi.mocked(getLodgeCapacity)).not.toHaveBeenCalled();
+  });
+
+  it("refuses a request whose stored guests cannot be read, counts or not (#2342)", async () => {
+    // The panel prefills those boxes from the SALVAGED list, in which an
+    // unreadable age tier counts as zero — so accepting typed numbers here
+    // would let a 30-child group be priced and invoiced for two.
+    await expect(
+      resolveSchoolGuestOverride({
+        request: storedRequest({ guests: [{ firstName: "Broken" }] }),
+        childCounts: { YOUTH: 18 },
+        lodgeId: "lodge-1",
+        linkedGuestIndexes: [],
+      })
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("refuses an empty group", async () => {
+    await expect(
+      resolveSchoolGuestOverride({
+        request: storedRequest({ teachers: [] }),
+        childCounts: { INFANT: 0, CHILD: 0, YOUTH: 0 },
+        lodgeId: "lodge-1",
+        linkedGuestIndexes: [],
+      })
+    ).rejects.toMatchObject({ status: 422 });
+  });
+
+  /*
+   * The link refusal lives HERE, not in the quote service (#3412 review, B3).
+   *
+   * Both callers apply their link map POSITIONALLY against the regenerated
+   * list, so a refusal in the quote service alone left approve doing by design
+   * the very thing the refusal exists to prevent — with no new condition on the
+   * Approve button to stop an officer editing the boxes and approving.
+   */
+  it("refuses a member linked to a row the new numbers renumber", async () => {
+    const refusal = (await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      // Three youth become two children: every child row is renumbered or
+      // retiered from index 2 on.
+      childCounts: { CHILD: 2 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [3],
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    )) as { status?: number; message?: string };
+
+    expect(refusal.status).toBe(422);
+    // Names the row the officer has to find among identical placeholders, and
+    // tells them to LINK AGAIN afterwards — followed literally, the old
+    // "unlink, then save" lost the member their member rate.
+    expect(refusal.message).toContain("School Child 2");
+    expect(refusal.message).toContain("link them again");
+  });
+
+  it("keeps a teacher's link, and any child row the change leaves untouched", async () => {
+    // Adding a fourth youth appends: rows 0-4 are byte-identical in both lists,
+    // so nothing at those positions is renumbered and no link there is at risk.
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      childCounts: { YOUTH: 4 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [0, 4],
+    });
+
+    expect(resolution.changed).toBe(true);
+    expect(resolution.guests).toHaveLength(6);
+  });
+
+  it("measures the boundary against the stored LIST, not the teachers column", async () => {
+    /*
+     * #3412 review (F12). `teachers.length` and the stored list's leading ADULT
+     * run agree when one generator wrote both — and #3412's own incident row
+     * was REPAIRED BY HAND, which is exactly how a production row stops
+     * agreeing. Here the stored list carries a third adult the `teachers`
+     * column does not, so index 2 holds a named adult that regeneration
+     * replaces with a child. A boundary counted in the column would have
+     * allowed a link there.
+     */
+    const refusal = (await resolveSchoolGuestOverride({
+      request: storedRequest({
+        guests: [
+          { firstName: "Tui", lastName: "Teacher", ageTier: "ADULT" },
+          { firstName: "Rimu", lastName: "Helper", ageTier: "ADULT" },
+          { firstName: "Kauri", lastName: "Parent", ageTier: "ADULT" },
+          { firstName: "School Child", lastName: "1", ageTier: "YOUTH" },
+        ],
+      }),
+      childCounts: { YOUTH: 2 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [2],
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    )) as { status?: number; message?: string };
+
+    expect(refusal.status).toBe(422);
+    expect(refusal.message).toContain("Kauri Parent");
+  });
+
+  it("refuses nothing when the officer types the stored numbers back", async () => {
+    // An unchanged list renumbers nobody, so a link anywhere in it is safe —
+    // otherwise a correctly-linked row could never be re-saved at all.
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      childCounts: { YOUTH: 3 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [4],
+    });
+
+    expect(resolution.changed).toBe(false);
   });
 });

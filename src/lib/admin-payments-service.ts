@@ -14,9 +14,11 @@ import {
   type XeroActivitySummary,
   type XeroState,
 } from "@/lib/admin-operational-state";
+import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
+import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   endOfDateOnlyForTimeZone,
@@ -154,7 +156,9 @@ type PaymentCandidate = {
       firstName: string;
       lastName: string;
       email: string;
-    };
+    } | null;
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    organisation: { name: string; email: string | null } | null;
     creditsFromCancellation: Array<{
       amountCents: number;
       description: string | null;
@@ -262,7 +266,7 @@ function latestPaymentActivityAt(payment: PaymentCandidate) {
 }
 
 function memberSortValue(payment: PaymentCandidate) {
-  return `${payment.booking.member.lastName} ${payment.booking.member.firstName}`.toLowerCase();
+  return `${bookingOwner(payment.booking).member.lastName} ${bookingOwner(payment.booking).member.firstName}`.toLowerCase();
 }
 
 function settlementSortValue(payment: PaymentCandidate) {
@@ -407,6 +411,28 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                 },
               },
             },
+            // #3369: a school's payment is found by the school's name. Its own
+            // ARM, not a key beside `member` in the same filter: the two arms
+            // would be ANDed, and `Booking_owner_exactly_one` means no booking
+            // can satisfy both, so an officer searching any name would have got
+            // nothing. Per term, like every other arm in this list — this
+            // surface already lets one term match a reference and another a
+            // name, unlike the bookings list, which picks one party for the
+            // whole search.
+            {
+              booking: {
+                is: {
+                  organisation: {
+                    is: {
+                      OR: [
+                        { name: insensitiveContains(term) },
+                        { email: insensitiveContains(term) },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
           ],
         }))
       );
@@ -454,13 +480,15 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                 email: true,
               },
             },
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
           },
         },
       },
     });
 
     const candidatePaymentIds = candidates.map((payment) => payment.id);
-    const [activityOperations, primaryInvoiceLinks] = await Promise.all([
+    const [activityOperations, invoiceEvidence] = await Promise.all([
       candidatePaymentIds.length
         ? prisma.xeroSyncOperation.findMany({
             where: {
@@ -477,23 +505,11 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
             orderBy: { createdAt: "desc" },
           })
         : Promise.resolve([]),
-      candidatePaymentIds.length
-        ? prisma.xeroObjectLink.findMany({
-            where: {
-              localModel: "Payment",
-              localId: { in: candidatePaymentIds },
-              xeroObjectType: "INVOICE",
-              role: "PRIMARY_INVOICE",
-              active: true,
-            },
-            select: {
-              localId: true,
-            },
-          })
-        : Promise.resolve([]),
+      // #3467: "is there an invoice" is the one evidence rule, read in its set
+      // form — the payment's stored id, else an active PRIMARY_INVOICE link.
+      readBookingInvoiceEvidenceForPayments(candidates),
     ]);
     const activityByRecord = buildXeroActivityByRecord(activityOperations);
-    const invoiceLinkedPaymentIds = new Set(primaryInvoiceLinks.map((link) => link.localId));
 
     const filteredCandidates = candidates
       .map((payment): EnrichedPaymentCandidate => {
@@ -506,8 +522,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
             latestOperationStatus: null,
             latestOperationAt: null,
           };
-        const invoiceLinked =
-          Boolean(payment.xeroInvoiceId) || invoiceLinkedPaymentIds.has(payment.id);
+        const invoiceLinked = invoiceEvidence.get(payment.id)?.exists ?? false;
 
         return {
           ...payment,
@@ -586,6 +601,8 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                 member: {
                   select: { id: true, firstName: true, lastName: true, email: true },
                 },
+                // #3369: the owner may be an Organisation; bookingOwner() reads both.
+                organisation: { select: { name: true, email: true } },
               },
             },
           },

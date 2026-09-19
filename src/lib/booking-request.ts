@@ -30,6 +30,7 @@ import {
   type BookingRequest,
 } from "@prisma/client";
 import { z } from "zod";
+import { bookingOwner } from "@/lib/booking-owner";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileAdultMemberHostingReviewWithSiblings } from "@/lib/adult-member-hosting-review";
@@ -47,11 +48,11 @@ import {
   CONSENT_FREE_GUEST_COLUMNS,
   type MemberGuestAddActor,
 } from "@/lib/member-guest-consent";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import {
   buildApprovalGuestCreates,
   claimAlreadyConvertedBookingRequest,
   collectNotifiedMemberGuestIds,
-  getCapacityFullNights,
   notifyMemberGuestsHoldReleased,
   planBookingRequestGuestConsent,
   sendOwnerSubstitutionAdminAlert,
@@ -817,7 +818,7 @@ export async function createMemberWholeLodgeRequest(input: {
   notes?: string | null;
 }) {
   const member = await prisma.member.findUnique({
-    where: { id: input.memberId },
+    where: { id: bookingOwner(input).memberId },
     select: {
       id: true,
       firstName: true,
@@ -855,7 +856,7 @@ export async function createMemberWholeLodgeRequest(input: {
   // Account-state guard (D3), not an availability guard: how many requests this
   // member already has open. Runs before the write so the cap cannot be raced
   // past by more than the usual single-request window.
-  const openRequests = await countOpenMemberWholeLodgeRequests(input.memberId);
+  const openRequests = await countOpenMemberWholeLodgeRequests(bookingOwner(input).memberId);
   if (openRequests >= MEMBER_WHOLE_LODGE_OPEN_REQUEST_CAP) {
     // Audit the REFUSAL, not just the success. A member hammering this door is
     // the cheapest signal that something is wrong (a broken client, or someone
@@ -1665,7 +1666,8 @@ export function resolveRequestBookingHoldUntil(
  */
 export interface ReassignMemberGuestContext {
   /** The converted booking's owner — the family boundary is computed against them. */
-  bookingOwnerMemberId: string;
+  /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
+  bookingOwnerMemberId: string | null;
   /** Always `{ kind: "BOOKING_REQUEST" }` today; typed so it cannot silently become an admin add. */
   actor: MemberGuestAddActor;
   policy: MemberGuestAddPolicy;
@@ -2101,7 +2103,11 @@ export async function approveBookingRequest(input: {
     lodgeId: string;
     memberId: string;
     ownerSubstitution:
-      | { invalidMemberId: string; substituteMemberId: string; reason: string }
+      | {
+          invalidMemberId: string | null;
+          substituteMemberId: string;
+          reason: string;
+        }
       | null;
     alreadyConverted: boolean;
     memberGuestNotificationRows: MemberGuestAddNotificationRow[];
@@ -2189,7 +2195,8 @@ export async function approveBookingRequest(input: {
       let held: {
         id: string;
         lodgeId: string;
-        memberId: string;
+        /** Null since #3369 when the held booking is owned by an Organisation. */
+        memberId: string | null;
         status: BookingStatus;
       } | null = null;
       if (request.heldBookingId) {
@@ -2273,9 +2280,20 @@ export async function approveBookingRequest(input: {
         // back to a fresh non-login contact (the pre-#1255 default owner) and
         // flag an admin. Auto-created owners always pass this guard, so it is a
         // no-op except for a changed-state mapped contact.
-        let ownerId = held.memberId;
+        let ownerId = bookingOwner(held).memberId;
         try {
-          await assertMappableOwnerContact(tx, held.memberId);
+        // #3369: a held booking with no member is owned by an `Organisation`,
+        // which is not a person and cannot serve as this request's booking
+        // contact. Treated exactly as an unmappable contact is — the recovery
+        // below mints a fresh non-login contact from the request's own details
+        // and flags an admin — rather than failing the requester's accept.
+          if (!ownerId) {
+            throw new BookingRequestError(
+              "The held booking has no member contact",
+              409,
+            );
+          }
+          await assertMappableOwnerContact(tx, ownerId);
         } catch (err) {
           // Only recover from validation failures; a real DB/other error must
           // still abort so we never silently substitute on a transient fault.
@@ -2297,7 +2315,7 @@ export async function approveBookingRequest(input: {
           });
           ownerId = substitute.id;
           ownerSubstitution = {
-            invalidMemberId: held.memberId,
+            invalidMemberId: bookingOwner(held).memberId,
             substituteMemberId: substitute.id,
             reason: err.message,
           };
@@ -2805,11 +2823,34 @@ export function buildBookingRequestListWhere(
   return { status: filter };
 }
 
+/**
+ * The stored teachers/parent helpers, as the ADMIN QUEUE reads them.
+ *
+ * The names go through `nameField()` — the same helper `schoolTeacherSchema`
+ * uses — because the panel and the server now answer the SAME question from
+ * these two reads (#3412, review round 5, finding E). The panel builds the
+ * party it is about to quote by putting these names in front of the generated
+ * children and comparing that list to the stored one; the server rebuilds it
+ * through `parseSchoolTeachers`, which trims and collapses CR/LF. A raw
+ * `z.string()` here made the two lists differ at the teacher prefix for any row
+ * whose `teachers` column carries an untrimmed name — a hand-repaired row, the
+ * very kind #3412 was reported on.
+ *
+ * Measured before the fix, with a stored `" Tui "` and the officer typing the
+ * stored numbers straight back: Send quote went permanently disabled and the
+ * misplaced-link warning fired against the teacher's own row, which disabled
+ * Save quote too. Both doors shut on a request nothing was wrong with.
+ *
+ * A name the helper rejects (empty, or over 100 characters) now yields the same
+ * empty list this parser has always returned for a shape it cannot read. That
+ * is the answer the server already gives such a row — `parseSchoolTeachers`
+ * refuses it outright — so the two reads agree there as well.
+ */
 function parseAdminTeachers(raw: unknown) {
   const schema = z.array(
     z.object({
-      firstName: z.string(),
-      lastName: z.string(),
+      firstName: nameField(),
+      lastName: nameField(),
       email: z.string().nullable().optional(),
     })
   );
@@ -2857,6 +2898,12 @@ export function serializeBookingRequestForAdmin(
     id: request.id,
     type: request.type,
     status: request.status,
+    // #2936: the optimistic-concurrency counter, so the officer's correction
+    // form can send back the version it was showing and have the service refuse
+    // a correction written over a request a quote-accept or a decline has moved
+    // underneath it. Read-only to every client; the server never trusts it as
+    // anything but a fence.
+    version: request.version,
     // Null lodgeId means the club's default lodge (pre-multi-lodge rows and
     // single-lodge submissions); lodgeName is only present when the caller
     // included the lodge relation.

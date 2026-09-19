@@ -1,3 +1,4 @@
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { notFound, redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -183,7 +184,7 @@ export default async function BookingDetailPage({
   const canDeleteDraft =
     !isDeleted &&
     isDraft &&
-    (isAdmin || booking.memberId === session.user.id);
+    (isAdmin || bookingOwner(booking).memberId === session.user.id);
   const canSoftDeleteCancelled =
     !isDeleted &&
     booking.status === "CANCELLED" &&
@@ -334,6 +335,8 @@ export default async function BookingDetailPage({
       <BookingReviewNotices
         booking={booking}
         club={club}
+        viewer={viewer}
+        access={access}
       />
 
       <BookingStayPreferences

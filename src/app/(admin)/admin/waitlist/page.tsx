@@ -42,6 +42,7 @@ import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
@@ -69,7 +70,8 @@ interface WaitlistEntry {
   id: string;
   memberName: string;
   memberEmail: string;
-  memberId: string;
+  /** `null` for an organisation-owned entry, which has no member page (#3369). */
+  memberId: string | null;
   checkIn: string;
   checkOut: string;
   guestCount: number;
@@ -137,17 +139,6 @@ function formatDateTime(clubTime: BoundClubTime, value: string | null) {
   }
 
   return clubTime.instantDateTime(instant);
-}
-
-function getErrorMessage(data: unknown, fallback: string) {
-  if (data && typeof data === "object" && "error" in data) {
-    const message = (data as { error?: unknown }).error;
-    if (typeof message === "string" && message.trim()) {
-      return message;
-    }
-  }
-
-  return fallback;
 }
 
 function readString(value: unknown) {
@@ -374,7 +365,7 @@ export default function AdminWaitlistPage() {
 
       if (!res.ok) {
         failure = diagnosticsPageErrorCodeForStatus(res.status);
-        throw new Error(getErrorMessage(data, "Failed to load waitlist"));
+        throw new Error(apiErrorMessageFromBody(data, "Failed to load waitlist"));
       }
 
       const nextEntries = Array.isArray(data.entries)
@@ -860,16 +851,26 @@ export default function AdminWaitlistPage() {
                 <TableRow key={entry.id}>
                   <TableCell>{entry.waitlistPosition ?? "-"}</TableCell>
                   <TableCell>
-                    <Link
-                      href={buildHrefWithReturnTo(
-                        `/admin/members/${entry.memberId}`,
-                        currentWaitlistPath
-                      )}
-                      className="hover:underline"
-                    >
-                      <div className="font-medium text-primary">{entry.memberName}</div>
-                      <div className="text-xs text-muted-foreground">{entry.memberEmail}</div>
-                    </Link>
+                    {/* #3369/#3480: an organisation-owned entry has no member
+                        page, so its name is plain text rather than a link to
+                        `/admin/members/null`. */}
+                    {entry.memberId ? (
+                      <Link
+                        href={buildHrefWithReturnTo(
+                          `/admin/members/${entry.memberId}`,
+                          currentWaitlistPath
+                        )}
+                        className="hover:underline"
+                      >
+                        <div className="font-medium text-primary">{entry.memberName}</div>
+                        <div className="text-xs text-muted-foreground">{entry.memberEmail}</div>
+                      </Link>
+                    ) : (
+                      <div>
+                        <div className="font-medium">{entry.memberName}</div>
+                        <div className="text-xs text-muted-foreground">{entry.memberEmail}</div>
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div>{entry.checkIn}</div>

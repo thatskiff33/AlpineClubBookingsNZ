@@ -14,6 +14,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
 import type { CalendarDate } from "@/lib/club-time";
 import {
@@ -107,13 +108,13 @@ import {
 } from "@/lib/member-guest-add-policy";
 import {
   isNonNegativeIntegerCents,
-  type EditFinancialReviewOccurrence,
   type FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
 import {
   preCheckInEditEvidence,
   preCheckInEditStrands,
 } from "@/lib/stored-sold-price-evidence";
+import type { ParkedEditWorkItems } from "@/lib/parked-edit-occurrence";
 import {
   classifyNightPriceToWrite,
   preservedNightPriceWrites,
@@ -644,10 +645,13 @@ export type GuestPlan = {
     adminReviewNotes: string | null;
     adminReviewedById: string | null;
     adminReviewedAt: Date | null;
-    /** When true, status must move to AWAITING_REVIEW unless already there. */
+    /**
+     * When true, status must move to AWAITING_REVIEW unless already there.
+     * There is no counterpart flag: an edit never releases AWAITING_REVIEW —
+     * every edit door refuses that status, so the only release is the officer
+     * review route (#3500, `INV-MOD-013`).
+     */
     parkForReview: boolean;
-    /** When true, AWAITING_REVIEW should be released to PAYMENT_PENDING. */
-    releaseFromReview: boolean;
   };
 };
 
@@ -795,7 +799,7 @@ export async function prepareGuestPlan(
   const { members: linkedMembers, boundary } =
     await resolveLinkedBookingMembersWithBoundary(
       tx,
-      booking.memberId,
+      bookingOwner(booking).memberId,
       [
         ...(input.addGuests ?? []).map((guest) => guest.memberId),
         ...guestMemberLinks.map((link) => link.memberId),
@@ -811,10 +815,13 @@ export async function prepareGuestPlan(
     // Judged as the booking's own member when the caller asked for member
     // semantics: the profile/bookability gate answers "can THIS person add that
     // member", and for an approved exception request that person is the booker.
-    guestAuthorizationIsAdmin ? actorId : booking.memberId,
+    // #3369: when the caller asked for member semantics the judging person is
+    // the booker, and a school has none. `null` is the honest answer and the
+    // gate treats it as "no member is vouching", which is the fail-closed side.
+    guestAuthorizationIsAdmin ? actorId : bookingOwner(booking).memberId,
     {
     actorRole: guestAuthorizationRole,
-    onBehalfOfMemberId: guestAuthorizationIsAdmin ? booking.memberId : null,
+    onBehalfOfMemberId: guestAuthorizationIsAdmin ? bookingOwner(booking).memberId : null,
     // D-8: a blocked cross-family member is refused neutrally.
     crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
     },
@@ -1030,7 +1037,7 @@ export async function prepareGuestPlan(
   // rather than the persisted consent columns.
   const guestsForPricing = await markCrossFamilyGuestsOnBooking(
     tx,
-    booking.memberId,
+    bookingOwner(booking).memberId,
     proposedGuestRows,
     // `bookingId` arms the owner's gate (finding 4) — see
     // `markCrossFamilyGuestsOnBooking`.
@@ -1094,7 +1101,7 @@ export async function prepareGuestPlan(
 
   if (!guestAuthorizationIsAdmin) {
     const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
-      bookingMemberId: booking.memberId,
+      bookingMemberId: bookingOwner(booking).memberId,
       checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
       guests: normalizedAddGuests ?? [],
     });
@@ -1136,7 +1143,7 @@ export async function prepareGuestPlan(
       // Owner decision, 3 Aug 2026. On the apply path this also closes the
       // removal shape of the same hole: an unfinancial owner cannot take their own
       // row off and leave a party they still own with nobody paid-up on it.
-      bookingOwnerMemberId: booking.memberId,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
       participants: guestsForPricing.map((guest) => ({
         isMember: guest.isMember,
         memberId: guest.memberId ?? null,
@@ -1197,8 +1204,8 @@ function resolveModifyReviewUpdate({
   const justification = memberReviewJustification?.trim();
 
   if (!nowFlagged) {
-    // Rule cleared. Wipe review state so the booking returns to the
-    // normal lifecycle; if it was parked in AWAITING_REVIEW, release it.
+    // Rule cleared. Wipe review state so the booking returns to the normal
+    // lifecycle, in place: the status is untouched (#3500).
     return {
       requiresAdminReview: false,
       adminReviewReason: null,
@@ -1208,7 +1215,6 @@ function resolveModifyReviewUpdate({
       adminReviewedById: null,
       adminReviewedAt: null,
       parkForReview: false,
-      releaseFromReview: booking.status === "AWAITING_REVIEW",
     };
   }
 
@@ -1226,7 +1232,6 @@ function resolveModifyReviewUpdate({
       adminReviewedById: booking.adminReviewedById,
       adminReviewedAt: booking.adminReviewedAt,
       parkForReview: existingStatus === AdminReviewStatus.PENDING,
-      releaseFromReview: false,
     };
   }
 
@@ -1241,7 +1246,6 @@ function resolveModifyReviewUpdate({
       adminReviewedById: actorId,
       adminReviewedAt: new Date(),
       parkForReview: false,
-      releaseFromReview: false,
     };
   }
 
@@ -1258,7 +1262,6 @@ function resolveModifyReviewUpdate({
     adminReviewedById: null,
     adminReviewedAt: null,
     parkForReview: true,
-    releaseFromReview: false,
   };
 }
 
@@ -1353,7 +1356,7 @@ export type PricedModification = {
  * no `newTotalPriceCents`, no `priceBreakdown` and no `inProgressPlan`, so there
  * is no ADJUSTMENT a caller could default to zero — the epic prohibits a magic
  * zero, and the cheapest enforcement is a shape in which one cannot be written.
- * What it does carry is `occurrences[].storedEvidence`: the stored history as it
+ * What it does carry is the occurrence's per-strand `storedEvidence`: the stored history as it
  * stands, which is evidence for a person and never an amount to move. See
  * `InProgressGuestRangePlanResult` for why that distinction is worth stating.
  * Quote and apply consume this same type, which is the issue's own parity
@@ -1626,7 +1629,7 @@ export async function calculateModifiedPricing(
 ): Promise<PricingResult> {
   const seasonYear = seasonYearOfStoredDate(newCheckIn);
   await assertMembershipTypeBookingAllowed(tx, {
-    ownerMemberId: booking.memberId,
+    ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,
     seasonYear,
     skipAuthorization,
@@ -1677,7 +1680,7 @@ export async function calculateModifiedPricing(
   // #3170: the parked twin. Set instead of `inProgressPlan` when this booking's
   // own history cannot price the edit; it carries the beds and no amount.
   let parkedPlan: ParkedEditStructuralPlan | null = null;
-  let parkedOccurrences: EditFinancialReviewOccurrence[] = [];
+  let parkedOccurrences: ParkedEditWorkItems | null = null;
   if (isInProgressEdit && editableFrom) {
     // #2756: the same mapping the QUOTE route already applies around its own call
     // to this planner (`modify-quote/route.ts`, "Unable to price the requested
@@ -1841,6 +1844,15 @@ export async function calculateModifiedPricing(
   // single cent is computed. Everything below prices the edit, and this booking's
   // history cannot support a price — that is the whole finding.
   if (parkedPlan) {
+    if (parkedOccurrences === null) {
+      // #3498: the two are set in the same statement above from one planner
+      // answer, so this cannot fire - but the parked exit is a money path and
+      // "cannot fire" is worth one line that says so loudly rather than a park
+      // that raises no review at all.
+      throw new Error(
+        "An in-progress edit parked with no financial-review occurrence (#3498).",
+      );
+    }
     return {
       kind: "financial_review_required",
       occurrences: parkedOccurrences,
@@ -1862,7 +1874,7 @@ export async function calculateModifiedPricing(
       };
     } else {
       const priced = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-          ownerMemberId: booking.memberId,
+          ownerMemberId: bookingOwner(booking).memberId,
           checkIn: newCheckIn,
           checkOut: newCheckOut,
           guests: policyAdjustedGuestsForPricing,
@@ -1954,7 +1966,7 @@ export async function calculateModifiedPricing(
         removeGuestIds,
       }),
     });
-    if (evidence.occurrences.length > 0) {
+    if (evidence.occurrences !== null) {
       return {
         kind: "financial_review_required",
         occurrences: evidence.occurrences,
@@ -2290,7 +2302,7 @@ export async function applyPromoCodeChanges(
     const application = await validateAndCalculatePromoDiscount(
       promoCode,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,
@@ -2327,7 +2339,7 @@ export async function applyPromoCodeChanges(
         tx,
         promoCode.id,
         bookingId,
-        booking.memberId,
+        bookingOwner(booking).memberId,
         newDiscountCents,
         newPromoAdjustmentCents,
         promoResult.freeNightsUsed,
@@ -2361,7 +2373,7 @@ export async function applyPromoCodeChanges(
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,

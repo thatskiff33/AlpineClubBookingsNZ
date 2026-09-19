@@ -53,6 +53,7 @@ import {
 } from "@/lib/pricing";
 import { eachDateOnlyInRange, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
+import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
 
 /**
  * The zone the LEGACY oracle below reads, named rather than left to
@@ -235,14 +236,22 @@ function pricedPlan(input: BuildInProgressGuestRangePlanInput) {
   if (result.kind !== "priced") {
     throw new Error(
       `Expected a priced plan, got financial review: ${result.occurrences
-        .map((occurrence) => `${occurrence.bookingGuestId}:${occurrence.cause}`)
+        .flatMap((occurrence) => editFinancialReviewStrandRecords(occurrence))
+        .map((strand) => `${strand.bookingGuestId}:${strand.cause}`)
         .join(", ")}`,
     );
   }
   return result.plan;
 }
 
-/** The review verdict, insisting the edit was NOT priced (#3031). */
+/**
+ * The review verdict, insisting the edit was NOT priced (#3031).
+ *
+ * #3498 moved the grain: a parked edit raises ONE occurrence carrying every
+ * strand it records, where it used to raise one per strand. What these cases
+ * assert about is the strand records, so that is what this hands back - through
+ * `editFinancialReviewStrandRecords`, the one place that list is assembled.
+ */
 function reviewOf(input: BuildInProgressGuestRangePlanInput) {
   const result = buildInProgressGuestRangePlan(input);
   if (result.kind !== "financial_review_required") {
@@ -250,7 +259,9 @@ function reviewOf(input: BuildInProgressGuestRangePlanInput) {
       "Expected financial review, got a priced plan — an amount was invented",
     );
   }
-  return result.occurrences;
+  return result.occurrences.flatMap((occurrence) =>
+    editFinancialReviewStrandRecords(occurrence),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -736,10 +747,21 @@ describe("#2736/#2743 contiguous stays", () => {
         // including the one this edit does not touch, because the writer
         // rewrites every existing guest's night rows.
         expect(
-          current.value.occurrences.map((occurrence) => ({
-            bookingGuestId: occurrence.bookingGuestId,
-            cause: occurrence.cause,
-          })),
+          current.value.occurrences
+            .flatMap((occurrence) =>
+              editFinancialReviewStrandRecords(occurrence),
+            )
+            .map((strand) => ({
+              bookingGuestId: strand.bookingGuestId,
+              cause: strand.cause,
+            }))
+            // #3498 orders the strands by how urgent each is rather than by the
+            // order the planner walked the booking's guests in, so this case -
+            // which is about WHICH strands are recorded and with what cause -
+            // sorts by guest to stay about that.
+            .sort((left, right) =>
+              left.bookingGuestId < right.bookingGuestId ? -1 : 1,
+            ),
           testCase.name,
         ).toEqual([
           { bookingGuestId: "g1", cause: EXPECTED_CAUSE[testCase.variant] },
@@ -1277,7 +1299,7 @@ describe("#2736 a sparse stay", () => {
       storedSoldPriceEvidenceForGuest(rowsPastEnvelope, {
         checkIn: D("2026-08-20"),
         checkOut: D("2026-08-23"),
-      }).kind,
+      }, "WHOLE_GUEST").kind,
     ).toBe("exact");
 
     const occurrences = reviewOf(
@@ -1411,7 +1433,7 @@ describe("#2736 a sparse stay", () => {
         storedSoldPriceEvidenceForGuest(rowsPastEnvelope, {
           checkIn: D("2026-08-20"),
           checkOut: D("2026-08-22"),
-        }).kind,
+        }, "WHOLE_GUEST").kind,
       ).toBe("exact");
 
       const occurrences = reviewOf(
@@ -2288,10 +2310,11 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     // tautological, because no branch of this union has such a key and nothing
     // could add one under that name. Pinning the key set is what actually fails
     // if a numeric field appears on the review branch under ANY name.
+    // #3498: `bookingId` belongs to the EDIT and lives once on the occurrence,
+    // so it is no longer repeated on a strand's own record.
     expect(Object.keys(occurrences[0]).sort()).toEqual([
       "addedNightDates",
       "bookingGuestId",
-      "bookingId",
       "cause",
       "storedEvidence",
       "surrenderedNightDates",
@@ -3047,10 +3070,11 @@ describe("#2756 the group discount on a stay already under way", () => {
     // makes a fake amount unrepresentable rather than merely absent. (The stored
     // total appears under `storedEvidence`, because that is what the club has on
     // file, not what it owes.)
+    // #3498: `bookingId` belongs to the EDIT and lives once on the occurrence,
+    // so it is no longer repeated on a strand's own record.
     expect(Object.keys(occurrences[0]).sort()).toEqual([
       "addedNightDates",
       "bookingGuestId",
-      "bookingId",
       "cause",
       "storedEvidence",
       "surrenderedNightDates",

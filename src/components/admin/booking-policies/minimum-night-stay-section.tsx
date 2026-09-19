@@ -23,31 +23,10 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
 import { dateOnlyFromIsoString } from "@/lib/date-only"
-import {
-  calendarDateOfSerialisedDbDateOrNull,
-  formatClubDate,
-} from "@/lib/club-time"
+import { formatStayDateOrNull } from "@/lib/club-time"
 import { DAY_LABELS, type MinStayPolicy } from "./types"
-
-/**
- * A minimum-stay boundary is an NZ date-only lodge date (#2264). It reaches the
- * browser as the JSON form of a Prisma `@db.Date`, i.e. a full ISO timestamp at
- * UTC midnight, so the calendar day is taken from the string and handed over as
- * UTC midnight rather than parsed in the viewer's own zone — a local parse
- * slides the day for anyone at UTC+13/+14. The NaN guard keeps a malformed
- * value from throwing and taking the whole panel down.
- * Deliberately the twin of `formatPeriodDate` in `booking-period-draft`. *
- * CT-4 (#2870), epic #2988: the value is a CALENDAR DAY and now takes no
- * timezone at all. The kernel's calendar-date formatter pins UTC over the
- * UTC-midnight encoding, so the projection is provably the identity - where the
- * zoned formatter this replaces was the identity only for a club east of
- * Greenwich, and a day early for any club west of it.
- */
-function formatPolicyDate(value: string): string {
-  const day = calendarDateOfSerialisedDbDateOrNull(value)
-  return day === null ? value : formatClubDate(day)
-}
 
 /**
  * One open minimum-stay editor's draft. Like the booking-periods section, the
@@ -115,16 +94,6 @@ function parseMinStayPolicy(value: unknown): MinStayPolicy | null {
     return null
   }
   return row as unknown as MinStayPolicy
-}
-
-async function responseMessage(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  const body = await response.json().catch(() => null) as
-    | { error?: unknown }
-    | null
-  return typeof body?.error === "string" ? body.error : fallback
 }
 
 function draftsEqual(a: MinStayDraft, b: MinStayDraft) {
@@ -521,7 +490,7 @@ export function MinimumNightStaySection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const message = await responseMessage(res, "Failed to save")
+        const message = await apiErrorMessageFromResponse(res, "Failed to save")
         if (res.status === 409) {
           const refreshed = await refreshAfterMutation()
           setError(
@@ -580,7 +549,7 @@ export function MinimumNightStaySection() {
         },
       )
       if (!res.ok) {
-        const message = await responseMessage(res, "Failed to deactivate")
+        const message = await apiErrorMessageFromResponse(res, "Failed to deactivate")
         if (res.status === 409) {
           const refreshed = await refreshAfterMutation()
           setError(
@@ -638,7 +607,7 @@ export function MinimumNightStaySection() {
         }),
       })
       if (!res.ok) {
-        const message = await responseMessage(res, "Failed to update")
+        const message = await apiErrorMessageFromResponse(res, "Failed to update")
         if (res.status === 409) {
           const refreshed = await refreshAfterMutation()
           setError(
@@ -804,8 +773,8 @@ export function MinimumNightStaySection() {
                               </Badge>
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              {formatPolicyDate(policy.startDate)} &mdash;{" "}
-                              {formatPolicyDate(policy.endDate)}
+                              {formatStayDateOrNull(policy.startDate) ?? policy.startDate} &mdash;{" "}
+                              {formatStayDateOrNull(policy.endDate) ?? policy.endDate}
                             </p>
                           </div>
                           <div className="flex space-x-2">

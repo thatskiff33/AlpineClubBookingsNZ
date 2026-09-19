@@ -71,6 +71,17 @@ describe("the evidence projection an admin screen is built from (#3033)", () => 
       // #3166. Null here because THIS fixture's edit added nobody; the case
       // below proves a populated one crosses as a count and a figure only.
       guestsAddedByEdit: null,
+      /*
+        #3498: the other strands the same parked edit recorded. EMPTY here
+        because this fixture is a row written before the grain moved, which is
+        the shape production is holding and must keep rendering.
+
+        THE MUTATION PROOF EXTENDS TO IT. Spread a strand instead of listing its
+        fields in `toEditFinancialReviewEvidence` and `bookingGuestId` rides
+        onto a `finance:view` payload once per guest - the same leak this case
+        exists to catch, in a loop. The populated case below asserts it whole.
+      */
+      otherStrands: [],
     });
   });
 

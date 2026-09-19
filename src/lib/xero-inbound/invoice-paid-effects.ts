@@ -1,5 +1,6 @@
 import { type Invoice } from "xero-node";
-import { BookingEventType, BookingStatus, CreditType, PaymentSource, PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
+import { BookingEventType, BookingStatus, CreditType, ManualRefundTaskKind, PaymentSource, PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -32,6 +33,7 @@ import { createAuditLog } from "@/lib/audit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
+import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { formatCents } from "@/lib/utils";
 
 function isPaidXeroInvoice(invoice: Invoice): boolean {
@@ -257,7 +259,8 @@ async function recordManualSettlementConflict({
   invoiceNumber,
 }: {
   payment: Prisma.PaymentGetPayload<{
-    include: { booking: { include: { member: true } } };
+    // #3369: the owner may be an Organisation; bookingOwner() reads both.
+    include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } };
   }>;
   bookingStatus: BookingStatus;
   invoiceId: string;
@@ -319,7 +322,7 @@ async function recordManualSettlementConflict({
   if (!holdsClaim) return;
 
   await sendAdminManualSettlementConflictAlert({
-    memberName: `${payment.booking.member.firstName} ${payment.booking.member.lastName}`,
+    memberName: `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`,
     checkIn: payment.booking.checkIn,
     checkOut: payment.booking.checkOut,
     amountCents: payment.amountCents,
@@ -400,6 +403,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             checkIn: true,
             checkOut: true,
             member: { select: { firstName: true, lastName: true } },
+            // #3369: the owner may be an Organisation; bookingOwner() reads both.
+            organisation: { select: { name: true, email: true } },
           },
         },
       },
@@ -468,7 +473,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         continue;
       }
       await sendAdminPaymentFailureAlert({
-        memberName: `${payment.booking.member.firstName} ${payment.booking.member.lastName}`,
+        memberName: `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`,
         checkIn: payment.booking.checkIn,
         checkOut: payment.booking.checkOut,
         amountCents: payment.amountCents,
@@ -497,6 +502,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       booking: {
         include: {
           member: true,
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
           guests: { include: { nights: true } },
           promoRedemption: {
             include: {
@@ -531,6 +538,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           booking: {
             include: {
               member: true,
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
               guests: { include: { nights: true } },
               promoRedemption: { include: { promoCode: true } },
             },
@@ -683,6 +692,29 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           originalPaymentStatus === PaymentStatus.FAILED;
         const bookingLabel = settlementPayment.bookingId.slice(0, 8);
 
+        // #3369: this arm mints MEMBER CREDIT, and an organisation-owned
+        // booking has no member account to mint into. It never had a usable one
+        // either — the invented school member could not sign in, so credit
+        // minted against it was unspendable. But the CASH IS REAL: a school has
+        // paid for a booking the club has cancelled, and the club now holds
+        // money it owes back.
+        //
+        // The first cut of this stage answered that with a `logger.warn` whose
+        // comment claimed it gave the club "a visible, actionable line". It did
+        // not. No task was raised, nothing reached the stuck-state dashboard,
+        // and the caller treats this outcome as an ordinary silent one — so a
+        // school's money became a log line and a clean webhook.
+        //
+        // It now raises a `ManualRefundTask`, which is this repository's
+        // durable record of exactly this thing: money the system cannot move
+        // itself. It appears on the payments board, it carries the amount, and
+        // it stays open until somebody closes it. The admin alert beside the
+        // other three anomalies in this arm's caller says the same thing by
+        // email. The branch sits BELOW the cash quantification so the task is
+        // raised for the cents that actually arrived rather than the payment's
+        // face amount — the same figure the member arm would have credited.
+        const creditMemberId = bookingOwner(settlementPayment.booking).memberId;
+
         // #1459: size the mint by the invoice's quantified CASH, never by the
         // payment's face amount alone. On a mixed invoice — the member
         // part-pays in cash and the remainder is cleared by credit allocation
@@ -706,11 +738,85 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             otherMintedCents,
           );
 
+        if (!creditMemberId) {
+          // The same three conditions the member arm mints under: cash really
+          // arrived, the payment never settled, and there are cents to hand
+          // back. Idempotent on the (booking, payment, kind) triple rather than
+          // on status, so a replay after an officer has CLOSED the task does
+          // not raise a second one — a webhook may be delivered any number of
+          // times, and this is money.
+          const handBackCents = mintableCents;
+          const shouldHandBack =
+            invoiceHasCashPayment && paymentNeverSettled && handBackCents > 0;
+          const alreadyRaised = shouldHandBack
+            ? await tx.manualRefundTask.findFirst({
+                where: {
+                  bookingId: settlementPayment.bookingId,
+                  paymentId: settlementPayment.id,
+                  kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+                },
+                select: { id: true },
+              })
+            : null;
+          if (shouldHandBack && !alreadyRaised) {
+            await tx.manualRefundTask.create({
+              data: {
+                bookingId: settlementPayment.bookingId,
+                paymentId: settlementPayment.id,
+                amountCents: handBackCents,
+                kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+                // Fixed at creation, like every other hand-back: the figure
+                // comes from the invoice's quantified cash, not from an
+                // officer's judgement, so it is not amendable at completion.
+                raisedAmountCents: handBackCents,
+                reason: `Booking ${bookingLabel} was cancelled and an Internet Banking payment arrived for it. The booking belongs to an organisation, which has no member account for the money to be held as credit, so it must be returned to the organisation by hand (#3369).`.slice(
+                  0,
+                  MANUAL_REFUND_TASK_REASON_MAX,
+                ),
+              },
+            });
+          }
+          logger.warn(
+            {
+              invoiceId,
+              paymentId: settlementPayment.id,
+              bookingId: settlementPayment.bookingId,
+              organisationId: settlementPayment.booking.organisationId,
+              handBackCents,
+              taskRaised: shouldHandBack && !alreadyRaised,
+            },
+            "Internet Banking payment on a cancelled organisation-owned booking: no member account to credit, so a manual hand-back task carries the money instead (#3369)."
+          );
+          return {
+            type: "alreadyCancelled" as const,
+            payment: settlementPayment,
+            // The enclosing value, exactly as the member arm's return below
+            // uses it. The first cut passed `paymentNeverSettled` here, which
+            // is derived from the argument rather than from the outer read and
+            // therefore diverged from the member arm on the post-lock re-entry.
+            paymentWasPending,
+            credited: false,
+            creditedCents: 0,
+            creditedPartial: false,
+            cashUnverified,
+            aggregateCapped,
+            laterCashCents: 0,
+            zeroCashAnomaly: false,
+            // What the caller alerts on. Zero means there was nothing to hand
+            // back — a replay, an allocation-cleared invoice — and stays silent
+            // exactly as the member arm does in the same states.
+            organisationHandBackCents: shouldHandBack ? handBackCents : 0,
+            clearingNoteAlreadyIssued: Boolean(
+              settlementPayment.xeroRefundCreditNoteId,
+            ),
+          };
+        }
+
         // Looked up unconditionally (amount included): the dedup gate needs
         // its existence, and the later-cash detection below needs its size.
         const existingCredit = await tx.memberCredit.findFirst({
           where: {
-            memberId: settlementPayment.booking.memberId,
+            memberId: creditMemberId,
             sourceBookingId: settlementPayment.bookingId,
             type: CreditType.CANCELLATION_REFUND,
             description: {
@@ -785,7 +891,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         if (credited) {
           await tx.memberCredit.create({
             data: {
-              memberId: settlementPayment.booking.memberId,
+              memberId: creditMemberId,
               amountCents: mintableCents,
               type: CreditType.CANCELLATION_REFUND,
               description: `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
@@ -831,6 +937,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           aggregateCapped,
           laterCashCents,
           zeroCashAnomaly,
+          // #3369: the member arm never hands back to an organisation, by
+          // construction — it only runs when there IS a member. Stated rather
+          // than left to the union, so both arms return the same shape.
+          organisationHandBackCents: 0,
           clearingNoteAlreadyIssued: Boolean(
             settlementPayment.xeroRefundCreditNoteId,
           ),
@@ -851,6 +961,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           booking: {
             include: {
               member: true,
+              // #3369: the owner may be an Organisation; bookingOwner() reads both.
+              organisation: { select: { name: true, email: true } },
               guests: { include: { nights: true } },
               promoRedemption: { include: { promoCode: true } },
             },
@@ -975,20 +1087,37 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           }
 
           const creditDescription = `Internet Banking payment credit for booking ${fresh.bookingId.slice(0, 8)}`;
-          const existingCredit = await tx.memberCredit.findFirst({
+          // #3369: the same decision as the cancelled arm above — an
+          // organisation-owned booking has no member account, so there is
+          // nothing to mint into and nothing to dedupe against. The warning is
+          // what makes the money the treasurer's to return rather than a
+          // balance nobody can reach.
+          const lateCapacityCreditMemberId = bookingOwner(fresh.booking).memberId;
+          if (!lateCapacityCreditMemberId) {
+            logger.warn(
+              {
+                invoiceId,
+                paymentId: fresh.id,
+                bookingId: fresh.bookingId,
+                organisationId: fresh.booking.organisationId,
+              },
+              "Internet Banking payment on an organisation-owned booking that failed capacity: no member account to credit, so no credit was minted. Refund the organisation directly (#3369)."
+            );
+          }
+          const existingCredit = lateCapacityCreditMemberId ? await tx.memberCredit.findFirst({
             where: {
-              memberId: fresh.booking.memberId,
+              memberId: lateCapacityCreditMemberId,
               sourceBookingId: fresh.bookingId,
               amountCents: mintableCents,
               type: CreditType.CANCELLATION_REFUND,
               description: creditDescription,
             },
             select: { id: true },
-          });
-          if (!existingCredit && mintableCents > 0) {
+          }) : null;
+          if (lateCapacityCreditMemberId && !existingCredit && mintableCents > 0) {
             await tx.memberCredit.create({
               data: {
-                memberId: fresh.booking.memberId,
+                memberId: lateCapacityCreditMemberId,
                 amountCents: mintableCents,
                 type: CreditType.CANCELLATION_REFUND,
                 description: creditDescription,
@@ -1153,10 +1282,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         sendBookingCancelledEmail(
           {
             bookingId: outcome.payment.booking.id,
-            recipientMemberId: outcome.payment.booking.memberId,
+            recipientMemberId: bookingOwner(outcome.payment.booking).memberId,
           },
-          outcome.payment.booking.member.email,
-          outcome.payment.booking.member.firstName,
+          bookingOwner(outcome.payment.booking).member.email,
+          bookingOwner(outcome.payment.booking).member.firstName,
           outcome.payment.booking.checkIn,
           outcome.payment.booking.checkOut,
           outcome.creditedCents,
@@ -1173,7 +1302,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero."
           : "";
         sendAdminPaymentFailureAlert({
-          memberName: `${outcome.payment.booking.member.firstName} ${outcome.payment.booking.member.lastName}`,
+          memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`,
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.creditedCents,
@@ -1193,7 +1322,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         );
       } else if (outcome.laterCashCents > 0) {
         sendAdminPaymentFailureAlert({
-          memberName: `${outcome.payment.booking.member.firstName} ${outcome.payment.booking.member.lastName}`,
+          memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`,
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.laterCashCents,
@@ -1205,9 +1334,29 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             "Failed to alert admins about later cash on an already-credited cancelled booking"
           )
         );
+      } else if (outcome.organisationHandBackCents > 0) {
+        // #3369: a school paid for a booking the club had already cancelled.
+        // There is no member account to hold the money as credit, so the arm
+        // above raised a manual hand-back task and this says so out loud — the
+        // fourth anomaly in a list of three, and for the same reason as the
+        // other three: money that moved without a member-facing outcome must
+        // never be silent.
+        sendAdminPaymentFailureAlert({
+          memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`.trim(),
+          checkIn: outcome.payment.booking.checkIn,
+          checkOut: outcome.payment.booking.checkOut,
+          amountCents: outcome.organisationHandBackCents,
+          errorMessage: `Internet Banking cash of ${formatCents(outcome.organisationHandBackCents)} arrived for an already-cancelled booking that belongs to an ORGANISATION. An organisation has no member account, so the money is NOT held as account credit — a manual refund task has been raised on the payments board for the full amount and stays open until somebody returns the money and closes it. Verify the invoice in Xero, then refund the organisation directly.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
+          paymentIntentId: invoiceId,
+        }).catch((err) =>
+          logger.error(
+            { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
+            "Failed to alert admins about an Internet Banking payment on a cancelled organisation-owned booking"
+          )
+        );
       } else if (outcome.zeroCashAnomaly) {
         sendAdminPaymentFailureAlert({
-          memberName: `${outcome.payment.booking.member.firstName} ${outcome.payment.booking.member.lastName}`,
+          memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`,
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.payment.amountCents,
@@ -1252,7 +1401,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // transaction above (atomic with the local credit), so there is no
       // post-commit fire-and-forget enqueue here.
       sendAdminPaymentFailureAlert({
-        memberName: `${outcome.payment.booking.member.firstName} ${outcome.payment.booking.member.lastName}`,
+        memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`,
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
         amountCents: outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
@@ -1267,10 +1416,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       sendBookingCancelledEmail(
         {
           bookingId: outcome.payment.booking.id,
-          recipientMemberId: outcome.payment.booking.memberId,
+          recipientMemberId: bookingOwner(outcome.payment.booking).memberId,
         },
-        outcome.payment.booking.member.email,
-        outcome.payment.booking.member.firstName,
+        bookingOwner(outcome.payment.booking).member.email,
+        bookingOwner(outcome.payment.booking).member.firstName,
         outcome.payment.booking.checkIn,
         outcome.payment.booking.checkOut,
         outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
@@ -1302,7 +1451,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       await createAuditLog({
         action: "booking.payment.confirmed",
         targetId: outcome.payment.bookingId,
-        subjectMemberId: outcome.payment.booking.memberId,
+        subjectMemberId: bookingOwner(outcome.payment.booking).memberId,
         entityType: "Booking",
         entityId: outcome.payment.bookingId,
         category: "payment",
@@ -1345,9 +1494,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     if (outcome.staleCreditElectionCents != null) {
       await reportUnappliedCreditElection({
         bookingId: outcome.payment.bookingId,
-        memberId: outcome.payment.booking.memberId,
-        memberFirstName: outcome.payment.booking.member.firstName,
-        memberLastName: outcome.payment.booking.member.lastName,
+        memberId: bookingOwner(outcome.payment.booking).memberId,
+        memberFirstName: bookingOwner(outcome.payment.booking).member.firstName,
+        memberLastName: bookingOwner(outcome.payment.booking).member.lastName,
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
         electionCents: outcome.staleCreditElectionCents,
@@ -1370,16 +1519,16 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     // separate later charge. Read-only; null on non-split bookings.
     const provisionalGuests = await getProvisionalNonMemberChildSummary({
       id: outcome.payment.bookingId,
-      memberId: outcome.payment.booking.memberId,
+      memberId: bookingOwner(outcome.payment.booking).memberId,
     });
 
     sendBookingConfirmedEmail(
       {
         bookingId: outcome.payment.booking.id,
-        recipientMemberId: outcome.payment.booking.memberId,
+        recipientMemberId: bookingOwner(outcome.payment.booking).memberId,
       },
-      outcome.payment.booking.member.email,
-      outcome.payment.booking.member.firstName,
+      bookingOwner(outcome.payment.booking).member.email,
+      bookingOwner(outcome.payment.booking).member.firstName,
       outcome.payment.booking.checkIn,
       outcome.payment.booking.checkOut,
       outcome.payment.booking.guests.length,

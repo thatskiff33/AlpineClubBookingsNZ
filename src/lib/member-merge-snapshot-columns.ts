@@ -44,6 +44,18 @@
  * Layout: the FIRST block is that hand-kept remainder (bespoke names plus the
  * entries that predate the detector); the SECOND is the detectable set.
  */
+/**
+ * FK-less member-id-shaped columns that are derived transactionally from live
+ * relationship rows rather than moved or retained as history during merge.
+ * Source-table triggers update these pair endpoints while merge rewrites and
+ * deletes Member/MemberPartnerLink edges; treating them as snapshots would
+ * leave a stale loser id, while moving them directly would double-apply deltas.
+ */
+export const MEMBER_MERGE_DERIVED_MEMBER_ID_COLUMNS: readonly string[] = [
+  "MemberParentPartnerExclusion.memberAId",
+  "MemberParentPartnerExclusion.memberBId",
+];
+
 export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "MemberLifecycleActionRequest.memberId",
   "MemberApplication.nominator1Id",
@@ -241,6 +253,18 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "MembershipCancellationSetting.updatedByMemberId",
   "MembershipLockoutSettings.updatedByMemberId",
   "MembershipNominationSettings.updatedByMemberId",
+  // Video meetings (MiroTalk) settings singleton (#2940): records WHO last set
+  // the club's meeting server address, presenter choice and join-link lifetime.
+  // The ordinary settings-audit column, identical in kind to
+  // ServerNzSettings' below and every other `*.updatedByMemberId` here, and a
+  // snapshot for the same reason: the answer to "who pointed our meetings at
+  // that server" is the administrator who did it at the time, not whoever later
+  // absorbed their record. The three MiroTalk SECRETS are not here and need no
+  // entry of their own — they are rows in IntegrationCredential, whose
+  // `updatedByUserId` is already documented in the hand-kept block above.
+  // (Detectable: `updatedByMemberId` is a Member FK column name elsewhere in
+  // the schema.)
+  "MirotalkSettings.updatedByMemberId",
   "NotificationDeliveryPolicy.updatedByMemberId",
   "PageContent.updatedByMemberId",
   "PublicContentSettings.updatedByMemberId",

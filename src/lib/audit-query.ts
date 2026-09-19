@@ -5,6 +5,11 @@ import {
   AUDIT_CATEGORY_LABELS,
   type AuditCategory,
 } from "./audit-categories";
+import { readDeclaredMemberText } from "./audit-member-disclosure";
+import {
+  isReservedDetailKey,
+  recoverTruncatedStructuredDetail,
+} from "./audit-structured-detail";
 import { formatCents } from "./utils";
 
 /**
@@ -531,6 +536,11 @@ function formatMetadataDescription(
   }
 
   return Object.entries(metadata)
+    // Reserved bookkeeping keys are filtered BEFORE the slice, not after
+    // (#2704). A reduced or recovered payload leads with `_truncated` and
+    // `_originalLength`, which would otherwise take two of the four fragments
+    // and render "Truncated · True" as if it were what happened.
+    .filter(([key]) => !isReservedDetailKey(key))
     .slice(0, 4)
     .map(([key, value]) =>
       value === undefined ? null : formatMetadataFragment(key, value)
@@ -614,9 +624,27 @@ function getActorName(actor: AuditTimelineActorRecord | undefined): string {
   return fullName || actor.email || "Unknown member";
 }
 
+/**
+ * The writer's OWN short title, or null when there is none worth showing.
+ *
+ * ONE rule, read by both audiences, and that is the whole reason it exists as a
+ * function. The admin title fell back on a truthiness test and the member title
+ * was first written with `??`, so a row stored with a BLANK summary — an empty
+ * string, which the write boundary stores as readily as any other (only
+ * `undefined` is dropped), or the whitespace `sanitizeAuditDetails` passes
+ * through — gave an officer the derived title and the member a blank line.
+ * That is two tests of one fallback rule, living inside the pair of functions
+ * written to make the audiences agree about everything except what a member may
+ * read.
+ */
+function storedSummary(log: AuditTimelineLog): string | null {
+  return log.summary && log.summary.trim().length > 0 ? log.summary : null;
+}
+
 function getSummary(log: AuditTimelineLog): string {
-  if (log.summary) {
-    return log.summary;
+  const stored = storedSummary(log);
+  if (stored) {
+    return stored;
   }
 
   const parsedDetails = parseJsonObject(log.details);
@@ -633,12 +661,47 @@ function getSummary(log: AuditTimelineLog): string {
   return titleCaseAction(log.action);
 }
 
+/**
+ * The short title a MEMBER reads for one row (#2695).
+ *
+ * Two differences from the admin `getSummary`, and both are the same rule.
+ *
+ * It never reaches into `details` for a value. The admin version answers
+ * `member.setup-invite-sent` / `member.password-reset-sent` by parsing the
+ * legacy JSON payload and reading `recipientEmail` out of it — the same
+ * parse-the-payload move the member `description` used to make, and it is not
+ * safe here: `buildMemberAuditLogWhere` puts a row on the ACTING member's own
+ * timeline through its null-subject `memberId` leg, so an officer who sent the
+ * invite reads their own timeline and the recipient is somebody else. A member
+ * gets the derived title for those two actions instead.
+ *
+ * What it still shows is the writer's `summary` column, and that is a DELIBERATE
+ * limit of this change rather than an oversight. `summary` is the timeline's
+ * short title; 188 write sites in member-visible categories set one today and
+ * denying them all would withdraw history from members at every one of those
+ * sites at once — a readership change reserved to the owner by `INV-PRIV-012`
+ * and `INV-OPS-012`, not a consequence a lane may take on its way past. What
+ * this change does close is the channel nobody decided about: `details`, and the
+ * `description` built from it.
+ */
+function getMemberSummary(log: AuditTimelineLog): string {
+  return storedSummary(log) ?? titleCaseAction(log.action);
+}
+
+/**
+ * The one-line description an officer reads under the row title.
+ *
+ * `structuredDetails` — the column holds a payload, parsed cleanly or rebuilt
+ * from a clipped one — is passed IN rather than re-derived here (#2704). The
+ * old test was "did it parse?", which called a legacy clipped payload prose and
+ * printed a broken fragment of JSON where a human sentence goes.
+ */
 function getDescription(
   log: AuditTimelineLog,
-  metadata: Prisma.JsonValue | Prisma.JsonObject | null
+  metadata: Prisma.JsonValue | Prisma.JsonObject | null,
+  structuredDetails: boolean
 ): string | null {
-  const legacyMetadata = parseJsonObject(log.details);
-  if (log.details && !legacyMetadata) {
+  if (log.details && !structuredDetails) {
     return log.details;
   }
 
@@ -1046,6 +1109,76 @@ function serializeSubjectForAudience(params: {
   };
 }
 
+/**
+ * EVERY free-text field an audit row can show, decided BY AUDIENCE in one place
+ * (#2695).
+ *
+ * WHAT THIS REPLACED, and why it was wrong. The member's `description` and
+ * `details` used to be `hasLegacyMetadata ? null : log.details` — a SHAPE test.
+ * A row whose `details` happened to parse as a JSON object showed the member
+ * nothing; a row whose `details` was a plain sentence handed them the sentence
+ * in full. Nobody decided either outcome: an administrator's rejection note,
+ * typed under a "do not notify the member" tick, reached the member because it
+ * was prose, and a credit approval reached them carrying two database ids and
+ * the requesting officer's member id for the same reason. The audience was a
+ * property of the JSON parser.
+ *
+ * SO THE MEMBER'S TEXT COMES FROM ONE SOURCE AND ONE ONLY: the declaration the
+ * writing site made (`src/lib/audit-member-disclosure.ts`). No declaration, no
+ * text — and because nothing here reads `details`, `metadata` or a payload's
+ * shape for a member, no length and no parse result can change the answer. That
+ * is the truncation hole closed by construction rather than by a second check.
+ *
+ * ONE FUNCTION, EXHAUSTIVE ON AUDIENCE, rather than three ternaries spread
+ * through the serializer. `INV-PRIV-012` already records why that shape matters
+ * on this surface: a guard living inside one query was measured to survive
+ * deletion with the word left behind in a comment. A free-text field added to
+ * the timeline later has to be answered for HERE, for both audiences, or it
+ * does not compile.
+ */
+function projectFreeTextForAudience(params: {
+  audience: "admin" | "member";
+  log: AuditTimelineLog;
+  legacyMetadata: Prisma.JsonObject | null;
+  /**
+   * The `details` column holds a payload — parsed, or rebuilt from a clipped
+   * one (#2704). ADMIN-ONLY in effect: the member branch below reads neither
+   * this nor the column, so a payload that becomes readable here cannot become
+   * readable there.
+   */
+  hasStructuredDetails: boolean;
+  adminMetadata: Prisma.JsonValue | Prisma.JsonObject | null;
+}): { summary: string; description: string | null; details: string | null } {
+  const { audience, log, legacyMetadata, hasStructuredDetails, adminMetadata } =
+    params;
+
+  if (audience === "member") {
+    return {
+      // Derived from the row's own columns, never from a writer's prose.
+      summary: getMemberSummary(log),
+      description: readDeclaredMemberText(log.metadata),
+      // The `details` column is the officers' record of what happened. A member
+      // reads the declared sentence or nothing; there is no path from this
+      // column to a member timeline any more.
+      details: null,
+    };
+  }
+
+  return {
+    summary: getSummary(log),
+    description: getDescription(log, adminMetadata, hasStructuredDetails),
+    // The RAW column, and the test is the CLEAN parse rather than
+    // `hasStructuredDetails` — deliberately (#2704). A cleanly-parsed payload
+    // is shown whole in the metadata panel, so repeating it is noise; a
+    // RECOVERED one is a derived view, so the stored string stays on screen as
+    // the club's actual record. The officer reads both, never a rendering
+    // standing in for the record. (A property of this reader, held by its own
+    // test — not `INV-OPS-012`, which an earlier draft cited here and which
+    // governs reclassifying a stored `category`.)
+    details: legacyMetadata ? null : log.details,
+  };
+}
+
 function serializeAuditTimelineLog(params: {
   log: AuditTimelineLog;
   memberById: Map<string, AuditTimelineActorRecord>;
@@ -1068,17 +1201,29 @@ function serializeAuditTimelineLog(params: {
     currentMemberId,
   });
   const legacyMetadata = parseJsonObject(log.details);
-  const hasLegacyMetadata = Boolean(legacyMetadata);
+  // A payload written before #2704, which the old character clip left
+  // unparseable — the whole legacy population, which no write-time change can
+  // reach. Attempted only when the clean parse failed, and marked
+  // `_recoveredFromTruncatedText` so it is never mistaken for the stored
+  // document. Rule and guarantees: `audit-structured-detail.ts`.
+  const structuredDetails =
+    legacyMetadata ??
+    (recoverTruncatedStructuredDetail(log.details) as Prisma.JsonObject | null);
+  // The admin metadata panel deliberately still shows the reserved
+  // `memberFacingText` key when a row carries one: an officer reviewing the
+  // trail should be able to read exactly what the member was told, and hiding
+  // it from them would put the two audiences back out of step (#2695).
   const metadata =
     audience === "admin"
-      ? log.metadata ?? legacyMetadata
+      ? log.metadata ?? structuredDetails
       : null;
-  const description =
-    audience === "admin"
-      ? getDescription(log, metadata)
-      : hasLegacyMetadata
-        ? null
-        : log.details;
+  const freeText = projectFreeTextForAudience({
+    audience,
+    log,
+    legacyMetadata,
+    hasStructuredDetails: structuredDetails !== null,
+    adminMetadata: metadata,
+  });
 
   return {
     id: log.id,
@@ -1086,9 +1231,9 @@ function serializeAuditTimelineLog(params: {
     category: log.category ?? inferAuditCategoryFromAction(log.action),
     severity: log.severity,
     outcome: log.outcome,
-    summary: getSummary(log),
-    description,
-    details: hasLegacyMetadata ? null : log.details,
+    summary: freeText.summary,
+    description: freeText.description,
+    details: freeText.details,
     createdAt:
       log.createdAt instanceof Date
         ? log.createdAt.toISOString()

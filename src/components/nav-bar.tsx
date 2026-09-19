@@ -51,6 +51,10 @@ const memberLinks = [
 ];
 
 const financeLink = { href: "/finance", label: "Finance" };
+
+// The member lodge roster (#2942). Off unless the club turns the module on,
+// so the link is conditional rather than part of `memberLinks` above.
+const lodgeRosterLink = { href: "/lodge-roster", label: "Who's at the lodge" };
 /*
   The Admin link is the SHELL entrance, not a page this user is known to hold
   (#2984). Portal standing is any one of the seven areas, so a finance-only
@@ -95,6 +99,7 @@ export function getNavBarLinks(
   return [
     ...memberLinks,
     ...(user.canAccessFinance && features.financeDashboard ? [financeLink] : []),
+    ...(features.memberLodgeRoster ? [lodgeRosterLink] : []),
     ...(features.kiosk
       ? user.isHutLeader && features.hutLeaders
         ? [hutLeaderLink]

@@ -29,6 +29,7 @@ import {
   collapseNightRuns,
   stayWindowPage,
 } from "@/lib/bed-allocation-board-window";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import {
   bedAllocationRemovalCategoryForAnchor,
@@ -253,15 +254,6 @@ interface GuestRow {
   unplacedNightCount: number;
 }
 
-async function readApiError(response: Response, fallback: string) {
-  try {
-    const body = (await response.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function nightWord(count: number) {
   return count === 1 ? "night" : "nights";
 }
@@ -365,7 +357,7 @@ export function BookingBedAllocationPanel({
         `/api/admin/bed-allocation?${params.toString()}`,
       );
       if (!response.ok) {
-        const message = await readApiError(
+        const message = await apiErrorMessageFromResponse(
           response,
           "Failed to load bed allocation",
         );
@@ -692,7 +684,7 @@ export function BookingBedAllocationPanel({
         body: JSON.stringify({ bookingId, lodgeId }),
       });
       if (!response.ok) {
-        toast.error(await readApiError(response, "Failed to confirm beds"));
+        toast.error(await apiErrorMessageFromResponse(response, "Failed to confirm beds"));
         return;
       }
       const body = (await response.json()) as { approvedCount?: number };

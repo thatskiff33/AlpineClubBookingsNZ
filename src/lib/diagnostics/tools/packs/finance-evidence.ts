@@ -68,10 +68,10 @@
  * EIGHT RELATIONS ARE READ, all by named `select`: `Booking`, `Payment`,
  * `MemberCredit`, `XeroSyncOperation`, `XeroObjectLink`,
  * `PaymentRecoveryOperation`, `ManualRefundTask` and `RefundRequest`. The
- * `XeroObjectLink` read is an EXISTENCE check only — it selects `id` and returns a
- * boolean — because "is there an invoice" is an OR that every other surface in this
- * platform performs, and the column alone is the wrong answer (see
- * `readPrimaryInvoiceLinked`).
+ * `XeroObjectLink` read is made by the one invoice-evidence reader
+ * (`xero-booking-invoice-evidence.ts`, #3001/#3467), handed this transaction
+ * as its client, because "is there an invoice" is an OR every other surface
+ * performs and the column alone is the wrong answer (see `readInvoiceLinked`).
  *
  * READ ONLY AT THE DATABASE SINCE #2786, NOT ONLY BY INSPECTION. Every call below
  * is a Prisma `findUnique`, `findMany` or `aggregate`, and every one of them now
@@ -122,12 +122,14 @@ import {
   hasCapturedPayment,
   isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
+import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import {
   deriveBookingAppliedCreditCents,
   getMemberCreditBalance,
 } from "@/lib/member-credit";
 import { getPaymentDisplayStatus } from "@/lib/payment-status-display";
+import { readBookingInvoiceEvidence } from "@/lib/xero-booking-invoice-evidence";
 
 import type { DiagnosticsToolRawRow } from "../define";
 import { withBoundedReadOnlyTransaction } from "../read-only-transaction";
@@ -417,7 +419,8 @@ async function readXeroActivity(
 }
 
 /**
- * Is there an ACTIVE primary-invoice link for this payment?
+ * Is there an invoice for this payment — the column OR an active
+ * primary-invoice link?
  *
  * THE COLUMN IS NOT THE ONLY SOURCE, and treating it as one was the most
  * expensive defect in this file. `Payment."xeroInvoiceId"` and the
@@ -426,29 +429,23 @@ async function readXeroActivity(
  * not the column. This platform names that state `XERO_LINK_MISMATCH` and ships
  * an auto-applicable backfill for it (`xero-booking-repair-classify.ts`).
  *
- * Every other surface that decides "is there an invoice" ORs the two: the admin
- * payments screen (`admin-payments-service.ts`), the manual-settle READ guard
- * (`manual-booking-payment-state.ts`) and the manual-settle WRITE fence
- * (`payment-reconciliation.ts`). Reading the column alone made this tool report
- * `xero_invoice_missing` for a booking that HAS an invoice — and the next step an
- * operator takes from that is to raise a second one.
+ * The OR itself is not spelled here (#3467, `INV-SSOT-001`): it is asked of the
+ * one reader in `xero-booking-invoice-evidence.ts`, which the admin payments
+ * and bookings screens, the booking page and the enqueue fence also ask. The
+ * transaction is handed in as its client so the read stays inside the one
+ * read-only transaction. Reading the column alone made this tool report
+ * `xero_invoice_missing` for a booking that HAS an invoice — and the next step
+ * an operator takes from that is to raise a second one.
  */
-async function readPrimaryInvoiceLinked(
+async function readInvoiceLinked(
   tx: Prisma.TransactionClient,
-  paymentId: string | null,
+  payment: { id: string; xeroInvoiceId: string | null } | null,
 ): Promise<boolean> {
-  if (!paymentId) return false;
-  const link = await tx.xeroObjectLink.findFirst({
-    where: {
-      localModel: "Payment",
-      localId: paymentId,
-      xeroObjectType: "INVOICE",
-      role: "PRIMARY_INVOICE",
-      active: true,
-    },
-    select: { id: true },
+  if (!payment) return false;
+  const evidence = await readBookingInvoiceEvidence(payment, {
+    deps: { db: tx },
   });
-  return link !== null;
+  return evidence.exists;
 }
 
 /**
@@ -555,13 +552,17 @@ async function assembleBookingFinanceState(
     await Promise.all([
       deriveBookingAppliedCreditCents(bookingId, tx),
       readCancellationCredits(tx, bookingId),
-      getMemberCreditBalance(booking.memberId, tx),
+      // #3369: an organisation holds no account credit, so the evidence pack
+      // reports zero rather than reading a ledger that does not exist.
+      bookingOwner(booking).memberId
+        ? getMemberCreditBalance(bookingOwner(booking).memberId as string, tx)
+        : Promise.resolve(0),
     ]);
 
-  const [xeroActivity, refundPosture, primaryInvoiceLinked] = await Promise.all([
+  const [xeroActivity, refundPosture, invoiceLinked] = await Promise.all([
     readXeroActivity(tx, payment?.id ?? null),
     readRefundPosture(tx, bookingId, payment?.id ?? null),
-    readPrimaryInvoiceLinked(tx, payment?.id ?? null),
+    readInvoiceLinked(tx, payment ?? null),
   ]);
 
   // ---- Money. Integer cents only, no division anywhere. ------------------
@@ -692,13 +693,8 @@ async function assembleBookingFinanceState(
     refundedAmountCents,
     credits,
   });
-  /**
-   * "Is there an invoice?" — the SAME OR every other surface uses. The column
-   * and the link are written by separate steps and either alone is a wrong
-   * answer; see `readPrimaryInvoiceLinked`.
-   */
-  const invoiceLinked =
-    Boolean(payment?.xeroInvoiceId) || primaryInvoiceLinked;
+  // "Is there an invoice?" — `invoiceLinked` above came from the one reader
+  // every other surface uses; see `readInvoiceLinked`.
 
   /**
    * The Xero classification, computed with the SCREEN's own expectation

@@ -122,7 +122,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         {
           name: "Rooms & Beds",
           description:
-            "Capacity and allocation inventory used by lodge stays.",
+            "Capacity and allocation inventory used by lodge stays, plus each lodge's allocation preferences.",
         },
       ],
     ),
@@ -220,7 +220,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
       "Bookings Setup",
       "Bookings Setup groups lower-frequency pages that shape booking inventory and member-facing booking copy.",
       [
-        "Open Rooms & Beds before changing bed-allocation inventory.",
+        "Open Rooms & Beds to change bed-allocation inventory, or to change a lodge's allocation preferences.",
         "Open Booking Messages when booking, payment, cancellation, or group-booking wording needs an operator-approved update.",
         "Check module and permission gates if a setup card is hidden for the current admin.",
       ],
@@ -228,7 +228,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         {
           name: "Rooms & Beds",
           description:
-            "Lodge room and bed inventory used by bed-allocation workflows.",
+            "Lodge room and bed inventory used by bed-allocation workflows, and each lodge's allocation preferences.",
         },
         {
           name: "Booking Messages",
@@ -409,11 +409,12 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     "/admin/rooms-beds",
     help(
       "Rooms & Beds",
-      "Rooms & Beds configures lodge room and bed inventory used by capacity and bed allocation.",
+      "Rooms & Beds configures lodge room and bed inventory used by capacity and bed allocation, plus that lodge's allocation preferences.",
       [
         "Create or edit rooms and beds to match the physical lodge layout.",
         "Import from config only when you intend to align database beds to configured defaults.",
         "Deactivate beds rather than deleting history where existing allocations may refer to them.",
+        "Allocation preferences at the foot of the page apply to the lodge chosen at the top, and only when one lodge is chosen. Switching lodge discards an unsaved preference edit rather than carrying it across.",
       ],
       [
         {

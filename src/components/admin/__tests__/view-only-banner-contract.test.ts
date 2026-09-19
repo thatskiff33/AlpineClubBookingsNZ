@@ -287,21 +287,70 @@ const FIGURES = {
    * control. One per unreadable guest strand at RUN time, but one render site in
    * the source, which is what this census counts. MEASURED by re-running it.
    *
+   * 346 -> 347 (#2698): the hut-leaders page's Accept control, which narrows an
+   * overlapping whole-lodge hold in the same action that writes the custodian
+   * bed. Decline is a plain Button — it sends nothing and writes nothing, so
+   * gating it would refuse a view-only admin the way out of a prompt they could
+   * not have acted on, exactly as #2999's Cancel reasons. MEASURED by re-running
+   * this census.
    * 346 -> 349 (#3354): the shared "Currency for AI spend" card
    * (`ai-spend-currency-card.tsx`) adds Set/Change rate, Save rate and Cancel.
    * One component rendered on two pages is ONE file to this census. MEASURED by
    * re-running it.
+   *
+   * 347/349 -> 351 (sync of `main` into `epic/2725-mad`): both lanes' new
+   * call sites are disjoint files, so neither classification moved. MEASURED on
+   * the MERGED tree by re-running this census, never by adding the deltas.
+   *
+   * 351 -> 353 (#2939): the missing-Xero-contact panel's two controls — run the
+   * dry run, and create the next batch. MEASURED by re-running this census.
+   *
+   * 353 -> 354 (#3058, arriving with the epic merge): the erased-member Xero
+   * contact panel's "Check these in Xero". Its Refresh stays a plain Button.
+   *
+   * 354 -> 359 (#2940): the Video meetings setup screen. Three on the settings
+   * section (Edit, Save, Cancel — Cancel is gated here rather than left a plain
+   * Button because it is the staged-edit hook's Cancel, mounted only while the
+   * section is already in edit mode, which a view-only admin can never reach)
+   * and two in the secrets section, which renders one Save and one Clear per
+   * secret from a single pair of render sites. This census counts render sites,
+   * not the three rows they produce. MEASURED by re-running it.
+   *
+   * 359 -> 361 (#2942, on the eighth sync): the member lodge roster's per-lodge name-detail card
+   * (`lodge-roster-settings-card.tsx`) adds Edit and Save. Cancel is a plain
+   * Button, as it is on the Retention section: it reverts local state and
+   * writes nothing, so gating it would refuse a view-only admin the way out of
+   * a form they could not have changed. MEASURED by re-running this census.
+   *
+   * 361 -> 362 (#3498): the finance queue's reopen card adds one - the **Put
+   * back on the queue** control on a dismissed money task. It carries the
+   * DEFAULT `describeReason`, like every other control on that surface: the
+   * finance queue renders no `AdminViewOnlySectionBanner` at all, so each of its
+   * buttons explains its own view-only state.
    */
-  callSites: 349,
+  callSites: 362,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
    * 285 -> 289 (#2998): all four of the moderation queue's controls opt out.
    * 289 -> 292 (#2999): so do the Retention section's three.
    * 292 -> 293 (#3214): so does the night-price control.
+   * 293 -> 294 (#2698): so does the custodian/whole-lodge-hold amendment
+   * control, whose Accept sits under the hut-leaders page's own banner.
    * 293 -> 296 (#3354): so do the AI spend currency card's three.
+   * 294/296 -> 298 (sync of `main` into `epic/2725-mad`): both lanes' opt-outs
+   * are disjoint. MEASURED on the MERGED tree, never added together.
+   * 298 -> 300 (#2939): both of the missing-contact panel's controls opt out
+   * under the banner that panel heads itself with.
+   * 300 -> 301 (#3058, arriving with the epic merge): the erased-member panel's
+   * one control opts out under its section banner.
+   *
+   * 301 -> 306 (#2940): all five of the Video meetings screen's controls opt
+   * out — each of its two sections heads itself with its own banner.
+   *
+   * 306 -> 308 (#2942, on the eighth sync): so do the roster name-detail card's two.
    */
-  optOuts: 296,
+  optOuts: 308,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -314,8 +363,40 @@ const FIGURES = {
    * COMPONENT, but the static rule is about the FILE.
    * 259 -> 262 (#3354): the AI spend currency card heads itself with its own
    * banner, so its three controls are static.
+   * 259 -> 260 (#2698, carried in from `epic/2725-mad`, which moved the literal
+   * without a bump line): the custodian/whole-lodge-hold amendment Accept sits
+   * in the same file as the hut-leaders page's own banner, so it is static.
+   * 260/262 -> 264 (sync of `main` into `epic/2725-mad`): the two are in
+   * different files and neither classification moved. MEASURED on the MERGED
+   * tree by re-running this census, never by adding the deltas together.
+   * 264 -> 266 (#2939): the missing-contact panel's banner and both its
+   * controls are in one file, so both are static rather than vouched.
+   *
+   * Both controls are ALSO gated on whether Xero is connected, which the
+   * finance-permission banner says nothing about. That second axis is carried
+   * by a visible paragraph in the same section rather than by a per-button
+   * reason, deliberately: a kept reason lands in a `title` that never fires on
+   * a `disabled:pointer-events-none` button and an sr-only line on a control
+   * out of the tab order, which is the weakness the banner exists to fix. So
+   * this is an opt-out with the banner in its own file, not an exception.
+   * 266 -> 267 (#3058, arriving with the epic merge): the erased-member panel's
+   * control passes the literal.
+   *
+   * 267 -> 272 (#2940): the Video meetings screen's two banners and all five of
+   * its controls are in one file, so every one of them is static rather than
+   * vouched.
+   *
+   * Each also passes `readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}`,
+   * which is NOT an exception: the reason is what a Full-Admin-only control
+   * says when it has no banner, and here both banners already state the
+   * Full Admin requirement themselves. It is carried so a future render of
+   * these controls outside this file still says the narrower rule rather than
+   * the area one.
+   *
+   * 272 -> 274 (#2942, on the eighth sync): the roster name-detail card likewise heads its own
+   * file with its own banner, so its two are static rather than vouched.
    */
-  staticOptOuts: 262,
+  staticOptOuts: 274,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -332,12 +413,22 @@ const FIGURES = {
   renderSiteVouchedOptOuts: 29,
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
-  /** Controls that KEEP the per-button reason, and the files holding them. */
-  exceptions: 53,
-  exceptionFiles: 29,
-  /** The remainder bucket: neither a member detail card nor dialog-only. */
-  leafControls: 39,
-  leafFiles: 23,
+  /**
+   * Controls that KEEP the per-button reason, and the files holding them.
+   *
+   * 53 -> 54 in 29 -> 30 files (#3498): the finance queue's reopen card, which
+   * is a new file and heads no banner - the same shape as the settle card it
+   * sits beside, where each button explains its own view-only state.
+   */
+  exceptions: 54,
+  exceptionFiles: 30,
+  /**
+   * The remainder bucket: neither a member detail card nor dialog-only.
+   *
+   * 39 -> 40 in 23 -> 24 files (#3498): the reopen card's own control.
+   */
+  leafControls: 40,
+  leafFiles: 24,
   /**
    * Components that render an `AdminViewOnlySectionBanner`.
    *
@@ -359,8 +450,24 @@ const FIGURES = {
    * 92 -> 93 (#3354): the AI spend currency card heads itself with one banner,
    * mounted above its loading early-return, and carries it onto both AI
    * settings pages — one component, counted once.
+   *
+   * 93 -> 94 (#2939): the missing-Xero-contact panel heads its own section with
+   * one banner, above everything the section renders.
+   *
+   * 94 -> 95 (#3058, arriving with the epic merge): the erased-member Xero
+   * contact panel heads itself with its own banner.
+   *
+   * 95 -> 96 (#2940): the Video meetings setup screen. TWO banners, ONE
+   * component — this figure counts files that render one, and the settings
+   * section and the host sign-in section each head themselves with their own,
+   * which is the one-per-SECTION rule rather than one per page.
+   *
+   * 96 -> 97 (#2942, on the eighth sync): the roster name-detail card heads itself with one banner,
+   * mounted above its loading early-return. Its sibling on the same lodge — the
+   * lobby display card — keeps its own, because the two are separate sections
+   * on separate sub-pages and neither is ever rendered inside the other.
    */
-  bannerComponents: 93,
+  bannerComponents: 97,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
@@ -1122,7 +1229,7 @@ describe("view-only section banner coverage (#2160)", () => {
         The delta chain from upstream, so the figures reconcile rather than
         merely being asserted. Every step is a MEASURED re-run, not arithmetic:
 
-          263  upstream.
+          264  upstream.
           264  +1  member-photos (hoppers#171) adds the committee photo-display
                control — a leaf exception that keeps its own reason.
           268  +4  the Member Notices feature (#2238) adds banner-bearing admin
@@ -1131,7 +1238,7 @@ describe("view-only section banner coverage (#2160)", () => {
           269  +1  commit 427200eb ("Build Fix") re-measured after that merge
                and found one call site and one banner component MORE than the
                +4/+2 written above — so the Notices feature really contributed
-               5 call sites and 3 banner components (263 -> 269, 75 -> 78), and
+               5 call sites and 3 banner components (264 -> 269, 75 -> 78), and
                the prose deltas for it undercount by one. Recorded here rather
                than silently corrected, because 427200eb is the commit that
                made these numbers true and the earlier prose is what a reader
@@ -1241,8 +1348,8 @@ describe("view-only section banner coverage (#2160)", () => {
                Re-measured on the merged tree rather than added to either
                side's figure: #2286 and #2307 landed in the same window and
                both moved the count.
-          297      Re-measured on the merged tree: #2262's +4 and #2307's +2 are
-               independent, so 291 -> 295 -> 297. Neither side's number is
+          298      Re-measured on the merged tree: #2262's +4 and #2307's +2 are
+               independent, so 291 -> 295 -> 298. Neither side's number is
                taken as-is.
           299  +2  the Mountain Conditions "Source & selectors" panel adds
                Preview and Save configuration ViewOnlyActionButtons — two static
@@ -1284,7 +1391,7 @@ describe("view-only section banner coverage (#2160)", () => {
                cannot reach — so all five controls are static opt-outs in the
                same file: Edit, Save, "Restore the suggested wording", and the
                two halves of the confirm-gated "Ask visitors to choose again"
-               action. optOuts 258 -> 263, staticOptOuts 232 -> 237 and
+               action. optOuts 258 -> 264, staticOptOuts 232 -> 237 and
                bannerComponents 82 -> 83 move together; the vouched split,
                exceptions and the leaf bucket are untouched, because nothing
                here is gated on anything narrower than the finance area the
@@ -1294,7 +1401,7 @@ describe("view-only section banner coverage (#2160)", () => {
                one staged whole-roster Edit control. That child control is
                vouched by the roster page's unconditional lodge-access banner,
                so static opt-outs move 237 -> 234, render-site vouches move
-               21 -> 22, and total opt-outs move 263 -> 261.
+               21 -> 22, and total opt-outs move 264 -> 261.
           311  +1  #2593 replaces the old Save Mode site with two Edit/Save
                sites in the per-lodge allocation-preferences card. It owns a
                banner for standalone reuse, while the bed-allocation page
@@ -1327,7 +1434,7 @@ describe("view-only section banner coverage (#2160)", () => {
                opt-out under the page's own unconditional
                AdminViewOnlySectionBanner, which the sibling Approve/Reject/
                Resume controls already opt out under, so static opt-outs move
-               235 -> 236 and total opt-outs 262 -> 263. Nothing else moves: no
+               235 -> 236 and total opt-outs 262 -> 264. Nothing else moves: no
                new banner component, and the Full-Admin gate it additionally
                carries is applied by NOT RENDERING the control at all rather
                than by disabling it with a narrower per-button reason, so it
@@ -1339,7 +1446,7 @@ describe("view-only section banner coverage (#2160)", () => {
           313  +1  #2352 MC-03D adds the per-page Delete control to the Page
                Content cards, beside the Hide/Publish toggle it sits with and
                under the banner that file already renders. Static opt-outs move
-               236 -> 237 and total opt-outs 263 -> 264; the vouched split,
+               236 -> 237 and total opt-outs 264 -> 264; the vouched split,
                the exceptions and the banner count are untouched, because the
                control is gated on the same content area the banner states.
           313      THE COLLISION THIS LEDGER EXISTS FOR, and it fired. This

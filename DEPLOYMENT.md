@@ -705,7 +705,7 @@ Check for these before every deploy:
 awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv
 ```
 
-**Current windowed migrations — there are three, and pending rows share ONE
+**Current windowed migrations — there are six, and pending rows share ONE
 window.** `prisma migrate deploy` applies them in the same command, so the
 sequence below is run once, not once per migration.
 
@@ -729,6 +729,37 @@ sequence below is run once, not once per migration.
   not: an old hosting worker ignores the token/expiry fields and can take, email and
   complete work that a new worker already owns. The old web colour and **every** old
   worker must therefore be stopped before migrate, and only new workers may start.
+- `20260929010000_add_member_parent_partner_exclusion` (#3271 / #3292). Its
+  additive pair-state table and triggers reject a direct-parent/partner overlap
+  that the previous runtime can still attempt, and that runtime does not decode
+  the new database error. Stop every old runtime and database-capable worker before
+  the authorized private deployment lane's repair and keep them stopped through
+  the repeat zero-conflict census, migration, verification, and
+  replacement-runtime start. Follow the
+  issue-specific sequence in `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.3; no member
+  identifiers or repair SQL belong in this public repository.
+
+- `20260928020000_booking_owner_optional_member` and
+  `20260928030000_backfill_school_bookings_to_organisations` (#3369, stage 4 of
+  programme #2912). **These two are ONE window and are never applied apart.**
+  The first only changes the shape — it makes the booking's member link
+  optional, adds two partial unique indexes and creates the empty table the
+  classification is recorded in — and on its own the previous release survives
+  it. The second is what the previous release cannot survive: it moves every
+  school's booking onto the school's `Organisation` and leaves `memberId` NULL
+  on it, and the previous client reads that column as required, so the old
+  colour errors on the first school booking it touches. Between the two the
+  database would also accept a booking nobody owns, because the CHECK constraint
+  that makes "exactly one owner" true is added by the second.
+
+  **The backfill REFUSES unless the classification is complete**, and that is a
+  precondition of the window rather than a step inside it. Run
+  `npm run db:school-classification-census` against the club's database before
+  the window opens; every row it lists as CANNOT TELL must be decided by a person
+  and recorded, or the migration raises
+  `school_member_classification_incomplete` and writes nothing at all. The
+  operator guide is
+  [`guides/school-organisation-cutover.md`](docs/guides/school-organisation-cutover.md).
 
 There is no ordering that keeps both runtime protocols working, which is why the
 window exists.
@@ -759,7 +790,13 @@ says which governs when:
    instead: the exact commands, and why `pg_restore --list` is not one of them, are in
    `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 7.
 5. **Record the pre-migration checks** the runbook lists for the migration in hand
-   — for `20260803030000` that is the row count, the distinct `role` values with
+   — for `20260928030000` that is the census's own output, saved: the counts by
+   classification, the CANNOT TELL list (which must be empty) and how many school
+   bookings the backfill is about to re-parent. §2.4.2 has the commands. The
+   census is read-only and can be run as often as you like; run it once more
+   after step 3, because a school approval landing between the last run and the
+   window would add an unclassified row and the migration would refuse. For
+   `20260803030000` that is the row count, the distinct `role` values with
    counts, the column-exists confirmation, the proof that the replacement runtime
    cannot name the column, and the **required** per-row dump. Both of the
    `role`-related checks run inside the replacement image rather than at the host
@@ -767,6 +804,10 @@ says which governs when:
    **host** path and then move somewhere durable — a `\copy` through
    `docker compose exec postgres psql` writes inside that container's writable layer,
    which the deploy recreates. After migrate those values are unrecoverable.
+   For `20260929010000`, obtain the authorized private deployment lane's verified
+   repair and full read-only overlap-census result, and record publicly only that
+   the deployment prerequisite passed. Any changed row or additional pair stops
+   the release for an individual owner decision.
 6. **Run the safety validator, then migrate** — two commands, in that order. The
    validator is `scripts/validate-blue-green-migrations.sh`, a **separate script**
    that `prisma migrate deploy` knows nothing about: the only thing that runs it
@@ -781,10 +822,15 @@ says which governs when:
    dedicated compose service the deploy script uses,
    `docker compose --profile migrate run --rm migrate` — not `npx`, which this host
    is not documented as having and which is deliberately removed from the runtime
-   image. Pass all six pending migration files, in order — `20260803010000`,
-   `20260803020000`, `20260803030000`, `20260803070000`, `20260806000000` and
-   `20260806010000` — including the additive rows; exact commands are in
-   `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 9.
+   image. Pass all eighteen pending migration files, in order —
+   `20260803010000`, `20260803020000`, `20260803030000`, `20260803070000`,
+   `20260806000000` and `20260806010000`, followed by `20260913010000`,
+   `20260913020000`, `20260913030000`, `20260923010000` and `20260927010000`,
+   then programme #2912's `20260928010000`, `20260928020000`, `20260928030000`,
+   `20260928040000`, `20260928050000` and `20260928060000`, and finally
+   `20260929010000` — including the additive rows; exact commands are in
+   `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 9, and for the school pair
+   §2.4.2 and for #3271 §2.4.3.
 7. **Verify the migrate step**: the dropped column is gone and
    `_prisma_migrations` records each migration once.
 8. **Start the replacement release and replacement workers only**, confirm
@@ -796,7 +842,13 @@ says which governs when:
 intact, so finishing the deploy is usually the fastest recovery. If the new release
 will not start, run the reverse script beside the migration —
 `prisma/migrations/<migration>/rollback.sql` — as the migration role, then redeploy
-the previous release's images. **Never restart the previous release before running
+the previous release's images. **When a window carried more than one windowed
+migration, run their reverse scripts in the OPPOSITE order to the one they were
+applied in** — newest first. The #3369 pair is the worked example, and it enforces
+that rule rather than relying on it: `20260928030000/rollback.sql` gives every
+organisation-owned booking its member back, and only then can
+`20260928020000/rollback.sql` re-impose the NOT NULL constraints, which refuse
+loudly if it has not run. That refusal is the guard, not the failure. **Never restart the previous release before running
 the reverse script or restoring the backup**: after the drop commits, its client
 names a column that no longer exists, so re-pointing traffic at it does not restore
 service. Restore from backup only if the **data** is wrong rather than the schema.
@@ -846,10 +898,13 @@ when the queue is empty. Repeat the ENFORCED, unprocessed-work and unresolved-in
 proofs after the last policy change. **Only after all three remain empty** may you
 stop every new worker and start the old-only release.
 
-**When all three windowed migrations were applied in one window, first follow
-`20260806010000/rollback.sql`'s no-op operational boundary:** keep traffic removed,
-stop every new app/worker, and leave its nullable columns plus migration history
-intact. Then roll back the two schema-removal migrations in reverse order —
+**When all four windowed migrations were applied in one window, keep traffic
+removed and stop every new app/worker, then reverse them in application order.**
+Run `20260929010000/rollback.sql` first while no relationship writer is active;
+verify its pair table, functions, and triggers are gone without changing either
+source table. Then follow `20260806010000/rollback.sql`'s no-op operational
+boundary and leave its nullable columns plus migration history intact. Finally
+roll back the two schema-removal migrations in reverse order —
 `20260803030000` first, then `20260803010000`. One schema script is not enough:
 whichever you skip leaves its column missing
 and the previous release still broken, and if you skip `20260803010000` what stays

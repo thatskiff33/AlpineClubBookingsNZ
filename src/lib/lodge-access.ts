@@ -46,9 +46,15 @@ export async function getEligibleLodgeIdsForMember(
  */
 export async function isMemberEligibleToBookLodge(
   db: LodgeAccessDb,
-  memberId: string,
+  /** The BOOKER, or null when the booking is owned by an Organisation (#3369). */
+  memberId: string | null,
   lodgeId: string,
 ): Promise<boolean> {
+  // #3369: a booking restriction is a MEMBER grant, held as rows against a
+  // person. An organisation has none, which is the default-open case — exactly
+  // the answer the invented school member gave, since it never carried a
+  // restriction row either. No school's lodge access changes today.
+  if (memberId === null) return true;
   const eligible = await getEligibleLodgeIdsForMember(db, memberId);
   return eligible.allLodges || eligible.lodgeIds.includes(lodgeId);
 }

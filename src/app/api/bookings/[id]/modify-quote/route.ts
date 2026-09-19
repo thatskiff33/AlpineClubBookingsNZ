@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { AgeTier } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -53,6 +54,7 @@ import {
   preCheckInEditEvidence,
   preCheckInEditStrands,
 } from "@/lib/stored-sold-price-evidence";
+import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import {
   assertCheckInClearsXeroLockDate,
@@ -137,6 +139,8 @@ import {
   type BookingEditGuestRangePlan,
 } from "@/lib/booking-edit-guest-ranges";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
+import { overCapacityNights } from "@/lib/over-capacity-confirmation";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
@@ -326,7 +330,7 @@ export async function POST(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && !isAdmin) {
+  if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -734,7 +738,12 @@ export async function POST(
   // same field the create-flow quote returns (api/bookings/quote/route.ts) —
   // the edit panel's credit card keys off it. The BOOKING OWNER's balance, not
   // the actor's: an admin editing on behalf must see the member's credit.
-  const availableCreditCents = await getMemberCreditBalance(booking.memberId);
+  // #3369: an account-credit balance belongs to a MEMBER. An organisation has
+  // none, so zero is the balance rather than a fallback for one.
+  const creditBalanceMemberId = bookingOwner(booking).memberId;
+  const availableCreditCents = creditBalanceMemberId
+    ? await getMemberCreditBalance(creditBalanceMemberId)
+    : 0;
 
   let normalizedAddGuests: NormalizedAddGuest[] | undefined = addGuests;
   let guestNameUpdates: ReturnType<typeof resolveGuestNameUpdates> = [];
@@ -803,7 +812,7 @@ export async function POST(
     const { members: linkedMembers, boundary } =
       await resolveLinkedBookingMembersWithBoundary(
         prisma,
-        booking.memberId,
+        bookingOwner(booking).memberId,
         [
           ...(addGuests ?? []).map((guest) => guest.memberId),
           // #2337: linked members resolve through the same eligibility/boundary
@@ -841,7 +850,7 @@ export async function POST(
       session.user.id,
       {
         actorRole,
-        onBehalfOfMemberId: isAdmin ? booking.memberId : null,
+        onBehalfOfMemberId: isAdmin ? bookingOwner(booking).memberId : null,
         // D-8: neutral refusal for a blocked cross-family member.
         crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
       }
@@ -1128,7 +1137,7 @@ export async function POST(
   // `markCrossFamilyGuestsOnBooking`.
   const guestsForPricing = await markCrossFamilyGuestsOnBooking(
     prisma,
-    booking.memberId,
+    bookingOwner(booking).memberId,
     proposedGuestRows,
     // `bookingId` arms the owner's gate (finding 4): with the module off and no
     // consent row on this booking, the family-boundary recomputation is skipped.
@@ -1218,7 +1227,7 @@ export async function POST(
 
   try {
     await assertMembershipTypeBookingAllowed(prisma, {
-      ownerMemberId: booking.memberId,
+      ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,
       seasonYear,
       // Finding 2 (privacy re-review of MG3 #2308). `guestsForPricing` is the
@@ -1258,7 +1267,7 @@ export async function POST(
     let unpaidMemberGuests;
     try {
       unpaidMemberGuests = await findUnpaidMemberGuestNames(prisma, {
-        bookingMemberId: booking.memberId,
+        bookingMemberId: bookingOwner(booking).memberId,
         checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
         guests: normalizedAddGuests ?? [],
       });
@@ -1332,7 +1341,7 @@ export async function POST(
       // Owner decision, 3 Aug 2026: an unfinancial owner triggers the requirement
       // whether or not they are one of the rows being priced, so the preview
       // refuses exactly what the apply path refuses.
-      bookingOwnerMemberId: booking.memberId,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
       // D-12. `proposedGuestRows` is rebuilt field by field and deliberately
       // carries no consent column, so passing it raw made a PENDING cross-family
       // adult count as the party's paid-up adult HERE while the guest-add path
@@ -1625,6 +1634,41 @@ export async function POST(
    * member's request two ways (`INV-SSOT`). Null whenever the request carried no
    * promo change at all.
    */
+  /**
+   * What a capacity refusal puts on the wire, for each of the two audiences that
+   * can receive one (#2930).
+   *
+   * MEMBER — `capacityFullNights`, the nights and nothing else, through the ONE
+   * helper. The list this replaces was built inline by the price summary card
+   * from `availableBeds < 0`, and it told a member two things it must not. A
+   * whole-lodge-held night is pinned to exactly 0 available beds and never goes
+   * negative (`INV-CAP-021`, `INV-CAP-038`), so it fell out of that filter and a
+   * hold-only refusal rendered an EMPTY list where genuine fullness rendered a
+   * populated one — the tell ADR-001 decision 6 forbids, readable in the network
+   * response before a pixel was drawn. And each row carried the night's
+   * shortfall, which has no counterpart on a held night and so tells the two
+   * apart by arithmetic even once the list itself matches.
+   *
+   * ADMIN OVERRIDE — `nightDetails`, the confirmable over-capacity set from its
+   * own canonical helper, which deliberately EXCLUDES held nights because no
+   * override may admit anyone onto one (decision 5). It is emitted only on the
+   * branch that also raises `overCapacityConfirmRequired`, which `adminOverride`
+   * gates, so the bed numbers never reach a member at all. It used to be the
+   * whole unfiltered list, re-filtered client-side — a second spelling of
+   * `overCapacityNights` that could drift from the 409's (`INV-SSOT-001`).
+   */
+  const capacityRefusalFields: {
+    capacityFullNights?: string[];
+    nightDetails?: ReturnType<typeof overCapacityNights>;
+  } = capacity.available
+    ? {}
+    : {
+        capacityFullNights: getCapacityFullNights(capacity.nightDetails),
+        ...(adminOverride && partnerSharedGuests.length === 0
+          ? { nightDetails: overCapacityNights(capacity) }
+          : {}),
+      };
+
   const parkedQuoteResponse = (causes: readonly string[]) => {
     /**
      * #3214: THE ONE ANSWER THAT IS NOT A PARKED QUOTE — an edit that parks its
@@ -1708,14 +1752,7 @@ export async function POST(
       ...(adminOverride && !capacity.available && partnerSharedGuests.length === 0
         ? { overCapacityConfirmRequired: true }
         : {}),
-      ...(capacity.available
-        ? {}
-        : {
-            nightDetails: capacity.nightDetails.map((n) => ({
-              date: formatDateOnly(n.date),
-              availableBeds: n.availableBeds,
-            })),
-          }),
+      ...capacityRefusalFields,
     });
   };
 
@@ -1728,8 +1765,15 @@ export async function POST(
   // "no beds" before they are told "an officer will confirm the amount".
   if (parkedPlan) {
     return parkedQuoteResponse(
+      // #3498: the causes of EVERY strand this park records, across every work
+      // item it composes into - the preview said the same thing before, when it
+      // was one occurrence per strand.
       planResult?.kind === "financial_review_required"
-        ? planResult.occurrences.map((occurrence) => occurrence.cause)
+        ? planResult.occurrences.flatMap((occurrence) =>
+            editFinancialReviewStrandRecords(occurrence).map(
+              (strand) => strand.cause,
+            ),
+          )
         : [],
     );
   }
@@ -1745,7 +1789,7 @@ export async function POST(
       newTotalPriceCents = inProgressPlan.newTotalPriceCents;
     } else {
       priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         checkIn: newCheckIn,
         checkOut: newCheckOut,
         guests: policyAdjustedGuestsForPricing,
@@ -1815,9 +1859,13 @@ export async function POST(
         removeGuestIds: removeSet,
       }),
     });
-    if (previewEvidence.occurrences.length > 0) {
+    if (previewEvidence.occurrences !== null) {
       return parkedQuoteResponse(
-        previewEvidence.occurrences.map((occurrence) => occurrence.cause),
+        previewEvidence.occurrences.flatMap((occurrence) =>
+          editFinancialReviewStrandRecords(occurrence).map(
+            (strand) => strand.cause,
+          ),
+        ),
       );
     }
   }
@@ -1940,7 +1988,7 @@ export async function POST(
 
     try {
       const oldPriceForRemaining = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         guests: oldRemainingForPricing,
@@ -1949,7 +1997,7 @@ export async function POST(
         subscriptionLockoutMode,
       });
       const newPriceForRemaining = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-        ownerMemberId: booking.memberId,
+        ownerMemberId: bookingOwner(booking).memberId,
         checkIn: newCheckIn,
         checkOut: newCheckOut,
         guests: newRemainingForPricing,
@@ -2024,7 +2072,7 @@ export async function POST(
     for (const guest of normalizedAddGuestsWithRanges) {
       try {
         const guestPrice = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-          ownerMemberId: booking.memberId,
+          ownerMemberId: bookingOwner(booking).memberId,
           checkIn: newCheckIn,
           checkOut: newCheckOut,
           guests: [
@@ -2171,7 +2219,7 @@ export async function POST(
     }
     const validation = await validatePromoCodeFull(newPromoCode, {
       totalPriceCents: newTotalPriceCents,
-      memberId: booking.memberId,
+      memberId: bookingOwner(booking).memberId,
       guests: quoteGuestNightRates,
     }, todayAtClub, bookingId, bookingLodgeId, {
       selectedGuestIndexes: quoteSelectedGuestIndexes,
@@ -2209,7 +2257,7 @@ export async function POST(
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
-        memberId: booking.memberId,
+        memberId: bookingOwner(booking).memberId,
         bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,
@@ -2325,13 +2373,6 @@ export async function POST(
     ...(adminOverride && !capacity.available && partnerSharedGuests.length === 0
       ? { overCapacityConfirmRequired: true }
       : {}),
-    ...(capacity.available
-      ? {}
-      : {
-          nightDetails: capacity.nightDetails.map((n) => ({
-            date: formatDateOnly(n.date),
-            availableBeds: n.availableBeds,
-          })),
-        }),
+    ...capacityRefusalFields,
   });
 }

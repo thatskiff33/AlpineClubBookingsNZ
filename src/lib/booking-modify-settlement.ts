@@ -15,6 +15,7 @@ import {
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
+import { bookingOwner } from "@/lib/booking-owner";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import {
@@ -403,9 +404,10 @@ export async function applyLifecycleTransitions(
   if (reviewUpdate?.parkForReview && canParkForReview) {
     clearDraftExpiresAt = newStatus === BookingStatus.DRAFT;
     newStatus = "AWAITING_REVIEW";
-  } else if (reviewUpdate?.releaseFromReview && newStatus === "AWAITING_REVIEW") {
-    newStatus = "PAYMENT_PENDING";
   }
+  // No release arm here: an edit never reaches AWAITING_REVIEW (every edit
+  // door refuses it), so the only writer of AWAITING_REVIEW -> PAYMENT_PENDING
+  // is the officer review route (#3500, `INV-MOD-013`).
 
   // #2266: a DRAFT never carries a hold — it holds no capacity and owes no
   // money until the pay step (or $0 confirm-draft) makes it real, and THAT
@@ -470,7 +472,7 @@ export async function applyLifecycleTransitions(
     );
     if (appliedBeforeClamp > 0) {
       const clamp = await clampAppliedCreditToBookingPrice(
-        { memberId: booking.memberId, bookingId, newFinalPriceCents },
+        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents },
         tx,
       );
       appliedCreditCents = clamp.appliedCreditCents;
@@ -493,12 +495,12 @@ export async function applyLifecycleTransitions(
     // and none is owed, so nothing is lost by dropping the request and there is
     // no unhonoured choice to report to anybody.
     //
-    // This is the one arm that can genuinely reach a settled booking with a live
-    // election. A guest removal on a review-parked booking releases it from
-    // AWAITING_REVIEW to PAYMENT_PENDING (above) with its election still stored,
-    // and a removal that reprices the stay to nothing then lands it PAID right
-    // here — without this line, on a row still advertising an outstanding
-    // election that no consumer would ever look at again.
+    // Defence in depth (#3500): no edit reaches a review-parked booking with
+    // its election still stored, because every edit door refuses
+    // AWAITING_REVIEW and a self-removal on one can never clear the review.
+    // The clear stays so that a later writer which does let one through cannot
+    // land a PAID row still advertising an outstanding election that no
+    // consumer would ever look at again.
     await clearStaleCreditElection(tx, booking);
     const zeroDollarPayment = await tx.payment.upsert({
       where: { bookingId },

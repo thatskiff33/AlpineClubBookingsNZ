@@ -241,6 +241,7 @@ import {
   readBookingCapacityEvidence,
   readMemberEligibilityEvidence,
 } from "../booking-evidence";
+import { matchesWhere as evaluateWhere } from "@/lib/__tests__/support/prisma-where";
 
 // ---------------------------------------------------------------------------
 // The in-memory store.
@@ -257,6 +258,8 @@ interface Store {
   policyExceptionReservationNight: Row[];
   bedAllocation: Row[];
   member: Row[];
+  // #3369: the other half of a booking's owner.
+  organisation: Row[];
   memberSubscription: Row[];
   memberInduction: Row[];
 }
@@ -317,7 +320,17 @@ const MODELS: Record<ModelName, ModelSpec> = {
       // is what makes a select of any OTHER column throw here.
       member: (row, state) =>
         state.member.find((candidate) => candidate.id === row.memberId) ?? null,
+      // #3369: the OTHER half of the owner. A booking has a member or an
+      // organisation, never both, and `bookingOwner()` reads whichever is
+      // there — so the pack's select names both and this double resolves both.
+      organisation: (row, state) =>
+        state.organisation.find(
+          (candidate) => candidate.id === row.organisationId,
+        ) ?? null,
     },
+  },
+  organisation: {
+    columns: ["id", "name", "email"],
   },
   bookingRequest: {
     columns: ["id"],
@@ -419,18 +432,10 @@ function emptyStore(): Store {
     policyExceptionReservationNight: [],
     bedAllocation: [],
     member: [],
+    organisation: [],
     memberSubscription: [],
     memberInduction: [],
   };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    !(value instanceof Date)
-  );
 }
 
 function comparable(value: unknown): unknown {
@@ -438,143 +443,32 @@ function comparable(value: unknown): unknown {
 }
 
 /**
- * Apply one scalar condition. Every operator the sources could reach is handled
- * explicitly and everything else THROWS — a double that ignored an operator it
- * did not recognise would quietly return unfiltered rows, which is the exact
- * failure this whole design exists to prevent.
+ * Apply a `where` to one row of `model` through the shared evaluator (#3434),
+ * which THROWS on any operator it does not model. This wrapper supplies the two
+ * things only this double knows: which keys are columns of the model — from the
+ * spec, so an unselected column still counts and an unknown field throws — and
+ * how a relation is resolved through the store by foreign key, with the related
+ * row checked against ITS model.
  */
-function matchScalar(actual: unknown, condition: unknown, where: string): boolean {
-  if (condition === null) return actual === null || actual === undefined;
-  if (condition instanceof Date) return comparable(actual) === condition.getTime();
-  if (isPlainObject(condition)) {
-    for (const [operator, operand] of Object.entries(condition)) {
-      switch (operator) {
-        case "equals":
-          if (!matchScalar(actual, operand, where)) return false;
-          break;
-        case "not":
-          if (matchScalar(actual, operand, where)) return false;
-          break;
-        case "in":
-          if (!(operand as unknown[]).some((v) => matchScalar(actual, v, where)))
-            return false;
-          break;
-        case "notIn":
-          if ((operand as unknown[]).some((v) => matchScalar(actual, v, where)))
-            return false;
-          break;
-        case "lt":
-          if (!((comparable(actual) as number) < (comparable(operand) as number)))
-            return false;
-          break;
-        case "lte":
-          if (!((comparable(actual) as number) <= (comparable(operand) as number)))
-            return false;
-          break;
-        case "gt":
-          if (!((comparable(actual) as number) > (comparable(operand) as number)))
-            return false;
-          break;
-        case "gte":
-          if (!((comparable(actual) as number) >= (comparable(operand) as number)))
-            return false;
-          break;
-        default:
-          throw new Error(
-            `booking-evidence test double: unsupported filter operator "${operator}" at ${where}. ` +
-              "Teach the double the operator rather than letting it match everything.",
-          );
-      }
-    }
-    return true;
-  }
-  return actual === condition;
-}
-
 function matchesWhere(
   model: ModelName,
   row: Row,
   where: Row | undefined,
 ): boolean {
-  if (!where) return true;
   const spec = MODELS[model];
-  for (const [key, condition] of Object.entries(where)) {
-    if (condition === undefined) continue;
-    if (key === "AND") {
-      const clauses = Array.isArray(condition) ? condition : [condition];
-      if (!clauses.every((clause) => matchesWhere(model, row, clause as Row)))
-        return false;
-      continue;
-    }
-    if (key === "OR") {
-      const clauses = (condition as Row[]) ?? [];
-      if (!clauses.some((clause) => matchesWhere(model, row, clause))) return false;
-      continue;
-    }
-    if (key === "NOT") {
-      const clauses = Array.isArray(condition) ? condition : [condition];
-      if (clauses.some((clause) => matchesWhere(model, row, clause as Row)))
-        return false;
-      continue;
-    }
-    if (spec.columns.includes(key)) {
-      if (!matchScalar(row[key], condition, `${model}.${key}`)) return false;
-      continue;
-    }
-    const relation = spec.relations?.[key];
-    if (relation) {
-      const related = relation(row, store);
-      const rows = Array.isArray(related) ? related : related ? [related] : [];
-      const filter = condition as Record<string, Row>;
+  return evaluateWhere(row, where, {
+    label: `booking-evidence test double (${model})`,
+    column: (_row, key) => spec.columns.includes(key),
+    relation: (candidate, key) => {
+      const relation = spec.relations?.[key];
+      if (!relation) return undefined;
       const relatedModel = relationModel(model, key);
-      // Only the relation predicates the sources could reach; anything else
-      // throws below rather than silently passing.
-      if (filter.is !== undefined) {
-        if (
-          rows.length !== 1 ||
-          !matchesWhere(relatedModel, rows[0], filter.is)
-        ) {
-          return false;
-        }
-        continue;
-      }
-      if (filter.some !== undefined) {
-        if (
-          !rows.some((candidate) =>
-            matchesWhere(relatedModel, candidate, filter.some),
-          )
-        )
-          return false;
-        continue;
-      }
-      if (filter.none !== undefined) {
-        if (
-          rows.some((candidate) =>
-            matchesWhere(relatedModel, candidate, filter.none),
-          )
-        )
-          return false;
-        continue;
-      }
-      throw new Error(
-        `booking-evidence test double: unsupported relation filter on ${model}.${key}`,
-      );
-    }
-    // A compound unique key, e.g. `memberId_seasonYear: { memberId, seasonYear }`.
-    if (
-      isPlainObject(condition) &&
-      Object.keys(condition).length > 0 &&
-      Object.keys(condition).every((part) => spec.columns.includes(part))
-    ) {
-      if (!matchesWhere(model, row, condition)) return false;
-      continue;
-    }
-    throw new Error(
-      `booking-evidence test double: unknown filter field "${model}.${key}". ` +
-        "Add it to the model spec — do not let an unrecognised predicate match every row.",
-    );
-  }
-  return true;
+      return {
+        related: relation(candidate, store),
+        matches: (relatedRow, nested) => matchesWhere(relatedModel, relatedRow, nested),
+      };
+    },
+  });
 }
 
 function shapeRow(
@@ -666,6 +560,9 @@ function relationModel(model: ModelName, relation: string): ModelName {
     return "bookingGuest";
   }
   if (model === "booking" && relation === "member") return "member";
+  if (model === "booking" && relation === "organisation") {
+    return "organisation";
+  }
   throw new Error(
     `booking-evidence test double: no model registered for ${model}.${relation}`,
   );
