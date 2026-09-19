@@ -247,6 +247,41 @@ function resolveLocalBinding(
 }
 
 /**
+ * The census reads files the `@/` alias cannot reach. `prisma/demo-seed.ts`
+ * imports the one canonical relation as `../src/lib/booking-final-price`,
+ * because a seed script outside `src/` has no alias to spell. Matching the
+ * specifier as text therefore reported a correct caller of the one home as an
+ * escape. Resolve both spellings to the repository path they name instead.
+ */
+function importsCanonicalModule(
+  specifier: string,
+  importingFile: string,
+  canonicalPath: string,
+): boolean {
+  const normalise = (path: string): string => {
+    const segments: string[] = [];
+    for (const segment of path.split("/")) {
+      if (segment === "" || segment === ".") continue;
+      if (segment === ".." ) {
+        segments.pop();
+        continue;
+      }
+      segments.push(segment);
+    }
+    return segments.join("/");
+  };
+  if (specifier.startsWith("@/")) {
+    return normalise(`src/${specifier.slice(2)}`) === canonicalPath;
+  }
+  if (specifier.startsWith("./") || specifier.startsWith("../")) {
+    const directory = importingFile.replaceAll("\\", "/").split("/");
+    directory.pop();
+    return normalise(`${directory.join("/")}/${specifier}`) === canonicalPath;
+  }
+  return false;
+}
+
+/**
  * A same-named local function is not the money helper.  The census proves the
  * binding at the call site is the canonical import, rather than trusting its
  * spelling, so a shadowed helper cannot certify a writer.
@@ -254,14 +289,18 @@ function resolveLocalBinding(
 function importedCanonicalBinding(
   use: ts.Identifier,
   source: ts.SourceFile,
-  moduleSpecifier: string,
+  canonicalPath: string,
 ): boolean {
   let imported = false;
   for (const statement of source.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
       !ts.isStringLiteral(statement.moduleSpecifier) ||
-      statement.moduleSpecifier.text !== moduleSpecifier ||
+      !importsCanonicalModule(
+        statement.moduleSpecifier.text,
+        source.fileName,
+        canonicalPath,
+      ) ||
       !statement.importClause?.namedBindings ||
       !ts.isNamedImports(statement.importClause.namedBindings)
     ) {
@@ -309,13 +348,113 @@ function importedCanonicalBinding(
   return true;
 }
 
+/**
+ * The payload expressions a relation operand may legitimately be spelled as.
+ * More than one is possible on a parked edit; see `withBranchOperands`.
+ */
+type ExpectedOperands = {
+  totalPriceCents?: readonly ts.Expression[];
+  promoAdjustmentCents?: readonly ts.Expression[];
+};
+
+/** A payload that writes the column contributes exactly one spelling to start. */
+function acceptedOperand(
+  value: ts.Expression | undefined,
+): readonly ts.Expression[] | undefined {
+  return value ? [value] : undefined;
+}
+
+/**
+ * A hard-coded number cannot be the row's existing value except by accident, so
+ * it is never evidence that an unwritten column was fed to the relation.
+ */
+function isLiteralOperand(operand: ts.Expression): boolean {
+  if (
+    ts.isPrefixUnaryExpression(operand) &&
+    (operand.operator === ts.SyntaxKind.MinusToken ||
+      operand.operator === ts.SyntaxKind.PlusToken)
+  ) {
+    return isLiteralOperand(operand.operand);
+  }
+  return ts.isNumericLiteral(operand) || ts.isStringLiteral(operand);
+}
+
+/**
+ * Compare one operand of the canonical relation against the payload value for
+ * the same column.
+ *
+ * A payload need not write every column it derives from: an update that clears
+ * the promotion recomputes `finalPriceCents` from the total it is NOT changing.
+ * There is no payload expression to compare that operand against, and demanding
+ * one reported the writer as an escape for using the canonical helper
+ * correctly. The census can still insist the operand exists and reads something
+ * rather than being a hard-coded number; whether the value it reads equals the
+ * stored column is a runtime identity, which the reconciliation projection owns.
+ */
+function canonicalOperandMatches(
+  operand: ts.Expression | undefined,
+  accepted: readonly ts.Expression[] | undefined,
+  source: ts.SourceFile,
+): boolean {
+  // The relation takes both operands; a call missing one is not that relation.
+  if (!operand) return false;
+  if (!accepted || accepted.length === 0) return !isLiteralOperand(operand);
+  return accepted.some(
+    (candidate) => candidate.getText(source) === operand.getText(source),
+  );
+}
+
+/**
+ * Follow a parked edit into the branch being checked.
+ *
+ * A parked writer stores its four columns from parallel ternaries on the one
+ * condition: the total is `parked ? stored : computed`, and the final price is
+ * `parked ? stored : relation(...)`. Inside the computed branch the relation may
+ * legitimately be fed either spelling — the ternary variable itself, which
+ * evaluates to the computed total on that branch, or the computed expression
+ * the ternary chooses — and the tree contains both. Comparing only the whole
+ * ternary reported `booking-batch-modification-service.ts` as an escape, and
+ * comparing only the branch reported `api/bookings/[id]/guests/route.ts`; each
+ * is a correct caller. Accept the branch AS WELL, and only when the payload
+ * value is parked on the same condition, so a writer that feeds the relation
+ * the stored figure, or mixes two conditions, is still refused.
+ */
+function withBranchOperands(
+  expectedOperands: ExpectedOperands | undefined,
+  conditional: ts.ConditionalExpression,
+  branchIndex: number,
+  source: ts.SourceFile,
+): ExpectedOperands | undefined {
+  if (!expectedOperands) return expectedOperands;
+  const widen = (
+    accepted: readonly ts.Expression[] | undefined,
+  ): readonly ts.Expression[] | undefined => {
+    if (!accepted || accepted.length === 0) return accepted;
+    const widened = [...accepted];
+    for (const candidate of accepted) {
+      const resolved = ts.isIdentifier(candidate)
+        ? (resolveLocalBinding(candidate, source) ?? candidate)
+        : candidate;
+      if (
+        ts.isConditionalExpression(resolved) &&
+        resolved.condition.getText(source) ===
+          conditional.condition.getText(source)
+      ) {
+        widened.push(branchIndex === 0 ? resolved.whenTrue : resolved.whenFalse);
+      }
+    }
+    return widened;
+  };
+  return {
+    totalPriceCents: widen(expectedOperands.totalPriceCents),
+    promoAdjustmentCents: widen(expectedOperands.promoAdjustmentCents),
+  };
+}
+
 function expressionUsesCanonicalFinalPrice(
   expression: ts.Expression,
   source: ts.SourceFile,
-  expectedOperands?: {
-    totalPriceCents?: ts.Expression;
-    promoAdjustmentCents?: ts.Expression;
-  },
+  expectedOperands?: ExpectedOperands,
   seen = new Set<ts.Node>(),
 ): boolean {
   if (seen.has(expression)) return false;
@@ -329,8 +468,8 @@ function expressionUsesCanonicalFinalPrice(
       helper,
       source,
       helper.text === "bookingFinalPriceCents"
-        ? "@/lib/booking-final-price"
-        : "@/lib/booking-money-build-up",
+        ? "src/lib/booking-final-price"
+        : "src/lib/booking-money-build-up",
     );
     if (!imported) return false;
     if (helper.text === "d3CompatibleBookingMoneyBuildUpCents") return true;
@@ -346,10 +485,16 @@ function expressionUsesCanonicalFinalPrice(
       }
     }
     return (
-      operands.get("totalPriceCents")?.getText(source) ===
-        expectedOperands?.totalPriceCents?.getText(source) &&
-      operands.get("promoAdjustmentCents")?.getText(source) ===
-        expectedOperands?.promoAdjustmentCents?.getText(source)
+      canonicalOperandMatches(
+        operands.get("totalPriceCents"),
+        expectedOperands?.totalPriceCents,
+        source,
+      ) &&
+      canonicalOperandMatches(
+        operands.get("promoAdjustmentCents"),
+        expectedOperands?.promoAdjustmentCents,
+        source,
+      )
     );
   }
   if (ts.isIdentifier(expression)) {
@@ -364,8 +509,13 @@ function expressionUsesCanonicalFinalPrice(
   if (ts.isConditionalExpression(expression)) {
     const branches = [expression.whenTrue, expression.whenFalse];
     return (
-      branches.some((branch) =>
-        expressionUsesCanonicalFinalPrice(branch, source, expectedOperands, seen),
+      branches.some((branch, index) =>
+        expressionUsesCanonicalFinalPrice(
+          branch,
+          source,
+          withBranchOperands(expectedOperands, expression, index, source),
+          seen,
+        ),
       ) &&
       branches.some(
         (branch) =>
@@ -698,8 +848,10 @@ export function scanBookingMoneyWriterEqualityEscapes(
         !values.has("promoAdjustmentCents")
       ) &&
       !expressionUsesCanonicalFinalPrice(finalPrice, source, {
-        totalPriceCents: values.get("totalPriceCents"),
-        promoAdjustmentCents: values.get("promoAdjustmentCents"),
+        totalPriceCents: acceptedOperand(values.get("totalPriceCents")),
+        promoAdjustmentCents: acceptedOperand(
+          values.get("promoAdjustmentCents"),
+        ),
       })
     ) {
       const finalLine =

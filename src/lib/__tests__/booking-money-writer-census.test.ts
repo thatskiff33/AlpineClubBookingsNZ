@@ -712,6 +712,63 @@ describe("INV-MONEY-031 booking money writer census", () => {
       ),
     ).toEqual(["update-zero-helper.ts:1|discountCents"]);
     expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "update-zero-literal-total.ts",
+        'import { bookingFinalPriceCents } from "@/lib/booking-final-price"; await database.booking.update({ data: { promoAdjustmentCents: 0, discountCents: 0, finalPriceCents: bookingFinalPriceCents({ totalPriceCents: 0, promoAdjustmentCents: 0 }) } });',
+      ),
+    ).toEqual(["update-zero-literal-total.ts:1|finalPriceCents"]);
+    // The census reads seeds and fixtures outside `src/`, which have no `@/`
+    // alias to import the one canonical relation by.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "prisma/relative-import.ts",
+        cleanWriter.replace(
+          '"@/lib/booking-final-price"',
+          '"../src/lib/booking-final-price"',
+        ),
+      ),
+    ).toEqual([]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "prisma/relative-import-elsewhere.ts",
+        cleanWriter.replace(
+          '"@/lib/booking-final-price"',
+          '"../src/lib/booking-final-price-copy"',
+        ),
+      ),
+    ).not.toEqual([]);
+    // A parked edit writes its total and its final price from parallel
+    // ternaries on one condition, and the computed branch may feed the relation
+    // either the ternary variable or the expression that branch chooses.
+    const parkedWriter = `import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+      const newTotalPriceCents = parked ? booking.totalPriceCents : priced.totalPriceCents;
+      const newFinalPriceCents = parked
+        ? booking.finalPriceCents
+        : bookingFinalPriceCents({ totalPriceCents: priced.totalPriceCents, promoAdjustmentCents: promo });
+      await database.booking.update({ data: { totalPriceCents: newTotalPriceCents, discountCents: Math.max(0, -promo), promoAdjustmentCents: promo, finalPriceCents: newFinalPriceCents } });
+    `;
+    expect(
+      scanBookingMoneyWriterEqualityEscapes("parked.ts", parkedWriter),
+    ).toEqual([]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "parked-variable-operand.ts",
+        parkedWriter.replace(
+          "totalPriceCents: priced.totalPriceCents, promoAdjustmentCents: promo }",
+          "totalPriceCents: newTotalPriceCents, promoAdjustmentCents: promo }",
+        ),
+      ),
+    ).toEqual([]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "parked-stored-operand.ts",
+        parkedWriter.replace(
+          "totalPriceCents: priced.totalPriceCents, promoAdjustmentCents: promo }",
+          "totalPriceCents: booking.totalPriceCents, promoAdjustmentCents: promo }",
+        ),
+      ),
+    ).not.toEqual([]);
+    expect(
       DISCOVERED_EQUALITY_ESCAPES,
       "INV-MONEY-031: a complete Booking headline write bypasses the canonical final-price relation.",
     ).toEqual([]);
