@@ -32,6 +32,11 @@
  */
 
 import { calendarDateParts } from "./calendar-date";
+import {
+  calendarDateOfDateOnlyInstant,
+  calendarDateOfSerialisedDbDate,
+  calendarDateOfSerialisedDbDateOrNull,
+} from "./instant";
 import { formatCalendarDateShape, formatHouseShape } from "./intl";
 import type { CalendarDate, ClubTimeZone, Instant } from "./types";
 
@@ -149,6 +154,71 @@ export function formatClubLongWeekdayDayMonth(date: CalendarDate): string {
  */
 export function formatClubLongWeekdayDate(date: CalendarDate): string {
   return formatCalendarDateShape("longWeekdayDate", date);
+}
+
+// ---------------------------------------------------------------------------
+// Stay dates — a stored lodge night, decoded and formatted in ONE call
+// ---------------------------------------------------------------------------
+
+/**
+ * "16 Apr 2026" — a stored lodge night (`checkIn`, `checkOut`, a join deadline,
+ * a booking-period edge: any `@db.Date`), whether it is still the `Date` Prisma
+ * returned or the string it became crossing a JSON boundary.
+ *
+ * THE ONE HOME of the SERIALISED composition — `calendarDateOfSerialisedDbDate`
+ * then `formatClubDate` — which fifteen production files spelled out for
+ * themselves before #3507, each with its own docblock of why the pair must stay
+ * a pair. The reason is a defect that shipped once (CT-4, #2870;
+ * `INV-DATE-010`): a `@db.Date` is encoded as UTC MIDNIGHT, so reading its day
+ * THROUGH A TIMEZONE is the identity for a club east of Greenwich and THE DAY
+ * BEFORE for any club west of it — a stay on the 16th renders as the 15th in
+ * Vancouver. The kernel's decoders read the calendar day out of the encoding
+ * instead, and `formatClubDate` takes no zone, so nothing here can move the day.
+ * `__tests__/stay-date.test.ts` pins that west-of-Greenwich case.
+ *
+ * WHAT IT DOES NOT DO is tell you whether the value was a `@db.Date` in the
+ * first place. Hand it a `createdAt` and you get that instant's UTC day, which
+ * is the `INV-DATE-019` defect — use `formatClubInstantDate` with the club's
+ * zone for a moment. Throws for a value that is not a calendar day at all; a
+ * client render that must survive a malformed stored value takes
+ * {@link formatStayDateOrNull}.
+ *
+ * `stay-date-format-census.test.ts` (`INV-SSOT-001`) refuses THAT pair — the
+ * serialised decoder beside `formatClubDate` — anywhere else in `src/`, so the
+ * next surface imports the rule rather than re-spelling it.
+ *
+ * WHAT IS NOT YET CONVERGED, so nobody reads the census as covering it: the
+ * `Date`-form spelling, `formatClubDate(calendarDateOfDateOnlyInstant(x))`,
+ * is still written out in about a dozen server-side files (several behind a
+ * local `formatStayDay`), and `formatPayloadCalendarDay` in
+ * `src/app/(admin)/admin/_lib/calendar-day.ts` is a sibling shared helper for
+ * the same job with its OWN, pinned rejection semantics — it refuses a
+ * time-bearing string this helper's prefix read would accept. The `Instant`
+ * arm of the signature exists for the one server caller converted here
+ * (`xero-record-activity`); sweeping the rest, and deciding which rejection
+ * semantics survive, is #3511 rather than this change.
+ */
+export function formatStayDate(value: string | Instant): string {
+  return formatClubDate(
+    typeof value === "string"
+      ? calendarDateOfSerialisedDbDate(value)
+      : calendarDateOfDateOnlyInstant(value),
+  );
+}
+
+/**
+ * {@link formatStayDate} for a SERIALISED value, answering `null` rather than
+ * throwing — for a malformed value and for an absent one, so a nullable column
+ * needs no guard. The caller chooses the fallback (`?? value` to show the raw
+ * string, `?? "—"` for an empty cell), which is the same failure-mode line
+ * {@link calendarDateOfSerialisedDbDateOrNull} draws and for the same reason: a
+ * throw out of a client render blanks the whole screen.
+ */
+export function formatStayDateOrNull(
+  value: string | null | undefined,
+): string | null {
+  const day = calendarDateOfSerialisedDbDateOrNull(value);
+  return day === null ? null : formatClubDate(day);
 }
 
 // ---------------------------------------------------------------------------
