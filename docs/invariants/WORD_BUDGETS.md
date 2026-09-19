@@ -72,7 +72,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | --- | ---: |
 | `INV-MOD-025` | 4650 |
 | `INV-ADDPAY-037` | 2769 |
-| `INV-SSOT-004` | 2658 |
+| `INV-SSOT-004` | 2653 |
 | `INV-HOST-050` | 2220 |
 | `INV-PRIV-012` | 2086 |
 | `INV-CONFIG-005` | 1742 |

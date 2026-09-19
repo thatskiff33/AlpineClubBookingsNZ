@@ -33,7 +33,7 @@ reason: the existing booking export query must carry the complete canonical
   projection so the exported state describes the same stored record.
 
 file: src/lib/admin-bookings-service.ts
-lines: 1439
+lines: 1438
 reason: list hydration already owns the one bounded heavy booking projection;
   classifying there avoids another query and keeps pagination coherent.
 
