@@ -24,6 +24,7 @@ import {
 import { formatCents } from "@/lib/utils";
 import { formatStayDate } from "@/lib/club-time";
 import { bookingStatusLabel } from "@/lib/status-colors";
+import type { BookingMoneyReconciliation } from "@/lib/booking-money-reconciliation";
 
 type PaymentMode = "EACH_PAYS_OWN" | "ORGANISER_PAYS";
 type GroupStatus = "OPEN" | "CLOSED" | "CANCELLED";
@@ -35,6 +36,7 @@ interface JoinerRow {
   guestCount: number;
   status: string | null;
   priceCents: number | null;
+  moneyReconciliation: BookingMoneyReconciliation | null;
   isMember: boolean;
 }
 
@@ -459,7 +461,12 @@ export function OrganiserGroupBookingCard({
                   </span>
                   <span className="flex items-center gap-2">
                     {j.priceCents != null ? (
-                      <span className="text-muted-foreground">{formatCents(j.priceCents)}</span>
+                      <span className="text-muted-foreground">
+                        {formatCents(j.priceCents)}
+                        {j.moneyReconciliation?.state === "UNRECONCILED"
+                          ? " · recorded amount needs review"
+                          : ""}
+                      </span>
                     ) : null}
                     {j.status ? (
                       <Badge variant="outline" className="text-xs">

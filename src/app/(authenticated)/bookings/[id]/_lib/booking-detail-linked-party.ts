@@ -6,6 +6,7 @@ import type { OrganiserGroupState } from "@/components/group-booking/organiser-g
 import type { BookingDetailRecord } from "./load-booking-detail";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
 import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
+import { reconcileStoredBookingMoney } from "@/lib/booking-money-reconciliation-store";
 
 /**
  * THE REST OF THE PARTY (#2958): the bookings LINKED to this one — the #738
@@ -65,6 +66,7 @@ export function resolveBookingDetailLinkedParty({
         status: linked.status,
         guestCount: linked.guests.length,
         finalPriceCents: linked.finalPriceCents,
+        moneyReconciliation: reconcileStoredBookingMoney(linked),
         datesDiffer:
           childCheckIn !== parentCheckInDate ||
           childCheckOut !== parentCheckOutDate,
@@ -114,6 +116,9 @@ export function resolveBookingDetailLinkedParty({
             guestCount: join.booking?.guests.length ?? 0,
             status: join.booking?.status ?? null,
             priceCents: join.booking?.finalPriceCents ?? null,
+            moneyReconciliation: join.booking
+              ? reconcileStoredBookingMoney(join.booking)
+              : null,
             isMember: join.isMember,
           })),
       }

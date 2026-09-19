@@ -31,6 +31,14 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
+// This page test owns the list's nesting discriminator. Its Prisma mock returns
+// the list shape for both reads, so keep stored-money classification outside
+// that unrelated fixture contract; reconciliation has its own reader tests.
+vi.mock("@/lib/booking-money-reconciliation-store", () => ({
+  BOOKING_MONEY_RECONCILIATION_SELECT: {},
+  reconcileStoredBookingMoney: vi.fn(() => ({ state: "RECONCILED", reasons: [] })),
+}));
+
 // Render Next's Link as a plain anchor so hrefs land in the static markup.
 vi.mock("next/link", () => ({
   default: ({

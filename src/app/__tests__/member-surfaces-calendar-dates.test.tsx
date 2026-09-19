@@ -239,6 +239,7 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
             status: "PENDING",
             guestCount: 2,
             finalPriceCents: 12_000,
+            moneyReconciliation: { state: "RECONCILED", reasons: [] },
             datesDiffer: true,
             // Straight off Prisma: a `@db.Date` column, so UTC midnight.
             checkIn: new Date("2026-04-16T00:00:00.000Z"),

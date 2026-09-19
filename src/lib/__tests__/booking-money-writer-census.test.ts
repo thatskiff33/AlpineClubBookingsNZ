@@ -568,6 +568,7 @@ describe("INV-MONEY-031 booking money writer census", () => {
 
   it("mutation-proves headline equality through aliases, spreads, upserts and parked branches", () => {
     const cleanWriter = `
+      import { bookingFinalPriceCents } from "@/lib/booking-final-price";
       const final = bookingFinalPriceCents({ totalPriceCents: total, promoAdjustmentCents: promo });
       const base = { totalPriceCents: total, discountCents: Math.max(0, -promo), promoAdjustmentCents: promo };
       const payload = { ...base, finalPriceCents: final };
@@ -599,6 +600,27 @@ describe("INV-MONEY-031 booking money writer census", () => {
     expect(
       scanBookingMoneyWriterEqualityEscapes("stale.ts", stale),
     ).not.toEqual([]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "shadowed-helper.ts",
+        cleanWriter.replace(
+          'const final = bookingFinalPriceCents',
+          'function run(bookingFinalPriceCents) { const final = bookingFinalPriceCents',
+        ).replace(
+          'await database.booking.upsert({ where: { id: "booking-1" }, create: payload, update: payload });',
+          'await database.booking.upsert({ where: { id: "booking-1" }, create: payload, update: payload }); }',
+        ),
+      ),
+    ).not.toEqual([]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "wrong-helper-constant.ts",
+        cleanWriter.replace(
+          "promoAdjustmentCents: promo });",
+          "promoAdjustmentCents: 0 });",
+        ),
+      ),
+    ).not.toEqual([]);
     expect(scanBookingMoneyWriterEqualityEscapes("opaque.ts", opaque)).toEqual([
       "opaque.ts:1|opaqueCompleteHeadlinePayload",
     ]);
@@ -621,6 +643,7 @@ describe("INV-MONEY-031 booking money writer census", () => {
       ),
     ).toEqual(["partial-discount.ts:1|discountCents"]);
     const mutablePair = `
+      import { bookingFinalPriceCents } from "@/lib/booking-final-price";
       let discountCents = 0;
       let promoAdjustmentCents = 0;
       if (applyPromo) {
@@ -686,7 +709,7 @@ describe("INV-MONEY-031 booking money writer census", () => {
     expect(
       scanBookingMoneyWriterEqualityEscapes(
         "update-zero-helper.ts",
-        "await database.booking.update({ data: { promoAdjustmentCents: 0, finalPriceCents: bookingFinalPriceCents({ totalPriceCents, promoAdjustmentCents: 0 }) } });",
+        'import { bookingFinalPriceCents } from "@/lib/booking-final-price"; await database.booking.update({ data: { promoAdjustmentCents: 0, finalPriceCents: bookingFinalPriceCents({ totalPriceCents, promoAdjustmentCents: 0 }) } });',
       ),
     ).toEqual(["update-zero-helper.ts:1|discountCents"]);
     expect(

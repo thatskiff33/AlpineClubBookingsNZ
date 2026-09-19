@@ -246,27 +246,103 @@ function resolveLocalBinding(
   return resolveLocalVariableDeclaration(use, source)?.initializer;
 }
 
+/**
+ * A same-named local function is not the money helper.  The census proves the
+ * binding at the call site is the canonical import, rather than trusting its
+ * spelling, so a shadowed helper cannot certify a writer.
+ */
+function importedCanonicalBinding(
+  use: ts.Identifier,
+  source: ts.SourceFile,
+  moduleSpecifier: string,
+): boolean {
+  let imported = false;
+  for (const statement of source.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.moduleSpecifier.text !== moduleSpecifier ||
+      !statement.importClause?.namedBindings ||
+      !ts.isNamedImports(statement.importClause.namedBindings)
+    ) {
+      continue;
+    }
+    imported ||= statement.importClause.namedBindings.elements.some(
+      (specifier) =>
+        specifier.name.text === use.text &&
+        (specifier.propertyName?.text ?? specifier.name.text) === use.text,
+    );
+  }
+  if (!imported) return false;
+  for (let scope = enclosingScope(use); scope; scope = enclosingScope(scope)) {
+    if (ts.isSourceFile(scope)) break;
+    let shadowed = false;
+    const visit = (node: ts.Node) => {
+      if (shadowed || (node !== scope && isNestedScope(node))) return;
+      if (
+        (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) ||
+        (ts.isFunctionDeclaration(node) && node.name) ||
+        (ts.isParameter(node) && ts.isIdentifier(node.name))
+      ) {
+        const name = ts.isIdentifier(node.name) ? node.name.text : "";
+        if (name === use.text) shadowed = true;
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(scope, visit);
+    if (shadowed) return false;
+  }
+  return true;
+}
+
 function expressionUsesCanonicalFinalPrice(
   expression: ts.Expression,
   source: ts.SourceFile,
+  expectedOperands?: {
+    totalPriceCents?: ts.Expression;
+    promoAdjustmentCents?: ts.Expression;
+  },
   seen = new Set<ts.Node>(),
 ): boolean {
   if (seen.has(expression)) return false;
   seen.add(expression);
   if (
     ts.isCallExpression(expression) &&
-    ts.isIdentifier(expression.expression) &&
-    (expression.expression.text === "bookingFinalPriceCents" ||
-      // Stage 3's verified build-up projector is the canonical evidence-aware
-      // equivalent after it has checked the relation against this helper.
-      expression.expression.text === "d3CompatibleBookingMoneyBuildUpCents")
-  )
-    return true;
+    ts.isIdentifier(expression.expression)
+  ) {
+    const helper = expression.expression;
+    const imported = importedCanonicalBinding(
+      helper,
+      source,
+      helper.text === "bookingFinalPriceCents"
+        ? "@/lib/booking-final-price"
+        : "@/lib/booking-money-build-up",
+    );
+    if (!imported) return false;
+    if (helper.text === "d3CompatibleBookingMoneyBuildUpCents") return true;
+    const argument = expression.arguments[0];
+    if (!argument || !ts.isObjectLiteralExpression(argument)) return false;
+    const operands = new Map<string, ts.Expression>();
+    for (const property of argument.properties) {
+      if (ts.isPropertyAssignment(property)) {
+        const name = propertyName(property.name);
+        if (name) operands.set(name, property.initializer);
+      } else if (ts.isShorthandPropertyAssignment(property)) {
+        operands.set(property.name.text, property.name);
+      }
+    }
+    return (
+      operands.get("totalPriceCents")?.getText(source) ===
+        expectedOperands?.totalPriceCents?.getText(source) &&
+      operands.get("promoAdjustmentCents")?.getText(source) ===
+        expectedOperands?.promoAdjustmentCents?.getText(source)
+    );
+  }
   if (ts.isIdentifier(expression)) {
     const binding = resolveLocalBinding(expression, source);
     return (
       binding !== undefined &&
-      expressionUsesCanonicalFinalPrice(binding, source, seen)
+      expressionUsesCanonicalFinalPrice(binding, source, expectedOperands, seen)
     );
   }
   // Parked edits deliberately preserve the stored value on one branch; the
@@ -275,7 +351,7 @@ function expressionUsesCanonicalFinalPrice(
     const branches = [expression.whenTrue, expression.whenFalse];
     return (
       branches.some((branch) =>
-        expressionUsesCanonicalFinalPrice(branch, source, seen),
+        expressionUsesCanonicalFinalPrice(branch, source, expectedOperands, seen),
       ) &&
       branches.some(
         (branch) =>
@@ -607,7 +683,10 @@ export function scanBookingMoneyWriterEqualityEscapes(
         finalEqualsTotal &&
         !values.has("promoAdjustmentCents")
       ) &&
-      !expressionUsesCanonicalFinalPrice(finalPrice, source)
+      !expressionUsesCanonicalFinalPrice(finalPrice, source, {
+        totalPriceCents: values.get("totalPriceCents"),
+        promoAdjustmentCents: values.get("promoAdjustmentCents"),
+      })
     ) {
       const finalLine =
         source.getLineAndCharacterOfPosition(finalPrice.getStart(source)).line +

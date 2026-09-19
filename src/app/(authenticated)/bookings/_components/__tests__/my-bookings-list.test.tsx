@@ -48,6 +48,7 @@ function item(overrides: Partial<MyBookingItem> = {}): MyBookingItem {
     checkOut: "2026-08-12T00:00:00.000Z",
     guestCount: 2,
     finalPriceCents: 12000,
+    moneyReconciliation: { state: "RECONCILED", reasons: [] },
     status: "PAID" as BookingStatus,
     linkLabel: null,
     parentBookingId: null,
@@ -254,5 +255,25 @@ describe("a booking whose adjustment is still being worked out (#3033)", () => {
     expect(
       screen.getByRole("link", { name: /Aug 2026/ }),
     ).not.toHaveTextContent("being checked");
+  });
+});
+
+describe("stored booking money reconciliation", () => {
+  it("qualifies an unreconciled stored amount without replacing it", () => {
+    render(
+      <MyBookingsList
+        bookings={[
+          item({
+            moneyReconciliation: {
+              state: "UNRECONCILED",
+              reasons: ["FINAL_PRICE_RELATION_MISMATCH"],
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Recorded amount needs review")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Aug 2026/ })).toHaveTextContent("$120.00");
   });
 });

@@ -31,6 +31,7 @@ function group(overrides: Partial<OrganiserGroupState> = {}): OrganiserGroupStat
         guestCount: 1,
         status: "CONFIRMED",
         priceCents: 4500,
+        moneyReconciliation: { state: "RECONCILED", reasons: [] },
         isMember: true,
       },
     ],

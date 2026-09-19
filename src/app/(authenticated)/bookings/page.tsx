@@ -10,6 +10,10 @@ import { MyExceptionRequests } from "./_components/my-exception-requests";
 import { toMyWholeLodgeRequestItem } from "@/lib/member-whole-lodge-requests";
 import { readMemberExceptionRequests } from "@/lib/booking-exception-request-service";
 import { bookingsWithOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
+import {
+  BOOKING_MONEY_RECONCILIATION_SELECT,
+  reconcileStoredBookingMoney,
+} from "@/lib/booking-money-reconciliation-store";
 
 export default async function MyBookingsPage() {
   const session = await auth();
@@ -95,8 +99,24 @@ export default async function MyBookingsPage() {
   const bookingsUnderFinancialReview = await bookingsWithOpenFinancialReview(
     bookings.map((booking) => booking.id),
   );
+  const storedMoneyRows = await prisma.booking.findMany({
+    where: { id: { in: bookings.map((booking) => booking.id) } },
+    select: BOOKING_MONEY_RECONCILIATION_SELECT,
+  });
+  const moneyReconciliationByBookingId = new Map(
+    storedMoneyRows.map((booking) => [
+      booking.id,
+      reconcileStoredBookingMoney(booking),
+    ]),
+  );
 
   const items: MyBookingItem[] = bookings.map((booking) => {
+    const moneyReconciliation = moneyReconciliationByBookingId.get(booking.id);
+    if (!moneyReconciliation) {
+      throw new Error(
+        `Booking ${booking.id} disappeared before its stored-money projection could be read`,
+      );
+    }
     // #1975/#796: only a genuine #738 split child (a provisional non-member
     // booking) is nestable. A group joiner also carries parentBookingId but is
     // presented by the organiser group card, not nested here. Mirror the detail
@@ -112,6 +132,7 @@ export default async function MyBookingsPage() {
       checkOut: booking.checkOut.toISOString(),
       guestCount: booking.guests.length,
       finalPriceCents: booking.finalPriceCents,
+      moneyReconciliation,
       // #3033: the price above is the post-change total, and it is real — but a
       // booking with an open review has an adjustment on top of it that nobody
       // has worked out yet, so the row must not let it read as the final word.

@@ -146,13 +146,37 @@ export async function loadBookingDetail(id: string) {
         select: {
           id: true,
           status: true,
+          checkIn: true,
+          checkOut: true,
+          totalPriceCents: true,
+          discountCents: true,
+          promoAdjustmentCents: true,
           finalPriceCents: true,
           hasNonMembers: true,
           // #1975: dates for the "Your non-member guests" section — shown only
           // when they differ from the parent's stay dates.
-          checkIn: true,
-          checkOut: true,
-          guests: { select: { id: true } },
+          guests: {
+            select: {
+              id: true,
+              priceCents: true,
+              stayStart: true,
+              stayEnd: true,
+              nights: {
+                select: { stayDate: true, priceCents: true, priceSource: true },
+              },
+            },
+          },
+          promoRedemption: {
+            select: {
+              priceAdjustmentCents: true,
+              allocations: {
+                select: { memberId: true, priceAdjustmentCents: true },
+              },
+            },
+          },
+          nightAdjustments: {
+            select: { beneficiaryMemberId: true, amountCents: true },
+          },
           // Discriminates a genuine #738 split child from a #796 group joiner
           // (joiners also carry parentBookingId but always have a join row).
           groupBookingJoin: { select: { id: true } },
@@ -180,9 +204,40 @@ export async function loadBookingDetail(id: string) {
               joinerMember: { select: { firstName: true, lastName: true } },
               booking: {
                 select: {
+                  id: true,
                   status: true,
+                  checkIn: true,
+                  checkOut: true,
+                  totalPriceCents: true,
+                  discountCents: true,
+                  promoAdjustmentCents: true,
                   finalPriceCents: true,
-                  guests: { select: { id: true } },
+                  guests: {
+                    select: {
+                      id: true,
+                      priceCents: true,
+                      stayStart: true,
+                      stayEnd: true,
+                      nights: {
+                        select: {
+                          stayDate: true,
+                          priceCents: true,
+                          priceSource: true,
+                        },
+                      },
+                    },
+                  },
+                  promoRedemption: {
+                    select: {
+                      priceAdjustmentCents: true,
+                      allocations: {
+                        select: { memberId: true, priceAdjustmentCents: true },
+                      },
+                    },
+                  },
+                  nightAdjustments: {
+                    select: { beneficiaryMemberId: true, amountCents: true },
+                  },
                 },
               },
             },

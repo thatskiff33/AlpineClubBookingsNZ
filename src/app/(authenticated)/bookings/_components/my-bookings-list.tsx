@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCents } from "@/lib/utils";
+import type { BookingMoneyReconciliation } from "@/lib/booking-money-reconciliation";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import {
@@ -30,6 +31,7 @@ export interface MyBookingItem {
   checkOut: string;
   guestCount: number;
   finalPriceCents: number;
+  moneyReconciliation: BookingMoneyReconciliation;
   /**
    * #3033 (epic #2797): a change to this booking saved and the refund or credit
    * for it has not been worked out yet, so `finalPriceCents` above is not the
@@ -116,6 +118,8 @@ function BookingSummary({
             corrected one is the thing this epic exists to forbid — so the
             figure stays and stops claiming to be the last word.
           */}
+          {booking.moneyReconciliation.state === "UNRECONCILED" &&
+            " · recorded amount needs review"}
           {booking.financialReviewPending ? " · being checked" : ""}
         </p>
         {showLinkLabel ? <LinkLabelText linkLabel={booking.linkLabel} /> : null}
@@ -139,6 +143,11 @@ function BookingSummary({
         {booking.financialReviewPending ? (
           <MiniChip tone="info" icon={Scale}>
             Adjustment being checked
+          </MiniChip>
+        ) : null}
+        {booking.moneyReconciliation.state === "UNRECONCILED" ? (
+          <MiniChip tone="info" icon={Scale}>
+            Recorded amount needs review
           </MiniChip>
         ) : null}
       </div>
