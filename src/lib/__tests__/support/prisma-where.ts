@@ -89,6 +89,31 @@ const SCALAR_OPERATORS = new Set([
 
 const RELATION_OPERATORS = new Set(["is", "isNot", "some", "none"]);
 
+/**
+ * Operators Prisma has and this helper does not model. Named so a filter using
+ * one throws wherever it appears — including on a NULL column, where the
+ * evaluator could not otherwise tell an unknown operator from the to-one
+ * shorthand on an absent relation.
+ */
+const UNMODELLED_OPERATORS = new Set([
+  "endsWith",
+  "mode",
+  "search",
+  "every",
+  "has",
+  "hasEvery",
+  "hasSome",
+  "isEmpty",
+  "isSet",
+  "path",
+  "string_contains",
+  "string_starts_with",
+  "string_ends_with",
+  "array_contains",
+  "array_starts_with",
+  "array_ends_with",
+]);
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return (
     typeof value === "object" &&
@@ -293,20 +318,27 @@ export function matchesWhere(
     }
     if (hasColumn(record, key)) {
       const value = record[key];
-      if (
-        isPlainObject(condition) &&
-        Object.keys(condition).some((operator) => !SCALAR_OPERATORS.has(operator))
-      ) {
-        // Not a scalar filter object, so a relation filter (`is` / `some` / …) or
-        // the to-one shorthand on an embedded relation. Both of those describe
-        // a row or a list; on a scalar column it is an operator we do not know.
-        if (!isNull(value) && !isPlainObject(value) && !Array.isArray(value)) {
-          const unknown = Object.keys(condition).filter((k) => !SCALAR_OPERATORS.has(k));
-          unsupported(label, `filter operator "${unknown[0]}" on ${key}`);
+      if (isPlainObject(condition)) {
+        const keys = Object.keys(condition).filter((k) => condition[k] !== undefined);
+        const unmodelled = keys.find((k) => UNMODELLED_OPERATORS.has(k));
+        if (unmodelled !== undefined) {
+          unsupported(label, `filter operator "${unmodelled}" on ${key}`);
         }
-        if (!matchesRelation({ related: value }, condition, key, label, options))
-          return false;
-        continue;
+        const scalarKeys = keys.filter((k) => SCALAR_OPERATORS.has(k));
+        if (scalarKeys.length !== keys.length) {
+          if (scalarKeys.length > 0) {
+            unsupported(label, `filter mixing ${keys.join(", ")} on ${key}`);
+          }
+          // No scalar operator at all, so a relation filter (`is` / `some` / …)
+          // or the to-one shorthand on an embedded relation. Both describe a
+          // row or a list; on a scalar value it is an operator we do not know.
+          if (!isNull(value) && !isPlainObject(value) && !Array.isArray(value)) {
+            unsupported(label, `filter operator "${keys[0]}" on ${key}`);
+          }
+          if (!matchesRelation({ related: value }, condition, key, label, options))
+            return false;
+          continue;
+        }
       }
       if (!matchesScalar(value, condition, key, label)) return false;
       continue;

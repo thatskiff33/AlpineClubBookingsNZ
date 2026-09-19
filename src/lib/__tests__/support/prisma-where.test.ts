@@ -200,6 +200,18 @@ describe("matchesWhere — refuses what it does not model", () => {
     expect(() => matchesWhere(booking(), { status: { equalz: "PAID" } })).toThrow(
       /unsupported filter operator "equalz" on status/,
     );
+    // On a NULL column an unknown key could pass for the to-one shorthand on an
+    // absent relation; an operator Prisma has is refused there too.
+    expect(() => matchesWhere(booking(), { deletedAt: { endsWith: "x" } })).toThrow(
+      /unsupported filter operator "endsWith" on deletedAt/,
+    );
+    // Nested inside `not`, where the scalar evaluator meets it directly.
+    expect(() => matchesWhere(booking(), { status: { not: { equalz: "PAID" } } })).toThrow(
+      /unsupported filter operator "equalz" on status/,
+    );
+    expect(() => matchesWhere(booking(), { status: { in: ["PAID"], is: null } })).toThrow(
+      /mixing/,
+    );
   });
 
   it("throws on a column the row does not carry, rather than reading it as NULL", () => {
