@@ -27,6 +27,7 @@ import {
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant, type BoundClubTime } from "@/lib/club-time";
 import { LocalBackupCard } from "@/app/(admin)/admin/backups/local-backup-card";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 interface BackupRunSummary {
   id: string;
@@ -93,15 +94,6 @@ export const CONFIG_URL = "/api/admin/backups/config";
 export const RUN_URL = "/api/admin/backups/run";
 const CREDENTIALS_URL = "/api/admin/integrations/credentials";
 
-export async function readError(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 // Backup completion and run-start stamps are real INSTANTS, shown in the
 // club's persisted zone rather than the viewer's (CT-4, #2870; INV-CONFIG-002).
 function formatDateTime(clubTime: BoundClubTime, iso: string | null): string {
@@ -157,7 +149,7 @@ export function BackupsClient() {
     try {
       const res = await fetch(STATUS_URL, { cache: "no-store" });
       if (!res.ok) {
-        setStatusError(await readError(res, "Could not load backup status."));
+        setStatusError(await apiErrorMessageFromResponse(res, "Could not load backup status."));
         return null;
       }
       const data = (await res.json()) as BackupStatus;
@@ -276,7 +268,7 @@ function StatusCard({
     try {
       const res = await fetch(RUN_URL, { method: "POST" });
       if (!res.ok && res.status !== 202) {
-        setRunError(await readError(res, "Could not start a backup."));
+        setRunError(await apiErrorMessageFromResponse(res, "Could not start a backup."));
         return;
       }
       await onRan();
@@ -464,7 +456,7 @@ function S3BackupCard({
     },
     load: async () => {
       const res = await fetch(STATUS_URL, { cache: "no-store" });
-      if (!res.ok) throw new Error(await readError(res, "Could not load config."));
+      if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not load config."));
       const data = (await res.json()) as BackupStatus;
       return {
         enabled: data.enabled,
@@ -489,7 +481,7 @@ function S3BackupCard({
       });
       if (res.status === 403) throw new ForbiddenSaveError();
       if (!res.ok) {
-        throw new Error(await readError(res, "Could not save configuration."));
+        throw new Error(await apiErrorMessageFromResponse(res, "Could not save configuration."));
       }
       await onSaved();
       // Re-seed from the freshly persisted values.
@@ -685,7 +677,7 @@ function CredentialsSection({
       body: JSON.stringify({ provider: "backup", key, value }),
     });
     if (!res.ok) {
-      throw new Error(await readError(res, "Could not save the credential."));
+      throw new Error(await apiErrorMessageFromResponse(res, "Could not save the credential."));
     }
   }, []);
 

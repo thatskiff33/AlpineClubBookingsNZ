@@ -28,6 +28,7 @@ import {
   centsToDollars,
   parseDollarsToCents,
 } from "./budget";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 const CREDENTIALS_URL = "/api/admin/integrations/credentials";
 const USAGE_URL = "/api/admin/ai-assistant/usage";
@@ -65,15 +66,6 @@ interface UsageSummary {
     successCount: number;
     failureCount: number;
   }>;
-}
-
-async function readError(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 const STATUS_TONES: Record<BudgetStatus, string> = {
@@ -176,7 +168,7 @@ function KeyCard({
         }),
       });
       if (!res.ok) {
-        setError(await readError(res, "Could not store the API key."));
+        setError(await apiErrorMessageFromResponse(res, "Could not store the API key."));
         return;
       }
       setValue("");
@@ -285,7 +277,7 @@ function BudgetCard() {
       try {
         const res = await fetch(SETTINGS_URL, { cache: "no-store" });
         if (!res.ok) {
-          if (!cancelled) setError(await readError(res, "Could not load the spend cap."));
+          if (!cancelled) setError(await apiErrorMessageFromResponse(res, "Could not load the spend cap."));
           return;
         }
         const data = (await res.json()) as { monthlyBudgetCents: number };
@@ -320,7 +312,7 @@ function BudgetCard() {
         body: JSON.stringify({ monthlyBudgetCents: parsed.cents }),
       });
       if (!res.ok) {
-        setError(await readError(res, "Could not save the spend cap."));
+        setError(await apiErrorMessageFromResponse(res, "Could not save the spend cap."));
         return;
       }
       const data = (await res.json()) as { monthlyBudgetCents: number };
@@ -443,7 +435,7 @@ function UsageCard() {
     try {
       const res = await fetch(USAGE_URL, { cache: "no-store" });
       if (!res.ok) {
-        setError(await readError(res, "Could not load AI usage."));
+        setError(await apiErrorMessageFromResponse(res, "Could not load AI usage."));
         return;
       }
       setUsage((await res.json()) as UsageSummary);

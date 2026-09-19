@@ -8,9 +8,10 @@ import { AgeTier, type MemberGuestConsentStatus } from "@prisma/client";
  * canned list. This whole family of rules is about which bookings ARE and ARE NOT
  * related — same owner, same #738 split pair, same Group Trip — so a double that
  * ignored the clauses would pass every "supplies no cover" test for entirely the
- * wrong reason. `matchesWhere` applies the real predicates and THROWS on an
- * operator it does not model, which is what makes such a test a fact about the
- * production query instead of a fact about the fake.
+ * wrong reason. The shared `matchesWhere` (`support/prisma-where.ts`, #3434)
+ * applies the real predicates and THROWS on an operator it does not model, which
+ * is what makes such a test a fact about the production query instead of a fact
+ * about the fake.
  *
  * WHY IT IS ONE MODULE AND NOT THREE COPIES (`INV-SSOT-001`). #3037 wrote it,
  * #3038 copied it, #3039 copied it again — and by the time the third copy landed
@@ -23,8 +24,8 @@ import { AgeTier, type MemberGuestConsentStatus } from "@prisma/client";
  * is `support/hosting-participant-fence-double.ts`, which the same argument put in
  * one place and which now has sixteen importers.
  *
- * WHAT STAYS IN EACH SUITE. The row BUILDERS and the predicate engine live here,
- * because those are the parts whose drift is silent. Each suite keeps its own
+ * WHAT STAYS IN EACH SUITE. The row BUILDERS live here and the predicate engine
+ * in `prisma-where.ts`, because those are the parts whose drift is silent. Each suite keeps its own
  * `makeStore`: one file records advisory-lock acquisitions and queue writes, another
  * records only the `where` clauses it was handed, and a third mutates the store
  * between two reads to model a concurrent commit. Those differences are what each
@@ -168,83 +169,6 @@ export function joinerOf(
     groupBookingJoin: { groupBookingId: trip },
     ...overrides,
   });
-}
-
-/**
- * Apply a Prisma-shaped `where` to a plain row.
- *
- * Supports exactly the operators the hosting coverage predicates use, and THROWS on
- * anything else. Throwing rather than ignoring is the point: a clause this fake
- * silently skipped would make a "not related" test pass while the production query
- * related the two bookings.
- */
-export function matchesWhere(
-  row: FakeBooking,
-  where: Record<string, unknown>,
-): boolean {
-  for (const [key, condition] of Object.entries(where)) {
-    if (key === "AND") {
-      const clauses = condition as Array<Record<string, unknown>>;
-      if (!clauses.every((clause) => matchesWhere(row, clause))) return false;
-      continue;
-    }
-    if (key === "OR") {
-      const clauses = condition as Array<Record<string, unknown>>;
-      if (!clauses.some((clause) => matchesWhere(row, clause))) return false;
-      continue;
-    }
-    const value = row[key];
-    if (condition === null || typeof condition !== "object") {
-      if (value !== condition) return false;
-      continue;
-    }
-    const operators = condition as Record<string, unknown>;
-    // A to-one relation filter: `groupBookingJoin: { is: { groupBookingId } }`. A
-    // null relation matches nothing, which is the whole reason a booking in no Group
-    // Trip supplies no Group Trip cover.
-    if ("is" in operators) {
-      const nested = operators.is as Record<string, unknown> | null;
-      if (nested === null) {
-        if (value != null) return false;
-        continue;
-      }
-      if (value == null) return false;
-      if (!matchesWhere(value as FakeBooking, nested)) return false;
-      continue;
-    }
-    // A to-many relation filter: `guests: { some: { memberId } }`.
-    if ("some" in operators) {
-      const nested = operators.some as Record<string, unknown>;
-      const list = (value ?? []) as FakeBooking[];
-      if (!list.some((entry) => matchesWhere(entry, nested))) return false;
-      continue;
-    }
-    for (const [operator, operand] of Object.entries(operators)) {
-      switch (operator) {
-        case "not":
-          if (value === operand) return false;
-          break;
-        case "in":
-          if (!(operand as unknown[]).includes(value)) return false;
-          break;
-        case "notIn":
-          if ((operand as unknown[]).includes(value)) return false;
-          break;
-        case "lt":
-          if (!((value as Date) < (operand as Date))) return false;
-          break;
-        case "gt":
-          if (!((value as Date) > (operand as Date))) return false;
-          break;
-        case "gte":
-          if (!((value as Date) >= (operand as Date))) return false;
-          break;
-        default:
-          throw new Error(`fake store cannot apply operator ${operator}`);
-      }
-    }
-  }
-  return true;
 }
 
 /**

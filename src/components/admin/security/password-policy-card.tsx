@@ -26,6 +26,7 @@ import {
   MIN_PASSWORD_LENGTH_CEILING,
   MIN_PASSWORD_LENGTH_FLOOR,
 } from "@/lib/password-policy";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 // Self-contained password-policy card for the Login & Security page (epic #2030,
 // child #2033; edit-gated in #2103). Kept fully independent — it loads and saves
@@ -69,18 +70,6 @@ function toDraft(policy: SettingsResponse["policy"]): PolicyDraft {
   };
 }
 
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof (body as { error?: unknown }).error === "string"
-  ) {
-    return (body as { error: string }).error;
-  }
-  return fallback;
-}
-
 export function PasswordPolicyCard() {
   const canEdit = useAdminAreaEditAccess("support");
 
@@ -92,7 +81,7 @@ export function PasswordPolicyCard() {
       });
       const body = (await response.json()) as SettingsResponse | { error?: string };
       if (!response.ok || !("policy" in body)) {
-        throw new Error(responseErrorMessage(body, "Failed to load password policy"));
+        throw new Error(apiErrorMessageFromBody(body, "Failed to load password policy"));
       }
       return toDraft(body.policy);
     },
@@ -106,7 +95,7 @@ export function PasswordPolicyCard() {
       const body = (await response.json()) as SettingsResponse | { error?: string };
       if (!response.ok || !("policy" in body)) {
         if (response.status === 403) throw new ForbiddenSaveError();
-        throw new Error(responseErrorMessage(body, "Failed to save password policy"));
+        throw new Error(apiErrorMessageFromBody(body, "Failed to save password policy"));
       }
       return toDraft(body.policy);
     },

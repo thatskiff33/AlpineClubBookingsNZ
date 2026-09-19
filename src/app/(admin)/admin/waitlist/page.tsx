@@ -42,6 +42,7 @@ import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
@@ -138,17 +139,6 @@ function formatDateTime(clubTime: BoundClubTime, value: string | null) {
   }
 
   return clubTime.instantDateTime(instant);
-}
-
-function getErrorMessage(data: unknown, fallback: string) {
-  if (data && typeof data === "object" && "error" in data) {
-    const message = (data as { error?: unknown }).error;
-    if (typeof message === "string" && message.trim()) {
-      return message;
-    }
-  }
-
-  return fallback;
 }
 
 function readString(value: unknown) {
@@ -375,7 +365,7 @@ export default function AdminWaitlistPage() {
 
       if (!res.ok) {
         failure = diagnosticsPageErrorCodeForStatus(res.status);
-        throw new Error(getErrorMessage(data, "Failed to load waitlist"));
+        throw new Error(apiErrorMessageFromBody(data, "Failed to load waitlist"));
       }
 
       const nextEntries = Array.isArray(data.entries)

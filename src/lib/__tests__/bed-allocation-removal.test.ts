@@ -33,6 +33,7 @@ import {
   type BedAllocationRemovalCategory,
   type BedAllocationRemovalRequest,
 } from "@/lib/bed-allocation-removal";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 
 type Row = ReturnType<typeof row>;
 
@@ -75,61 +76,6 @@ function row(input: {
       member: { firstName: "Booking", lastName: bookingId },
     },
   };
-}
-
-function dateMatches(value: Date, filter: { gte?: Date; lt?: Date }) {
-  return (!filter.gte || value >= filter.gte) && (!filter.lt || value < filter.lt);
-}
-
-function matchesWhere(candidate: Row, where: Record<string, unknown>): boolean {
-  if (where.AND) {
-    return (where.AND as Record<string, unknown>[]).every((part) =>
-      matchesWhere(candidate, part),
-    );
-  }
-  if (where.OR) {
-    return (where.OR as Record<string, unknown>[]).some((part) =>
-      matchesWhere(candidate, part),
-    );
-  }
-  if (typeof where.id === "string" && candidate.id !== where.id) return false;
-  if (where.id && typeof where.id === "object" && "in" in where.id) {
-    if (!(where.id.in as string[]).includes(candidate.id)) return false;
-  }
-  if (typeof where.bookingId === "string" && candidate.bookingId !== where.bookingId) {
-    return false;
-  }
-  if (where.bookingId && typeof where.bookingId === "object" && "in" in where.bookingId) {
-    if (!(where.bookingId.in as string[]).includes(candidate.bookingId)) return false;
-  }
-  if (
-    typeof where.bookingGuestId === "string" &&
-    candidate.bookingGuestId !== where.bookingGuestId
-  ) {
-    return false;
-  }
-  if (where.room && typeof where.room === "object" && "lodgeId" in where.room) {
-    if (candidate.room.lodgeId !== where.room.lodgeId) return false;
-  }
-  if (where.stayDate && typeof where.stayDate === "object") {
-    if (!dateMatches(candidate.stayDate, where.stayDate as { gte?: Date; lt?: Date })) {
-      return false;
-    }
-  }
-  if (where.source && candidate.source !== where.source) return false;
-  if (where.approvedAt && typeof where.approvedAt === "object") {
-    if ("not" in where.approvedAt && candidate.approvedAt === null) return false;
-  } else if (where.approvedAt === null && candidate.approvedAt !== null) {
-    return false;
-  }
-  if (
-    typeof where.isSecondOccupant === "boolean" &&
-    candidate.isSecondOccupant !== where.isSecondOccupant
-  ) {
-    return false;
-  }
-  if (where.bedId && candidate.bedId !== where.bedId) return false;
-  return true;
 }
 
 function installRows(rows: Row[]) {

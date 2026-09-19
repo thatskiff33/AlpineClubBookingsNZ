@@ -32,6 +32,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import type { XeroAccount } from "@/lib/xero-admin-cache";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 type CategoryKind = "REVENUE" | "EXPENSE";
 
@@ -103,18 +104,6 @@ function subtypeHintId(categoryKey: string) {
 function nextKey() {
   keyCounter += 1;
   return `new-${keyCounter}`;
-}
-
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
 }
 
 function categoryTitle(kind: CategoryKind) {
@@ -218,7 +207,7 @@ export function FinanceReportMappingsPanel() {
         | { error?: string };
       if (!response.ok || !("categories" in body)) {
         throw new Error(
-          responseErrorMessage(body, "Failed to load finance mappings"),
+          apiErrorMessageFromBody(body, "Failed to load finance mappings"),
         );
       }
       setState(toEditorState(body));
@@ -271,7 +260,7 @@ export function FinanceReportMappingsPanel() {
         | { error?: string };
       if (!response.ok || !("accounts" in body) || !Array.isArray(body.accounts)) {
         throw new Error(
-          responseErrorMessage(body, "Failed to load Xero chart of accounts"),
+          apiErrorMessageFromBody(body, "Failed to load Xero chart of accounts"),
         );
       }
       setAccounts(body.accounts);
@@ -405,7 +394,7 @@ export function FinanceReportMappingsPanel() {
             ? ` ${body.details.join(" ")}`
             : "";
         throw new Error(
-          `${responseErrorMessage(body, "Failed to save finance mappings")}${detailText}`,
+          `${apiErrorMessageFromBody(body, "Failed to save finance mappings")}${detailText}`,
         );
       }
       setState(toEditorState(body));
@@ -437,7 +426,7 @@ export function FinanceReportMappingsPanel() {
         | { status?: string; snapshotCount?: number; error?: string }
         | null;
       if (!response.ok) {
-        throw new Error(responseErrorMessage(body, "Finance backfill failed"));
+        throw new Error(apiErrorMessageFromBody(body, "Finance backfill failed"));
       }
       setMessage(
         `Finance backfill ${body?.status ?? "completed"} with ${body?.snapshotCount ?? 0} snapshots.`,
