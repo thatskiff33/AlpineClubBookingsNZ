@@ -266,6 +266,35 @@ describe("setup-readiness", () => {
     expect(readiness.summary.blocked).toBe(0);
   });
 
+  it("says what the system does without a key that has no fallback (#3529, INV-PAY-101)", () => {
+    // The Bank Transfer Refunds Account has no fallback by owner decision: a
+    // bank-transfer refund note is raised UNSETTLED while it is unset. The
+    // checklist must say that, not "keeps posting where it did".
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        xeroUnsetFallbackMappingLabels: [],
+        xeroUnsetMappingConsequences: [
+          "Bank Transfer Refunds Account: refund credit notes for money sent back by internet banking are raised in Xero without a settling payment, for the treasurer to match to the bank line by hand",
+        ],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const step = findStep(readiness, "xero-mappings");
+    expect(step?.status).toBe("warning");
+    expect(step?.message).toContain("Bank Transfer Refunds Account");
+    expect(step?.details?.join(" ")).toContain(
+      "Not chosen yet — Bank Transfer Refunds Account: refund credit notes for money sent back by internet banking are raised in Xero without a settling payment",
+    );
+    // MUTATION (review of #3537): the key has NO fallback, so the checklist
+    // must never call it one, in the message or the details.
+    expect(step?.message).not.toContain("keep posting where they did before");
+    expect(step?.details?.join(" ")).not.toContain("using a fallback");
+  });
+
   it("reports the mappings step complete once every fallback key is chosen (#2717)", () => {
     const readiness = buildSetupReadiness({
       env: baseEnv,
