@@ -491,17 +491,21 @@ function sameParkedCondition(
 ): boolean {
   const constantBinding = (
     expression: ts.Expression,
+    depth = 0,
   ): ts.VariableDeclaration | undefined => {
-    if (!ts.isIdentifier(expression)) return undefined;
+    if (depth > 4 || !ts.isIdentifier(expression)) return undefined;
     const declaration = resolveLocalVariableDeclaration(expression, source);
     if (!declaration || !ts.isVariableDeclarationList(declaration.parent)) {
       return undefined;
     }
     // A `let` can be reassigned between the two ternaries, so only a `const`
     // is demonstrably the same value at both of them.
-    return declaration.parent.flags & ts.NodeFlags.Const
-      ? declaration
-      : undefined;
+    if (!(declaration.parent.flags & ts.NodeFlags.Const)) return undefined;
+    // `const alsoParked = parked` is a second SPELLING of one value, not a
+    // second value, so follow the alias to the declaration both names reach.
+    return declaration.initializer && ts.isIdentifier(declaration.initializer)
+      ? (constantBinding(declaration.initializer, depth + 1) ?? declaration)
+      : declaration;
   };
   const leftBinding = constantBinding(left);
   const rightBinding = constantBinding(right);
@@ -546,8 +550,13 @@ function parkedBranchValue(
     const branch =
       branchIndex === 0 ? expression.whenTrue : expression.whenFalse;
     return ts.isIdentifier(branch)
-      ? (parkedBranchValue(branch, conditional, branchIndex, source, depth + 1) ??
-          branch)
+      ? (parkedBranchValue(
+          branch,
+          conditional,
+          branchIndex,
+          source,
+          depth + 1,
+        ) ?? branch)
       : branch;
   }
   return expression;
@@ -583,7 +592,12 @@ function isStoredHeadlineBranch(
   }
   const receiver = branch.expression.getText(source);
   return (expectedTotals ?? []).some((candidate) => {
-    const total = parkedBranchValue(candidate, conditional, branchIndex, source);
+    const total = parkedBranchValue(
+      candidate,
+      conditional,
+      branchIndex,
+      source,
+    );
     return (
       total !== undefined &&
       ts.isPropertyAccessExpression(total) &&
@@ -650,7 +664,12 @@ function d3SelectionProvesCanonicalFinalPrice(
       }
       if (
         derived &&
-        expressionUsesCanonicalFinalPrice(derived, source, expectedOperands, seen)
+        expressionUsesCanonicalFinalPrice(
+          derived,
+          source,
+          expectedOperands,
+          seen,
+        )
       ) {
         return true;
       }

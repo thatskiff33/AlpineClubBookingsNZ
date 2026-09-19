@@ -841,6 +841,70 @@ describe("INV-MONEY-031 booking money writer census", () => {
         ),
       ),
     ).not.toEqual([]);
+    // #3544: the parked branch is certified by the RECEIVER it reads, not by
+    // the column name. Some other row's headline stored beside this row's
+    // total is a pair that satisfies the relation for neither.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "parked-foreign-receiver.ts",
+        parkedWriter.replace(
+          "? booking.finalPriceCents",
+          "? legacyQuote.finalPriceCents",
+        ),
+      ),
+    ).not.toEqual([]);
+    // #3544: two ternaries are one parked edit when their conditions resolve to
+    // one value. Two evaluations of a call are two conditions however alike
+    // they are spelled, and two spellings of one `const` are one condition.
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "parked-recalled-condition.ts",
+        parkedWriter.replaceAll("parked ?", "isParked() ?").replace(
+          "const newFinalPriceCents = parked",
+          "const newFinalPriceCents = isParked()",
+        ),
+      ),
+    ).not.toEqual([]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "parked-aliased-condition.ts",
+        `const parked = evidence !== null;
+         const alsoParked = parked;
+         ${parkedWriter.replace(
+           "const newFinalPriceCents = parked",
+           "const newFinalPriceCents = alsoParked",
+         )}`,
+      ),
+    ).toEqual([]);
+    // #3544: the D3 build-up helper is not a certificate a writer can claim by
+    // taking its name. The selection handed to it must derive from the
+    // canonical relation over the operands this very payload stores.
+    const d3Writer = `import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+      import { d3CompatibleBookingMoneyBuildUpCents, selectLoadedBookingMoneyBuildUp } from "@/lib/booking-money-build-up";
+      const derived = bookingFinalPriceCents({ totalPriceCents: newTotalPriceCents, promoAdjustmentCents: promo });
+      const selection = selectLoadedBookingMoneyBuildUp(loaded, { derivedCents: derived, mismatchClassification: "STORED_SIDE_DEFECT" });
+      const verified = d3CompatibleBookingMoneyBuildUpCents(selection);
+      await database.booking.updateMany({ data: { totalPriceCents: newTotalPriceCents, discountCents: Math.max(0, -promo), promoAdjustmentCents: promo, finalPriceCents: verified } });
+    `;
+    expect(scanBookingMoneyWriterEqualityEscapes("d3.ts", d3Writer)).toEqual([]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "d3-unproven-selection.ts",
+        d3Writer.replace(
+          "const selection = selectLoadedBookingMoneyBuildUp(loaded, { derivedCents: derived, mismatchClassification: \"STORED_SIDE_DEFECT\" });",
+          "const selection = loadWhateverSelection(loaded);",
+        ),
+      ),
+    ).not.toEqual([]);
+    expect(
+      scanBookingMoneyWriterEqualityEscapes(
+        "d3-foreign-operand.ts",
+        d3Writer.replace(
+          "totalPriceCents: newTotalPriceCents, promoAdjustmentCents: promo }",
+          "totalPriceCents: someOtherBooking.totalPriceCents, promoAdjustmentCents: promo }",
+        ),
+      ),
+    ).not.toEqual([]);
     expect(
       DISCOVERED_EQUALITY_ESCAPES,
       "INV-MONEY-031: a complete Booking headline write bypasses the canonical final-price relation.",
