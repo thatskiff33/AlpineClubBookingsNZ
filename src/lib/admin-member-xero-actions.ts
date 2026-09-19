@@ -210,12 +210,10 @@ export async function pushMemberToXero(
   }
 
   if (!res.ok) {
-    const fallback = "Failed to create Xero contact";
-    const message =
-      typeof data.error === "string" && data.error.length > 0
-        ? data.error
-        : fallback;
-    throw new AdminMemberXeroActionError(message, readRecovery(data));
+    throw new AdminMemberXeroActionError(
+      apiErrorMessageFromBody(data, "Failed to create Xero contact"),
+      readRecovery(data),
+    );
   }
 
   return { status: "created", data };

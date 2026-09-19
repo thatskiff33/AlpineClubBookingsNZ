@@ -461,10 +461,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
       }
 
       if (!response.ok) {
-        setError(
-          (payload as { error?: string } | null)?.error ??
-            "Logo could not be uploaded.",
-        );
+        setError(apiErrorMessageFromBody(payload, "Logo could not be uploaded."));
         return;
       }
 

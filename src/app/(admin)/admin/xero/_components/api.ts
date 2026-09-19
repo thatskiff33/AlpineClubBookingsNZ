@@ -27,7 +27,7 @@ async function readOptionalJson<T>(res: Response, fallback: T): Promise<T> {
 // `message` key rather than `error`. That second key is read here, once, and
 // only as the fallback the shared rule is handed: a blank or non-text `error`
 // then lands on `message`, and a blank or non-text `message` on the caller's
-// own sentence — never on an empty alert or "[object Object]" (#3445).
+// own sentence â€” never on an empty alert or "[object Object]" (#3445).
 async function readErrorMessage(res: Response, fallback: string): Promise<string> {
   const data = await readOptionalJson<ErrorBody | null>(res, null)
   const message = typeof data?.message === "string" ? data.message.trim() : ""

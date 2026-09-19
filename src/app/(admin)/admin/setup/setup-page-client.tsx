@@ -333,7 +333,7 @@ export function SetupPageClient({
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(body?.error ?? "Failed to update setup progress");
+        throw new Error(apiErrorMessageFromBody(body, "Failed to update setup progress"));
       }
       await loadSetup();
     } catch (saveError) {
@@ -359,7 +359,7 @@ export function SetupPageClient({
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(body?.error ?? "Failed to finish setup");
+        throw new Error(apiErrorMessageFromBody(body, "Failed to finish setup"));
       }
       await loadSetup();
     } catch (finishError) {
