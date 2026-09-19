@@ -14,7 +14,7 @@ Known schema statuses: `DRAFT`, `PENDING`, `PAYMENT_PENDING`, `CONFIRMED`,
 DRAFT -> PENDING or PAYMENT_PENDING -> CONFIRMED or PAID -> COMPLETED
 PENDING -> CONFIRMED/PAID or BUMPED/CANCELLED
 WAITLISTED -> WAITLIST_OFFERED -> CONFIRMED/PAID or WAITLISTED/CANCELLED
-AWAITING_REVIEW -> PENDING (quote accepted, #1254) or CONFIRMED/PAID or CANCELLED
+AWAITING_REVIEW -> PENDING (quote accepted, #1254) or PAYMENT_PENDING (officer approval, the only writer of this transition, #3500) or CONFIRMED/PAID or CANCELLED
 ```
 
 `AWAITING_REVIEW -> CANCELLED` is an officer's or the system's arc (review
@@ -191,7 +191,9 @@ the same transaction continues straight to `PAID` with a $0 SUCCEEDED payment
 rather than minting a card intent — as does a draft that was repriced to $0
 while the member was looking at the pay step. Any booking held in
 `AWAITING_REVIEW` keeps its election through review and spends it on the
-`AWAITING_REVIEW -> PAYMENT_PENDING` release instead; that release path claims
+`AWAITING_REVIEW -> PAYMENT_PENDING` release instead — a transition only the
+officer review route (`/api/admin/bookings/[id]/review`) writes, since every
+edit door refuses `AWAITING_REVIEW` (#3500, `INV-MOD-013`); that release path claims
 capacity before it settles, honouring a persisted capacity override (#1771),
 and refuses with a 409 (election intact, nothing charged) when the beds are
 gone. `confirm-draft` only ever settles a $0 booking, where credit has nothing
@@ -219,9 +221,9 @@ non-NULL value there would advertise an outstanding request forever:
 session confirm, the payment link, the saved-card charge and the auto-confirm
 cron share), the Internet Banking reconcile's `PAID` flip and its
 late-capacity-failure `CANCELLED` flip, and the repriced-to-$0 auto-pay in both
-modification services — the last of which is the one arm that can genuinely get
-there, when a guest removal releases a review-parked booking to `PAYMENT_PENDING`
-and reprices the stay to nothing in the same edit. A clear on a $0 settle is
+modification services — the last of which is defence in depth: no edit reaches a
+review-parked booking (#3500), so a stored election meets the $0 settle only if
+some later writer lets one through. A clear on a $0 settle is
 silent (nothing was owed); a clear where real money was taken writes a
 `booking.credit_election.unapplied` audit row that the member's booking history
 renders, plus an operator alert. `PENDING -> PAID` via the public payment link is

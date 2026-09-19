@@ -1112,6 +1112,26 @@ describe("a consent removal runs the SELF-REMOVAL gate set (D-14)", () => {
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
   });
 
+  it("leaves an AWAITING_REVIEW booking parked when a guest removes themselves (#3500)", async () => {
+    // The self-removal door admits a parked booking, so this is the one removal
+    // that reaches `resolveRemovalReviewUpdate` on AWAITING_REVIEW. Here the
+    // survivor is an adult, so the review clears — and the status is still not
+    // touched: only the officer review route releases it (INV-MOD-013).
+    expect(SELF_REMOVABLE_GUEST_BOOKING_STATUSES.has(BookingStatus.AWAITING_REVIEW)).toBe(true);
+
+    const booking = makeBooking({ status: BookingStatus.AWAITING_REVIEW, targetConsent: "CONFIRMED" });
+    booking.requiresAdminReview = true;
+    booking.adminReviewStatus = "PENDING" as never;
+    const tx = makeTx(booking);
+    const result = await remove(tx, { guestId: TARGET_GUEST, actorMemberId: TARGET });
+
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    const written = tx.booking.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(written.status).toBe(BookingStatus.AWAITING_REVIEW);
+    expect(written.requiresAdminReview).toBe(false);
+    expect(written.adminReviewStatus).toBeNull();
+  });
+
   it("refuses the SAME removal on the SAME booking when it comes from the owner path", async () => {
     // Same fixture, same guest, no authority — and now the owner's own status gate
     // applies and refuses. This is what proves the authority ROUTES rather than
