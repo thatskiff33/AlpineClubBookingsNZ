@@ -2494,6 +2494,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
           bookingId: "bk1",
           refundAmountCents: 5000,
           bookingModificationId: "mod_1",
+          // `INV-PAY-101`: a member's ordinary edit refunds the card.
+          refundMethod: "card",
         },
         {
           createdByMemberId: "m1",
@@ -3230,6 +3232,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
         bookingId: "bk1",
         refundAmountCents: 5000,
         bookingModificationId: "mod_1",
+        // `INV-PAY-101`: a member's ordinary edit refunds the card.
+        refundMethod: "card",
       },
       {
         createdByMemberId: "m1",
@@ -3303,6 +3307,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
         bookingId: "bk1",
         refundAmountCents: 5000,
         bookingModificationId: "mod_1",
+        // `INV-PAY-101`: a member's ordinary edit refunds the card.
+        refundMethod: "card",
       },
       {
         createdByMemberId: "m1",
@@ -3369,6 +3375,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
         bookingId: "bk1",
         refundAmountCents: 4000,
         bookingModificationId: "mod_1",
+        // `INV-PAY-101`: a member's ordinary edit refunds the card.
+        refundMethod: "card",
       },
       {
         createdByMemberId: "m1",

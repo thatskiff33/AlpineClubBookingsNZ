@@ -2283,6 +2283,8 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
         bookingId: "bk1",
         refundAmountCents: 5000,
         bookingModificationId: "mod1",
+        // `INV-PAY-101`: a member's ordinary edit refunds the card.
+        refundMethod: "card",
       },
       {
         createdByMemberId: "m1",
