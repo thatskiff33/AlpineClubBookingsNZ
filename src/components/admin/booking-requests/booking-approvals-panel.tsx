@@ -27,10 +27,7 @@ import {
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import { useClubTime } from "@/components/club-time-provider";
-import {
-  calendarDateOfSerialisedDbDate,
-  formatClubDate,
-} from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
@@ -111,19 +108,6 @@ function buildBookingApprovalsPath(
     recordKey: "bookingId",
     recordId: bookingId,
   });
-}
-
-/**
- * A lodge night as the calendar day it IS - no timezone, because a calendar day
- * has none (CT-4, #2870; INV-DATE-010). `checkIn`/`checkOut` are `@db.Date`
- * columns and reach the browser as UTC midnight; the kernel's calendar-date
- * formatter pins UTC over that encoding, so the projection is the identity.
- *
- * WHAT THIS REPLACES projected the same value through a zone, which is the
- * identity for a club east of Greenwich and the PREVIOUS DAY west of it.
- */
-function formatStayDate(value: string): string {
-  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 export function BookingApprovalsPanel({
