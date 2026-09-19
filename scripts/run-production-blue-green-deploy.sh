@@ -446,7 +446,7 @@ build_application_images_from_workspace() {
     COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" \
     APP_IMAGE="$APP_IMAGE" \
     MIGRATE_IMAGE="$MIGRATE_IMAGE" \
-    docker compose build --pull app migrate
+    docker compose --profile migrate build --pull app migrate
   )
 }
 
@@ -802,7 +802,7 @@ write_deploy_failure_record() {
     if [ -z "$(trim_whitespace "$PENDING_MIGRATION_NAMES")" ]; then
       echo "None."
     else
-      printf '%s\n' "$PENDING_MIGRATION_NAMES" | sed 's/^/- /'
+      printf '%s' "$PENDING_MIGRATION_NAMES" | grep -v '^[[:space:]]*$' | sed 's/^/- /'
     fi
     echo
     echo "## What the database says about them"

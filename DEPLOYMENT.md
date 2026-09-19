@@ -1603,11 +1603,26 @@ reports the mutable `<project>-app:local`, which the build then re-tags onto the
 deployed, let the real rollback image fall dangling into the prune, and report it
 retained.
 
-If you need to remove them by hand:
+To see what is held, and which image each hold is keeping:
 
 ```bash
-docker ps -a --filter "label=nz.alpineclub.deploy.rollback-image-hold"
+docker ps -a --filter "label=nz.alpineclub.deploy.rollback-image-hold" \
+  --format '{{.Names}}\t{{.Image}}'
 ```
+
+**Using a held image depends on how the release was built.** With the normal
+registry deploy, both images are tagged by commit SHA, so rolling back is
+`APP_IMAGE=<repo>:<old sha> MIGRATE_IMAGE=<repo>:<old sha>` on the deploy — the
+hold simply guarantees the tag still resolves. With a **local build** the tag
+`<project>-app:local` has already been moved onto the new image, so point it
+back at the held one first:
+
+```bash
+docker tag <held image id> <project>-app:local
+```
+
+The held id is the second column of the listing above, and it is also the
+suffix of the placeholder's name.
 
 Keep deploy logs, the target commit SHA, migration output, and health-check
 results with the release record.

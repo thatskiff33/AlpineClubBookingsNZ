@@ -278,7 +278,11 @@ describe("guard 4: host-built images carry the release identifier", () => {
     expect(build).toContain('GIT_COMMIT_SHA="$RESOLVED_REF" \\');
     expect(build).toContain('KNOWLEDGE_BUNDLE_OBSERVED_AT="$observed_at" \\');
     expect(build).toContain('RELEASE_ID="$RESOLVED_REF" \\');
-    expect(build).toContain("docker compose build --pull app migrate");
+    // The `migrate` service carries `profiles: ["migrate"]`, so the profile is
+    // named rather than relying on Compose's implicit activation.
+    expect(build).toContain(
+      "docker compose --profile migrate build --pull app migrate",
+    );
 
     // Every one of those is a declared build arg on the app service, or the
     // export silently reaches nothing.
