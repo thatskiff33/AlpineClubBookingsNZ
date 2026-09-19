@@ -274,6 +274,20 @@ function importedCanonicalBinding(
     );
   }
   if (!imported) return false;
+  // Parameters live on the function node rather than its body block.  Check
+  // the lexical ancestors directly so a parameter that shadows an otherwise
+  // valid top-level import cannot be mistaken for that import.
+  for (let cursor: ts.Node | undefined = use.parent; cursor; cursor = cursor.parent) {
+    if (
+      ts.isFunctionLike(cursor) &&
+      cursor.parameters.some(
+        (parameter) =>
+          ts.isIdentifier(parameter.name) && parameter.name.text === use.text,
+      )
+    ) {
+      return false;
+    }
+  }
   for (let scope = enclosingScope(use); scope; scope = enclosingScope(scope)) {
     if (ts.isSourceFile(scope)) break;
     let shadowed = false;
