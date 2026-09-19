@@ -102,7 +102,7 @@ function archiveRow(overrides: Record<string, unknown> = {}) {
 // replaced (`value !== cond`) would have deleted it. The shared evaluator throws
 // on that negation rather than answer either way, so every row here names its
 // severity explicitly; whether the production predicate in `audit-retention.ts`
-// should prune a null-severity unclassified row is a question for that module,
+// should prune a null-severity unclassified row is a question for that module and is filed as #3524,
 // not for this fixture.
 type PruneRow = {
   id: string;
