@@ -642,8 +642,7 @@ describe("INV-MONEY-031 booking money writer census", () => {
         "await database.booking.update({ data: { discountCents: 999 } });",
       ),
     ).toEqual(["partial-discount.ts:1|discountCents"]);
-    const mutablePair = `
-      import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+    const mutablePair = `import { bookingFinalPriceCents } from "@/lib/booking-final-price";
       let discountCents = 0;
       let promoAdjustmentCents = 0;
       if (applyPromo) {
