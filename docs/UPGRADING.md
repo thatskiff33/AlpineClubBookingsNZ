@@ -88,9 +88,19 @@ as a red flag and check the release notes before deploying.
    `lock_impact_plan`.
 5. Run the deploy (`scripts/run-production-blue-green-deploy.sh` runs the
    migration-safety validator, then `prisma migrate deploy`, then cuts traffic
-   over to the new color).
+   over to the new color). **The commit you deploy has to exist on a remote**
+   — the deploy refuses one that only your host holds, because every
+   precondition above is worked out against the commit the repository has. If
+   you must build on the host, do it with
+   `./scripts/run-production-blue-green-deploy.sh --build-and-push-images`,
+   which stamps the release identifier the same way CI does. Both are in
+   `DEPLOYMENT.md` → "Routine Production Deploy".
 6. Complete the post-upgrade actions for the release (below). Confirm the app is
    healthy on the new color before you consider the upgrade done.
+7. If the deploy fails at or after the migrate step, read the record it wrote to
+   `$HOME/tacbookings-deploy-failures` before retrying or rolling back. It names
+   which migrations *started* — including any that began and did not finish —
+   which is the question the schema's state turns on.
 
 ---
 
