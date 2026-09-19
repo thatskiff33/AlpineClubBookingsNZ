@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import { prisma } from "@/lib/prisma";
+import { matchesWhere as evaluateWhere } from "@/lib/__tests__/support/prisma-where";
 
 /**
  * Args-aware stand-in for `prisma.booking.findMany` / `prisma.booking.count`
@@ -42,18 +43,16 @@ interface FindManyArgsLike {
   take?: number;
 }
 
+/** The `where` keys this mock emulates; every other key is dropped, per the contract above. */
+const EMULATED_WHERE_KEYS = ["id", "payment"] as const;
+
 function matchesWhere(row: FixtureRow, where?: WhereLike) {
   if (!where) return true;
-  if (where.id?.in && !where.id.in.includes(row.id)) return false;
-  if (where.payment && "is" in where.payment) {
-    const is = where.payment.is;
-    if (is === null) {
-      if (row.payment != null) return false;
-    } else if (is?.source && row.payment?.source !== is.source) {
-      return false;
-    }
+  const emulated: Record<string, unknown> = {};
+  for (const key of EMULATED_WHERE_KEYS) {
+    if (key in where) emulated[key] = where[key];
   }
-  return true;
+  return evaluateWhere(row, emulated, { label: "admin-bookings db mock" });
 }
 
 function orderRows(rows: FixtureRow[], orderBy: OrderByClause | OrderByClause[]) {

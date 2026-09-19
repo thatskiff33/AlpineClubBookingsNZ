@@ -26,6 +26,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 interface CommitteeRole {
   id: string;
@@ -78,18 +79,6 @@ const emptyAssignmentForm = {
 
 async function readJson(response: Response) {
   return response.json().catch(() => null);
-}
-
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
 }
 
 function assignmentEffectiveEmail(assignment: CommitteeAssignment) {
@@ -175,12 +164,12 @@ export default function CommitteePage() {
 
       if (!rolesRes.ok) {
         throw new Error(
-          responseErrorMessage(rolesBody, "Failed to load committee roles"),
+          apiErrorMessageFromBody(rolesBody, "Failed to load committee roles"),
         );
       }
       if (!assignmentsRes.ok) {
         throw new Error(
-          responseErrorMessage(
+          apiErrorMessageFromBody(
             assignmentsBody,
             "Failed to load committee assignments",
           ),
@@ -283,7 +272,7 @@ export default function CommitteePage() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
-        throw new Error(responseErrorMessage(body, "Failed to save role"));
+        throw new Error(apiErrorMessageFromBody(body, "Failed to save role"));
       }
       closeRoleForm();
       await fetchCommitteeData();
@@ -327,7 +316,7 @@ export default function CommitteePage() {
           return;
         }
         throw new Error(
-          responseErrorMessage(body, "Failed to save assignment"),
+          apiErrorMessageFromBody(body, "Failed to save assignment"),
         );
       }
       closeAssignmentForm();

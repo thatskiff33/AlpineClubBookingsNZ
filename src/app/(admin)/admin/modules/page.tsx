@@ -29,6 +29,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 
 type ModuleReadinessStatus =
   | "ready"
@@ -56,18 +57,6 @@ interface ModulesResponse {
   modules: ModuleStatus[];
   updatedAt: string | null;
   updatedByMemberId: string | null;
-}
-
-function responseErrorMessage(body: unknown, fallback: string) {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof body.error === "string"
-  ) {
-    return body.error;
-  }
-  return fallback;
 }
 
 function readinessVariant(
@@ -162,7 +151,7 @@ export default function AdminModulesPage() {
       });
       const body = (await response.json()) as ModulesResponse | { error?: string };
       if (!response.ok || !("settings" in body) || !("modules" in body)) {
-        throw new Error(responseErrorMessage(body, "Failed to load modules"));
+        throw new Error(apiErrorMessageFromBody(body, "Failed to load modules"));
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
@@ -234,7 +223,7 @@ export default function AdminModulesPage() {
       }
       const body = (await response.json()) as ModulesResponse | { error?: string };
       if (!response.ok || !("settings" in body) || !("modules" in body)) {
-        throw new Error(responseErrorMessage(body, "Failed to save modules"));
+        throw new Error(apiErrorMessageFromBody(body, "Failed to save modules"));
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
