@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => ({
   getAuthenticatedXeroClient: vi.fn(),
   callXeroApi: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
+  allocateAppliedCreditForBooking: vi.fn(),
   warn: vi.fn(),
 }));
 
@@ -246,9 +247,20 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
         manuallyMarkedPaidAt: null,
       },
     });
-    mocks.getAuthenticatedXeroClient.mockResolvedValue({
-      xero: { accountingApi: {} },
-      tenantId: "tenant-1",
+    mocks.getAuthenticatedXeroClient.mockImplementation(() => {
+      expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            requestPayload: expect.objectContaining({
+              moneyReconciliation: expect.any(Object),
+            }),
+          },
+        }),
+      );
+      return Promise.resolve({
+        xero: { accountingApi: {} },
+        tenantId: "tenant-1",
+      });
     });
     mocks.findOrCreateXeroContact.mockResolvedValue("contact-1");
     mocks.seasonFindFirst.mockResolvedValue(null);
@@ -297,6 +309,9 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
       completeXeroSyncOperation: mocks.completeXeroSyncOperation,
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,
     }));
+    vi.doMock("@/lib/xero-applied-credit-allocation", () => ({
+      allocateAppliedCreditForBooking: mocks.allocateAppliedCreditForBooking,
+    }));
 
     mocks.xeroSyncOperationFindUnique.mockResolvedValue({
       requestPayload: {
@@ -336,9 +351,9 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
         xeroInvoiceNumber: "INV-1",
         source: PaymentSource.STRIPE,
         status: "SUCCEEDED",
-        amountCents: 10000,
+        amountCents: 8000,
         refundedAmountCents: 0,
-        creditAppliedCents: 0,
+        creditAppliedCents: 2000,
         manuallyMarkedPaidAt: null,
       },
     });
@@ -371,6 +386,9 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
         status: "SUCCEEDED",
         xeroObjectId: "inv-already",
       }),
+    );
+    expect(mocks.xeroSyncOperationUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.allocateAppliedCreditForBooking.mock.invocationCallOrder[0],
     );
   });
 });

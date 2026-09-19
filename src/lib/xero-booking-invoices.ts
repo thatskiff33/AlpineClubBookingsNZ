@@ -400,6 +400,31 @@ async function settleCardAppliedCreditAllocation(
   });
 }
 
+/**
+ * Stage 4 evidence must reach an already-claimed operation before this handler
+ * can authenticate or otherwise invoke a provider-capable dependency. Later
+ * invoice-payload writes carry the same field when they rebuild the request.
+ */
+async function enrichClaimedOperationMoneyReconciliation(
+  syncOperationId: string,
+  moneyReconciliation: ReturnType<typeof reconcileBookingMoney>,
+): Promise<void> {
+  const operation = await prisma.xeroSyncOperation.findUnique({
+    where: { id: syncOperationId },
+    select: { requestPayload: true },
+  });
+  const requestPayload = asRecord(operation?.requestPayload) ?? {};
+  await prisma.xeroSyncOperation.update({
+    where: { id: syncOperationId },
+    data: {
+      requestPayload: sanitizeForJson({
+        ...requestPayload,
+        moneyReconciliation,
+      }),
+    },
+  });
+}
+
 export async function createXeroInvoiceForBooking(
   bookingId: string,
   options?: CreateXeroBookingInvoiceOptions
@@ -426,6 +451,13 @@ export async function createXeroInvoiceForBooking(
 
   // Skip if invoice already created
   if (booking.payment.xeroInvoiceId) {
+    const moneyReconciliation = reconcileBookingMoney(booking);
+    if (options?.syncOperationId) {
+      await enrichClaimedOperationMoneyReconciliation(
+        options.syncOperationId,
+        moneyReconciliation,
+      );
+    }
     await upsertXeroObjectLink({
       localModel: "Payment",
       localId: booking.payment.id,
@@ -446,23 +478,7 @@ export async function createXeroInvoiceForBooking(
     // -> RUNNING before calling in; the outbox claims PENDING -> RUNNING) must
     // not be stranded RUNNING when the invoice already exists: close it
     // SUCCEEDED against the existing invoice so the ops panel reads true. A
-    // replay of a pre-Stage-4 operation can reach this shortcut before the
-    // normal request-payload write below, so enrich its durable evidence first.
     if (options?.syncOperationId) {
-      const operation = await prisma.xeroSyncOperation.findUnique({
-        where: { id: options.syncOperationId },
-        select: { requestPayload: true },
-      });
-      const requestPayload = asRecord(operation?.requestPayload) ?? {};
-      await prisma.xeroSyncOperation.update({
-        where: { id: options.syncOperationId },
-        data: {
-          requestPayload: sanitizeForJson({
-            ...requestPayload,
-            moneyReconciliation: reconcileBookingMoney(booking),
-          }),
-        },
-      });
       await completeXeroSyncOperation(options.syncOperationId, {
         status: "SUCCEEDED",
         responsePayload: {
@@ -577,6 +593,13 @@ export async function createXeroInvoiceForBooking(
     promoMoneyBuildUpSelection,
   );
   const moneyReconciliation = reconcileBookingMoney(booking);
+
+  if (options?.syncOperationId) {
+    await enrichClaimedOperationMoneyReconciliation(
+      options.syncOperationId,
+      moneyReconciliation,
+    );
+  }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
