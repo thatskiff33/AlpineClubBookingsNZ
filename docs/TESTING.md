@@ -1292,11 +1292,29 @@ re-verify an entry.
   load once is still one to re-run alone before diagnosing. The next lane that
   measures it and finds the same should remove it rather than let the list
   assert something it cannot show.
+- [`src/lib/__tests__/identity-ordering-census.test.ts`](../src/lib/__tests__/identity-ordering-census.test.ts)
+  — isolated 2.45s wall, 1.99s in tests, 5 passed; its slowest test, "reaches
+  the comparator by ONE import specifier", ran **1,073ms** alone. Under the
+  smaller batch below it **timed out**, so this entry records a red rather than
+  a margin.
+- [`src/lib/__tests__/in-progress-edit-sold-price-census.test.ts`](../src/lib/__tests__/in-progress-edit-sold-price-census.test.ts)
+  — isolated 5.23s wall, 3.84s in tests, 15 passed; its slowest test, "keeps
+  that mapper the only production season mapping", ran **2,589ms** alone, over
+  half the budget with the machine otherwise idle. Under the smaller batch it
+  **timed out**. This is the entry closest to being a real per-test budget
+  problem rather than a load artefact, and it is the first candidate if the
+  class is ever fixed at the suite rather than in this list.
 
-Neither batch produced a timeout, so the figures show how close each suite runs
-to the budget under a batch of this size, not a red; the three-lane observation
-is the evidence of the limit being crossed, and a lane running the batch beside
-another lane's tests, a build, or a typecheck is where it will be crossed again.
+The two 2026-09-19 batches produced no timeout, so their figures show how close
+each suite runs to the budget under a batch of that size, not a red. The reds
+came later, on 20 September 2026 at `6ca8f179d`, from a smaller and therefore
+harsher-per-file batch: the 141 files vitest selects for the filters `census`,
+`contract` and `guard`, 2,068 tests in 220s, run beside nothing else. All three
+of `client-server-boundary-census`, `identity-ordering-census` and
+`in-progress-edit-sold-price-census` timed out in that one run and all three
+passed alone immediately afterwards. That is the evidence of the limit being
+crossed; a lane running any such batch beside another lane's tests, a build, or
+a typecheck is where it will be crossed again.
 
 ## Mocking `requireAdmin`: reference the helper, never wrap it
 
