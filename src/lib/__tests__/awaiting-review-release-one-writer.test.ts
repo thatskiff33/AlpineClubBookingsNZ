@@ -14,13 +14,19 @@ import { activeLifecycleEditRefusal } from "@/lib/booking-edit-policy";
  * parked booking to `PAYMENT_PENDING` when adding an adult cleared the review,
  * and `booking-modify-plan.ts`, `booking-guest-removal-service.ts` and
  * `booking-modify-settlement.ts` carried the same fiction as a
- * `releaseFromReview` flag. None of it could run: every edit door has refused
- * `AWAITING_REVIEW` since the day the branch was written
- * (`booking-edit-eligibility-one-home.test.ts` pins that refusal for every role,
- * so this file does not pin it again — it reads the same helper once, below, to
- * name the door it leans on). The owner's decision on #3500 deleted the four
- * arms rather than opening the door, so the next reader is not told a
- * self-service route out of review exists when it does not.
+ * `releaseFromReview` flag. None of it could run. Three of the four sit behind
+ * an edit door that has refused `AWAITING_REVIEW` since the day the branch was
+ * written (`booking-edit-eligibility-one-home.test.ts` pins that refusal for
+ * every role, so this file does not pin it again — it reads the same helper
+ * once, below, to name the door it leans on). The removal arm is the exception:
+ * a linked guest's SELF-removal skips that door and `AWAITING_REVIEW` is in
+ * `SELF_REMOVABLE_GUEST_BOOKING_STATUSES`, so it does reach
+ * `resolveRemovalReviewUpdate` — and was still dead, because a no-adult park is
+ * all-minor (any surviving subset stays flagged) and a request hold carries
+ * `heldBookingId`, which `assertBookingNotQuotePriced` refuses first
+ * (`booking-guest-consent-authority.test.ts` pins the status staying put). The
+ * owner's decision on #3500 deleted the four arms rather than opening a door,
+ * so the next reader is not told a self-service route out of review exists.
  *
  * WHAT THIS CENSUS SEES. It reads every non-test `.ts`/`.tsx` under `src/` with
  * comments stripped (`stripComments`, the one stripper in the tree) and looks

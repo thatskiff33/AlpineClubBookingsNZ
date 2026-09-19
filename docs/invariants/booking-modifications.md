@@ -552,11 +552,13 @@ Because the clamp only fires in PENDING/PAYMENT_PENDING, a modification parked t
 AWAITING_REVIEW does NOT refund credit or auto-$0-pay before an admin approves it
 (F4, #1887), matching booking-create's under-review block on the zero-dollar
 path; the release-from-review transition lands PAYMENT_PENDING, at which point the
-clamp runs. That release has ONE writer, the officer review route: every edit
-door refuses AWAITING_REVIEW, so no modification, guest add or guest removal can
-release it, and #3500 deleted the four unreachable `releaseFromReview` arms that
-said otherwise. A flagged PAID/CONFIRMED booking clears its review in place and
-keeps its status. Pin: `awaiting-review-release-one-writer.test.ts`.
+clamp runs. That release has ONE writer, the officer review route. Every edit
+door refuses AWAITING_REVIEW; a linked guest's self-removal does reach a parked
+booking but cannot clear its review, because a no-adult park is all-minor (any
+survivor stays flagged) and a request hold is refused first as quote-priced.
+#3500 deleted the four unreachable `releaseFromReview` arms that said otherwise.
+A flagged PAID/CONFIRMED booking clears its review in place and keeps its
+status. Pin: `awaiting-review-release-one-writer.test.ts`.
 
 ## INV-MOD-014
 

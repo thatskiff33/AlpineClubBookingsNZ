@@ -226,8 +226,12 @@ function resolveRemovalReviewUpdate({
   if (!nowFlagged) {
     // Rule cleared (or never tripped): wipe review state so the booking
     // returns to the normal lifecycle, in place — the status is untouched. A
-    // removal never meets AWAITING_REVIEW (the edit door refuses it), and only
-    // the officer review route releases it (#3500, `INV-MOD-013`).
+    // self-removal CAN reach an AWAITING_REVIEW booking (it is in
+    // `SELF_REMOVABLE_GUEST_BOOKING_STATUSES`), but it can never clear the
+    // review there: a no-adult park is all-minor, so any surviving subset
+    // stays flagged, and a request hold is refused first by
+    // `assertBookingNotQuotePriced`. Only the officer review route releases
+    // AWAITING_REVIEW (#3500, `INV-MOD-013`).
     return {
       requiresAdminReview: false,
       adminReviewReason: null,

@@ -495,12 +495,12 @@ export async function applyLifecycleTransitions(
     // and none is owed, so nothing is lost by dropping the request and there is
     // no unhonoured choice to report to anybody.
     //
-    // This is the one arm that can genuinely reach a settled booking with a live
-    // election. A guest removal on a review-parked booking releases it from
-    // AWAITING_REVIEW to PAYMENT_PENDING (above) with its election still stored,
-    // and a removal that reprices the stay to nothing then lands it PAID right
-    // here — without this line, on a row still advertising an outstanding
-    // election that no consumer would ever look at again.
+    // Defence in depth (#3500): no edit reaches a review-parked booking with
+    // its election still stored, because every edit door refuses
+    // AWAITING_REVIEW and a self-removal on one can never clear the review.
+    // The clear stays so that a later writer which does let one through cannot
+    // land a PAID row still advertising an outstanding election that no
+    // consumer would ever look at again.
     await clearStaleCreditElection(tx, booking);
     const zeroDollarPayment = await tx.payment.upsert({
       where: { bookingId },
