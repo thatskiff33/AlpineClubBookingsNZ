@@ -1,6 +1,5 @@
 import {
   AdminReviewStatus,
-  BookingStatus,
   type AgeTier,
   type Prisma,
 } from "@prisma/client";
