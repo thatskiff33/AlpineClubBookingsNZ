@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 
+import type { EditFinancialReviewCause } from "@/lib/edit-financial-review-context";
 import {
   deriveNightAdjustmentState,
   memberBenefitAllocations,
@@ -27,12 +28,12 @@ export type BookingMoneyBaseEvidence =
   | { kind: "EXACT"; amountCents: number }
   | {
       kind: "UNKNOWN";
-      reason:
-        | "NO_STORED_NIGHT_PRICES"
-        | "PARTIAL_STORED_NIGHT_PRICES"
-        | "INEXACT_STORED_NIGHT_PRICES"
-        | "STORED_TOTAL_MISMATCH"
-        | "COUNTERPART_STRAND_UNREADABLE";
+      /**
+       * The one cause vocabulary (`INV-SSOT-001`, #3506): this is fed straight
+       * from `storedSoldPriceEvidenceForGuest(...).cause`, so a value added to
+       * `EDIT_FINANCIAL_REVIEW_CAUSES` flows through here with no edit.
+       */
+      reason: EditFinancialReviewCause;
     };
 
 export type BookingMoneyCompatibilityClassification =
