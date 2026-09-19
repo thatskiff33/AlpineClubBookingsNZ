@@ -61,6 +61,8 @@ function createRefundStore() {
     // #3267: a saved-card charge ATTEMPT row carries its Stripe key here, so
     // the fixture's column has to admit one.
     reason: null as string | null,
+    // #3528: a withdrawn ADDITIONAL row is stamped; the fixture admits it.
+    withdrawnAt: null as Date | null,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
   };
@@ -108,6 +110,7 @@ function createRefundStore() {
           status: data.status ?? "PENDING",
           paymentMethodId: data.paymentMethodId ?? null,
           reason: data.reason ?? null,
+          withdrawnAt: data.withdrawnAt ?? null,
           createdAt: new Date("2026-01-02T00:00:00.000Z"),
           updatedAt: new Date("2026-01-02T00:00:00.000Z"),
         };
@@ -468,6 +471,7 @@ describe("multi-transaction refund allocation (#1097)", () => {
       status: "SUCCEEDED",
       paymentMethodId: "pm_1",
       reason: null,
+      withdrawnAt: null,
       // Newer than txn_1 so the internal allocation refunds it first.
       createdAt: new Date("2026-01-05T00:00:00.000Z"),
       updatedAt: new Date("2026-01-05T00:00:00.000Z"),
@@ -606,6 +610,7 @@ describe("planStripeRefundAllocation (#1349)", () => {
       status: "SUCCEEDED",
       paymentMethodId: "pm_1",
       reason: null,
+      withdrawnAt: null,
       // Newer than txn_1 so the newest-first allocation slices it first.
       createdAt: new Date("2026-01-05T00:00:00.000Z"),
       updatedAt: new Date("2026-01-05T00:00:00.000Z"),
@@ -977,5 +982,93 @@ describe("#3267 - reconcilePaymentAggregates and the Payment's intent pointer (I
     await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
 
     expect(stampedIntent(store)).toBeNull();
+  });
+});
+
+describe("#3528 - reconcilePaymentAggregates reads past a WITHDRAWN ask (INV-ADDPAY-040)", () => {
+  /*
+    The failure this pins: an officer withdraws an unpaid additional-payment
+    request, the withdrawal cancels its intent at Stripe, and the
+    payment_intent.canceled webhook then reconciles the payment. A FAILED
+    ADDITIONAL row still projects as owed - deliberately, a declined card is
+    retried on the same intent - so without the stamp the reconcile would put
+    the withdrawn amount straight back on the booking.
+  */
+  function stampedAdditional(store: ReturnType<typeof createRefundStore>["store"]) {
+    const call = store.payment.update.mock.calls.at(-1) as
+      | [{ data: Record<string, unknown> }]
+      | undefined;
+    expect(call).toBeDefined();
+    const { additionalAmountCents, additionalPaymentStatus, additionalPaymentIntentId } =
+      call![0].data;
+    return { additionalAmountCents, additionalPaymentStatus, additionalPaymentIntentId };
+  }
+
+  function additionalRow(transaction: ReturnType<typeof createRefundStore>["transaction"]) {
+    return {
+      ...transaction,
+      id: "txn_ask",
+      kind: "ADDITIONAL",
+      stripePaymentIntentId: "pi_ask",
+      amountCents: 2275,
+      status: "FAILED",
+      reason: "edit_financial_review_charge_mod_1",
+      withdrawnAt: null as Date | null,
+      createdAt: new Date("2026-01-05T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-05T00:00:00.000Z"),
+    };
+  }
+
+  it("CONTROL: a FAILED ask that was NOT withdrawn still projects as owed", async () => {
+    const { store, payment, transaction, transactions } = createRefundStore();
+    transactions.push(additionalRow(transaction));
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedAdditional(store)).toEqual({
+      additionalAmountCents: 2275,
+      additionalPaymentStatus: "FAILED",
+      additionalPaymentIntentId: "pi_ask",
+    });
+  });
+
+  it("a withdrawn ask projects to nothing owed, even when it is the newest row", async () => {
+    const { store, payment, transaction, transactions } = createRefundStore();
+    transactions.push({
+      ...additionalRow(transaction),
+      withdrawnAt: new Date("2026-01-06T00:00:00.000Z"),
+    });
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedAdditional(store)).toEqual({
+      additionalAmountCents: 0,
+      additionalPaymentStatus: null,
+      additionalPaymentIntentId: null,
+    });
+  });
+
+  it("an earlier ask that was withdrawn does not shadow a later live one", async () => {
+    const { store, payment, transaction, transactions } = createRefundStore();
+    transactions.push({
+      ...additionalRow(transaction),
+      withdrawnAt: new Date("2026-01-06T00:00:00.000Z"),
+    });
+    transactions.push({
+      ...additionalRow(transaction),
+      id: "txn_ask_2",
+      stripePaymentIntentId: "pi_ask_2",
+      amountCents: 1500,
+      status: "PENDING",
+      createdAt: new Date("2026-01-07T00:00:00.000Z"),
+    });
+
+    await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+    expect(stampedAdditional(store)).toEqual({
+      additionalAmountCents: 1500,
+      additionalPaymentStatus: "PENDING",
+      additionalPaymentIntentId: "pi_ask_2",
+    });
   });
 });

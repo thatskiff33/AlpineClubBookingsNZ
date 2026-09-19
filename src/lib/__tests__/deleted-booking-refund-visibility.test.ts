@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * THE DECISION, AND WHY THERE IS NO GATE HERE. Since #1350 the Stripe webhook
  * refunds a modification payment captured against an already-CANCELLED booking
  * automatically, and a soft-deleted booking is always CANCELLED
- * (`INV-ADDPAY-030`), so a late capture on a deleted booking is refunded before
+ * (`INV-ADDPAY-040`), so a late capture on a deleted booking is refunded before
  * anybody sees it. #2750 kept that deliberately: the member's money going back
  * is the safe direction when nobody is watching, and gating it leaves the club
  * holding a member's money until somebody acts. What #2750 changed is that the

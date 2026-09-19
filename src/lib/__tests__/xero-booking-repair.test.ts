@@ -3247,6 +3247,56 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
     expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
   });
 
+  it("raises NOTHING for a review charge an officer WITHDREW (#3528, INV-ADDPAY-040)", async () => {
+    /**
+     * The withdrawal cancelled the intent, failed the row and stamped it. Read
+     * as an ordinary FAILED request with an intent, the plan would queue a
+     * fresh supplementary invoice parked WAITING_PAYMENT on a cancelled intent
+     * - a held document for a debt that was withdrawn, until the reaper
+     * retired it. The withdrawal is the record; the repair pass says nothing.
+     */
+    const booking = bookingWithReviewCharge({
+      status: "FAILED",
+      withdrawnAt: new Date("2026-05-04T00:00:00Z"),
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [settledShare()],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(supplementaryFindingCodes(report)).toEqual([]);
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL: the same FAILED request NOT withdrawn still parks an invoice on its intent", async () => {
+    const booking = bookingWithReviewCharge({ status: "FAILED", withdrawnAt: null });
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [settledShare()],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(supplementaryFindingCodes(report)).toEqual(["MISSING_SUPPLEMENTARY_INVOICE"]);
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingModificationId: "mod_parked" }),
+      expect.objectContaining({
+        waitForConfirmedAdditionalPayment: true,
+        paymentIntentId: "pi_review",
+      }),
+    );
+  });
+
   it("defers when the review's card request was never minted and its recovery is still owed", async () => {
     /**
      * "No charge request row" has TWO causes that look identical in the ledger
