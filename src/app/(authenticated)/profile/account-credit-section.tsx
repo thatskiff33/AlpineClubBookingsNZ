@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
-import { calendarDateOfSerialisedDbDate, formatClubDate } from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
 interface SourceBooking {
@@ -53,19 +53,13 @@ function useTransactionDateFormatter() {
 }
 
 /**
- * The source booking's stay — two CALENDAR DAYS, which take no timezone at all.
- *
- * `checkIn`/`checkOut` are `@db.Date` lodge nights serialised to ISO, so the
- * kernel reads the day out of the value's first ten characters and formats it
- * pinned to `UTC`: provably the identity for every club, and
- * deliberately NOT routed through the hook above. Sitting one line from a real
- * instant is exactly where the two concepts get merged, which is the defect
- * class this epic exists to end.
+ * The source booking's stay — two CALENDAR DAYS, which take no timezone at all,
+ * so deliberately NOT routed through the hook above: sitting one line from a
+ * real instant is exactly where the two concepts get merged. `formatStayDate`
+ * is the kernel's one home for a serialised `@db.Date` (#3507; INV-DATE-010).
  */
 function formatDateRange(checkIn: string, checkOut: string): string {
-  const inDate = formatClubDate(calendarDateOfSerialisedDbDate(checkIn));
-  const outDate = formatClubDate(calendarDateOfSerialisedDbDate(checkOut));
-  return `${inDate} - ${outDate}`;
+  return `${formatStayDate(checkIn)} - ${formatStayDate(checkOut)}`;
 }
 
 export function AccountCreditSection() {

@@ -313,6 +313,7 @@ derivation).
   Do not cite this rule as permission to read one in a zone, and do not cite it
   as a prohibition on decoding one in UTC; several docblocks have paraphrased it
   as its own inverse and propagated that.
+- **Show one via `formatStayDate` (#3507).**
 
 ## Date handling rules
 

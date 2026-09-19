@@ -35,10 +35,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
-import {
-  calendarDateOfSerialisedDbDate,
-  formatClubDate,
-} from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 import { countNightsDateOnly } from "@/lib/date-only";
 import { formatCents } from "@/lib/utils";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
@@ -334,20 +331,6 @@ const LINKING_EDITOR_STATUSES = new Set<PublicBookingRequestData["status"]>([
  */
 function isMemberWholeLodgeRequest(request: PublicBookingRequestData) {
   return Boolean(request.requestedByMemberId) && request.exclusivityRequested;
-}
-
-/**
- * A lodge night as the calendar day it IS - no timezone, because a calendar day
- * has none (CT-4, #2870; INV-DATE-010). The value arrives as the JSON form of a
- * Prisma `@db.Date`, i.e. UTC midnight, so the day comes out of the string and
- * goes to the kernel's calendar-date formatter, which pins UTC over that
- * encoding and is therefore the identity.
- *
- * WHAT THIS REPLACES read the same value through a ZONE. That is the identity
- * for a club east of Greenwich and the PREVIOUS DAY for any club west of it.
- */
-function formatDate(value: string) {
-  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 // #2338: nights in a check-in/check-out range, for the whole-lodge flat-price
@@ -1094,7 +1077,7 @@ export function PublicBookingRequestsPanel({
         if (response.status === 409 && Array.isArray(data.fullNights)) {
           throw new Error(
             `The lodge is at capacity for: ${data.fullNights
-              .map((d: string) => formatDate(d))
+              .map((d: string) => formatStayDate(d))
               .join(", ")}`
           );
         }
@@ -1320,7 +1303,7 @@ export function PublicBookingRequestsPanel({
         if (response.status === 409 && Array.isArray(data.fullNights)) {
           throw new Error(
             `The lodge is at capacity for: ${data.fullNights
-              .map((d: string) => formatDate(d))
+              .map((d: string) => formatStayDate(d))
               .join(", ")}`
           );
         }
@@ -1624,7 +1607,7 @@ export function PublicBookingRequestsPanel({
                   <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <span className="text-muted-foreground">Dates:</span>{" "}
-                      {formatDate(request.checkIn)} to {formatDate(request.checkOut)}
+                      {formatStayDate(request.checkIn)} to {formatStayDate(request.checkOut)}
                     </div>
                     <div>
                       <span className="text-muted-foreground">Nights:</span>{" "}
@@ -2167,10 +2150,10 @@ export function PublicBookingRequestsPanel({
                                 <li key={`${conflict.memberId}-${conflict.bookingCheckIn}`}>
                                   {conflict.memberName} is already on{" "}
                                   {conflict.bookingOwnerName}&apos;s booking (
-                                  {formatDate(conflict.bookingCheckIn)}–
-                                  {formatDate(conflict.bookingCheckOut)}) for{" "}
+                                  {formatStayDate(conflict.bookingCheckIn)}–
+                                  {formatStayDate(conflict.bookingCheckOut)}) for{" "}
                                   {conflict.conflictingNights
-                                    .map((night) => formatDate(night))
+                                    .map((night) => formatStayDate(night))
                                     .join(", ")}
                                   .
                                 </li>

@@ -563,6 +563,124 @@ describe("request lifecycle", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #3252 — the canonical order must not depend on the server's collation
+// ---------------------------------------------------------------------------
+
+describe("computeProposalHash is locale-proof (#3252)", () => {
+  // A pair whose two surnames order ONE way under `localeCompare` and the OTHER
+  // way under a code-unit comparison. Measured inside the production container
+  // (node 24.17, ICU 78.3, resolved locale `en-US`): `"de la Cruz"` vs
+  // `"Delacruz"` is −1 under `localeCompare` and +1 ordinally, because locale
+  // collation treats the space as ignorable at the primary level and a code-unit
+  // comparison does not. A surname with a space is ordinary in this club's
+  // membership.
+  //
+  // THIS IS THE FIXTURE THE PINS ABOVE DO NOT GIVE. `Lovelace`/`Turing` and
+  // `Lovelace`/`O'Brien — Māhuta` order identically under both comparators, so
+  // both pre-#3252 pins would have passed a comparator change untouched — they
+  // were built to catch a change in the SERIALISATION, and a comparator lives
+  // one level below that.
+  const divergentParty: ProposalParty = {
+    checkIn: "2026-07-04",
+    checkOut: "2026-07-06",
+    guests: [
+      guest({ firstName: "Ana", lastName: "de la Cruz" }),
+      guest({ firstName: "Bo", lastName: "Delacruz", nights: ["2026-07-05"] }),
+    ],
+  };
+  const divergentSnapshot: ExceptionProposalSnapshot = {
+    kind: "NEW_BOOKING",
+    lodgeId: "lodge_1",
+    proposed: divergentParty,
+  };
+
+  it("orders the divergent pair the ORDINAL way, not the locale way", () => {
+    // Asserted against an EXPLICITLY CONSTRUCTED divergence rather than by
+    // running the suite under another `LANG`. Setting an env var proves nothing
+    // here: this very machine resolves a locale that agrees with the ordinal
+    // answer on the pairs the old pins used, so a locale-parameterised run can
+    // be green while the defect is fully present. What closes it is naming a
+    // pair whose two answers differ and asserting WHICH ONE the code gives.
+    expect(
+      canonicalizeProposalParty(divergentParty).guests.map(
+        (entry) => entry.lastName,
+      ),
+    ).toEqual(["Delacruz", "de la Cruz"]);
+    // The locale answer, stated so the divergence is visible in the test rather
+    // than only in the commit message. If ICU ever changes its mind about this
+    // pair the assertion below fails and the one above does not, which is
+    // exactly the right way round.
+    expect("de la Cruz".localeCompare("Delacruz")).toBe(-1);
+    expect(
+      "de la Cruz" < "Delacruz" ? -1 : "de la Cruz" > "Delacruz" ? 1 : 0,
+    ).toBe(1);
+  });
+
+  it("PINS the digest of the divergent party", () => {
+    // MUTATION-VERIFIED: reverting `canonicalizeProposalParty` to
+    // `a.lastName.localeCompare(b.lastName)` reorders these two guests and this
+    // literal fails. That is the only construction that proves the pin is
+    // load-bearing — the two pins above pass either way.
+    //
+    // If you are here because this failed: do NOT re-pin it. A stored
+    // `proposalHash` cannot be re-verified against new bytes, so a change here
+    // needs a data migration like the one #3252 shipped.
+    expect(computeProposalHash(divergentSnapshot)).toBe(
+      "79e4cff36fbc4ba69f3bf7ecc1b12818ae29cd56ec9acac6aa816937b6a914aa",
+    );
+  });
+
+  it("orders a case-only divergence ordinally too", () => {
+    // `"Smith"` vs `"smith"`: +1 under `localeCompare` (lower case first), −1
+    // ordinally (upper case first). Measured on the live server.
+    expect("Smith".localeCompare("smith")).toBe(1);
+    expect(
+      canonicalizeProposalParty({
+        checkIn: "2026-07-04",
+        checkOut: "2026-07-06",
+        guests: [
+          guest({ firstName: "Ada", lastName: "Smith" }),
+          guest({ firstName: "Bo", lastName: "smith", nights: ["2026-07-05"] }),
+        ],
+      }).guests.map((entry) => entry.lastName),
+    ).toEqual(["Smith", "smith"]);
+  });
+
+  it("MUTATION: the guest order is TOTAL, so a tie cannot fall back to input order", () => {
+    // Before #3252 the comparator chain stopped at `nights`, so two guests
+    // alike in surname, first name, member link and nights but differing in age
+    // tier TIED — and `Array#sort` is stable, which means the tie kept INPUT
+    // order and the digest depended on the order the caller happened to build
+    // the party in. That is the exact property `computeProposalHash` exists to
+    // remove, and it was false for this shape.
+    const tied: ProposalGuest[] = [
+      guest({ firstName: "Sam", lastName: "Smith", ageTier: "CHILD" }),
+      guest({ firstName: "Sam", lastName: "Smith", ageTier: "ADULT" }),
+    ];
+    const forwards: ExceptionProposalSnapshot = {
+      kind: "NEW_BOOKING",
+      lodgeId: "lodge_1",
+      proposed: { checkIn: "2026-07-04", checkOut: "2026-07-06", guests: tied },
+    };
+    const backwards: ExceptionProposalSnapshot = {
+      kind: "NEW_BOOKING",
+      lodgeId: "lodge_1",
+      proposed: {
+        checkIn: "2026-07-04",
+        checkOut: "2026-07-06",
+        guests: [...tied].reverse(),
+      },
+    };
+    expect(computeProposalHash(backwards)).toBe(computeProposalHash(forwards));
+    expect(
+      canonicalizeProposalParty(forwards.proposed).guests.map(
+        (entry) => entry.ageTier,
+      ),
+    ).toEqual(["ADULT", "CHILD"]);
+  });
+});
+
 // keep the capacity-mode type import meaningful
 const _mode: PolicyExceptionCapacityMode = "HOLD";
 void _mode;

@@ -21,10 +21,7 @@ import {
   type HostingCoverageOverridePromptData,
 } from "@/lib/hosting-coverage-override-client";
 import { useClubTime } from "@/components/club-time-provider";
-import {
-  calendarDateOfSerialisedDbDateOrNull,
-  formatClubDate,
-} from "@/lib/club-time";
+import { formatStayDateOrNull } from "@/lib/club-time";
 import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-request-shared";
 import type { PolicyExceptionReasonCode } from "@/lib/booking-policy-exceptions";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
@@ -181,18 +178,6 @@ function statusBadgeClass(status: string) {
   if (status === "REQUESTED") return "border-warning-6 bg-warning-3 text-warning-11";
   if (status === "APPROVED") return "border-success-6 bg-success-3 text-success-11";
   return "border-border bg-muted text-muted-foreground";
-}
-
-/**
- * The proposed lodge nights as the calendar days they ARE - no timezone, because
- * a calendar day has none (CT-4, #2870; INV-DATE-010). `@db.Date` reaches the
- * browser as UTC midnight, and the kernel's calendar-date formatter pins UTC over
- * that encoding, so the projection is the identity. What this replaces read the
- * day through a zone: correct east of Greenwich, a day early west of it.
- */
-function formatDate(value: string | null) {
-  const day = calendarDateOfSerialisedDbDateOrNull(value);
-  return day ? formatClubDate(day) : "—";
 }
 
 export interface PolicyExceptionRequestsPanelProps {
@@ -631,8 +616,8 @@ export function PolicyExceptionRequestsPanel({
                         <span className="text-muted-foreground">
                           Proposed dates:
                         </span>{" "}
-                        {formatDate(item.proposedCheckIn)} to{" "}
-                        {formatDate(item.proposedCheckOut)}
+                        {formatStayDateOrNull(item.proposedCheckIn) ?? "—"} to{" "}
+                        {formatStayDateOrNull(item.proposedCheckOut) ?? "—"}
                       </div>
                       <div>
                         <span className="text-muted-foreground">Guests:</span>{" "}
