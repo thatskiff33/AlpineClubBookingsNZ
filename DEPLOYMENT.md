@@ -593,6 +593,14 @@ rather than by hand:
 ./scripts/run-production-blue-green-deploy.sh --build-and-push-images
 ```
 
+**This mode pushes, so the host needs a GHCR token with `write:packages`** —
+not the `read:packages` token the "GitHub Container Registry" section above
+tells you to log the host in with, and which is the right default for a host
+that only ever pulls. Log in with a push-capable token for the build, and log
+back in with the read-only one afterwards. The script says so before it starts
+building, because the alternative is finding out after a full `next build` on a
+small server.
+
 It resolves and checks the commit exactly as a deploy does, extracts the same
 clean `git archive` workspace, and builds with the same build arguments CI
 passes — including `RELEASE_ID`, which a bare `docker compose build` does not
@@ -627,10 +635,11 @@ naming:
   "nothing applied";
 - whether traffic had already moved to the new colour.
 
-If the database could not be reached, the record says so as its own state. It
-does not report "nothing started", because a database that is down after a
+If the database could not be reached, the record says `UNKNOWN.` as its own
+state. It does not say `NONE STARTED.`, because a database that is down after a
 migration was attempted against it is the one case where a reassuring answer
-would be the most damaging.
+would be the most damaging. Those two strings are the ones printed in the file,
+so they are the ones to look for.
 
 ### What the internal engine does
 

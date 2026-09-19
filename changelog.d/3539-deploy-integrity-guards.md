@@ -30,9 +30,11 @@
   **A deploy that dies after changing the database leaves a record.** From that
   point the database may match neither the old release nor the new one, and the
   only account of what happened was whatever was still on the operator's screen.
-  Any failure from that step onward now writes a file naming the step it died
-  on, the release attempted, whether traffic had moved, and — most importantly —
-  which database changes had *started*, including any that began and did not
+  Any failure from that step onward now writes a file — into
+  `$HOME/tacbookings-deploy-failures` unless you point
+  `DEPLOY_FAILURE_RECORD_DIR` somewhere else — naming the step it died on, the
+  release attempted, whether traffic had moved, and — most importantly — which
+  database changes had *started*, including any that began and did not
   finish. If the database could not be reached at all, the record says that,
   rather than reporting "nothing happened" in the one situation where that would
   be the most misleading thing it could say.

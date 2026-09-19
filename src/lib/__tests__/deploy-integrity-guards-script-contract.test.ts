@@ -168,6 +168,20 @@ describe("guard 2: the previous release's rollback images survive the prune", ()
       'docker ps -a --filter "label=$ROLLBACK_HOLD_LABEL"',
     );
   });
+
+  // The script is clean here - the label is defined once and only ever used
+  // through the variable - so every assertion above passes whatever the label
+  // is CALLED. But DEPLOYMENT.md hands an operator a `docker ps` filter with
+  // the literal baked in, and a rename would leave that command returning
+  // nothing while the suite stayed green. "Nothing is held" is exactly the
+  // answer somebody acts on mid-rollback, so the literal is pinned on both
+  // sides: rename it and this fails until the documented command is updated
+  // with it.
+  it("keeps the documented rollback-hold filter working", () => {
+    const label = "nz.alpineclub.deploy.rollback-image-hold";
+    expect(code).toContain(`ROLLBACK_HOLD_LABEL="${label}"`);
+    expect(readRepoFile("DEPLOYMENT.md")).toContain(`label=${label}`);
+  });
 });
 
 describe("guard 3: a deploy that dies after migrating leaves a record", () => {

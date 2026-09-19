@@ -47,7 +47,15 @@ warn() {
 
 fail() {
   trap - ERR
-  printf "\nProduction blue/green wrapper failed.\n" >&2
+  # Name the mode that failed. `--build-and-push-images` attempts no deploy
+  # at all, and at 2am "Production blue/green wrapper failed" reads as
+  # "production is mid-deploy" - the most alarming possible reading of a
+  # build that never touched the running site.
+  if [ "$WRAPPER_MODE" = "build-and-push-images" ]; then
+    printf "\nHost image build failed. No deploy was attempted and the running site is untouched.\n" >&2
+  else
+    printf "\nProduction blue/green wrapper failed.\n" >&2
+  fi
   if [ -n "$WORKSPACE" ]; then
     printf "Workspace preserved at %s\n" "$WORKSPACE" >&2
   fi
@@ -513,6 +521,15 @@ if [ "$WRAPPER_MODE" = "build-and-push-images" ]; then
   resolve_ref
   validate_deploy_commit_is_published
   resolve_image_refs
+
+  # Said BEFORE the build, not after the push. A production host is logged
+  # into GHCR with a `read:packages` token by documented policy, which is
+  # right for a host that only pulls - and which makes the final
+  # `docker push` the first thing that fails, after a full `next build` on a
+  # small server. There is no cheap, credential-helper-agnostic way to test
+  # push access without pushing, so this states the requirement up front
+  # rather than probing for it.
+  warn "This mode pushes images. A production host is normally logged in to the registry with a read-only token; if this run ends in 'denied: permission_denied', log in with a token that has write:packages and run it again."
 
   step "4/6" "Creating clean build workspace"
   create_workspace
