@@ -13,10 +13,7 @@ import {
   membershipCancellationBlockerHint,
   type MembershipCancellationBlocker,
 } from "@/lib/membership-cancellation-blocker-messages";
-import {
-  calendarDateOfSerialisedDbDate,
-  formatClubDate,
-} from "@/lib/club-time";
+import { formatStayDate } from "@/lib/club-time";
 
 /**
  * Everything standing between this participant and an approval, in the server's
@@ -40,19 +37,6 @@ const CANCELLATION_SETTINGS_PATH = "/admin/membership-cancellation";
  */
 const PANEL_BLOCKER_LIMIT = 20;
 
-/**
- * A blocker's dates are CALENDAR DAYS - a booking's `@db.Date` lodge nights and
- * an invoice due date - so they take no timezone at all (CT-4, #2870;
- * INV-DATE-010). The kernel's calendar-date formatter pins UTC over the
- * UTC-midnight encoding, which makes the projection the identity.
- *
- * WHAT THIS REPLACES read the day through a zone: the same answer for a club
- * east of Greenwich, the PREVIOUS DAY for any club west of it.
- */
-function formatDateOnly(value: string) {
-  return formatClubDate(calendarDateOfSerialisedDbDate(value));
-}
-
 /** Stable list key across every blocker kind. */
 function blockerKey(blocker: MembershipCancellationBlocker) {
   if (blocker.type === "unpaid_invoice") {
@@ -70,14 +54,17 @@ function blockerKey(blocker: MembershipCancellationBlocker) {
  * what makes a bill or an unnumbered invoice findable at all: the link is
  * computed server-side and was, until this fix, shipped to the browser and
  * never rendered (#2392 review, H1).
+ *
+ * A blocker's dates - a booking's `@db.Date` lodge nights and an invoice due
+ * date - are CALENDAR DAYS, so `formatStayDate` serves both (#3507).
  */
 function BlockerLine({ blocker }: { blocker: MembershipCancellationBlocker }) {
   if (!isUnpaidInvoiceBlocker(blocker)) {
-    return <>{describeMembershipCancellationBlocker(blocker, { formatDate: formatDateOnly })}</>;
+    return <>{describeMembershipCancellationBlocker(blocker, { formatDate: formatStayDate })}</>;
   }
 
   const { label, detail, href } = describeUnpaidInvoiceBlockerParts(blocker, {
-    formatDate: formatDateOnly,
+    formatDate: formatStayDate,
   });
 
   return (

@@ -510,3 +510,34 @@ invariants hold in addition to every #2365/#2524/#2525 invariant above:
   + 1, so the card's "Attempts" is the number of times the member has actually
   asked. Every replacement starting again at 1 told an officer that a request
   resubmitted three times was a first ask.
+
+### INV-EXCEPT-036
+
+- **A stored proposal identity is ordered by code unit, never by the server's
+  locale.** `proposalHash` proves a waiting request was not altered, and it is
+  built over the party sorted by name. A bare `localeCompare` there made the
+  stored fingerprint depend on the collation the runtime resolves from its
+  environment, which nothing in this repository pins; the failure would surface
+  at approval as tampering rather than as configuration drift (#3252).
+
+  Three orders are covered, because fixing one alone moves the failure rather
+  than removing it: the proposal party (`canonicalizeProposalParty`), the
+  `uncovered` array frozen into `frozenEvidence` and re-fingerprinted at approval
+  (`policies/adult-member-hosting.ts`), and the frozen violation and policy-ref
+  orders. All go through the one `compareOrdinal` (`src/lib/ordinal-order.ts`,
+  `INV-SSOT-001`), whose docblock carries the reasoning and the measurements.
+  The party comparator is total, so a tie can never fall back to input order.
+
+  **Pin:** `identity-ordering-census.test.ts` refuses a bare `localeCompare` or a
+  hand-rolled comparator in any identity module, and
+  `booking-exception-requests.test.ts` pins the digest of a party that orders
+  differently under the two comparators.
+
+  **Recorded one-off exception:**
+  `20260930010000_relocale_proof_exception_request_identities` re-derived the
+  stored values of `REQUESTED` rows — both tables' `proposalHash`, the `nbpe:`
+  `openStateKey` that embeds it (the duplicate-open-request cap), and the sorted
+  `uncovered` array — a column this file and both schema comments otherwise call
+  frozen. It rewrote a derivation of the frozen proposal, never the proposal, and
+  it is not a licence to rewrite frozen rows. The decision, the production
+  measurement (zero affected rows) and the rejected alternatives are on #3252.

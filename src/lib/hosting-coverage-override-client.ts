@@ -6,6 +6,11 @@
  * correlator with the exact rejected mutation.
  */
 
+// Ordinal, never `localeCompare`: this signature is an identity (#3252). The
+// comparator lives in a module that imports NOTHING precisely so this
+// browser-side path can share it instead of keeping its own copy.
+import { compareOrdinal } from "@/lib/ordinal-order";
+
 export interface HostingCoverageStrandedBooking {
   bookingId: string;
   reference: string;
@@ -115,7 +120,7 @@ export function hostingCoverageMutationSignature(value: unknown): string {
       return Object.fromEntries(
         Object.entries(input as Record<string, unknown>)
           .filter(([, nested]) => nested !== undefined)
-          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .sort(([left], [right]) => compareOrdinal(left, right))
           .map(([key, nested]) => [key, canonical(nested)]),
       );
     }
