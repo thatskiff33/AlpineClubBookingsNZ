@@ -94,9 +94,9 @@ type WaitlistStrandAuditReader = Prisma.TransactionClient | PrismaClient;
  * and refuted: guest REMOVAL settles the same case to `PAID`
  * (`booking-guest-removal-service.ts` reaches the un-nested settle, since no
  * caller can supply the `ADMIN` actor role its skip arm needs), and the guest-add
- * route's own `AWAITING_REVIEW -> PAYMENT_PENDING` arm is unreachable — an
- * earlier status gate in the same handler admits only
- * `PENDING`/`PAYMENT_PENDING`/`CONFIRMED`/`PAID`.
+ * route once carried an `AWAITING_REVIEW -> PAYMENT_PENDING` arm that its own
+ * edit door made unreachable — #3500 deleted it; only the officer review route
+ * writes that transition.
  *
  * On any of those, returning the booking to `WAITLISTED` would un-confirm a
  * booking that was never on a waitlist, prune its bed allocations and email its

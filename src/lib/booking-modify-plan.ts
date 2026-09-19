@@ -645,10 +645,13 @@ export type GuestPlan = {
     adminReviewNotes: string | null;
     adminReviewedById: string | null;
     adminReviewedAt: Date | null;
-    /** When true, status must move to AWAITING_REVIEW unless already there. */
+    /**
+     * When true, status must move to AWAITING_REVIEW unless already there.
+     * There is no counterpart flag: an edit never releases AWAITING_REVIEW —
+     * every edit door refuses that status, so the only release is the officer
+     * review route (#3500, `INV-MOD-013`).
+     */
     parkForReview: boolean;
-    /** When true, AWAITING_REVIEW should be released to PAYMENT_PENDING. */
-    releaseFromReview: boolean;
   };
 };
 
@@ -1201,8 +1204,8 @@ function resolveModifyReviewUpdate({
   const justification = memberReviewJustification?.trim();
 
   if (!nowFlagged) {
-    // Rule cleared. Wipe review state so the booking returns to the
-    // normal lifecycle; if it was parked in AWAITING_REVIEW, release it.
+    // Rule cleared. Wipe review state so the booking returns to the normal
+    // lifecycle, in place: the status is untouched (#3500).
     return {
       requiresAdminReview: false,
       adminReviewReason: null,
@@ -1212,7 +1215,6 @@ function resolveModifyReviewUpdate({
       adminReviewedById: null,
       adminReviewedAt: null,
       parkForReview: false,
-      releaseFromReview: booking.status === "AWAITING_REVIEW",
     };
   }
 
@@ -1230,7 +1232,6 @@ function resolveModifyReviewUpdate({
       adminReviewedById: booking.adminReviewedById,
       adminReviewedAt: booking.adminReviewedAt,
       parkForReview: existingStatus === AdminReviewStatus.PENDING,
-      releaseFromReview: false,
     };
   }
 
@@ -1245,7 +1246,6 @@ function resolveModifyReviewUpdate({
       adminReviewedById: actorId,
       adminReviewedAt: new Date(),
       parkForReview: false,
-      releaseFromReview: false,
     };
   }
 
@@ -1262,7 +1262,6 @@ function resolveModifyReviewUpdate({
     adminReviewedById: null,
     adminReviewedAt: null,
     parkForReview: true,
-    releaseFromReview: false,
   };
 }
 
