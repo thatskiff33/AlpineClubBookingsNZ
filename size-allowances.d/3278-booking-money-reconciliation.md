@@ -13,7 +13,7 @@ reason: two explicit zero components belong in the existing atomic school-bookin
   the four-column money identity without reducing lifecycle complexity.
 
 file: src/app/(admin)/admin/bookings/page.tsx
-lines: 818
+lines: 833
 reason: the compact status-cell chip belongs beside the existing booking and
   operational review signals; extracting it would split one row. Re-measured
   after the chip was routed through the shared audience helper, which moved its
