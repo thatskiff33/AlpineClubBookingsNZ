@@ -140,24 +140,43 @@ export function bookingMoneyReviewSuffix(
 export type BookingMoneyUnreconciledKind = "DISAGREEMENT" | "EVIDENCE_ABSENT";
 
 /**
- * The reasons that mean the records were never kept, rather than that the
- * recorded numbers disagree. Exhaustive by construction: the kind function
- * below treats every reason NOT named here as a disagreement, so a reason
- * added later is actionable until somebody deliberately says otherwise — which
- * is the fail-loud direction.
+ * WHICH SIDE EVERY REASON FALLS ON. Every one, stated.
+ *
+ * This was a Set of the quiet reasons, with everything unlisted defaulting to
+ * actionable. That default is the safe direction, but it makes the most
+ * important property of a new reason — what the screen will ask of an officer
+ * — something you get by saying nothing. Review pointed out the obvious
+ * alternative was already in use three declarations below, and costs the same:
+ * an exhaustive `Record` keyed by the reason union. A reason added later now
+ * fails to compile until somebody chooses its side, which is `INV-SSOT`'s
+ * preference for unrepresentable over policed, applied to the thing that
+ * actually matters here.
+ *
+ * `STRAND_TOTAL_DISAGREES` is a DISAGREEMENT (#3547): it used to arrive inside
+ * `STRAND_EVIDENCE_UNREADABLE` and so inherited the quiet wording, but two
+ * numbers both on file that do not agree is something an officer can resolve.
  */
-const BOOKING_MONEY_EVIDENCE_ABSENT_REASONS: ReadonlySet<BookingMoneyReconciliationReason> =
-  new Set<BookingMoneyReconciliationReason>([
-    "NO_SURVIVING_STRANDS",
-    "STRAND_EVIDENCE_UNREADABLE",
-    "PROMO_BUILD_UP_NOT_KNOWN",
-  ]);
+const BOOKING_MONEY_REASON_KIND = {
+  NO_SURVIVING_STRANDS: "EVIDENCE_ABSENT",
+  STRAND_EVIDENCE_UNREADABLE: "EVIDENCE_ABSENT",
+  STRAND_TOTAL_DISAGREES: "DISAGREEMENT",
+  HEADLINE_TOTAL_MISMATCH: "DISAGREEMENT",
+  PROMO_BUILD_UP_NOT_KNOWN: "EVIDENCE_ABSENT",
+  PROMO_BUILD_UP_MISMATCH: "DISAGREEMENT",
+  DISCOUNT_COMPONENT_MISMATCH: "DISAGREEMENT",
+  FINAL_PRICE_RELATION_MISMATCH: "DISAGREEMENT",
+} as const satisfies Record<
+  BookingMoneyReconciliationReason,
+  BookingMoneyUnreconciledKind
+>;
 
 /** Which kind a set of reasons describes. See the type's docblock for the rule. */
 export function bookingMoneyUnreconciledKind(
   reasons: readonly BookingMoneyReconciliationReason[],
 ): BookingMoneyUnreconciledKind {
-  return reasons.every((reason) => BOOKING_MONEY_EVIDENCE_ABSENT_REASONS.has(reason))
+  return reasons.every(
+    (reason) => BOOKING_MONEY_REASON_KIND[reason] === "EVIDENCE_ABSENT",
+  )
     ? "EVIDENCE_ABSENT"
     : "DISAGREEMENT";
 }
@@ -226,19 +245,41 @@ export const BOOKING_MONEY_RECONCILIATION_COPY = {
  *
  * Each one states the condition the code actually tests, not a guess at
  * history. `NO_SURVIVING_STRANDS` is `guests.length === 0`;
- * `STRAND_EVIDENCE_UNREADABLE` is a guest whose stored night prices come back
- * unusable, which covers an even-share price source, no stored night rows at
- * all, and rows that do not sum to that guest's own total;
+ * `STRAND_EVIDENCE_UNREADABLE` is a guest some or all of whose night rows carry
+ * no usable amount — `NO_STORED_NIGHT_PRICES` when none of them do,
+ * `PARTIAL_STORED_NIGHT_PRICES` when only some do, which is what a parked edit
+ * that GAINS nights leaves behind. Two causes, not one: an earlier draft of
+ * this wording said "no nightly prices at all" and was simply false for the
+ * partial case, which review caught. Reconciliation reads at WHOLE_GUEST grain,
+ * where an even-share row that sums correctly is EXACT, so that cause never
+ * arrives here at all; and #3547 moved rows that do not sum to the guest's own
+ * recorded total to `STRAND_TOTAL_DISAGREES`, because that one is actionable;
  * `PROMO_BUILD_UP_NOT_KNOWN` is a promotion whose per-night rows carry a null
  * amount.
  */
-export const BOOKING_MONEY_EVIDENCE_ABSENT_WHY: Partial<
-  Record<BookingMoneyReconciliationReason, string>
+type BookingMoneyEvidenceAbsentReason = {
+  [R in BookingMoneyReconciliationReason]: (typeof BOOKING_MONEY_REASON_KIND)[R] extends "EVIDENCE_ABSENT"
+    ? R
+    : never;
+}[BookingMoneyReconciliationReason];
+
+/**
+ * Keyed by the evidence-absent reasons DERIVED from the map above, not by a
+ * second hand-written list. It was `Partial<Record<Reason, string>>`, which
+ * meant moving a reason to the quiet side and forgetting its sentence
+ * compiled cleanly and fell back to the terse internal text on screen — the
+ * same class of wrong-words-to-an-officer failure this pull request is fixing.
+ * Now a quiet reason without a sentence does not compile, and a sentence for a
+ * reason that is not quiet does not either.
+ */
+export const BOOKING_MONEY_EVIDENCE_ABSENT_WHY: Record<
+  BookingMoneyEvidenceAbsentReason,
+  string
 > = {
   NO_SURVIVING_STRANDS:
     "No guests remain on this booking, so there are no per-guest amounts left to add up.",
   STRAND_EVIDENCE_UNREADABLE:
-    "At least one guest's nightly prices were not stored in a form that can be added up: recorded as an even share of a total rather than what that guest was charged, or not stored at all, or not matching that guest's own total.",
+    "For at least one guest, some or all of the nights have no price recorded against them, so that guest's stay cannot be added up.",
   PROMO_BUILD_UP_NOT_KNOWN:
     "The discount on this booking was stored as a single figure, without the per-night breakdown needed to check it.",
 };
@@ -253,9 +294,16 @@ export function bookingMoneyEvidenceAbsentReasons(
 ): readonly { reason: BookingMoneyReconciliationReason; why: string }[] {
   return reasons.map((reason) => ({
     reason,
+    // The index is still guarded at runtime: this helper is only ever called
+    // for an all-quiet verdict, but it is exported and a caller could hand it
+    // anything. A reason with no sentence falls back to the internal text
+    // rather than rendering an empty bullet.
     why:
-      BOOKING_MONEY_EVIDENCE_ABSENT_WHY[reason] ??
-      `${BOOKING_MONEY_RECONCILIATION_REASON_TEXT[reason]}.`,
+      (
+        BOOKING_MONEY_EVIDENCE_ABSENT_WHY as Partial<
+          Record<BookingMoneyReconciliationReason, string>
+        >
+      )[reason] ?? `${BOOKING_MONEY_RECONCILIATION_REASON_TEXT[reason]}.`,
   }));
 }
 
@@ -270,7 +318,9 @@ export const BOOKING_MONEY_RECONCILIATION_REASON_TEXT: Record<
 > = {
   NO_SURVIVING_STRANDS: "no surviving guest price strands are recorded",
   STRAND_EVIDENCE_UNREADABLE:
-    "at least one guest strand has incomplete or inexact stored price evidence",
+    "at least one guest strand has some or all night prices unrecorded",
+  STRAND_TOTAL_DISAGREES:
+    "at least one guest's stored night prices do not add up to that guest's own recorded total",
   HEADLINE_TOTAL_MISMATCH:
     "the stored booking total differs from the recorded guest totals",
   PROMO_BUILD_UP_NOT_KNOWN:

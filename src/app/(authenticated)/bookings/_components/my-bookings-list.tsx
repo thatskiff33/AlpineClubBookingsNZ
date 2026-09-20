@@ -18,6 +18,7 @@ import {
 import { formatCents } from "@/lib/utils";
 import {
   bookingMoneyUnreconciledCopy,
+  bookingMoneyUnreconciledKind,
   bookingMoneyNeedsOfficerReview,
   bookingMoneyReviewSuffix,
   type BookingMoneyReconciliationView,
@@ -157,7 +158,22 @@ function BookingSummary({
           </MiniChip>
         ) : null}
         {bookingMoneyNeedsOfficerReview(booking.moneyReconciliation) ? (
-          <MiniChip tone="info" icon={Scale}>
+          // Tone follows the kind, as it does on the other three surfaces
+          // (#3547). Hardcoding `info` here meant a booking promoted to a
+          // finding still rendered as a non-event on this list — the very
+          // failure the promotion exists to remove, surviving on one surface
+          // out of four. This list is reachable by an officer looking at their
+          // own bookings; the gate above is what keeps it away from members.
+          <MiniChip
+            tone={
+              bookingMoneyUnreconciledKind(
+                booking.moneyReconciliation.reconciliation.reasons,
+              ) === "EVIDENCE_ABSENT"
+                ? "info"
+                : "danger"
+            }
+            icon={Scale}
+          >
             {
               bookingMoneyUnreconciledCopy(
                 booking.moneyReconciliation.reconciliation.reasons,
