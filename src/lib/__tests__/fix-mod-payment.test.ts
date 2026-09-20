@@ -1158,6 +1158,85 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     POST = mod.POST;
   });
 
+  it("stores the itemised lines behind a guest add, summing to priceDiffCents (#3530)", async () => {
+    // Alice holds two sold nights at 2500 (booking total 5000); Bob is added
+    // for the same two nights at 5000. The rows the add WRITES are re-read for
+    // the after side, so the tx double answers that read with what landed.
+    const booking = makeBooking({ totalPriceCents: 5000, finalPriceCents: 5000 });
+    const tx = makeTx(booking);
+    (tx as any).bookingGuest.findMany = vi.fn().mockImplementation(
+      async (args: { select?: { nights?: unknown } }) =>
+        args?.select?.nights
+          ? [
+              {
+                id: "g1",
+                firstName: "Alice",
+                lastName: "Smith",
+                ageTier: "ADULT",
+                isMember: true,
+                rateMembershipTypeId: null,
+                nights: [
+                  { stayDate: new Date("2026-08-01"), priceCents: 2500 },
+                  { stayDate: new Date("2026-08-02"), priceCents: 2500 },
+                ],
+              },
+              {
+                id: "g2",
+                firstName: "Bob",
+                lastName: "Jones",
+                ageTier: "ADULT",
+                isMember: true,
+                rateMembershipTypeId: "rt-member",
+                nights: [
+                  { stayDate: new Date("2026-08-01"), priceCents: 5000 },
+                  { stayDate: new Date("2026-08-02"), priceCents: 5000 },
+                ],
+              },
+            ]
+          : [],
+    );
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 15000,
+      guests: guests.map((_g: unknown, i: number) =>
+        i === 0 && guests.length > 1
+          ? { priceCents: 5000, perNightCents: [2500, 2500] }
+          : { priceCents: 10000, perNightCents: [5000, 5000] },
+      ),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({ id: "pi_guest_extra", client_secret: "s" } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    const created = (tx.bookingModification.create as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]?.data;
+    expect(created.priceDiffCents).toBe(10000);
+    const lines = created.priceLines as Array<{ amountCents: number }>;
+    expect(lines.reduce((sum, line) => sum + line.amountCents, 0)).toBe(created.priceDiffCents);
+    expect(lines).toEqual([
+      expect.objectContaining({
+        kind: "GUEST_NIGHTS",
+        sign: 1,
+        unitCents: 5000,
+        nightCount: 2,
+        guestCount: 1,
+        startDate: "2026-08-01",
+        guestNames: ["Bob Jones"],
+        amountCents: 10000,
+      }),
+    ]);
+  });
+
   it("creates additional PaymentIntent when adding guest to CONFIRMED booking", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);

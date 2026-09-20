@@ -1886,3 +1886,38 @@ derivation) and the #3245 census in
 `booking-edit-eligibility-one-home.test.ts`, which refuses a hand-written
 status list near a booking door. Member guide:
 [`changing-or-cancelling-a-booking.md`](../user-guide/changing-or-cancelling-a-booking.md).
+
+## INV-MOD-058
+
+**A booking edit stores the lines its price delta is made of, and every reader
+of them reads the same rows** (#3530 stage 2a, programme #3527; owner
+direction 20 September 2026).
+
+`BookingModification.priceLines` holds the signed lines behind
+`priceDiffCents` — per guest category × rate × unit price × nights, plus one
+promotion delta — computed at edit time by `diffBookingPricing` in
+`src/lib/booking-modification-lines.ts`, the one home for their shape, sum rule,
+parser and sentence. The edit's audit row, the booking's history and (stage 2b)
+the Xero supplementary invoice and modification credit notes read those rows;
+none derives its own.
+
+The lines are **narration**. `priceDiffCents` stays the figure every settlement
+decision reads; no idempotency key or outbox payload carries a line; the row is
+immutable after the edit.
+
+Rules: night prices are gross and the promotion is one signed `PROMO_DELTA`
+line, because `finalPriceCents = totalPriceCents + promoAdjustmentCents`; a
+kept night at the same price and category cancels; a repriced night is one
+removed and one added, never netted; runs are cut by `splitNightsIntoPriceRuns`
+(`night-price-runs.ts`), the same cutter the original invoice uses, and folded
+across guests. Any unpriced night on either side, or a before-night whose stored
+price is not exact provenance (`EVEN_SPLIT`, `UNKNOWN`), yields **no** lines
+(`INV-MOD-028`); lines that do not sum to the caller's `priceDiffCents` are not
+stored (`INV-MONEY-003`). NULL means "no itemisation" — parked, inexact, a
+credit election, a price rebase, or a legacy row — and is never `[]`. The
+computation runs inside `computeModificationPriceLines`, which stores NULL on
+any failure, so narration can never fail an edit.
+
+Pinned by `booking-modification-lines.test.ts` and one sum assertion per edit
+site (`fix-mod-payment`, `batch-modify-payment`,
+`booking-guest-consent-authority`).

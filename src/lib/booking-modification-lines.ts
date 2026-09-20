@@ -187,12 +187,18 @@ export function diffBookingPricing(
         night.priceCents as number,
       ]),
     );
+    // The shape a kept night is judged on is the CATEGORY - age tier and
+    // membership - not the rate-type snapshot. The stored snapshot is kept
+    // stale on purpose while a guest holds locked nights (#2543, D5), so the
+    // before side may carry an older id than the freshly priced after side
+    // for a night whose price did not move; treating that as a re-sale would
+    // print a reprice that never happened. The rate id still travels on each
+    // line, taken from the side that sold it.
     const sameShape =
       beforeGuest !== undefined &&
       afterGuest !== undefined &&
       beforeGuest.ageTier === afterGuest.ageTier &&
-      beforeGuest.isMember === afterGuest.isMember &&
-      beforeGuest.rateMembershipTypeId === afterGuest.rateMembershipTypeId;
+      beforeGuest.isMember === afterGuest.isMember;
 
     const removed: Array<{ stayDate: Date; priceCents: number }> = [];
     const added: Array<{ stayDate: Date; priceCents: number }> = [];

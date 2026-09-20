@@ -523,6 +523,41 @@ describe("consentAuthority authorizes exactly one guest row", () => {
     expect(result.priceDiffCents).toBeLessThan(0);
   });
 
+  it("stores the itemised lines behind the removal's delta, summing to priceDiffCents (#3530)", async () => {
+    const booking = makeBooking({ targetConsent: "EXPIRED" });
+    const tx = makeTx(booking);
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+      consentAuthority: authority("CONSENT_EXPIRY"),
+    });
+
+    // Tania's two sold nights at 6000 go; Cass keeps hers at their locked
+    // prices, so the only line is the removal.
+    expect(result.priceDiffCents).toBe(-12000);
+    expect(result.priceLines).toEqual([
+      expect.objectContaining({
+        kind: "GUEST_NIGHTS",
+        sign: -1,
+        ageTier: "ADULT",
+        isMember: true,
+        unitCents: 6000,
+        nightCount: 2,
+        guestCount: 1,
+        startDate: "2026-11-02",
+        endExclusive: "2026-11-04",
+        guestNames: ["Tania Person"],
+        amountCents: -12000,
+      }),
+    ]);
+    const created = (tx.bookingModification.create as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]?.data;
+    expect(created.priceLines).toEqual(result.priceLines);
+    expect(
+      (created.priceLines as Array<{ amountCents: number }>).reduce((sum, line) => sum + line.amountCents, 0),
+    ).toBe(created.priceDiffCents);
+  });
+
   it("refuses to remove a DIFFERENT guest than the one it names", async () => {
     // The IDOR shape that matters most: hold a valid authority for your own lapsed
     // row and aim it at somebody else's place on the same booking. The authority is

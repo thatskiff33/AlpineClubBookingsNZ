@@ -329,7 +329,6 @@ describe("the sentences (for the owner's eye)", () => {
       diffBookingPricing(before, after, -32000 + -4500 + 4500 + 8000 + 1000),
     );
     const rendered = lines.map(renderModificationLineWithAmount);
-    // eslint-disable-next-line no-console
     console.info(["", "Rendered modification lines:", ...rendered.map((l) => `  ${l}`)].join("\n"));
     // Removals first, then additions; within each, by start date, members
     // before non-members; the promotion last.
