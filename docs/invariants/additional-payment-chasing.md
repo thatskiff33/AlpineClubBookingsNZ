@@ -1537,10 +1537,12 @@ decision and would need its own owner decision.
   (`INV-LOCK-001`; idempotent — an already-cancelled intent makes no call); then,
   under the global money key, the `Payment` summary columns are zeroed behind a
   fence re-asserting the exact values retired (count 0 → 409, nothing changes),
-  the `ADDITIONAL` row is FAILED and stamped `withdrawnAt`, any
+  the `ADDITIONAL` row is FAILED and stamped `withdrawnAt`, and any
   `SUPPLEMENTARY_INVOICE` operation parked `WAITING_PAYMENT` on that intent is
-  CANCELLED (`ADDITIONAL_ASK_WITHDRAWN`), and any PENDING intent-mint recovery
-  is failed terminally. The source task stays COMPLETED (`INV-PAY-099`); the
+  CANCELLED (`ADDITIONAL_ASK_WITHDRAWN`). A live intent-mint recovery
+  (PENDING, PROCESSING, or a retry scheduled) REFUSES the withdrawal rather
+  than being retired here — one route to terminal failure (`INV-PAY-056`).
+  The source task stays COMPLETED (`INV-PAY-099`); the
   `booking.additionalPayment.withdrawn` audit row is the record.
 - **`withdrawnAt` is the durable fact; the columns are a projection.**
   `reconcilePaymentAggregates` derives the additional columns from the latest
@@ -1550,8 +1552,10 @@ decision and would need its own owner decision.
   withdrawn. `findEditReviewChargeRequest` and the repair pass's
   `planEditReviewChargeInvoicePayment` (`withdrawn` outcome, no finding) read
   past it too, so no fresh invoice is parked on a cancelled intent.
-- **Only a review-raised request** (D-3528-2): an ordinary price-increase ask is
-  the price itself (`INV-PAY-047`); the door for a wrong price is editing the
-  booking. A paid request is a refund, refused. Pinned by
+- **Only a review-raised request, and only its own money** (D-3528-2): an
+  ordinary price-increase ask is the price itself (`INV-PAY-047`), and so is
+  the balance a review request absorbed from one it superseded
+  (`carriedAskCents` > 0, `INV-PAY-098`) — both refused; the door for a wrong
+  price is editing the booking. A paid request is a refund, refused. Pinned by
   `additional-payment-withdraw.test.ts`, `payment-transactions-refunds.test.ts`,
   `xero-booking-repair.test.ts`.

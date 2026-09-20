@@ -649,7 +649,11 @@ crash between its two halves converges on a retry rather than leaving a payable
 intent behind a zeroed booking:
 
 ```text
-officer withdraws -> Stripe cancel FIRST, outside any lock (no-op if already cancelled)
+officer withdraws
+     not review-raised, or carries a superseded price ask -> refused (edit the booking)
+     already paid -> refused (that is a refund)
+     a live CREATE_ADDITIONAL_PAYMENT_INTENT recovery -> refused (try once it has minted or died)
+  -> Stripe cancel FIRST, outside any lock (no-op if already cancelled)
      succeeded at the provider -> refused: that is a refund, nothing changes
      processing / not cancellable -> refused, nothing changes
   -> under pg_advisory_xact_lock(1):
@@ -657,7 +661,6 @@ officer withdraws -> Stripe cancel FIRST, outside any lock (no-op if already can
          (count 0 -> 409, whole transaction rolls back)
        ADDITIONAL row -> FAILED + withdrawnAt (the durable fact; never deleted)
        WAITING_PAYMENT supplementary invoice on that intent -> CANCELLED
-       PENDING CREATE_ADDITIONAL_PAYMENT_INTENT recovery -> FAILED (terminal)
   -> booking.additionalPayment.withdrawn audit row; the review task stays COMPLETED
 later payment_intent.canceled webhook -> reconcile reads PAST the stamped row -> still nothing owed
 ```

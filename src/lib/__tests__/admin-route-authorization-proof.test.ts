@@ -495,6 +495,12 @@ const REVIEWED_PERMISSION_DIVERGENCES: Divergence[] = [
     why: "STRICTER than the map. The list exists to be picked from while editing a booking's party, so it is gated at the level of the edit it serves.",
   },
   {
+    pathname: "/api/admin/bookings/x123/additional-payment/withdraw",
+    method: "POST",
+    gate: "finance:edit",
+    why: "STRICTER than the map (#3528, INV-ADDPAY-040): withdrawing an additional-payment request cancels a card request and retires a held Xero document - money instruments, which are the payments board's authority (the same gate that completes the review task that raised the request) - while the path runs through the booking the request sits on. The booking officer's re-send sibling beside it stays at bookings:edit because it moves no money.",
+  },
+  {
     pathname: "/api/admin/bookings/x123/eligible-family",
     method: "GET",
     gate: "bookings:edit",
@@ -942,6 +948,10 @@ const FINANCE_ONLY_NON_FINANCE_ADMISSIONS = [
   // a named member's resolved joining fee, and the previous version of this
   // sweep asserted the opposite while the route answered 200.
   "POST /api/admin/members/x123/joining-fee/preview",
+  // NOT here, deliberately: `POST /api/admin/bookings/x123/additional-payment/
+  // withdraw` (#3528) is gated finance:EDIT under a bookings path, so this
+  // view-only grid is refused it, exactly as the sweep expects; the divergence
+  // is recorded in REVIEWED_PERMISSION_DIVERGENCES above.
 ];
 
 function financePathsOf(paths: string[]) {

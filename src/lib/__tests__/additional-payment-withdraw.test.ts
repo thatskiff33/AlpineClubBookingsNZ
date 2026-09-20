@@ -33,6 +33,7 @@ vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.createAuditLog }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
 import {
+  additionalAskCarriesPriceMessage,
   ADDITIONAL_ASK_ALREADY_PAID_MESSAGE,
   ADDITIONAL_ASK_CHANGED_MESSAGE,
   ADDITIONAL_ASK_NOT_REVIEW_RAISED_MESSAGE,
@@ -52,6 +53,7 @@ function request(overrides: Record<string, unknown> = {}) {
     source: "STRIPE",
     status: "PENDING",
     amountCents: 2275,
+    carriedAskCents: 0,
     stripePaymentIntentId: INTENT_ID,
     reason: buildEditFinancialReviewChargeReason(MODIFICATION_ID),
     withdrawnAt: null,
@@ -151,7 +153,7 @@ describe("withdrawAdditionalPaymentAsk", () => {
       withdrawnAmountCents: 2275,
       paymentIntentId: INTENT_ID,
       intentStatus: "canceled",
-      retired: { xeroOperations: 1, pendingRecoveries: 0 },
+      retired: { xeroOperations: 1 },
     });
 
     // The provider FIRST, outside the transaction, with the club's reason.
@@ -206,15 +208,14 @@ describe("withdrawAdditionalPaymentAsk", () => {
       }),
     });
 
-    // A pending retry can no longer mint the ask again.
-    expect(mocks.prisma.paymentRecoveryOperation.updateMany).toHaveBeenCalledWith({
-      where: {
-        paymentId: "payment-1",
-        type: "CREATE_ADDITIONAL_PAYMENT_INTENT",
-        status: "PENDING",
-      },
-      data: expect.objectContaining({ status: "FAILED", nextRetryAt: null }),
+    // The transaction runs on the global key's long budget, not the 5s default.
+    expect(mocks.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      maxWait: 10_000,
+      timeout: 30_000,
     });
+    // No recovery is written here: a live one refuses the withdrawal instead
+    // (`INV-PAY-056`, one route to terminal failure).
+    expect(mocks.prisma.paymentRecoveryOperation.updateMany).not.toHaveBeenCalled();
 
     // The record: completed, then withdrawn, naming the task that raised it.
     expect(mocks.createAuditLog).toHaveBeenCalledWith(
@@ -256,7 +257,6 @@ describe("withdrawAdditionalPaymentAsk", () => {
     // Nothing after the fence ran, and no record claims a withdrawal.
     expect(mocks.prisma.paymentTransaction.updateMany).not.toHaveBeenCalled();
     expect(mocks.prisma.xeroSyncOperation.updateMany).not.toHaveBeenCalled();
-    expect(mocks.prisma.paymentRecoveryOperation.updateMany).not.toHaveBeenCalled();
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
   });
 
@@ -393,16 +393,53 @@ describe("withdrawAdditionalPaymentAsk", () => {
     });
   });
 
-  it("refuses while a background retry is mid-mint rather than racing the worker", async () => {
+  it("D-3528-2: refuses a review request that CARRIES a superseded price ask, naming the carried amount (review of #3550)", async () => {
+    // A review charge sized on top of an ordinary +$100 ask it superseded
+    // (INV-PAY-098): $22.75 of review money and $100.00 of price. Withdrawing
+    // the whole row would erase the price part from every surface.
+    mocks.prisma.booking.findUnique.mockResolvedValue(
+      booking({
+        payment: {
+          additionalAmountCents: 12275,
+          transactions: [request({ amountCents: 12275, carriedAskCents: 10000 })],
+        },
+      }),
+    );
+
+    const result = await withdraw();
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      error: additionalAskCarriesPriceMessage(10000),
+    });
+    expect((result as { error: string }).error).toContain("$100.00");
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses while an intent-mint recovery is still live, and never writes one (INV-PAY-056)", async () => {
     mocks.prisma.paymentRecoveryOperation.findFirst.mockResolvedValue({ id: "rec-1" });
 
     const result = await withdraw();
 
     expect(result).toMatchObject({ ok: false, status: 409 });
+    expect((result as { error: string }).error).toContain("background retry");
+    // Live means PENDING, PROCESSING, or FAILED with a retry still scheduled;
+    // a dead recovery (no retry time) is not asked about.
+    expect(mocks.prisma.paymentRecoveryOperation.findFirst).toHaveBeenCalledWith({
+      where: {
+        paymentId: "payment-1",
+        type: "CREATE_ADDITIONAL_PAYMENT_INTENT",
+        OR: [{ status: { in: ["PENDING", "PROCESSING"] } }, { nextRetryAt: { not: null } }],
+      },
+      select: { id: true },
+    });
     expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+    expect(mocks.prisma.paymentRecoveryOperation.updateMany).not.toHaveBeenCalled();
   });
 
-  it("withdraws a request that never got its intent (the mint is still owed to a pending retry)", async () => {
+  it("withdraws a legacy request that carries no intent, with no provider call and no Xero lookup", async () => {
     mocks.prisma.booking.findUnique.mockResolvedValue(
       booking({
         payment: {
@@ -411,7 +448,6 @@ describe("withdrawAdditionalPaymentAsk", () => {
         },
       }),
     );
-    mocks.prisma.paymentRecoveryOperation.updateMany.mockResolvedValue({ count: 1 });
 
     const result = await withdraw();
 
@@ -419,10 +455,9 @@ describe("withdrawAdditionalPaymentAsk", () => {
       ok: true,
       paymentIntentId: null,
       intentStatus: null,
-      retired: { xeroOperations: 0, pendingRecoveries: 1 },
+      retired: { xeroOperations: 0 },
     });
     expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
-    // No intent means no held Xero document to look for.
     expect(mocks.prisma.xeroSyncOperation.updateMany).not.toHaveBeenCalled();
   });
 

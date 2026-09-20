@@ -50,7 +50,7 @@ beforeEach(() => {
     withdrawnAmountCents: 2275,
     paymentIntentId: "pi_1",
     intentStatus: "canceled",
-    retired: { xeroOperations: 1, pendingRecoveries: 0 },
+    retired: { xeroOperations: 1 },
   });
 });
 
@@ -77,7 +77,7 @@ describe("admin additional-payment withdraw route", () => {
     await expect(response.json()).resolves.toEqual({
       success: true,
       withdrawnAmountCents: 2275,
-      retired: { xeroOperations: 1, pendingRecoveries: 0 },
+      retired: { xeroOperations: 1 },
     });
     expect(mocks.withdrawAdditionalPaymentAsk).toHaveBeenCalledWith({
       bookingId: "bk_1",

@@ -44,9 +44,11 @@ import { formatCents } from "@/lib/utils";
  *     the exact values being retired, so a payment landing under us is a 409
  *     and changes nothing);
  *   * any `SUPPLEMENTARY_INVOICE` outbox operation parked `WAITING_PAYMENT`
- *     on that intent (CANCELLED with a reason, never executable);
- *   * any PENDING `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery for the payment
- *     (FAILED terminally, so no retry mints the ask again).
+ *     on that intent (CANCELLED with a reason, never executable).
+ *
+ * A live intent-mint recovery is not retired here - it is REFUSED (below):
+ * a recovery dies through one chokepoint (`INV-PAY-056`), and this door does
+ * not own it.
  *
  * The source review task stays COMPLETED. The audit row written here is the
  * record: completed, then withdrawn, by whom, for how much, naming the task.
@@ -57,7 +59,9 @@ import { formatCents } from "@/lib/utils";
  * "unasked" and the next edit would raise it again. The door for a wrong price
  * is editing the booking, which supersedes the ask; this door is for money a
  * person typed on top of the price, which is the one the issue describes and
- * the one whose withdrawal BALANCES the ledger.
+ * the one whose withdrawal BALANCES the ledger. The same rule reads the ROW,
+ * not just its reason: a review request that absorbed a superseded ordinary
+ * ask's balance (`carriedAskCents` > 0) is part price, and is refused too.
  *
  * ORDER: the provider round trip runs before the transaction, never inside it
  * (`docs/CONCURRENCY_AND_LOCKING.md`: no lock across Stripe). Cancel-then-write
@@ -87,7 +91,6 @@ export type WithdrawAdditionalPaymentAskResult =
       intentStatus: string | null;
       retired: {
         xeroOperations: number;
-        pendingRecoveries: number;
       };
     }
   | {
@@ -103,6 +106,17 @@ export const ADDITIONAL_ASK_ALREADY_PAID_MESSAGE =
 
 export const ADDITIONAL_ASK_NOT_REVIEW_RAISED_MESSAGE =
   "This request was raised by a change to the booking's price, not by a financial review, so withdrawing it would leave the price unpaid. If the price is wrong, edit the booking; the request is replaced by the edit.";
+
+/**
+ * A review-raised request can ABSORB the unpaid balance of an ordinary
+ * price-increase ask it superseded (`carriedAskCents`, #3371, `INV-PAY-098`).
+ * That carried part IS the booking's price, so withdrawing the whole request
+ * would erase it (review of #3550) - the D-3528-2 refusal, read off the row's
+ * own provenance rather than its reason alone.
+ */
+export function additionalAskCarriesPriceMessage(carriedAskCents: number): string {
+  return `This request includes ${formatCents(carriedAskCents)} carried over from a change to the booking's price, so withdrawing it would leave that amount unpaid. If the price is wrong, edit the booking; the request is replaced by the edit.`;
+}
 
 export const ADDITIONAL_ASK_CHANGED_MESSAGE =
   "This request changed while you were withdrawing it - a payment may have landed. Refresh and check the booking before trying again.";
@@ -145,6 +159,7 @@ export async function withdrawAdditionalPaymentAsk(params: {
               source: true,
               status: true,
               amountCents: true,
+              carriedAskCents: true,
               stripePaymentIntentId: true,
               reason: true,
               withdrawnAt: true,
@@ -207,24 +222,47 @@ export async function withdrawAdditionalPaymentAsk(params: {
   if (!request || !anchorModificationId) {
     return { ok: false, status: 409, error: ADDITIONAL_ASK_NOT_REVIEW_RAISED_MESSAGE };
   }
+  if (request.carriedAskCents > 0) {
+    return {
+      ok: false,
+      status: 409,
+      error: additionalAskCarriesPriceMessage(request.carriedAskCents),
+    };
+  }
 
-  // A recovery mid-mint holds a claim the worker is acting on; retiring it
-  // under the worker would race a Stripe call. Refuse for now rather than
-  // guess; the worker finishes in seconds.
-  const processingRecovery = await prisma.paymentRecoveryOperation.findFirst({
+  // A LIVE intent-mint recovery still owes this request a replay: one the
+  // worker is acting on now (PROCESSING), one waiting its turn (PENDING), or
+  // one that failed and is scheduled to try again (a retry time set). Its
+  // replay re-derives the shares and would mint the ask afresh the moment the
+  // withdrawal had retired it. A recovery is retired only through
+  // `markPaymentRecoveryOperationFailed` (`INV-PAY-056`, one route to
+  // terminal failure), which this door does not own - so it refuses instead,
+  // and the officer withdraws once the retry has minted or died. A dead
+  // recovery (no retry time) blocks nothing.
+  const liveRecovery = await prisma.paymentRecoveryOperation.findFirst({
     where: {
       paymentId: payment.id,
       type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
-      status: PaymentRecoveryOperationStatus.PROCESSING,
+      OR: [
+        {
+          status: {
+            in: [
+              PaymentRecoveryOperationStatus.PENDING,
+              PaymentRecoveryOperationStatus.PROCESSING,
+            ],
+          },
+        },
+        { nextRetryAt: { not: null } },
+      ],
     },
     select: { id: true },
   });
-  if (processingRecovery) {
+  if (liveRecovery) {
     return {
       ok: false,
       status: 409,
       error:
-        "A background retry is setting this request up right now. Wait a minute and try again.",
+        "A background retry is still setting this request up. Wait for it to finish (a few minutes), then try again.",
     };
   }
 
@@ -342,25 +380,13 @@ export async function withdrawAdditionalPaymentAsk(params: {
         })
       : { count: 0 };
 
-    // A pending retry would mint the ask again after we retired it.
-    const pendingRecoveries = await tx.paymentRecoveryOperation.updateMany({
-      where: {
-        paymentId: payment.id,
-        type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
-        status: PaymentRecoveryOperationStatus.PENDING,
-      },
-      data: {
-        status: PaymentRecoveryOperationStatus.FAILED,
-        lastError: "Withdrawn: an officer withdrew the additional-payment request this retry would have raised.",
-        nextRetryAt: null,
-        processingStartedAt: null,
-      },
-    });
-
-    return {
-      xeroOperations: xeroOperations.count,
-      pendingRecoveries: pendingRecoveries.count,
-    };
+    return { xeroOperations: xeroOperations.count };
+  }, {
+    // The longest-lived holder of the global key in the tree runs on this
+    // budget (`assignBedRange`); queued behind it, the default 5s would turn a
+    // legitimate wait into a 500 after the intent is already dead at Stripe.
+    maxWait: 10_000,
+    timeout: 30_000,
   }).catch((err) => {
     if (err instanceof WithdrawalFenceError) return null;
     throw err;
@@ -393,7 +419,6 @@ export async function withdrawAdditionalPaymentAsk(params: {
       bookingModificationId: anchorModificationId,
       sourceTaskIds,
       retiredXeroOperations: retired.xeroOperations,
-      retiredPendingRecoveries: retired.pendingRecoveries,
     },
     requestId: params.auditRequest?.id,
     ipAddress: params.auditRequest?.ipAddress,
