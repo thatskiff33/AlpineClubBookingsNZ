@@ -297,31 +297,23 @@ rules first written here. #2765 extended it with the measured-audience half.
   Everything a client module pulls in at runtime is compiled into the browser
   bundle, so reaching `@/lib/prisma`, `@/lib/auth`, `@/lib/audit`,
   `@/lib/session`, `@/lib/email`, `@/lib/xero`, `@/lib/stripe`, `@/lib/env`,
-  `next/headers`, `server-only` or a Node built-in from a `"use client"` file
-  ships database access, credential handling or filesystem code to every
-  visitor. Importing `server-only` from the client layer fails the Next build
-  outright, and since #2850 so does reaching `@/lib/auth`, `@/lib/prisma`,
-  `@/lib/audit`, `@/lib/email`, `@/lib/xero` or `@/lib/stripe` — all six now
-  carry that marker, so the build refuses the whole chain. What made the last
-  five possible is set out below, and it is a change to how the operator
-  command-line tools are STARTED rather than a change to any of them.
+  `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration`,
+  `@/lib/environment-role`, `next/headers`, `server-only` or a Node built-in
+  from a `"use client"` file ships database access, credential handling,
+  filesystem code or an environment answer the browser cannot have to every
+  visitor.
 
-  `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
-  `@/lib/environment-role` are still unmarked, and deliberately so — see
-  "Which modules carry the marker" below. They are the modules that would ship
-  silently were the two source-level guards to miss them.
-
-  (`@/lib/session` and `@/lib/env` are named in the census's list but no such
-  files exist today. They stay listed deliberately, so that creating one
-  starts out protected rather than starting out invisible.)
+  (`@/lib/session` and `@/lib/env` name no file today. They stay listed
+  deliberately, so that creating one starts out protected rather than starting
+  out invisible.)
 
   **"Reaches", not "imports", and the two words are enforced by two different
-  mechanisms.** A re-export (`export { prisma } from …`, `export * from …`) and a
-  dynamic `await import()` / `require()` have exactly the same bundle effect as a
-  plain import, and all of them are direct edges. A hop through an intermediate
-  module — a client component importing `@/lib/audit`, which imports
-  `@/lib/prisma` — has the same effect again and is not visible in any single
-  file.
+  mechanisms.** A re-export (`export { prisma } from …`, `export * from …`) and
+  a dynamic `await import()` / `require()` have exactly the same bundle effect
+  as a plain import, and all of them are direct edges. A hop through an
+  intermediate module — a client component importing `@/lib/audit`, which
+  imports `@/lib/prisma` — has the same effect again and is not visible in any
+  single file.
 
   The fix is to do the work in an API route or a server component and pass the
   RESULT to the client component. A type-only `import type` / `export type` is
@@ -350,11 +342,7 @@ rules first written here. #2765 extended it with the measured-audience half.
     separately — not merely to go red. That distinction is load-bearing:
     seeding that import also drags Prisma's `pg` driver into the browser layer,
     so the build fails either way, and a gate keyed on the exit code would pass
-    with Next's rule switched off. Measured: with both markers present the
-    self-test passes; with `@/lib/prisma`'s marker removed and `@/lib/auth`'s
-    left in place the build is still red for a real boundary reason and the
-    self-test still fails, saying "no Turbopack error was attributed to
-    ./src/lib/prisma.ts".
+    with Next's rule switched off.
 
   **Which modules carry the marker, and how the operator CLIs live with it.**
   `server-only` throws at import under plain Node, so for a year the marker
@@ -373,41 +361,26 @@ rules first written here. #2765 extended it with the measured-audience half.
   cleanly. Every published invocation that reaches one now carries that flag,
   and the money-repair and maintenance commands the documentation used to
   publish as raw `npx tsx` lines are npm scripts that carry it for the
-  operator — `npm run xero:booking-repair`,
-  `npm run xero:refund-note-link-repair`,
-  `npm run xero:audit-invoice-rounding`,
-  `npm run payments:backfill-orphaned-credits`,
-  `npm run payments:backfill-cancel-flattened`,
-  `npm run payments:audit-ib-hold-clearing`,
-  `npm run finance:backfill-monthly-facts` and
-  `npm run calendar:diagnose-access`. That last part is a requirement, not a
-  nicety: somebody copying a runbook line during a money-repair incident must
-  not meet a confusing import failure.
+  operator. That is a requirement, not a nicety: somebody copying a runbook line
+  during a money-repair incident must not meet a confusing import failure. **A
+  tool's own `--help` is a published invocation too**, and was the last place
+  handing out the bare form; the `#!/usr/bin/env npx tsx` shebang is gone from
+  every CLI root that reaches a marked module.
 
-  **A tool's own `--help` is a published invocation too**, and it was the last
-  place still handing out the bare form (#2850): ask `xero-booking-repair` how
-  to run it and it printed back the `npx tsx …` line that aborts, to the one
-  reader most likely to be mid-incident. Each of these tools now prints its
-  `npm run` name in its usage text and its docblock examples, and the
-  `#!/usr/bin/env npx tsx` first line is gone from every CLI root that reaches
-  a marked module — those files are not executable, so the line was pure
-  instruction to run a command that cannot start.
+  `cli-server-only-reach-census.test.ts` (CT-5, #2869) enforces the pairing. It
+  walks every CLI root's import graph, sweeps every place a `tsx` entrypoint is
+  named — package scripts, `prisma.config.ts`, shell runners, workflows, the
+  documentation, and the CLI sources' own usage text — judges each root's
+  shebang separately because that one names no entrypoint argument, and fails
+  when a command reaching a marked module is published without the condition.
 
-  `cli-server-only-reach-census.test.ts` (CT-5, #2869) enforces the pairing —
-  it walks every CLI root's import graph, sweeps every place a `tsx`
-  entrypoint is named (package scripts, `prisma.config.ts`, shell runners,
-  workflows, the documentation, and the CLI sources' own usage text), judges
-  each root's shebang separately because that one names no entrypoint
-  argument, and fails when a command that reaches a marked module is published
-  without the condition.
-
-  **The last three modules were sealed by #3204, and the roots went from six to
-  nine.** `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
-  `@/lib/environment-role` now carry the marker too. They went without it for a
-  year on a reason that stopped being true: every copy said a `tsx` entrypoint
-  reaching them would abort, and #3186 measured that it would not. Do not
-  reinstate the retired excuse anywhere — it is the second time this text has
-  outlived the fact it stated.
+  **#3204 marked the last three, taking the roots from six to nine.**
+  `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
+  `@/lib/environment-role` had gone without the marker for a year on a reason
+  that stopped being true: every copy said a `tsx` entrypoint reaching them
+  would abort, and #3186 measured that it would not. Do not reinstate the
+  retired excuse anywhere — it is the second time that text outlived the fact it
+  stated.
 
   What #3204 added was the evidence, because a static walk saying it is safe and
   being sure are different things. These are the modules a command-line tool
@@ -415,52 +388,44 @@ rules first written here. #2765 extended it with the measured-audience half.
   the club's REAL members get emailed (`INV-CONFIG-003`); getting that wrong is
   not a build error, it is a mailout from a copy of the site. Measured on the
   tree at the time: **eleven** CLI and seed roots reach at least one of the
-  three — the setup check, both seeds, the second-lodge E2E seed, the config
-  self-heal, the induction baseline, the three payment backfills and two Xero
-  repair tools — and **every one of them already reached a marked module**, so
-  the set of commands needing `--conditions=react-server` did not grow by one.
-  `next.config.ts`, `instrumentation-client.ts`, `sentry.edge.config.ts` and
-  `prisma.config.ts` reach none of the three; `instrumentation.node.ts` reaches
-  all three and already reached five marked modules, so the Node server layer
-  was demonstrably tolerating markers before this change. There is no
-  middleware.
+  three, and **every one already reached a marked module**, so the set of
+  commands needing the condition did not grow by one. `next.config.ts`,
+  `instrumentation-client.ts`, `sentry.edge.config.ts` and `prisma.config.ts`
+  reach none of the three; `instrumentation.node.ts` reaches all three and
+  already reached five marked modules, so the Node server layer was
+  demonstrably tolerating markers before the change. There is no middleware.
 
-  **Two roots are planted by the build proof; nine are retained by the
+  **Two roots are planted by the build proof; nine are held by the retention
   assertion, and that asymmetry is deliberate.** Planting a root proves NEXT'S
   RULE is on and discriminating, which is a property of the toolchain rather
   than of any one module — and `@/lib/prisma` was chosen as the second precisely
   because it was the hard case. Planting seven more would re-prove it seven
-  times while widening the surface on which a Turbopack wording change reds the
-  required `verify` check with nothing broken. What planting buys for a root —
-  noticing its marker has gone — the mutation-proven retention assertion in
+  times while widening the surface on which a Turbopack wording change reds a
+  required check with nothing broken. What planting buys for a root — noticing
+  its marker has gone — the mutation-proven retention assertion in
   `client-server-boundary-census.test.ts` buys for all nine, with no build.
 
-  **All nine are ALSO named as forbidden leaves in both halves of this
-  invariant**, and #3204 kept them there rather than retiring the entries —
-  `FORBIDDEN_MODULES` in
-  `src/lib/__tests__/client-server-boundary-census.test.ts`, and the `$MOD`
-  alternation in `.semgrep/rules/acb-client-server-boundary.yml`. Those two
-  answer without a build: one in review on a single file, one in the required
-  `verify` check with the shortest import path it found. They are also the only
-  thing that covers a module nobody has marked yet — `@/lib/session` and
-  `@/lib/env` name no file, so a module created at either path starts out
-  protected instead of starting out invisible. Both are FIXED LEAF LISTS: a
-  module in neither is protected by neither, however firmly its own docblock
-  says otherwise. **This passage is the one home for that reasoning**;
-  everywhere else points here rather than restating it.
+  **All nine are ALSO named as forbidden leaves in both source-level guards**,
+  and #3204 kept them there rather than retiring the entries: `FORBIDDEN_MODULES`
+  in that census, and the `$MOD` alternation in the Semgrep rule. Those two
+  answer without a build — one in review on a single file, one in `verify` with
+  the shortest import path — and they are the only thing covering a module
+  nobody has marked yet. Both are FIXED LEAF LISTS: a module in neither is
+  protected by neither, however firmly its own docblock says otherwise. **This
+  passage is the one home for that reasoning**; everywhere else points here
+  rather than restating it.
 
   The cost that used to be cited here — "122 test files already carry
-  `vi.mock("server-only", ...)`, so adding it would put that requirement on
+  `vi.mock("server-only", …)`, so adding it would put that requirement on
   essentially every test" — was **wrong**, and worth recording as wrong.
   `vitest.setup.ts` has stubbed the marker globally for every test file since
   0e278396d (22 Jul 2026), three weeks before that sentence was written. The
-  full suite with the marker on six protected roots reported **zero**
-  `server-only` failures. The real obstacle was always the CLI invariant above,
-  and the answer to it was a resolution flag rather than a refactor.
+  real obstacle was always the CLI invariant above, and the answer to it was a
+  resolution flag rather than a refactor.
 
-  Counting the marked modules, if you ever need the number:
+  Counting the marked modules, if you need the number:
   `grep -rlE '^import "server-only";$' src/`. An unanchored `grep -rl` answers
-  with fifteen more, because that many files only NAME the import inside a
+  with twenty more, because that many files only NAME the import inside a
   docblock explaining this invariant — which is where the figure this page used
   to carry came from, and why it is not carried any more.
 
