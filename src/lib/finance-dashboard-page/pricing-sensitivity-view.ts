@@ -9,19 +9,18 @@ import {
   formatFinancePercent as formatPercent,
   formatSignedDollarsDisplay,
 } from "@/lib/finance-format";
-import {
-  buildFinanceMonthlyPnlSummary,
-} from "@/lib/finance-monthly-pnl";
+import { buildFinanceMonthlyPnlSummary } from "@/lib/finance-monthly-pnl";
 import { formatCents } from "@/lib/utils";
 import {
   cardRows,
   type FinanceDashboardKpiCard,
 } from "@/lib/finance-dashboard-page/model";
+import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-dashboard-page/money-reconciliation";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 
 export async function buildPricingSensitivityDashboard(
   selection: FinanceDashboardSelection,
-  lodgeId: string | null
+  lodgeId: string | null,
 ) {
   const [costs, metrics] = await Promise.all([
     buildFinanceMonthlyPnlSummary({
@@ -63,16 +62,32 @@ export async function buildPricingSensitivityDashboard(
         realizedRateCents === null ? 0 : impliedGuestNights * realizedRateCents,
     };
   });
+  const warnings = [...costs.warnings];
+  const moneyReconciliationPanel =
+    appendBookingMoneyReconciliationDashboardState({
+      warnings,
+      primary: metrics.moneyReconciliation,
+      comparison: null,
+      affectedMetrics:
+        "Realized rate, booked revenue less costs, and occupancy scenarios",
+      formatNumber,
+    });
   // Per-night rates keep cents: they are unit prices where cents are signal.
   const cards: FinanceDashboardKpiCard[] = [
     {
       title: "Break-even revenue / guest night",
-      value: breakEvenRateCents === null ? "Unavailable" : formatCents(breakEvenRateCents),
+      value:
+        breakEvenRateCents === null
+          ? "Unavailable"
+          : formatCents(breakEvenRateCents),
       description: "Selected-period costs divided by realized guest nights.",
     },
     {
       title: "Realized rate",
-      value: realizedRateCents === null ? "Unavailable" : formatCents(realizedRateCents),
+      value:
+        realizedRateCents === null
+          ? "Unavailable"
+          : formatCents(realizedRateCents),
       description: "Booked revenue divided by realized guest nights.",
     },
     {
@@ -115,9 +130,11 @@ export async function buildPricingSensitivityDashboard(
     ],
     mix: null,
     statusPanels: [
+      moneyReconciliationPanel,
       {
         title: "Scenario assumptions",
-        description: "Break-even rates are based on mapped selected-period costs.",
+        description:
+          "Break-even rates are based on mapped selected-period costs.",
         items: scenarioData.map((scenario) => ({
           label: scenario.label,
           value: formatCents(scenario.requiredRate),
@@ -134,13 +151,22 @@ export async function buildPricingSensitivityDashboard(
       },
       {
         label: "Booking source",
-        description: "Guest nights and booked revenue come from local booking metrics.",
+        description:
+          "Guest nights and booked revenue come from local booking metrics.",
       },
     ],
     exportSections: [
       { title: "KPI cards", rows: cardRows(cards) },
       { title: "Scenarios", rows: scenarioData },
+      {
+        title: "Booking money reconciliation",
+        rows: moneyReconciliationPanel.items.map((item) => ({
+          Label: item.label,
+          Value: item.value,
+          Detail: item.detail ?? "",
+        })),
+      },
     ],
-    warnings: costs.warnings,
+    warnings,
   };
 }

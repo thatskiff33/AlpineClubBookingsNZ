@@ -63,6 +63,71 @@ function occupancyRate(occupiedBedNights: number, dayCount = 1): number {
     : 0;
 }
 
+type FinanceFixtureBooking = {
+  checkIn: Date;
+  checkOut: Date;
+  finalPriceCents: number;
+  guests: Array<{
+    id: string;
+    stayStart?: Date | null;
+    stayEnd?: Date | null;
+  }>;
+};
+
+function allocate(totalCents: number, parts: number): number[] {
+  const base = Math.floor(totalCents / parts);
+  let remainder = totalCents - base * parts;
+  return Array.from({ length: parts }, () => {
+    if (remainder <= 0) return base;
+    remainder -= 1;
+    return base + 1;
+  });
+}
+
+function fixtureNightDates(start: Date, end: Date): Date[] {
+  const dates: Date[] = [];
+  for (let cursor = start; cursor < end; cursor = new Date(cursor.getTime() + 86_400_000)) {
+    dates.push(cursor);
+  }
+  return dates;
+}
+
+function withReconciledMoneyEvidence<T extends FinanceFixtureBooking>(rows: T[]): T[] {
+  return rows.map((row) => {
+    const guestTotals = allocate(row.finalPriceCents, row.guests.length);
+    return {
+      ...row,
+      totalPriceCents: row.finalPriceCents,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      promoRedemption: null,
+      nightAdjustments: [],
+      guests: row.guests.map((guest, guestIndex) => {
+        const nights = fixtureNightDates(
+          guest.stayStart ?? row.checkIn,
+          guest.stayEnd ?? row.checkOut,
+        );
+        const nightPrices = allocate(guestTotals[guestIndex] ?? 0, nights.length);
+        return {
+          ...guest,
+          priceCents: guestTotals[guestIndex] ?? 0,
+          stayStart: guest.stayStart ?? null,
+          stayEnd: guest.stayEnd ?? null,
+          nights: nights.map((stayDate, index) => ({
+            stayDate,
+            priceCents: nightPrices[index] ?? 0,
+            priceSource: "SOLD" as const,
+          })),
+        };
+      }),
+    };
+  });
+}
+
+function mockBookingRows<T extends FinanceFixtureBooking>(rows: T[]): void {
+  mockPrisma.booking.findMany.mockResolvedValue(withReconciledMoneyEvidence(rows));
+}
+
 describe("finance-booking-metrics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -71,8 +136,55 @@ describe("finance-booking-metrics", () => {
     });
   });
 
-  it("derives realized stays, forward pipeline, and payment summaries from booking rows", async () => {
+  it("carries the complete booking-money trust summary beside finance figures", async () => {
+    const checkIn = new Date("2026-08-01T00:00:00.000Z");
+    const checkOut = new Date("2026-08-02T00:00:00.000Z");
     mockPrisma.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-unreconciled",
+        checkIn,
+        checkOut,
+        status: BookingStatus.PAID,
+        totalPriceCents: 10_000,
+        discountCents: 1,
+        promoAdjustmentCents: 0,
+        finalPriceCents: 9_999,
+        guests: [
+          {
+            id: "guest-1",
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              {
+                stayDate: checkIn,
+                priceCents: 10_000,
+                priceSource: "SOLD",
+              },
+            ],
+          },
+        ],
+        promoRedemption: null,
+        nightAdjustments: [],
+        payment: null,
+      },
+    ]);
+
+    const result = await getFinanceBookingMetrics({
+      forward: { from: "2026-08-01", to: "2026-08-01", asOfDate: "2026-07-01" },
+    });
+    expect(result.moneyReconciliation).toMatchObject({
+      totalBookings: 1,
+      byState: { RECONCILED: 0, UNRECONCILED: 1 },
+      byReason: {
+        DISCOUNT_COMPONENT_MISMATCH: 1,
+        FINAL_PRICE_RELATION_MISMATCH: 1,
+      },
+    });
+  });
+
+  it("derives realized stays, forward pipeline, and payment summaries from booking rows", async () => {
+    mockBookingRows([
       {
         id: "booking-confirmed-split",
         checkIn: new Date("2026-04-20T00:00:00.000Z"),
@@ -449,7 +561,7 @@ describe("finance-booking-metrics", () => {
   });
 
   it("uses guest stay ranges for finance guest-night occupancy", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockBookingRows([
       {
         id: "booking-with-cut-short-guest",
         checkIn: new Date("2026-04-10T00:00:00.000Z"),
@@ -507,7 +619,7 @@ describe("finance-booking-metrics", () => {
     much of the booked revenue had never arrived.
   */
   it("totals uncollected additional payments, counting FAILED with PENDING", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockBookingRows([
       {
         id: "booking-pending-extra",
         checkIn: new Date("2026-04-10T00:00:00.000Z"),
@@ -598,7 +710,7 @@ describe("finance-booking-metrics", () => {
     $142 — money the club never took.
   */
   it("counts a collected price increase once, not twice", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockBookingRows([
       {
         id: "booking-grew-and-paid",
         checkIn: new Date("2026-04-10T00:00:00.000Z"),
@@ -641,7 +753,7 @@ describe("finance-booking-metrics", () => {
     settlement writes exactly this shape - $100 recorded, $21 left owing).
   */
   it("leaves an unchanged booking and a still-owed increase counted once each", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockBookingRows([
       {
         id: "booking-never-grew",
         checkIn: new Date("2026-04-10T00:00:00.000Z"),
@@ -704,7 +816,7 @@ describe("finance-booking-metrics", () => {
     the net has to be gross-minus-refunds and not a sum of parts.
   */
   it("takes a refund off a collected increase without double-counting it", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockBookingRows([
       {
         id: "booking-grew-then-partly-refunded",
         checkIn: new Date("2026-04-10T00:00:00.000Z"),
@@ -747,7 +859,7 @@ describe("finance-booking-metrics", () => {
     path could make one, and it must not pass quietly.
   */
   it("shouts when a collected increase has no payment record behind it", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockBookingRows([
       {
         id: "booking-unproven-extra",
         checkIn: new Date("2026-04-10T00:00:00.000Z"),
@@ -822,7 +934,7 @@ describe("finance-booking-metrics", () => {
     ledger rows would report the $121 the club took as the $21 it did not.
   */
   it("counts the full captured amount when no ledger row backs the payment", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockBookingRows([
       {
         id: "booking-organiser-settled",
         checkIn: new Date("2026-04-10T00:00:00.000Z"),
@@ -881,7 +993,7 @@ describe("finance-booking-metrics", () => {
     Failed 0" beside a non-zero total — the split contradicting its own sum.
   */
   it("files a legacy null-status addition as awaiting, matching the total", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockBookingRows([
       {
         id: "booking-legacy-extra",
         checkIn: new Date("2026-04-10T00:00:00.000Z"),
@@ -925,7 +1037,7 @@ describe("finance-booking-metrics", () => {
     "across 1 booking".
   */
   it("keeps the additional-payment split summing to its own total", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockBookingRows([
       // Owed: counts in both the split and the total.
       {
         id: "booking-owed-pending",

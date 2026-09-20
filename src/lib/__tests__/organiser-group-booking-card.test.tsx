@@ -31,6 +31,10 @@ function group(overrides: Partial<OrganiserGroupState> = {}): OrganiserGroupStat
         guestCount: 1,
         status: "CONFIRMED",
         priceCents: 4500,
+        moneyReconciliation: {
+          visibility: "VISIBLE",
+          reconciliation: { state: "RECONCILED", reasons: [] },
+        },
         isMember: true,
       },
     ],
@@ -221,5 +225,77 @@ describe("OrganiserGroupBookingCard settlement", () => {
         JSON.parse((settleCall![1] as { body: string }).body).paymentMethod
       ).toBe("stripe");
     });
+  });
+});
+
+/*
+  #3278 — THE JOINER ROSTER IS OTHER MEMBERS' BOOKINGS.
+
+  Each row is a different member's booking, rendered to the organiser. The
+  stored-money verdict is officer-only (owner decision, 20 September 2026), so
+  an ordinary organiser receives a WITHHELD view and the row prints the amount
+  alone. The projection is where the gate is applied; this is the other half —
+  that the card renders what it is handed and decides nothing itself.
+*/
+describe("OrganiserGroupBookingCard joiner money verdicts (#3278)", () => {
+  beforeEach(() => {
+    stubFetch({});
+  });
+
+  it("prints a joiner's amount with no review mark when the verdict was withheld", async () => {
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={group({
+          joiners: [
+            {
+              id: "j1",
+              name: "Jo Member",
+              guestCount: 1,
+              status: "CONFIRMED",
+              priceCents: 4500,
+              moneyReconciliation: { visibility: "WITHHELD" },
+              isMember: true,
+            },
+          ],
+        })}
+      />
+    );
+
+    expect(await screen.findByText("$45.00")).toBeTruthy();
+    expect(screen.queryByText(/needs review/)).toBeNull();
+  });
+
+  it("qualifies the amount for an officer, without replacing it", async () => {
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={group({
+          joiners: [
+            {
+              id: "j1",
+              name: "Jo Member",
+              guestCount: 1,
+              status: "CONFIRMED",
+              priceCents: 4500,
+              moneyReconciliation: {
+                visibility: "VISIBLE",
+                reconciliation: {
+                  state: "UNRECONCILED",
+                  reasons: ["HEADLINE_TOTAL_MISMATCH"],
+                },
+              },
+              isMember: true,
+            },
+          ],
+        })}
+      />
+    );
+
+    expect(
+      await screen.findByText(/\$45\.00.*recorded amount needs review/)
+    ).toBeTruthy();
   });
 });

@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import type { BookingPriceRebaseDeclineReason } from "@/lib/booking-money-reconciliation";
 import { recalculateBookingPromo } from "@/lib/booking-guest-removal-service";
 import type { CalendarDate } from "@/lib/club-time";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
@@ -207,9 +208,7 @@ export type BookingPriceRebase = {
  * below exists to keep unreachable - and with no repaired strand to check
  * against, this is the check that keeps it so.
  */
-export type BookingPriceRebaseDeclineReason =
-  | "strand-evidence-unreadable"
-  | "no-surviving-strands";
+export type { BookingPriceRebaseDeclineReason } from "@/lib/booking-money-reconciliation";
 
 export type BookingPriceRebaseOutcome =
   | {

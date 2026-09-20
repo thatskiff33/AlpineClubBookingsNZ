@@ -79,7 +79,7 @@ prepare() {
   DATABASE_URL="$HOST_DATABASE_URL" npx prisma migrate deploy
 
   echo "==> Seeding demo data"
-  ALLOW_DEMO_SEED=1 DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/demo-seed.ts
+  ALLOW_DEMO_SEED=1 DATABASE_URL="$HOST_DATABASE_URL" npx tsx --conditions=react-server prisma/demo-seed.ts
 
   echo "==> Seeding base data"
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx --conditions=react-server prisma/seed.ts

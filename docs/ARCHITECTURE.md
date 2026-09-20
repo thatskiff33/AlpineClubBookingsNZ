@@ -2997,6 +2997,12 @@ when a positive additional amount is marked succeeded without such evidence,
 cash arithmetic is unchanged, a bounded server log names the affected booking
 IDs, and the API returns only aggregate possible-gap cents/count for the page,
 CSV, and PDF warning. Money on those report surfaces is rendered to exact cents.
+The same booking cohort is classified by the pure `INV-MONEY-031` projection;
+the API and finance metrics return the full state/reason census, the page warns
+when any contributing booking is unreconciled, and the CSV records counts by
+reason. Legacy booking export rows carry their own state and ordered reasons.
+No report path repairs a headline or substitutes current rates for unknown
+history.
 Occupancy intentionally keeps the pre-existing PAID/COMPLETED-only utilisation
 and custodian-exclusion semantics.
 

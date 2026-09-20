@@ -26,6 +26,10 @@ import {
   getFinanceBookingMetricsWindowDayCount,
   parseFinanceBookingMetricDate as parseIsoDate,
 } from "@/lib/finance-booking-metric-calculations";
+import {
+  summarizeBookingMoneyReconciliations,
+  type BookingMoneyReconciliationSummary,
+} from "@/lib/booking-money-reconciliation";
 
 export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
 export { getFinanceBookingMetricsWindowDayCount };
@@ -71,13 +75,35 @@ const bookingMetricsSelect = Prisma.validator<Prisma.BookingSelect>()({
   checkIn: true,
   checkOut: true,
   status: true,
+  totalPriceCents: true,
+  discountCents: true,
+  promoAdjustmentCents: true,
   finalPriceCents: true,
   guests: {
     select: {
       id: true,
+      priceCents: true,
       stayStart: true,
       stayEnd: true,
+      nights: {
+        select: {
+          stayDate: true,
+          priceCents: true,
+          priceSource: true,
+        },
+      },
     },
+  },
+  promoRedemption: {
+    select: {
+      priceAdjustmentCents: true,
+      allocations: {
+        select: { memberId: true, priceAdjustmentCents: true },
+      },
+    },
+  },
+  nightAdjustments: {
+    select: { beneficiaryMemberId: true, amountCents: true },
   },
   payment: {
     select: {
@@ -301,6 +327,7 @@ interface FinanceForwardBookingMetrics {
 export interface FinanceBookingMetricsResult {
   generatedAt: string;
   bookingCount: number;
+  moneyReconciliation: BookingMoneyReconciliationSummary;
   paymentSummary: FinanceBookingMetricsPaymentSummary;
   realized?: FinanceRealizedStayMetrics;
   forward?: FinanceForwardBookingMetrics;
@@ -1281,10 +1308,15 @@ export async function getFinanceBookingMetrics(
   const paymentSummary = summarizePayments(
     bookings.filter((booking) => contributingBookingIds.has(booking.id))
   );
+  const contributingBookings = bookings.filter((booking) =>
+    contributingBookingIds.has(booking.id),
+  );
 
   return {
     generatedAt: new Date().toISOString(),
     bookingCount: contributingBookingIds.size,
+    moneyReconciliation:
+      summarizeBookingMoneyReconciliations(contributingBookings),
     paymentSummary,
     ...(realized ? { realized } : {}),
     ...(forward ? { forward } : {}),

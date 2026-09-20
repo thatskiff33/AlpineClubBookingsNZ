@@ -3,7 +3,7 @@
  * preserved, plus the two other forms a scanner in this tree ever needs.
  *
  * THE ONE DEFINITION IN THE TREE, and since #3164 a rule ENFORCES that rather
- * than review doing it: 93 test files, two test helpers and one CI script import this module, and
+ * than review doing it: 94 test files, three test helpers and one CI script import this module, and
  * `ssot/no-local-comment-stripper` in `eslint.config.mjs` reports a second
  * scanner wherever one is written, in the editor. That FIGURE is measured
  * against the tree by `ssot-comment-stripper-guard.test.ts`, which also requires
@@ -15,12 +15,11 @@
  *
  * COUNT BY IMPORT SPECIFIER rather than by path text, which is what the pin
  * does, because a grep for the path over-reports three ways. The module is
- * reached through three spellings — `./support/strip-comments`,
- * `@/lib/__tests__/support/strip-comments`, and the CI script's relative path
- * with its `.ts` extension — and three further files NAME that path without
- * importing it: `eslint.config.mjs` inside the rule's own message,
- * `ssot-comment-stripper-guard.test.ts` as the lint target it feeds ESLint, and
- * `support/member-merge-family.ts` in prose.
+ * reached through four spellings — `@/lib/__tests__/support/strip-comments`,
+ * `./support/strip-comments`, `./strip-comments`, and the CI script's relative
+ * path with its `.ts` extension — and two further files NAME that path without
+ * importing it: `eslint.config.mjs` inside the rule's own message and
+ * `ssot-comment-stripper-guard.test.ts` as the lint target it feeds ESLint.
  *
  * #3132's own claim to have converged the tree was true of the copies spelled
  * `stripComments` and of nothing else. Measured on the day it landed, SEVEN more

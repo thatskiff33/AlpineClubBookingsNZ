@@ -18,6 +18,7 @@ import {
   type FinanceDashboardTrend,
   type FinanceDashboardViewModel,
 } from "@/lib/finance-dashboard-page/model";
+import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-dashboard-page/money-reconciliation";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 
 // Compact day+month export label ("14 Jun"), deliberately year-less: it labels
@@ -38,7 +39,7 @@ function formatShortDate(dateOnly: string) {
 
 export async function buildBookingsDashboard(
   selection: FinanceDashboardSelection,
-  lodgeId: string | null
+  lodgeId: string | null,
 ): Promise<FinanceDashboardViewModel> {
   const warnings: string[] = [];
   const query = {
@@ -75,7 +76,9 @@ export async function buildBookingsDashboard(
   const compareRealized = comparison?.realized ?? null;
 
   if (!realized) {
-    warnings.push("Realized booking metrics were unavailable for the selected range.");
+    warnings.push(
+      "Realized booking metrics were unavailable for the selected range.",
+    );
   }
 
   // #2408. Net collected cash is the gross captured figure from the payment
@@ -85,13 +88,21 @@ export async function buildBookingsDashboard(
   // below would understate the cash. Say so where the treasurer reads the
   // number, and say by how much, rather than publishing a figure that is
   // quietly short.
-  const ledgerGapBookings =
-    metrics.paymentSummary.additionalLedgerGapBookings;
+  const ledgerGapBookings = metrics.paymentSummary.additionalLedgerGapBookings;
   if (ledgerGapBookings > 0) {
     warnings.push(
-      `Net collected cash may understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents)}: ${formatNumber(ledgerGapBookings)} booking${ledgerGapBookings === 1 ? "" : "s"} in this range record an extra payment as collected without a matching payment record behind it. Ask a developer to re-check those payments before reconciling this figure.`
+      `Net collected cash may understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents)}: ${formatNumber(ledgerGapBookings)} booking${ledgerGapBookings === 1 ? "" : "s"} in this range record an extra payment as collected without a matching payment record behind it. Ask a developer to re-check those payments before reconciling this figure.`,
     );
   }
+  const moneyReconciliationPanel =
+    appendBookingMoneyReconciliationDashboardState({
+      warnings,
+      primary: metrics.moneyReconciliation,
+      comparison: comparison?.moneyReconciliation ?? null,
+      affectedMetrics:
+        "Booked revenue, forward revenue, and comparison figures",
+      formatNumber,
+    });
 
   const realizedTotals = realized?.totals;
   const compareTotals = compareRealized?.totals;
@@ -115,7 +126,8 @@ export async function buildBookingsDashboard(
     {
       title: "Booked revenue",
       value: formatDollarsDisplay(realizedTotals?.bookedRevenueCents ?? 0),
-      description: "Booking-system revenue allocated across realized stay nights.",
+      description:
+        "Booking-system revenue allocated across realized stay nights.",
       footnote: compareTotals
         ? `${formatSignedDollarsDisplay((realizedTotals?.bookedRevenueCents ?? 0) - compareTotals.bookedRevenueCents)} vs comparison.`
         : undefined,
@@ -135,8 +147,11 @@ export async function buildBookingsDashboard(
     },
     {
       title: "Forward demand",
-      value: formatNumber(metrics.forward?.totals.totalPipeline.guestNights ?? 0),
-      description: "Committed plus at-risk future guest nights in the forward window.",
+      value: formatNumber(
+        metrics.forward?.totals.totalPipeline.guestNights ?? 0,
+      ),
+      description:
+        "Committed plus at-risk future guest nights in the forward window.",
       footnote: selection.forwardWindow.from
         ? selection.forwardWindow.label
         : "Forward window unavailable.",
@@ -163,7 +178,8 @@ export async function buildBookingsDashboard(
   if (realized) {
     trends.push({
       title: "Occupancy and guest-night trend",
-      description: "Daily realized occupancy and guest nights for the selected range.",
+      description:
+        "Daily realized occupancy and guest nights for the selected range.",
       variant: "line",
       xKey: "label",
       data: realized.byDate.map((entry) => ({
@@ -190,7 +206,8 @@ export async function buildBookingsDashboard(
   if (metrics.forward) {
     trends.push({
       title: "Forward committed and at-risk demand",
-      description: "Future pipeline split between paid committed stays and at-risk bookings.",
+      description:
+        "Future pipeline split between paid committed stays and at-risk bookings.",
       variant: "area",
       xKey: "label",
       data: metrics.forward.byDate.map((entry) => ({
@@ -217,7 +234,10 @@ export async function buildBookingsDashboard(
     });
   }
 
-  const statusPanels = buildBookingStatusPanels(metrics);
+  const statusPanels = [
+    moneyReconciliationPanel,
+    ...buildBookingStatusPanels(metrics),
+  ];
   return {
     cards,
     trends,
@@ -246,7 +266,7 @@ export async function buildBookingsDashboard(
             Label: item.label,
             Value: item.value,
             Detail: item.detail ?? "",
-          }))
+          })),
         ),
       },
     ],
@@ -255,7 +275,7 @@ export async function buildBookingsDashboard(
 }
 
 function buildBookingStatusPanels(
-  metrics: FinanceBookingMetricsResult
+  metrics: FinanceBookingMetricsResult,
 ): FinanceDashboardStatusPanel[] {
   const panels: FinanceDashboardStatusPanel[] = [];
   if (metrics.realized) {
@@ -267,7 +287,7 @@ function buildBookingStatusPanels(
           label: status,
           value: formatNumber(summary.guestNights),
           detail: `${formatNumber(summary.bookingCount)} bookings, ${formatDollarsDisplay(summary.bookedRevenueCents)}`,
-        })
+        }),
       ),
     });
   }
@@ -297,7 +317,7 @@ function buildBookingStatusPanels(
         {
           label: "Total outstanding",
           value: formatDollarsDisplay(
-            metrics.paymentSummary.outstandingAdditionalCents
+            metrics.paymentSummary.outstandingAdditionalCents,
           ),
           detail: `Across ${formatNumber(metrics.paymentSummary.outstandingAdditionalBookings)} booking${metrics.paymentSummary.outstandingAdditionalBookings === 1 ? "" : "s"}.`,
         },
@@ -307,7 +327,8 @@ function buildBookingStatusPanels(
   if (metrics.forward) {
     panels.push({
       title: "Forward pipeline split",
-      description: "Committed demand is paid; at-risk demand still needs settlement or review.",
+      description:
+        "Committed demand is paid; at-risk demand still needs settlement or review.",
       badgeLabel: "Forward",
       badgeTone: "secondary",
       items: [
@@ -315,14 +336,14 @@ function buildBookingStatusPanels(
           label: "Committed",
           value: formatNumber(metrics.forward.totals.committed.guestNights),
           detail: formatDollarsDisplay(
-            metrics.forward.totals.committed.bookedRevenueCents
+            metrics.forward.totals.committed.bookedRevenueCents,
           ),
         },
         {
           label: "At risk",
           value: formatNumber(metrics.forward.totals.atRisk.guestNights),
           detail: formatDollarsDisplay(
-            metrics.forward.totals.atRisk.bookedRevenueCents
+            metrics.forward.totals.atRisk.bookedRevenueCents,
           ),
         },
       ],
