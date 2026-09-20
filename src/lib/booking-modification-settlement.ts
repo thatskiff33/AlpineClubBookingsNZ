@@ -1,3 +1,4 @@
+import type { ModificationLine } from "@/lib/booking-modification-lines";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
@@ -75,6 +76,11 @@ export type BookingModificationPaymentContext = {
    */
   memberId: string | null;
   bookingModificationId: string;
+  /**
+   * #3530: the itemised lines this edit stored on its modification row, or
+   * null when it stored none - carried out so the audit row can list them.
+   */
+  priceLines: ModificationLine[] | null;
 };
 
 export async function drainSupersededPrimaryIntents({

@@ -175,7 +175,10 @@ const PLAN_CALL_SITES = [
     kind: "loader",
     calls: 1,
     what: "the APPLY path: re-reads the booking under the lodge capacity lock, then prices the edit through calculateModifiedPricing",
-    nightsSelects: 1,
+    // 1 -> 2 (#3530): the second select is the AFTER-side re-read of the guest
+    // rows the edit has just written, for the itemised lines the modification
+    // row stores; it asks for `priceCents` for the same reason the loader does.
+    nightsSelects: 2,
     planBuilderCalls: 0,
   },
   {

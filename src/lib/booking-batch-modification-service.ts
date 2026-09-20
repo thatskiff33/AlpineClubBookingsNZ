@@ -124,6 +124,13 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import {
+  computeModificationPriceLines,
+  diffBookingPricing,
+  loadModificationLinesAuditFields,
+  pricingSideFromStoredGuests,
+  pricingSideFromWrittenGuests,
+} from "@/lib/booking-modification-lines";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
@@ -1727,6 +1734,53 @@ export async function modifyBookingBatch({
       },
     });
 
+    /**
+     * #3530: the lines behind `priceDiffCents`. BEFORE is the guest snapshot
+     * this transaction loaded, in memory; AFTER is the guest rows the edit has
+     * just WRITTEN, re-read here so identity, category, rate and every night's
+     * price are exactly what landed - no index alignment with the plan's
+     * ordering to get wrong. A parked or price-preserving edit stores none.
+     */
+    const priceLines =
+      parked || promoFiguresStubbedHere
+        ? null
+        : await computeModificationPriceLines(
+            { bookingId, site: "batch-modify" },
+            async () => {
+              // The re-read is narration's own I/O and runs INSIDE the guard:
+              // a failure here stores no lines and fails no edit.
+              const writtenGuests = await tx.bookingGuest.findMany({
+                where: { bookingId },
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  ageTier: true,
+                  isMember: true,
+                  rateMembershipTypeId: true,
+                  nights: { select: { stayDate: true, priceCents: true } },
+                },
+              });
+              const existingPromoCode = booking.promoRedemption?.promoCode?.code ?? null;
+              return diffBookingPricing(
+                  pricingSideFromStoredGuests(booking.guests, {
+                    promoAdjustmentCents: booking.promoAdjustmentCents,
+                    promoCode: existingPromoCode,
+                  }),
+                  pricingSideFromWrittenGuests(writtenGuests, {
+                    promoAdjustmentCents: promo.newPromoAdjustmentCents,
+                    promoCode: promo.promoRemoved
+                      ? null
+                      : promo.promoChanged
+                        ? (input.promoCode?.trim() || existingPromoCode)
+                        : existingPromoCode,
+                  }),
+                  priceDiffCents,
+                );
+            },
+            logger,
+          );
+
     const bookingModification = await tx.bookingModification.create({
       data: {
         bookingId,
@@ -1852,6 +1906,7 @@ export async function modifyBookingBatch({
         },
         priceDiffCents,
         changeFeeCents,
+        ...(priceLines ? { priceLines } : {}),
       },
     });
 
@@ -2056,6 +2111,7 @@ export async function modifyBookingBatch({
       memberFirstName: bookingOwner(booking).member.firstName,
       memberId: bookingOwner(booking).memberId,
       bookingModificationId: bookingModification.id,
+      priceLines,
       // MG2 #2307: the cross-family guests this modification added, matched to
       // the rows it actually created, carried OUT of the transaction so the
       // sends happen after the commit.
@@ -2311,12 +2367,15 @@ async function dispatchBatchPostTransactionSideEffects({
   additionalPaymentIntentId: string | undefined;
   linkedChangeRequestId: string | null;
 }): Promise<void> {
+  // #3530: what that figure is made of, line by line and in dollars.
+  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
   const auditDetails = {
     datesChanged: result.datesChanged,
     oldGuestCount: result.oldGuestCount,
     newGuestCount: result.booking.guests.length,
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
+    ...linesAudit,
     // #3232 D2: present only on a waiver, so a query for waived fees is a query
     // for this key rather than a guess at which zeroes meant something.
     ...(result.changeFeeWaived

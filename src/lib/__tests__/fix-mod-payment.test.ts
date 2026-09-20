@@ -609,6 +609,50 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     PUT = mod.PUT;
   });
 
+  it("stores the itemised lines behind the delta, summing to priceDiffCents (#3530)", async () => {
+    // A booking whose stored total IS its two sold nights (5000), moved to two
+    // nights at 7500: the delta is +10000, and the lines say which nights went
+    // and which came - never a bare "+$100".
+    const booking = makeBooking({ totalPriceCents: 5000, finalPriceCents: 5000 });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 15000,
+      guests: [
+        {
+          ageTier: "ADULT",
+          isMember: true,
+          rateMembershipTypeId: "rt-member",
+          priceCents: 15000,
+          perNightCents: [7500, 7500],
+          nightDates: [new Date("2026-08-05"), new Date("2026-08-06")],
+        },
+      ],
+    } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockedCreatePaymentIntent.mockResolvedValue({ id: "pi_additional", client_secret: "s" } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-08-05", checkOut: "2026-08-07" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    const created = (tx.bookingModification.create as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]?.data;
+    expect(created.priceDiffCents).toBe(10000);
+    const lines = created.priceLines as Array<{ amountCents: number }>;
+    expect(lines.reduce((sum, line) => sum + line.amountCents, 0)).toBe(created.priceDiffCents);
+    expect(lines).toEqual([
+      expect.objectContaining({ kind: "GUEST_NIGHTS", sign: -1, unitCents: 2500, nightCount: 2, startDate: "2026-08-01", amountCents: -5000, guestNames: ["Alice Smith"] }),
+      expect.objectContaining({ kind: "GUEST_NIGHTS", sign: 1, unitCents: 7500, nightCount: 2, startDate: "2026-08-05", amountCents: 15000 }),
+    ]);
+  });
+
   it("creates additional PaymentIntent and returns clientSecret when price increases", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
@@ -1112,6 +1156,85 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     } as any);
     const mod = await import("@/app/api/bookings/[id]/guests/route");
     POST = mod.POST;
+  });
+
+  it("stores the itemised lines behind a guest add, summing to priceDiffCents (#3530)", async () => {
+    // Alice holds two sold nights at 2500 (booking total 5000); Bob is added
+    // for the same two nights at 5000. The rows the add WRITES are re-read for
+    // the after side, so the tx double answers that read with what landed.
+    const booking = makeBooking({ totalPriceCents: 5000, finalPriceCents: 5000 });
+    const tx = makeTx(booking);
+    (tx as any).bookingGuest.findMany = vi.fn().mockImplementation(
+      async (args: { select?: { nights?: unknown } }) =>
+        args?.select?.nights
+          ? [
+              {
+                id: "g1",
+                firstName: "Alice",
+                lastName: "Smith",
+                ageTier: "ADULT",
+                isMember: true,
+                rateMembershipTypeId: null,
+                nights: [
+                  { stayDate: new Date("2026-08-01"), priceCents: 2500 },
+                  { stayDate: new Date("2026-08-02"), priceCents: 2500 },
+                ],
+              },
+              {
+                id: "g2",
+                firstName: "Bob",
+                lastName: "Jones",
+                ageTier: "ADULT",
+                isMember: true,
+                rateMembershipTypeId: "rt-member",
+                nights: [
+                  { stayDate: new Date("2026-08-01"), priceCents: 5000 },
+                  { stayDate: new Date("2026-08-02"), priceCents: 5000 },
+                ],
+              },
+            ]
+          : [],
+    );
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 15000,
+      guests: guests.map((_g: unknown, i: number) =>
+        i === 0 && guests.length > 1
+          ? { priceCents: 5000, perNightCents: [2500, 2500] }
+          : { priceCents: 10000, perNightCents: [5000, 5000] },
+      ),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({ id: "pi_guest_extra", client_secret: "s" } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    const created = (tx.bookingModification.create as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]?.data;
+    expect(created.priceDiffCents).toBe(10000);
+    const lines = created.priceLines as Array<{ amountCents: number }>;
+    expect(lines.reduce((sum, line) => sum + line.amountCents, 0)).toBe(created.priceDiffCents);
+    expect(lines).toEqual([
+      expect.objectContaining({
+        kind: "GUEST_NIGHTS",
+        sign: 1,
+        unitCents: 5000,
+        nightCount: 2,
+        guestCount: 1,
+        startDate: "2026-08-01",
+        guestNames: ["Bob Jones"],
+        amountCents: 10000,
+      }),
+    ]);
   });
 
   it("creates additional PaymentIntent when adding guest to CONFIRMED booking", async () => {

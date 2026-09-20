@@ -410,6 +410,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-055` | Closing a parked review re-prices the booking from its strands, or declines |
 | `INV-MOD-056` | Operation-grain provenance governs edits and review re-bases |
 | `INV-MOD-057` | Cancellable statuses have one home; member doors read a named subset |
+| `INV-MOD-058` | An edit stores its delta as lines; every reader reads those rows |
 
 ### Adult-member hosting
 

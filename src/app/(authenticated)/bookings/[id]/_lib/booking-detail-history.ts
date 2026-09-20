@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { bookingMoneyReconciliationForViewer } from "@/lib/booking-money-reconciliation-audience";
 import type { BoundClubTime } from "@/lib/club-time";
 import { buildBookingHistoryItems } from "@/lib/booking-history";
+import { loadRateMembershipLabelResolver } from "@/lib/rate-membership-label";
 import {
   resolveBookingNarrative,
   type NarrativeEvent,
@@ -148,6 +149,15 @@ export async function loadBookingDetailHistory({
         }))
     : [];
 
+  // #3530: an edit's itemised lines name each guest's rate category with the
+  // same member/non-member word the invoice line uses (#2543), which needs the
+  // club's NON_MEMBER type id. Read only when some edit stored lines.
+  const rateLabels = booking.modifications.some(
+    (modification) => modification.priceLines !== null,
+  )
+    ? await loadRateMembershipLabelResolver(prisma)
+    : null;
+
   const bookingHistory = buildBookingHistoryItems({
     createdAt: booking.createdAt,
     // #3232 D3 (owner, 4 September 2026): the incident's recorded explanation is
@@ -178,6 +188,7 @@ export async function loadBookingDetailHistory({
     // priced modification row and the banner cannot disagree about whether this
     // booking's money is settled.
     financialReviewPending,
+    rateLabels,
   });
 
   return {
