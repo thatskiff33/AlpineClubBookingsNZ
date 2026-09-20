@@ -1351,7 +1351,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     checkOut: Date;
     /**
      * #2760: which population this capture belongs to. A soft-deleted booking is
-     * always CANCELLED (`INV-ADDPAY-040`) so both kinds reach this handler, and
+     * always CANCELLED (`INV-ADDPAY-030`) so both kinds reach this handler, and
      * the record and the alert both name which one it was. Read from the same
      * booking row the dispatch above already loaded — no extra query on the
      * webhook path.
@@ -1623,7 +1623,7 @@ async function handleCancelledBookingPaymentSucceeded(
     checkOut: Date;
     /**
      * #2773: which population this capture belongs to. A soft-deleted booking is
-     * always CANCELLED (`INV-ADDPAY-040`) so both kinds reach this handler, and the
+     * always CANCELLED (`INV-ADDPAY-030`) so both kinds reach this handler, and the
      * record and the alert both name which one it was. Read from the same booking
      * row the dispatch above already loaded — no extra query on the webhook path.
      */

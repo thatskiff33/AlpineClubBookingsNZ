@@ -211,7 +211,7 @@ export async function reportWithheldLateCaptureRefund(params: {
  * "normally nothing to do" — for the one population whose follow-up the alert
  * exists to state, where remaking the booking means charging the member again.
  *
- * WHY IT IS SAFE TO READ AGAIN. Deletion is one-way (`INV-ADDPAY-040`) with a
+ * WHY IT IS SAFE TO READ AGAIN. Deletion is one-way (`INV-ADDPAY-030`) with a
  * single writer and no restore path, so the two reads can disagree in only one
  * direction: the earlier one can under-report a deletion, never over-report it.
  * That is why the re-read is skipped entirely when the opening read already saw a

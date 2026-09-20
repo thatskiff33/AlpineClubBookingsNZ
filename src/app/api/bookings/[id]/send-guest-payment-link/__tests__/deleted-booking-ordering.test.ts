@@ -16,7 +16,7 @@ import { NextRequest } from "next/server";
  * exists to prevent, and this route was cited as the model to copy.
  *
  * The fixtures use the only shape production can emit: a soft-deleted booking is
- * always `CANCELLED` (`INV-ADDPAY-040`) and `deletedAt` is never cleared.
+ * always `CANCELLED` (`INV-ADDPAY-030`) and `deletedAt` is never cleared.
  *
  * `@/lib/access-roles` is deliberately UN-mocked so real role resolution decides
  * who reaches the write: the booking's owner and a Full Admin (`hasAdminAccess`).

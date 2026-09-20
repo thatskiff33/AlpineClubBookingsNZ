@@ -48,8 +48,10 @@ export function WithdrawAdditionalPaymentButton({
       setDone(
         `Payment request of ${formatCents(amountCents)} withdrawn. The member no longer owes it.`,
       );
-      // The panel reads the amount owing, so re-read it: it should now be gone.
-      router.refresh();
+      // NOT `router.refresh()` here: the panel around this button renders
+      // nothing once nothing is owed, so a refresh would unmount this very
+      // sentence before the officer had read it. The confirmation stays until
+      // they choose to re-read the booking.
     } catch (err) {
       setError(
         err instanceof Error
@@ -62,7 +64,14 @@ export function WithdrawAdditionalPaymentButton({
   }
 
   if (done) {
-    return <p className="text-sm text-success-11">{done}</p>;
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-success-11">{done}</p>
+        <Button type="button" variant="outline" onClick={() => router.refresh()}>
+          Refresh the booking
+        </Button>
+      </div>
+    );
   }
 
   return (

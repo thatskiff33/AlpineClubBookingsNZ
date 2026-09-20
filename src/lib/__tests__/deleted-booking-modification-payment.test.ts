@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * sends `payment_intent.succeeded`, and since #1350 the webhook routes an
  * additional payment on a CANCELLED booking through
  * `handleCancelledBookingAdditionalPaymentSucceeded`, which refunds it in full.
- * A soft-deleted booking is ALWAYS CANCELLED (`INV-ADDPAY-040`), so that
+ * A soft-deleted booking is ALWAYS CANCELLED (`INV-ADDPAY-030`), so that
  * pre-existing path covers deleted bookings too. If it runs after this task was
  * raised, the task's question is already answered, and leaving it OPEN would
  * invite an operator to COMPLETE it — which writes a second refund allocation

@@ -1468,7 +1468,7 @@ describe("Stripe webhook Xero alerting", () => {
      * #2760: `deletedAt` is now part of what this handler reads, because the
      * record and the alert both name which population the capture belonged to.
      * Defaults to the DELETED population — a soft-deleted booking is always
-     * CANCELLED (`INV-ADDPAY-040`), which is the case #2700 and #2750 were about —
+     * CANCELLED (`INV-ADDPAY-030`), which is the case #2700 and #2750 were about —
      * and the merely-cancelled population passes `deletedAt: null` explicitly.
      */
     function armCancelledBooking(
@@ -1556,7 +1556,7 @@ describe("Stripe webhook Xero alerting", () => {
      * #2700 — this pre-existing #1350 path is the reason the deleted-booking
      * ManualRefundTask needs closing rather than leaving OPEN.
      *
-     * A soft-deleted booking is ALWAYS CANCELLED (`INV-ADDPAY-040`), so every
+     * A soft-deleted booking is ALWAYS CANCELLED (`INV-ADDPAY-030`), so every
      * deleted booking reaches the branch above. If the browser confirm won the
      * race first, it recorded the capture and raised an OPEN task asking a human
      * to decide whether to refund. The refund this handler has just issued
@@ -1752,7 +1752,7 @@ describe("Stripe webhook Xero alerting", () => {
         needs a person — remake the booking and charge the member again. The confirm
         route re-reads the same flag after its own round trip for the same reason.
 
-        Deletion is one-way (`INV-ADDPAY-040`), so the two reads can only disagree
+        Deletion is one-way (`INV-ADDPAY-030`), so the two reads can only disagree
         in one direction: the stale read can only ever UNDER-report a deletion.
       */
       mockConstructWebhookEvent.mockReturnValue(

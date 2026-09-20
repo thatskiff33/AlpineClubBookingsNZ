@@ -270,6 +270,18 @@ describe("withdrawAdditionalPaymentAsk", () => {
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
   });
 
+  it("lets a real database error out of the transaction as an error, never as the fence's 409", async () => {
+    // Only the fence is mapped to "changed under you". A Prisma failure mid-
+    // transaction rolls back and must reach the route as a 500, not tell the
+    // officer to refresh a booking that did not change.
+    mocks.prisma.xeroSyncOperation.updateMany.mockRejectedValue(
+      new Error("connection reset"),
+    );
+
+    await expect(withdraw()).rejects.toThrow("connection reset");
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
   it("refuses a request the member has already paid - that is a refund", async () => {
     mocks.prisma.booking.findUnique.mockResolvedValue(
       booking({

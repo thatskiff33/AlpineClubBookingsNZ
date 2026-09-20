@@ -412,7 +412,7 @@ describe("recordAutomaticLateCaptureRefund (#2773 — the record)", () => {
   });
 
   it("skips the re-read when the opening read already saw a deletion", async () => {
-    // Deletion is one-way (`INV-ADDPAY-040`), so the two reads can disagree in only
+    // Deletion is one-way (`INV-ADDPAY-030`), so the two reads can disagree in only
     // one direction and a known deletion cannot be undone by a fresh read.
     const outcome = await recordAutomaticLateCaptureRefund(
       capture({ openingDeletedAt: new Date("2026-07-01") }),
