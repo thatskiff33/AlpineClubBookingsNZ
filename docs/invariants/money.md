@@ -393,8 +393,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   by the read** (#3278, stage 4 of programme #3272; owner-approved D1-D4,
   14 September 2026). `reconcileBookingMoney` is the one pure projection. It
   returns `RECONCILED`, or `UNRECONCILED` with every applicable reason in this
-  order: no surviving strands, unreadable strand evidence, headline-total
-  mismatch, promotion build-up not known, promotion build-up mismatch,
+  order: no surviving strands, unreadable strand evidence, a guest total
+  disagreeing with its own night prices (#3547), headline-total mismatch,
+  promotion build-up not known, promotion build-up mismatch,
   discount-component mismatch, and final-price relation mismatch.
 
   It checks recorded facts only: `Booking.totalPriceCents` against readable
@@ -407,11 +408,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `MemberCredit`.
 
   **The verdict is officer-only** (owner decision, 20 September 2026): a member
-  sees their amounts unmarked, and their data export carries no verdict, since
-  it is the club's current assessment of its own records rather than data held
-  about them. `booking-money-reconciliation-audience.ts` is the one home for
-  that gate, for the named `WITHHELD` state that replaces a nullable absence,
-  and for the wording. Behind it, booking detail and lists, officer history,
+  sees their amounts unmarked and their data export carries no verdict.
+  `booking-money-reconciliation-audience.ts` is the one home for that gate, for
+  the named `WITHHELD` state replacing a nullable absence, and for the wording. Behind it, booking detail and lists, officer history,
   finance metrics, reports and exports, and per-booking Xero reconciliation
   input carry the same state and complete ordered reasons. The Xero invoice shape and every
   displayed or settled amount remain unchanged. A read-only repeatable-read

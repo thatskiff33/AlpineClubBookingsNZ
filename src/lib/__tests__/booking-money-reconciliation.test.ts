@@ -5,9 +5,13 @@ import {
   reconcileBookingMoney,
   summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliationProjection,
+  type BookingMoneyReconciliationReason,
 } from "@/lib/booking-money-reconciliation";
 
 const NIGHT = new Date("2026-08-01T00:00:00.000Z");
+// A second lodge night, for the case where only SOME of a guest's nights
+// carry a price. Future relative to the frozen clock, like NIGHT.
+const SECOND_NIGHT = new Date("2026-08-02T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-02T00:00:00.000Z");
 
 function booking(
@@ -80,6 +84,29 @@ describe("reconcileBookingMoney", () => {
         ],
       },
     ],
+    // #3547. Same `unusable` verdict as the case above, different CAUSE: the
+    // night rows are exact and stored, they simply do not add up to the total
+    // recorded against that guest. Two numbers both on file that disagree, which
+    // an officer can resolve — so it must not arrive wearing the other reason.
+    [
+      "STRAND_TOTAL_DISAGREES",
+      {
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              {
+                stayDate: NIGHT,
+                priceCents: 9_000,
+                priceSource: "SOLD" as const,
+              },
+            ],
+          },
+        ],
+      },
+    ],
     ["HEADLINE_TOTAL_MISMATCH", { totalPriceCents: 9_999, finalPriceCents: 7_999 }],
     [
       "PROMO_BUILD_UP_NOT_KNOWN",
@@ -101,6 +128,116 @@ describe("reconcileBookingMoney", () => {
     ["FINAL_PRICE_RELATION_MISMATCH", { finalPriceCents: 8_001 }],
   ] as const)("reports %s", (reason, overrides) => {
     expect(reconcileBookingMoney(booking(overrides)).reasons).toContain(reason);
+  });
+
+  // The whole point of #3547, stated as the property rather than as two
+  // examples: a guest whose prices were never recorded and a guest whose
+  // recorded prices disagree are different findings, and each must produce its
+  // own reason and NOT the other. Asserting only `toContain` on each would pass
+  // if the split silently emitted both.
+  it("never reports absent evidence and a disagreement for one another", () => {
+    const neverRecorded = reconcileBookingMoney(
+      booking({
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: null, priceSource: "UNKNOWN" as const },
+            ],
+          },
+        ],
+      }),
+    ).reasons;
+    expect(neverRecorded).toContain("STRAND_EVIDENCE_UNREADABLE");
+    expect(neverRecorded).not.toContain("STRAND_TOTAL_DISAGREES");
+
+    const disagrees = reconcileBookingMoney(
+      booking({
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: 9_000, priceSource: "SOLD" as const },
+            ],
+          },
+        ],
+      }),
+    ).reasons;
+    expect(disagrees).toContain("STRAND_TOTAL_DISAGREES");
+    expect(disagrees).not.toContain("STRAND_EVIDENCE_UNREADABLE");
+
+    // Only SOME nights priced is a third cause, and it belongs with the
+    // never-recorded ones. The first draft of this change forgot it and told
+    // the officer "no nightly prices recorded at all" for a guest who had one
+    // night priced at $50 — which is why the wording now says "some or all".
+    const partiallyRecorded = reconcileBookingMoney(
+      booking({
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: 5_000, priceSource: "SOLD" as const },
+              { stayDate: SECOND_NIGHT, priceCents: null, priceSource: "UNKNOWN" as const },
+            ],
+          },
+        ],
+      }),
+    ).reasons;
+    expect(partiallyRecorded).toContain("STRAND_EVIDENCE_UNREADABLE");
+    expect(partiallyRecorded).not.toContain("STRAND_TOTAL_DISAGREES");
+
+    // An even-share source is a fourth cause and reaches NEITHER: reconciliation
+    // reads at WHOLE_GUEST grain, where an even-share row that sums correctly is
+    // EXACT and the booking reconciles — pinned by "accepts an evenly split row
+    // at whole-guest grain when it reconciles" above.
+  });
+
+  // Two guests, one of each cause. Every single-guest case above would pass a
+  // build that emitted only the first reason it met, so this is the one that
+  // proves both survive — and that the officer-facing verdict is the loud one.
+  it("keeps both reasons when two guests fail for different causes", () => {
+    // Typed as a plain array: `reasons` is a union of tuple types, so `indexOf`
+    // below narrows its own parameter to `never` and will not compile against
+    // a reason literal. `npm test` does not typecheck, which is how that
+    // reached CI.
+    const reasons: readonly BookingMoneyReconciliationReason[] =
+      reconcileBookingMoney(
+      booking({
+        totalPriceCents: 20_000,
+        finalPriceCents: 18_000,
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: null, priceSource: "UNKNOWN" as const },
+            ],
+          },
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: 9_000, priceSource: "SOLD" as const },
+            ],
+          },
+        ],
+      }),
+    ).reasons;
+    expect(reasons).toContain("STRAND_EVIDENCE_UNREADABLE");
+    expect(reasons).toContain("STRAND_TOTAL_DISAGREES");
+    // Published order, and each reason once however many guests produced it.
+    expect(reasons.indexOf("STRAND_EVIDENCE_UNREADABLE")).toBeLessThan(
+      reasons.indexOf("STRAND_TOTAL_DISAGREES"),
+    );
+    expect(new Set(reasons).size).toBe(reasons.length);
   });
 
   it("retains every simultaneous reason in the approved deterministic order", () => {
@@ -126,6 +263,7 @@ describe("reconcileBookingMoney", () => {
     expect(BOOKING_MONEY_RECONCILIATION_REASON_ORDER).toEqual([
       "NO_SURVIVING_STRANDS",
       "STRAND_EVIDENCE_UNREADABLE",
+      "STRAND_TOTAL_DISAGREES",
       "HEADLINE_TOTAL_MISMATCH",
       "PROMO_BUILD_UP_NOT_KNOWN",
       "PROMO_BUILD_UP_MISMATCH",
