@@ -1933,6 +1933,25 @@ describe("invariant baseline resolution and loading", () => {
   });
 });
 
+/**
+ * How long a CLI spawn in this describe may take.
+ *
+ * These cases spawn the real checker over the REAL repository, so their runtime
+ * grows with the repository rather than with the test. That made the previous
+ * 15s an expiring limit rather than a limit: on the merge of #3491, #3546 and
+ * #3549 the checker crossed it and reddened `main` — measured at 15044ms for
+ * the case that failed, beside 13886ms for its sibling, which passed with a
+ * second to spare. Nothing was wrong with either test; there were simply more
+ * files to scan than when 15s was chosen.
+ *
+ * So the number is defined once, here, and set with real headroom over the
+ * slowest observed run rather than just above it. If this ever needs raising
+ * again, first ask whether the checker has got slower per file — a limit that
+ * has to be raised twice is telling you about the thing it is timing, not about
+ * itself.
+ */
+const CLI_SPAWN_TIMEOUT_MS = 45_000;
+
 describe("doc-index CLI baseline wiring", () => {
   it(
     "passes a real pull-request synchronize shape whose webhook.before is populated",
@@ -1971,7 +1990,7 @@ describe("doc-index CLI baseline wiring", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("every id present at base");
     },
-    15_000,
+    CLI_SPAWN_TIMEOUT_MS,
   );
 
   it("fails closed at the CLI when an event base SHA is missing", () => {
@@ -2003,7 +2022,7 @@ describe("doc-index CLI baseline wiring", () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("every id present at base");
     },
-    15_000,
+    CLI_SPAWN_TIMEOUT_MS,
   );
 
   it("fails closed at the CLI when a process override collides with PR identity", () => {
