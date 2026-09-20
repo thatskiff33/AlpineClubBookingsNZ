@@ -230,7 +230,10 @@ Things worth knowing:
 2. Each row shows the member, the stay dates and nights, the guest count
    (total and how many are non-members), the price, the status chip, and the
    payment method. A **Review** chip on the Status cell links straight to the
-   Approvals queue for that booking.
+   Approvals queue for that booking. A red **Money review** chip means the
+   stored booking total does not reconcile to every recorded part. Open the
+   booking to see every reason. The warning is diagnostic: it does not change
+   the displayed price, charge, refund, credit, or invoice.
 3. The Payment cell also says how much of the money has actually arrived. A
    fully settled booking reads **Paid**. One where a later change pushed the
    price up and the extra was never collected reads **Partly paid**, with an
@@ -404,6 +407,7 @@ lives in [`STATE_MACHINES.md`](../STATE_MACHINES.md#booking-lifecycle).
 | No bookings show | Filters are too narrow, or you are viewing the wrong month | Click **Reset**, then re-apply one filter at a time |
 | A booking you expect is missing | It may be soft-deleted or in another lodge | Under **More filters** set Deleted to "Include deleted", and (multi-lodge) check the Lodge filter |
 | A row shows a **Review** chip | The booking needs admin review (for example a minor without an adult) | Click the chip to open the [Booking Requests → Approvals](booking-requests.md) queue |
+| A row shows a red **Money review** chip | The stored total has missing or disagreeing recorded parts | Open the booking and read the red warning and the current state in **Transaction History**; keep the amount under officer review rather than correcting it from today's rates |
 | A row reads **Partly paid** with an amount due | A change raised the price after payment and the extra was never collected | Open the booking and work through the **Additional payment outstanding** panel |
 | **Resend payment request email** says one was already sent | Someone — or the automatic reminder — emailed the member within the last hour | Wait for the hour to pass; the panel shows when the member was last emailed |
 | **Resend payment request email** is refused for a silenced booking | The booking has the **No emails** switch on | Turn the switch off, or contact the member yourself |

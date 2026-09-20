@@ -68,6 +68,13 @@ export type XeroAccountMappingDefinition = {
    */
   readonly unsetEntriesLabel?: string;
   /**
+   * For a key with NO fallback that still asks to be decided (`INV-INT-021`'s
+   * setup prompt): one sentence saying what the system does while it is unset.
+   * The setup checklist and the mapping row both read it, so a treasurer who
+   * skipped the row is told on the checklist that a choice is waiting.
+   */
+  readonly whileUnset?: string;
+  /**
    * Whether this key's `itemCode` column is READ at runtime. A Xero Item
    * carries its own account and wins over a line's account code, so an item
    * code set on a key nothing reads it from is not merely inert — on a key that
@@ -119,6 +126,23 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     accountClass: "ASSET",
     accountTypes: ["BANK"],
     defaultCode: "606",
+  },
+  {
+    key: "bankTransferRefundAccount",
+    label: "Bank Transfer Refunds Account",
+    description:
+      "Bank account a refund the club sends by internet banking is recorded against — the credit-note payment that shows the money leaving. Leave it unset and such a credit note is raised WITHOUT a settling payment, so it stays visibly outstanding in Xero for the treasurer to match to the bank line (#3529). A card refund never reads this: it is recorded against the Stripe bank account only when Stripe reports the refund.",
+    accountClass: "ASSET",
+    accountTypes: ["BANK"],
+    // No default and NO fallback key, by owner decision (#3529, 20 Sep 2026):
+    // Xero records a payment only where the money verifiably moved, and the
+    // Stripe account is the one place a bank transfer never came from. The
+    // `INV-INT-021` "fallback while unset" for this key is a behaviour rather
+    // than an account — the note is raised unsettled — and the description
+    // above is the setup prompt that says so.
+    defaultCode: null,
+    whileUnset:
+      "refund credit notes for money sent back by internet banking are raised in Xero without a settling payment, for the treasurer to match to the bank line by hand",
   },
   {
     key: "stripeFees",
@@ -236,6 +260,32 @@ export const MAPPING_ACCOUNT_FILTERS: Record<
 export function describeMappingUnsetEntries(key: AccountMappingKey): string {
   return MAPPING_UNSET_ENTRY_LABELS[key] ?? "entries";
 }
+
+/**
+ * `INV-INT-021`: every key that is ASKING to be decided while unset — one with
+ * a registered fallback (entries keep posting somewhere else) or one that
+ * declares `whileUnset` (the system does something the treasurer should know
+ * about). The setup checklist reads this list, not the fallback map, so a key
+ * of the second kind is surfaced without anybody remembering to add it.
+ */
+export const ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET: readonly AccountMappingKey[] =
+  XERO_ACCOUNT_MAPPING_DEFINITIONS.filter(
+    (definition) => "fallbackKey" in definition || "whileUnset" in definition,
+  ).map((definition) => definition.key);
+
+/**
+ * The key's OWN while-unset sentence, or null for a key that declares none —
+ * the mapping row shows it beside an unset key the way it shows the fallback
+ * notice, and must not invent one for a key that simply has a default.
+ */
+export function describeMappingOwnWhileUnset(key: AccountMappingKey): string | null {
+  return MAPPING_WHILE_UNSET[key] ?? null;
+}
+
+const MAPPING_WHILE_UNSET: Record<string, string | undefined> = byKey(
+  XERO_ACCOUNT_MAPPING_DEFINITIONS,
+  (d) => ("whileUnset" in d ? d.whileUnset : undefined),
+);
 
 export function describeMappingAccountFilter(key: AccountMappingKey): string {
   const filter = MAPPING_ACCOUNT_FILTERS[key];

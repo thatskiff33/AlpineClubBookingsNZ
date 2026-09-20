@@ -6,6 +6,7 @@ import type { BookingDetailRecord } from "../_lib/load-booking-detail";
 import type { BoundClubTime } from "@/lib/club-time";
 import type { BookingDetailEditAccess } from "../_lib/booking-detail-edit-access";
 import type { BookingDetailHistory } from "../_lib/booking-detail-history";
+import { BookingMoneyReconciliationHistoryStatus } from "./booking-money-reconciliation-history-status";
 
 const historyToneClasses: Record<BookingHistoryTone, string> = {
   default: "border-border bg-muted text-muted-foreground",
@@ -52,6 +53,9 @@ export function BookingNotesAndHistory({
           <CardTitle>Transaction History</CardTitle>
         </CardHeader>
         <CardContent>
+          <BookingMoneyReconciliationHistoryStatus
+            view={history.moneyReconciliation}
+          />
           <div className="divide-y">
             {bookingHistory.map((item) => (
               <div

@@ -143,8 +143,57 @@ describe("classifyXeroBookingEditSettlement", () => {
     expect(decision.financialAction).toEqual({
       type: "modification-credit-note",
       refundAmountCents: 2000,
+      // `INV-PAY-101`: no method stated and no credit election reads as the
+      // card refund every such note was before #3529.
+      refundMethod: "card",
       reason: expect.stringContaining("modification credit note"),
     });
+  });
+
+  it("carries an explicit bank-transfer refund method onto the modification credit note (INV-PAY-101)", () => {
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -2500,
+      refundMethod: "internet-banking",
+    });
+
+    expect(decision.financialAction).toMatchObject({
+      type: "modification-credit-note",
+      refundAmountCents: 2500,
+      refundMethod: "internet-banking",
+    });
+  });
+
+  it("words a card-elected reduction as a bank transfer when Stripe captured nothing (INV-PAY-101, review of #3537)", () => {
+    // An internet-banking-paid booking can be reduced "to card" - the member's
+    // choice is money back rather than credit - but no Stripe refund runs
+    // (`hasSucceededPayment` is false), so the club returns the money itself.
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -2500,
+      settlementMethod: "card",
+      settlementAmountCents: 2500,
+      refundedThroughStripe: false,
+    });
+
+    expect(decision.financialAction).toMatchObject({
+      type: "modification-credit-note",
+      refundMethod: "internet-banking",
+    });
+
+    // MUTATION: a Stripe-captured payment reduced to card IS a card refund.
+    expect(
+      classifyXeroBookingEditSettlement({
+        hasIssuedXeroInvoice: true,
+        originalPaymentStatus: "SUCCEEDED",
+        priceDiffCents: -2500,
+        settlementMethod: "card",
+        settlementAmountCents: 2500,
+        refundedThroughStripe: true,
+      }).financialAction,
+    ).toMatchObject({ refundMethod: "card" });
   });
 
   it("uses unapplied account-credit notes for credit-settled negative deltas", () => {
@@ -325,10 +374,31 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
         bookingId: "booking_2",
         refundAmountCents: 3000,
         bookingModificationId: "mod_2",
+        refundMethod: "card",
       }),
       expect.objectContaining({ createdByMemberId: "admin_1" }),
     );
     expect(mocks.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("hands an explicit bank-transfer refund method to the modification credit note enqueue (INV-PAY-101)", async () => {
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_2",
+      bookingModificationId: "mod_2",
+      createdByMemberId: "admin_1",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -3000,
+      datesChanged: false,
+      refundMethod: "internet-banking",
+    });
+
+    expect(
+      mocks.enqueueXeroModificationCreditNoteOperation,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ refundMethod: "internet-banking" }),
+      expect.anything(),
+    );
   });
 
   it("queues a modification account-credit note for a credit-settled negative delta", async () => {

@@ -191,7 +191,7 @@ prepare_source() {
   DATABASE_URL="$SRC_URL" npx prisma migrate deploy >/dev/null
 
   log "Seeding demo data (prisma/demo-seed.ts)"
-  ALLOW_DEMO_SEED=1 DATABASE_URL="$SRC_URL" npx tsx prisma/demo-seed.ts >/dev/null
+  ALLOW_DEMO_SEED=1 DATABASE_URL="$SRC_URL" npx tsx --conditions=react-server prisma/demo-seed.ts >/dev/null
 
   log "Seeding base data (prisma/seed.ts)"
   DATABASE_URL="$SRC_URL" npx tsx --conditions=react-server prisma/seed.ts >/dev/null

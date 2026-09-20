@@ -19,6 +19,7 @@ import {
   auditDocReachability,
   auditDocs,
   auditEncoding,
+  auditInvalidUtf8Bytes,
   auditTextScanCoverage,
   auditWordBudgets,
   auditIndexCatalogueRows,
@@ -1932,6 +1933,25 @@ describe("invariant baseline resolution and loading", () => {
   });
 });
 
+/**
+ * How long a CLI spawn in this describe may take.
+ *
+ * These cases spawn the real checker over the REAL repository, so their runtime
+ * grows with the repository rather than with the test. That made the previous
+ * 15s an expiring limit rather than a limit: on the merge of #3491, #3546 and
+ * #3549 the checker crossed it and reddened `main` — measured at 15044ms for
+ * the case that failed, beside 13886ms for its sibling, which passed with a
+ * second to spare. Nothing was wrong with either test; there were simply more
+ * files to scan than when 15s was chosen.
+ *
+ * So the number is defined once, here, and set with real headroom over the
+ * slowest observed run rather than just above it. If this ever needs raising
+ * again, first ask whether the checker has got slower per file — a limit that
+ * has to be raised twice is telling you about the thing it is timing, not about
+ * itself.
+ */
+const CLI_SPAWN_TIMEOUT_MS = 45_000;
+
 describe("doc-index CLI baseline wiring", () => {
   it(
     "passes a real pull-request synchronize shape whose webhook.before is populated",
@@ -1970,7 +1990,7 @@ describe("doc-index CLI baseline wiring", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("every id present at base");
     },
-    15_000,
+    CLI_SPAWN_TIMEOUT_MS,
   );
 
   it("fails closed at the CLI when an event base SHA is missing", () => {
@@ -2002,7 +2022,7 @@ describe("doc-index CLI baseline wiring", () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("every id present at base");
     },
-    15_000,
+    CLI_SPAWN_TIMEOUT_MS,
   );
 
   it("fails closed at the CLI when a process override collides with PR identity", () => {
@@ -2494,6 +2514,50 @@ describe("auditEncoding", () => {
     ].join("\n");
 
     expect(auditEncoding(repo({ "docs/example.md": prose }))).toEqual([]);
+  });
+});
+
+// The findings this takes are produced by `findInvalidUtf8Bytes`, which reads
+// the raw buffer; these cases exercise the MESSAGE, and the scan itself is
+// covered by the repository-wide run in the integration test below. Byte values
+// are written as numbers, never as characters, so this file stays valid UTF-8
+// while describing text that is not — the same discipline the control-character
+// cases above follow.
+describe("auditInvalidUtf8Bytes", () => {
+  it("says nothing when every tracked file decoded cleanly", () => {
+    expect(auditInvalidUtf8Bytes([])).toEqual([]);
+  });
+
+  it("names the file, the byte offset and the byte, because none of them is visible", () => {
+    const problems = auditInvalidUtf8Bytes([
+      { path: "src/lib/example.ts", byteOffset: 412, byte: 0x97 },
+    ]);
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("src/lib/example.ts");
+    expect(problems[0]).toContain("byte 412");
+    expect(problems[0]).toContain("0x97");
+    expect(problems[0]).toContain("cp1252");
+  });
+
+  it("explains why the other encoding checks cannot see it", () => {
+    const [problem] = auditInvalidUtf8Bytes([
+      { path: "docs/example.md", byteOffset: 0, byte: 0xff },
+    ]);
+
+    expect(problem).toContain("0xff");
+    expect(problem).toContain("after the decode");
+  });
+
+  it("reports one file per finding, in path order", () => {
+    const problems = auditInvalidUtf8Bytes([
+      { path: "src/z.ts", byteOffset: 1, byte: 0x91 },
+      { path: "src/a.ts", byteOffset: 2, byte: 0x92 },
+    ]);
+
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("src/a.ts");
+    expect(problems[1]).toContain("src/z.ts");
   });
 });
 

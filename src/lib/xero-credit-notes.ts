@@ -36,10 +36,7 @@ import {
   callXeroApi,
   getAuthenticatedXeroClient,
 } from "./xero-api-client";
-import {
-  getAccountMapping,
-  getResolvedAccountMapping,
-} from "./xero-mappings";
+import { getResolvedAccountMapping } from "./xero-mappings";
 import { retryXeroWriteWithContactRepair, type FindOrCreateXeroContactOptions } from "./xero-contacts";
 import {
   findOrCreateXeroContactForInvoicedParty,
@@ -52,7 +49,14 @@ import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
 import {
   buildRefundCreditNotePayment,
   REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON,
+  resolveRefundSettlement,
+  type CashRefundMethod,
 } from "./xero-invoice-payments";
+import {
+  buildRefundDocumentDescription,
+  buildRefundDocumentReference,
+  defaultRefundMethodForPaymentSource,
+} from "@/lib/xero-refund-method";
 
 export interface CreateXeroRefundCreditNoteOptions
   extends FindOrCreateXeroContactOptions {
@@ -65,6 +69,14 @@ export interface CreateXeroRefundCreditNoteOptions
    * legacy single-note behaviour for non-per-delta callers.
    */
   watermarkCents?: number;
+  /**
+   * How the money went back (`INV-PAY-101`, #3529): the wording on the note and
+   * the bank account its settling payment posts to. Threaded from the caller
+   * that made the settlement decision through the outbox payload. Absent on
+   * rows queued before the field existed, where the payment's source is the
+   * only evidence and `defaultRefundMethodForPaymentSource` reads it.
+   */
+  refundMethod?: CashRefundMethod;
 }
 
 function readLinkWatermarkCents(metadata: unknown): number | null {
@@ -284,9 +296,23 @@ export async function createXeroCreditNote(
   );
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
+  // `INV-PAY-101`: the method a caller SAID, or — only for a row queued before
+  // the field existed — the payment's source. Whether the caller said it is
+  // itself a fact the settlement leg reads: a note nobody vouched for is
+  // raised unsettled rather than marked paid from an account it never touched.
+  const refundMethodRecorded = options?.refundMethod !== undefined;
+  const refundMethod =
+    options?.refundMethod ?? defaultRefundMethodForPaymentSource(payment.source);
 
   const refundLineItem: LineItem = {
-    description: `Refund for booking ${payment.booking.id.slice(0, 8)} (${formatDateOnly(new Date(payment.booking.checkIn))} - ${formatDateOnly(new Date(payment.booking.checkOut))})`,
+    description: buildRefundDocumentDescription({
+      method: refundMethod,
+      bookingId: payment.booking.id,
+      stay: {
+        checkIn: formatDateOnly(new Date(payment.booking.checkIn)),
+        checkOut: formatDateOnly(new Date(payment.booking.checkOut)),
+      },
+    }),
     quantity: 1,
     unitAmount: effectiveRefundAmountCents / 100,
     taxType: "OUTPUT2",
@@ -311,7 +337,10 @@ export async function createXeroCreditNote(
     date: creditNoteDate,
     lineAmountTypes: LineAmountTypes.Inclusive,
     lineItems: [refundLineItem],
-    reference: `Refund - Booking ${payment.booking.id.slice(0, 8)}`,
+    reference: buildRefundDocumentReference({
+      method: refundMethod,
+      bookingId: payment.booking.id,
+    }),
     status: CreditNote.StatusEnum.AUTHORISED,
   });
 
@@ -331,12 +360,15 @@ export async function createXeroCreditNote(
         "v1"
       );
   let operationId = queuedOperationId;
+  // `refundMethod` rides in the recorded payload so a retry or a repair of
+  // this row settles against the same account and says the same thing.
   const requestPayload = {
     creditNotes: [buildCreditNote(contactId)],
     allocation: {
       invoiceId: originalInvoiceId,
       amount: effectiveRefundAmountCents / 100,
     },
+    refundMethod,
   };
 
   if (operationId) {
@@ -381,6 +413,7 @@ export async function createXeroCreditNote(
           invoiceId: originalInvoiceId,
           amount: effectiveRefundAmountCents / 100,
         },
+        refundMethod,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
@@ -417,55 +450,74 @@ export async function createXeroCreditNote(
       | { paymentID?: string; invoiceNumber?: string; creditNoteNumber?: string; amount?: number }
       | null = null;
     let refundPaymentErr: unknown = null;
+    // `INV-PAY-101` (owner decision, 20 Sep 2026): Xero records a payment only
+    // where the money verifiably moved. A card refund settles from the Stripe
+    // account; a bank-transfer refund from the club's configured account, and
+    // is otherwise left UNSETTLED — visibly outstanding for the bank-feed
+    // match — never marked paid from the Stripe account it did not come from.
+    const settlement = await resolveRefundSettlement({
+      method: refundMethod,
+      methodRecorded: refundMethodRecorded,
+    });
+    const refundPaymentSkipReason =
+      settlement.kind === "unsettled" ? settlement.reason : null;
 
-    try {
-      const bankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
-      // Key on the freshly created note id (#1162): this runs only for a
-      // brand-new note, so v1->v2 cannot replay historical payments, and equal
-      // amount refunds no longer collide onto one refund-payment key.
-      const refundPaymentIdempotencyKey = buildXeroIdempotencyKey(
-        "payment",
-        paymentId,
-        "refund-payment",
-        createdNote.creditNoteID,
-        "v2"
-      );
-      const refundPayment = buildRefundCreditNotePayment({
-        paymentId,
-        creditNoteId: createdNote.creditNoteID,
-        refundAmountCents: effectiveRefundAmountCents,
-        bankCode,
-        // The club's calendar day, from the persisted zone (CT-5, #2869).
-        paymentDate: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
-      });
-      const refundPaymentResponse = await callXeroApi(
-        () =>
-          xero.accountingApi.createPayments(
-            tenantId,
-            {
-              payments: [refundPayment],
-            },
-            undefined,
-            refundPaymentIdempotencyKey
-          ),
-        {
-          operation: "createPayments",
-          resourceType: "PAYMENT",
-          workflow: "createXeroCreditNote",
-          context: `createPayments(refund credit note ${paymentId})`,
-        }
-      );
-      refundPaymentResponseBody = refundPaymentResponse.body.payments?.[0] ?? null;
+    if (settlement.kind === "unsettled") {
       logger.info(
-        { paymentId, creditNoteId: createdNote.creditNoteID },
-        "Xero refund payment created against Stripe bank account via credit note"
+        { paymentId, creditNoteId: createdNote.creditNoteID, refundMethod, reason: settlement.reason },
+        "Xero refund credit note left unsettled: no verifiable settlement account for this refund"
       );
-    } catch (error) {
-      refundPaymentErr = error;
-      logger.error(
-        { err: error, paymentId, creditNoteId: createdNote.creditNoteID },
-        "Failed to create Xero refund payment against Stripe bank account via credit note"
-      );
+    } else {
+      try {
+        const bankCode = settlement.bankCode;
+        // Key on the freshly created note id (#1162): this runs only for a
+        // brand-new note, so v1->v2 cannot replay historical payments, and equal
+        // amount refunds no longer collide onto one refund-payment key.
+        const refundPaymentIdempotencyKey = buildXeroIdempotencyKey(
+          "payment",
+          paymentId,
+          "refund-payment",
+          createdNote.creditNoteID,
+          "v2"
+        );
+        const refundPayment = buildRefundCreditNotePayment({
+          paymentId,
+          creditNoteId: createdNote.creditNoteID,
+          refundAmountCents: effectiveRefundAmountCents,
+          bankCode,
+          // The club's calendar day, from the persisted zone (CT-5, #2869).
+          paymentDate: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
+          refundMethod,
+        });
+        const refundPaymentResponse = await callXeroApi(
+          () =>
+            xero.accountingApi.createPayments(
+              tenantId,
+              {
+                payments: [refundPayment],
+              },
+              undefined,
+              refundPaymentIdempotencyKey
+            ),
+          {
+            operation: "createPayments",
+            resourceType: "PAYMENT",
+            workflow: "createXeroCreditNote",
+            context: `createPayments(refund credit note ${paymentId})`,
+          }
+        );
+        refundPaymentResponseBody = refundPaymentResponse.body.payments?.[0] ?? null;
+        logger.info(
+          { paymentId, creditNoteId: createdNote.creditNoteID, refundMethod, bankCode },
+          "Xero refund payment created against the refund settlement bank account via credit note"
+        );
+      } catch (error) {
+        refundPaymentErr = error;
+        logger.error(
+          { err: error, paymentId, creditNoteId: createdNote.creditNoteID, refundMethod },
+          "Failed to create Xero refund payment against the refund settlement bank account via credit note"
+        );
+      }
     }
 
     await completeXeroSyncOperation(operationId!, {
@@ -477,6 +529,11 @@ export async function createXeroCreditNote(
         allocationSkipReason: REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON,
         refundPayment: refundPaymentResponseBody,
         refundPaymentError: refundPaymentErr,
+        // Read by the repair leg (`INV-PAY-101`): an unsettled-by-design note
+        // is complete, not a payment leg waiting to be repaired.
+        refundPaymentSkipped: refundPaymentSkipReason !== null,
+        refundPaymentSkipReason,
+        refundMethod,
       },
       xeroObjectType: "CREDIT_NOTE",
       xeroObjectId: createdNote.creditNoteID,
@@ -691,10 +748,18 @@ export async function createUnappliedXeroCreditNote(
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
 
+  // Account credit by construction (`INV-PAY-101`): this note is left
+  // unapplied on the contact, so its method is not a caller's choice.
   const creditLineItem: LineItem = {
-    description: bookingModificationId
-      ? `Account credit from booking modification ${bookingModificationId.slice(0, 8)} (Booking ${payment.booking.id.slice(0, 8)})`
-      : `Account credit from booking ${payment.booking.id.slice(0, 8)} (${formatDateOnly(new Date(payment.booking.checkIn))} - ${formatDateOnly(new Date(payment.booking.checkOut))})`,
+    description: buildRefundDocumentDescription({
+      method: "account-credit",
+      bookingId: payment.booking.id,
+      modificationId: bookingModificationId ?? null,
+      stay: {
+        checkIn: formatDateOnly(new Date(payment.booking.checkIn)),
+        checkOut: formatDateOnly(new Date(payment.booking.checkOut)),
+      },
+    }),
     quantity: 1,
     unitAmount: refundAmountCents / 100,
     taxType: "OUTPUT2",
@@ -716,9 +781,10 @@ export async function createUnappliedXeroCreditNote(
     date: creditNoteDate,
     lineAmountTypes: LineAmountTypes.Inclusive,
     lineItems: [creditLineItem],
-    reference: bookingModificationId
-      ? `Modification Credit - Booking ${payment.booking.id.slice(0, 8)}`
-      : `Account Credit - Booking ${payment.booking.id.slice(0, 8)}`,
+    reference: buildRefundDocumentReference({
+      method: "account-credit",
+      bookingId: payment.booking.id,
+    }),
     status: CreditNote.StatusEnum.AUTHORISED,
   });
 

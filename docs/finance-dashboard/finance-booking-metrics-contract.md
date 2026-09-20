@@ -33,6 +33,10 @@ The booking metrics response includes:
 
 - `generatedAt`
 - `bookingCount`: distinct AlpineClubBookingsNZ bookings contributing to any requested metrics section
+- `moneyReconciliation`: the canonical derived reconciliation summary for that
+  same contributing-booking cohort: `totalBookings`, `byState` counts for
+  `RECONCILED` and `UNRECONCILED`, and a count for every canonical typed reason
+  in `byReason`. It never recalculates, corrects, or suppresses stored amounts.
 - `paymentSummary`: distinct-booking summary derived from AlpineClubBookingsNZ `Payment` rows
 - optional `realized`
 - optional `forward`
@@ -125,6 +129,14 @@ The booking metrics response includes:
 - A booking can contribute to both realized and forward sections when its stay spans the realized cutoff or forward `asOfDate`.
 - Forward metrics count only stay dates strictly after `forwardAsOf`.
 - Waitlist states remain excluded from occupied or committed pipeline nights.
+- Finance dashboard consumers carry `moneyReconciliation` with every
+  booked-revenue-derived figure. The bookings view separately exposes its
+  primary and comparison cohorts; pricing sensitivity exposes its primary
+  cohort. Each emits the state and non-zero reason counts in its warning and
+  reconciliation panel, and the dashboard export carries the same panel rows.
+  An unreconciled cohort leaves its stored amount visible but explicitly marks
+  booked/forward revenue, realized rate, revenue less costs, comparisons, and
+  scenarios as requiring review rather than silently trusted.
 
 ## JSON Safety Rules
 

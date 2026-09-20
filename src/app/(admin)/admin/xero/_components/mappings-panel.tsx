@@ -28,6 +28,7 @@ import {
   ACCOUNT_MAPPING_KEYS,
   accountsForMappingKey,
   describeMappingAccountFilter,
+  describeMappingOwnWhileUnset,
   describeMappingUnsetEntries,
   isCodeExplicitlyConfigured,
   MAPPING_DESCRIPTIONS,
@@ -407,7 +408,7 @@ function AccountMappingRow({
             </SelectContent>
           </Select>
         ) : (
-          <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm">{matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode || <span className="text-muted-foreground">Not configured (using default)</span>}</p>
+          <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm">{matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode || <span className="text-muted-foreground">{ACCOUNT_MAPPING_DEFAULTS[mappingKey] ? "Not configured (using default)" : "Not configured"}</span>}</p>
         )}
         {currentIsOutsideFilter ? (
           <p className="mt-1 text-xs text-warning-11">
@@ -415,6 +416,18 @@ function AccountMappingRow({
             Xero organisation. It is still what entries post to &mdash; the server does not
             second-guess a stored code (<code>INV-INT-021</code>) &mdash; so check it, or refresh the
             chart of accounts if it is simply out of date.
+          </p>
+        ) : null}
+        {!usingFallback &&
+        !isCodeExplicitlyConfigured({ code: currentCode ?? null }) &&
+        describeMappingOwnWhileUnset(mappingKey) ? (
+          // `INV-INT-021`'s row prompt for a key with NO fallback (#3529): the
+          // treasurer is told what happens without it, in the same place the
+          // fallback notice would sit.
+          <p className="mt-1 text-xs text-warning-11">
+            Not set, so {describeMappingOwnWhileUnset(mappingKey)}. Choosing a{" "}
+            {accountNoun} account here records those payments from it; notes
+            already in Xero are never changed.
           </p>
         ) : null}
         {usingFallback ? (

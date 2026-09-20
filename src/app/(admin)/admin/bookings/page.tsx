@@ -46,6 +46,14 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import {
+  BOOKING_MONEY_RECONCILIATION_COPY,
+  bookingMoneyUnreconciledCopy,
+  bookingMoneyUnreconciledKind,
+  bookingMoneyNeedsOfficerReview,
+  bookingMoneyReconciliationForViewer,
+  bookingMoneyReviewReasonText,
+} from "@/lib/booking-money-reconciliation-audience";
+import {
   calendarDateOfDateOnlyInstant,
   countClubNights,
   formatClubDate,
@@ -649,6 +657,17 @@ export default async function AdminBookingsPage({
                 // to `/admin/members/undefined`; the school's name is plain text
                 // instead, as the change-requests panel already does.
                 const owner = bookingOwner(booking).member;
+                // #3278: through the shared audience helper, so the wording
+                // and the "only when unreconciled" rule have one home. Every
+                // viewer of this page has already cleared the admin bookings
+                // area, and that admission IS the officer proof here — it is
+                // supplied rather than re-derived, which keeps the chip for the
+                // read-only admin who triages this list.
+                const moneyReconciliationView =
+                  bookingMoneyReconciliationForViewer(
+                    booking.moneyReconciliation,
+                    { canSeeAdminTools: true },
+                  );
 
                 return (
                   <TableRow key={booking.id}>
@@ -731,6 +750,30 @@ export default async function AdminBookingsPage({
                           >
                             <MiniChip tone="warning" icon={Eye}>Review</MiniChip>
                           </Link>
+                        ) : null}
+                        {bookingMoneyNeedsOfficerReview(
+                          moneyReconciliationView,
+                        ) ? (
+                          <span
+                            title={`${BOOKING_MONEY_RECONCILIATION_COPY.featureName}: ${bookingMoneyReviewReasonText(moneyReconciliationView.reconciliation.reasons)}`}
+                          >
+                            <MiniChip
+                              tone={
+                                bookingMoneyUnreconciledKind(
+                                  moneyReconciliationView.reconciliation.reasons,
+                                ) === "EVIDENCE_ABSENT"
+                                  ? "neutral"
+                                  : "danger"
+                              }
+                              icon={AlertTriangle}
+                            >
+                              {
+                                bookingMoneyUnreconciledCopy(
+                                  moneyReconciliationView.reconciliation.reasons,
+                                ).chipLabel
+                              }
+                            </MiniChip>
+                          </span>
                         ) : null}
                         {booking.deletedAt ? (
                           <MiniChip tone="danger" icon={Trash2}>Deleted</MiniChip>

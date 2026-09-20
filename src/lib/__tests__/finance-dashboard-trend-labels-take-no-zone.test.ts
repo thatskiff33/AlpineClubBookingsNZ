@@ -173,6 +173,19 @@ function bookingMetrics() {
   return {
     generatedAt: "2026-06-28T00:00:00.000Z",
     bookingCount: 1,
+    moneyReconciliation: {
+      totalBookings: 1,
+      byState: { RECONCILED: 1, UNRECONCILED: 0 },
+      byReason: {
+        NO_SURVIVING_STRANDS: 0,
+        STRAND_EVIDENCE_UNREADABLE: 0,
+        HEADLINE_TOTAL_MISMATCH: 0,
+        PROMO_BUILD_UP_NOT_KNOWN: 0,
+        PROMO_BUILD_UP_MISMATCH: 0,
+        DISCOUNT_COMPONENT_MISMATCH: 0,
+        FINAL_PRICE_RELATION_MISMATCH: 0,
+      },
+    },
     paymentSummary: {
       bookingCount: 1,
       bookingsWithPayment: 1,

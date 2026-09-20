@@ -1,5 +1,6 @@
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { bookingMoneyReconciliationForViewer } from "@/lib/booking-money-reconciliation-audience";
 import type { BoundClubTime } from "@/lib/club-time";
 import { buildBookingHistoryItems } from "@/lib/booking-history";
 import {
@@ -179,7 +180,20 @@ export async function loadBookingDetailHistory({
     financialReviewPending,
   });
 
-  return { financialReviewPending, bookingNarrative, bookingHistory };
+  return {
+    financialReviewPending,
+    bookingNarrative,
+    bookingHistory,
+    // This is the booking's current derived state, not a durable past event.
+    // Keep it officer-only at the data boundary, matching the other private
+    // integrity evidence loaded above. #3278: through the shared gate, so the
+    // withheld case is a named state rather than a null every reader gets to
+    // interpret for itself.
+    moneyReconciliation: bookingMoneyReconciliationForViewer(
+      booking.moneyReconciliation,
+      { canSeeAdminTools },
+    ),
+  };
 }
 
 export type BookingDetailHistory = Awaited<

@@ -1,5 +1,6 @@
 import type { EntranceFeeCategory } from "@prisma/client";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
+import { parseRefundMethod, type RefundMethod } from "@/lib/xero-refund-method";
 
 export const XERO_OUTBOX_ENTRANCE_FEE_TYPE = "ENTRANCE_FEE_INVOICE";
 export const XERO_OUTBOX_BOOKING_INVOICE_TYPE = "BOOKING_INVOICE";
@@ -87,6 +88,10 @@ interface QueuedRefundCreditNoteOutboxPayload {
   // Cumulative refunded-cents watermark this note settles up to (#1162). Absent
   // on payloads queued before per-delta refund notes existed.
   watermarkCents?: number;
+  // How the money went back (`INV-PAY-101`, #3529): the wording on the note and
+  // the bank account its settling payment posts to. Absent on rows queued
+  // before the field existed; the executor then reads the payment's source.
+  refundMethod?: RefundMethod;
 }
 
 interface QueuedAccountCreditNoteOutboxPayload {
@@ -125,6 +130,9 @@ interface QueuedModificationCreditNoteOutboxPayload {
   bookingId: string;
   refundAmountCents: number;
   bookingModificationId?: string;
+  // `INV-PAY-101`: the wording on the note. Absent on rows queued before #3529,
+  // which the builder renders as the card refund they always were.
+  refundMethod?: RefundMethod;
 }
 
 interface QueuedModificationAccountCreditNoteOutboxPayload {
@@ -285,6 +293,7 @@ export function readQueuedOutboxPayload(
       queueType,
       refundAmountCents,
       watermarkCents: readNumber(payload.watermarkCents) ?? undefined,
+      refundMethod: parseRefundMethod(payload.refundMethod) ?? undefined,
     };
   }
 
@@ -344,6 +353,7 @@ export function readQueuedOutboxPayload(
       refundAmountCents,
       bookingModificationId:
         readString(payload.bookingModificationId) ?? undefined,
+      refundMethod: parseRefundMethod(payload.refundMethod) ?? undefined,
     };
   }
 

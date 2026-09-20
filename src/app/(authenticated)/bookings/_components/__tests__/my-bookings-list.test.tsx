@@ -48,6 +48,10 @@ function item(overrides: Partial<MyBookingItem> = {}): MyBookingItem {
     checkOut: "2026-08-12T00:00:00.000Z",
     guestCount: 2,
     finalPriceCents: 12000,
+    moneyReconciliation: {
+      visibility: "VISIBLE",
+      reconciliation: { state: "RECONCILED", reasons: [] },
+    },
     status: "PAID" as BookingStatus,
     linkLabel: null,
     parentBookingId: null,
@@ -254,5 +258,49 @@ describe("a booking whose adjustment is still being worked out (#3033)", () => {
     expect(
       screen.getByRole("link", { name: /Aug 2026/ }),
     ).not.toHaveTextContent("being checked");
+  });
+});
+
+describe("stored booking money reconciliation", () => {
+  it("marks nothing when the page withheld the verdict from this viewer", () => {
+    render(
+      <MyBookingsList
+        bookings={[item({ moneyReconciliation: { visibility: "WITHHELD" } })]}
+      />,
+    );
+
+    expect(screen.queryByText("Money review")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Aug 2026/ })).toHaveTextContent(
+      "$120.00",
+    );
+    expect(
+      screen.getByRole("link", { name: /Aug 2026/ }),
+    ).not.toHaveTextContent("needs review");
+  });
+
+  it("qualifies an unreconciled stored amount without replacing it", () => {
+    render(
+      <MyBookingsList
+        bookings={[
+          item({
+            moneyReconciliation: {
+              visibility: "VISIBLE",
+              reconciliation: {
+                state: "UNRECONCILED",
+                reasons: ["FINAL_PRICE_RELATION_MISMATCH"],
+              },
+            },
+          }),
+        ]}
+      />,
+    );
+
+    // #3278: one chip label across the member list and the admin list, from
+    // the single copy home, rather than a second sentence meaning the same.
+    expect(screen.getByText("Money review")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Aug 2026/ })).toHaveTextContent(
+      "recorded amount needs review",
+    );
+    expect(screen.getByRole("link", { name: /Aug 2026/ })).toHaveTextContent("$120.00");
   });
 });

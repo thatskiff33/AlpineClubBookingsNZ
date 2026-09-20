@@ -634,7 +634,8 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | --- | --- |
 | `xero-booking-invoices` | Primary booking invoice create/update (`buildInvoiceLineItems`). |
 | `xero-invoice-payments` | Recording Stripe payments against invoices and Stripe refunds as credit-note payments. |
-| `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment. |
+| `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment. A cash refund note's settling payment is recorded only where the money verifiably moved (`resolveRefundSettlement`, `INV-PAY-101`): Stripe for a card refund, the configured bank-transfer refund account for a recorded bank transfer, and otherwise the note is left unsettled with `refundPaymentSkipped` on the operation. |
+| `xero-refund-method` | Leaf, pure: how the money went back — `card`, `internet-banking`, `account-credit` — as the ONE home for the wording every refund or credit document carries (#3529, `INV-PAY-101`), the default a method-less legacy row falls to (Stripe → card, anything else → bank transfer), and which mapping key settles a cash refund. The method is threaded from the settlement decision through the outbox payload; the builders never infer it from `Payment.source` when the caller said. |
 | `xero-supplementary-invoices` | Positive booking-modification delta invoices. |
 | `xero-modification-credit-notes` | Negative booking-modification credit notes. |
 | `xero-entrance-fee-invoices` | One-off entrance-fee invoices per age tier. |
@@ -1280,6 +1281,22 @@ night does not prevent a reconciling aggregate promotion line from being
 verified. It also does not change group-settlement invoice totals or introduce
 the child promotion line that path already omits; those are separate accounting
 shape decisions, not compatibility fallbacks.
+
+Stage 4 (#3278, `INV-MONEY-031`) also derives the complete booking-money
+reconciliation state from that same coherent booking snapshot before provider
+authentication. The state and every ordered reason are retained only in
+`XeroSyncOperation.requestPayload` as reconciliation evidence. The object sent
+to Xero still contains the established invoice lines and no additional field;
+the classifier neither changes an amount nor moves a provider call into a
+database transaction. Group-settlement line shape remains outside Stage 4.
+
+That evidence is recorded under two separate keys, because an operation can be
+run twice and the two runs observe different things. `moneyReconciliation` is
+the state at the moment the operation raised its invoice. When a later run of
+the same operation finds the invoice already there, it records what it sees
+under `moneyReconciliationOnReplay` instead and leaves the raise-time verdict
+untouched — a retry months later must not be able to restate, or to erase, what
+was true when the money was invoiced.
 
 ## OAuth and token lifecycle (supporting flow)
 

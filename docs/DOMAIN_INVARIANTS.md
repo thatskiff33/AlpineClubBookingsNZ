@@ -97,6 +97,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-028` | Each stored guest-night price records its origin; even splits are not evidence |
 | `INV-MONEY-029` | Promo adjustment rows reconcile to the promo total; unknown is never zero |
 | `INV-MONEY-030` | Stored money readers preserve current amounts and record their source |
+| `INV-MONEY-031` | Stored booking totals carry a derived reconciliation state |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |
@@ -261,6 +262,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
 | `INV-PAY-099` | A dismissed money task can be reopened; a completed one cannot |
 | `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
+| `INV-PAY-101` | Refund documents name the method from the settlement decision, never the source |
 | `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
 | `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |
 | `INV-PAY-071` | Both shortfall endings audited with opposite instructions; repair reads settled shares |

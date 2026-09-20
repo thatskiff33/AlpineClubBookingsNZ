@@ -31,10 +31,12 @@ import {
   ACCOUNT_MAPPING_DEFAULTS,
   ACCOUNT_MAPPING_FALLBACK_KEYS,
   ACCOUNT_MAPPING_KEYS,
+  ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET,
   accountsForMappingKey,
   MAPPING_DESCRIPTIONS,
   MAPPING_LABELS,
   describeMappingAccountFilter,
+  describeMappingOwnWhileUnset,
   MAPPING_ACCOUNT_FILTERS,
   XERO_ACCOUNT_MAPPING_DEFINITIONS,
   XERO_ITEM_ONLY_MAPPING_DEFINITIONS,
@@ -205,6 +207,47 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
     expect(MAPPING_ACCOUNT_FILTERS.hutFeeRefunds.accountClass).toBe("REVENUE");
     expect(MAPPING_ACCOUNT_FILTERS.hutFeeRefunds.accountTypes).toEqual(["REVENUE"]);
     expect(ACCOUNT_MAPPING_FALLBACK_KEYS.hutFeeRefunds).toBeUndefined();
+  });
+});
+
+describe("bankTransferRefundAccount — the second INV-INT-021 instance (#3529, INV-PAY-101)", () => {
+  it("wants a BANK account and nothing else, exactly as the Stripe account key does", () => {
+    expect(MAPPING_ACCOUNT_FILTERS.bankTransferRefundAccount).toEqual(
+      MAPPING_ACCOUNT_FILTERS.stripeBankAccount,
+    );
+    const chartOfAccounts = [
+      { code: "200", name: "Hut Fees", type: "REVENUE", class: "REVENUE" },
+      { code: "090", name: "Club Cheque Account", type: "BANK", class: "ASSET" },
+      { code: "606", name: "Stripe Clearing", type: "BANK", class: "ASSET" },
+      { code: "620", name: "Prepayments", type: "PREPAYMENT", class: "ASSET" },
+    ];
+    expect(
+      accountsForMappingKey("bankTransferRefundAccount", chartOfAccounts).map((a) => a.code),
+    ).toEqual(["090", "606"]);
+  });
+
+  it("has NO fallback and no default: unset, a bank-transfer refund note is left unsettled rather than posted to Stripe (owner decision, 20 Sep 2026)", () => {
+    expect(ACCOUNT_MAPPING_FALLBACK_KEYS.bankTransferRefundAccount).toBeUndefined();
+    expect(ACCOUNT_MAPPING_DEFAULTS.bankTransferRefundAccount).toBeNull();
+    expect(resolveAccountMappingSource("bankTransferRefundAccount", false)).toEqual({
+      sourceKey: "bankTransferRefundAccount",
+      usingFallback: false,
+    });
+  });
+
+  it("still asks to be decided while unset, on the setup checklist and the row (INV-INT-021)", () => {
+    expect(ACCOUNT_MAPPING_KEYS).toContain("bankTransferRefundAccount");
+    expect(ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET).toContain("bankTransferRefundAccount");
+    // ...and the fallback-carrying key is on the same list, so the snapshot
+    // reads one list to find both kinds - and tells them apart by whether the
+    // key has its OWN sentence (no fallback) or a fallback key (no sentence).
+    expect(ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET).toContain("goodwillWriteOffs");
+    expect(describeMappingOwnWhileUnset("bankTransferRefundAccount")).toMatch(
+      /raised in Xero without a settling payment/,
+    );
+    expect(ACCOUNT_MAPPING_FALLBACK_KEYS.bankTransferRefundAccount).toBeUndefined();
+    expect(describeMappingOwnWhileUnset("goodwillWriteOffs")).toBeNull();
+    expect(ACCOUNT_MAPPING_FALLBACK_KEYS.goodwillWriteOffs).toBe("hutFeeRefunds");
   });
 });
 

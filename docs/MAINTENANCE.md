@@ -264,7 +264,11 @@ to this procedure while still being load-bearing.
 - Keep production image tags commit-SHA based. Operators should deploy the app
   and migration images that match the resolved `origin/main` commit.
 - Keep GHCR host tokens read-only. Production hosts need `read:packages`; CI
-  publishing uses the workflow `GITHUB_TOKEN` in the publish job only.
+  publishing uses the workflow `GITHUB_TOKEN` in the publish job only. The one
+  exception is `--build-and-push-images`, the supported way to build on the host
+  when CI cannot (#3539): it pushes, so it needs `write:packages` for the
+  duration of that build. Log back in with the read-only token afterwards — a
+  host that is only ever deployed to has no standing need to publish.
 - Treat Docker image security as two gates: CRITICAL Trivy findings fail the PR,
   while HIGH findings are warning-only until reviewed and promoted to a blocking
   policy. Since #2686 the CRITICAL half is intended as a **required**
