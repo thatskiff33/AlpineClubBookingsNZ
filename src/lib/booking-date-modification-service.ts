@@ -153,7 +153,7 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import {
   computeModificationPriceLines,
   diffBookingPricing,
-  modificationLinesAuditFields,
+  loadModificationLinesAuditFields,
   pricingSideFromPriceBreakdown,
   pricingSideFromStoredGuests,
 } from "@/lib/booking-modification-lines";
@@ -1277,7 +1277,7 @@ export async function modifyBookingDates({
      */
     const priceLines = parked
       ? null
-      : computeModificationPriceLines(
+      : await computeModificationPriceLines(
           { bookingId, site: "date-change" },
           () =>
             diffBookingPricing(
@@ -1559,6 +1559,8 @@ async function dispatchDatePostTransactionSideEffects({
     : result.notifyMember
       ? {}
       : { notifyMember: false };
+  // #3530: what the figure is made of, line by line and in dollars.
+  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
   logAudit({
     action: result.adminOverride
       ? "booking.modify.admin_override"
@@ -1587,8 +1589,7 @@ async function dispatchDatePostTransactionSideEffects({
       policyRetainedAmountCents: result.policyRetainedAmountCents,
       promoRemoved: result.promoRemoved,
       promoCoverageNote: result.promoCoverage?.message ?? null,
-      // #3530: what the figure is made of, line by line and in dollars.
-      ...modificationLinesAuditFields(result.priceLines),
+      ...linesAudit,
     }),
     metadata: {
       bookingId,
@@ -1605,7 +1606,7 @@ async function dispatchDatePostTransactionSideEffects({
       policyRetainedAmountCents: result.policyRetainedAmountCents,
       promoRemoved: result.promoRemoved,
       promoCoverageNote: result.promoCoverage?.message ?? null,
-      ...modificationLinesAuditFields(result.priceLines),
+      ...linesAudit,
     },
     ipAddress,
   });

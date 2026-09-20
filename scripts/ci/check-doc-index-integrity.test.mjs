@@ -1456,7 +1456,9 @@ describe("tracked citation source extensions", () => {
     // maximum, and no further, exactly as the note above requires.
     // Moved up again by #3497, which shipped INV-MOD-057: cancellable statuses
     // have one home and the member-facing doors read a named subset of it.
-    const planted = "INV-MOD-058";
+    // Moved up again by #3530 (2a), which shipped INV-MOD-058: an edit stores
+    // its delta as lines and every reader reads those rows.
+    const planted = "INV-MOD-059";
     // The precondition the fixture rests on. When this fails, `planted` has been
     // taken by a real invariant: move it up one, and no further.
     expect(files.get("docs/DOMAIN_INVARIANTS.md")).not.toContain(planted);

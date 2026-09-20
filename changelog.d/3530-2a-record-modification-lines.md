@@ -6,7 +6,7 @@
   which nights, and any change to a promotion, each with its own amount and all
   adding up to the difference. The admin booking page's history and the edit's
   audit entry list them in dollars, for example
-  "1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026 ($80.00)".
+  "1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026 (+$80.00)".
 
   Nothing sent to Xero changes in this release; the next stage puts the same
   lines on the supplementary invoice and credit note. An edit whose money is

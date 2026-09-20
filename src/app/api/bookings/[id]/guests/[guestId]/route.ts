@@ -1,4 +1,4 @@
-import { modificationLinesAuditFields } from "@/lib/booking-modification-lines";
+import { loadModificationLinesAuditFields } from "@/lib/booking-modification-lines";
 import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -255,7 +255,8 @@ export async function DELETE(
           "Failed to create additional PaymentIntent for guest removal",
       });
 
-    // Audit log
+    // Audit log. #3530: what the figure is made of, line by line and in dollars.
+    const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
     logAudit({
       action: "booking.modify.guests.remove",
       memberId: session.user.id,
@@ -274,8 +275,7 @@ export async function DELETE(
         settlementMethod: result.settlementMethod,
         policyRetainedAmountCents: result.policyRetainedAmountCents,
         choreWarnings: result.choreWarnings,
-        // #3530: what the figure is made of, line by line and in dollars.
-        ...modificationLinesAuditFields(result.priceLines),
+        ...linesAudit,
       }),
       metadata: {
         bookingId,
@@ -286,7 +286,7 @@ export async function DELETE(
         settlementMethod: result.settlementMethod,
         policyRetainedAmountCents: result.policyRetainedAmountCents,
         choreWarnings: result.choreWarnings,
-        ...modificationLinesAuditFields(result.priceLines),
+        ...linesAudit,
         newGuestCount: result.booking.guests.length,
         // Issue #1705 (#1698 pattern): a suppressed admin removal records the
         // choice — notifyMember is false only when an admin opted out, so every

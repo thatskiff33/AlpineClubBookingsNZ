@@ -8,6 +8,7 @@ import {
   type BookingHistoryModification,
 } from "@/lib/booking-history-modification-narrative";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import type { RateMembershipLabelResolver } from "@/lib/rate-membership-label";
 import { formatCents, formatSignedCents } from "@/lib/utils";
 
 export type BookingHistoryTone = "default" | "success" | "warning" | "danger";
@@ -119,6 +120,13 @@ interface BuildBookingHistoryOptions {
    * always has rather than making a claim about money it has not checked.
    */
   financialReviewPending?: boolean;
+  /**
+   * #3530: the club's built-in NON_MEMBER type, so an edit's itemised lines say
+   * "Member" / "Non-member" by the rate each guest was priced at - the same
+   * words as the invoice line (#2543). Absent, the lines fall back to the
+   * guest's `isMember` flag, which is what a page that loaded no resolver gets.
+   */
+  rateLabels?: RateMembershipLabelResolver | null;
 }
 
 function parseAuditDetails(details: string | null): Record<string, unknown> | null {
@@ -143,6 +151,7 @@ export function buildBookingHistoryItems({
   auditLogs,
   duplicateCaptureRefunds = [],
   financialReviewPending = false,
+  rateLabels = null,
 }: BuildBookingHistoryOptions): BookingHistoryItem[] {
   /*
     #3033: WHICH row the open review belongs to.
@@ -394,7 +403,7 @@ export function buildBookingHistoryItems({
   for (const modification of modifications) {
     const detailParts = [describeModification(modification)];
     // #3530: the itemised lines behind the figure, when the edit stored them.
-    const linesNote = describeModificationLines(modification);
+    const linesNote = describeModificationLines(modification, rateLabels);
     if (linesNote) {
       detailParts.push(linesNote);
     }

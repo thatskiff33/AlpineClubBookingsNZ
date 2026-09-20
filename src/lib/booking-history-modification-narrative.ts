@@ -3,6 +3,7 @@ import {
   parseModificationLines,
   renderModificationLineWithAmount,
 } from "@/lib/booking-modification-lines";
+import type { RateMembershipLabelResolver } from "@/lib/rate-membership-label";
 import type {
   BookingMoneyBuildUpHistoryMetadata,
   BookingMoneyCompatibilityClassification,
@@ -217,8 +218,12 @@ export function describeModification(modification: BookingHistoryModification): 
  */
 export function describeModificationLines(
   modification: Pick<BookingHistoryModification, "priceLines">,
+  /** #2543's member word follows the rate snapshot; null falls back to `isMember`. */
+  rateLabels: RateMembershipLabelResolver | null,
 ): string | null {
   const lines = parseModificationLines(modification.priceLines);
   if (!lines) return null;
-  return `Made up of: ${lines.map(renderModificationLineWithAmount).join("; ")}.`;
+  return `Made up of: ${lines
+    .map((line) => renderModificationLineWithAmount(line, rateLabels))
+    .join("; ")}.`;
 }

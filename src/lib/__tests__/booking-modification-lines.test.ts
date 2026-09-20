@@ -4,9 +4,12 @@
  * sentences so the owner can read the wording before a Xero document (2b)
  * carries it.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  computeModificationPriceLines,
   diffBookingPricing,
+  loadModificationLinesAuditFields,
+  modificationLinesAuditFields,
   parseModificationLines,
   renderModificationLineDescription,
   renderModificationLineWithAmount,
@@ -127,7 +130,7 @@ describe("diffBookingPricing", () => {
 
     const lines = linesOf(diffBookingPricing(before, after, 0));
 
-    expect(lines.map(renderModificationLineDescription)).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
       "1 x Non-member Adult removed - 1 night - 14 Aug 2026 - 15 Aug 2026",
       "1 x Non-member Adult added - 1 night - 16 Aug 2026 - 17 Aug 2026",
     ]);
@@ -141,7 +144,7 @@ describe("diffBookingPricing", () => {
     const lines = linesOf(diffBookingPricing(before, after, 1500));
 
     expect(lines.map((line) => line.amountCents)).toEqual([-8000, 9500]);
-    expect(lines.map(renderModificationLineDescription)).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
       "1 x Non-member Adult removed - 1 night - 14 Aug 2026 - 15 Aug 2026",
       "1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
     ]);
@@ -153,7 +156,7 @@ describe("diffBookingPricing", () => {
 
     const lines = linesOf(diffBookingPricing(before, after, -3000));
 
-    expect(lines.map(renderModificationLineDescription)).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
       "1 x Non-member Adult removed - 1 night - 14 Aug 2026 - 15 Aug 2026",
       "1 x Member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
     ]);
@@ -165,7 +168,7 @@ describe("diffBookingPricing", () => {
 
     const lines = linesOf(diffBookingPricing(before, after, -8000));
 
-    expect(lines.map(renderModificationLineDescription)).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
       "1 x Non-member Adult removed - 1 night - 16 Aug 2026 - 17 Aug 2026",
     ]);
   });
@@ -176,7 +179,7 @@ describe("diffBookingPricing", () => {
 
     const lines = linesOf(diffBookingPricing(before, after, 25500));
 
-    expect(lines.map(renderModificationLineDescription)).toEqual([
+    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
       "1 x Non-member Adult added - 2 nights - 14 Aug 2026 - 16 Aug 2026",
       "1 x Non-member Adult added - 1 night - 16 Aug 2026 - 17 Aug 2026",
     ]);
@@ -328,16 +331,142 @@ describe("the sentences (for the owner's eye)", () => {
     const lines = linesOf(
       diffBookingPricing(before, after, -32000 + -4500 + 4500 + 8000 + 1000),
     );
-    const rendered = lines.map(renderModificationLineWithAmount);
+    const rendered = lines.map((line) => renderModificationLineWithAmount(line));
     console.info(["", "Rendered modification lines:", ...rendered.map((l) => `  ${l}`)].join("\n"));
     // Removals first, then additions; within each, by start date, members
     // before non-members; the promotion last.
     expect(rendered).toEqual([
       "1 x Member Youth removed - 1 night - 14 Aug 2026 - 15 Aug 2026 (-$45.00)",
       "2 x Non-member Adult removed - 2 nights - 14 Aug 2026 - 16 Aug 2026 (-$320.00)",
-      "1 x Non-member Adult added - 1 night - 15 Aug 2026 - 16 Aug 2026 ($80.00)",
-      "1 x Member Youth added - 1 night - 16 Aug 2026 - 17 Aug 2026 ($45.00)",
-      "Promotion SUMMER25 reduced by $10.00 ($10.00)",
+      "1 x Non-member Adult added - 1 night - 15 Aug 2026 - 16 Aug 2026 (+$80.00)",
+      "1 x Member Youth added - 1 night - 16 Aug 2026 - 17 Aug 2026 (+$45.00)",
+      "Promotion SUMMER25 reduced by $10.00 (+$10.00)",
     ]);
+  });
+});
+
+describe("the member word follows the rate snapshot (#2543), as on the invoice line", () => {
+  const lockedOutMember: ModificationLine = {
+    v: 1,
+    kind: "GUEST_NIGHTS",
+    sign: 1,
+    ageTier: "ADULT",
+    isMember: true,
+    rateMembershipTypeId: "type-non-member",
+    unitCents: 8000,
+    nightCount: 1,
+    guestCount: 1,
+    quantity: 1,
+    startDate: "2026-08-14",
+    endExclusive: "2026-08-15",
+    guestNames: ["Guest a"],
+    amountCents: 8000,
+  };
+
+  it("says Non-member for a member priced at the non-member rate when the club's type is known", () => {
+    expect(
+      renderModificationLineDescription(lockedOutMember, { nonMemberTypeId: "type-non-member" }),
+    ).toBe("1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026");
+  });
+
+  it("falls back to isMember with no resolver, exactly as a legacy invoice line does", () => {
+    expect(renderModificationLineDescription(lockedOutMember)).toBe(
+      "1 x Member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
+    );
+    expect(renderModificationLineDescription(lockedOutMember, { nonMemberTypeId: null })).toBe(
+      "1 x Member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
+    );
+  });
+
+  it("puts the same words and signed money on the audit row", () => {
+    expect(modificationLinesAuditFields([lockedOutMember], { nonMemberTypeId: "type-non-member" })).toEqual({
+      priceLines: [lockedOutMember],
+      priceLinesText: ["1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026 (+$80.00)"],
+    });
+    expect(modificationLinesAuditFields(null, null)).toEqual({});
+    expect(modificationLinesAuditFields([], null)).toEqual({});
+  });
+
+  it("loads the club's NON_MEMBER type only when there are lines, and narrates without it when the read fails", async () => {
+    const findFirst = vi.fn(async () => ({ id: "type-non-member" }));
+    const db = { membershipType: { findFirst } } as unknown as Parameters<
+      typeof loadModificationLinesAuditFields
+    >[0];
+    const log = { warn: vi.fn() };
+
+    expect(await loadModificationLinesAuditFields(db, null, log)).toEqual({});
+    expect(findFirst).not.toHaveBeenCalled();
+
+    const fields = await loadModificationLinesAuditFields(db, [lockedOutMember], log);
+    expect(findFirst).toHaveBeenCalledWith({ where: { key: "NON_MEMBER" }, select: { id: true } });
+    expect(fields).toMatchObject({
+      priceLinesText: ["1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026 (+$80.00)"],
+    });
+    expect(log.warn).not.toHaveBeenCalled();
+
+    findFirst.mockRejectedValueOnce(new Error("connection reset"));
+    const fallback = await loadModificationLinesAuditFields(db, [lockedOutMember], log);
+    expect(fallback).toMatchObject({
+      priceLinesText: ["1 x Member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026 (+$80.00)"],
+    });
+    expect(log.warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("computeModificationPriceLines never fails the edit", () => {
+  const context = { bookingId: "booking-1", site: "test" };
+
+  it("stores NULL and logs when the diff says none", async () => {
+    const log = { info: vi.fn(), error: vi.fn() };
+    await expect(
+      computeModificationPriceLines(
+        context,
+        () => ({ kind: "none", reason: "SUM_MISMATCH", linesSumCents: 100 }),
+        log,
+      ),
+    ).resolves.toBeNull();
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking-1", site: "test", reason: "SUM_MISMATCH", linesSumCents: 100 }),
+      expect.any(String),
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it("stores NULL and logs when the builder throws - synchronously or from its await", async () => {
+    const log = { info: vi.fn(), error: vi.fn() };
+    await expect(
+      computeModificationPriceLines(
+        context,
+        () => {
+          throw new Error("undefined is not iterable");
+        },
+        log,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      computeModificationPriceLines(context, async () => Promise.reject(new Error("re-read failed")), log),
+    ).resolves.toBeNull();
+    expect(log.error).toHaveBeenCalledTimes(2);
+    expect(log.error).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bookingId: "booking-1", site: "test", err: expect.any(Error) }),
+      expect.any(String),
+    );
+  });
+
+  it("returns the lines when the diff has them", async () => {
+    const before = side([guest("a")]);
+    const after = side([
+      { ...guest("a"), nights: afterNights("2026-08-14", [8000, 8000]) },
+      { ...guest("b"), nights: afterNights("2026-08-14", [8000]) },
+    ]);
+    const log = { info: vi.fn(), error: vi.fn() };
+    const lines = await computeModificationPriceLines(
+      context,
+      async () => diffBookingPricing(before, after, 8000),
+      log,
+    );
+    expect(lines).toHaveLength(1);
+    expect(sumModificationLines(lines ?? [])).toBe(8000);
+    expect(log.info).not.toHaveBeenCalled();
   });
 });

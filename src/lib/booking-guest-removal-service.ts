@@ -1121,7 +1121,7 @@ export async function removeBookingGuestInTransaction({
   const priceLines =
     priceBreakdown === null
       ? null
-      : computeModificationPriceLines(
+      : await computeModificationPriceLines(
           { bookingId, site: "guest-removal" },
           () => {
             const promoCode = booking.promoRedemption?.promoCode.code ?? null;

@@ -52,11 +52,17 @@
  * (`INV-DATE-026`).
  */
 
-import type { AgeTier } from "@prisma/client";
+import type { AgeTier, BookingGuestNightPriceSource } from "@prisma/client";
 import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import { splitNightsIntoPriceRuns } from "@/lib/night-price-runs";
-import { formatCents } from "@/lib/utils";
+import { storedNightPriceSourceIsInexact } from "@/lib/stored-sold-price-evidence";
+import {
+  describeGuestRateMembershipLabel,
+  loadRateMembershipLabelResolver,
+  type RateMembershipLabelResolver,
+} from "@/lib/rate-membership-label";
+import { formatCents, formatSignedCents } from "@/lib/utils";
 
 export const MODIFICATION_LINES_VERSION = 1 as const;
 
@@ -109,7 +115,7 @@ export interface ModificationPricingSide {
        * Stored provenance where the side is the booking's own rows; omitted
        * for the freshly priced after side, whose every night is exact.
        */
-      priceSource?: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN";
+      priceSource?: BookingGuestNightPriceSource;
     }>;
   }>;
   promoAdjustmentCents: number;
@@ -128,8 +134,6 @@ export type DiffBookingPricingResult =
       linesSumCents?: number;
     };
 
-const EXACT_PRICE_SOURCES = new Set(["SOLD", "OFFICER_PRICED"]);
-
 /**
  * The signed lines from `before` to `after`, or why there are none.
  * `expectedDeltaCents` is the caller's own `priceDiffCents`, the figure it
@@ -145,7 +149,7 @@ export function diffBookingPricing(
       if (typeof night.priceCents !== "number") {
         return { kind: "none", reason: "UNPRICED_NIGHT" };
       }
-      if (night.priceSource !== undefined && !EXACT_PRICE_SOURCES.has(night.priceSource)) {
+      if (storedNightPriceSourceIsInexact(night.priceSource)) {
         return { kind: "none", reason: "INEXACT_STORED_NIGHT_PRICE" };
       }
     }
@@ -359,11 +363,17 @@ const AGE_TIER_WORD: Record<AgeTier, string> = {
   NOT_APPLICABLE: "Guest",
 };
 
-/** "Non-member Adult" / "Member Youth". */
+/**
+ * "Non-member Adult" / "Member Youth". The member word is #2543's - it follows
+ * the rate snapshot the line was priced at, exactly as the invoice line does,
+ * so a member priced at the non-member rate reads "Non-member" here too. With
+ * no resolver the label falls back to `isMember`, as that function documents.
+ */
 export function describeModificationLineCategory(
   line: Extract<ModificationLine, { kind: "GUEST_NIGHTS" }>,
+  labels?: RateMembershipLabelResolver | null,
 ): string {
-  return `${line.isMember ? "Member" : "Non-member"} ${AGE_TIER_WORD[line.ageTier]}`;
+  return `${describeGuestRateMembershipLabel(labels, line)} ${AGE_TIER_WORD[line.ageTier]}`;
 }
 
 function formatDay(day: string): string {
@@ -376,7 +386,10 @@ function formatDay(day: string): string {
  * `Promotion SUMMER25 reduced by $20.00`. The same words on the Xero line
  * (2b), in the booking's history and in the audit row (`INV-SSOT`).
  */
-export function renderModificationLineDescription(line: ModificationLine): string {
+export function renderModificationLineDescription(
+  line: ModificationLine,
+  labels?: RateMembershipLabelResolver | null,
+): string {
   if (line.kind === "PROMO_DELTA") {
     const code = line.promoCode ? `Promotion ${line.promoCode}` : "Promotion";
     // A promotion adjustment is negative money; it "increases" when the
@@ -387,16 +400,15 @@ export function renderModificationLineDescription(line: ModificationLine): strin
   }
   const verb = line.sign > 0 ? "added" : "removed";
   const nights = `${line.nightCount} night${line.nightCount === 1 ? "" : "s"}`;
-  return `${line.guestCount} x ${describeModificationLineCategory(line)} ${verb} - ${nights} - ${formatDay(line.startDate)} - ${formatDay(line.endExclusive)}`;
+  return `${line.guestCount} x ${describeModificationLineCategory(line, labels)} ${verb} - ${nights} - ${formatDay(line.startDate)} - ${formatDay(line.endExclusive)}`;
 }
 
-/** The description with its signed money, for history and audit text. */
-export function renderModificationLineWithAmount(line: ModificationLine): string {
-  const amount =
-    line.amountCents < 0
-      ? `-${formatCents(-line.amountCents)}`
-      : formatCents(line.amountCents);
-  return `${renderModificationLineDescription(line)} (${amount})`;
+/** The description with its signed money (`+$320.00` / `-$320.00`), for history and audit text. */
+export function renderModificationLineWithAmount(
+  line: ModificationLine,
+  labels?: RateMembershipLabelResolver | null,
+): string {
+  return `${renderModificationLineDescription(line, labels)} (${formatSignedCents(line.amountCents)})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -418,7 +430,7 @@ export interface StoredGuestForLines {
   nights?: ReadonlyArray<{
     stayDate: Date;
     priceCents?: number | null;
-    priceSource: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN";
+    priceSource: BookingGuestNightPriceSource;
   }>;
 }
 
@@ -542,16 +554,22 @@ export function modificationPriceLinesToStore(
  * fixture shape the composer did not expect, a wiring slip) is logged as an
  * error and stored as NULL too, never rethrown into the transaction.
  */
-export function computeModificationPriceLines(
+export async function computeModificationPriceLines(
   context: { bookingId: string; site: string },
-  build: () => DiffBookingPricingResult,
+  /**
+   * Composes the two sides and diffs them. May be async so that a site whose
+   * AFTER side is a re-read of the rows it just wrote runs that read INSIDE
+   * this guard too: the read is narration's, and a failure of it must not
+   * roll back the edit that already succeeded (review of #3559).
+   */
+  build: () => DiffBookingPricingResult | Promise<DiffBookingPricingResult>,
   log: {
     info: (obj: Record<string, unknown>, msg: string) => void;
     error: (obj: Record<string, unknown>, msg: string) => void;
   },
-): ModificationLine[] | null {
+): Promise<ModificationLine[] | null> {
   try {
-    const result = build();
+    const result = await build();
     if (result.kind === "none") {
       log.info(
         { bookingId: context.bookingId, site: context.site, reason: result.reason, linesSumCents: result.linesSumCents },
@@ -576,10 +594,40 @@ export function computeModificationPriceLines(
  */
 export function modificationLinesAuditFields(
   lines: ReadonlyArray<ModificationLine> | null | undefined,
-): { priceLines: ModificationLine[]; priceLinesText: string[] } | Record<string, never> {
+  labels: RateMembershipLabelResolver | null,
+): ModificationLinesAuditFields {
   if (!lines || lines.length === 0) return {};
   return {
     priceLines: [...lines],
-    priceLinesText: lines.map(renderModificationLineWithAmount),
+    priceLinesText: lines.map((line) => renderModificationLineWithAmount(line, labels)),
   };
+}
+
+export type ModificationLinesAuditFields =
+  | { priceLines: ModificationLine[]; priceLinesText: string[] }
+  | Record<string, never>;
+
+/**
+ * The audit fields with the club's member/non-member resolver loaded for them -
+ * loaded only when there are lines to narrate, so an edit that stored none
+ * costs no read. The edit has already committed when this runs, so a failed
+ * read is logged and the text falls back to `isMember` rather than failing
+ * the audit write; the stored `priceLines` carry the snapshot regardless.
+ */
+export async function loadModificationLinesAuditFields(
+  db: Parameters<typeof loadRateMembershipLabelResolver>[0],
+  lines: ReadonlyArray<ModificationLine> | null | undefined,
+  log: { warn: (obj: Record<string, unknown>, msg: string) => void },
+): Promise<ModificationLinesAuditFields> {
+  if (!lines || lines.length === 0) return {};
+  let labels: RateMembershipLabelResolver | null = null;
+  try {
+    labels = await loadRateMembershipLabelResolver(db);
+  } catch (error) {
+    log.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      "booking-modification-lines: member label resolver unavailable; audit text falls back to isMember",
+    );
+  }
+  return modificationLinesAuditFields(lines, labels);
 }

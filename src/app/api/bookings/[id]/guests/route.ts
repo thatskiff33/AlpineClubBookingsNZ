@@ -151,7 +151,7 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import {
   computeModificationPriceLines,
   diffBookingPricing,
-  modificationLinesAuditFields,
+  loadModificationLinesAuditFields,
   pricingSideFromStoredGuests,
   pricingSideFromWrittenGuests,
 } from "@/lib/booking-modification-lines";
@@ -1149,24 +1149,25 @@ export async function POST(
        */
       const priceLines = parked
         ? null
-        : await (async () => {
-            const writtenGuests = await tx.bookingGuest.findMany({
-              where: { bookingId },
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                ageTier: true,
-                isMember: true,
-                rateMembershipTypeId: true,
-                nights: { select: { stayDate: true, priceCents: true } },
-              },
-            });
-            const promoCode = booking.promoRedemption?.promoCode?.code ?? null;
-            return computeModificationPriceLines(
-              { bookingId, site: "guest-add" },
-              () =>
-                diffBookingPricing(
+        : await computeModificationPriceLines(
+            { bookingId, site: "guest-add" },
+            async () => {
+              // The re-read is narration's own I/O and runs INSIDE the guard:
+              // a failure here stores no lines and fails no edit.
+              const writtenGuests = await tx.bookingGuest.findMany({
+                where: { bookingId },
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  ageTier: true,
+                  isMember: true,
+                  rateMembershipTypeId: true,
+                  nights: { select: { stayDate: true, priceCents: true } },
+                },
+              });
+              const promoCode = booking.promoRedemption?.promoCode?.code ?? null;
+              return diffBookingPricing(
                   pricingSideFromStoredGuests(booking.guests, {
                     promoAdjustmentCents: booking.promoAdjustmentCents,
                     promoCode,
@@ -1176,10 +1177,10 @@ export async function POST(
                     promoCode: promoRemoved ? null : promoCode,
                   }),
                   priceDiffCents,
-                ),
-              logger,
-            );
-          })();
+                );
+            },
+            logger,
+          );
 
       // Create BookingModification record
       const bookingModification = await tx.bookingModification.create({
@@ -1361,7 +1362,8 @@ export async function POST(
           "Failed to create additional PaymentIntent for guest addition",
       });
 
-    // Audit log
+    // Audit log. #3530: what the figure is made of, line by line and in dollars.
+    const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
     logAudit({
       action: "booking.modify.guests.add",
       memberId: session.user.id,
@@ -1375,14 +1377,13 @@ export async function POST(
       details: JSON.stringify({
         addedGuests: result.addedGuestNames,
         priceDiffCents: result.priceDiffCents,
-        // #3530: what the figure is made of, line by line and in dollars.
-        ...modificationLinesAuditFields(result.priceLines),
+        ...linesAudit,
       }),
       metadata: {
         bookingId,
         addedGuests: result.addedGuestNames,
         priceDiffCents: result.priceDiffCents,
-        ...modificationLinesAuditFields(result.priceLines),
+        ...linesAudit,
         newGuestCount: result.booking.guests.length,
         // #1769b honesty rule: the guest-add modified email always sends when a
         // member exists, so record the notify choice whenever it was

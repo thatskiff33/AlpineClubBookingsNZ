@@ -1911,12 +1911,15 @@ kept night at the same price and category cancels; a repriced night is one
 removed and one added, never netted; runs are cut by `splitNightsIntoPriceRuns`
 (`night-price-runs.ts`), the same cutter the original invoice uses, and folded
 across guests. Any unpriced night on either side, or a before-night whose stored
-price is not exact provenance (`EVEN_SPLIT`, `UNKNOWN`), yields **no** lines
-(`INV-MOD-028`); lines that do not sum to the caller's `priceDiffCents` are not
-stored (`INV-MONEY-003`). NULL means "no itemisation" — parked, inexact, a
-credit election, a price rebase, or a legacy row — and is never `[]`. The
-computation runs inside `computeModificationPriceLines`, which stores NULL on
-any failure, so narration can never fail an edit.
+price is not exact provenance (`storedNightPriceSourceIsInexact`, the evidence
+module's own rule), yields **no** lines (`INV-MOD-028`); lines that do not sum
+to the caller's `priceDiffCents` are not stored (`INV-MONEY-003`). NULL means
+"no itemisation" — parked, inexact, a credit election, a price rebase, or a
+legacy row — and is never `[]`. The computation runs inside
+`computeModificationPriceLines`, which stores NULL on any failure, so narration
+can never fail an edit. A line's member word is
+`describeGuestRateMembershipLabel` (#2543): the rate snapshot, the same word as
+the invoice line.
 
 Pinned by `booking-modification-lines.test.ts` and one sum assertion per edit
 site (`fix-mod-payment`, `batch-modify-payment`,

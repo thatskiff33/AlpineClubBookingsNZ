@@ -11,7 +11,7 @@ rows it just wrote, and which promotion figure it decided.
 `edit-financial-review-charge.ts` stood exactly at its budget and stays there.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2291
+lines: 2292
 reason: the date change composes its lines from the guest snapshot it loaded
   and the breakdown it priced, index-aligned with `guestsForPricing`, and
   returns them so the audit row can list them. Both inputs are locals of the
@@ -26,7 +26,7 @@ reason: the same composition for the removal, from the loaded snapshot (the
   field the route's audit row reads.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2585
+lines: 2587
 reason: the batch edit composes its AFTER side from the guest rows it has just
   WRITTEN, re-read inside the transaction - the one reading that cannot
   disagree with what landed when the plan orders remaining strands and added
@@ -34,7 +34,7 @@ reason: the batch edit composes its AFTER side from the guest rows it has just
   lines. That re-read has to sit between the write and the modification row.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1633
+lines: 1634
 reason: the guest add composes its lines the same way the batch edit does,
   from the rows it just wrote, inside the transaction that writes the
   modification row; its audit row and result carry them.
