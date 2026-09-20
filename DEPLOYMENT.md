@@ -557,6 +557,103 @@ fast-forwards the clean checkout after success.
 For a fork, set `GHCR_APP_IMAGE_REPOSITORY` and
 `GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults.
 
+### The deploy refuses a commit that exists on no remote (#3539)
+
+Before it builds the workspace, the wrapper asks git whether the commit it
+resolved is reachable from any **remote** branch. A commit that only your deploy
+host holds — a local branch, a detached `HEAD`, a tag nobody pushed — is
+refused.
+
+This is not bureaucracy. A release nobody else has cannot be rebuilt, cannot be
+reviewed, and quietly invalidates the *next* release's preconditions: the
+pending-migration list, the ledger rows in
+`docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` and the upgrade notes are all worked out
+against a commit that is not the one running. It has happened in production.
+
+Building from a local branch is still legitimate — a registry outage, a depleted
+CI budget — so there is an override, and it wants the decision written down:
+
+```bash
+ALLOW_UNPUBLISHED_DEPLOY_COMMIT=1 \
+UNPUBLISHED_DEPLOY_COMMIT_REASON="GHCR outage 2026-09-20; hotfix built on the host" \
+  ./scripts/run-production-blue-green-deploy.sh
+```
+
+The flag on its own is refused: without a non-empty reason the deploy stops. The
+reason is printed in the deploy log. Push the commit as soon as the reason no
+longer holds.
+
+The check asks the remote, not this host's copy of it. A remote-tracking ref
+such as `origin/feature` is a local cache, and the deploy's fetch prunes only
+the branch it fetched — so a branch deleted on the remote can leave a ref here
+that would vouch for a commit nobody else has. If **no** remote can be reached
+at all, the deploy does not refuse on that ground: it warns that it could not
+confirm, says the local refs may be stale, and continues. An outage is not a
+reason to block a deploy whose commit really is pushed.
+
+### Building the images on the host (#3539)
+
+When CI cannot build the images — a depleted Actions budget, a registry you
+cannot reach from CI — build them on the deploy host with the supported mode
+rather than by hand:
+
+```bash
+./scripts/run-production-blue-green-deploy.sh --build-and-push-images
+```
+
+**This mode pushes, so the host needs a GHCR token with `write:packages`** —
+not the `read:packages` token the "GitHub Container Registry" section above
+tells you to log the host in with, and which is the right default for a host
+that only ever pulls. Log in with a push-capable token for the build, and log
+back in with the read-only one afterwards. The script says so before it starts
+building, because the alternative is finding out after a full `next build` on a
+small server.
+
+It resolves and checks the commit exactly as a deploy does, extracts the same
+clean `git archive` workspace, and builds with the same build arguments CI
+passes — including `RELEASE_ID`, which a bare `docker compose build` does not
+set. Before it pushes anything it starts the image it just built and reads
+`RELEASE_ID` back out of the running container. If the identifier did not reach
+the runtime environment, nothing is pushed.
+
+That read-back matters because a missing `RELEASE_ID` is invisible from outside
+the image, and two things quietly degrade without it: the pre-cutover warm-up
+gate can no longer confirm it warmed the release being deployed (it warns
+instead), and the public website's per-release CSP nonce falls back to a
+per-build seed.
+
+Then deploy the pushed tags normally:
+
+```bash
+./scripts/run-production-blue-green-deploy.sh
+```
+
+### A failed deploy leaves a record (#3539)
+
+From the migrate step onward the database may no longer match either release,
+and until #3539 the only account of what happened was the operator's terminal.
+Any failure at or after step 13 now writes a file to
+`$HOME/tacbookings-deploy-failures` (override with `DEPLOY_FAILURE_RECORD_DIR`)
+naming:
+
+- the step the deploy died on, the release attempted, and both image references;
+- the migrations that were pending when the deploy began;
+- what the database says about them — selected on `started_at`, so a migration
+  that began and did **not** finish is reported as exactly that rather than as
+  "nothing applied";
+- whether traffic had already moved to the new colour — and, when it had and
+  the new colour was already verified healthy from outside, that it **stays**
+  there and no restore is attempted, because that is what the script really
+  does.
+
+If the database could not be reached, the record says `UNKNOWN.` as its own
+state. It does not say `NONE STARTED.`, because a database that is down after a
+migration was attempted against it is the one case where a reassuring answer
+would be the most damaging. Those two strings are the ones printed in the file,
+so they are the ones to look for.
+
+### What the internal engine does
+
 The internal deployment engine in the same script:
 
 - pulls the app and migration images for the resolved commit SHA
@@ -567,6 +664,8 @@ The internal deployment engine in the same script:
 - waits for `/api/health/ready`
 - warms the new release's public pages and verifies its page cache, refusing to
   continue if a critical page failed (see "Pre-cutover warm-up gate")
+- holds the previous release's images back from its own prune, so the rollback
+  below stays possible (see "Rollback")
 - updates Caddy upstream routing
 - verifies the public domain is serving the target runtime through
   `/api/deploy/runtime-status`, authenticated with the existing `CRON_SECRET`
@@ -1504,6 +1603,46 @@ before deployment; Admin Modules do not replace that safety check.
 Preferred rollback is to route Caddy back to the previous healthy color while it
 is still running. If schema changes have already applied, rollback must respect
 the migration policy and any compatibility constraints in the migration PR.
+
+**The previous release's images are held back from the deploy's own prune
+(#3539).** That rollback needs the previous images on the host, and the deploy
+used to evict them itself: step 18 removes the inactive colour's container,
+which leaves its image referenced by nothing, and step 20 then prunes it. The
+deploy reported success while the rollback it documents had quietly become
+impossible.
+
+Before the first prune, the deploy now records the **image IDs** of the running
+app containers and holds each one with a stopped placeholder container named
+`tacbookings-rollback-hold-<image id>`. Docker never prunes an image a container
+references, running or not. The holds are replaced on the next deploy, so at most
+one release's worth exists at a time.
+
+The ID rather than the tag is deliberate: in local-build mode the running colour
+reports the mutable `<project>-app:local`, which the build then re-tags onto the
+*new* image — a hold written against the tag would protect the image being
+deployed, let the real rollback image fall dangling into the prune, and report it
+retained.
+
+To see what is held, and which image each hold is keeping:
+
+```bash
+docker ps -a --filter "label=nz.alpineclub.deploy.rollback-image-hold" \
+  --format '{{.Names}}\t{{.Image}}'
+```
+
+**Using a held image depends on how the release was built.** With the normal
+registry deploy, both images are tagged by commit SHA, so rolling back is
+`APP_IMAGE=<repo>:<old sha> MIGRATE_IMAGE=<repo>:<old sha>` on the deploy — the
+hold simply guarantees the tag still resolves. With a **local build** the tag
+`<project>-app:local` has already been moved onto the new image, so point it
+back at the held one first:
+
+```bash
+docker tag <held image id> <project>-app:local
+```
+
+The held id is the second column of the listing above, and it is also the
+suffix of the placeholder's name.
 
 Keep deploy logs, the target commit SHA, migration output, and health-check
 results with the release record.

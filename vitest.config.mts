@@ -19,7 +19,14 @@ export default defineConfig({
     // first: setup files are evaluated in order, and a module's imports are
     // evaluated before its own body, so anything the second setup file imports
     // would otherwise capture the real clock at import time.
-    setupFiles: ["./vitest.clock-setup.ts", "./vitest.setup.ts"],
+    // The async-local-storage global sits between them: Next captures it at
+    // MODULE EVALUATION, so it must be set before vitest.setup.ts imports
+    // anything that reaches Next. See that file for why it is not a one-liner.
+    setupFiles: [
+      "./vitest.clock-setup.ts",
+      "./vitest.async-local-storage-setup.ts",
+      "./vitest.setup.ts",
+    ],
     // Never descend into agent git worktrees (.claude/worktrees/*): they hold
     // stale snapshots of the repo whose test files would otherwise be collected
     // and run against the main source via the "@" alias. e2e/ holds Playwright

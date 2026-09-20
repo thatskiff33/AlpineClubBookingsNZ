@@ -10,10 +10,37 @@ import { MyExceptionRequests } from "./_components/my-exception-requests";
 import { toMyWholeLodgeRequestItem } from "@/lib/member-whole-lodge-requests";
 import { readMemberExceptionRequests } from "@/lib/booking-exception-request-service";
 import { bookingsWithOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
+import {
+  BOOKING_MONEY_RECONCILIATION_SELECT,
+  reconcileStoredBookingMoney,
+} from "@/lib/booking-money-reconciliation-store";
+import { bookingMoneyReconciliationForViewer } from "@/lib/booking-money-reconciliation-audience";
+import { canSeeBookingAdminTools } from "@/lib/admin-permissions";
 
 export default async function MyBookingsPage() {
   const session = await auth();
   if (!session) return null;
+
+  /*
+    WHO IS LOOKING, on a page that had no idea (#3278).
+
+    "My bookings" is a member's own list, so the page never needed a viewer
+    before. The stored-money verdict needs one, for two reasons. It is
+    officer-only (owner decision, 20 September 2026); and this list is not
+    purely the viewer's own bookings — the `where` below also selects bookings
+    the viewer merely appears on as a GUEST, whose figure belongs to another
+    member. Printing an integrity verdict about that member's money to this one
+    is the exposure, and it is not cured by the viewer being a member in good
+    standing.
+
+    The signal is `canSeeBookingAdminTools`, which is the SAME predicate the
+    booking-detail page gates the rest of a booking's private integrity
+    evidence on (`canSeeAdminTools`) rather than a second officer test invented
+    for this page — a Full Admin or a `bookings:edit` holder. An officer who is
+    also a member therefore sees the mark on their own list, and everyone else
+    sees their amounts exactly as they did before this feature existed.
+  */
+  const canSeeAdminTools = canSeeBookingAdminTools(session.user);
 
   // #2263 — the member's own whole-lodge requests. Scoped by
   // requestedByMemberId + exclusivityRequested, and projected through
@@ -64,7 +91,20 @@ export default async function MyBookingsPage() {
       ],
     },
     include: {
-      guests: true,
+      // #3278: the stored-money classification below is derived from THIS read,
+      // so the per-night and adjustment evidence it needs rides along here
+      // rather than arriving from a second query. The relation shapes are the
+      // canonical `BOOKING_MONEY_RECONCILIATION_SELECT`'s own, spread rather
+      // than retyped (`INV-SSOT`); the Booking scalars it names come with the
+      // `include`. A second read would let a commit land between the two and
+      // have the page render one read's total wearing the other read's verdict.
+      guests: {
+        include: {
+          nights: BOOKING_MONEY_RECONCILIATION_SELECT.guests.select.nights,
+        },
+      },
+      promoRedemption: BOOKING_MONEY_RECONCILIATION_SELECT.promoRedemption,
+      nightAdjustments: BOOKING_MONEY_RECONCILIATION_SELECT.nightAdjustments,
       // #796 discriminator: a group joiner also links to its organiser via
       // parentBookingId, so the list needs the join row to tell it apart from a
       // genuine #738 split child. Mirrors [id]/page.tsx's nonMemberGuestChildren
@@ -97,6 +137,14 @@ export default async function MyBookingsPage() {
   );
 
   const items: MyBookingItem[] = bookings.map((booking) => {
+    // #3278: classified from the row this page is about to render, which is the
+    // contract every other reader of the projection keeps. Nothing can commit
+    // between the number and its verdict, and a booking that disappears while
+    // the page renders cannot strand the list looking for a row that is gone.
+    const moneyReconciliation = bookingMoneyReconciliationForViewer(
+      reconcileStoredBookingMoney(booking),
+      { canSeeAdminTools },
+    );
     // #1975/#796: only a genuine #738 split child (a provisional non-member
     // booking) is nestable. A group joiner also carries parentBookingId but is
     // presented by the organiser group card, not nested here. Mirror the detail
@@ -112,6 +160,7 @@ export default async function MyBookingsPage() {
       checkOut: booking.checkOut.toISOString(),
       guestCount: booking.guests.length,
       finalPriceCents: booking.finalPriceCents,
+      moneyReconciliation,
       // #3033: the price above is the post-change total, and it is real — but a
       // booking with an open review has an adjustment on top of it that nobody
       // has worked out yet, so the row must not let it read as the final word.

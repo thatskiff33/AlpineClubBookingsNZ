@@ -7,6 +7,10 @@ import {
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
+import {
+  reconcileBookingMoney,
+  type BookingMoneyReconciliationReason,
+} from "@/lib/booking-money-reconciliation";
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MILLISECONDS_PER_DAY = 86_400_000;
@@ -17,12 +21,36 @@ const legacyDashboardBookingExportSelect =
     checkIn: true,
     checkOut: true,
     status: true,
+    totalPriceCents: true,
+    discountCents: true,
+    promoAdjustmentCents: true,
     finalPriceCents: true,
     createdAt: true,
     guests: {
       select: {
         id: true,
+        priceCents: true,
+        stayStart: true,
+        stayEnd: true,
+        nights: {
+          select: {
+            stayDate: true,
+            priceCents: true,
+            priceSource: true,
+          },
+        },
       },
+    },
+    promoRedemption: {
+      select: {
+        priceAdjustmentCents: true,
+        allocations: {
+          select: { memberId: true, priceAdjustmentCents: true },
+        },
+      },
+    },
+    nightAdjustments: {
+      select: { beneficiaryMemberId: true, amountCents: true },
     },
   });
 
@@ -40,6 +68,8 @@ interface LegacyDashboardBookingRow {
   nights: number;
   guest_nights: number;
   total: number;
+  money_reconciliation_state: "RECONCILED" | "UNRECONCILED";
+  money_reconciliation_reasons: readonly BookingMoneyReconciliationReason[];
 }
 
 interface LegacyDashboardForwardBookingRow
@@ -182,6 +212,7 @@ function toLegacyDashboardBookingRow(input: {
     bookingIndexOffset: input.bookingIndexOffset,
     overlapNights: input.overlapNights,
   });
+  const moneyReconciliation = reconcileBookingMoney(input.booking);
 
   return {
     booking_id: input.booking.id,
@@ -207,6 +238,8 @@ function toLegacyDashboardBookingRow(input: {
     nights: input.overlapNights,
     guest_nights: guestCount * input.overlapNights,
     total: Number((bookedRevenueCents / 100).toFixed(2)),
+    money_reconciliation_state: moneyReconciliation.state,
+    money_reconciliation_reasons: moneyReconciliation.reasons,
   };
 }
 

@@ -16,6 +16,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCents } from "@/lib/utils";
+import {
+  bookingMoneyUnreconciledCopy,
+  bookingMoneyUnreconciledKind,
+  bookingMoneyNeedsOfficerReview,
+  bookingMoneyReviewSuffix,
+  type BookingMoneyReconciliationView,
+} from "@/lib/booking-money-reconciliation-audience";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import {
@@ -30,6 +37,14 @@ export interface MyBookingItem {
   checkOut: string;
   guestCount: number;
   finalPriceCents: number;
+  /**
+   * #3278: the OFFICER-GATED view of this booking's stored-money verdict, not
+   * the verdict. The list prints bookings the viewer merely appears on as a
+   * guest, so the figure beside this can be another member's; the page decides
+   * who may read a verdict about it and this row only renders what it is
+   * handed. Required, so a caller cannot omit the question.
+   */
+  moneyReconciliation: BookingMoneyReconciliationView;
   /**
    * #3033 (epic #2797): a change to this booking saved and the refund or credit
    * for it has not been worked out yet, so `finalPriceCents` above is not the
@@ -116,6 +131,7 @@ function BookingSummary({
             corrected one is the thing this epic exists to forbid — so the
             figure stays and stops claiming to be the last word.
           */}
+          {bookingMoneyReviewSuffix(booking.moneyReconciliation)}
           {booking.financialReviewPending ? " · being checked" : ""}
         </p>
         {showLinkLabel ? <LinkLabelText linkLabel={booking.linkLabel} /> : null}
@@ -139,6 +155,30 @@ function BookingSummary({
         {booking.financialReviewPending ? (
           <MiniChip tone="info" icon={Scale}>
             Adjustment being checked
+          </MiniChip>
+        ) : null}
+        {bookingMoneyNeedsOfficerReview(booking.moneyReconciliation) ? (
+          // Tone follows the kind, as it does on the other three surfaces
+          // (#3547). Hardcoding `info` here meant a booking promoted to a
+          // finding still rendered as a non-event on this list — the very
+          // failure the promotion exists to remove, surviving on one surface
+          // out of four. This list is reachable by an officer looking at their
+          // own bookings; the gate above is what keeps it away from members.
+          <MiniChip
+            tone={
+              bookingMoneyUnreconciledKind(
+                booking.moneyReconciliation.reconciliation.reasons,
+              ) === "EVIDENCE_ABSENT"
+                ? "info"
+                : "danger"
+            }
+            icon={Scale}
+          >
+            {
+              bookingMoneyUnreconciledCopy(
+                booking.moneyReconciliation.reconciliation.reasons,
+              ).chipLabel
+            }
           </MiniChip>
         ) : null}
       </div>

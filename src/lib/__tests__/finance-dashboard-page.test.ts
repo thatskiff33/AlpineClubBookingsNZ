@@ -101,7 +101,8 @@ vi.mock("@/lib/finance-monthly-balance", () => ({
 
 vi.mock("@/lib/finance-ratio-insights", () => ({
   buildFinanceRatioMatrix: mockBuildFinanceRatioMatrix,
-  buildFinanceFinancialYearsPanelItems: mockBuildFinanceFinancialYearsPanelItems,
+  buildFinanceFinancialYearsPanelItems:
+    mockBuildFinanceFinancialYearsPanelItems,
 }));
 
 vi.mock("@/lib/financial-year-server", () => ({
@@ -191,6 +192,19 @@ function bookingMetrics() {
   return {
     generatedAt: "2026-06-28T00:00:00.000Z",
     bookingCount: 2,
+    moneyReconciliation: {
+      totalBookings: 2,
+      byState: { RECONCILED: 2, UNRECONCILED: 0 },
+      byReason: {
+        NO_SURVIVING_STRANDS: 0,
+        STRAND_EVIDENCE_UNREADABLE: 0,
+        HEADLINE_TOTAL_MISMATCH: 0,
+        PROMO_BUILD_UP_NOT_KNOWN: 0,
+        PROMO_BUILD_UP_MISMATCH: 0,
+        DISCOUNT_COMPONENT_MISMATCH: 0,
+        FINAL_PRICE_RELATION_MISMATCH: 0,
+      },
+    },
     paymentSummary: {
       bookingCount: 2,
       bookingsWithPayment: 2,
@@ -236,8 +250,18 @@ function bookingMetrics() {
       },
       statusBreakdown: {
         CONFIRMED: bucket,
-        PAID: { ...bucket, bookingCount: 0, guestNights: 0, bookedRevenueCents: 0 },
-        COMPLETED: { ...bucket, bookingCount: 0, guestNights: 0, bookedRevenueCents: 0 },
+        PAID: {
+          ...bucket,
+          bookingCount: 0,
+          guestNights: 0,
+          bookedRevenueCents: 0,
+        },
+        COMPLETED: {
+          ...bucket,
+          bookingCount: 0,
+          guestNights: 0,
+          bookedRevenueCents: 0,
+        },
       },
       byDate: [
         {
@@ -307,6 +331,21 @@ function bookingMetrics() {
           },
         },
       ],
+    },
+  };
+}
+
+function unreconciledMoneySummary(
+  byReason: Partial<
+    ReturnType<typeof bookingMetrics>["moneyReconciliation"]["byReason"]
+  >,
+) {
+  return {
+    totalBookings: 3,
+    byState: { RECONCILED: 1, UNRECONCILED: 2 },
+    byReason: {
+      ...bookingMetrics().moneyReconciliation.byReason,
+      ...byReason,
     },
   };
 }
@@ -409,7 +448,9 @@ describe("finance dashboard page model", () => {
     mockSeasonFindMany.mockResolvedValue([]);
     // Single active lodge by default: the reporting-lodge selector stays hidden
     // (ADR-002) and metrics run club-wide, matching existing expectations.
-    mockLodgeFindMany.mockResolvedValue([{ id: "lodge-default", name: "The Lodge" }]);
+    mockLodgeFindMany.mockResolvedValue([
+      { id: "lodge-default", name: "The Lodge" },
+    ]);
     mockGetFinanceSyncDiagnosticsStatus.mockResolvedValue({
       latestRun: {
         status: "SUCCEEDED",
@@ -422,8 +463,9 @@ describe("finance dashboard page model", () => {
     });
     mockGetFinanceBookingMetrics.mockResolvedValue(bookingMetrics());
     mockRefreshFinancialYearConfig.mockResolvedValue(3);
-    mockBuildFinanceMonthlyPnlSummary.mockImplementation(async (input: { kind: "REVENUE" | "EXPENSE" }) =>
-      mappedSummary(input.kind)
+    mockBuildFinanceMonthlyPnlSummary.mockImplementation(
+      async (input: { kind: "REVENUE" | "EXPENSE" }) =>
+        mappedSummary(input.kind),
     );
     mockBuildFinanceMonthlyBalanceSeries.mockResolvedValue(balanceSeries());
     mockBuildFinanceRatioMatrix.mockResolvedValue({
@@ -556,18 +598,21 @@ describe("finance dashboard page model", () => {
     "costs",
     "balance-sheet",
     "working-capital",
-  ])("scopes the %s view's Open Xero reports link to the club", async (view) => {
-    const model = await buildFinanceDashboardPageModel({
-      member: financeManager(),
-      searchParams: { view },
-    });
+  ])(
+    "scopes the %s view's Open Xero reports link to the club",
+    async (view) => {
+      const model = await buildFinanceDashboardPageModel({
+        member: financeManager(),
+        searchParams: { view },
+      });
 
-    const note = model.sourceNotes.find(
-      (sourceNote) => sourceNote.linkLabel === "Open Xero reports",
-    );
-    expect(note?.href).toBe(buildXeroReportsUrl({ shortCode: "!aBc12" }));
-    expect(note?.href).toContain("shortcode=!aBc12");
-  });
+      const note = model.sourceNotes.find(
+        (sourceNote) => sourceNote.linkLabel === "Open Xero reports",
+      );
+      expect(note?.href).toBe(buildXeroReportsUrl({ shortCode: "!aBc12" }));
+      expect(note?.href).toContain("shortcode=!aBc12");
+    },
+  );
 
   it("degrades Open Xero reports to the generic link when no short code resolves", async () => {
     mockGetXeroOrgShortCode.mockResolvedValue(null);
@@ -597,7 +642,7 @@ describe("finance dashboard page model", () => {
     });
 
     const opsPanel = model.statusPanels.find(
-      (panel) => panel.title === "Xero operations"
+      (panel) => panel.title === "Xero operations",
     );
     expect(opsPanel).toMatchObject({
       badgeLabel: "Attention",
@@ -611,14 +656,16 @@ describe("finance dashboard page model", () => {
     });
 
     const syncPanel = model.statusPanels.find(
-      (panel) => panel.title === "Daily Xero sync"
+      (panel) => panel.title === "Daily Xero sync",
     );
     expect(syncPanel).toMatchObject({ badgeLabel: "OK", badgeTone: "success" });
     expect(syncPanel?.items[0]).toMatchObject({ emphasis: false });
 
     expect(model.warnings).toContain("Pending operations: 2.");
     expect(
-      model.exportSections.some((section) => section.title === "Sync health signals")
+      model.exportSections.some(
+        (section) => section.title === "Sync health signals",
+      ),
     ).toBe(true);
   });
 
@@ -634,7 +681,7 @@ describe("finance dashboard page model", () => {
 
     for (const model of [revenue, costs]) {
       const panel = model.statusPanels.find(
-        (statusPanel) => statusPanel.title === "Financial years"
+        (statusPanel) => statusPanel.title === "Financial years",
       );
       expect(panel).toBeDefined();
       expect(panel?.items[0]).toMatchObject({ label: "Total income" });
@@ -664,7 +711,7 @@ describe("finance dashboard page model", () => {
     });
 
     const panel = model.statusPanels.find(
-      (statusPanel) => statusPanel.title === "Revenue groups"
+      (statusPanel) => statusPanel.title === "Revenue groups",
     );
     expect(panel).toBeDefined();
     const subheading = panel?.items.find((item) => item.emphasis);
@@ -697,7 +744,7 @@ describe("finance dashboard page model", () => {
     expect(model.selectedLodgeId).toBeNull();
     // All-lodges scope: metrics run with lodgeId null.
     expect(mockGetFinanceBookingMetrics).toHaveBeenCalledWith(
-      expect.objectContaining({ lodgeId: null })
+      expect.objectContaining({ lodgeId: null }),
     );
   });
 
@@ -787,6 +834,129 @@ describe("finance dashboard page model", () => {
     ).toBe("Cash is local payment-derived and separate from Xero revenue.");
   });
 
+  it("warns and exports primary reconciliation reason counts for pricing sensitivity", async () => {
+    const metrics = bookingMetrics();
+    metrics.moneyReconciliation = unreconciledMoneySummary({
+      HEADLINE_TOTAL_MISMATCH: 2,
+      DISCOUNT_COMPONENT_MISMATCH: 1,
+    });
+    mockGetFinanceBookingMetrics.mockResolvedValue(metrics);
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "pricing-sensitivity" },
+    });
+
+    expect(
+      model.warnings.some((warning) =>
+        warning.includes("Primary booking money reconciliation needs review"),
+      ),
+    ).toBe(true);
+    const panel = model.statusPanels.find(
+      (entry) => entry.title === "Booking money reconciliation",
+    );
+    expect(panel?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Primary unreconciled", value: "2" }),
+      ]),
+    );
+    const exportSection = model.exportSections.find(
+      (entry) => entry.title === "Booking money reconciliation",
+    );
+    expect(exportSection?.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Label: "Primary unreconciled",
+          Detail: expect.stringContaining("HEADLINE_TOTAL_MISMATCH: 2"),
+        }),
+      ]),
+    );
+  });
+
+  it("warns when only the bookings comparison cohort is unreconciled", async () => {
+    const primary = bookingMetrics();
+    const comparison = bookingMetrics();
+    comparison.moneyReconciliation = unreconciledMoneySummary({
+      PROMO_BUILD_UP_MISMATCH: 2,
+    });
+    mockGetFinanceBookingMetrics
+      .mockResolvedValueOnce(primary)
+      .mockResolvedValueOnce(comparison);
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "bookings", compare: "previous-period" },
+    });
+
+    expect(
+      model.warnings.some((warning) =>
+        warning.includes(
+          "Comparison booking money reconciliation needs review",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      model.warnings.some((warning) =>
+        warning.includes("Primary booking money reconciliation needs review"),
+      ),
+    ).toBe(false);
+    expect(
+      model.exportSections.find((entry) => entry.title === "Forward status")
+        ?.rows,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Panel: "Booking money reconciliation",
+          Label: "Comparison unreconciled",
+          Detail: expect.stringContaining("PROMO_BUILD_UP_MISMATCH: 2"),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps primary and comparison unreconciled reason counts separate", async () => {
+    const primary = bookingMetrics();
+    primary.moneyReconciliation = unreconciledMoneySummary({
+      HEADLINE_TOTAL_MISMATCH: 2,
+      FINAL_PRICE_RELATION_MISMATCH: 1,
+    });
+    const comparison = bookingMetrics();
+    comparison.moneyReconciliation = unreconciledMoneySummary({
+      STRAND_EVIDENCE_UNREADABLE: 2,
+      DISCOUNT_COMPONENT_MISMATCH: 1,
+    });
+    mockGetFinanceBookingMetrics
+      .mockResolvedValueOnce(primary)
+      .mockResolvedValueOnce(comparison);
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "bookings", compare: "previous-period" },
+    });
+
+    expect(model.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("HEADLINE_TOTAL_MISMATCH: 2"),
+        expect.stringContaining("STRAND_EVIDENCE_UNREADABLE: 2"),
+      ]),
+    );
+    const panel = model.statusPanels.find(
+      (entry) => entry.title === "Booking money reconciliation",
+    );
+    expect(panel?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Primary unreconciled",
+          detail: expect.stringContaining("FINAL_PRICE_RELATION_MISMATCH: 1"),
+        }),
+        expect.objectContaining({
+          label: "Comparison unreconciled",
+          detail: expect.stringContaining("DISCOUNT_COMPONENT_MISMATCH: 1"),
+        }),
+      ]),
+    );
+  });
+
   it("keeps the outstanding-payments panel off the dashboard when nothing is owing", async () => {
     const model = await buildFinanceDashboardPageModel({
       member: financeManager(),
@@ -823,7 +993,7 @@ describe("finance dashboard page model", () => {
     ]);
     expect(model.selectedLodgeId).toBe("lodge-b");
     expect(mockGetFinanceBookingMetrics).toHaveBeenCalledWith(
-      expect.objectContaining({ lodgeId: "lodge-b" })
+      expect.objectContaining({ lodgeId: "lodge-b" }),
     );
   });
 
@@ -840,7 +1010,7 @@ describe("finance dashboard page model", () => {
 
     expect(model.selectedLodgeId).toBeNull();
     expect(mockGetFinanceBookingMetrics).toHaveBeenCalledWith(
-      expect.objectContaining({ lodgeId: null })
+      expect.objectContaining({ lodgeId: null }),
     );
   });
 
@@ -888,17 +1058,17 @@ describe("finance dashboard page model", () => {
       expect(mockSeasonFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { active: true, lodge: { active: true }, lodgeId: "lodge-b" },
-        })
+        }),
       );
       // Scoped to one lodge there is nothing to disambiguate, so the header
       // keeps the dates-only wording it has always had — while the Forward
       // demand card's footnote still names the season, exactly as before, and
       // without a lodge name it has no use for.
       expect(model.selectionLabels.forwardWindow).toBe(
-        "15 Jul 2026 to 30 Sept 2026"
+        "15 Jul 2026 to 30 Sept 2026",
       );
       expect(model.selection.forwardWindow.label).toBe(
-        "Bravo Winter: 15 Jul 2026 to 30 Sept 2026"
+        "Bravo Winter: 15 Jul 2026 to 30 Sept 2026",
       );
       expect(model.selection.forwardWindow.to).toBe("2026-09-30");
     });
@@ -918,15 +1088,15 @@ describe("finance dashboard page model", () => {
       expect(mockSeasonFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { active: true, lodge: { active: true } },
-        })
+        }),
       );
       expect(model.selectionLabels.forwardWindow).toBe(
-        "Alpha Lodge — Alpha Winter: 1 Jul 2026 to 31 Aug 2026"
+        "Alpha Lodge — Alpha Winter: 1 Jul 2026 to 31 Aug 2026",
       );
       // One construction only: the header reuses the label the range resolver
       // built, so the two can never drift apart (review finding, #2919).
       expect(model.selectionLabels.forwardWindow).toBe(
-        model.selection.forwardWindow.label
+        model.selection.forwardWindow.label,
       );
       expect(model.selection.forwardWindow.to).toBe("2026-08-31");
     });
@@ -944,12 +1114,12 @@ describe("finance dashboard page model", () => {
       expect(mockSeasonFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { active: true, lodge: { active: true } },
-        })
+        }),
       );
       // Untouched means untouched: the dates alone, with neither the season
       // name nor a lodge name added to what a one-lodge club used to read.
       expect(model.selectionLabels.forwardWindow).toBe(
-        "1 Jul 2026 to 31 Aug 2026"
+        "1 Jul 2026 to 31 Aug 2026",
       );
       expect(model.selectionLabels.forwardWindow).not.toContain("Alpha Winter");
       expect(model.selectionLabels.forwardWindow).not.toContain("Alpha Lodge");
@@ -976,10 +1146,10 @@ describe("finance dashboard page model", () => {
       expect(mockSeasonFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { active: true, lodge: { active: true } },
-        })
+        }),
       );
       expect(model.warnings).not.toContain(
-        "Rest of Season needs an active or upcoming configured season. Configure seasons before using this forward window."
+        "Rest of Season needs an active or upcoming configured season. Configure seasons before using this forward window.",
       );
     });
 
@@ -990,7 +1160,7 @@ describe("finance dashboard page model", () => {
       // carried-over lodge really does come back empty.
       mockSeasonFindMany.mockImplementation(
         async (args: { where?: { lodgeId?: string } }) =>
-          args.where?.lodgeId ? [] : [alphaSeason]
+          args.where?.lodgeId ? [] : [alphaSeason],
       );
 
       const model = await buildFinanceDashboardPageModel({
@@ -1003,7 +1173,7 @@ describe("finance dashboard page model", () => {
       });
 
       expect(model.warnings).not.toContain(
-        "Rest of Season needs an active or upcoming configured season. Configure seasons before using this forward window."
+        "Rest of Season needs an active or upcoming configured season. Configure seasons before using this forward window.",
       );
       expect(model.selection.forwardWindow.to).toBe("2026-08-31");
     });
@@ -1022,7 +1192,7 @@ describe("finance dashboard page model", () => {
       });
 
       expect(model.warnings).toContain(
-        "Rest of Season needs an active or upcoming configured season. Configure seasons before using this forward window."
+        "Rest of Season needs an active or upcoming configured season. Configure seasons before using this forward window.",
       );
     });
   });
@@ -1034,12 +1204,14 @@ describe("finance dashboard page model", () => {
       latestBankAccounts: [],
       monthsWithData: 0,
     });
-    mockListFinanceSnapshots.mockImplementation(async (input?: { snapshotType?: FinanceSnapshotType }) => {
-      if (input?.snapshotType === FinanceSnapshotType.BANK_BALANCES) {
-        return [];
-      }
-      return [{ id: "snapshot-1" }];
-    });
+    mockListFinanceSnapshots.mockImplementation(
+      async (input?: { snapshotType?: FinanceSnapshotType }) => {
+        if (input?.snapshotType === FinanceSnapshotType.BANK_BALANCES) {
+          return [];
+        }
+        return [{ id: "snapshot-1" }];
+      },
+    );
 
     const model = await buildFinanceDashboardPageModel({
       member: financeManager(),
@@ -1048,8 +1220,8 @@ describe("finance dashboard page model", () => {
 
     expect(
       model.warnings.some((warning) =>
-        warning.includes("No monthly Xero balance data is stored")
-      )
+        warning.includes("No monthly Xero balance data is stored"),
+      ),
     ).toBe(true);
   });
 
@@ -1074,7 +1246,7 @@ describe("finance dashboard page model", () => {
       searchParams: { view: "revenue", compare: "none" },
     });
     expect(mockBuildFinanceMonthlyPnlSummary).toHaveBeenLastCalledWith(
-      expect.objectContaining({ comparison: null })
+      expect.objectContaining({ comparison: null }),
     );
     expect(withoutComparison.selectionLabels.comparisonWindow).toBe("None");
   });
@@ -1101,7 +1273,7 @@ describe("finance dashboard page model", () => {
             isProvisional: false,
           },
         ],
-      })
+      }),
     );
 
     const model = await buildFinanceDashboardPageModel({

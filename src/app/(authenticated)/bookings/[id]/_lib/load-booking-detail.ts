@@ -1,4 +1,8 @@
 import { prisma } from "@/lib/prisma";
+import {
+  BOOKING_MONEY_RECONCILIATION_SELECT,
+  reconcileStoredBookingMoney,
+} from "@/lib/booking-money-reconciliation-store";
 
 /**
  * The booking-detail READ MODEL: the one `findUnique` every section of the
@@ -17,7 +21,15 @@ export async function loadBookingDetail(id: string) {
       // beneficiary bindings and pricing rows from this list, so it must be
       // the same order the modify/modify-quote fetches use.
       guests: {
-        include: { nights: { select: { stayDate: true } } },
+        include: {
+          nights: {
+            select: {
+              stayDate: true,
+              priceCents: true,
+              priceSource: true,
+            },
+          },
+        },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
       payment: {
@@ -54,6 +66,9 @@ export async function loadBookingDetail(id: string) {
       },
       promoRedemption: {
         include: {
+          allocations: {
+            select: { memberId: true, priceAdjustmentCents: true },
+          },
           promoCode: {
             select: {
               code: true,
@@ -64,6 +79,9 @@ export async function loadBookingDetail(id: string) {
             },
           },
         },
+      },
+      nightAdjustments: {
+        select: { beneficiaryMemberId: true, amountCents: true },
       },
       creditsFromCancellation: {
         select: {
@@ -129,15 +147,23 @@ export async function loadBookingDetail(id: string) {
       },
       linkedBookings: {
         select: {
-          id: true,
+          // #3278 (`INV-SSOT`): the linked child is classified by
+          // `reconcileStoredBookingMoney` too, so it takes the canonical
+          // projection itself rather than a hand-kept copy of it — a column
+          // added to the classifier's evidence must not be able to reach this
+          // read late.
+          ...BOOKING_MONEY_RECONCILIATION_SELECT,
           status: true,
-          finalPriceCents: true,
           hasNonMembers: true,
           // #1975: dates for the "Your non-member guests" section — shown only
-          // when they differ from the parent's stay dates.
-          checkIn: true,
-          checkOut: true,
-          guests: { select: { id: true } },
+          // when they differ from the parent's stay dates. `id` is this read's
+          // own addition on top of the canonical guest evidence.
+          guests: {
+            select: {
+              ...BOOKING_MONEY_RECONCILIATION_SELECT.guests.select,
+              id: true,
+            },
+          },
           // Discriminates a genuine #738 split child from a #796 group joiner
           // (joiners also carry parentBookingId but always have a join row).
           groupBookingJoin: { select: { id: true } },
@@ -165,9 +191,17 @@ export async function loadBookingDetail(id: string) {
               joinerMember: { select: { firstName: true, lastName: true } },
               booking: {
                 select: {
+                  // #3278 (`INV-SSOT`): a joiner's booking is classified by the
+                  // same projection, so it reads the canonical select rather
+                  // than a third copy of its columns.
+                  ...BOOKING_MONEY_RECONCILIATION_SELECT,
                   status: true,
-                  finalPriceCents: true,
-                  guests: { select: { id: true } },
+                  guests: {
+                    select: {
+                      ...BOOKING_MONEY_RECONCILIATION_SELECT.guests.select,
+                      id: true,
+                    },
+                  },
                 },
               },
             },
@@ -176,7 +210,9 @@ export async function loadBookingDetail(id: string) {
       },
     },
   });
-  return booking;
+  return booking
+    ? { ...booking, moneyReconciliation: reconcileStoredBookingMoney(booking) }
+    : null;
 }
 
 /** The loaded booking, once `notFound()` has ruled out `null`. */

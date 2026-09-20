@@ -29,6 +29,7 @@ import {
 import { dateOnlyInstantOf, endOfClubDayInclusive, parseCalendarDate, startOfClubDay } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
+import { summarizeBookingMoneyReconciliations } from "@/lib/booking-money-reconciliation";
 
 const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -121,6 +122,17 @@ export async function GET(request: NextRequest) {
         },
         include: {
           guests: { include: { nights: true } },
+          promoRedemption: {
+            select: {
+              priceAdjustmentCents: true,
+              allocations: {
+                select: { memberId: true, priceAdjustmentCents: true },
+              },
+            },
+          },
+          nightAdjustments: {
+            select: { beneficiaryMemberId: true, amountCents: true },
+          },
           payment: {
             select: {
               status: true,
@@ -309,6 +321,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       summary: {
         totalBookings: bookings.length,
+        moneyReconciliation: summarizeBookingMoneyReconciliations(bookings),
         totalRevenueCents,
         netCollectedCents,
         // Aggregate warning data only. Transaction rows and booking ids remain

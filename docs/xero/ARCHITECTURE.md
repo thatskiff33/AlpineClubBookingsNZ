@@ -1282,6 +1282,22 @@ verified. It also does not change group-settlement invoice totals or introduce
 the child promotion line that path already omits; those are separate accounting
 shape decisions, not compatibility fallbacks.
 
+Stage 4 (#3278, `INV-MONEY-031`) also derives the complete booking-money
+reconciliation state from that same coherent booking snapshot before provider
+authentication. The state and every ordered reason are retained only in
+`XeroSyncOperation.requestPayload` as reconciliation evidence. The object sent
+to Xero still contains the established invoice lines and no additional field;
+the classifier neither changes an amount nor moves a provider call into a
+database transaction. Group-settlement line shape remains outside Stage 4.
+
+That evidence is recorded under two separate keys, because an operation can be
+run twice and the two runs observe different things. `moneyReconciliation` is
+the state at the moment the operation raised its invoice. When a later run of
+the same operation finds the invoice already there, it records what it sees
+under `moneyReconciliationOnReplay` instead and leaves the raise-time verdict
+untouched — a retry months later must not be able to restate, or to erase, what
+was true when the money was invoiced.
+
 ## OAuth and token lifecycle (supporting flow)
 
 1. Admin hits `/api/admin/xero/connect` → consent URL with a signed state

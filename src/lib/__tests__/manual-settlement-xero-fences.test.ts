@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => ({
   getAuthenticatedXeroClient: vi.fn(),
   callXeroApi: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
+  allocateAppliedCreditForBooking: vi.fn(),
   warn: vi.fn(),
 }));
 
@@ -88,6 +89,9 @@ describe("level 1 — the enqueueXeroBookingInvoiceOperation choke point", () =>
     });
   }
 
+  // Each case resets and cold-imports the deliberately broad Xero outbox graph.
+  // Keep the larger budget local to these two integration-shaped assertions;
+  // the repository-wide five-second unit-test budget remains unchanged.
   it("refuses to queue an invoice for a manually settled booking, and says so", async () => {
     mocks.bookingFindUnique.mockResolvedValue({
       id: "booking-1",
@@ -113,7 +117,7 @@ describe("level 1 — the enqueueXeroBookingInvoiceOperation choke point", () =>
       expect.objectContaining({ bookingId: "booking-1", paymentId: "payment-1" }),
       expect.stringContaining("manually marked-paid"),
     );
-  });
+  }, 30_000);
 
   it("still queues normally for a booking with no manual provenance", async () => {
     mocks.bookingFindUnique.mockResolvedValue({
@@ -131,7 +135,7 @@ describe("level 1 — the enqueueXeroBookingInvoiceOperation choke point", () =>
     const result = await enqueue();
 
     expect(result.queueOperationId).toBe("op-1");
-  });
+  }, 30_000);
 });
 
 describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
@@ -243,9 +247,20 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
         manuallyMarkedPaidAt: null,
       },
     });
-    mocks.getAuthenticatedXeroClient.mockResolvedValue({
-      xero: { accountingApi: {} },
-      tenantId: "tenant-1",
+    mocks.getAuthenticatedXeroClient.mockImplementation(() => {
+      expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            requestPayload: expect.objectContaining({
+              moneyReconciliation: expect.any(Object),
+            }),
+          },
+        }),
+      );
+      return Promise.resolve({
+        xero: { accountingApi: {} },
+        tenantId: "tenant-1",
+      });
     });
     mocks.findOrCreateXeroContact.mockResolvedValue("contact-1");
     mocks.seasonFindFirst.mockResolvedValue(null);
@@ -265,6 +280,17 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     });
 
     expect(result).toBeNull();
+    // #3278 review — the "persisted before the provider work" assertion above
+    // lives INSIDE the client mock's body, so it proves nothing unless that
+    // mock actually ran. Move `getAuthenticatedXeroClient()` below the fresh
+    // provenance re-check and this path cancels before ever authenticating:
+    // the mock never runs, the assertion silently stops executing, and the
+    // suite stays green over an unguarded ordering. These two close it from
+    // the outside, where no such move can silence them.
+    expect(mocks.getAuthenticatedXeroClient).toHaveBeenCalled();
+    expect(mocks.xeroSyncOperationUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.getAuthenticatedXeroClient.mock.invocationCallOrder[0]!,
+    );
     // Nothing reached Xero: no create call, no email.
     expect(mocks.callXeroApi).not.toHaveBeenCalled();
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
@@ -294,23 +320,51 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
       completeXeroSyncOperation: mocks.completeXeroSyncOperation,
       upsertXeroObjectLink: mocks.upsertXeroObjectLink,
     }));
+    vi.doMock("@/lib/xero-applied-credit-allocation", () => ({
+      allocateAppliedCreditForBooking: mocks.allocateAppliedCreditForBooking,
+    }));
+
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+      requestPayload: {
+        queueType: "CREATE_INVOICE",
+        legacyMetadata: { retryCount: 1 },
+      },
+    });
 
     mocks.bookingFindUnique.mockResolvedValue({
       id: "booking-1",
       memberId: "member-1",
       status: BookingStatus.PAID,
-      guests: [],
+      totalPriceCents: 10000,
+      promoAdjustmentCents: 0,
+      discountCents: 0,
+      finalPriceCents: 10000,
+      guests: [
+        {
+          priceCents: 10000,
+          stayStart: new Date("2026-08-01T00:00:00Z"),
+          stayEnd: new Date("2026-08-02T00:00:00Z"),
+          nights: [
+            {
+              stayDate: new Date("2026-08-01T00:00:00Z"),
+              priceCents: 10000,
+              priceSource: "QUOTED",
+            },
+          ],
+        },
+      ],
       member: { email: "ada@example.org" },
       promoRedemption: null,
+      nightAdjustments: [],
       payment: {
         id: "payment-1",
         xeroInvoiceId: "inv-already",
         xeroInvoiceNumber: "INV-1",
         source: PaymentSource.STRIPE,
         status: "SUCCEEDED",
-        amountCents: 10000,
+        amountCents: 8000,
         refundedAmountCents: 0,
-        creditAppliedCents: 0,
+        creditAppliedCents: 2000,
         manuallyMarkedPaidAt: null,
       },
     });
@@ -324,6 +378,22 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     });
 
     expect(result).toBe("inv-already");
+    expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledWith({
+      where: { id: "op-retry-claimed" },
+      data: {
+        requestPayload: expect.objectContaining({
+          queueType: "CREATE_INVOICE",
+          legacyMetadata: { retryCount: 1 },
+          // #3278 review — a replay records TODAY's verdict under its own key.
+          // The invoice was raised on some earlier run, so writing this under
+          // `moneyReconciliation` would restate the raise-time evidence.
+          moneyReconciliationOnReplay: {
+            state: "RECONCILED",
+            reasons: [],
+          },
+        }),
+      },
+    });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "op-retry-claimed",
       expect.objectContaining({
@@ -331,5 +401,116 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
         xeroObjectId: "inv-already",
       }),
     );
+    expect(mocks.xeroSyncOperationUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.allocateAppliedCreditForBooking.mock.invocationCallOrder[0],
+    );
+  });
+
+  /*
+    #3278 review — A REPLAY MUST NOT REWRITE HISTORY, AND THE ALLOCATION IT
+    RUNS INTO CAN THROW.
+
+    The enrichment above happens before `settleCardAppliedCreditAllocation`,
+    which makes a provider round trip and throws by design when the allocation
+    fails. So an operator retry of an operation that raised its invoice months
+    ago writes evidence and can then abandon the run. If the two verdicts
+    shared one key, that retry would leave the operation asserting the
+    booking's money was unreconciled WHEN THE INVOICE WAS RAISED — which it was
+    not — and the throw would walk away with the claim standing.
+
+    The fixture makes the two verdicts differ on purpose: the stored payload
+    carries a RECONCILED raise-time verdict, today's booking fails the
+    final-price identity, and the allocation then throws.
+  */
+  it("H3 — a replay records today's verdict beside the raise-time one, and an allocation failure cannot rewrite it", async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+
+    vi.doMock("@/lib/xero-sync", async (importOriginal) => ({
+      ...((await importOriginal()) as typeof import("@/lib/xero-sync")),
+      startXeroSyncOperation: mocks.startXeroSyncOperation,
+      completeXeroSyncOperation: mocks.completeXeroSyncOperation,
+      upsertXeroObjectLink: mocks.upsertXeroObjectLink,
+    }));
+    vi.doMock("@/lib/xero-applied-credit-allocation", () => ({
+      allocateAppliedCreditForBooking: mocks.allocateAppliedCreditForBooking,
+    }));
+
+    // The evidence this operation recorded when it RAISED the invoice.
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+      requestPayload: {
+        queueType: "CREATE_INVOICE",
+        moneyReconciliation: { state: "RECONCILED", reasons: [] },
+      },
+    });
+
+    // Today the stored headline no longer satisfies the final-price identity.
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: BookingStatus.PAID,
+      totalPriceCents: 10000,
+      promoAdjustmentCents: 0,
+      discountCents: 0,
+      finalPriceCents: 9500,
+      guests: [
+        {
+          priceCents: 10000,
+          stayStart: new Date("2026-08-01T00:00:00Z"),
+          stayEnd: new Date("2026-08-02T00:00:00Z"),
+          nights: [
+            {
+              stayDate: new Date("2026-08-01T00:00:00Z"),
+              priceCents: 10000,
+              priceSource: "QUOTED",
+            },
+          ],
+        },
+      ],
+      member: { email: "ada@example.org" },
+      promoRedemption: null,
+      nightAdjustments: [],
+      payment: {
+        id: "payment-1",
+        xeroInvoiceId: "inv-already",
+        xeroInvoiceNumber: "INV-1",
+        source: PaymentSource.STRIPE,
+        status: "SUCCEEDED",
+        amountCents: 8000,
+        refundedAmountCents: 0,
+        creditAppliedCents: 2000,
+        manuallyMarkedPaidAt: null,
+      },
+    });
+    mocks.allocateAppliedCreditForBooking.mockRejectedValue(
+      new Error("Xero allocation refused"),
+    );
+
+    const { createXeroInvoiceForBooking } = await import(
+      "@/lib/xero-booking-invoices"
+    );
+
+    await expect(
+      createXeroInvoiceForBooking("booking-1", {
+        syncOperationId: "op-retry-claimed",
+      }),
+    ).rejects.toThrow("Xero allocation refused");
+
+    const [update] = mocks.xeroSyncOperationUpdate.mock.calls as Array<
+      [{ data: { requestPayload: Record<string, unknown> } }]
+    >;
+    // The raise-time verdict survives the replay byte for byte...
+    expect(update![0].data.requestPayload.moneyReconciliation).toEqual({
+      state: "RECONCILED",
+      reasons: [],
+    });
+    // ...and today's is recorded beside it rather than instead of it.
+    expect(update![0].data.requestPayload.moneyReconciliationOnReplay).toEqual({
+      state: "UNRECONCILED",
+      reasons: ["FINAL_PRICE_RELATION_MISMATCH"],
+    });
+    // The throw is by design: the operation stays open for the operator, so it
+    // must not have been closed SUCCEEDED behind a failed allocation.
+    expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
   });
 });

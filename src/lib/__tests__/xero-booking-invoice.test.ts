@@ -111,6 +111,7 @@ const mocks = vi.hoisted(() => {
     findCanonicalPaymentRefundCreditNote: vi.fn(),
     upsertXeroObjectLink: vi.fn(),
     resolveStripeCashRefundEvidence: vi.fn(),
+    retryXeroWriteWithContactRepair: vi.fn(),
     recordXeroApiUsage: vi.fn(),
     // #1641 — the card-path applied-credit allocation engine, dynamically imported
     // by createXeroInvoiceForBooking. Mocked so we assert the gate + placement
@@ -207,6 +208,14 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 vi.mock("@/lib/xero-applied-credit-allocation", () => ({
   allocateAppliedCreditForBooking: mocks.allocateAppliedCreditForBooking,
 }));
+
+vi.mock("@/lib/xero-contacts", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-contacts");
+  return {
+    ...actual,
+    retryXeroWriteWithContactRepair: mocks.retryXeroWriteWithContactRepair,
+  };
+});
 
 // DB-only Xero resolution (#2079): supply the operational config and the
 // token-encryption key from a stub so the token round-trips below need no
@@ -430,6 +439,19 @@ describe("createXeroInvoiceForBooking", () => {
         ],
       },
     });
+    mocks.retryXeroWriteWithContactRepair.mockImplementation(
+      async (options: {
+        currentContactId: string;
+        run: (input: {
+          contactId: string;
+          idempotencyKey?: string | null;
+        }) => Promise<unknown>;
+      }) =>
+        options.run({
+          contactId: options.currentContactId,
+          idempotencyKey: null,
+        }),
+    );
   });
 
   it("resolves the item-code season from the booking's own lodge, not any lodge", async () => {
@@ -2106,7 +2128,56 @@ describe("createXeroInvoiceForBooking", () => {
               moneyBuildUpStoredCents: -5000,
               moneyBuildUpDerivedCents: -5000,
             }),
+            moneyReconciliation: {
+              state: "UNRECONCILED",
+              reasons: ["FINAL_PRICE_RELATION_MISMATCH"],
+            },
           }),
+        }),
+      );
+    });
+
+    it("preserves Stage 4 reconciliation evidence when contact repair rebuilds the request", async () => {
+      const booking = bookingWithPromo({
+        code: "EXPIRED",
+        xeroItemCode: null,
+        xeroAccountCode: null,
+      });
+      booking.promoAdjustmentCents = 0;
+      booking.discountCents = 0;
+      mocks.prisma.booking.findUnique.mockResolvedValue(booking);
+      let repairedPayload: unknown;
+      mocks.retryXeroWriteWithContactRepair.mockImplementationOnce(
+        async (options: {
+          buildRequestPayload: (contactId: string) => unknown;
+          run: (input: {
+            contactId: string;
+            idempotencyKey?: string | null;
+          }) => Promise<unknown>;
+        }) => {
+          repairedPayload = options.buildRequestPayload("contact_repaired");
+          return options.run({
+            contactId: "contact_repaired",
+            idempotencyKey: null,
+          });
+        },
+      );
+
+      await createXeroInvoiceForBooking("booking_1");
+
+      expect(repairedPayload).toEqual(
+        expect.objectContaining({
+          moneyBuildUp: expect.objectContaining({
+            moneyBuildUpOperation: "XERO_PROMO_LINE",
+            moneyBuildUpSource: "DERIVED_COMPATIBILITY_FALLBACK",
+          }),
+          moneyReconciliation: {
+            state: "UNRECONCILED",
+            reasons: [
+              "PROMO_BUILD_UP_MISMATCH",
+              "FINAL_PRICE_RELATION_MISMATCH",
+            ],
+          },
         }),
       );
     });
@@ -2184,6 +2255,13 @@ describe("createXeroInvoiceForBooking", () => {
               moneyBuildUpStoredCents: -5000,
               moneyBuildUpDerivedCents: 0,
             }),
+            moneyReconciliation: {
+              state: "UNRECONCILED",
+              reasons: [
+                "PROMO_BUILD_UP_MISMATCH",
+                "FINAL_PRICE_RELATION_MISMATCH",
+              ],
+            },
           }),
         }),
       );

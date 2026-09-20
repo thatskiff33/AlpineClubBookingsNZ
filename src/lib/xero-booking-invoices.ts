@@ -79,6 +79,8 @@ import {
   d3CompatibleBookingMoneyBuildUpCents,
   selectLoadedBookingMoneyBuildUp,
 } from "@/lib/booking-money-build-up";
+import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
+import { asRecord } from "@/lib/xero-json";
 
 // #1765 — the aggregate Payment statuses that prove cash was captured at some
 // point. Settlement gating must pair one of these with a positive NET capture
@@ -398,6 +400,48 @@ async function settleCardAppliedCreditAllocation(
   });
 }
 
+/**
+ * Stage 4 evidence must reach an already-claimed operation before this handler
+ * can authenticate or otherwise invoke a provider-capable dependency. Later
+ * invoice-payload writes carry the same field when they rebuild the request.
+ *
+ * THE KEY IS A PARAMETER BECAUSE THE TWO CALLERS RECORD TWO DIFFERENT FACTS,
+ * and neither may be written over the other.
+ *
+ * `moneyReconciliation` is the state of the booking's money at the moment this
+ * operation RAISED its invoice. `moneyReconciliationOnReplay` is the state a
+ * later run found when it met an invoice that already existed. An operator
+ * retry of an operation that minted months ago takes the second path — and it
+ * runs immediately before `settleCardAppliedCreditAllocation`, which makes a
+ * provider round trip and throws by design when allocation fails. Writing
+ * today's verdict under the raise-time key would therefore leave the record
+ * asserting the booking's money was unreconciled when the invoice was raised,
+ * which it was not, and the throw would then abandon the run with that claim
+ * standing. Collapsing them the other way — declining to write at all on
+ * replay — loses the replay's own evidence instead. So both are kept, under
+ * their own keys, and each caller names the one it is entitled to write.
+ */
+async function enrichClaimedOperationMoneyReconciliation(
+  syncOperationId: string,
+  moneyReconciliation: ReturnType<typeof reconcileBookingMoney>,
+  key: "moneyReconciliation" | "moneyReconciliationOnReplay",
+): Promise<void> {
+  const operation = await prisma.xeroSyncOperation.findUnique({
+    where: { id: syncOperationId },
+    select: { requestPayload: true },
+  });
+  const requestPayload = asRecord(operation?.requestPayload) ?? {};
+  await prisma.xeroSyncOperation.update({
+    where: { id: syncOperationId },
+    data: {
+      requestPayload: sanitizeForJson({
+        ...requestPayload,
+        [key]: moneyReconciliation,
+      }),
+    },
+  });
+}
+
 export async function createXeroInvoiceForBooking(
   bookingId: string,
   options?: CreateXeroBookingInvoiceOptions
@@ -424,6 +468,17 @@ export async function createXeroInvoiceForBooking(
 
   // Skip if invoice already created
   if (booking.payment.xeroInvoiceId) {
+    const moneyReconciliation = reconcileBookingMoney(booking);
+    if (options?.syncOperationId) {
+      // Replay, not a raise: this operation's invoice already exists, so what
+      // is recorded is today's state under its own key. Whatever raise-time
+      // verdict the payload already carries is left exactly as it was.
+      await enrichClaimedOperationMoneyReconciliation(
+        options.syncOperationId,
+        moneyReconciliation,
+        "moneyReconciliationOnReplay",
+      );
+    }
     await upsertXeroObjectLink({
       localModel: "Payment",
       localId: booking.payment.id,
@@ -558,6 +613,17 @@ export async function createXeroInvoiceForBooking(
   const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents(
     promoMoneyBuildUpSelection,
   );
+  const moneyReconciliation = reconcileBookingMoney(booking);
+
+  if (options?.syncOperationId) {
+    // The raise path: no invoice exists yet, so this IS the raise-time verdict
+    // and it is persisted before the first provider round trip below.
+    await enrichClaimedOperationMoneyReconciliation(
+      options.syncOperationId,
+      moneyReconciliation,
+      "moneyReconciliation",
+    );
+  }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
@@ -688,6 +754,7 @@ export async function createXeroInvoiceForBooking(
   const requestPayload = {
     invoices: [buildInvoice(contactId)],
     moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
+    moneyReconciliation,
   };
 
   if (operationId) {
@@ -770,9 +837,11 @@ export async function createXeroInvoiceForBooking(
       buildRequestPayload: (resolvedContactId) => ({
         invoices: [buildInvoice(resolvedContactId)],
         // Contact repair rewrites the stored operation request. Preserve the
-        // Stage 3 source verdict with the rebuilt invoice instead of erasing
-        // the evidence on the only retry that changes this payload.
+        // Stage 3 source verdict and Stage 4 reconciliation state with the
+        // rebuilt invoice instead of erasing evidence on the only retry that
+        // changes this payload.
         moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
+        moneyReconciliation,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
