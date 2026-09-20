@@ -117,12 +117,7 @@ export async function createXeroCreditNoteForModification(params: {
    */
   const itemised = await resolveModificationDocumentLineItems({
     bookingId,
-    row: bookingModificationId
-      ? await prisma.bookingModification.findUnique({
-          where: { id: bookingModificationId },
-          select: { priceLines: true, priceDiffCents: true, changeFeeCents: true },
-        })
-      : null,
+    bookingModificationId,
     document: "MODIFICATION_CREDIT_NOTE",
     billedCents: refundAmountCents,
   });

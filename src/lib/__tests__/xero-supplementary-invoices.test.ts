@@ -326,6 +326,25 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(enqueued.idempotencyKey).toBe("booking-mod:mod_lines:supplementary-invoice:8000:1000:v1");
   });
 
+  it("retrying renders identical lines: the row is the anchor and is re-read, immutable (#3530 acceptance)", async () => {
+    itemisedFixtures();
+    const run = async () => {
+      mocks.startXeroSyncOperation.mockClear();
+      await createXeroSupplementaryInvoice({
+        bookingId: "bk1",
+        priceDiffCents: 8000,
+        changeFeeCents: 1000,
+        bookingModificationId: "mod_lines",
+      });
+      const payload = mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
+      return { lines: payload.invoices[0].lineItems, record: payload.priceLines };
+    };
+    const first = await run();
+    const second = await run();
+    expect(second).toEqual(first);
+    expect(first.record.source).toBe("STORED");
+  });
+
   it("a restated operation billing a raised figure falls back to the single line, with the reason (INV-PAY-070)", async () => {
     itemisedFixtures();
 

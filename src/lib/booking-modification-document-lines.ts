@@ -29,7 +29,13 @@ export type ModificationDocumentLinesFallbackReason =
    * The credit note returns less than the reduction (`INV-PAY-019`'s tier or
    * a policy retention), so the lines would overstate what went back.
    */
-  | "POLICY_RETAINED";
+  | "POLICY_RETAINED"
+  /**
+   * Not the selector's own: a read the itemisation needed failed after the
+   * row was written. `xero-modification-line-items.ts` records it so the
+   * reason union a reader matches on is complete in one place.
+   */
+  | "NARRATION_UNAVAILABLE";
 
 export type ModificationDocumentLinesSelection = {
   /** What the stored lines sum to, or null when there are none to sum. */

@@ -639,7 +639,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-supplementary-invoices` | Positive booking-modification delta invoices. Since #3530 (stage 2b) itemised from the edit's stored lines when they sum exactly to what the invoice bills; otherwise the single price-adjustment line, with the reason under `requestPayload.priceLines`. |
 | `xero-modification-credit-notes` | Negative booking-modification credit notes. Itemised the same way, every sign inverted, only when the note returns the whole reduction (#3530). |
 | `xero-modification-line-items` | The itemised lines on a booking-edit document (#3530): loads the codes the original invoice uses, renders one Xero line per stored line and the fee line, records `{source, reason, storedSumCents, billedCents}`. Selection is `booking-modification-document-lines` (pure); the per-line sentence is `booking-modification-lines`. |
-| `xero-hut-fee-line-codes` | Leaf, pure: the hut-fee item-code and account-code precedence (#1930 E4), extracted from `buildInvoiceLineItems` so the original invoice and the itemised modification documents code a night's money identically. |
+| `xero-hut-fee-line-codes` | Pure, no provider or database calls: the hut-fee item-code and account-code precedence (#1930 E4), extracted from `buildInvoiceLineItems` so the original invoice and the itemised modification documents code a night's money identically. |
 | `xero-entrance-fee-invoices` | One-off entrance-fee invoices per age tier. |
 | `xero-group-settlement-invoices` | Combined ORGANISER_PAYS internet-banking invoice across joiner bookings. |
 | `xero-invoice-helpers` | Shared date/allocation helpers for the six modules above. |

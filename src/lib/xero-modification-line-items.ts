@@ -27,11 +27,15 @@
  */
 import type { LineItem } from "xero-node";
 import { prisma } from "./prisma";
+import logger from "@/lib/logger";
 import {
   renderModificationLineDescription,
   type ModificationLine,
 } from "@/lib/booking-modification-lines";
-import { selectModificationDocumentLines } from "@/lib/booking-modification-document-lines";
+import {
+  selectModificationDocumentLines,
+  type ModificationDocumentLinesFallbackReason,
+} from "@/lib/booking-modification-document-lines";
 import {
   getHutFeeItemCodeMap,
   getHutFeeSeasonType,
@@ -179,7 +183,12 @@ export function buildModificationDocumentLineItems(args: {
 /** What the operation records beside the document (`INV-MONEY-030`'s shape). */
 export type ModificationDocumentLinesRecord = {
   source: "STORED" | "FALLBACK_SINGLE_LINE";
-  reason: string | null;
+  /**
+   * The selector's reason, or `NARRATION_UNAVAILABLE` when a read the
+   * itemisation needed (the row, the codes, the season) failed: the document
+   * is sent as its single line rather than not at all.
+   */
+  reason: ModificationDocumentLinesFallbackReason | null;
   storedSumCents: number | null;
   billedCents: number;
   lineCount: number;
@@ -201,54 +210,89 @@ export type ModificationDocumentLinesRow = {
  * passes its own `priceDiffCents` / `changeFeeCents` because a restated
  * operation (`INV-PAY-070`) bills raised figures the row's lines were never
  * about; a credit note bills from the row itself.
+ *
+ * NARRATION NEVER FAILS A DOCUMENT - the same rule 2a holds for the edit.
+ * Every read this needs and did not exist before #3530 (the row, when the
+ * caller did not already hold it; the codes; the season) runs inside this
+ * guard, so a failure of one sends the document as its single line, logged
+ * and recorded as `NARRATION_UNAVAILABLE`, rather than failing an operation
+ * that would have succeeded before the lines existed.
  */
 export async function resolveModificationDocumentLineItems(args: {
   bookingId: string;
-  row: ModificationDocumentLinesRow | null;
+  /** The row's lines and figures when the caller already read them; else read here. */
+  row?: ModificationDocumentLinesRow | null;
+  bookingModificationId?: string | null;
   document: ModificationDocumentKind;
   billedCents: number;
   billedFigures?: { priceDiffCents: number; changeFeeCents: number };
   secondAsk?: boolean;
 }): Promise<{ lineItems: LineItem[] | null; record: ModificationDocumentLinesRecord }> {
-  const figures = args.billedFigures ?? {
-    priceDiffCents: args.row?.priceDiffCents ?? 0,
-    changeFeeCents: args.row?.changeFeeCents ?? 0,
-  };
-  const selection = selectModificationDocumentLines({
-    storedPriceLines: args.row?.priceLines ?? null,
-    priceDiffCents: figures.priceDiffCents,
-    changeFeeCents: figures.changeFeeCents,
-    billedCents: args.billedCents,
-    document: args.document,
-    secondAsk: args.secondAsk,
-  });
-  if (selection.source !== "STORED") {
+  try {
+    const row =
+      args.row !== undefined
+        ? args.row
+        : args.bookingModificationId
+          ? await prisma.bookingModification.findUnique({
+              where: { id: args.bookingModificationId },
+              select: { priceLines: true, priceDiffCents: true, changeFeeCents: true },
+            })
+          : null;
+    const figures = args.billedFigures ?? {
+      priceDiffCents: row?.priceDiffCents ?? 0,
+      changeFeeCents: row?.changeFeeCents ?? 0,
+    };
+    const selection = selectModificationDocumentLines({
+      storedPriceLines: row?.priceLines ?? null,
+      priceDiffCents: figures.priceDiffCents,
+      changeFeeCents: figures.changeFeeCents,
+      billedCents: args.billedCents,
+      document: args.document,
+      secondAsk: args.secondAsk,
+    });
+    if (selection.source !== "STORED") {
+      return {
+        lineItems: null,
+        record: {
+          source: selection.source,
+          reason: selection.reason,
+          storedSumCents: selection.storedSumCents,
+          billedCents: selection.billedCents,
+          lineCount: 0,
+        },
+      };
+    }
+    const context = await loadModificationDocumentCodingContext(args.bookingId);
+    const lineItems = buildModificationDocumentLineItems({
+      lines: selection.lines,
+      changeFeeCents: figures.changeFeeCents,
+      document: args.document,
+      context,
+    });
+    return {
+      lineItems,
+      record: {
+        source: "STORED",
+        reason: null,
+        storedSumCents: selection.storedSumCents,
+        billedCents: selection.billedCents,
+        lineCount: lineItems.length,
+      },
+    };
+  } catch (err) {
+    logger.error(
+      { err, bookingId: args.bookingId, document: args.document, billedCents: args.billedCents },
+      "Booking-edit document could not read or render its itemised lines; sending the single line",
+    );
     return {
       lineItems: null,
       record: {
-        source: selection.source,
-        reason: selection.reason,
-        storedSumCents: selection.storedSumCents,
-        billedCents: selection.billedCents,
+        source: "FALLBACK_SINGLE_LINE",
+        reason: "NARRATION_UNAVAILABLE",
+        storedSumCents: null,
+        billedCents: args.billedCents,
         lineCount: 0,
       },
     };
   }
-  const context = await loadModificationDocumentCodingContext(args.bookingId);
-  const lineItems = buildModificationDocumentLineItems({
-    lines: selection.lines,
-    changeFeeCents: figures.changeFeeCents,
-    document: args.document,
-    context,
-  });
-  return {
-    lineItems,
-    record: {
-      source: "STORED",
-      reason: null,
-      storedSumCents: selection.storedSumCents,
-      billedCents: selection.billedCents,
-      lineCount: lineItems.length,
-    },
-  };
 }

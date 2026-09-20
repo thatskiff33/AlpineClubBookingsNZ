@@ -756,10 +756,7 @@ export async function createUnappliedXeroCreditNote(
   const itemised = bookingModificationId
     ? await resolveModificationDocumentLineItems({
         bookingId: payment.booking.id,
-        row: await prisma.bookingModification.findUnique({
-          where: { id: bookingModificationId },
-          select: { priceLines: true, priceDiffCents: true, changeFeeCents: true },
-        }),
+        bookingModificationId,
         document: "MODIFICATION_CREDIT_NOTE",
         billedCents: refundAmountCents,
       })

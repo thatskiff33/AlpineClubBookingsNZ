@@ -1900,30 +1900,30 @@ promotion delta — computed at edit time by `diffBookingPricing` in
 parser and sentence. The audit row, the booking's history and the Xero
 supplementary invoice and modification credit notes read those rows; none
 derives its own. A line's member word is `describeGuestRateMembershipLabel`
-(#2543), the invoice line's own.
+(#2543).
 
-The lines are **narration**. `priceDiffCents` stays the figure every settlement
-decision reads; no idempotency key or outbox payload carries a line; the row is
+The lines are **narration**: `priceDiffCents` stays the figure settlement
+reads; no idempotency key or outbox payload carries a line; the row is
 immutable after the edit.
 
 Rules: night prices are gross and the promotion is one signed `PROMO_DELTA`
-line (`finalPriceCents = totalPriceCents + promoAdjustmentCents`); a kept night
-at the same price and category cancels; a repriced night is one removed and one
-added, never netted; runs are cut by `splitNightsIntoPriceRuns`, the original
-invoice's cutter. Any unpriced night, or a before-night whose stored price is
+line; a kept night at the same price and category cancels; a repriced night is
+one removed and one added, never netted; runs are cut by
+`splitNightsIntoPriceRuns`, the original invoice's cutter. Any unpriced night, or a before-night whose stored price is
 not exact (`storedNightPriceSourceIsInexact`), yields **no** lines
 (`INV-MOD-028`); lines that do not sum to `priceDiffCents` are not stored
 (`INV-MONEY-003`). NULL means "no itemisation" and is never `[]`.
-`computeModificationPriceLines` stores NULL on any failure: narration never
-fails an edit.
+`computeModificationPriceLines` stores NULL on any failure and
+`resolveModificationDocumentLineItems` sends the single line on any failure
+(`NARRATION_UNAVAILABLE`): narration never fails an edit or a document.
 
 A Xero document is itemised only when `selectModificationDocumentLines` finds
 the lines explain exactly what it bills: Σ lines = `priceDiffCents` and the
-figure = `priceDiffCents + changeFeeCents` (negated on a credit note). No
-lines, unreadable, a restate (`INV-PAY-070`), a second ask or a policy-retained
-refund renders today's single line, the reason recorded under
-`requestPayload.priceLines`. Never a partial set.
+figure = `priceDiffCents + changeFeeCents` (negated on a credit note). Otherwise — none,
+unreadable, a restate (`INV-PAY-070`), a second ask, a policy-retained refund —
+today's single line, the reason under `requestPayload.priceLines`. Never a
+partial set.
 
-Pinned by `booking-modification-lines`, `booking-modification-document-lines`,
-`xero-modification-line-items`, one sum assertion per edit site, and the
-supplementary-invoice and refund-document suites.
+Pinned by the `booking-modification-lines`, `booking-modification-document-lines`
+and `xero-modification-line-items` suites, one sum assertion per edit site, and
+the supplementary-invoice and refund-document suites.

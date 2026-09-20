@@ -1,7 +1,7 @@
 # File-size allowance for #3530 stage 2b — builders render the stored lines
 
 file: src/lib/xero-credit-notes.ts
-lines: 1090
+lines: 1087
 reason: the unapplied (account-credit) note for a booking change gains one
   select-then-render call and the record it spreads into two payloads. The
   selection, the rendering and the coding live in their own modules

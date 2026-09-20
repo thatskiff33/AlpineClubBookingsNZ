@@ -8,13 +8,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bookingFindUniqueOrThrow: vi.fn(),
+  bookingModificationFindUnique: vi.fn(),
+  loggerError: vi.fn(),
   getResolvedAccountMapping: vi.fn(),
   getHutFeeItemCodeMap: vi.fn(),
   getHutFeeSeasonType: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { booking: { findUniqueOrThrow: mocks.bookingFindUniqueOrThrow } },
+  prisma: {
+    booking: { findUniqueOrThrow: mocks.bookingFindUniqueOrThrow },
+    bookingModification: { findUnique: mocks.bookingModificationFindUnique },
+  },
+}));
+
+vi.mock("@/lib/logger", () => ({
+  default: { error: mocks.loggerError, warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
 vi.mock("@/lib/xero-mappings", async (importOriginal) => ({
@@ -143,6 +152,9 @@ describe("buildModificationDocumentLineItems", () => {
       -8000,
     );
     const items = buildModificationDocumentLineItems({ lines, changeFeeCents: 2500, document: "MODIFICATION_CREDIT_NOTE", context: context() });
+    console.info(
+      ["", "Modification credit note lines (two guests 14-16 Aug; one guest removed, the other extended a night, late-change fee $25):", ...items.map((i) => `  ${i.quantity} x $${i.unitAmount?.toFixed(2)}  ${i.description}  [${i.itemCode ?? i.accountCode}]`)].join("\n"),
+    );
     expect(items.map((i) => [i.description, i.quantity, i.unitAmount, i.accountCode ?? i.itemCode])).toEqual([
       ["1 x Non-member Adult removed - 2 nights - 14 Aug 2026 - 16 Aug 2026", 2, 80, "201"],
       ["1 x Non-member Adult added - 1 night - 16 Aug 2026 - 17 Aug 2026", 1, -80, "HUT-NONMEMBER-ADULT"],
@@ -266,6 +278,52 @@ describe("resolveModificationDocumentLineItems", () => {
     expect(result.record).toEqual({ source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", storedSumCents: 8000, billedCents: 9000, lineCount: 0 });
     expect(mocks.bookingFindUniqueOrThrow).not.toHaveBeenCalled();
     expect(mocks.getHutFeeItemCodeMap).not.toHaveBeenCalled();
+  });
+
+  it("reads the row itself for a credit note, inside the guard", async () => {
+    const removedLines = linesOf(
+      { guests: [guest("a"), guest("b")], promoAdjustmentCents: 0 },
+      { guests: [{ ...guest("a"), nights: nights("2026-08-14", [8000, 8000], false) }], promoAdjustmentCents: 0 },
+      -16000,
+    );
+    mocks.bookingModificationFindUnique.mockResolvedValue({ priceLines: removedLines, priceDiffCents: -16000, changeFeeCents: 0 });
+    const result = await resolveModificationDocumentLineItems({
+      bookingId: "bk1",
+      bookingModificationId: "mod_1",
+      document: "MODIFICATION_CREDIT_NOTE",
+      billedCents: 16000,
+    });
+    expect(mocks.bookingModificationFindUnique).toHaveBeenCalledWith({
+      where: { id: "mod_1" },
+      select: { priceLines: true, priceDiffCents: true, changeFeeCents: true },
+    });
+    expect(result.record.source).toBe("STORED");
+    expect(lineTotalCents(result.lineItems ?? [])).toBe(16000);
+  });
+
+  it("narration never fails a document: a failed read sends the single line, logged and recorded", async () => {
+    mocks.getHutFeeItemCodeMap.mockRejectedValueOnce(new Error("connection reset"));
+    const result = await resolveModificationDocumentLineItems({
+      bookingId: "bk1",
+      row: { priceLines: stored, priceDiffCents: 8000, changeFeeCents: 0 },
+      document: "SUPPLEMENTARY_INVOICE",
+      billedCents: 8000,
+      billedFigures: { priceDiffCents: 8000, changeFeeCents: 0 },
+    });
+    expect(result).toEqual({
+      lineItems: null,
+      record: { source: "FALLBACK_SINGLE_LINE", reason: "NARRATION_UNAVAILABLE", storedSumCents: null, billedCents: 8000, lineCount: 0 },
+    });
+    expect(mocks.loggerError).toHaveBeenCalledTimes(1);
+
+    mocks.bookingModificationFindUnique.mockRejectedValueOnce(new Error("connection reset"));
+    const rowRead = await resolveModificationDocumentLineItems({
+      bookingId: "bk1",
+      bookingModificationId: "mod_1",
+      document: "MODIFICATION_CREDIT_NOTE",
+      billedCents: 16000,
+    });
+    expect(rowRead.record.reason).toBe("NARRATION_UNAVAILABLE");
   });
 
   it("a credit note bills from the row itself", async () => {
