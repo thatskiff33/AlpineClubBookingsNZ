@@ -636,8 +636,10 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-invoice-payments` | Recording Stripe payments against invoices and Stripe refunds as credit-note payments. |
 | `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment. A cash refund note's settling payment is recorded only where the money verifiably moved (`resolveRefundSettlement`, `INV-PAY-101`): Stripe for a card refund, the configured bank-transfer refund account for a recorded bank transfer, and otherwise the note is left unsettled with `refundPaymentSkipped` on the operation. |
 | `xero-refund-method` | Leaf, pure: how the money went back — `card`, `internet-banking`, `account-credit` — as the ONE home for the wording every refund or credit document carries (#3529, `INV-PAY-101`), the default a method-less legacy row falls to (Stripe → card, anything else → bank transfer), and which mapping key settles a cash refund. The method is threaded from the settlement decision through the outbox payload; the builders never infer it from `Payment.source` when the caller said. |
-| `xero-supplementary-invoices` | Positive booking-modification delta invoices. |
-| `xero-modification-credit-notes` | Negative booking-modification credit notes. |
+| `xero-supplementary-invoices` | Positive booking-modification delta invoices. Since #3530 (stage 2b) itemised from the edit's stored lines when they sum exactly to what the invoice bills; otherwise the single price-adjustment line, with the reason under `requestPayload.priceLines`. |
+| `xero-modification-credit-notes` | Negative booking-modification credit notes. Itemised the same way, every sign inverted, only when the note returns the whole reduction (#3530). |
+| `xero-modification-line-items` | The itemised lines on a booking-edit document (#3530): loads the codes the original invoice uses, renders one Xero line per stored line and the fee line, records `{source, reason, storedSumCents, billedCents}`. Selection is `booking-modification-document-lines` (pure); the per-line sentence is `booking-modification-lines`. |
+| `xero-hut-fee-line-codes` | Pure, no provider or database calls: the hut-fee item-code and account-code precedence (#1930 E4), extracted from `buildInvoiceLineItems` so the original invoice and the itemised modification documents code a night's money identically. |
 | `xero-entrance-fee-invoices` | One-off entrance-fee invoices per age tier. |
 | `xero-group-settlement-invoices` | Combined ORGANISER_PAYS internet-banking invoice across joiner bookings. |
 | `xero-invoice-helpers` | Shared date/allocation helpers for the six modules above. |
@@ -1260,8 +1262,13 @@ invoices.
 
 Scope boundary: only `buildInvoiceLineItems` carries this pattern, and both its
 callers — per-booking invoices and `xero-group-settlement-invoices` — are now
-scanned. The entrance-fee and supplementary builders emit single `quantity: 1`
-exact-cent lines and cannot drift, so they are out of scope by construction.
+scanned. The entrance-fee builder emits single `quantity: 1` exact-cent lines
+and cannot drift, so it is out of scope by construction. Since #3530 the
+supplementary and modification-credit-note builders may carry itemised
+`quantity: n` lines, but each is a stored line whose money is
+`sign × unitCents × quantity` by the parser's rule, and a set that does not sum
+to the document's figure is refused as a whole (`INV-MOD-058`) — so those
+documents reconcile to the cent by construction rather than by audit.
 
 ### Stored promotion build-up on a booking invoice (#3277)
 

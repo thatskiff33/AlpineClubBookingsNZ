@@ -22,7 +22,6 @@ import { BookingStatus, GroupBookingStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
-import { lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   recordWithheldBookingEmail,
   XERO_GROUP_SETTLEMENT_INVOICE_EMAIL_TEMPLATE,
@@ -48,6 +47,7 @@ import {
 } from "@/lib/xero-invoice-email";
 import {
   getHutFeeItemCodeMap,
+  getHutFeeSeasonType,
   getResolvedAccountMapping,
 } from "./xero-mappings";
 import {
@@ -296,19 +296,7 @@ export async function createXeroInvoiceForGroupSettlement(
     // Scoped to the CHILD booking's own lodge, for the same reason as the
     // per-booking invoice paths: lodges may run different season windows, so an
     // unscoped read can take another lodge's season and its item code.
-    let seasonType: string | null = null;
-    const season = await prisma.season.findFirst({
-      where: {
-        startDate: { lte: checkIn },
-        endDate: { gte: checkIn },
-        active: true,
-        ...lodgeNullTolerantScope(child.lodgeId),
-      },
-      select: { type: true },
-    });
-    if (season) {
-      seasonType = season.type;
-    }
+    const seasonType = await getHutFeeSeasonType(checkIn, child.lodgeId);
 
     lineItems.push(
       ...buildInvoiceLineItems(

@@ -92,7 +92,11 @@ vi.mock("@/lib/xero-contacts", () => ({
   ),
 }));
 
-vi.mock("@/lib/xero-mappings", () => ({
+// Partial: `getHutFeeSeasonType` stays real (#3530 moved the lodge-scoped
+// season read there), so the lodge-scope assertion below still reads the query
+// this builder actually issues through the mocked prisma.
+vi.mock("@/lib/xero-mappings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-mappings")),
   getResolvedAccountMapping: vi.fn().mockResolvedValue({
     code: "200",
     itemCode: null,

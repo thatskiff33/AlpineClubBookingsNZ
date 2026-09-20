@@ -30,6 +30,9 @@ const mocks = vi.hoisted(() => ({
   callXeroApi: vi.fn(),
   getResolvedAccountMapping: vi.fn(),
   getAccountMapping: vi.fn(),
+  getHutFeeItemCodeMap: vi.fn(),
+  getHutFeeSeasonType: vi.fn(),
+  bookingFindUniqueOrThrow: vi.fn(),
   retryXeroWriteWithContactRepair: vi.fn(),
   findOrCreateXeroContactForInvoicedParty: vi.fn(),
   readClubTimeZoneOutsideRequest: vi.fn(),
@@ -40,7 +43,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     payment: { findUnique: mocks.paymentFindUnique, update: mocks.paymentUpdate },
-    booking: { findUnique: mocks.bookingFindUnique },
+    booking: { findUnique: mocks.bookingFindUnique, findUniqueOrThrow: mocks.bookingFindUniqueOrThrow },
     bookingModification: { findUnique: mocks.bookingModificationFindUnique },
     xeroObjectLink: {
       findFirst: mocks.xeroObjectLinkFindFirst,
@@ -82,9 +85,12 @@ vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/xero-mappings", () => ({
+vi.mock("@/lib/xero-mappings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-mappings")),
   getResolvedAccountMapping: mocks.getResolvedAccountMapping,
   getAccountMapping: mocks.getAccountMapping,
+  getHutFeeItemCodeMap: mocks.getHutFeeItemCodeMap,
+  getHutFeeSeasonType: mocks.getHutFeeSeasonType,
 }));
 
 vi.mock("@/lib/xero-contacts", async (importOriginal) => {
@@ -139,7 +145,7 @@ function paymentRow(source: PaymentSource) {
 
 type CreditNoteShape = {
   reference?: string;
-  lineItems?: Array<{ description?: string }>;
+  lineItems?: Array<{ description?: string; quantity?: number; unitAmount?: number; accountCode?: string; itemCode?: string }>;
 };
 
 /** The note the builder handed the provider, read off the captured closure. */
@@ -382,5 +388,130 @@ describe("the modification credit note (createXeroCreditNoteForModification)", (
     expect(builtCreditNote().reference).toBe(
       "Refund against original credit card - Booking cmbookin",
     );
+  });
+});
+
+/**
+ * #3530 stage 2b: a modification note carries the edit's stored lines,
+ * inverted, when they explain exactly what it returns; the single method line
+ * otherwise, with the reason recorded. The method wording stays on the
+ * reference either way (`INV-PAY-101`).
+ */
+describe("itemised modification notes (#3530)", () => {
+  const removedLines = [
+    {
+      v: 1, kind: "GUEST_NIGHTS", sign: -1, ageTier: "ADULT", isMember: false,
+      rateMembershipTypeId: "type-non-member", unitCents: 8000, nightCount: 2,
+      guestCount: 1, quantity: 2, startDate: "2026-08-16", endExclusive: "2026-08-18",
+      guestNames: ["Guest b"], amountCents: -16000,
+    },
+  ];
+  beforeEach(() => {
+    mocks.bookingModificationFindUnique.mockResolvedValue({
+      createdAt: new Date("2026-08-10T00:00:00.000Z"),
+      priceLines: removedLines,
+      priceDiffCents: -16000,
+      changeFeeCents: 0,
+    });
+    mocks.bookingFindUniqueOrThrow.mockResolvedValue({
+      checkIn: new Date("2026-08-16T00:00:00.000Z"),
+      lodgeId: "lodge-1",
+      promoRedemption: null,
+      guests: [{ ageTier: "ADULT", isMember: false, rateMembershipTypeId: "type-non-member" }],
+    });
+    mocks.getHutFeeItemCodeMap.mockResolvedValue({
+      byKey: new Map(), fullTypeId: "type-full", nonMemberTypeId: "type-non-member", legacyItemCode: null, size: 0,
+    });
+    mocks.getHutFeeSeasonType.mockResolvedValue("WINTER");
+  });
+
+  it("the modification credit note lists the removed nights as its credit and keeps the method on the reference", async () => {
+    await createXeroCreditNoteForModification({
+      bookingId: BOOKING_ID,
+      refundAmountCents: 16000,
+      bookingModificationId: "cmmodification01",
+      refundMethod: "internet-banking",
+    });
+
+    const note = builtCreditNote();
+    expect(note.lineItems).toEqual([
+      {
+        description: "1 x Non-member Adult removed - 2 nights - 16 Aug 2026 - 18 Aug 2026",
+        quantity: 2,
+        unitAmount: 80,
+        taxType: "OUTPUT2",
+        accountCode: "200",
+      },
+    ]);
+    expect(note.reference).toBe("Refund requested via internet banking - Booking cmbookin");
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestPayload: expect.objectContaining({
+          priceLines: { source: "STORED", reason: null, storedSumCents: -16000, billedCents: 16000, lineCount: 1 },
+        }),
+      }),
+    );
+  });
+
+  it("a note that returns less than the reduction keeps the single method line and says why", async () => {
+    await createXeroCreditNoteForModification({
+      bookingId: BOOKING_ID,
+      refundAmountCents: 8000,
+      bookingModificationId: "cmmodification01",
+    });
+
+    const note = builtCreditNote();
+    expect(note.lineItems?.map((line) => line.description)).toEqual([
+      "Refund against original credit card - Booking cmbookin - booking change cmmodifi",
+    ]);
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestPayload: expect.objectContaining({
+          priceLines: expect.objectContaining({ source: "FALLBACK_SINGLE_LINE", reason: "POLICY_RETAINED", storedSumCents: -16000, billedCents: 8000 }),
+        }),
+      }),
+    );
+    expect(mocks.bookingFindUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it("the account-credit note for a booking change is itemised the same way", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 16000, { bookingModificationId: "cmmodification01" });
+
+    const note = builtCreditNote();
+    expect(note.lineItems?.map((line) => [line.description, line.quantity, line.unitAmount])).toEqual([
+      ["1 x Non-member Adult removed - 2 nights - 16 Aug 2026 - 18 Aug 2026", 2, 80],
+    ]);
+    expect(note.reference).toBe("Account Credit - Booking cmbookin");
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestPayload: expect.objectContaining({ priceLines: expect.objectContaining({ source: "STORED" }) }),
+      }),
+    );
+  });
+
+  it("a legacy booking-anchored modification note has no edit behind it and records nothing about lines", async () => {
+    await createXeroCreditNoteForModification({
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+    });
+
+    expect(mocks.bookingModificationFindUnique).not.toHaveBeenCalled();
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    expect(enqueued.requestPayload).not.toHaveProperty("priceLines");
+    expect(builtCreditNote().lineItems?.[0]?.description).toBe(
+      "Refund against original credit card - Booking cmbookin",
+    );
+  });
+
+  it("a cancellation's account-credit note has no edit behind it and records nothing about lines", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 5000);
+
+    expect(mocks.bookingModificationFindUnique).not.toHaveBeenCalled();
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    expect(enqueued.requestPayload).not.toHaveProperty("priceLines");
   });
 });

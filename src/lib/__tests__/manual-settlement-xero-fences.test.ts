@@ -219,6 +219,9 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
         .mockResolvedValue({ code: "200", itemCode: null, codeExplicitlyConfigured: false }),
       getAccountMapping: vi.fn().mockResolvedValue("606"),
       getHutFeeItemCodeMap: vi.fn().mockResolvedValue({}),
+      // #3530: the season read now lives in xero-mappings; this fixture's
+      // `season.findFirst` answered null, and so does this.
+      getHutFeeSeasonType: vi.fn().mockResolvedValue(null),
       isHutFeeResolverConfigured: vi.fn().mockReturnValue(false),
       resolveHutFeeItemCode: vi.fn().mockReturnValue(null),
     }));

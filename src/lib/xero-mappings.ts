@@ -11,6 +11,7 @@ import { prisma } from "./prisma";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 import { getEffectiveJoiningFee } from "@/lib/authoritative-fees";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   JOINING_FEE_EXEMPT_MESSAGE,
@@ -258,6 +259,29 @@ function hutFeeItemCodeKey(
   ageTier: string | null,
 ): string {
   return `${membershipTypeId}_${seasonType}_${ageTier ?? "FLAT"}`;
+}
+
+/**
+ * The season type the hut-fee item codes are keyed on, for a stay starting on
+ * `checkIn` at the booking's own lodge (#2913: lodges may run different season
+ * windows, so an unscoped read could take another lodge's season and its item
+ * code). One lookup for the original invoice, its update, the group-settlement
+ * invoice and the itemised modification documents (#3530, `INV-SSOT`).
+ */
+export async function getHutFeeSeasonType(
+  checkIn: Date,
+  lodgeId: string,
+): Promise<string | null> {
+  const season = await prisma.season.findFirst({
+    where: {
+      startDate: { lte: checkIn },
+      endDate: { gte: checkIn },
+      active: true,
+      ...lodgeNullTolerantScope(lodgeId),
+    },
+    select: { type: true },
+  });
+  return season?.type ?? null;
 }
 
 /**
