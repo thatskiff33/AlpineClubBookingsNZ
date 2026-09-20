@@ -400,6 +400,50 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(enqueued.idempotencyKey).toBe("booking-mod:mod_lines:supplementary-invoice:3275:0:v1");
   });
 
+  it("a share settled between a failed send and its retry never renders a line the retry does not bill: it falls back, same total", async () => {
+    itemisedFixtures();
+    mocks.bookingModificationFindUnique.mockResolvedValue({
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      priceLines: null,
+      priceDiffCents: 0,
+      changeFeeCents: 0,
+    });
+    const reviewContext = {
+      version: 1,
+      occurrence: {
+        bookingId: "bk1",
+        bookingGuestId: "guest-1",
+        cause: "NO_STORED_NIGHT_PRICES",
+        surrenderedNightDates: ["2026-08-14"],
+        addedNightDates: [],
+        storedEvidence: { guestTotalCents: null, nightPrices: [] },
+      },
+      guestMemberId: "member-1",
+      bookingCheckIn: "2026-08-14",
+      bookingCheckOut: "2026-08-16",
+      bookingModificationId: "mod_lines",
+    };
+    const first = { id: "t1", amountCents: 2275, settlementDirection: "CHARGE_TO_MEMBER", note: "owing", completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext };
+    const run = async () => {
+      mocks.startXeroSyncOperation.mockClear();
+      await createXeroSupplementaryInvoice({ bookingId: "bk1", priceDiffCents: 2275, changeFeeCents: 0, bookingModificationId: "mod_lines" });
+      const payload = mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
+      return { lines: payload.invoices[0].lineItems, record: payload.priceLines };
+    };
+
+    mocks.manualRefundTaskFindMany.mockResolvedValue([first]);
+    const attempt1 = await run();
+    expect(attempt1.record).toMatchObject({ source: "STORED", shareCount: 1 });
+
+    // A second share lands on the same anchor; the operation still bills 2275
+    // (the restate could not join it, INV-PAY-070).
+    mocks.manualRefundTaskFindMany.mockResolvedValue([first, { ...first, id: "t2", amountCents: 1000, note: "late", completedAt: new Date("2026-06-02T00:00:00Z") }]);
+    const attempt2 = await run();
+    expect(attempt2.record).toMatchObject({ source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", sharesSumCents: 3275, billedCents: 2275 });
+    expect(attempt2.lines[0].description).toBe("Booking modification - price adjustment (Booking bk1)");
+    expect(lineTotalCents(attempt2.lines)).toBe(lineTotalCents(attempt1.lines));
+  });
+
   it("a restated operation billing a raised figure falls back to the single line, with the reason (INV-PAY-070)", async () => {
     itemisedFixtures();
 

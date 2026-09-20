@@ -1746,7 +1746,8 @@ Five things about that re-price are load-bearing:
   frozen headline still counts it (#3257);
 - **the promotion FOLLOWS THE STRANDS** (owner, 5 September 2026), through
   `recalculateBookingPromo` — the same recompute every other writer of these
-  columns uses. Carrying the frozen adjustment through is not stale but unsound: two guests at $100 with a valid 75%-off code carry a $150 discount
+  columns uses. Carrying the frozen adjustment through is not merely stale, it is
+  unsound: two guests at $100 with a valid 75%-off code carry a $150 discount
   against a $200 total, so removing one and recording the other at $100 would
   store MINUS $50 — a shape no other writer can produce and one the money
   invariants have no form for. Re-applying the code to the new total gives
@@ -1757,15 +1758,14 @@ Five things about that re-price are load-bearing:
   2026), including the cancellation refund cap, Internet-Banking reconciliation's
   amount law, the unpaid-invoice clearing credit note, per-night revenue
   allocation and member lifetime spend. One rule; no reader gets its own. This
-  accepts that a member who paid $240 and had a guest removed on a
+  accepts, deliberately, that a member who paid $240 and had a guest removed on a
   DISMISSED review is refunded $120 on a later full-refund cancellation — and it
   requires that consequence to be VISIBLE rather than silent, which is why the
   re-price writes a `PRICE_REBASE` row into the booking's own history with the
   figures before and after, and why a closure that issues no Xero document
   records the resulting invoice divergence on that row and raises its audit entry
-  to `critical`. A closure that issues one names the settled share on it
-  (`Adjustment agreed with member: <note>`), never the re-priced strands
-  (`INV-MOD-058`);
+  to `critical`. A closure that issues one names the settled share, never the
+  re-priced strands (`INV-MOD-058`);
 - **in the same transaction as the strand write**, under the claim that write
   already holds, fenced on all four columns. This path takes no advisory lock, so
   a concurrent edit that moved any of them is a 409 that rolls the whole
@@ -1782,18 +1782,19 @@ readable and whose stored total is usable money — so a total mismatch with no
 blanks, damaged rows, a removed guest whose rows the edit deleted, the "a
 different guest is the problem" item and #3213's withheld-share notice are all
 exempt by construction and close exactly as they did before. The refusal is the
-sentence the officer was already shown, said once (`INV-SSOT`).
+sentence the officer was already shown at the moment of decision, said once
+(`INV-SSOT`).
 
 **Where the evidence is not there, the re-price DECLINES rather than
 approximating.** Every surviving strand must have night rows, all carrying usable
 money, summing to that strand's stored total — this invariant applied to the
 whole booking rather than to one strand. Where one does not, the four columns
-are left as the park set them. A booking total built from strands the system
+are left exactly as the park set them. A total built from strands the system
 has said it cannot value would be a worse lie than the stale one, and harder to
 notice.
 
-Nothing else about the park changes: a parked edit itself still writes no
-amount at all.
+Nothing else about the park changes: a parked edit still writes no amount at
+all.
 
 **The trigger is a parked review CLOSING, not a strand being repaired** (owner
 decision, 7 September 2026; #3257). The re-price used to be invoked from the

@@ -256,11 +256,12 @@ export async function dispatchEditReviewXeroSettlement({
     createdByMemberId: actingMemberId,
     hasIssuedXeroInvoice,
     originalPaymentStatus: bookingPaymentStatus,
-    // #3170: the SIGN is the direction, and it is the only place the direction
-    // becomes a number. A refund reaches the credit-note branch; a charge
-    // reaches the supplementary-invoice branch, which is the same branch an
-    // ordinary price increase takes. `amountCents` itself is a positive
-    // magnitude on both.
+    // #3170: the SIGN is the direction - the same rule `editReviewSettlementSign`
+    // applies to a settled share's line on the document (#3530), read here from
+    // the route because a charge route is reachable only from CHARGE_TO_MEMBER.
+    // A refund reaches the credit-note branch; a charge reaches the
+    // supplementary-invoice branch, which is the same branch an ordinary price
+    // increase takes. `amountCents` itself is a positive magnitude on both.
     priceDiffCents: isCharge ? ask.amountCents : -ask.amountCents,
     changeFeeCents: 0,
     // The structural edit that raised this review queued its own narration
