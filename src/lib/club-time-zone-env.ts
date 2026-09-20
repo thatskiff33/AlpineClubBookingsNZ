@@ -24,7 +24,7 @@
  * This module IS marked `server-only` (#3204), so the production build refuses
  * it in a browser bundle at any depth rather than leaving that to two lists
  * somebody has to remember to write a module into. It went unmarked for as long
- * as it did because two of its four callers are `tsx` entrypoints
+ * as it did because it is reached by two `tsx` entrypoints
  * (`npm run config:self-heal` and `npm run setup:check`) that the marker would
  * have aborted at import; since #2850 those commands run with
  * `--conditions=react-server`, under which `server-only` resolves to an empty

@@ -43,8 +43,8 @@ import { stripComments } from "./support/strip-comments";
  * test files carry `vi.mock("server-only", …)` and marking `@/lib/prisma` would
  * put that on every test. `vitest.setup.ts` has stubbed the marker globally for
  * every test file since 22 Jul 2026, three weeks before that sentence was
- * written, and the full suite with the marker on six protected roots reported
- * zero `server-only` failures. A cost nobody re-measured had been keeping a
+ * written, and the full suite with the marker on the six roots marked at that
+ * point reported zero `server-only` failures. A cost nobody re-measured had been keeping a
  * guard off for a year.
  *
  * So this census carries the modules the build cannot, and carries every module
@@ -335,21 +335,93 @@ describe("INV-OPS-013: no client module reaches server-only code, at any depth",
  * drift, because `server-only-boundary-selftest.test.mjs` requires
  * `PROTECTED_ROOTS` to be a subset of `MARKED_ROOTS`.
  *
- * ANCHORED, not a substring search, and that distinction is the whole check.
- * Twenty files here NAME `import "server-only"` inside a docblock explaining
- * the boundary without carrying it, and the roots themselves open by quoting
- * the statement they do carry. A substring match would be satisfied by the
- * paragraph ABOUT the marker surviving while the marker itself was deleted,
- * which is precisely the mutation this exists to catch.
+ * ANCHORED AND COMMENT-STRIPPED, and both halves are the check.
+ *
+ * Anchored, because eighteen files under `src/` NAME `import "server-only"`
+ * inside a docblock explaining the boundary without carrying it, and the roots
+ * themselves open by quoting the statement they do carry. A substring match
+ * would be satisfied by the paragraph ABOUT the marker surviving while the
+ * marker itself was deleted, which is precisely the mutation this exists to
+ * catch.
+ *
+ * Comment-stripped since #3204, because anchoring alone caught DELETION and not
+ * DISABLEMENT. Measured: wrap the statement in `/* … *\/` and the line still
+ * sits at column 0, so the anchored match still found it while the module had
+ * stopped being refused by the build — a green suite over a marker that does
+ * nothing, which is the silent-green shape this whole area exists to prevent.
+ * That mattered more once #3204 took the roots this assertion is the only
+ * cover for from four to seven, one of them the module that decides whether
+ * real members get emailed. `stripComments` is the tree's one comment stripper
+ * (`INV-SSOT-004`) and this file already used it, so no second stripper and no
+ * new importer: `stripCommentsAndStrings` would have been wrong here, since it
+ * blanks string CONTENTS and would erase the `"server-only"` in the marker
+ * itself.
  */
 const MARKER_LINE = new RegExp(
   `^${MARKER_STATEMENT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
   "m",
 );
 
+/**
+ * A marker that is PRESENT as text and INERT as code — the mutation
+ * `carriesMarker` gained `stripComments` to catch (#3204).
+ *
+ * Module scope, and deliberately: `ssot/no-local-comment-stripper` reports a
+ * function that handles comment delimiters, because that is what a second
+ * comment stripper looks like. This is a FIXTURE rather than a scanner — text
+ * handed to the canonical helper, which does the stripping — and the rule's own
+ * suite is listed in `COMMENT_STRIPPER_ALLOWLIST` for exactly this reason.
+ * Keeping the delimiters out of the `it(...)` callback is the cheaper answer
+ * than a second allowlist entry, and it puts the fixture beside the regex it
+ * probes.
+ */
+const COMMENTED_OUT_MARKER_FIXTURE = [
+  "/*",
+  MARKER_STATEMENT,
+  "*/",
+  "export const value = 1;",
+].join("\n");
+
 function carriesMarker(text: string): boolean {
-  return MARKER_LINE.test(text.replace(/\r\n/g, "\n"));
+  return MARKER_LINE.test(stripComments(text.replace(/\r\n/g, "\n")));
 }
+
+describe("INV-OPS-013: the forbidden-leaf list is the list it claims to be", () => {
+  // #3204 decided to KEEP all nine marked roots on this list rather than let
+  // the build proof replace it, because this half answers without a build and
+  // covers a module before anybody marks it. That decision was enforced by
+  // nothing: measured, deleting "environment-role" from `FORBIDDEN_MODULES`
+  // left every suite in this repository green, while the Semgrep half of the
+  // same rule is pinned by its own `ruleid:` fixtures. So the decision is
+  // asserted here, at the list.
+  it("names every marked root, plus the two reserved names", () => {
+    const missing = MARKED_ROOTS.filter(
+      (root) =>
+        !FORBIDDEN_MODULES.has(
+          path.resolve(process.cwd(), root).replace(/\.[^./\\]+$/, ""),
+        ),
+    );
+    expect(
+      missing,
+      "A module carries `import \"server-only\"` but is not a forbidden leaf of " +
+        "this census, so nothing reports the shortest client-side path to it " +
+        "and nothing covers it in a run with no build (INV-OPS-013, #3204).\n\n" +
+        missing.join("\n"),
+    ).toEqual([]);
+
+    // `@/lib/session` and `@/lib/env` name no file, so no build can refuse
+    // them and this list is their only protection. Losing either is silent.
+    for (const reserved of ["session", "env"]) {
+      expect(
+        FORBIDDEN_MODULES.has(path.join(SRC, "lib", reserved)),
+        `@/lib/${reserved} names no file, so this list is the ONLY thing that ` +
+          "would protect a module created at that path. Do not remove it.",
+      ).toBe(true);
+    }
+
+    expect(FORBIDDEN_MODULES.size).toBe(11);
+  });
+});
 
 describe("INV-OPS-013: the nine marked roots still carry the marker", () => {
   it("names nine roots, all of which exist", () => {
@@ -399,5 +471,18 @@ describe("INV-OPS-013: the nine marked roots still carry the marker", () => {
     ].join("\n");
     expect(carriesMarker(docblockOnly)).toBe(false);
     expect(carriesMarker(`${docblockOnly}\n${MARKER_STATEMENT}\n`)).toBe(true);
+  });
+
+  it("is not satisfied by a marker that has been COMMENTED OUT (#3204)", () => {
+    // Deletion is the mutation people expect; DISABLEMENT is the one that
+    // survived, because a block comment leaves the statement at column 0 and
+    // the anchored match still found it there. Only this spelling needs a
+    // fixture: a line-commented marker never could match, since the anchor
+    // requires column 0 and `// ` occupies it.
+    const commentedOut = COMMENTED_OUT_MARKER_FIXTURE;
+    expect(carriesMarker(commentedOut)).toBe(false);
+    // …and a real statement beside a commented-out one still counts, so this
+    // cannot be read as banning the words from a file.
+    expect(carriesMarker(`${commentedOut}\n${MARKER_STATEMENT}\n`)).toBe(true);
   });
 });

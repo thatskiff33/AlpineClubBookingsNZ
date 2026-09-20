@@ -23,10 +23,14 @@ rules:
     patterns:
       # The banned-module alternation below is a FIXED LIST, and it is the whole
       # of the rule: a module that is not spelled in it is not covered, however
-      # server-only its own docblock says it is. Every module in it now carries
-      # `import "server-only"` as well — the last three, `club-time-zone-env`
-      # (#2989), `environment-role-declaration` and `environment-role` (#3034),
-      # were marked by #3204 — and they stay listed here anyway. This rule is the
+      # server-only its own docblock says it is. Every `@/lib` module in it that
+      # EXISTS now carries `import "server-only"` as well — the last three,
+      # `club-time-zone-env` (#2989), `environment-role-declaration` and
+      # `environment-role` (#3034), were marked by #3204 — and they stay listed
+      # here anyway. `@/lib/session` and `@/lib/env` name no file, so there is
+      # nothing to mark and this list is the ONLY thing standing between a module
+      # created at either path and the browser: do not delete an entry on the
+      # grounds that the build now catches it. This rule is the
       # half of INV-OPS-013 that answers in REVIEW, on one file, with no build,
       # and deleting an entry because a build now also catches it would trade a
       # cheap always-on check for a slower one. The one home for the reasoning is

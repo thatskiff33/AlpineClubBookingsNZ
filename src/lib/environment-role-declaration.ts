@@ -63,7 +63,6 @@
  */
 import "server-only";
 
-
 /** The one variable that declares this installation's role. */
 export const ENVIRONMENT_ROLE_ENV_VAR = "APP_ENVIRONMENT_ROLE";
 

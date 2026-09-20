@@ -1024,8 +1024,8 @@ is not tidiness.
 each carry `import "server-only"` (`INV-OPS-013`, #2850), which is what makes
 the production build refuse to ship any of them to a member's browser. Since
 #3204 the club-timezone seed and the two environment-role readers carry it too,
-taking the marked roots to nine — the commands below already reached one of the
-first six, so none of them needed a new flag. That
+taking the marked roots to nine — every command below already reached a module
+that carried the marker, so none of them needed a new flag. That
 marker throws the moment it is loaded under plain Node, with a message about
 React Server Components that names nothing you did — so a script started with a
 bare `npx tsx scripts/<name>.ts` would abort before it printed anything, which

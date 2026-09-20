@@ -1171,12 +1171,12 @@ Residual risks to keep visible:
   operator, and CT-5 now fails when a command reaching a marked module is
   published without it. `@/lib/club-time-zone-env` and
   `@/lib/environment-role*` were the three that stayed unmarked once that reason
-  retired; **#3204 marked them**, taking the roots from six to nine, after
-  measuring that all eleven CLI and seed roots reaching them already reached a
-  marked module and so already carried the condition. All three remain named in
-  the Semgrep alternation and the census's `FORBIDDEN_MODULES` as well, because
-  those two answer without a build. That reasoning has one home:
-  `docs/invariants/operations.md` -> `INV-OPS-013`.
+  retired; **#3204 marked them**, taking the roots from six to nine, and they
+  remain named in the Semgrep alternation and the census's `FORBIDDEN_MODULES`
+  as well, because those two answer without a build. The reach measurement that
+  made marking them safe, and the reason only two of the nine are planted by the
+  build proof, have one home: `docs/invariants/operations.md` ->
+  `INV-OPS-013`.
 - The repo does not yet publish signed image attestations or SBOM artifacts.
   Current image provenance is protected PR checks plus commit-SHA GHCR tags.
 

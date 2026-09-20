@@ -97,7 +97,7 @@ export const PROTECTED_ROOTS = ["./src/lib/auth.ts", "./src/lib/prisma.ts"];
 
 /**
  * The statement, exactly. Every marked module carries this line and nothing
- * looser: twenty files in this repository NAME `import "server-only"` inside a
+ * looser: eighteen files under `src/` NAME `import "server-only"` inside a
  * docblock explaining the boundary WITHOUT carrying it, so a substring search
  * would count a paragraph about the marker as the marker itself. That count
  * moves whenever somebody writes such a paragraph and nothing asserts it — the
@@ -108,8 +108,8 @@ export const MARKER_STATEMENT = 'import "server-only";';
 /**
  * The nine `INV-OPS-013` ROOTS that carry `MARKER_STATEMENT` — the modules a
  * browser bundle must never reach, which is a longer list than the two the
- * fixture plants. NOT every file in the tree carrying the marker: 141 do as of
- * #3204, and they are covered because they sit behind these.
+ * fixture plants. NOT every file carrying the marker: 141 files under `src/`
+ * do as of #3204, and they are covered because they sit behind these.
  *
  * `PROTECTED_ROOTS` above is what this gate can prove with a build: the fixture
  * imports those two, so those two are the ones Turbopack is made to complain

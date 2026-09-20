@@ -337,12 +337,9 @@ rules first written here. #2765 extended it with the measured-audience half.
     the only one of the three that is not our own regular expression.
     `scripts/ci/server-only-boundary-selftest.mjs` runs last in `verify`: it
     plants a `"use client"` page reaching **both** `@/lib/auth` and
-    `@/lib/prisma` through an ordinary intermediate module and requires the real
-    build to go red **for the boundary reason**, attributed to each of them
-    separately — not merely to go red. That distinction is load-bearing:
-    seeding that import also drags Prisma's `pg` driver into the browser layer,
-    so the build fails either way, and a gate keyed on the exit code would pass
-    with Next's rule switched off.
+    `@/lib/prisma` and requires the real build to go red **for the boundary
+    reason**, attributed to each separately rather than merely to go red. Its
+    docblock has the measurements and says why the distinction is load-bearing.
 
   **Which modules carry the marker, and how the operator CLIs live with it.**
   `server-only` throws at import under plain Node, so for a year the marker
@@ -358,14 +355,12 @@ rules first written here. #2765 extended it with the measured-audience half.
   #2850 closed that rather than living with it. `server-only`'s own `exports`
   map resolves Node's **`react-server` condition** to an empty module, so a
   command started as `tsx --conditions=react-server …` loads a marked module
-  cleanly. Every published invocation that reaches one now carries that flag,
-  and the money-repair and maintenance commands the documentation used to
-  publish as raw `npx tsx` lines are npm scripts that carry it for the
-  operator. That is a requirement, not a nicety: somebody copying a runbook line
-  during a money-repair incident must not meet a confusing import failure. **A
-  tool's own `--help` is a published invocation too**, and was the last place
-  handing out the bare form; the `#!/usr/bin/env npx tsx` shebang is gone from
-  every CLI root that reaches a marked module.
+  cleanly, and every published invocation that reaches one now carries that
+  flag. The money-repair and maintenance commands are npm scripts that carry it
+  for the operator, which is a requirement rather than a nicety: somebody
+  copying a runbook line mid-incident must not meet a confusing import failure.
+  `docs/MAINTENANCE.md` names them. **A tool's own `--help` is a published
+  invocation too**, and was the last place handing out the bare form.
 
   `cli-server-only-reach-census.test.ts` (CT-5, #2869) enforces the pairing. It
   walks every CLI root's import graph, sweeps every place a `tsx` entrypoint is
@@ -382,28 +377,34 @@ rules first written here. #2765 extended it with the measured-audience half.
   retired excuse anywhere — it is the second time that text outlived the fact it
   stated.
 
-  What #3204 added was the evidence, because a static walk saying it is safe and
-  being sure are different things. These are the modules a command-line tool
-  reads its environment through, and what `environment-role*` answers is whether
-  the club's REAL members get emailed (`INV-CONFIG-003`); getting that wrong is
-  not a build error, it is a mailout from a copy of the site. Measured on the
-  tree at the time: **eleven** CLI and seed roots reach at least one of the
-  three, and **every one already reached a marked module**, so the set of
-  commands needing the condition did not grow by one. `next.config.ts`,
+  What #3204 added was the evidence, because these are the modules a
+  command-line tool reads its environment through, and what `environment-role*`
+  answers is whether the club's REAL members get emailed (`INV-CONFIG-003`);
+  getting that wrong is not a build error, it is a mailout from a copy of the
+  site. Measured on the tree at the time, counting VALUE edges only because a
+  type-only import is erased and cannot abort anything: **ten** CLI and seed
+  roots reach at least one of the three, and **every one already reached a
+  marked module**, so the set of commands needing the condition did not grow by
+  one — 18 of the 38 roots reached one before, and 18 after. `next.config.ts`,
   `instrumentation-client.ts`, `sentry.edge.config.ts` and `prisma.config.ts`
   reach none of the three; `instrumentation.node.ts` reaches all three and
   already reached five marked modules, so the Node server layer was
   demonstrably tolerating markers before the change. There is no middleware.
+  That is a static walk, which is what can be known before merging; the
+  `Playwright E2E` and `E2E multi-lodge` runs are the rest of the answer and the
+  merge waits on them.
 
   **Two roots are planted by the build proof; nine are held by the retention
-  assertion, and that asymmetry is deliberate.** Planting a root proves NEXT'S
-  RULE is on and discriminating, which is a property of the toolchain rather
-  than of any one module — and `@/lib/prisma` was chosen as the second precisely
-  because it was the hard case. Planting seven more would re-prove it seven
-  times while widening the surface on which a Turbopack wording change reds a
-  required check with nothing broken. What planting buys for a root — noticing
-  its marker has gone — the mutation-proven retention assertion in
-  `client-server-boundary-census.test.ts` buys for all nine, with no build.
+  assertion, and that asymmetry is deliberate.** Planting proves NEXT'S RULE is
+  on and discriminating — a property of the toolchain, not of any one module,
+  and `@/lib/prisma` was chosen as the second precisely because it was the hard
+  case. Planting seven more re-proves it seven times while widening the surface
+  on which a Turbopack wording change reds a required check with nothing broken.
+  What planting buys for a root, the mutation-proven retention assertion in
+  `client-server-boundary-census.test.ts` buys for all nine with no build: it
+  now strips comments before matching, so it catches a marker COMMENTED OUT as
+  well as one deleted. Anchoring alone caught only deletion, which is the gap
+  that made this trade worth stating rather than assuming.
 
   **All nine are ALSO named as forbidden leaves in both source-level guards**,
   and #3204 kept them there rather than retiring the entries: `FORBIDDEN_MODULES`
@@ -415,24 +416,24 @@ rules first written here. #2765 extended it with the measured-audience half.
   passage is the one home for that reasoning**; everywhere else points here
   rather than restating it.
 
-  The cost that used to be cited here — "122 test files already carry
-  `vi.mock("server-only", …)`, so adding it would put that requirement on
-  essentially every test" — was **wrong**, and worth recording as wrong.
-  `vitest.setup.ts` has stubbed the marker globally for every test file since
+  The cost once cited here — "122 test files already carry
+  `vi.mock("server-only", …)`" — was **wrong**, and worth recording as wrong:
+  `vitest.setup.ts` had stubbed the marker globally for every test file since
   0e278396d (22 Jul 2026), three weeks before that sentence was written. The
-  real obstacle was always the CLI invariant above, and the answer to it was a
+  real obstacle was always the CLI invariant above, and its answer was a
   resolution flag rather than a refactor.
 
-  Counting the marked modules, if you need the number:
-  `grep -rlE '^import "server-only";$' src/`. An unanchored `grep -rl` answers
-  with twenty more, because that many files only NAME the import inside a
-  docblock explaining this invariant — which is where the figure this page used
-  to carry came from, and why it is not carried any more.
+  Counting the marked modules:
+  `grep -rlE '^import "server-only";$' src/` — 141 at the time of writing. An
+  unanchored `grep -rl` over the same directory answers with 18 more, files
+  that only NAME the import while explaining this invariant. Nothing asserts
+  either number.
 
-  Measured on this tree: 478 `"use client"` modules in `src/`, **zero** direct
-  imports of any listed module or Node built-in, and **zero** transitive edges;
-  14 of the CLI census's 33 roots reach `server-only`, and every published way
-  of running each of them carries the condition.
+  Measured on this tree: **zero** direct imports of any listed module or Node
+  built-in from a `"use client"` module and **zero** transitive edges, over a
+  client-module set the census's own non-vacuity test proves is not empty; 18 of
+  the CLI census's 38 roots reach `server-only`, and every published way of
+  running each of them carries the condition.
 
 ## INV-OPS-002
 
