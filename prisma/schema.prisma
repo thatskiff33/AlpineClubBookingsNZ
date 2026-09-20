@@ -3086,6 +3086,12 @@ model PaymentTransaction {
   status                PaymentStatus          @default(PENDING)
   paymentMethodId       String?
   reason                String?
+  /// #3528 (INV-ADDPAY-040): when an officer WITHDREW this ADDITIONAL request
+  /// while it was unpaid. A withdrawn row is no longer the live ask:
+  /// `reconcilePaymentAggregates` projects the Payment's additional columns
+  /// from the latest row WITHOUT one, and the repair pass raises nothing for
+  /// it. Never deleted, never cleared - the audit row says who and why.
+  withdrawnAt           DateTime?
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
 

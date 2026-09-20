@@ -222,6 +222,8 @@ export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
           status: true,
           paymentMethodId: true,
           reason: true,
+          // #3528: a withdrawn charge request must not plan a new invoice.
+          withdrawnAt: true,
           createdAt: true,
           updatedAt: true,
         },

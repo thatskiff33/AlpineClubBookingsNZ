@@ -51,8 +51,13 @@ export function BookingPaymentCards({
   payment: BookingDetailPayment;
   messages: BookingDetailMessages;
 }) {
-  const { canManageBooking, isBookingOwner, nonOwnerAdminViewer, canSeeAdminTools } =
-    viewer;
+  const {
+    canManageBooking,
+    isBookingOwner,
+    nonOwnerAdminViewer,
+    canSeeAdminTools,
+    canEditFinance,
+  } = viewer;
   const { isDeleted, isDraft, isWaitlisted, isWaitlistOffered } = access;
   const { hasProvisionalChildren, provisionalChildGuestCount } = party;
   const {
@@ -382,6 +387,7 @@ export function BookingPaymentCards({
               booking.payment.transactions[0]?.createdAt ?? null,
           })}
           canResend={canSeeAdminTools}
+          canWithdraw={canEditFinance}
         />
       ) : null}
 

@@ -1387,7 +1387,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // pair survives the merge and only a run over the composed tree gives it.
     // 355 -> 356 (#3498): the manual-refund-task reopen record, which is a new
     // unpinned writer and joins neither map.
-    ).toEqual({ pinned: 128, unpinned: 356 });
+    // 356 -> 357 (#3528): the additional-payment withdrawal record, likewise.
+    ).toEqual({ pinned: 128, unpinned: 357 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

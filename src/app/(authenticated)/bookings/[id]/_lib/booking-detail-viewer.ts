@@ -71,6 +71,13 @@ export function resolveBookingDetailViewer({
   // bookings list can gate its money verdicts on the SAME predicate rather than
   // on a second spelling of it (`INV-SSOT`). Same answer as before, one home.
   const canSeeAdminTools = canSeeBookingAdminTools(session.user);
+  // #3528: withdrawing an additional-payment request retires money
+  // instruments, which is the payments board's authority (`finance:edit`),
+  // not the booking officer's. The route re-checks the same permission.
+  const canEditFinance = hasAdminAreaAccess(session.user, {
+    area: "finance",
+    level: "edit",
+  });
   // Issue #1313 (option A2): a non-owner Full Admin OR Booking Officer cancels /
   // modifies on behalf of the member. Both flow through the SAME admin-on-behalf
   // semantics (suppress owner second-person framing, policy wording, and the
@@ -91,6 +98,7 @@ export function resolveBookingDetailViewer({
     canViewAsAdmin,
     canAdminEditBookings,
     canSeeAdminTools,
+    canEditFinance,
     actingOnBehalf,
     nonOwnerAdminViewer,
   };

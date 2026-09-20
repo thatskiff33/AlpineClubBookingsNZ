@@ -346,6 +346,16 @@ export type EditReviewChargeInvoicePaymentPlan =
       outcome: "manual-review";
       reason: "capture-short-of-ask" | "intent-mint-awaiting-recovery";
       capturedAmountCents: number | null;
+    }
+  | {
+      /**
+       * #3528 (`INV-ADDPAY-040`): the newest request for this edit was
+       * WITHDRAWN by an officer. The money is no longer asked for, so no
+       * invoice is missing - the classifier raises nothing, rather than
+       * parking a fresh supplementary invoice on a cancelled intent.
+       */
+      outcome: "withdrawn";
+      withdrawnAt: Date;
     };
 
 export function planEditReviewChargeInvoicePayment({
@@ -386,6 +396,10 @@ export function planEditReviewChargeInvoicePayment({
       waitForConfirmedAdditionalPayment: false,
       paymentIntentId: null,
     };
+  }
+
+  if (request.withdrawnAt) {
+    return { outcome: "withdrawn", withdrawnAt: request.withdrawnAt };
   }
 
   const capture = classifyEditReviewChargeCapture(request, expectedNetAmountCents);

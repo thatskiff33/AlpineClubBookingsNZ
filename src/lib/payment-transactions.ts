@@ -300,8 +300,14 @@ export async function reconcilePaymentAggregates({
     payment.transactions,
     PaymentTransactionKind.PRIMARY
   );
+  // #3528 (`INV-ADDPAY-040`): a request an officer WITHDREW is no longer the
+  // live ask. It stays in the ledger - FAILED, intent cancelled, `withdrawnAt`
+  // stamped - but the projection reads past it, so the summary columns derive
+  // zero rather than the FAILED-but-still-owed shape a declined card keeps.
+  // Excluded here, at the one place the columns are derived, so the webhook
+  // that follows the cancel cannot resurrect what the withdrawal retired.
   const latestAdditional = getLatestTransaction(
-    payment.transactions,
+    payment.transactions.filter((transaction) => transaction.withdrawnAt === null),
     PaymentTransactionKind.ADDITIONAL
   );
 
