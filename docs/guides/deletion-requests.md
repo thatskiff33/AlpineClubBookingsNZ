@@ -42,7 +42,10 @@ to read the queues and membership **edit** to approve or reject.
 2. **Approve** opens a dialog warning that the account will be permanently
    anonymised, future bookings cancelled, and login deactivated. Add an optional
    internal note and click **Approve & Delete Account**. An approval receipt is
-   emailed to the member.
+   emailed to the member. The erasure time is recorded in the same transaction
+   as anonymisation, so a failed cleanup commits neither the marker nor a
+   partially anonymised member. This first rollout records the fact only;
+   existing screens and eligibility rules are unchanged.
 3. **Reject** lets you choose **Reject without emailing** or **Reject and email
    member** (with an optional reason sent to the member). If the member has no
    email on file, it is a single **Reject Request** with no notification.

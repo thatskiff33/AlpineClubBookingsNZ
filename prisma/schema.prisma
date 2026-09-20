@@ -596,6 +596,10 @@ model Member {
   cancelledAt                         DateTime?
   cancelledReason                     String?
   cancelledViaRequestId               String?
+  // Structural account-erasure marker. Written atomically with self-service
+  // deletion anonymisation; readers continue to use the legacy shape until
+  // the separately staged #3542 rollout.
+  deletedAt                           DateTime?
   comments                            String?            @db.Text
   archivedAt                          DateTime?
   archivedReason                      String?

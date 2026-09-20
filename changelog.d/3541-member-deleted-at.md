@@ -1,0 +1,1 @@
+- Account-deletion approvals now record when member details were erased in the same transaction as anonymisation, preparing reliable deleted-member handling without changing current screens or eligibility rules.
