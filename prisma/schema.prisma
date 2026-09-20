@@ -5809,6 +5809,16 @@ model BookingModification {
   newData          Json // snapshot of changed fields after
   priceDiffCents   Int      @default(0) // positive = owes more, negative = refund
   changeFeeCents   Int      @default(0) // late-notice fee charged
+  /// #3530 (programme #3527): the signed lines that make up `priceDiffCents` -
+  /// per guest category x rate x unit price x nights, plus one promotion
+  /// delta - computed at edit time from the before and after night sets
+  /// (`booking-modification-lines.ts`, the one builder and the one parser).
+  /// NARRATION ONLY: `priceDiffCents` stays the figure settlement reads, and
+  /// no idempotency key or outbox payload carries these. NULL means "no
+  /// itemisation for this edit" - parked, inexact stored evidence, a credit
+  /// election, a price rebase, or a row from before the column - and is never
+  /// an empty array. Immutable after the edit, like the row it sits on.
+  priceLines       Json?
   createdAt        DateTime @default(now())
 
   booking                 Booking                @relation(fields: [bookingId], references: [id], onDelete: Restrict)

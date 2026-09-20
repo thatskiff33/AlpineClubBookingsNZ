@@ -1,4 +1,8 @@
 import { formatCents } from "@/lib/utils";
+import {
+  parseModificationLines,
+  renderModificationLineWithAmount,
+} from "@/lib/booking-modification-lines";
 import type {
   BookingMoneyBuildUpHistoryMetadata,
   BookingMoneyCompatibilityClassification,
@@ -29,6 +33,8 @@ export interface BookingHistoryModification {
   newData: unknown;
   priceDiffCents: number;
   changeFeeCents: number;
+  /** #3530: the stored itemisation, or null / absent on a row that has none. */
+  priceLines?: unknown;
   createdAt: Date;
 }
 
@@ -199,4 +205,20 @@ export function describeModification(modification: BookingHistoryModification): 
     default:
       return "Booking details were updated.";
   }
+}
+
+/**
+ * #3530: what the edit's delta is MADE OF, line by line, in dollars - the same
+ * lines the edit's audit row carries and (stage 2b) the Xero document renders,
+ * so an officer reading the booking sees what the treasurer sees. Null for a
+ * row that stores no itemisation (parked, inexact evidence, or written before
+ * the column existed), in which case the sentence above stands alone exactly
+ * as it always did.
+ */
+export function describeModificationLines(
+  modification: Pick<BookingHistoryModification, "priceLines">,
+): string | null {
+  const lines = parseModificationLines(modification.priceLines);
+  if (!lines) return null;
+  return `Made up of: ${lines.map(renderModificationLineWithAmount).join("; ")}.`;
 }

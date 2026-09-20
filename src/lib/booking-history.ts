@@ -2,6 +2,7 @@ import { additionalPaymentEpisodeStartedAt } from "@/lib/additional-payment-chas
 import {
   MODIFICATION_LABELS,
   describeModification,
+  describeModificationLines,
   memberFacingNoteOf,
   moneyBuildUpNoteOf,
   type BookingHistoryModification,
@@ -392,6 +393,11 @@ export function buildBookingHistoryItems({
 
   for (const modification of modifications) {
     const detailParts = [describeModification(modification)];
+    // #3530: the itemised lines behind the figure, when the edit stored them.
+    const linesNote = describeModificationLines(modification);
+    if (linesNote) {
+      detailParts.push(linesNote);
+    }
     const moneyBuildUpNote = moneyBuildUpNoteOf(modification);
     if (moneyBuildUpNote) {
       detailParts.push(moneyBuildUpNote);

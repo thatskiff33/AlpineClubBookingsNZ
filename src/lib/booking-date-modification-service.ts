@@ -150,6 +150,13 @@ import {
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import {
+  computeModificationPriceLines,
+  diffBookingPricing,
+  modificationLinesAuditFields,
+  pricingSideFromPriceBreakdown,
+  pricingSideFromStoredGuests,
+} from "@/lib/booking-modification-lines";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -1262,6 +1269,40 @@ export async function modifyBookingDates({
       });
     }
 
+    /**
+     * #3530: the lines behind `priceDiffCents`, from the guest rows this
+     * transaction LOADED (the in-memory snapshot - the night rows themselves
+     * were rewritten above) against the breakdown it priced, index-aligned
+     * with `guestsForPricing`. A parked edit moved no money and stores none.
+     */
+    const priceLines = parked
+      ? null
+      : computeModificationPriceLines(
+          { bookingId, site: "date-change" },
+          () =>
+            diffBookingPricing(
+              pricingSideFromStoredGuests(booking.guests, {
+                promoAdjustmentCents: booking.promoAdjustmentCents,
+                promoCode: booking.promoRedemption?.promoCode.code ?? null,
+              }),
+              pricingSideFromPriceBreakdown(
+                booking.guests.map((g) => ({
+                  guestKey: g.id,
+                  name: `${g.firstName} ${g.lastName}`.trim(),
+                })),
+                priceBreakdown.guests,
+                {
+                  promoAdjustmentCents: newPromoAdjustmentCents,
+                  promoCode: promoRemoved
+                    ? null
+                    : (booking.promoRedemption?.promoCode.code ?? null),
+                },
+              ),
+              priceDiffCents,
+            ),
+          logger,
+        );
+
     const bookingModification = await tx.bookingModification.create({
       data: {
         bookingId,
@@ -1294,6 +1335,7 @@ export async function modifyBookingDates({
         },
         priceDiffCents,
         changeFeeCents,
+        ...(priceLines ? { priceLines } : {}),
       },
     });
 
@@ -1418,6 +1460,7 @@ export async function modifyBookingDates({
       memberFirstName: bookingOwner(booking).member.firstName,
       memberId: bookingOwner(booking).memberId,
       bookingModificationId: bookingModification.id,
+      priceLines,
     } satisfies DateModificationTransactionResult;
   });
 
@@ -1544,6 +1587,8 @@ async function dispatchDatePostTransactionSideEffects({
       policyRetainedAmountCents: result.policyRetainedAmountCents,
       promoRemoved: result.promoRemoved,
       promoCoverageNote: result.promoCoverage?.message ?? null,
+      // #3530: what the figure is made of, line by line and in dollars.
+      ...modificationLinesAuditFields(result.priceLines),
     }),
     metadata: {
       bookingId,
@@ -1560,6 +1605,7 @@ async function dispatchDatePostTransactionSideEffects({
       policyRetainedAmountCents: result.policyRetainedAmountCents,
       promoRemoved: result.promoRemoved,
       promoCoverageNote: result.promoCoverage?.message ?? null,
+      ...modificationLinesAuditFields(result.priceLines),
     },
     ipAddress,
   });

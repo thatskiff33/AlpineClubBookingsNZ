@@ -1,3 +1,4 @@
+import { modificationLinesAuditFields } from "@/lib/booking-modification-lines";
 import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -273,6 +274,8 @@ export async function DELETE(
         settlementMethod: result.settlementMethod,
         policyRetainedAmountCents: result.policyRetainedAmountCents,
         choreWarnings: result.choreWarnings,
+        // #3530: what the figure is made of, line by line and in dollars.
+        ...modificationLinesAuditFields(result.priceLines),
       }),
       metadata: {
         bookingId,
@@ -283,6 +286,7 @@ export async function DELETE(
         settlementMethod: result.settlementMethod,
         policyRetainedAmountCents: result.policyRetainedAmountCents,
         choreWarnings: result.choreWarnings,
+        ...modificationLinesAuditFields(result.priceLines),
         newGuestCount: result.booking.guests.length,
         // Issue #1705 (#1698 pattern): a suppressed admin removal records the
         // choice — notifyMember is false only when an admin opted out, so every

@@ -148,6 +148,13 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import {
+  computeModificationPriceLines,
+  diffBookingPricing,
+  modificationLinesAuditFields,
+  pricingSideFromStoredGuests,
+  pricingSideFromWrittenGuests,
+} from "@/lib/booking-modification-lines";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -1134,6 +1141,46 @@ export async function POST(
         }),
       });
 
+      /**
+       * #3530: the lines behind `priceDiffCents`. BEFORE is the guest snapshot
+       * this transaction loaded, in memory; AFTER is the guest rows the add has
+       * just WRITTEN, re-read here so the new guests' identity, category, rate
+       * and night prices are exactly what landed. A parked add stores none.
+       */
+      const priceLines = parked
+        ? null
+        : await (async () => {
+            const writtenGuests = await tx.bookingGuest.findMany({
+              where: { bookingId },
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                ageTier: true,
+                isMember: true,
+                rateMembershipTypeId: true,
+                nights: { select: { stayDate: true, priceCents: true } },
+              },
+            });
+            const promoCode = booking.promoRedemption?.promoCode?.code ?? null;
+            return computeModificationPriceLines(
+              { bookingId, site: "guest-add" },
+              () =>
+                diffBookingPricing(
+                  pricingSideFromStoredGuests(booking.guests, {
+                    promoAdjustmentCents: booking.promoAdjustmentCents,
+                    promoCode,
+                  }),
+                  pricingSideFromWrittenGuests(writtenGuests, {
+                    promoAdjustmentCents: newPromoAdjustmentCents,
+                    promoCode: promoRemoved ? null : promoCode,
+                  }),
+                  priceDiffCents,
+                ),
+              logger,
+            );
+          })();
+
       // Create BookingModification record
       const bookingModification = await tx.bookingModification.create({
         data: {
@@ -1165,6 +1212,7 @@ export async function POST(
           },
           priceDiffCents,
           changeFeeCents: 0,
+          ...(priceLines ? { priceLines } : {}),
         },
       });
 
@@ -1223,6 +1271,7 @@ export async function POST(
         memberId: bookingOwner(booking).memberId,
         addedGuestNames: normalizedNewGuests.map((guest) => `${guest.firstName} ${guest.lastName}`),
         bookingModificationId: bookingModification.id,
+        priceLines,
         // MG2 #2307: the cross-family rows to tell about, matched to the guest
         // ids this transaction actually created. Carried OUT of the transaction
         // so the sends happen after the commit — no provider call may sit inside
@@ -1326,11 +1375,14 @@ export async function POST(
       details: JSON.stringify({
         addedGuests: result.addedGuestNames,
         priceDiffCents: result.priceDiffCents,
+        // #3530: what the figure is made of, line by line and in dollars.
+        ...modificationLinesAuditFields(result.priceLines),
       }),
       metadata: {
         bookingId,
         addedGuests: result.addedGuestNames,
         priceDiffCents: result.priceDiffCents,
+        ...modificationLinesAuditFields(result.priceLines),
         newGuestCount: result.booking.guests.length,
         // #1769b honesty rule: the guest-add modified email always sends when a
         // member exists, so record the notify choice whenever it was
