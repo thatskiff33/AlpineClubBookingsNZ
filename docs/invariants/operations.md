@@ -401,36 +401,52 @@ rules first written here. #2765 extended it with the measured-audience half.
   argument, and fails when a command that reaches a marked module is published
   without the condition.
 
-  **The three modules that stay unmarked, and the reason that is now RETIRED.**
-  `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
-  `@/lib/environment-role` carry no marker. Every copy of that reason used to
-  say a `tsx` entrypoint reaching them would abort if they did, and **that is no
-  longer true** (#3186). Measured on this tree: every CLI root that reaches any
-  of the three also reaches `server-only` through `@/lib/prisma`, and every
-  published invocation of all fourteen such roots carries
-  `--conditions=react-server`, under which the marker resolves to an empty
-  module. Marking them would abort nothing. Do not repeat the retired reason,
-  and do not read "unmarked" as "cannot be marked".
+  **The last three modules were sealed by #3204, and the roots went from six to
+  nine.** `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
+  `@/lib/environment-role` now carry the marker too. They went without it for a
+  year on a reason that stopped being true: every copy said a `tsx` entrypoint
+  reaching them would abort, and #3186 measured that it would not. Do not
+  reinstate the retired excuse anywhere — it is the second time this text has
+  outlived the fact it stated.
 
-  They stay unmarked because marking them is a decision taken on its own
-  evidence rather than as a side effect of a boundary change. A static walk says
-  it is safe; being sure needs a full E2E and measurement-stack run, because
-  these are the modules a command-line tool reads its environment through — and
-  what `environment-role*` answers is whether the club's REAL members get
-  emailed (`INV-CONFIG-003`). Getting that wrong is not a build error, it is a
-  mailout from a copy of the site.
+  What #3204 added was the evidence, because a static walk saying it is safe and
+  being sure are different things. These are the modules a command-line tool
+  reads its environment through, and what `environment-role*` answers is whether
+  the club's REAL members get emailed (`INV-CONFIG-003`); getting that wrong is
+  not a build error, it is a mailout from a copy of the site. Measured on the
+  tree at the time: **eleven** CLI and seed roots reach at least one of the
+  three — the setup check, both seeds, the second-lodge E2E seed, the config
+  self-heal, the induction baseline, the three payment backfills and two Xero
+  repair tools — and **every one of them already reached a marked module**, so
+  the set of commands needing `--conditions=react-server` did not grow by one.
+  `next.config.ts`, `instrumentation-client.ts`, `sentry.edge.config.ts` and
+  `prisma.config.ts` reach none of the three; `instrumentation.node.ts` reaches
+  all three and already reached five marked modules, so the Node server layer
+  was demonstrably tolerating markers before this change. There is no
+  middleware.
 
-  **That decision is filed as #3204**, which is where the marking work and its
-  verification live. A reader who arrives here wanting to know why these three
-  are different should be handed that issue, not the retired excuse.
+  **Two roots are planted by the build proof; nine are retained by the
+  assertion, and that asymmetry is deliberate.** Planting a root proves NEXT'S
+  RULE is on and discriminating, which is a property of the toolchain rather
+  than of any one module — and `@/lib/prisma` was chosen as the second precisely
+  because it was the hard case. Planting seven more would re-prove it seven
+  times while widening the surface on which a Turbopack wording change reds the
+  required `verify` check with nothing broken. What planting buys for a root —
+  noticing its marker has gone — the mutation-proven retention assertion in
+  `client-server-boundary-census.test.ts` buys for all nine, with no build.
 
-  Until it is taken they are kept off the browser graph the way they
-  always were: by being NAMED as forbidden leaves in both halves of this
-  invariant — `FORBIDDEN_MODULES` in
+  **All nine are ALSO named as forbidden leaves in both halves of this
+  invariant**, and #3204 kept them there rather than retiring the entries —
+  `FORBIDDEN_MODULES` in
   `src/lib/__tests__/client-server-boundary-census.test.ts`, and the `$MOD`
-  alternation in `.semgrep/rules/acb-client-server-boundary.yml`. Both are FIXED
-  LEAF LISTS: a module in neither is protected by neither, however firmly its own
-  docblock says otherwise. **This paragraph is the one home for that reasoning**;
+  alternation in `.semgrep/rules/acb-client-server-boundary.yml`. Those two
+  answer without a build: one in review on a single file, one in the required
+  `verify` check with the shortest import path it found. They are also the only
+  thing that covers a module nobody has marked yet — `@/lib/session` and
+  `@/lib/env` name no file, so a module created at either path starts out
+  protected instead of starting out invisible. Both are FIXED LEAF LISTS: a
+  module in neither is protected by neither, however firmly its own docblock
+  says otherwise. **This passage is the one home for that reasoning**;
   everywhere else points here rather than restating it.
 
   The cost that used to be cited here — "122 test files already carry

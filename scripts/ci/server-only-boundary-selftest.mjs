@@ -97,21 +97,23 @@ export const PROTECTED_ROOTS = ["./src/lib/auth.ts", "./src/lib/prisma.ts"];
 
 /**
  * The statement, exactly. Every marked module carries this line and nothing
- * looser: fifteen files in this repository merely NAME `import "server-only"`
- * inside a docblock explaining the boundary, so a substring search would count
- * a paragraph about the marker as the marker itself.
+ * looser: twenty files in this repository NAME `import "server-only"` inside a
+ * docblock explaining the boundary WITHOUT carrying it, so a substring search
+ * would count a paragraph about the marker as the marker itself. That count
+ * moves whenever somebody writes such a paragraph and nothing asserts it — the
+ * anchored match below is the guarantee, not the number.
  */
 export const MARKER_STATEMENT = 'import "server-only";';
 
 /**
- * The six `INV-OPS-013` ROOTS that carry `MARKER_STATEMENT` — the modules a
+ * The nine `INV-OPS-013` ROOTS that carry `MARKER_STATEMENT` — the modules a
  * browser bundle must never reach, which is a longer list than the two the
- * fixture plants. NOT every file in the tree carrying the marker: a hundred and
- * twelve do, and they are covered because they sit behind these.
+ * fixture plants. NOT every file in the tree carrying the marker: 141 do as of
+ * #3204, and they are covered because they sit behind these.
  *
  * `PROTECTED_ROOTS` above is what this gate can prove with a build: the fixture
  * imports those two, so those two are the ones Turbopack is made to complain
- * about. That left the other four roots pinned by nothing — a reviewer deleted
+ * about. That left the other roots pinned by nothing — a reviewer deleted
  * `import "server-only"` from `@/lib/audit`, `@/lib/email`, `@/lib/stripe` and
  * `@/lib/xero` and every boundary suite stayed green, which is the same
  * silent-green shape this whole file exists to prevent.
@@ -123,6 +125,17 @@ export const MARKER_STATEMENT = 'import "server-only";';
  * a SUBSET of this list, so a root cannot be planted by the build proof and
  * absent from the census at the same time.
  *
+ * WHY THE THREE ENVIRONMENT READERS ADDED BY #3204 ARE NOT ALSO PLANTED, which
+ * is the question this list invites. What a planted root proves is that NEXT'S
+ * RULE IS ON AND DISCRIMINATING — a property of the toolchain, not of any one
+ * module, and `@/lib/prisma` was chosen as the second precisely because it was
+ * the hard case. Planting seven more would re-prove the same property seven
+ * times while widening the surface on which a Turbopack wording or trace-format
+ * change reds the REQUIRED `verify` check with nothing actually broken. What
+ * planting does buy for a root — noticing that its marker is gone — is bought
+ * here instead by the retention assertion, which is mutation-proven and costs
+ * no build. So: two planted, nine retained.
+ *
  * Adding a root here is the whole cost of marking a new module. Removing one is
  * a deliberate act that has to be argued for in review, because the module it
  * names stops being refused by the production build the moment it happens.
@@ -130,7 +143,10 @@ export const MARKER_STATEMENT = 'import "server-only";';
 export const MARKED_ROOTS = [
   "./src/lib/audit.ts",
   "./src/lib/auth.ts",
+  "./src/lib/club-time-zone-env.ts",
   "./src/lib/email.ts",
+  "./src/lib/environment-role-declaration.ts",
+  "./src/lib/environment-role.ts",
   "./src/lib/prisma.ts",
   "./src/lib/stripe.ts",
   "./src/lib/xero.ts",
