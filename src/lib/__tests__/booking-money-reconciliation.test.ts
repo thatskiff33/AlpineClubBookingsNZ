@@ -5,6 +5,7 @@ import {
   reconcileBookingMoney,
   summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliationProjection,
+  type BookingMoneyReconciliationReason,
 } from "@/lib/booking-money-reconciliation";
 
 const NIGHT = new Date("2026-08-01T00:00:00.000Z");
@@ -201,7 +202,12 @@ describe("reconcileBookingMoney", () => {
   // build that emitted only the first reason it met, so this is the one that
   // proves both survive — and that the officer-facing verdict is the loud one.
   it("keeps both reasons when two guests fail for different causes", () => {
-    const reasons = reconcileBookingMoney(
+    // Typed as a plain array: `reasons` is a union of tuple types, so `indexOf`
+    // below narrows its own parameter to `never` and will not compile against
+    // a reason literal. `npm test` does not typecheck, which is how that
+    // reached CI.
+    const reasons: readonly BookingMoneyReconciliationReason[] =
+      reconcileBookingMoney(
       booking({
         totalPriceCents: 20_000,
         finalPriceCents: 18_000,
