@@ -59,19 +59,26 @@
  * copy is about to email real members — and it taking effect. If a future
  * optimiser wants one, that window is the thing to argue about first.
  *
- * NOT `server-only`, on purpose — but not for the reason this line used to
- * give. `setup-readiness-db.ts` imports this and is itself imported by the
- * `tsx` entrypoint `npm run setup:check`, which a `server-only` import once
- * would have aborted; since #2850 that command carries
- * `--conditions=react-server` and the marker is inert under it, so THAT REASON
- * IS RETIRED and marking this module is technically possible. It is
- * deliberately not done, and the marking work is tracked as #3204; why lives in
- * one place: `docs/invariants/operations.md` -> `INV-OPS-013`, "The three
- * modules that stay unmarked". It is kept off the client bundle graph by being
- * named a forbidden leaf in both halves of `INV-OPS-013` — see
- * `environment-role-declaration.ts`'s docblock for the two lists and why being
- * in neither means being protected by neither.
+ * MARKED `server-only` SINCE #3204, having gone without it for a year.
+ * `setup-readiness-db.ts` imports this and is itself imported by the `tsx`
+ * entrypoint `npm run setup:check`, which the marker once would have aborted at
+ * import; since #2850 that command carries `--conditions=react-server`, under
+ * which `server-only` resolves to an empty module, and
+ * `cli-server-only-reach-census.test.ts` fails any published invocation that
+ * reaches a marked module without the condition.
+ *
+ * So the production build now refuses this module in a browser bundle at any
+ * depth, which matters more here than anywhere else on that list. What this
+ * answers is whether the club's REAL members get emailed (`INV-CONFIG-003`),
+ * and a non-public variable inlines as `undefined` in a browser — so a
+ * client-side import would read "nothing has declared this installation" while
+ * the server reads `production`. Why lives in one place:
+ * `docs/invariants/operations.md` -> `INV-OPS-013`. It remains named a
+ * forbidden leaf in both halves of that invariant as well — see
+ * `environment-role-declaration.ts`'s docblock for the two lists and why both
+ * are kept now that the marker is on.
  */
+import "server-only";
 
 import {
   readEnvironmentRoleDeclaration,

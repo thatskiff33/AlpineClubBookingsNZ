@@ -297,31 +297,23 @@ rules first written here. #2765 extended it with the measured-audience half.
   Everything a client module pulls in at runtime is compiled into the browser
   bundle, so reaching `@/lib/prisma`, `@/lib/auth`, `@/lib/audit`,
   `@/lib/session`, `@/lib/email`, `@/lib/xero`, `@/lib/stripe`, `@/lib/env`,
-  `next/headers`, `server-only` or a Node built-in from a `"use client"` file
-  ships database access, credential handling or filesystem code to every
-  visitor. Importing `server-only` from the client layer fails the Next build
-  outright, and since #2850 so does reaching `@/lib/auth`, `@/lib/prisma`,
-  `@/lib/audit`, `@/lib/email`, `@/lib/xero` or `@/lib/stripe` — all six now
-  carry that marker, so the build refuses the whole chain. What made the last
-  five possible is set out below, and it is a change to how the operator
-  command-line tools are STARTED rather than a change to any of them.
+  `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration`,
+  `@/lib/environment-role`, `next/headers`, `server-only` or a Node built-in
+  from a `"use client"` file ships database access, credential handling,
+  filesystem code or an environment answer the browser cannot have to every
+  visitor.
 
-  `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
-  `@/lib/environment-role` are still unmarked, and deliberately so — see
-  "Which modules carry the marker" below. They are the modules that would ship
-  silently were the two source-level guards to miss them.
-
-  (`@/lib/session` and `@/lib/env` are named in the census's list but no such
-  files exist today. They stay listed deliberately, so that creating one
-  starts out protected rather than starting out invisible.)
+  (`@/lib/session` and `@/lib/env` name no file today. They stay listed
+  deliberately, so that creating one starts out protected rather than starting
+  out invisible.)
 
   **"Reaches", not "imports", and the two words are enforced by two different
-  mechanisms.** A re-export (`export { prisma } from …`, `export * from …`) and a
-  dynamic `await import()` / `require()` have exactly the same bundle effect as a
-  plain import, and all of them are direct edges. A hop through an intermediate
-  module — a client component importing `@/lib/audit`, which imports
-  `@/lib/prisma` — has the same effect again and is not visible in any single
-  file.
+  mechanisms.** A re-export (`export { prisma } from …`, `export * from …`) and
+  a dynamic `await import()` / `require()` have exactly the same bundle effect
+  as a plain import, and all of them are direct edges. A hop through an
+  intermediate module — a client component importing `@/lib/audit`, which
+  imports `@/lib/prisma` — has the same effect again and is not visible in any
+  single file.
 
   The fix is to do the work in an API route or a server component and pass the
   RESULT to the client component. A type-only `import type` / `export type` is
@@ -345,16 +337,9 @@ rules first written here. #2765 extended it with the measured-audience half.
     the only one of the three that is not our own regular expression.
     `scripts/ci/server-only-boundary-selftest.mjs` runs last in `verify`: it
     plants a `"use client"` page reaching **both** `@/lib/auth` and
-    `@/lib/prisma` through an ordinary intermediate module and requires the real
-    build to go red **for the boundary reason**, attributed to each of them
-    separately — not merely to go red. That distinction is load-bearing:
-    seeding that import also drags Prisma's `pg` driver into the browser layer,
-    so the build fails either way, and a gate keyed on the exit code would pass
-    with Next's rule switched off. Measured: with both markers present the
-    self-test passes; with `@/lib/prisma`'s marker removed and `@/lib/auth`'s
-    left in place the build is still red for a real boundary reason and the
-    self-test still fails, saying "no Turbopack error was attributed to
-    ./src/lib/prisma.ts".
+    `@/lib/prisma` and requires the real build to go red **for the boundary
+    reason**, attributed to each separately rather than merely to go red. Its
+    docblock has the measurements and says why the distinction is load-bearing.
 
   **Which modules carry the marker, and how the operator CLIs live with it.**
   `server-only` throws at import under plain Node, so for a year the marker
@@ -370,88 +355,85 @@ rules first written here. #2765 extended it with the measured-audience half.
   #2850 closed that rather than living with it. `server-only`'s own `exports`
   map resolves Node's **`react-server` condition** to an empty module, so a
   command started as `tsx --conditions=react-server …` loads a marked module
-  cleanly. Every published invocation that reaches one now carries that flag,
-  and the money-repair and maintenance commands the documentation used to
-  publish as raw `npx tsx` lines are npm scripts that carry it for the
-  operator — `npm run xero:booking-repair`,
-  `npm run xero:refund-note-link-repair`,
-  `npm run xero:audit-invoice-rounding`,
-  `npm run payments:backfill-orphaned-credits`,
-  `npm run payments:backfill-cancel-flattened`,
-  `npm run payments:audit-ib-hold-clearing`,
-  `npm run finance:backfill-monthly-facts` and
-  `npm run calendar:diagnose-access`. That last part is a requirement, not a
-  nicety: somebody copying a runbook line during a money-repair incident must
-  not meet a confusing import failure.
+  cleanly, and every published invocation that reaches one now carries that
+  flag. The money-repair and maintenance commands are npm scripts that carry it
+  for the operator, which is a requirement rather than a nicety: somebody
+  copying a runbook line mid-incident must not meet a confusing import failure.
+  `docs/MAINTENANCE.md` names them. **A tool's own `--help` is a published
+  invocation too**, and was the last place handing out the bare form.
 
-  **A tool's own `--help` is a published invocation too**, and it was the last
-  place still handing out the bare form (#2850): ask `xero-booking-repair` how
-  to run it and it printed back the `npx tsx …` line that aborts, to the one
-  reader most likely to be mid-incident. Each of these tools now prints its
-  `npm run` name in its usage text and its docblock examples, and the
-  `#!/usr/bin/env npx tsx` first line is gone from every CLI root that reaches
-  a marked module — those files are not executable, so the line was pure
-  instruction to run a command that cannot start.
+  `cli-server-only-reach-census.test.ts` (CT-5, #2869) enforces the pairing. It
+  walks every CLI root's import graph, sweeps every place a `tsx` entrypoint is
+  named — package scripts, `prisma.config.ts`, shell runners, workflows, the
+  documentation, and the CLI sources' own usage text — judges each root's
+  shebang separately because that one names no entrypoint argument, and fails
+  when a command reaching a marked module is published without the condition.
 
-  `cli-server-only-reach-census.test.ts` (CT-5, #2869) enforces the pairing —
-  it walks every CLI root's import graph, sweeps every place a `tsx`
-  entrypoint is named (package scripts, `prisma.config.ts`, shell runners,
-  workflows, the documentation, and the CLI sources' own usage text), judges
-  each root's shebang separately because that one names no entrypoint
-  argument, and fails when a command that reaches a marked module is published
-  without the condition.
-
-  **The three modules that stay unmarked, and the reason that is now RETIRED.**
+  **#3204 marked the last three, taking the roots from six to nine.**
   `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
-  `@/lib/environment-role` carry no marker. Every copy of that reason used to
-  say a `tsx` entrypoint reaching them would abort if they did, and **that is no
-  longer true** (#3186). Measured on this tree: every CLI root that reaches any
-  of the three also reaches `server-only` through `@/lib/prisma`, and every
-  published invocation of all fourteen such roots carries
-  `--conditions=react-server`, under which the marker resolves to an empty
-  module. Marking them would abort nothing. Do not repeat the retired reason,
-  and do not read "unmarked" as "cannot be marked".
+  `@/lib/environment-role` had gone without the marker for a year on a reason
+  that stopped being true: every copy said a `tsx` entrypoint reaching them
+  would abort, and #3186 measured that it would not. Do not reinstate the
+  retired excuse anywhere — it is the second time that text outlived the fact it
+  stated.
 
-  They stay unmarked because marking them is a decision taken on its own
-  evidence rather than as a side effect of a boundary change. A static walk says
-  it is safe; being sure needs a full E2E and measurement-stack run, because
-  these are the modules a command-line tool reads its environment through — and
-  what `environment-role*` answers is whether the club's REAL members get
-  emailed (`INV-CONFIG-003`). Getting that wrong is not a build error, it is a
-  mailout from a copy of the site.
+  What #3204 added was the evidence, because these are the modules a
+  command-line tool reads its environment through, and what `environment-role*`
+  answers is whether the club's REAL members get emailed (`INV-CONFIG-003`);
+  getting that wrong is not a build error, it is a mailout from a copy of the
+  site. Measured on the tree at the time, counting VALUE edges only because a
+  type-only import is erased and cannot abort anything: **ten** CLI and seed
+  roots reach at least one of the three, and **every one already reached a
+  marked module**, so the set of commands needing the condition did not grow by
+  one — 18 of the 38 roots reached one before, and 18 after. `next.config.ts`,
+  `instrumentation-client.ts`, `sentry.edge.config.ts` and `prisma.config.ts`
+  reach none of the three; `instrumentation.node.ts` reaches all three and
+  already reached five marked modules, so the Node server layer was
+  demonstrably tolerating markers before the change. There is no middleware.
+  That is a static walk, which is what can be known before merging; the
+  `Playwright E2E` and `E2E multi-lodge` runs are the rest of the answer and the
+  merge waits on them.
 
-  **That decision is filed as #3204**, which is where the marking work and its
-  verification live. A reader who arrives here wanting to know why these three
-  are different should be handed that issue, not the retired excuse.
+  **Two roots are planted by the build proof; nine are held by the retention
+  assertion, and that asymmetry is deliberate.** Planting proves NEXT'S RULE is
+  on and discriminating — a property of the toolchain, not of any one module,
+  and `@/lib/prisma` was chosen as the second precisely because it was the hard
+  case. Planting seven more re-proves it seven times while widening the surface
+  on which a Turbopack wording change reds a required check with nothing broken.
+  What planting buys for a root, the mutation-proven retention assertion in
+  `client-server-boundary-census.test.ts` buys for all nine with no build: it
+  now strips comments before matching, so it catches a marker COMMENTED OUT as
+  well as one deleted. Anchoring alone caught only deletion, which is the gap
+  that made this trade worth stating rather than assuming.
 
-  Until it is taken they are kept off the browser graph the way they
-  always were: by being NAMED as forbidden leaves in both halves of this
-  invariant — `FORBIDDEN_MODULES` in
-  `src/lib/__tests__/client-server-boundary-census.test.ts`, and the `$MOD`
-  alternation in `.semgrep/rules/acb-client-server-boundary.yml`. Both are FIXED
-  LEAF LISTS: a module in neither is protected by neither, however firmly its own
-  docblock says otherwise. **This paragraph is the one home for that reasoning**;
-  everywhere else points here rather than restating it.
+  **All nine are ALSO named as forbidden leaves in both source-level guards**,
+  and #3204 kept them there rather than retiring the entries: `FORBIDDEN_MODULES`
+  in that census, and the `$MOD` alternation in the Semgrep rule. Those two
+  answer without a build — one in review on a single file, one in `verify` with
+  the shortest import path — and they are the only thing covering a module
+  nobody has marked yet. Both are FIXED LEAF LISTS: a module in neither is
+  protected by neither, however firmly its own docblock says otherwise. **This
+  passage is the one home for that reasoning**; everywhere else points here
+  rather than restating it.
 
-  The cost that used to be cited here — "122 test files already carry
-  `vi.mock("server-only", ...)`, so adding it would put that requirement on
-  essentially every test" — was **wrong**, and worth recording as wrong.
-  `vitest.setup.ts` has stubbed the marker globally for every test file since
+  The cost once cited here — "122 test files already carry
+  `vi.mock("server-only", …)`" — was **wrong**, and worth recording as wrong:
+  `vitest.setup.ts` had stubbed the marker globally for every test file since
   0e278396d (22 Jul 2026), three weeks before that sentence was written. The
-  full suite with the marker on six protected roots reported **zero**
-  `server-only` failures. The real obstacle was always the CLI invariant above,
-  and the answer to it was a resolution flag rather than a refactor.
+  real obstacle was always the CLI invariant above, and its answer was a
+  resolution flag rather than a refactor.
 
-  Counting the marked modules, if you ever need the number:
-  `grep -rlE '^import "server-only";$' src/`. An unanchored `grep -rl` answers
-  with fifteen more, because that many files only NAME the import inside a
-  docblock explaining this invariant — which is where the figure this page used
-  to carry came from, and why it is not carried any more.
+  Counting the marked modules:
+  `grep -rlE '^import "server-only";$' src/` — 141 at the time of writing. An
+  unanchored `grep -rl` over the same directory answers with 18 more, files
+  that only NAME the import while explaining this invariant. Nothing asserts
+  either number.
 
-  Measured on this tree: 478 `"use client"` modules in `src/`, **zero** direct
-  imports of any listed module or Node built-in, and **zero** transitive edges;
-  14 of the CLI census's 33 roots reach `server-only`, and every published way
-  of running each of them carries the condition.
+  Measured on this tree: **zero** direct imports of any listed module or Node
+  built-in from a `"use client"` module and **zero** transitive edges, over a
+  client-module set the census's own non-vacuity test proves is not empty; 18 of
+  the CLI census's 38 roots reach `server-only`, and every published way of
+  running each of them carries the condition.
 
 ## INV-OPS-002
 

@@ -21,27 +21,28 @@
  * only thing standing between that and a real split-brain was nobody having
  * imported it yet.
  *
- * This module is equally NOT marked `server-only`, and that is a decision
- * rather than an obstacle. The reason recorded here used to be that two of its
- * four callers are `tsx` entrypoints (`npm run config:self-heal` and
- * `npm run setup:check`) that a `server-only` import would abort. Since #2850
- * those commands run with `--conditions=react-server`, under which the marker
- * resolves to an empty module, so THAT REASON IS RETIRED and marking this
- * module is technically possible. It is deliberately not done, and the marking
- * work is tracked as #3204. The reasoning lives in one place and is not
- * restated here: `docs/invariants/operations.md` -> `INV-OPS-013`, "The three
- * modules that stay unmarked".
- * Meanwhile it is kept off the client graph by being NAMED as a forbidden leaf
- * in both halves of
- * `INV-OPS-013`: `FORBIDDEN_MODULES` in
- * `src/lib/__tests__/client-server-boundary-census.test.ts`, which walks the real
- * import graph out of every `"use client"` module, and the `$MOD` alternation in
- * `.semgrep/rules/acb-client-server-boundary.yml`, which catches a direct import
- * in review. Both are FIXED LEAF LISTS, so a module in neither of them is
- * protected by neither — however firmly a docblock says otherwise. This one was
- * in neither until #2989's fix round, which is why the claim is now two file
- * names and a fixture rather than a reassurance.
+ * This module IS marked `server-only` (#3204), so the production build refuses
+ * it in a browser bundle at any depth rather than leaving that to two lists
+ * somebody has to remember to write a module into. It went unmarked for as long
+ * as it did because it is reached by two `tsx` entrypoints
+ * (`npm run config:self-heal` and `npm run setup:check`) that the marker would
+ * have aborted at import; since #2850 those commands run with
+ * `--conditions=react-server`, under which `server-only` resolves to an empty
+ * module, and `cli-server-only-reach-census.test.ts` fails any published
+ * invocation that reaches a marked module without the condition. The reasoning
+ * lives in one place and is not restated here:
+ * `docs/invariants/operations.md` -> `INV-OPS-013`.
+ * The two leaf lists still name it, and that is deliberate rather than
+ * leftover: the build proof needs a build, while `FORBIDDEN_MODULES` in
+ * `src/lib/__tests__/client-server-boundary-census.test.ts` — which walks the
+ * real import graph out of every `"use client"` module and reports the shortest
+ * path it found — and the `$MOD` alternation in
+ * `.semgrep/rules/acb-client-server-boundary.yml` both run without one, in the
+ * required `verify` check and in review. This module was in neither until
+ * #2989's fix round, which is why the claim is file names and a fixture rather
+ * than a reassurance.
  */
+import "server-only";
 
 import { normaliseClubTimeZoneForPreservation } from "@/lib/club-time-zone";
 

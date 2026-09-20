@@ -30,18 +30,21 @@ import { stripComments } from "./support/strip-comments";
  * `cli-server-only-reach-census.test.ts` (CT-5, #2869) fails any published
  * command that reaches a marked module without it.
  *
- * That does not make this census redundant. Three of the modules below still
- * cannot carry the marker — `@/lib/club-time-zone-env`,
- * `@/lib/environment-role-declaration` and `@/lib/environment-role` — and this
- * is the only guard that covers a module the moment somebody creates it, with
- * no marker and no build to notice.
+ * That does not make this census redundant, and #3204 — which put the marker on
+ * the last three modules below, `@/lib/club-time-zone-env`,
+ * `@/lib/environment-role-declaration` and `@/lib/environment-role` — did not
+ * either. This is the only guard that covers a module the moment somebody
+ * creates it, with no marker and no build to notice; it runs in the required
+ * `verify` check without a build; and it reports the shortest import path it
+ * found, where Turbopack reports a trace. The build proof and this census are
+ * the same rule at two prices, not one superseding the other.
  *
  * The reason recorded here before #2850 was different and was WRONG: that 122
  * test files carry `vi.mock("server-only", …)` and marking `@/lib/prisma` would
  * put that on every test. `vitest.setup.ts` has stubbed the marker globally for
  * every test file since 22 Jul 2026, three weeks before that sentence was
- * written, and the full suite with the marker on six protected roots reported
- * zero `server-only` failures. A cost nobody re-measured had been keeping a
+ * written, and the full suite with the marker on the six roots marked at that
+ * point reported zero `server-only` failures. A cost nobody re-measured had been keeping a
  * guard off for a year.
  *
  * So this census carries the modules the build cannot, and carries every module
@@ -57,42 +60,41 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
 /**
  * The leaves a browser bundle must never reach. Since #2850 six of them —
  * `@/lib/auth`, `@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and
- * `@/lib/stripe` — also fail the Next build on their own. The three
- * environment readers at the end of the list do not, so those are the ones
- * that would ship silently if this census missed them.
+ * `@/lib/stripe` — also fail the Next build on their own, and since #3204 the
+ * three environment readers at the end of the list do too. `@/lib/session` and
+ * `@/lib/env` name no file, so they are the two that would ship silently if
+ * this census missed them — there is nothing for a build to refuse until
+ * somebody creates one.
  *
  * THIS LIST IS THE GUARD. It is not a sample of the server-only modules and
  * there is no rule that adds new ones automatically, so a module that is not
  * named here is not protected by this census however plainly its own docblock
  * says it is. `@/lib/club-time-zone-env` (#2989) is here for that reason: it
- * reads `process.env.TZ` and is deliberately NOT marked `server-only`. Its
- * `tsx` callers would survive the marker now that they carry
- * `--conditions=react-server` (#2850), so the "an entrypoint would abort"
- * reason those docblocks used to give is RETIRED; it is unmarked as a decision
- * instead, recorded once in `docs/invariants/operations.md` -> `INV-OPS-013`,
- * "The three modules that stay unmarked" — where the sealing work is tracked
- * as #3204 — and not restated here. Next inlines
- * `NEXT_PUBLIC_*` into the browser bundle, so a
- * `"use client"` component importing it would silently answer from the
- * BUILD-TIME `NEXT_PUBLIC_TZ` rather than from the running server — the
+ * reads `process.env.TZ`, and Next inlines `NEXT_PUBLIC_*` into the browser
+ * bundle, so a `"use client"` component importing it would silently answer from
+ * the BUILD-TIME `NEXT_PUBLIC_TZ` rather than from the running server — the
  * split-brain second authority `INV-CONFIG-002` forbids and the one that module
  * exists to prevent. Its sibling `@/lib/club-time-zone` is pure validation with
  * no environment read and is deliberately NOT here: the admin panel needs its
  * zone list.
  *
  * `@/lib/environment-role-declaration` and `@/lib/environment-role` (#3034,
- * epic #2986) are here for the same reason and a sharper one. Neither is
- * `server-only` — `setup-readiness-db.ts` reaches the resolver from the
- * `npm run setup:check` entrypoint, which carries the condition and would
- * survive the marker, and the same deliberate-decision answer above applies —
- * and the
- * declaration module reads `process.env.APP_ENVIRONMENT_ROLE`. A client
- * component importing it would answer from whatever the bundler inlined at
- * build time for a NON-public variable, which is `undefined`: the browser would
- * read "nothing has declared this installation" while the server reads
- * `production`. What is keyed on that answer is whether the club's real members
- * get emailed (INV-CONFIG-003), so a second authority here is worse than the
- * timezone one, not merely analogous.
+ * epic #2986) are here for the same reason and a sharper one. The declaration
+ * module reads `process.env.APP_ENVIRONMENT_ROLE`, and a client component
+ * importing it would answer from whatever the bundler inlined at build time for
+ * a NON-public variable, which is `undefined`: the browser would read "nothing
+ * has declared this installation" while the server reads `production`. What is
+ * keyed on that answer is whether the club's real members get emailed
+ * (INV-CONFIG-003), so a second authority here is worse than the timezone one,
+ * not merely analogous.
+ *
+ * ALL THREE NOW CARRY THE MARKER TOO (#3204), and they stay on this list
+ * anyway. The reason they were unmarked — that a `tsx` entrypoint reaching them
+ * would abort — was RETIRED by #2850's `--conditions=react-server` and finally
+ * acted on by #3204; the reasoning is recorded once, in
+ * `docs/invariants/operations.md` -> `INV-OPS-013`, and not restated here. A
+ * marked module is not a reason to delete its entry: this list is what catches
+ * a new module before anyone marks it, and what answers without a build.
  */
 const FORBIDDEN_MODULES = new Set(
   [
@@ -319,40 +321,129 @@ describe("INV-OPS-013: no client module reaches server-only code, at any depth",
  *
  * `scripts/ci/server-only-boundary-selftest.mjs` proves the production build
  * refuses a client component reaching `@/lib/auth` or `@/lib/prisma`, because
- * those are the two roots its fixture imports. The other four roots this
- * invariant names — `@/lib/audit`, `@/lib/email`, `@/lib/stripe` and
- * `@/lib/xero` — carry the same marker, and nothing checked that they still
- * did. Measured: delete it from all four and every boundary suite in this
- * repository stays green.
+ * those are the two roots its fixture imports. The other seven roots this
+ * invariant names — `@/lib/audit`, `@/lib/email`, `@/lib/stripe`, `@/lib/xero`
+ * and, since #3204, `@/lib/club-time-zone-env`,
+ * `@/lib/environment-role-declaration` and `@/lib/environment-role` — carry the
+ * same marker, and nothing checked that they still did. Measured: delete it
+ * from the first four and every boundary suite in this repository stayed green.
+ * This assertion is what the seven unplanted roots have instead of a build, and
+ * `MARKED_ROOTS` records why that trade is the right one.
  *
  * So the list of marked roots lives in the self-test beside the two it plants,
  * and this asserts each entry still carries the statement. The two lists cannot
  * drift, because `server-only-boundary-selftest.test.mjs` requires
  * `PROTECTED_ROOTS` to be a subset of `MARKED_ROOTS`.
  *
- * ANCHORED, not a substring search, and that distinction is the whole check.
- * Fifteen files here NAME `import "server-only"` inside a docblock explaining
- * the boundary — including the roots themselves, whose docblocks open by
- * quoting the statement they carry. A substring match would be satisfied by the
- * paragraph ABOUT the marker surviving while the marker itself was deleted,
- * which is precisely the mutation this exists to catch.
+ * ANCHORED AND COMMENT-STRIPPED, and both halves are the check.
+ *
+ * Anchored, because eighteen files under `src/` NAME `import "server-only"`
+ * inside a docblock explaining the boundary without carrying it, and the roots
+ * themselves open by quoting the statement they do carry. A substring match
+ * would be satisfied by the paragraph ABOUT the marker surviving while the
+ * marker itself was deleted, which is precisely the mutation this exists to
+ * catch.
+ *
+ * Comment-stripped since #3204, because anchoring alone caught DELETION and not
+ * DISABLEMENT. Measured: wrap the statement in `/* … *\/` and the line still
+ * sits at column 0, so the anchored match still found it while the module had
+ * stopped being refused by the build — a green suite over a marker that does
+ * nothing, which is the silent-green shape this whole area exists to prevent.
+ * That mattered more once #3204 took the roots this assertion is the only
+ * cover for from four to seven, one of them the module that decides whether
+ * real members get emailed. `stripComments` is the tree's one comment stripper
+ * (`INV-SSOT-004`) and this file already used it, so no second stripper and no
+ * new importer: `stripCommentsAndStrings` would have been wrong here, since it
+ * blanks string CONTENTS and would erase the `"server-only"` in the marker
+ * itself.
+ *
+ * WHAT IS STILL NOT CAUGHT, stated rather than implied away: the statement
+ * written at column 0 inside a TEMPLATE LITERAL. Seeing into one needs a
+ * parser, and the blanking forms cannot be used for the reason just given. It
+ * is left because it is not an accident shape — reaching it means deleting the
+ * real import AND adding a template whose content is exactly that line, which
+ * is forgery rather than debugging.
  */
 const MARKER_LINE = new RegExp(
   `^${MARKER_STATEMENT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
   "m",
 );
 
+/**
+ * A marker that is PRESENT as text and INERT as code — the mutation
+ * `carriesMarker` gained `stripComments` to catch (#3204).
+ *
+ * Module scope, and deliberately: `ssot/no-local-comment-stripper` reports a
+ * function that handles comment delimiters, because that is what a second
+ * comment stripper looks like. This is a FIXTURE rather than a scanner — text
+ * handed to the canonical helper, which does the stripping — and the rule's own
+ * suite is listed in `COMMENT_STRIPPER_ALLOWLIST` for exactly this reason.
+ * Keeping the delimiters out of the `it(...)` callback is the cheaper answer
+ * than a second allowlist entry, and it puts the fixture beside the regex it
+ * probes.
+ */
+const COMMENTED_OUT_MARKER_FIXTURE = [
+  "/*",
+  MARKER_STATEMENT,
+  "*/",
+  "export const value = 1;",
+].join("\n");
+
 function carriesMarker(text: string): boolean {
-  return MARKER_LINE.test(text.replace(/\r\n/g, "\n"));
+  return MARKER_LINE.test(stripComments(text.replace(/\r\n/g, "\n")));
 }
 
-describe("INV-OPS-013: the six marked roots still carry the marker", () => {
-  it("names six roots, all of which exist", () => {
+describe("INV-OPS-013: the forbidden-leaf list is the list it claims to be", () => {
+  // #3204 decided to KEEP all nine marked roots on this list rather than let
+  // the build proof replace it, because this half answers without a build and
+  // covers a module before anybody marks it. That decision was enforced by
+  // nothing: measured, deleting "environment-role" from `FORBIDDEN_MODULES`
+  // left every suite in this repository green, while the Semgrep half of the
+  // same rule is pinned by its own `ruleid:` fixtures. So the decision is
+  // asserted here, at the list.
+  it("names every marked root, plus the two reserved names", () => {
+    const missing = MARKED_ROOTS.filter(
+      (root) =>
+        !FORBIDDEN_MODULES.has(
+          path.resolve(process.cwd(), root).replace(/\.[^./\\]+$/, ""),
+        ),
+    );
+    expect(
+      missing,
+      "A module carries `import \"server-only\"` but is not a forbidden leaf of " +
+        "this census, so nothing reports the shortest client-side path to it " +
+        "and nothing covers it in a run with no build (INV-OPS-013, #3204).\n\n" +
+        missing.join("\n"),
+    ).toEqual([]);
+
+    // `@/lib/session` and `@/lib/env` name no file, so no build can refuse
+    // them and this list is their only protection. Losing either is silent.
+    for (const reserved of ["session", "env"]) {
+      expect(
+        FORBIDDEN_MODULES.has(path.join(SRC, "lib", reserved)),
+        `@/lib/${reserved} names no file, so this list is the ONLY thing that ` +
+          "would protect a module created at that path. Do not remove it.",
+      ).toBe(true);
+    }
+
+    expect(
+      FORBIDDEN_MODULES.size,
+      "INV-OPS-013: this list is nine marked roots plus `@/lib/session` and " +
+        "`@/lib/env`, which name no file. Size plus the membership checks above " +
+        "pin the set EXACTLY, so a swapped entry cannot pass. Marking a tenth " +
+        "module means adding it here and to MARKED_ROOTS, and moving this " +
+        "number on purpose (#3204).",
+    ).toBe(11);
+  });
+});
+
+describe("INV-OPS-013: the nine marked roots still carry the marker", () => {
+  it("names nine roots, all of which exist", () => {
     // Non-vacuity, in the one shape that would make the assertion below pass by
     // checking nothing: a rename, a deletion, or a truncated list. The count is
     // asserted in `server-only-boundary-selftest.test.mjs` too; repeated here
     // so this file cannot be read as trusting a list it never looked at.
-    expect(MARKED_ROOTS).toHaveLength(6);
+    expect(MARKED_ROOTS).toHaveLength(9);
     for (const root of MARKED_ROOTS) {
       expect(
         existsSync(path.resolve(process.cwd(), root)),
@@ -394,5 +485,30 @@ describe("INV-OPS-013: the six marked roots still carry the marker", () => {
     ].join("\n");
     expect(carriesMarker(docblockOnly)).toBe(false);
     expect(carriesMarker(`${docblockOnly}\n${MARKER_STATEMENT}\n`)).toBe(true);
+  });
+
+  it("is not satisfied by the statement anywhere but column 0", () => {
+    // The fixture above stopped proving the ANCHOR the moment `carriesMarker`
+    // began stripping comments (#3204 review): a docblock is now removed before
+    // the match, so that case fails whether or not `MARKER_LINE` is anchored,
+    // and dropping the `^`/`$` would leave every other fixture here green.
+    // These two isolate the anchor — both are FALSE anchored and TRUE without
+    // it — so the docblock's claim that both halves are the check is proven by
+    // both halves.
+    expect(carriesMarker(`const sample = '${MARKER_STATEMENT}';\n`)).toBe(false);
+    expect(carriesMarker(`  ${MARKER_STATEMENT}\n`)).toBe(false);
+  });
+
+  it("is not satisfied by a marker that has been COMMENTED OUT (#3204)", () => {
+    // Deletion is the mutation people expect; DISABLEMENT is the one that
+    // survived, because a block comment leaves the statement at column 0 and
+    // the anchored match still found it there. Only this spelling needs a
+    // fixture: a line-commented marker never could match, since the anchor
+    // requires column 0 and `// ` occupies it.
+    const commentedOut = COMMENTED_OUT_MARKER_FIXTURE;
+    expect(carriesMarker(commentedOut)).toBe(false);
+    // …and a real statement beside a commented-out one still counts, so this
+    // cannot be read as banning the words from a file.
+    expect(carriesMarker(`${commentedOut}\n${MARKER_STATEMENT}\n`)).toBe(true);
   });
 });

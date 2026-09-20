@@ -1170,11 +1170,13 @@ Residual risks to keep visible:
   documented money-repair commands became npm scripts that carry it for the
   operator, and CT-5 now fails when a command reaching a marked module is
   published without it. `@/lib/club-time-zone-env` and
-  `@/lib/environment-role*` stay unmarked — the condition makes marking them
-  possible, so the old "an entrypoint would abort" reason is retired, and they
-  are unmarked as a deliberate decision instead, tracked for sealing as #3204.
-  That reasoning has one home: `docs/invariants/operations.md` ->
-  `INV-OPS-013`, "The three modules that stay unmarked".
+  `@/lib/environment-role*` were the three that stayed unmarked once that reason
+  retired; **#3204 marked them**, taking the roots from six to nine, and they
+  remain named in the Semgrep alternation and the census's `FORBIDDEN_MODULES`
+  as well, because those two answer without a build. The reach measurement that
+  made marking them safe, and the reason only two of the nine are planted by the
+  build proof, have one home: `docs/invariants/operations.md` ->
+  `INV-OPS-013`.
 - The repo does not yet publish signed image attestations or SBOM artifacts.
   Current image provenance is protected PR checks plus commit-SHA GHCR tags.
 
