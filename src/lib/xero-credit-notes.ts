@@ -46,6 +46,7 @@ import { formatDateOnly } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
+import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
 import {
   buildRefundCreditNotePayment,
   REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON,
@@ -748,6 +749,22 @@ export async function createUnappliedXeroCreditNote(
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
 
+  // #3530 (`INV-MOD-058`): a modification's note carries the edit's stored
+  // lines, inverted, when they explain exactly what it credits; otherwise the
+  // single line below as before, the reason recorded on the operation. A
+  // cancellation's note has no edit behind it and is never itemised.
+  const itemised = bookingModificationId
+    ? await resolveModificationDocumentLineItems({
+        bookingId: payment.booking.id,
+        row: await prisma.bookingModification.findUnique({
+          where: { id: bookingModificationId },
+          select: { priceLines: true, priceDiffCents: true, changeFeeCents: true },
+        }),
+        document: "MODIFICATION_CREDIT_NOTE",
+        billedCents: refundAmountCents,
+      })
+    : null;
+
   // Account credit by construction (`INV-PAY-101`): this note is left
   // unapplied on the contact, so its method is not a caller's choice.
   const creditLineItem: LineItem = {
@@ -780,7 +797,7 @@ export async function createUnappliedXeroCreditNote(
     contact: { contactID: resolvedContactId },
     date: creditNoteDate,
     lineAmountTypes: LineAmountTypes.Inclusive,
-    lineItems: [creditLineItem],
+    lineItems: itemised?.lineItems ?? [creditLineItem],
     reference: buildRefundDocumentReference({
       method: "account-credit",
       bookingId: payment.booking.id,
@@ -796,7 +813,10 @@ export async function createUnappliedXeroCreditNote(
     "v1"
   );
   let operationId = queuedOperationId;
-  const requestPayload = { creditNotes: [buildCreditNote(contactId)] };
+  const requestPayload = {
+    creditNotes: [buildCreditNote(contactId)],
+    ...(itemised ? { priceLines: itemised.record } : {}),
+  };
 
   if (operationId) {
     await prisma.xeroSyncOperation.update({
@@ -832,6 +852,7 @@ export async function createUnappliedXeroCreditNote(
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
         creditNotes: [buildCreditNote(resolvedContactId)],
+        ...(itemised ? { priceLines: itemised.record } : {}),
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(

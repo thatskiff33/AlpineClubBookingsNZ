@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   callXeroApi: vi.fn(),
   getResolvedAccountMapping: vi.fn(),
   getAccountMapping: vi.fn(),
+  getHutFeeItemCodeMap: vi.fn(),
+  getHutFeeSeasonType: vi.fn(),
+  bookingFindUniqueOrThrow: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
   retryXeroWriteWithContactRepair: vi.fn(),
 }));
@@ -20,6 +23,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
       findUnique: mocks.bookingFindUnique,
+      findUniqueOrThrow: mocks.bookingFindUniqueOrThrow,
     },
     bookingModification: {
       findUnique: mocks.bookingModificationFindUnique,
@@ -61,9 +65,14 @@ vi.mock("@/lib/xero-api-client", () => ({
   callXeroApi: mocks.callXeroApi,
 }));
 
-vi.mock("@/lib/xero-mappings", () => ({
+// Partial (#3530): the pure item-code precedence stays real; the loaders the
+// itemised branch reads are stubbed beside the account mappings.
+vi.mock("@/lib/xero-mappings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-mappings")),
   getResolvedAccountMapping: mocks.getResolvedAccountMapping,
   getAccountMapping: mocks.getAccountMapping,
+  getHutFeeItemCodeMap: mocks.getHutFeeItemCodeMap,
+  getHutFeeSeasonType: mocks.getHutFeeSeasonType,
 }));
 
 vi.mock("@/lib/xero-contacts", () => ({
@@ -252,6 +261,92 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
       invoiceId: "inv_supp",
       amountCents: 500,
     });
+  });
+
+  // #3530 stage 2b: the edit's stored lines, when they explain exactly what
+  // this invoice bills; the single price-adjustment line otherwise.
+  const storedLines = [
+    {
+      v: 1, kind: "GUEST_NIGHTS", sign: 1, ageTier: "ADULT", isMember: false,
+      rateMembershipTypeId: "type-non-member", unitCents: 8000, nightCount: 1,
+      guestCount: 1, quantity: 1, startDate: "2026-08-14", endExclusive: "2026-08-15",
+      guestNames: ["Guest b"], amountCents: 8000,
+    },
+  ];
+  function itemisedFixtures() {
+    mocks.bookingModificationFindUnique.mockResolvedValue({
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      priceLines: storedLines,
+      priceDiffCents: 8000,
+      changeFeeCents: 1000,
+    });
+    mocks.bookingFindUniqueOrThrow.mockResolvedValue({
+      checkIn: new Date("2026-08-14T00:00:00Z"),
+      lodgeId: "lodge-1",
+      promoRedemption: null,
+      guests: [{ ageTier: "ADULT", isMember: false, rateMembershipTypeId: "type-non-member" }],
+    });
+    mocks.getHutFeeItemCodeMap.mockResolvedValue({
+      byKey: new Map([["type-non-member_WINTER_ADULT", "HUT-NONMEMBER-ADULT"]]),
+      fullTypeId: "type-full",
+      nonMemberTypeId: "type-non-member",
+      legacyItemCode: null,
+      size: 1,
+    });
+    mocks.getHutFeeSeasonType.mockResolvedValue("WINTER");
+  }
+
+  it("itemises the invoice from the edit's stored lines, summing to the cent, and records STORED (#3530)", async () => {
+    itemisedFixtures();
+
+    await createXeroSupplementaryInvoice({
+      bookingId: "bk1",
+      priceDiffCents: 8000,
+      changeFeeCents: 1000,
+      bookingModificationId: "mod_lines",
+    });
+
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    const lines = enqueued.requestPayload.invoices[0].lineItems;
+    expect(lines).toEqual([
+      {
+        description: "1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
+        quantity: 1,
+        unitAmount: 80,
+        taxType: "OUTPUT2",
+        itemCode: "HUT-NONMEMBER-ADULT",
+      },
+      { description: "Late notice booking change fee", quantity: 1, unitAmount: 10, taxType: "OUTPUT2", accountCode: "200" },
+    ]);
+    expect(lineTotalCents(lines)).toBe(9000);
+    expect(enqueued.requestPayload.priceLines).toEqual({
+      source: "STORED", reason: null, storedSumCents: 8000, billedCents: 9000, lineCount: 2,
+    });
+    // Identity is still amount-derived: lines enter no key (INV-PAY-070).
+    expect(enqueued.idempotencyKey).toBe("booking-mod:mod_lines:supplementary-invoice:8000:1000:v1");
+  });
+
+  it("a restated operation billing a raised figure falls back to the single line, with the reason (INV-PAY-070)", async () => {
+    itemisedFixtures();
+
+    await createXeroSupplementaryInvoice({
+      bookingId: "bk1",
+      priceDiffCents: 9500,
+      changeFeeCents: 1000,
+      bookingModificationId: "mod_lines",
+    });
+
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    const lines = enqueued.requestPayload.invoices[0].lineItems;
+    expect(lines).toHaveLength(2);
+    expect(lines[0].description).toBe("Booking modification - price adjustment (Booking bk1)");
+    expect(lines[0].unitAmount).toBe(95);
+    expect(lineTotalCents(lines)).toBe(10500);
+    expect(enqueued.requestPayload.priceLines).toEqual({
+      source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", storedSumCents: 8000, billedCents: 10500, lineCount: 0,
+    });
+    // Nothing the itemised branch needs was read for a fallback document.
+    expect(mocks.bookingFindUniqueOrThrow).not.toHaveBeenCalled();
   });
 
   it("completes as skipped without provider calls when the net is not positive", async () => {
@@ -566,7 +661,10 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
     // written onto it by accident.
     expect(mocks.xeroSyncOperationFindUnique).not.toHaveBeenCalled();
     const written = mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload;
-    expect(Object.keys(written)).toEqual(["invoices"]);
+    // The document and, since #3530, the record of which lines it carries -
+    // and nothing that could read as a queued instruction.
+    expect(Object.keys(written)).toEqual(["invoices", "priceLines"]);
+    expect(written.priceLines).toMatchObject({ source: "FALLBACK_SINGLE_LINE", reason: "NO_STORED_LINES" });
     expect(readQueuedOutboxPayload(written)).toBeNull();
   });
 });

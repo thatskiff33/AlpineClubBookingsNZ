@@ -18,7 +18,6 @@ import { PaymentSource, PaymentTransactionKind } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
-import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { getStayNights } from "./pricing";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
@@ -50,11 +49,15 @@ import {
   describeGuestRateMembershipLabel,
   getAccountMapping,
   getHutFeeItemCodeMap,
-  isHutFeeResolverConfigured,
-  resolveHutFeeItemCode,
+  getHutFeeSeasonType,
   type HutFeeItemCodeResolver,
   getResolvedAccountMapping,
 } from "./xero-mappings";
+import {
+  applyHutFeeLineCodes,
+  resolveHutFeeLineItemCode,
+  resolvePromoLineCodes,
+} from "@/lib/xero-hut-fee-line-codes";
 import {
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
@@ -152,36 +155,18 @@ export function buildInvoiceLineItems(
   itemCodeResolver?: HutFeeItemCodeResolver,
   seasonType?: string | null,
 ): LineItem[] {
+  // The precedence itself (#1930, E4) lives in `xero-hut-fee-line-codes.ts`,
+  // shared with the itemised modification documents (#3530) so a night's money
+  // is coded the same way whichever document carries it.
   const applyCodes = (
     lineItem: LineItem,
     guest: { ageTier: string; isMember: boolean; rateMembershipTypeId?: string | null },
-  ) => {
-    // Resolve item code with main's exact precedence (#1930, E4): when the
-    // per-guest resolver is configured (keyed rows or legacy hutFeeItem) AND a
-    // seasonType is known, the resolver's answer is FINAL — a miss with keyed
-    // rows present yields NO item code (account-coded line), never the single
-    // hutFeesIncome item code. The hutFeesIncome item code param applies only
-    // when the resolver is absent/unconfigured or the seasonType is unknown.
-    const resolverActive = Boolean(
-      itemCodeResolver && seasonType && isHutFeeResolverConfigured(itemCodeResolver),
-    );
-    const guestItemCode = resolverActive
-      ? resolveHutFeeItemCode(itemCodeResolver!, guest, seasonType)
-      : (itemCode ?? null);
-
-    // If itemCode is set, Xero auto-fills the account from the Item's config.
-    // If accountCode is also explicitly configured, it overrides the Item's default.
-    if (guestItemCode) {
-      lineItem.itemCode = guestItemCode;
-    }
-    // Include the account code when there is no item code, when a non-default account
-    // is supplied, or when the admin explicitly configured the default account code to
-    // override the selected Xero Item's own default.
-    if (!guestItemCode || accountCode !== "200" || accountCodeExplicitlyConfigured) {
-      lineItem.accountCode = accountCode;
-    }
-    return lineItem;
-  };
+  ) =>
+    applyHutFeeLineCodes(lineItem, {
+      itemCode: resolveHutFeeLineItemCode(guest, { itemCodeResolver, seasonType, itemCode }),
+      accountCode,
+      accountCodeExplicitlyConfigured,
+    });
 
   const runToLineItem = (
     run: NightPriceRun,
@@ -595,19 +580,7 @@ export async function createXeroInvoiceForBooking(
   const nights = getStayNights(checkIn, checkOut).length;
 
   // Season type for item-code mapping, from the booking's own lodge (#2913).
-  let bookingSeasonType: string | null = null;
-  const season = await prisma.season.findFirst({
-    where: {
-      startDate: { lte: checkIn },
-      endDate: { gte: checkIn },
-      active: true,
-      ...lodgeNullTolerantScope(booking.lodgeId),
-    },
-    select: { type: true },
-  });
-  if (season) {
-    bookingSeasonType = season.type;
-  }
+  const bookingSeasonType = await getHutFeeSeasonType(checkIn, booking.lodgeId);
 
   // Build line items with per-guest item codes
   const lineItems = buildInvoiceLineItems(
@@ -640,30 +613,23 @@ export async function createXeroInvoiceForBooking(
     const promo = booking.promoRedemption?.promoCode ?? null;
     const firstGuest = booking.guests[0];
 
-    // Fall back to hut-fee item code for legacy / non-promo discounts. Unlike
-    // the guest lines, main's promo fallback DID fall through to the single
-    // hutFeesIncome item code on a per-guest miss — preserved here (#1930, E4).
-    const fallbackItemCode = (bookingSeasonType && firstGuest && isHutFeeResolverConfigured(hutFeeItemCodeMap))
-      ? (resolveHutFeeItemCode(hutFeeItemCodeMap, firstGuest, bookingSeasonType) ?? hutFeeMapping.itemCode)
-      : hutFeeMapping.itemCode;
-
-    const discountItemCode = promo?.xeroItemCode ?? fallbackItemCode;
-    const discountAccountCode = promo?.xeroAccountCode ?? incomeCode;
-    const accountExplicitlyConfigured =
-      promo?.xeroAccountCode != null || hutFeeMapping.codeExplicitlyConfigured;
-
-    const discountLineItem: LineItem = {
-      description: promo ? `Promo adjustment - ${promo.code}` : "Promo adjustment",
-      quantity: 1,
-      unitAmount: xeroPromoAdjustmentCents / 100,
-      taxType: "OUTPUT2",
-    };
-    if (discountItemCode) {
-      discountLineItem.itemCode = discountItemCode;
-    }
-    if (!discountItemCode || accountExplicitlyConfigured || discountAccountCode !== "200") {
-      discountLineItem.accountCode = discountAccountCode;
-    }
+    // The promo line's codes (#1930, E4) - shared with the promotion-delta line
+    // of an itemised modification document (#3530).
+    const discountLineItem = applyHutFeeLineCodes(
+      {
+        description: promo ? `Promo adjustment - ${promo.code}` : "Promo adjustment",
+        quantity: 1,
+        unitAmount: xeroPromoAdjustmentCents / 100,
+        taxType: "OUTPUT2",
+      },
+      resolvePromoLineCodes({
+        promo,
+        firstGuest: firstGuest ?? null,
+        itemCodeResolver: hutFeeItemCodeMap,
+        seasonType: bookingSeasonType,
+        hutFeeMapping,
+      }),
+    );
     lineItems.push(discountLineItem);
   }
 
@@ -1367,19 +1333,7 @@ export async function updateXeroBookingInvoiceForBooking(
   const checkOut = new Date(booking.checkOut);
   const nights = getStayNights(checkIn, checkOut).length;
 
-  let bookingSeasonType: string | null = null;
-  const season = await prisma.season.findFirst({
-    where: {
-      startDate: { lte: checkIn },
-      endDate: { gte: checkIn },
-      active: true,
-      ...lodgeNullTolerantScope(booking.lodgeId),
-    },
-    select: { type: true },
-  });
-  if (season) {
-    bookingSeasonType = season.type;
-  }
+  const bookingSeasonType = await getHutFeeSeasonType(checkIn, booking.lodgeId);
 
   const desiredGuestLineItems = buildInvoiceLineItems(
     booking.guests.map((g) => ({
