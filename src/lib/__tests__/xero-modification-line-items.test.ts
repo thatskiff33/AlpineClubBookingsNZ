@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   bookingFindUniqueOrThrow: vi.fn(),
   bookingModificationFindUnique: vi.fn(),
+  manualRefundTaskFindMany: vi.fn(),
   loggerError: vi.fn(),
   getResolvedAccountMapping: vi.fn(),
   getHutFeeItemCodeMap: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUniqueOrThrow: mocks.bookingFindUniqueOrThrow },
     bookingModification: { findUnique: mocks.bookingModificationFindUnique },
+    manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
   },
 }));
 
@@ -35,9 +37,12 @@ vi.mock("@/lib/xero-mappings", async (importOriginal) => ({
 
 import {
   buildModificationDocumentLineItems,
+  loadEditReviewSettledShares,
+  renderEditReviewShareDescription,
   resolveModificationDocumentLineItems,
   type ModificationDocumentCodingContext,
 } from "@/lib/xero-modification-line-items";
+import { ManualRefundTaskDirection } from "@prisma/client";
 import {
   diffBookingPricing,
   type ModificationLine,
@@ -245,6 +250,7 @@ describe("resolveModificationDocumentLineItems", () => {
     );
     mocks.getHutFeeItemCodeMap.mockResolvedValue(resolver());
     mocks.getHutFeeSeasonType.mockResolvedValue("WINTER");
+    mocks.manualRefundTaskFindMany.mockResolvedValue([]);
   });
 
   const stored = linesOf(
@@ -262,7 +268,7 @@ describe("resolveModificationDocumentLineItems", () => {
       billedFigures: { priceDiffCents: 8000, changeFeeCents: 0 },
     });
     expect(result.lineItems).toHaveLength(1);
-    expect(result.record).toEqual({ source: "STORED", reason: null, storedSumCents: 8000, billedCents: 8000, lineCount: 1 });
+    expect(result.record).toEqual({ source: "STORED", reason: null, storedSumCents: 8000, sharesSumCents: null, billedCents: 8000, lineCount: 1, shareCount: 0 });
     expect(mocks.getHutFeeSeasonType).toHaveBeenCalledWith(day("2026-08-14"), "lodge-1");
   });
 
@@ -275,7 +281,7 @@ describe("resolveModificationDocumentLineItems", () => {
       billedFigures: { priceDiffCents: 9000, changeFeeCents: 0 },
     });
     expect(result.lineItems).toBeNull();
-    expect(result.record).toEqual({ source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", storedSumCents: 8000, billedCents: 9000, lineCount: 0 });
+    expect(result.record).toEqual({ source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", storedSumCents: 8000, sharesSumCents: null, billedCents: 9000, lineCount: 0, shareCount: 0 });
     expect(mocks.bookingFindUniqueOrThrow).not.toHaveBeenCalled();
     expect(mocks.getHutFeeItemCodeMap).not.toHaveBeenCalled();
   });
@@ -312,7 +318,7 @@ describe("resolveModificationDocumentLineItems", () => {
     });
     expect(result).toEqual({
       lineItems: null,
-      record: { source: "FALLBACK_SINGLE_LINE", reason: "NARRATION_UNAVAILABLE", storedSumCents: null, billedCents: 8000, lineCount: 0 },
+      record: { source: "FALLBACK_SINGLE_LINE", reason: "NARRATION_UNAVAILABLE", storedSumCents: null, sharesSumCents: null, billedCents: 8000, lineCount: 0, shareCount: 0 },
     });
     expect(mocks.loggerError).toHaveBeenCalledTimes(1);
 
@@ -340,5 +346,129 @@ describe("resolveModificationDocumentLineItems", () => {
     });
     expect(result.record.source).toBe("STORED");
     expect(lineTotalCents(result.lineItems ?? [])).toBe(16000);
+  });
+});
+
+/**
+ * Stage 2c: the settled review shares on a document, named for what they are.
+ */
+describe("review share lines (2c)", () => {
+  it("names the adjustment with the officer's note, or bare when there is none", () => {
+    expect(renderEditReviewShareDescription({ note: "  INV owing $340, collected $317.25 " })).toBe(
+      "Adjustment agreed with member: INV owing $340, collected $317.25",
+    );
+    expect(renderEditReviewShareDescription({ note: null })).toBe("Adjustment agreed with member");
+    expect(renderEditReviewShareDescription({ note: "   " })).toBe("Adjustment agreed with member");
+  });
+
+  it("a charge share on the supplementary invoice is coded as today's single price-adjustment line (printed for the owner's eye)", () => {
+    const items = buildModificationDocumentLineItems({
+      lines: [],
+      shares: [{ taskId: "t1", sign: 1, amountCents: 2275, note: "INV owing $340, collected $317.25" }],
+      changeFeeCents: 0,
+      document: "SUPPLEMENTARY_INVOICE",
+      context: context(),
+    });
+    console.info(
+      ["", "Supplementary invoice lines (parked edit; one review share of $22.75 settled as a charge):", ...items.map((i) => `  ${i.quantity} x $${i.unitAmount?.toFixed(2)}  ${i.description}  [${i.itemCode ?? i.accountCode}]`)].join("\n"),
+    );
+    expect(items).toEqual([
+      { description: "Adjustment agreed with member: INV owing $340, collected $317.25", quantity: 1, unitAmount: 22.75, taxType: "OUTPUT2", itemCode: "HUT" },
+    ]);
+    expect(lineTotalCents(items)).toBe(2275);
+  });
+
+  it("a refund share on a credit note is the credit, coded as a give-back; a charge share there reduces it", () => {
+    const items = buildModificationDocumentLineItems({
+      lines: [],
+      shares: [
+        { taskId: "t1", sign: -1, amountCents: 4000, note: "over-collected" },
+        { taskId: "t2", sign: 1, amountCents: 500, note: null },
+      ],
+      changeFeeCents: 0,
+      document: "MODIFICATION_CREDIT_NOTE",
+      context: context(),
+    });
+    expect(items.map((i) => [i.description, i.unitAmount, i.accountCode ?? i.itemCode])).toEqual([
+      ["Adjustment agreed with member: over-collected", 40, "201"],
+      ["Adjustment agreed with member", -5, "HUT"],
+    ]);
+    expect(lineTotalCents(items)).toBe(3500);
+  });
+
+  it("shares follow the edit's own lines and precede the fee", () => {
+    const lines = linesOf(
+      { guests: [], promoAdjustmentCents: 0 },
+      { guests: [{ ...guest("a"), nights: nights("2026-08-14", [8000], false) }], promoAdjustmentCents: 0 },
+      8000,
+    );
+    const items = buildModificationDocumentLineItems({
+      lines,
+      shares: [{ taskId: "t1", sign: 1, amountCents: 500, note: "rounding agreed" }],
+      changeFeeCents: 1000,
+      document: "SUPPLEMENTARY_INVOICE",
+      context: context(),
+    });
+    expect(items.map((i) => i.description)).toEqual([
+      "1 x Non-member Adult added - 1 night - 14 Aug 2026 - 15 Aug 2026",
+      "Adjustment agreed with member: rounding agreed",
+      "Late notice booking change fee",
+    ]);
+    expect(lineTotalCents(items)).toBe(9500);
+  });
+
+  /** A stored review context as the raise writes it, anchored where the case says. */
+  const reviewContext = (bookingModificationId: string) => ({
+    version: 1,
+    occurrence: {
+      bookingId: "bk1",
+      bookingGuestId: "guest-1",
+      cause: "NO_STORED_NIGHT_PRICES",
+      surrenderedNightDates: ["2026-08-14"],
+      addedNightDates: [],
+      storedEvidence: { guestTotalCents: null, nightPrices: [] },
+    },
+    guestMemberId: "member-1",
+    bookingCheckIn: "2026-08-14",
+    bookingCheckOut: "2026-08-16",
+    bookingModificationId,
+  });
+
+  it("loads the COMPLETED shares anchored on the modification, in completion order, by the one parser", async () => {
+    const context = reviewContext;
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      { id: "later", amountCents: 4500, settlementDirection: ManualRefundTaskDirection.CHARGE_TO_MEMBER, note: "second", completedAt: new Date("2026-06-02T00:00:00Z"), reviewContext: context("mod_1") },
+      { id: "first", amountCents: 3000, settlementDirection: ManualRefundTaskDirection.CHARGE_TO_MEMBER, note: "first", completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext: context("mod_1") },
+      { id: "other", amountCents: 999, settlementDirection: ManualRefundTaskDirection.REFUND_TO_MEMBER, note: null, completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext: context("mod_2") },
+      { id: "no-anchor", amountCents: 1, settlementDirection: ManualRefundTaskDirection.CHARGE_TO_MEMBER, note: null, completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext: null },
+    ]);
+    const shares = await loadEditReviewSettledShares("bk1", "mod_1");
+    expect(mocks.manualRefundTaskFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ bookingId: "bk1", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED" }),
+      }),
+    );
+    expect(shares).toEqual([
+      { taskId: "first", sign: 1, amountCents: 3000, note: "first" },
+      { taskId: "later", sign: 1, amountCents: 4500, note: "second" },
+    ]);
+  });
+
+  it("the resolve entry itemises a parked edit from its shares and records them", async () => {
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      { id: "t1", amountCents: 2275, settlementDirection: ManualRefundTaskDirection.CHARGE_TO_MEMBER, note: "owing", completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext: reviewContext("mod_1") },
+    ]);
+    const result = await resolveModificationDocumentLineItems({
+      bookingId: "bk1",
+      row: { priceLines: null, priceDiffCents: 0, changeFeeCents: 0 },
+      bookingModificationId: "mod_1",
+      document: "SUPPLEMENTARY_INVOICE",
+      billedCents: 2275,
+      billedFigures: { priceDiffCents: 2275, changeFeeCents: 0 },
+    });
+    expect(result.lineItems?.map((i) => i.description)).toEqual(["Adjustment agreed with member: owing"]);
+    expect(result.record).toEqual({
+      source: "STORED", reason: null, storedSumCents: null, sharesSumCents: 2275, billedCents: 2275, lineCount: 1, shareCount: 1,
+    });
   });
 });

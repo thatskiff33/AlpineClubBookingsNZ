@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getHutFeeItemCodeMap: vi.fn(),
   getHutFeeSeasonType: vi.fn(),
   bookingFindUniqueOrThrow: vi.fn(),
+  manualRefundTaskFindMany: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
   retryXeroWriteWithContactRepair: vi.fn(),
 }));
@@ -28,6 +29,7 @@ vi.mock("@/lib/prisma", () => ({
     bookingModification: {
       findUnique: mocks.bookingModificationFindUnique,
     },
+    manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
     xeroSyncOperation: {
       update: mocks.xeroSyncOperationUpdate,
       findUnique: mocks.xeroSyncOperationFindUnique,
@@ -95,6 +97,8 @@ import { lineTotalCents } from "@/lib/__tests__/helpers";
 describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L2)", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // #3530 2c: no settled review shares unless a case says so.
+    mocks.manualRefundTaskFindMany.mockResolvedValue([]);
     mocks.bookingFindUnique.mockResolvedValue({
       id: "bk1",
       memberId: "mem1",
@@ -177,6 +181,8 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    // #3530 2c: no settled review shares unless a case says so.
+    mocks.manualRefundTaskFindMany.mockResolvedValue([]);
     mocks.bookingFindUnique.mockResolvedValue({
       id: "bk1",
       memberId: "mem1",
@@ -320,7 +326,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     ]);
     expect(lineTotalCents(lines)).toBe(9000);
     expect(enqueued.requestPayload.priceLines).toEqual({
-      source: "STORED", reason: null, storedSumCents: 8000, billedCents: 9000, lineCount: 2,
+      source: "STORED", reason: null, storedSumCents: 8000, sharesSumCents: null, billedCents: 9000, lineCount: 2, shareCount: 0,
     });
     // Identity is still amount-derived: lines enter no key (INV-PAY-070).
     expect(enqueued.idempotencyKey).toBe("booking-mod:mod_lines:supplementary-invoice:8000:1000:v1");
@@ -345,6 +351,55 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(first.record.source).toBe("STORED");
   });
 
+  it("a parked edit's invoice, restated to the combined total of two settled shares, lists both adjustments (#3530 2c, INV-PAY-070)", async () => {
+    itemisedFixtures();
+    // A parked edit stores no lines; two review tasks were settled against it.
+    mocks.bookingModificationFindUnique.mockResolvedValue({
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      priceLines: null,
+      priceDiffCents: 0,
+      changeFeeCents: 0,
+    });
+    const reviewContext = {
+      version: 1,
+      occurrence: {
+        bookingId: "bk1",
+        bookingGuestId: "guest-1",
+        cause: "NO_STORED_NIGHT_PRICES",
+        surrenderedNightDates: ["2026-08-14"],
+        addedNightDates: [],
+        storedEvidence: { guestTotalCents: null, nightPrices: [] },
+      },
+      guestMemberId: "member-1",
+      bookingCheckIn: "2026-08-14",
+      bookingCheckOut: "2026-08-16",
+      bookingModificationId: "mod_lines",
+    };
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      { id: "t1", amountCents: 2275, settlementDirection: "CHARGE_TO_MEMBER", note: "INV owing $340, collected $317.25", completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext },
+      { id: "t2", amountCents: 1000, settlementDirection: "CHARGE_TO_MEMBER", note: null, completedAt: new Date("2026-06-02T00:00:00Z"), reviewContext },
+    ]);
+
+    await createXeroSupplementaryInvoice({
+      bookingId: "bk1",
+      priceDiffCents: 3275,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_lines",
+    });
+
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    const lines = enqueued.requestPayload.invoices[0].lineItems;
+    expect(lines.map((l: { description: string; unitAmount: number; accountCode?: string }) => [l.description, l.unitAmount, l.accountCode])).toEqual([
+      ["Adjustment agreed with member: INV owing $340, collected $317.25", 22.75, "200"],
+      ["Adjustment agreed with member", 10, "200"],
+    ]);
+    expect(lineTotalCents(lines)).toBe(3275);
+    expect(enqueued.requestPayload.priceLines).toEqual({
+      source: "STORED", reason: null, storedSumCents: null, sharesSumCents: 3275, billedCents: 3275, lineCount: 2, shareCount: 2,
+    });
+    expect(enqueued.idempotencyKey).toBe("booking-mod:mod_lines:supplementary-invoice:3275:0:v1");
+  });
+
   it("a restated operation billing a raised figure falls back to the single line, with the reason (INV-PAY-070)", async () => {
     itemisedFixtures();
 
@@ -362,7 +417,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(lines[0].unitAmount).toBe(95);
     expect(lineTotalCents(lines)).toBe(10500);
     expect(enqueued.requestPayload.priceLines).toEqual({
-      source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", storedSumCents: 8000, billedCents: 10500, lineCount: 0,
+      source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", storedSumCents: 8000, sharesSumCents: null, billedCents: 10500, lineCount: 0, shareCount: 0,
     });
     // Nothing the itemised branch needs was read for a fallback document.
     expect(mocks.bookingFindUniqueOrThrow).not.toHaveBeenCalled();
@@ -406,6 +461,8 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
 describe("createXeroSupplementaryInvoice: the second ask (#3193)", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // #3530 2c: no settled review shares unless a case says so.
+    mocks.manualRefundTaskFindMany.mockResolvedValue([]);
     mocks.bookingFindUnique.mockResolvedValue({
       id: "bk1",
       memberId: "mem1",
@@ -571,6 +628,8 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    // #3530 2c: no settled review shares unless a case says so.
+    mocks.manualRefundTaskFindMany.mockResolvedValue([]);
     mocks.bookingFindUnique.mockResolvedValue({
       id: "bk1",
       memberId: "mem1",

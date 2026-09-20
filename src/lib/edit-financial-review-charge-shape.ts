@@ -51,6 +51,77 @@ export const editReviewChargeShareTaskWhere = {
   amountCents: { not: null },
 } as const satisfies Prisma.ManualRefundTaskWhereInput;
 
+/**
+ * WHICH REVIEW TASKS CARRY A SETTLED SHARE IN EITHER DIRECTION (#3530 stage
+ * 2c): the charge shares above plus the refund shares, for the Xero document
+ * that names each as `Adjustment agreed with member: <note>`. The charge
+ * `where` is this one narrowed by direction, so the two cannot count a
+ * different set of rows.
+ */
+export const editReviewSettledShareTaskWhere = {
+  kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
+  status: ManualRefundTaskStatus.COMPLETED,
+  settlementDirection: {
+    in: [ManualRefundTaskDirection.CHARGE_TO_MEMBER, ManualRefundTaskDirection.REFUND_TO_MEMBER],
+  },
+  amountCents: { not: null },
+} as const satisfies Prisma.ManualRefundTaskWhereInput;
+
+export const editReviewSettledShareTaskSelect = {
+  id: true,
+  amountCents: true,
+  settlementDirection: true,
+  note: true,
+  completedAt: true,
+  reviewContext: true,
+} as const satisfies Prisma.ManualRefundTaskSelect;
+
+/** One settled share as a Xero document names it: signed like `priceDiffCents`. */
+export type EditReviewSettledShare = {
+  taskId: string;
+  /** +1 money owed to the club (a charge), -1 money owed to the member (a refund). */
+  sign: 1 | -1;
+  /** The share's magnitude, the task's own `amountCents`. */
+  amountCents: number;
+  /** The officer's completion note, trimmed at completion; null when none. */
+  note: string | null;
+};
+
+/**
+ * The settled shares on each anchor, in completion order. A row with no anchor
+ * in its context, no amount, or no direction contributes nothing - a DISMISSED
+ * task never reaches here (the `where` above), and a COMPLETED one always
+ * carries all three.
+ */
+export function editReviewSettledSharesByAnchor(
+  tasks: ReadonlyArray<{
+    id: string;
+    amountCents: number | null;
+    settlementDirection: ManualRefundTaskDirection | null;
+    note: string | null;
+    completedAt: Date | null;
+    reviewContext: unknown;
+  }>,
+): Map<string, EditReviewSettledShare[]> {
+  const byAnchor = new Map<string, EditReviewSettledShare[]>();
+  const ordered = [...tasks].sort(
+    (a, b) => (a.completedAt?.getTime() ?? 0) - (b.completedAt?.getTime() ?? 0),
+  );
+  for (const task of ordered) {
+    const anchor = parseEditFinancialReviewContext(task.reviewContext)?.bookingModificationId;
+    if (!anchor || task.amountCents === null || task.settlementDirection === null) continue;
+    const shares = byAnchor.get(anchor) ?? [];
+    shares.push({
+      taskId: task.id,
+      sign: task.settlementDirection === ManualRefundTaskDirection.CHARGE_TO_MEMBER ? 1 : -1,
+      amountCents: task.amountCents,
+      note: task.note,
+    });
+    byAnchor.set(anchor, shares);
+  }
+  return byAnchor;
+}
+
 export const editReviewChargeShareTaskSelect = {
   id: true,
   amountCents: true,
