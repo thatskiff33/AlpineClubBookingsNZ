@@ -2685,6 +2685,11 @@ rate-limited, or temporarily unavailable.
 | `DEPLOY_REF`                           | Git ref deployed by the production wrapper, default `origin/main`.    |
 | `FETCH_LATEST`                         | Whether the wrapper fetches before resolving `DEPLOY_REF`.            |
 | `DEPLOY_WORKSPACE_ROOT`                | Parent directory for clean deploy workspaces.                         |
+| `ALLOW_UNPUBLISHED_DEPLOY_COMMIT`      | Lets the wrapper deploy a commit that exists on no remote branch (#3539). Default `0`, which refuses. `1`, `true`, `yes`, and `on` enable it, and it is refused anyway unless `UNPUBLISHED_DEPLOY_COMMIT_REASON` is also set. Production running code only the deploy host holds cannot be rebuilt or reviewed, and it silently invalidates the next release's pending-migration list. |
+| `UNPUBLISHED_DEPLOY_COMMIT_REASON`     | The written justification required when `ALLOW_UNPUBLISHED_DEPLOY_COMMIT` is on. Default empty. Printed in the deploy log. |
+| `DEPLOY_FAILURE_RECORD_DIR`            | Where the deploy engine writes its record when a deploy fails at or after the migrate step (#3539). Default `$HOME/tacbookings-deploy-failures`. The record names the migrations that *started*, the step the deploy died on, the commit and images attempted, and whether traffic had moved. |
+| `DEPLOY_COMMIT_SHA`                    | The commit the deploy engine stamps into a locally-built image, for the case where it cannot read one. A deploy workspace is made with `git archive` and has no `.git`, so the engine's local-build path cannot derive the commit itself; the wrapper exports this. Set it by hand only if you invoke `--internal-blue-green-deploy` yourself from a directory that is not a Git checkout. |
+| `DEPLOY_COMMIT_OBSERVED_AT`            | The committer date (ISO 8601) that goes with `DEPLOY_COMMIT_SHA`, used to stamp the deployed-code knowledge bundle. Optional; empty is accepted. |
 | `SYNC_SOURCE_REPO_AFTER_DEPLOY`        | Whether the wrapper syncs the source checkout after deploy.           |
 | `PRUNE_STALE_DEPLOY_WORKSPACES`        | Whether the wrapper removes stale deployment workspaces.              |
 | `PROJECT_DIR`                          | Low-level blue/green deploy project directory.                        |

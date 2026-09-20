@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 run_production_wrapper() {
+WRAPPER_MODE="${1:-deploy}"
 DEFAULT_SOURCE_REPO="$HOME/AlpineClubBookingsNZ"
 if [[ ! -d "$DEFAULT_SOURCE_REPO" && -d "$HOME/AlpineClubBookingsNZ" ]]; then
   DEFAULT_SOURCE_REPO="$HOME/AlpineClubBookingsNZ"
@@ -17,6 +18,8 @@ GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpi
 GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-migrate}"
 APP_IMAGE="${APP_IMAGE:-}"
 MIGRATE_IMAGE="${MIGRATE_IMAGE:-}"
+ALLOW_UNPUBLISHED_DEPLOY_COMMIT="${ALLOW_UNPUBLISHED_DEPLOY_COMMIT:-0}"
+UNPUBLISHED_DEPLOY_COMMIT_REASON="${UNPUBLISHED_DEPLOY_COMMIT_REASON:-}"
 
 ACTIVE_UPSTREAM_FILE_REL="deploy/caddy/tacbookings-active.caddy"
 CADDY_CONFIG_CONTAINER_PATH="/etc/caddy/Caddyfile"
@@ -44,7 +47,15 @@ warn() {
 
 fail() {
   trap - ERR
-  printf "\nProduction blue/green wrapper failed.\n" >&2
+  # Name the mode that failed. `--build-and-push-images` attempts no deploy
+  # at all, and at 2am "Production blue/green wrapper failed" reads as
+  # "production is mid-deploy" - the most alarming possible reading of a
+  # build that never touched the running site.
+  if [ "$WRAPPER_MODE" = "build-and-push-images" ]; then
+    printf "\nHost image build failed. No deploy was attempted and the running site is untouched.\n" >&2
+  else
+    printf "\nProduction blue/green wrapper failed.\n" >&2
+  fi
   if [ -n "$WORKSPACE" ]; then
     printf "Workspace preserved at %s\n" "$WORKSPACE" >&2
   fi
@@ -118,6 +129,91 @@ resolve_ref() {
 
   RESOLVED_REF="$(git -C "$SOURCE_REPO" rev-parse "${DEPLOY_REF}^{commit}")"
   info "Resolved ${DEPLOY_REF} to commit ${RESOLVED_REF}"
+}
+
+# Production may only run a commit that exists somewhere other than this disk.
+#
+# A release built by hand on the deploy host from a local branch cannot be
+# rebuilt from the repository, cannot be reviewed, and silently invalidates the
+# next release's documented preconditions - the pending-migration list, the
+# ledger rows, the upgrade notes are all computed against a commit nobody else
+# has. It has happened, and nothing in this script noticed.
+#
+# `git branch -r --contains` answers the only question that matters: is this
+# commit reachable from at least one REMOTE branch. A local branch, a detached
+# HEAD or a tag that was never pushed all answer "no".
+#
+# The override exists because host-building from a local branch is legitimate
+# during a registry outage. It just has to be a decision somebody recorded, so
+# it takes a written reason as well as the flag - the same shape as
+# ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS and DEPLOY_WARMUP_ENABLED.
+validate_deploy_commit_is_published() {
+  local remote_branches
+  local branch_on_remote
+  local remote_ref
+  local remote_name
+  local branch_name
+  local live_branch=""
+  local remote_answered=0
+
+  remote_branches="$(git -C "$SOURCE_REPO" branch -r --contains "$RESOLVED_REF" --format '%(refname:short)' 2>/dev/null || true)"
+
+  # A remote-tracking ref is a LOCAL CACHE, and the fetch above is refspec
+  # scoped (`--prune origin main`), which prunes only what it fetched. So
+  # `origin/feature`, deleted on the remote months ago, survives on this disk
+  # and would answer "published" for a commit no remote holds - measured in a
+  # scratch repo, not assumed. Confirm with the remote itself.
+  #
+  # But a remote that cannot be REACHED must not turn into a refusal: a GitHub
+  # outage is not a reason to block a deploy whose commit really is pushed. So
+  # an unreachable remote downgrades to a warning, while a remote that answers
+  # and does not have the branch is treated as the stale ref it is.
+  while IFS= read -r remote_ref; do
+    [ -n "$remote_ref" ] || continue
+    case "$remote_ref" in
+      *" -> "*|*"->"*) continue ;;
+    esac
+    remote_name="${remote_ref%%/*}"
+    branch_name="${remote_ref#*/}"
+    [ -n "$branch_name" ] && [ "$branch_name" != "$remote_ref" ] || continue
+    if branch_on_remote="$(git -C "$SOURCE_REPO" ls-remote --heads "$remote_name" "$branch_name" 2>/dev/null)"; then
+      remote_answered=1
+      if [ -n "$branch_on_remote" ]; then
+        live_branch="$remote_ref"
+        break
+      fi
+    fi
+  done <<EOF
+$remote_branches
+EOF
+
+  if [ -n "$live_branch" ]; then
+    info "Deploy commit ${RESOLVED_REF} is published on ${live_branch}, confirmed against the remote."
+    return 0
+  fi
+
+  if [ -n "$(printf '%s' "$remote_branches" | tr -d '[:space:]')" ] && [ "$remote_answered" = "0" ]; then
+    warn "Could not reach any remote to confirm that ${RESOLVED_REF} is still published."
+    warn "This host's remote-tracking refs say it is, and those refs can be stale. Proceeding on that basis."
+    return 0
+  fi
+
+  if ! env_flag_is_true "$ALLOW_UNPUBLISHED_DEPLOY_COMMIT"; then
+    echo "Deploy commit ${RESOLVED_REF} exists on no remote branch of ${SOURCE_REPO} that the remote still has." >&2
+    echo "Production would then be running code that only this disk holds: it could not be rebuilt from the repository, reviewed, or reasoned about by the next release." >&2
+    echo "Push the commit, or set ALLOW_UNPUBLISHED_DEPLOY_COMMIT=1 together with a non-empty UNPUBLISHED_DEPLOY_COMMIT_REASON explaining why." >&2
+    return 1
+  fi
+
+  if [ -z "$UNPUBLISHED_DEPLOY_COMMIT_REASON" ]; then
+    echo "ALLOW_UNPUBLISHED_DEPLOY_COMMIT is set, but UNPUBLISHED_DEPLOY_COMMIT_REASON is empty." >&2
+    echo "Deploying a commit no remote holds is a decision that has to be recorded. Set UNPUBLISHED_DEPLOY_COMMIT_REASON to the reason." >&2
+    return 1
+  fi
+
+  warn "DEPLOYING AN UNPUBLISHED COMMIT. ${RESOLVED_REF} exists on no remote branch."
+  warn "Reason given: ${UNPUBLISHED_DEPLOY_COMMIT_REASON}"
+  warn "Push this commit as soon as the reason no longer holds, or the next release's preconditions are computed against a commit nobody else has."
 }
 
 resolve_image_refs() {
@@ -298,6 +394,8 @@ run_deploy() {
     COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" \
     APP_IMAGE="$APP_IMAGE" \
     MIGRATE_IMAGE="$MIGRATE_IMAGE" \
+    DEPLOY_COMMIT_SHA="$RESOLVED_REF" \
+    DEPLOY_COMMIT_OBSERVED_AT="$(git -C "$SOURCE_REPO" show -s --format=%cI "$RESOLVED_REF")" \
     ./scripts/run-production-blue-green-deploy.sh --internal-blue-green-deploy
   )
 }
@@ -359,6 +457,141 @@ prune_stale_deploy_workspaces() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Host image build (--build-and-push-images)
+# ---------------------------------------------------------------------------
+#
+# Building the images by hand on the deploy host is a legitimate thing to do -
+# a depleted CI budget, a registry outage, a fork whose Actions are off - and
+# until now it was done with a bare `docker compose build`, which exports none
+# of the build args the CI path passes. The image then carries no release
+# identifier, so the pre-cutover warm-up gate cannot confirm it warmed the
+# release being deployed and can only warn (`resolve_expected_release`), and the
+# public website's per-release CSP nonce falls back to a per-BUILD seed.
+#
+# This mode is the supported way to do it: the same build args, from the same
+# clean `git archive` workspace the deploy uses, on a commit that has already
+# passed the published-commit check above - and the identifier is read back OUT
+# of the built image BEFORE anything is pushed, because a build arg that never
+# reached the runtime stage is exactly the failure this mode exists to close and
+# it is invisible from the outside.
+
+build_application_images_from_workspace() {
+  local observed_at
+
+  # Read from the SOURCE repository, which has `.git`; the workspace is a
+  # `git archive` extraction and has none. That asymmetry is the latent break
+  # `prepare_application_images` carries, and passing the values in is the fix
+  # for both paths.
+  observed_at="$(git -C "$SOURCE_REPO" show -s --format=%cI "$RESOLVED_REF")"
+
+  info "Building $APP_IMAGE and $MIGRATE_IMAGE from $WORKSPACE."
+  (
+    cd "$WORKSPACE"
+    GIT_COMMIT_SHA="$RESOLVED_REF" \
+    KNOWLEDGE_BUNDLE_OBSERVED_AT="$observed_at" \
+    RELEASE_ID="$RESOLVED_REF" \
+    COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" \
+    APP_IMAGE="$APP_IMAGE" \
+    MIGRATE_IMAGE="$MIGRATE_IMAGE" \
+    docker compose --profile migrate build --pull app migrate
+  )
+}
+
+verify_built_image_carries_release_id() {
+  local observed
+
+  observed="$(docker run --rm --entrypoint sh "$APP_IMAGE" -lc 'printf %s "${RELEASE_ID:-}"')"
+  if [ "$observed" != "$RESOLVED_REF" ]; then
+    echo "The built app image does not carry the expected release identifier." >&2
+    echo "Expected RELEASE_ID=${RESOLVED_REF} in the image's runtime environment; read '${observed}'." >&2
+    echo "Nothing has been pushed. A RELEASE_ID that does not reach the runtime stage leaves the warm-up gate unable to confirm which release it warmed, and the public website's CSP nonce on a per-build seed." >&2
+    return 1
+  fi
+
+  info "The built app image reports RELEASE_ID=${RESOLVED_REF} from its own runtime environment."
+}
+
+push_application_images() {
+  local image_ref
+
+  for image_ref in "$APP_IMAGE" "$MIGRATE_IMAGE"; do
+    case "$image_ref" in
+      *:local)
+        echo "Refusing to push ${image_ref}: a ':local' tag is a local-build placeholder, not a release." >&2
+        return 1
+        ;;
+    esac
+  done
+
+  docker push "$APP_IMAGE"
+  docker push "$MIGRATE_IMAGE"
+  info "Pushed $APP_IMAGE and $MIGRATE_IMAGE."
+}
+
+if [ "$WRAPPER_MODE" = "build-and-push-images" ]; then
+  echo "====================================================="
+  echo "  AlpineClubBookingsNZ: Host Image Build And Push"
+  echo "====================================================="
+
+  step "1/6" "Validating host prerequisites"
+  require_command git
+  require_command docker
+  require_command tar
+  require_command mktemp
+  require_command cp
+  require_command chmod
+  require_command mkdir
+  info "Required host commands are available."
+
+  step "2/6" "Validating source repository"
+  [ -d "$SOURCE_REPO" ] || {
+    echo "Source repository not found: $SOURCE_REPO" >&2
+    return 1
+  }
+  git -C "$SOURCE_REPO" rev-parse --is-inside-work-tree >/dev/null
+  [ -f "$SOURCE_REPO/.env" ] || {
+    echo "Source repository is missing .env: $SOURCE_REPO/.env" >&2
+    return 1
+  }
+  validate_source_repo_state
+  info "Source repository contract looks valid."
+
+  step "3/6" "Resolving build commit and image references"
+  resolve_ref
+  validate_deploy_commit_is_published
+  resolve_image_refs
+
+  # Said BEFORE the build, not after the push. A production host is logged
+  # into GHCR with a `read:packages` token by documented policy, which is
+  # right for a host that only pulls - and which makes the final
+  # `docker push` the first thing that fails, after a full `next build` on a
+  # small server. There is no cheap, credential-helper-agnostic way to test
+  # push access without pushing, so this states the requirement up front
+  # rather than probing for it.
+  warn "This mode pushes images. A production host is normally logged in to the registry with a read-only token; if this run ends in 'denied: permission_denied', log in with a token that has write:packages and run it again."
+
+  step "4/6" "Creating clean build workspace"
+  create_workspace
+
+  step "5/6" "Building images with the release identifier"
+  build_application_images_from_workspace
+
+  step "6/6" "Verifying the release identifier reached the image, then pushing"
+  verify_built_image_carries_release_id
+  push_application_images
+
+  # Nothing bind-mounts a build workspace, so unlike a deploy workspace it is
+  # removed on success.
+  rm -rf "$WORKSPACE"
+  WORKSPACE=""
+
+  echo
+  echo "Built and pushed ${RESOLVED_REF}. Deploy it with:"
+  echo "  ./scripts/run-production-blue-green-deploy.sh"
+  return 0
+fi
+
 echo "====================================================="
 echo "  AlpineClubBookingsNZ: Production Blue/Green Deploy Wrapper"
 echo "====================================================="
@@ -396,6 +629,9 @@ info "Source repository contract looks valid."
 
 step "3/8" "Resolving deploy commit and image references"
 resolve_ref
+# Before the workspace is built, so a commit no remote holds never reaches a
+# `git archive`, an image build, or the database.
+validate_deploy_commit_is_published
 resolve_image_refs
 
 step "4/8" "Creating deployment workspace"
@@ -494,7 +730,18 @@ TARGET_SERVICE=""
 SWITCHED_TRAFFIC=0
 EXTERNAL_HEALTH_VERIFIED=0
 
+# Where a deploy that died after migrating leaves its record, and the state that
+# record is written from. See `write_deploy_failure_record`.
+DEPLOY_FAILURE_RECORD_DIR="${DEPLOY_FAILURE_RECORD_DIR:-$HOME/tacbookings-deploy-failures}"
+MIGRATE_STEP_REACHED=0
+PENDING_MIGRATION_NAMES=""
+CURRENT_DEPLOY_STEP="before the first step"
+
 step() {
+  # The step label is recorded as well as printed, so a failure record can name
+  # the step the deploy died on without twenty separate assignments to keep in
+  # sync with twenty step lines.
+  CURRENT_DEPLOY_STEP="$1 $2"
   printf "\n[%s] %s\n" "$1" "$2"
 }
 
@@ -538,8 +785,154 @@ rollback_traffic_if_needed() {
   reload_caddy >/dev/null 2>&1 || true
 }
 
+# A deploy that dies from the migrate step onward leaves a record on disk.
+#
+# From step 13 the database may no longer match either release, and the only
+# account of what happened is the operator's terminal - which is not a record.
+# There is no log file (the wrapper runs the engine with no `tee`), and the next
+# person to look is doing it at 2am, possibly not the same person.
+#
+# TWO THINGS ABOUT THIS ARE LOAD-BEARING, and both were review findings rather
+# than design:
+#
+# It selects on `started_at`, NEVER on `finished_at`. A migration that fails
+# part-way through leaves its row with a `started_at` and a NULL `finished_at`.
+# A `finished_at` filter therefore reports "nothing applied" in precisely the
+# case where the schema most likely DID move, which is the one case the record
+# exists for.
+#
+# And "the database could not be reached" is its own state, never folded into
+# "nothing started". Collapsing them writes a reassuring artefact in the worst
+# case there is - a database that is down, or unreachable, after a migration was
+# attempted against it.
+write_deploy_failure_record() {
+  local record_path
+  local migration_state
+  local started_output
+  local traffic_state
+  local release_attempted
+
+  if [ "$MIGRATE_STEP_REACHED" != "1" ]; then
+    return 0
+  fi
+
+  release_attempted="$(resolve_expected_release 2>/dev/null || true)"
+  release_attempted="${release_attempted:-unidentifiable}"
+
+  if started_output="$(query_started_migrations 2>/dev/null)"; then
+    if [ -z "$(trim_whitespace "$started_output")" ]; then
+      migration_state="NONE STARTED. No migration pending at the start of this deploy has a started_at row, so the schema is very likely untouched."
+    else
+      migration_state="$(printf 'STARTED (a row with a NULL finished_at means that migration did NOT complete):\n%s' "$started_output")"
+    fi
+  else
+    migration_state="UNKNOWN. The database could not be reached, so whether a migration started could NOT be determined. This is not the same as nothing having happened - treat the schema as possibly changed and check it before retrying or rolling back."
+  fi
+
+  # This has to describe what `rollback_traffic_if_needed` ACTUALLY does, not
+  # what the switch flag alone suggests. It returns early once the new colour
+  # has been verified healthy from outside, so a failure at a later step leaves
+  # the new colour serving with no restore attempted - and telling an operator
+  # a restore is in progress when it is not is worse than telling them nothing.
+  if [ "$SWITCHED_TRAFFIC" = "1" ] && [ "$EXTERNAL_HEALTH_VERIFIED" = "1" ]; then
+    traffic_state="YES, AND IT STAYS THERE. Caddy is pointed at ${TARGET_SERVICE}, which was verified healthy from outside, so no restore is attempted. ${TARGET_SERVICE} is serving."
+  elif [ "$SWITCHED_TRAFFIC" = "1" ]; then
+    traffic_state="YES. Caddy was pointed at ${TARGET_SERVICE}. The script attempts to restore ${ACTIVE_SERVICE}; confirm which colour is serving before doing anything else."
+  else
+    traffic_state="NO, NOT BY THE SCRIPT'S OWN ACCOUNTING. ${ACTIVE_SERVICE:-The previous colour} should still be serving - but if the deploy died between writing the upstream file and recording the switch, the file on disk may already name ${TARGET_SERVICE:-the target colour}. Read ${ACTIVE_UPSTREAM_FILE_REL} before acting."
+  fi
+
+  mkdir -p "$DEPLOY_FAILURE_RECORD_DIR" 2>/dev/null || {
+    warn "Could not create $DEPLOY_FAILURE_RECORD_DIR, so no failure record was written."
+    return 0
+  }
+  record_path="${DEPLOY_FAILURE_RECORD_DIR}/deploy-failure-$(date -u +%Y%m%dT%H%M%SZ)-$$.md"
+
+  {
+    echo "# Blue/green deploy failed after the migrate step"
+    echo
+    echo "- Failed at (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "- Died on step: ${CURRENT_DEPLOY_STEP}"
+    echo "- Release attempted: ${release_attempted}"
+    echo "- App image: ${APP_IMAGE:-local build}"
+    echo "- Migration image: ${MIGRATE_IMAGE:-local build}"
+    echo "- Project directory: ${PROJECT_DIR}"
+    echo "- Previous colour: ${ACTIVE_SERVICE:-unknown}"
+    echo "- Target colour: ${TARGET_SERVICE:-unknown}"
+    echo "- Traffic moved: ${traffic_state}"
+    echo
+    echo "## Migrations pending when this deploy began"
+    echo
+    if [ -z "$(trim_whitespace "$PENDING_MIGRATION_NAMES")" ]; then
+      echo "None."
+    else
+      printf '%s' "$PENDING_MIGRATION_NAMES" | grep -v '^[[:space:]]*$' | sed 's/^/- /'
+    fi
+    echo
+    echo "## What the database says about them"
+    echo
+    printf '%s\n' "$migration_state"
+    echo
+    echo "## Before retrying"
+    echo
+    echo "Read docs/BLUE_GREEN_MIGRATION_POLICY.md and this release's row in"
+    echo "docs/BLUE_GREEN_MIGRATION_SAFETY.tsv. A migration that started and did not"
+    echo "finish may have left the schema between the two releases; a windowed"
+    echo "migration additionally means the previous colour cannot serve correctly."
+  } >"$record_path" 2>/dev/null || {
+    warn "Could not write the failure record to $record_path."
+    return 0
+  }
+
+  warn "Deploy failed after the migrate step. Record written to: ${record_path}"
+}
+
+# The migrations this deploy was about to apply, as the database now reports
+# them. Selected on `started_at` for the reason given above; `finished_at` is
+# reported as a VALUE so a NULL is visible rather than being a filter that hides
+# the row entirely.
+query_started_migrations() {
+  local in_list=""
+  local name
+
+  while IFS= read -r name; do
+    name="$(trim_whitespace "$name")"
+    [ -n "$name" ] || continue
+    in_list="${in_list}${in_list:+,}'${name}'"
+  done <<EOF
+$PENDING_MIGRATION_NAMES
+EOF
+
+  if [ -z "$in_list" ]; then
+    printf ''
+    return 0
+  fi
+
+  # Bounded, because this runs on the failure path BEFORE the traffic
+  # restore. A database that is hanging rather than refusing - which is a
+  # state a half-applied migration can leave it in - would otherwise hold the
+  # restore open indefinitely while the script tried to write a record about
+  # it. A timeout costs the record's migration section, which then reads
+  # UNKNOWN; the alternative costs the rollback. `timeout` is coreutils and
+  # present on any host this runs on, but it is used only when it exists,
+  # because degrading to no record beats degrading to no deploy.
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 30 docker compose exec -T "$POSTGRES_SERVICE" \
+      psql -U tac -d tacbookings -Atqc \
+      "SELECT migration_name || ' | started_at=' || COALESCE(started_at::text, 'NULL') || ' | finished_at=' || COALESCE(finished_at::text, 'NULL') || ' | rolled_back_at=' || COALESCE(rolled_back_at::text, 'NULL') FROM \"_prisma_migrations\" WHERE started_at IS NOT NULL AND migration_name IN (${in_list}) ORDER BY started_at"
+    return $?
+  fi
+
+  docker compose exec -T "$POSTGRES_SERVICE" \
+    psql -U tac -d tacbookings -Atqc \
+    "SELECT migration_name || ' | started_at=' || COALESCE(started_at::text, 'NULL') || ' | finished_at=' || COALESCE(finished_at::text, 'NULL') || ' | rolled_back_at=' || COALESCE(rolled_back_at::text, 'NULL') FROM \"_prisma_migrations\" WHERE started_at IS NOT NULL AND migration_name IN (${in_list}) ORDER BY started_at"
+}
+
 fail() {
   trap - ERR
+  # Written BEFORE the traffic restore, so the record describes the state the
+  # deploy actually failed in rather than the state the restore left behind.
+  write_deploy_failure_record || true
   rollback_traffic_if_needed
   printf "\nBlue/green deployment failed.\n" >&2
   print_failure_context
@@ -1250,8 +1643,27 @@ prepare_application_images() {
   # the in-builder generator reads these from build args that compose forwards
   # from the environment (docker-compose.yml). Exported here from the clean,
   # ff-only main checkout this deploy is building.
-  GIT_COMMIT_SHA="$(git rev-parse HEAD)"
-  KNOWLEDGE_BUNDLE_OBSERVED_AT="$(git show -s --format=%cI HEAD)"
+  #
+  # THE WORKSPACE HAS NO `.git`. The wrapper builds it with `git archive`, so a
+  # bare `git rev-parse HEAD` here fails and `set -e` aborts the deploy with no
+  # explanation of why. That was unreachable only for as long as the wrapper
+  # always supplied a prebuilt image; it is reachable the moment anybody sets
+  # SKIP_APP_IMAGE_BUILD=0 with no APP_IMAGE, which is the documented recovery
+  # path. So the values are taken from the caller when it passed them, from git
+  # when there really is a checkout (bootstrap and staging run this script from
+  # a working tree), and otherwise the deploy is refused with the remedy named.
+  if [ -n "${DEPLOY_COMMIT_SHA:-}" ]; then
+    GIT_COMMIT_SHA="$DEPLOY_COMMIT_SHA"
+    KNOWLEDGE_BUNDLE_OBSERVED_AT="${DEPLOY_COMMIT_OBSERVED_AT:-}"
+  elif git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    GIT_COMMIT_SHA="$(git rev-parse HEAD)"
+    KNOWLEDGE_BUNDLE_OBSERVED_AT="$(git show -s --format=%cI HEAD)"
+  else
+    echo "Cannot stamp the image with the deployed commit: $PROJECT_DIR is not a Git checkout." >&2
+    echo "A deploy workspace is created with 'git archive' and has no .git, so the commit cannot be read here." >&2
+    echo "Build the images on the host with './scripts/run-production-blue-green-deploy.sh --build-and-push-images' and deploy the pushed tags, or export DEPLOY_COMMIT_SHA (and DEPLOY_COMMIT_OBSERVED_AT) before running this engine." >&2
+    return 1
+  fi
   # #2352 D1: the same commit, as the release identifier the public website's
   # fixed CSP nonce is derived from. Baked into the image as a build arg rather
   # than passed at runtime, so every process of this release computes the same
@@ -1259,13 +1671,132 @@ prepare_application_images() {
   # The nonce is a digest of this value, so the SHA itself is never published.
   RELEASE_ID="$GIT_COMMIT_SHA"
   export GIT_COMMIT_SHA KNOWLEDGE_BUNDLE_OBSERVED_AT RELEASE_ID
-  info "Stamping deployed-code knowledge bundle with commit $(git rev-parse --short=12 HEAD)."
+  info "Stamping deployed-code knowledge bundle with commit ${GIT_COMMIT_SHA:0:12}."
 
   if [ "$FORCE_NO_CACHE" = "1" ]; then
     docker compose build --pull --no-cache "$CRON_SERVICE" "$TARGET_SERVICE" "$MIGRATE_SERVICE"
   else
     docker compose build --pull "$CRON_SERVICE" "$TARGET_SERVICE" "$MIGRATE_SERVICE"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Protecting the previous release's rollback images from this deploy's own prune
+# ---------------------------------------------------------------------------
+#
+# Rollback here means routing Caddy back to the previous colour (DEPLOYMENT.md
+# -> "Rollback"). That needs the previous release's IMAGES still on the host,
+# and this script's own `prune` was evicting them: step 18 removes the inactive
+# colour's container, which leaves the old image referenced by nothing, and step
+# 20 then prunes it. The deploy reported success and the rollback it documents
+# had become impossible.
+#
+# A stopped placeholder container is the hold. `prune` never removes an image a
+# container references, running or not.
+#
+# PIN THE IMAGE ID, NOT THE TAG. In local-build mode the running colour's image
+# is the mutable `<project>-app:local`, and this deploy's own build re-tags that
+# name onto the NEW image. A hold written against the tag therefore protects the
+# image being deployed, lets the real rollback image fall dangling into the
+# prune, and reports it retained - worse than no hold, because it is a hold that
+# lies. `docker inspect --format '{{.Image}}'` on the RUNNING CONTAINER answers
+# with the immutable id, which is the whole point of reading it there.
+ROLLBACK_HOLD_LABEL="nz.alpineclub.deploy.rollback-image-hold"
+ROLLBACK_HOLD_NAME_PREFIX="tacbookings-rollback-hold-"
+ROLLBACK_IMAGE_IDS=""
+
+rollback_hold_container_name() {
+  local image_id="$1"
+
+  printf '%s%s' "$ROLLBACK_HOLD_NAME_PREFIX" "${image_id#sha256:}"
+}
+
+capture_rollback_image_ids() {
+  local service
+  local container_id
+  local container_ids
+  local image_id
+
+  ROLLBACK_IMAGE_IDS=""
+  for service in "$ACTIVE_SERVICE" "$CRON_SERVICE"; do
+    [ -n "$service" ] || continue
+    # `-a`, deliberately: STOPPED containers count. The moment this guard
+    # matters most is an operator running the deploy to recover from an
+    # incident, with the site already down - and `ps -q` reports nothing then,
+    # so the previous release's image would look unreferenced and the prune
+    # would take exactly the image the rollback needs. A stopped container
+    # still names the image it was created from, which is the whole question.
+    container_ids="$(docker compose ps -a -q "$service" 2>/dev/null || true)"
+    [ -n "$container_ids" ] || continue
+    while IFS= read -r container_id; do
+      [ -n "$container_id" ] || continue
+      image_id="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null || true)"
+      [ -n "$image_id" ] || continue
+      case " $ROLLBACK_IMAGE_IDS " in
+        *" $image_id "*) continue ;;
+      esac
+      ROLLBACK_IMAGE_IDS="${ROLLBACK_IMAGE_IDS}${ROLLBACK_IMAGE_IDS:+ }${image_id}"
+    done <<EOF
+$container_ids
+EOF
+  done
+
+  if [ -z "$ROLLBACK_IMAGE_IDS" ]; then
+    info "No app containers exist for this project, so there is no previous release for the prune to evict."
+    return 0
+  fi
+
+  for image_id in $ROLLBACK_IMAGE_IDS; do
+    info "Rollback image to protect: ${image_id}"
+  done
+}
+
+release_stale_rollback_holds() {
+  local keep=""
+  local image_id
+  local name
+
+  # An empty capture means this deploy learned NOTHING about what needs
+  # protecting - not that nothing does. Falling through would compute an empty
+  # keep-list and remove every hold on the host, which is this guard inverted
+  # into the exact damage it exists to prevent: the last good deploy's hold
+  # destroyed, and the image pruned behind it. Release nothing instead.
+  if [ -z "$ROLLBACK_IMAGE_IDS" ]; then
+    info "No rollback image was identified, so no existing hold is released."
+    return 0
+  fi
+
+  for image_id in $ROLLBACK_IMAGE_IDS; do
+    keep="${keep} $(rollback_hold_container_name "$image_id")"
+  done
+
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    case "${keep} " in
+      *" ${name} "*) continue ;;
+    esac
+    docker rm -f "$name" >/dev/null 2>&1 || true
+  done < <(docker ps -a --filter "label=$ROLLBACK_HOLD_LABEL" --format '{{.Names}}' 2>/dev/null || true)
+}
+
+hold_rollback_images() {
+  local image_id
+  local holder
+
+  release_stale_rollback_holds
+
+  for image_id in $ROLLBACK_IMAGE_IDS; do
+    holder="$(rollback_hold_container_name "$image_id")"
+    if docker container inspect "$holder" >/dev/null 2>&1; then
+      continue
+    fi
+    if docker create --name "$holder" --label "$ROLLBACK_HOLD_LABEL=1" \
+      --entrypoint /bin/true "$image_id" >/dev/null 2>&1; then
+      info "Holding rollback image ${image_id} with placeholder container ${holder}."
+    else
+      warn "Unable to hold rollback image ${image_id}. A prune may remove it and make rollback to the previous release impossible."
+    fi
+  done
 }
 
 run_prune_command() {
@@ -1288,10 +1819,26 @@ prune_stale_docker_assets() {
     "Cleared unused BuildKit cache older than $PRUNE_UNTIL." \
     "Unable to clear unused BuildKit cache older than $PRUNE_UNTIL. Continuing." \
     docker buildx prune -af --filter "until=$PRUNE_UNTIL"
+  # THREE PRUNES, NOT `docker system prune`, and the split is the guard rather
+  # than tidiness. `system prune` removes stopped containers BEFORE images and
+  # applies `until` to that pass too, so a short PRUNE_UNTIL sweeps the
+  # placeholder containers moments before the image pass they exist to guard -
+  # silently, and the deploy still reports the images retained. Split into
+  # separate passes the ORDER is ours: containers first, then the holds are
+  # (re-)created, then images. No value of PRUNE_UNTIL can reach between them.
   run_prune_command \
-    "Pruned unused Docker images, containers, and networks older than $PRUNE_UNTIL." \
-    "Unable to prune unused Docker images, containers, and networks older than $PRUNE_UNTIL. Continuing." \
-    docker system prune -af --filter "until=$PRUNE_UNTIL"
+    "Pruned unused Docker containers older than $PRUNE_UNTIL." \
+    "Unable to prune unused Docker containers older than $PRUNE_UNTIL. Continuing." \
+    docker container prune -f --filter "until=$PRUNE_UNTIL"
+  hold_rollback_images
+  run_prune_command \
+    "Pruned unused Docker networks older than $PRUNE_UNTIL." \
+    "Unable to prune unused Docker networks older than $PRUNE_UNTIL. Continuing." \
+    docker network prune -f --filter "until=$PRUNE_UNTIL"
+  run_prune_command \
+    "Pruned unused Docker images older than $PRUNE_UNTIL." \
+    "Unable to prune unused Docker images older than $PRUNE_UNTIL. Continuing." \
+    docker image prune -af --filter "until=$PRUNE_UNTIL"
 }
 
 get_service_image_ref() {
@@ -1448,8 +1995,18 @@ list_pending_migration_sql_files() {
 
 validate_pending_migrations_blue_green_safe() {
   local pending_sql_files=()
+  local pending_sql_file
 
   mapfile -t pending_sql_files < <(list_pending_migration_sql_files)
+
+  # Remembered for the failure record: the names this deploy was about to apply,
+  # captured here because after `migrate deploy` runs they are no longer pending
+  # and nothing else in the script can reconstruct the list.
+  PENDING_MIGRATION_NAMES=""
+  for pending_sql_file in "${pending_sql_files[@]+"${pending_sql_files[@]}"}"; do
+    PENDING_MIGRATION_NAMES="${PENDING_MIGRATION_NAMES}$(basename "$(dirname "$pending_sql_file")")"$'\n'
+  done
+
   if [ "${#pending_sql_files[@]}" -eq 0 ]; then
     info "No pending Prisma migrations detected."
     return 0
@@ -1876,6 +2433,15 @@ warmup_services() {
 # `prepare_application_images` exports as RELEASE_ID for that path anyway.
 resolve_expected_release() {
   local tag
+
+  # The host-build recovery path this PR unblocks runs the engine from a
+  # workspace with no `.git`, and passes the commit in DEPLOY_COMMIT_SHA.
+  # Without this the gate warns it cannot identify the release, and the failure
+  # record says "unidentifiable", while the answer sits in a variable.
+  if [ -n "${DEPLOY_COMMIT_SHA:-}" ]; then
+    printf '%s' "$DEPLOY_COMMIT_SHA"
+    return 0
+  fi
 
   if [ -n "$APP_IMAGE" ] && [ "${APP_IMAGE#*@}" = "$APP_IMAGE" ]; then
     tag="${APP_IMAGE##*:}"
@@ -2319,6 +2885,9 @@ info "Current live upstream: ${ACTIVE_SERVICE}"
 info "Target web service: ${TARGET_SERVICE}"
 
 step "7/20" "Pruning stale Docker cache before image preparation"
+# Captured BEFORE anything is pulled, built or re-tagged: after step 9 the
+# running colour's tag may name a different image than it does now.
+capture_rollback_image_ids
 prune_stale_docker_assets "before image preparation"
 
 step "8/20" "Pulling infrastructure images"
@@ -2343,6 +2912,10 @@ validate_pending_migrations_blue_green_safe
 info "Prisma schema matches the committed migration history."
 
 step "13/20" "Running Prisma migrations"
+# From here on, any failure writes a record: the schema may no longer match
+# either release, and the terminal is not a record. Armed BEFORE the migrate
+# runs, because a migrate that dies part-way is the case this exists for.
+MIGRATE_STEP_REACHED=1
 docker compose --profile "$MIGRATE_SERVICE" run --rm "$MIGRATE_SERVICE"
 verify_prisma_migration_status
 info "Prisma migration status reports the database is up to date."
@@ -2377,6 +2950,12 @@ if ! reload_caddy; then
   restore_previous_upstream_file "$PREVIOUS_UPSTREAM_CONTENTS"
   reload_caddy >/dev/null 2>&1 || true
   echo "Failed to reload Caddy after writing the target upstream." >&2
+  # An explicit `exit` does NOT fire the ERR trap, so `fail` never runs and this
+  # one path - a post-migrate failure, which is exactly the class the record
+  # exists for - would leave none. Written here rather than by moving the exit
+  # into the trap, because the upstream file has already been restored above and
+  # the record should say so.
+  write_deploy_failure_record || true
   exit 1
 fi
 SWITCHED_TRAFFIC=1
@@ -2428,11 +3007,19 @@ case "${1:-}" in
     fi
     run_internal_blue_green_deploy
     ;;
+  --build-and-push-images)
+    shift
+    if [ "$#" -ne 0 ]; then
+      echo "Unexpected arguments for --build-and-push-images: $*" >&2
+      exit 2
+    fi
+    run_production_wrapper build-and-push-images
+    ;;
   "")
-    run_production_wrapper
+    run_production_wrapper deploy
     ;;
   *)
-    echo "Usage: $0 [--internal-blue-green-deploy]" >&2
+    echo "Usage: $0 [--build-and-push-images | --internal-blue-green-deploy]" >&2
     exit 2
     ;;
 esac
