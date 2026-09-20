@@ -96,6 +96,7 @@ export async function findEditReviewChargeRequest({
     where: {
       paymentId,
       ...editReviewChargeRequestCriteria(bookingModificationId),
+      withdrawnAt: null, // #3528, `INV-ADDPAY-040`: a withdrawn request is closed for good
     },
     orderBy: { createdAt: "desc" },
     select: {

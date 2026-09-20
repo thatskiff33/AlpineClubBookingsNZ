@@ -76,6 +76,7 @@ const CONTEXT = {
   memberFirstName: "Ada Member",
   memberId: "member_1",
   bookingModificationId: "mod_1",
+  priceLines: null,
 };
 
 let order: string[] = [];

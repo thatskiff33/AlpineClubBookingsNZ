@@ -1022,7 +1022,10 @@ correct and supported — what is never correct is a bare `npx tsx`.) The reason
 is not tidiness.
 `@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and `@/lib/stripe`
 each carry `import "server-only"` (`INV-OPS-013`, #2850), which is what makes
-the production build refuse to ship any of them to a member's browser. That
+the production build refuse to ship any of them to a member's browser. Since
+#3204 the club-timezone seed and the two environment-role readers carry it too,
+taking the marked roots to nine — every command below already reached a module
+that carried the marker, so none of them needed a new flag. That
 marker throws the moment it is loaded under plain Node, with a message about
 React Server Components that names nothing you did — so a script started with a
 bare `npx tsx scripts/<name>.ts` would abort before it printed anything, which
@@ -1035,7 +1038,8 @@ normally. Arguments go after `--`, for example
 `npm run xero:booking-repair -- --dry-run`. Environment variables go in front as
 usual: `DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing`.
 `src/lib/__tests__/cli-server-only-reach-census.test.ts` fails the build if a
-command that reaches one of those modules is ever published without the flag —
+command that reaches ANY module carrying that marker is ever published without
+the flag —
 anywhere it is published, including inside a tool's own `--help` output, which
 is exactly where the bare form outlived every runbook (#2850).
 

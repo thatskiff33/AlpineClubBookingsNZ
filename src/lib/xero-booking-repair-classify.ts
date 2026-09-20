@@ -573,7 +573,15 @@ export function classifyBookingContext(
                     ),
                 })
               : null;
-          if (editReviewPaymentPlan?.outcome === "manual-review") {
+          if (editReviewPaymentPlan?.outcome === "withdrawn") {
+            // #3528 (`INV-ADDPAY-040`): an officer withdrew this edit's request
+            // while it was unpaid, so the money is no longer asked for and no
+            // invoice is missing. Nothing is queued and nothing is flagged -
+            // the withdrawal audit row is the record - because the only other
+            // reading, "a request exists with an intent, park an invoice on
+            // it", would hold a fresh supplementary invoice against an intent
+            // the withdrawal cancelled, until the reaper retired it.
+          } else if (editReviewPaymentPlan?.outcome === "manual-review") {
             // The invoice IS missing, but the tool must not raise it: doing so
             // would either assert money the club does not hold, or claim the
             // anchor the intent-mint recovery is about to use. Same finding

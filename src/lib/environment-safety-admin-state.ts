@@ -12,19 +12,17 @@ import "server-only";
  * isolation reasoning that is genuinely about the WRITE. This half has one
  * question of its own: what may travel to a browser.
  *
- * `server-only` HERE and not on `environment-role.ts`, which is the split worth
- * understanding rather than copying blindly. The reason used to be that the
- * resolver has to stay importable from a `tsx` entrypoint (through
- * `setup-readiness-db.ts`) and so COULD NOT carry the marker. Since #2850 it
+ * `server-only` HERE, and since #3204 on `environment-role.ts` as well — the
+ * split this paragraph used to explain has closed. The reason the resolver went
+ * without the marker was that it has to stay importable from a `tsx` entrypoint
+ * (through `setup-readiness-db.ts`) and so COULD NOT carry it. Since #2850 it
  * could: `npm run setup:check` runs with `--conditions=react-server`, under
- * which the marker is inert. It stays unmarked as a deliberate decision
- * instead, tracked for sealing as #3204 — see
- * `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that
- * stay unmarked".
+ * which the marker is inert, and #3204 acted on that. See
+ * `docs/invariants/operations.md` -> `INV-OPS-013`.
  * This module has no command-line caller at all — it exists to build a browser
- * payload — so it takes the compiler-enforced guarantee with no such question to
- * answer, and the panel that consumes the payload declares the same types itself
- * rather than importing them from here.
+ * payload — so it never had the question to answer in the first place, and the
+ * panel that consumes the payload declares the same types itself rather than
+ * importing them from here.
  *
  * WHAT IS DELIBERATELY NOT ON THE PAYLOAD: the changer's email (see
  * `MEMBER_NAME_SELECT`), the raw environment beyond the one refused value the

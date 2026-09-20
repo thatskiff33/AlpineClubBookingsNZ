@@ -57,6 +57,63 @@ describe("buildBookingHistoryItems", () => {
     expect(fallback).not.toContain("STORED_SIDE_DEFECT");
   });
 
+  it("says what a modification's figure is made of when the edit stored its lines (#3530)", () => {
+    const line = {
+      v: 1,
+      kind: "GUEST_NIGHTS",
+      sign: -1,
+      ageTier: "ADULT",
+      isMember: false,
+      rateMembershipTypeId: "rt-non-member",
+      unitCents: 8000,
+      nightCount: 2,
+      guestCount: 2,
+      quantity: 4,
+      startDate: "2026-08-14",
+      endExclusive: "2026-08-16",
+      guestNames: ["A Guest", "B Guest"],
+      amountCents: -32000,
+    };
+    const items = buildBookingHistoryItems({
+      audience: "member",
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [
+        {
+          id: "mod-lines",
+          modificationType: "GUEST_REMOVE",
+          previousData: { guestCount: 3, removedGuest: { firstName: "A", lastName: "Guest" } },
+          newData: { guestCount: 1 },
+          priceDiffCents: -32000,
+          changeFeeCents: 0,
+          priceLines: [line],
+          createdAt: new Date("2026-04-04T12:00:00Z"),
+        },
+        {
+          id: "mod-legacy",
+          modificationType: "GUEST_REMOVE",
+          previousData: { guestCount: 2, removedGuest: { firstName: "C", lastName: "Guest" } },
+          newData: { guestCount: 1 },
+          priceDiffCents: -8000,
+          changeFeeCents: 0,
+          priceLines: null,
+          createdAt: new Date("2026-04-03T12:00:00Z"),
+        },
+      ],
+      refundRequests: [],
+      auditLogs: [],
+    });
+
+    const withLines = items.find((item) => item.id === "modification-mod-lines")?.detail ?? "";
+    expect(withLines).toContain(
+      "Made up of: 2 x Non-member Adult removed - 2 nights - 14 Aug 2026 - 16 Aug 2026 (-$320.00).",
+    );
+    // A row with no lines reads exactly as it always did.
+    const legacy = items.find((item) => item.id === "modification-mod-legacy")?.detail ?? "";
+    expect(legacy).toContain("Removed C Guest");
+    expect(legacy).not.toContain("Made up of");
+  });
+
   it("shows unknown sold-price evidence without inventing a stored amount", () => {
     const items = buildBookingHistoryItems({
       audience: "member",

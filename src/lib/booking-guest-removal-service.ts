@@ -102,6 +102,14 @@ import {
 // this authoritative gate. The gate itself is unchanged.
 import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-removal";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import logger from "@/lib/logger";
+import {
+  computeModificationPriceLines,
+  diffBookingPricing,
+  pricingSideFromPriceBreakdown,
+  pricingSideFromStoredGuests,
+  type ModificationLine,
+} from "@/lib/booking-modification-lines";
 
 export class BookingGuestRemovalError extends Error {
   constructor(
@@ -149,6 +157,8 @@ export type RemoveBookingGuestResult = {
   choreWarnings: string[];
   oldGuestCount: number;
   bookingModificationId: string;
+  /** #3530: the itemised lines the removal stored, or null when it stored none. */
+  priceLines: ModificationLine[] | null;
   /**
    * #3032 (epic #2797): this removal's money was PARKED rather than settled -
    * the guest came off the booking and an OPEN `EDIT_FINANCIAL_REVIEW` task now
@@ -1101,6 +1111,42 @@ export async function removeBookingGuestInTransaction({
     },
   });
 
+  /**
+   * #3530: the lines behind `priceDiffCents`. BEFORE is every guest this
+   * transaction loaded, the removed one included, from the in-memory rows (the
+   * removed guest's night rows are gone by now); AFTER is the remaining guests
+   * as the breakdown priced them, index-aligned with `guestsForPricing`. A
+   * parked removal priced nothing and stores none.
+   */
+  const priceLines =
+    priceBreakdown === null
+      ? null
+      : await computeModificationPriceLines(
+          { bookingId, site: "guest-removal" },
+          () => {
+            const promoCode = booking.promoRedemption?.promoCode.code ?? null;
+            return diffBookingPricing(
+              pricingSideFromStoredGuests(booking.guests, {
+                promoAdjustmentCents: booking.promoAdjustmentCents,
+                promoCode,
+              }),
+              pricingSideFromPriceBreakdown(
+                remainingGuests.map((guest) => ({
+                  guestKey: guest.id,
+                  name: `${guest.firstName} ${guest.lastName}`.trim(),
+                })),
+                priceBreakdown.guests,
+                {
+                  promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
+                  promoCode: promoResult.promoRemoved ? null : promoCode,
+                },
+              ),
+              priceDiffCents,
+            );
+          },
+          logger,
+        );
+
   const bookingModification = await tx.bookingModification.create({
     data: {
       bookingId,
@@ -1138,6 +1184,7 @@ export async function removeBookingGuestInTransaction({
       },
       priceDiffCents,
       changeFeeCents: 0,
+      ...(priceLines ? { priceLines } : {}),
     },
   });
 
@@ -1266,6 +1313,7 @@ export async function removeBookingGuestInTransaction({
     choreWarnings,
     oldGuestCount: booking.guests.length,
     bookingModificationId: bookingModification.id,
+    priceLines,
     financialReviewPending: parkedFinancialReview,
     financialReviewTaskIds,
     zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,

@@ -385,6 +385,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "withdrawAdditionalPaymentAsk#1",
+    tier: "GLOBAL",
+    reason:
+      "#3528 (INV-ADDPAY-040): retiring an additional-payment request is a settlement-money transition that must exclude the counterparts that settle or supersede the same ask - the capture webhook, the #3340 supersede mint, the manual mark-paid settle and the cancel path's own intent failing - and the fenced updateMany on the exact retired values is the claim. The Stripe cancel runs BEFORE the transaction, so the key is never held across a provider call.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "performBookingCancellation#1",
     tier: "GLOBAL",
     reason:

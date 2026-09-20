@@ -78,6 +78,19 @@ export type HeldNightPrice = {
   priceSource?: BookingGuestNightPriceSource;
 };
 export type StoredSoldPriceGrain = "WHOLE_GUEST" | "INDIVIDUAL_NIGHT";
+
+/**
+ * At `INDIVIDUAL_NIGHT` grain, does this row's origin disprove its own sold
+ * price? The two backfill origins do (the docblock above); a live quote or an
+ * officer's figure does not. A row with no origin recorded is not judged here -
+ * both readers treat it as they always did. The one home for the rule, read by
+ * this module's classifier and by the edit-lines diff (#3530, `INV-SSOT`).
+ */
+export function storedNightPriceSourceIsInexact(
+  source: BookingGuestNightPriceSource | undefined,
+): boolean {
+  return source === "EVEN_SPLIT" || source === "UNKNOWN";
+}
 /**
  * The verdict on one guest strand.
  *
@@ -141,10 +154,7 @@ export function classifyStoredSoldPriceEvidence(
   }
   if (
     grain === "INDIVIDUAL_NIGHT" &&
-    heldNights.some(
-      (night) =>
-        night.priceSource === "EVEN_SPLIT" || night.priceSource === "UNKNOWN",
-    )
+    heldNights.some((night) => storedNightPriceSourceIsInexact(night.priceSource))
   ) {
     return {
       kind: "unusable",

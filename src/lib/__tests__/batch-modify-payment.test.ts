@@ -1515,6 +1515,111 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(tx.bookingGuest.create).not.toHaveBeenCalled();
   }, 10_000);
 
+  it("stores the itemised lines behind the delta, summing to priceDiffCents (#3530)", async () => {
+    // Alice holds two sold nights at 2500; Bob is added for the same two
+    // nights at 5000. The rows the edit WRITES are re-read for the after side,
+    // so the fake answers that one re-read with what the write left behind.
+    const booking = makeBooking({
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Alice",
+          lastName: "Member",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "m1",
+          priceCents: 5000,
+          rateMembershipTypeId: "rt-member",
+          nights: [
+            { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 2500, priceSource: "SOLD" },
+            { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: 2500, priceSource: "SOLD" },
+          ],
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+    const writtenRows = [
+      {
+        id: "g1",
+        firstName: "Alice",
+        lastName: "Member",
+        ageTier: "ADULT",
+        isMember: true,
+        rateMembershipTypeId: "rt-member",
+        nights: [
+          { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 2500 },
+          { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: 2500 },
+        ],
+      },
+      {
+        id: "g2",
+        firstName: "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        rateMembershipTypeId: "rt-non-member",
+        nights: [
+          { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 5000 },
+          { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: 5000 },
+        ],
+      },
+    ];
+    (tx.bookingGuest.findMany as ReturnType<typeof vi.fn>).mockImplementation(
+      async (args: { select?: { nights?: unknown } }) =>
+        args?.select?.nights ? writtenRows : [],
+    );
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+    mockCalculateBookingPrice
+      .mockReturnValueOnce({
+        totalPriceCents: 15000,
+        guests: [
+          { priceCents: 5000, perNightCents: [2500, 2500] },
+          { priceCents: 10000, perNightCents: [5000, 5000] },
+        ],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 10000,
+        guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        addGuests: [{ firstName: "Bob", lastName: "Guest", ageTier: "ADULT", isMember: false }],
+      }),
+    });
+    const response = await PUT(request, { params: Promise.resolve({ id: "bk1" }) });
+    expect(response.status).toBe(200);
+
+    const created = (tx.bookingModification.create as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]?.data;
+    expect(created.priceDiffCents).toBe(10000);
+    const lines = created.priceLines as Array<{ amountCents: number }>;
+    expect(lines.reduce((sum, line) => sum + line.amountCents, 0)).toBe(created.priceDiffCents);
+    expect(lines).toEqual([
+      expect.objectContaining({
+        kind: "GUEST_NIGHTS",
+        sign: 1,
+        isMember: false,
+        unitCents: 5000,
+        nightCount: 2,
+        guestCount: 1,
+        startDate: "2026-08-20",
+        endExclusive: "2026-08-22",
+        guestNames: ["Bob Guest"],
+        amountCents: 10000,
+      }),
+    ]);
+  });
+
   it("creates an additional PaymentIntent when a paid booking increases in price", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);

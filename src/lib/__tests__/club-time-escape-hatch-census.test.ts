@@ -615,8 +615,17 @@ const CENSUS_CEILING = {
    * and the correction service itself derives the club's today through
    * `club-time` rather than through this adapter. Re-measured by RUNNING this
    * suite on this tree, not by adding two to the literal.
+   *
+   * 223 -> 225 (#3530): two importers, both `formatDateOnly` alone and both the
+   * zone-free direction. `night-price-runs.ts` is the run splitter lifted out
+   * of `xero-booking-invoices.ts` (an importer already counted) so an edit's
+   * lines are cut on the same runs the invoice is; it compares date-only lodge
+   * nights for contiguity. `booking-modification-lines.ts` keys the same
+   * nights by their date-only string and stores them as calendar days; the
+   * sentence a person reads goes through `club-time`'s `formatClubDate`, not
+   * this adapter. Re-measured by RUNNING this suite on this tree.
    */
-  dateOnlyImporters: 223,
+  dateOnlyImporters: 225,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

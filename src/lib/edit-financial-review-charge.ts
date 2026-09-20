@@ -542,7 +542,7 @@ export async function syncEditFinancialReviewChargeRequest({
       memberEmail: member?.email ?? "",
       memberName: member?.name ?? "",
       memberId: member?.id ?? "",
-      bookingModificationId,
+      bookingModificationId, priceLines: null, // #3530: typed money; no lines describe it
       // #3181: carried, not re-read. See this function's parameter docblock.
       hasIssuedXeroInvoice,
     },

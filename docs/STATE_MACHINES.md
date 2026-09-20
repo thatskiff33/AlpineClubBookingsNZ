@@ -638,8 +638,31 @@ member/admin starts edit -> quoted delta -> local booking mutation
 positive delta -> additional payment or supplementary Xero invoice
 uncollected additional payment -> reminder at +3 days, reminder 2 days before
   check-in, admin re-send on demand; stops at check-out (never auto-cancelled)
+uncollected review-raised request -> WITHDRAWN by a finance officer (#3528)
 negative delta -> Stripe refund or source-linked member credit
 admin review path -> REQUESTED -> APPROVED or REJECTED
+```
+
+**Withdrawal (#3528, `INV-ADDPAY-040`).** A request a completed financial review
+raised can be taken back while it is unpaid. The transition is ordered so a
+crash between its two halves converges on a retry rather than leaving a payable
+intent behind a zeroed booking:
+
+```text
+officer withdraws
+     not review-raised, or carries a superseded price ask -> refused (edit the booking)
+     already paid -> refused (that is a refund)
+     a live CREATE_ADDITIONAL_PAYMENT_INTENT recovery -> refused (try once it has minted or died)
+  -> Stripe cancel FIRST, outside any lock (no-op if already cancelled)
+     succeeded at the provider -> refused: that is a refund, nothing changes
+     processing / not cancellable -> refused, nothing changes
+  -> under pg_advisory_xact_lock(1):
+       Payment.additional* zeroed behind a fence on the exact values retired
+         (count 0 -> 409, whole transaction rolls back)
+       ADDITIONAL row -> FAILED + withdrawnAt (the durable fact; never deleted)
+       WAITING_PAYMENT supplementary invoice on that intent -> CANCELLED
+  -> booking.additionalPayment.withdrawn audit row; the review task stays COMPLETED
+later payment_intent.canceled webhook -> reconcile reads PAST the stamped row -> still nothing owed
 ```
 
 **One ask at a time, sized to the whole outstanding balance (#3340).** A booking

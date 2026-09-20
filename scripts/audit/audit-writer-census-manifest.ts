@@ -529,7 +529,15 @@ export const AUDIT_CENSUS_TOTALS = {
   // of which the status claim beside it clears off the row, so this entry is the
   // only place they survive. Categorised `payment` at the site, so it does not
   // join `UNCATEGORISED_AUDIT_WRITERS` below.
-  writeSites: 484,
+  // 484 -> 485 (#3528): `booking.additionalPayment.withdrawn`, the record that a
+  // finance officer withdrew an unpaid request a completed review had raised -
+  // who, how much, which intent (and its provider status after the cancel),
+  // which review task, and what was retired. One awaited `createAuditLog` after
+  // the withdrawal's transaction commits. `payment`, like the request it
+  // reverses, and `important` because it is the only place the withdrawal
+  // shows: the task stays COMPLETED and the columns it zeroed read as if no
+  // request had existed.
+  writeSites: 485,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -689,7 +697,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // record of that change should not be able to be the part that quietly
     // failed.
     // 131 -> 132 (#3498): the manual-refund-task reopen record.
-    createAuditLog: { total: 132, uncategorised: 0 },
+    createAuditLog: { total: 133, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -852,7 +860,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // category those siblings already use.
     // 45 -> 46 (#3498): the reopen record, which is a money decision being
     // undone and belongs with the closure it reverses.
-    payment: 46,
+    payment: 47,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
