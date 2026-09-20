@@ -86,12 +86,34 @@ describe("BookingMoneyReconciliationNotice", () => {
     // And it says WHY, per reason — without the cause the reader cannot tell
     // whether it is theirs to fix.
     expect(note.textContent).toContain(
-      "not stored in a form that can be added up",
+      "no nightly prices recorded at all",
     );
-    expect(note.textContent).toContain("even share of a total");
     expect(note.textContent).toContain(
       "stored as a single figure, without the per-night breakdown",
     );
+  });
+
+  // #3547. This reason used to arrive inside STRAND_EVIDENCE_UNREADABLE and so
+  // inherited the quiet wording. It is a disagreement between two numbers that
+  // are both on file, so it has to reach the officer as one — on its own, with
+  // no actionable sibling carrying it.
+  it("asks for review when a guest's prices disagree with that guest's own total", () => {
+    render(
+      <BookingMoneyReconciliationNotice
+        view={{
+          visibility: "VISIBLE",
+          reconciliation: {
+            state: "UNRECONCILED",
+            reasons: ["STRAND_TOTAL_DISAGREES"],
+          },
+        }}
+      />,
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert.getAttribute("data-reconciliation-kind")).toBe("DISAGREEMENT");
+    expect(alert.textContent).toContain("needs officer review");
+    expect(alert.textContent).not.toContain("cannot be checked");
+    expect(screen.queryByRole("note")).toBeNull();
   });
 
   // The case that decides the rule: one actionable reason must not be muted by

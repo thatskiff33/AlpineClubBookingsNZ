@@ -10,6 +10,16 @@ import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidenc
 export const BOOKING_MONEY_RECONCILIATION_REASON_ORDER = [
   "NO_SURVIVING_STRANDS",
   "STRAND_EVIDENCE_UNREADABLE",
+  // #3547. Split out of `STRAND_EVIDENCE_UNREADABLE`, which was covering three
+  // causes with opposite answers to "can anybody do something about this?".
+  // Prices recorded as an even share, and prices never recorded at all, mean
+  // the figures do not exist — nobody can check those, today or ever. But
+  // prices that do not add up to that guest's OWN recorded total is a
+  // disagreement between two numbers that are both on file, which is exactly
+  // the finding this reconciliation exists to surface. Bundled together, the
+  // actionable one wore the quiet "cannot be checked" wording and nobody
+  // looked.
+  "STRAND_TOTAL_DISAGREES",
   "HEADLINE_TOTAL_MISMATCH",
   "PROMO_BUILD_UP_NOT_KNOWN",
   "PROMO_BUILD_UP_MISMATCH",
@@ -102,14 +112,20 @@ export function reconcileBookingMoney(
         "WHOLE_GUEST",
       );
       if (evidence.kind === "unusable") {
+        // Still unusable for SUMMING either way, so the headline comparison
+        // below stays suppressed — what differs is only what the booking is
+        // told to say about why (#3547).
         allStrandsReadable = false;
+        found.add(
+          evidence.cause === "STORED_TOTAL_MISMATCH"
+            ? "STRAND_TOTAL_DISAGREES"
+            : "STRAND_EVIDENCE_UNREADABLE",
+        );
         continue;
       }
       guestTotalCents += evidence.totalCents;
     }
-    if (!allStrandsReadable) {
-      found.add("STRAND_EVIDENCE_UNREADABLE");
-    } else if (guestTotalCents !== booking.totalPriceCents) {
+    if (allStrandsReadable && guestTotalCents !== booking.totalPriceCents) {
       found.add("HEADLINE_TOTAL_MISMATCH");
     }
   }

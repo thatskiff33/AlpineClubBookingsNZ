@@ -80,6 +80,29 @@ describe("reconcileBookingMoney", () => {
         ],
       },
     ],
+    // #3547. Same `unusable` verdict as the case above, different CAUSE: the
+    // night rows are exact and stored, they simply do not add up to the total
+    // recorded against that guest. Two numbers both on file that disagree, which
+    // an officer can resolve — so it must not arrive wearing the other reason.
+    [
+      "STRAND_TOTAL_DISAGREES",
+      {
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              {
+                stayDate: NIGHT,
+                priceCents: 9_000,
+                priceSource: "SOLD" as const,
+              },
+            ],
+          },
+        ],
+      },
+    ],
     ["HEADLINE_TOTAL_MISMATCH", { totalPriceCents: 9_999, finalPriceCents: 7_999 }],
     [
       "PROMO_BUILD_UP_NOT_KNOWN",
@@ -101,6 +124,55 @@ describe("reconcileBookingMoney", () => {
     ["FINAL_PRICE_RELATION_MISMATCH", { finalPriceCents: 8_001 }],
   ] as const)("reports %s", (reason, overrides) => {
     expect(reconcileBookingMoney(booking(overrides)).reasons).toContain(reason);
+  });
+
+  // The whole point of #3547, stated as the property rather than as two
+  // examples: a guest whose prices were never recorded and a guest whose
+  // recorded prices disagree are different findings, and each must produce its
+  // own reason and NOT the other. Asserting only `toContain` on each would pass
+  // if the split silently emitted both.
+  it("never reports absent evidence and a disagreement for one another", () => {
+    const neverRecorded = reconcileBookingMoney(
+      booking({
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: null, priceSource: "UNKNOWN" as const },
+            ],
+          },
+        ],
+      }),
+    ).reasons;
+    expect(neverRecorded).toContain("STRAND_EVIDENCE_UNREADABLE");
+    expect(neverRecorded).not.toContain("STRAND_TOTAL_DISAGREES");
+
+    const disagrees = reconcileBookingMoney(
+      booking({
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: 9_000, priceSource: "SOLD" as const },
+            ],
+          },
+        ],
+      }),
+    ).reasons;
+    expect(disagrees).toContain("STRAND_TOTAL_DISAGREES");
+    expect(disagrees).not.toContain("STRAND_EVIDENCE_UNREADABLE");
+
+    // Note what is NOT here. An even-share price source is the third cause the
+    // underlying reader can return, but reconciliation reads at WHOLE_GUEST
+    // grain, where an even-share row that sums correctly is EXACT and the
+    // booking reconciles — pinned already by "accepts an evenly split row at
+    // whole-guest grain when it reconciles" above. So only two of the three
+    // causes ever reach these reasons, which is why the wording names one
+    // cause each rather than listing all three.
   });
 
   it("retains every simultaneous reason in the approved deterministic order", () => {
@@ -126,6 +198,7 @@ describe("reconcileBookingMoney", () => {
     expect(BOOKING_MONEY_RECONCILIATION_REASON_ORDER).toEqual([
       "NO_SURVIVING_STRANDS",
       "STRAND_EVIDENCE_UNREADABLE",
+      "STRAND_TOTAL_DISAGREES",
       "HEADLINE_TOTAL_MISMATCH",
       "PROMO_BUILD_UP_NOT_KNOWN",
       "PROMO_BUILD_UP_MISMATCH",

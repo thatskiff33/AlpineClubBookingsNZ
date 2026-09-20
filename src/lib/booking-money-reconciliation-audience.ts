@@ -151,6 +151,12 @@ const BOOKING_MONEY_EVIDENCE_ABSENT_REASONS: ReadonlySet<BookingMoneyReconciliat
     "NO_SURVIVING_STRANDS",
     "STRAND_EVIDENCE_UNREADABLE",
     "PROMO_BUILD_UP_NOT_KNOWN",
+    // `STRAND_TOTAL_DISAGREES` is deliberately NOT here (#3547). It used to
+    // arrive inside `STRAND_EVIDENCE_UNREADABLE` and so inherited the quiet
+    // wording, but two numbers that are both on file and do not agree is
+    // something an officer can go and resolve. Its absence from this set is
+    // what makes it a disagreement, so it is written down rather than left to
+    // be inferred from a gap.
   ]);
 
 /** Which kind a set of reasons describes. See the type's docblock for the rule. */
@@ -226,9 +232,13 @@ export const BOOKING_MONEY_RECONCILIATION_COPY = {
  *
  * Each one states the condition the code actually tests, not a guess at
  * history. `NO_SURVIVING_STRANDS` is `guests.length === 0`;
- * `STRAND_EVIDENCE_UNREADABLE` is a guest whose stored night prices come back
- * unusable, which covers an even-share price source, no stored night rows at
- * all, and rows that do not sum to that guest's own total;
+ * `STRAND_EVIDENCE_UNREADABLE` is a guest with no usable stored night rows at
+ * all. Reconciliation reads evidence at WHOLE_GUEST grain, where an even-share
+ * row that sums correctly is EXACT — so of the three causes the underlying
+ * reader can return, only two ever reach here, and #3547 moved one of those
+ * (rows that do not sum to that guest's own recorded total) to
+ * `STRAND_TOTAL_DISAGREES` because it is actionable. The wording below says
+ * only what can actually arrive;
  * `PROMO_BUILD_UP_NOT_KNOWN` is a promotion whose per-night rows carry a null
  * amount.
  */
@@ -238,7 +248,7 @@ export const BOOKING_MONEY_EVIDENCE_ABSENT_WHY: Partial<
   NO_SURVIVING_STRANDS:
     "No guests remain on this booking, so there are no per-guest amounts left to add up.",
   STRAND_EVIDENCE_UNREADABLE:
-    "At least one guest's nightly prices were not stored in a form that can be added up: recorded as an even share of a total rather than what that guest was charged, or not stored at all, or not matching that guest's own total.",
+    "At least one guest has no nightly prices recorded at all, so there is nothing to add up for them.",
   PROMO_BUILD_UP_NOT_KNOWN:
     "The discount on this booking was stored as a single figure, without the per-night breakdown needed to check it.",
 };
@@ -270,7 +280,9 @@ export const BOOKING_MONEY_RECONCILIATION_REASON_TEXT: Record<
 > = {
   NO_SURVIVING_STRANDS: "no surviving guest price strands are recorded",
   STRAND_EVIDENCE_UNREADABLE:
-    "at least one guest strand has incomplete or inexact stored price evidence",
+    "at least one guest strand has no stored night price evidence at all",
+  STRAND_TOTAL_DISAGREES:
+    "at least one guest's stored night prices do not add up to that guest's own recorded total",
   HEADLINE_TOTAL_MISMATCH:
     "the stored booking total differs from the recorded guest totals",
   PROMO_BUILD_UP_NOT_KNOWN:
