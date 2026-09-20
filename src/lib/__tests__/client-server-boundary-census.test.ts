@@ -356,6 +356,13 @@ describe("INV-OPS-013: no client module reaches server-only code, at any depth",
  * new importer: `stripCommentsAndStrings` would have been wrong here, since it
  * blanks string CONTENTS and would erase the `"server-only"` in the marker
  * itself.
+ *
+ * WHAT IS STILL NOT CAUGHT, stated rather than implied away: the statement
+ * written at column 0 inside a TEMPLATE LITERAL. Seeing into one needs a
+ * parser, and the blanking forms cannot be used for the reason just given. It
+ * is left because it is not an accident shape — reaching it means deleting the
+ * real import AND adding a template whose content is exactly that line, which
+ * is forgery rather than debugging.
  */
 const MARKER_LINE = new RegExp(
   `^${MARKER_STATEMENT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
@@ -419,7 +426,14 @@ describe("INV-OPS-013: the forbidden-leaf list is the list it claims to be", () 
       ).toBe(true);
     }
 
-    expect(FORBIDDEN_MODULES.size).toBe(11);
+    expect(
+      FORBIDDEN_MODULES.size,
+      "INV-OPS-013: this list is nine marked roots plus `@/lib/session` and " +
+        "`@/lib/env`, which name no file. Size plus the membership checks above " +
+        "pin the set EXACTLY, so a swapped entry cannot pass. Marking a tenth " +
+        "module means adding it here and to MARKED_ROOTS, and moving this " +
+        "number on purpose (#3204).",
+    ).toBe(11);
   });
 });
 
@@ -471,6 +485,18 @@ describe("INV-OPS-013: the nine marked roots still carry the marker", () => {
     ].join("\n");
     expect(carriesMarker(docblockOnly)).toBe(false);
     expect(carriesMarker(`${docblockOnly}\n${MARKER_STATEMENT}\n`)).toBe(true);
+  });
+
+  it("is not satisfied by the statement anywhere but column 0", () => {
+    // The fixture above stopped proving the ANCHOR the moment `carriesMarker`
+    // began stripping comments (#3204 review): a docblock is now removed before
+    // the match, so that case fails whether or not `MARKER_LINE` is anchored,
+    // and dropping the `^`/`$` would leave every other fixture here green.
+    // These two isolate the anchor — both are FALSE anchored and TRUE without
+    // it — so the docblock's claim that both halves are the check is proven by
+    // both halves.
+    expect(carriesMarker(`const sample = '${MARKER_STATEMENT}';\n`)).toBe(false);
+    expect(carriesMarker(`  ${MARKER_STATEMENT}\n`)).toBe(false);
   });
 
   it("is not satisfied by a marker that has been COMMENTED OUT (#3204)", () => {
