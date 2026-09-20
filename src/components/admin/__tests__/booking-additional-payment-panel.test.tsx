@@ -66,6 +66,7 @@ async function render(
     payment: payment(),
     requestedOn: RAISED_AT,
     canResend: true,
+    canWithdraw: false,
     now: NOW,
     ...props,
   });
@@ -162,10 +163,27 @@ describe("BookingAdditionalPaymentPanel", () => {
     expect(viewOnly).toContain("cannot make changes");
   });
 
+  it("offers the withdrawal only to a finance officer, and asks before doing it (#3528)", async () => {
+    // The button alone; the confirmation and the amount appear on the first
+    // press, client-side, so static markup shows the offer and nothing more.
+    const finance = await render({ canWithdraw: true });
+    expect(finance).toContain("Withdraw payment request");
+    expect(finance).not.toContain("Withdraw $210.00");
+
+    // A booking officer (bookings:edit) sees the re-send and NOT the withdrawal:
+    // retiring money instruments is the payments board's authority.
+    const bookingOfficer = await render({ canResend: true, canWithdraw: false });
+    expect(bookingOfficer).toContain("Resend payment request email");
+    expect(bookingOfficer).not.toContain("Withdraw payment request");
+  });
+
   /*
     The panel is read-only on purpose: an admin must never be able to take,
     waive, or zero the member's money from here. Collecting it stays with the
-    member's own card or the ordinary modification tooling.
+    member's own card or the ordinary modification tooling. The one retirement
+    it offers, withdrawing a review-raised request (#3528), is offered only to
+    a finance officer and is tested above; with that off, the shape below is
+    exactly what it was.
   */
   it("offers no way to take or waive the payment", async () => {
     const source = readFileSync(

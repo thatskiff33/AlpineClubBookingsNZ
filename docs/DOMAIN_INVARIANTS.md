@@ -668,6 +668,7 @@ Prefix `INV-ADDPAY`.
 | `INV-ADDPAY-037` | Auto-refund leaves DISMISSED task — #2773 orchestrator decision; owner has not ruled; `INV-ADDPAY-039` |
 | `INV-ADDPAY-038` | Unmutable alert names population — #2773 orchestrator decision; owner has not ruled; `INV-ADDPAY-039` |
 | `INV-ADDPAY-039` | Hand-refunded late capture never refunded again — orchestrator decision; owner has not ruled |
+| `INV-ADDPAY-040` | An unpaid review-raised request can be withdrawn; withdrawal retires every instrument, durably |
 
 ## Analytics And Privacy
 

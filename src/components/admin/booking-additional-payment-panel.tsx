@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ResendAdditionalPaymentButton } from "@/components/admin/resend-additional-payment-button";
+import { WithdrawAdditionalPaymentButton } from "@/components/admin/withdraw-additional-payment-button";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import {
   additionalPaymentAgeDays,
@@ -20,8 +21,11 @@ import { formatCents } from "@/lib/utils";
  * last chased, and one button to chase them again.
  *
  * Deliberately shows nothing an admin could get wrong: it never offers to take
- * the payment, waive it, or change the booking. Collecting it stays with the
- * member (their card) or with the ordinary modification tooling.
+ * the payment or change the booking. Collecting it stays with the member (their
+ * card) or with the ordinary modification tooling. The one retirement it does
+ * offer (#3528) is WITHDRAWING the request - for a finance officer only, and
+ * only where the request was raised by a completed financial review; the
+ * server refuses every other case with a sentence saying which door to use.
  */
 export interface BookingAdditionalPaymentPanelProps {
   bookingId: string;
@@ -46,6 +50,11 @@ export interface BookingAdditionalPaymentPanelProps {
   requestedOn: Date | null;
   /** Whether this admin may actually send the email (`bookings:edit`). */
   canResend: boolean;
+  /**
+   * Whether this admin may withdraw the request (`finance:edit`, #3528). The
+   * route re-checks; this only decides whether the control is offered.
+   */
+  canWithdraw: boolean;
   /** Injectable for tests; defaults to wall-clock now. */
   now?: Date;
 }
@@ -63,6 +72,7 @@ export async function BookingAdditionalPaymentPanel({
   payment,
   requestedOn,
   canResend,
+  canWithdraw,
   now = new Date(),
 }: BookingAdditionalPaymentPanelProps) {
   if (!isAdditionalPaymentOwed({ bookingStatus, payment }) || !payment) {
@@ -149,6 +159,12 @@ export async function BookingAdditionalPaymentPanel({
         ) : (
           <p className="text-sm opacity-90">{ADMIN_VIEW_ONLY_ACTION_REASON}</p>
         )}
+        {canWithdraw ? (
+          <WithdrawAdditionalPaymentButton
+            bookingId={bookingId}
+            amountCents={payment.additionalAmountCents}
+          />
+        ) : null}
       </CardContent>
     </Card>
   );
