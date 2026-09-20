@@ -115,12 +115,16 @@ export async function createXeroCreditNoteForModification(params: {
    * reason recorded on the operation. The method wording (`INV-PAY-101`)
    * stays on the note's reference either way.
    */
-  const itemised = await resolveModificationDocumentLineItems({
-    bookingId,
-    bookingModificationId,
-    document: "MODIFICATION_CREDIT_NOTE",
-    billedCents: refundAmountCents,
-  });
+  const itemised = bookingModificationId
+    ? await resolveModificationDocumentLineItems({
+        bookingId,
+        bookingModificationId,
+        document: "MODIFICATION_CREDIT_NOTE",
+        billedCents: refundAmountCents,
+      })
+    : // A legacy row anchored on the booking has no edit behind it; nothing
+      // to itemise and nothing to record, as the account-credit note does.
+      null;
 
   const modRefundLineItem: LineItem = {
     description: buildRefundDocumentDescription({
@@ -150,7 +154,7 @@ export async function createXeroCreditNoteForModification(params: {
     contact: { contactID: resolvedContactId },
     date: modificationCreditNoteDate,
     lineAmountTypes: LineAmountTypes.Inclusive,
-    lineItems: itemised.lineItems ?? [modRefundLineItem],
+    lineItems: itemised?.lineItems ?? [modRefundLineItem],
     reference: buildRefundDocumentReference({ method: refundMethod, bookingId }),
     status: CreditNote.StatusEnum.AUTHORISED,
   });
@@ -170,7 +174,7 @@ export async function createXeroCreditNoteForModification(params: {
     invoiceId: originalInvoiceId,
     refundAmountCents,
     refundMethod,
-    priceLines: itemised.record,
+    ...(itemised ? { priceLines: itemised.record } : {}),
   };
 
   if (operationId) {
@@ -212,7 +216,7 @@ export async function createXeroCreditNoteForModification(params: {
         invoiceId: originalInvoiceId,
         refundAmountCents,
         refundMethod,
-        priceLines: itemised.record,
+        ...(itemised ? { priceLines: itemised.record } : {}),
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(

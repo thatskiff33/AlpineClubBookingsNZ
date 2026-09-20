@@ -51,6 +51,16 @@ import {
 
 export type ModificationDocumentKind = "SUPPLEMENTARY_INVOICE" | "MODIFICATION_CREDIT_NOTE";
 
+/** The change-fee line's words, on every document that carries one. */
+export const CHANGE_FEE_LINE_DESCRIPTION = "Late notice booking change fee";
+
+/** The modification row's columns a document reads: one `select`, spread by every reader. */
+export const MODIFICATION_DOCUMENT_LINES_SELECT = {
+  priceLines: true,
+  priceDiffCents: true,
+  changeFeeCents: true,
+} as const;
+
 /** Everything the renderer needs to code a line; loaded once per document. */
 export type ModificationDocumentCodingContext = {
   incomeMapping: ResolvedAccountMapping;
@@ -164,7 +174,7 @@ export function buildModificationDocumentLineItems(args: {
     items.push(
       applyHutFeeLineCodes(
         {
-          description: "Late notice booking change fee",
+          description: CHANGE_FEE_LINE_DESCRIPTION,
           quantity: 1,
           unitAmount: (orientation * changeFeeCents) / 100,
           taxType: "OUTPUT2",
@@ -235,7 +245,7 @@ export async function resolveModificationDocumentLineItems(args: {
         : args.bookingModificationId
           ? await prisma.bookingModification.findUnique({
               where: { id: args.bookingModificationId },
-              select: { priceLines: true, priceDiffCents: true, changeFeeCents: true },
+              select: MODIFICATION_DOCUMENT_LINES_SELECT,
             })
           : null;
     const figures = args.billedFigures ?? {

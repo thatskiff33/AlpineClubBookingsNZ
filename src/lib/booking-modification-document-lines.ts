@@ -30,6 +30,8 @@ export type ModificationDocumentLinesFallbackReason =
    * a policy retention), so the lines would overstate what went back.
    */
   | "POLICY_RETAINED"
+  /** The credit note returns more than the reduction; the lines would understate it. */
+  | "REFUND_EXCEEDS_REDUCTION"
   /**
    * Not the selector's own: a read the itemisation needed failed after the
    * row was written. `xero-modification-line-items.ts` records it so the
@@ -95,7 +97,11 @@ export function selectModificationDocumentLines(args: {
   const expectedBilledCents = document === "SUPPLEMENTARY_INVOICE" ? netCents : -netCents;
   if (billedCents !== expectedBilledCents) {
     return fallback(
-      document === "SUPPLEMENTARY_INVOICE" ? "STORED_LINES_DO_NOT_SUM" : "POLICY_RETAINED",
+      document === "SUPPLEMENTARY_INVOICE"
+        ? "STORED_LINES_DO_NOT_SUM"
+        : billedCents < expectedBilledCents
+          ? "POLICY_RETAINED"
+          : "REFUND_EXCEEDS_REDUCTION",
       storedSumCents,
     );
   }

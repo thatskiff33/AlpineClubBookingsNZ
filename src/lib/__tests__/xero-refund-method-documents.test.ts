@@ -491,6 +491,20 @@ describe("itemised modification notes (#3530)", () => {
     );
   });
 
+  it("a legacy booking-anchored modification note has no edit behind it and records nothing about lines", async () => {
+    await createXeroCreditNoteForModification({
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+    });
+
+    expect(mocks.bookingModificationFindUnique).not.toHaveBeenCalled();
+    const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];
+    expect(enqueued.requestPayload).not.toHaveProperty("priceLines");
+    expect(builtCreditNote().lineItems?.[0]?.description).toBe(
+      "Refund against original credit card - Booking cmbookin",
+    );
+  });
+
   it("a cancellation's account-credit note has no edit behind it and records nothing about lines", async () => {
     mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
 

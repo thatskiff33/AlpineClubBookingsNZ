@@ -44,7 +44,11 @@ import {
   xeroDocumentDateForClubToday,
   xeroDocumentDateFromInstant,
 } from "@/lib/xero-provider-dates";
-import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
+import {
+  CHANGE_FEE_LINE_DESCRIPTION,
+  MODIFICATION_DOCUMENT_LINES_SELECT,
+  resolveModificationDocumentLineItems,
+} from "@/lib/xero-modification-line-items";
 
 export async function createXeroSupplementaryInvoice(params: {
   bookingId: string;
@@ -170,7 +174,7 @@ export async function createXeroSupplementaryInvoice(params: {
 
   const bookingModification = await prisma.bookingModification.findUnique({
     where: { id: bookingModificationId },
-    select: { createdAt: true, priceLines: true, priceDiffCents: true, changeFeeCents: true },
+    select: { createdAt: true, ...MODIFICATION_DOCUMENT_LINES_SELECT },
   });
 
   /**
@@ -226,7 +230,7 @@ export async function createXeroSupplementaryInvoice(params: {
 
   if (!itemised.lineItems && changeFeeCents > 0) {
     const li: LineItem = {
-      description: "Late notice booking change fee",
+      description: CHANGE_FEE_LINE_DESCRIPTION,
       quantity: 1,
       unitAmount: changeFeeCents / 100,
       taxType: "OUTPUT2",

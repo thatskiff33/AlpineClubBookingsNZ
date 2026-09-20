@@ -1904,23 +1904,23 @@ derives its own. A line's member word is `describeGuestRateMembershipLabel`
 
 The lines are **narration**: `priceDiffCents` stays the figure settlement
 reads; no idempotency key or outbox payload carries a line; the row is
-immutable after the edit.
+immutable once written.
 
 Rules: night prices are gross and the promotion is one signed `PROMO_DELTA`
 line; a kept night at the same price and category cancels; a repriced night is
 one removed and one added, never netted; runs are cut by
-`splitNightsIntoPriceRuns`, the original invoice's cutter. Any unpriced night, or a before-night whose stored price is
-not exact (`storedNightPriceSourceIsInexact`), yields **no** lines
+`splitNightsIntoPriceRuns`, the original invoice's cutter. Any unpriced night, or a before-night whose stored price is inexact
+(`storedNightPriceSourceIsInexact`), yields **no** lines
 (`INV-MOD-028`); lines that do not sum to `priceDiffCents` are not stored
 (`INV-MONEY-003`). NULL means "no itemisation" and is never `[]`.
 `computeModificationPriceLines` stores NULL on any failure and
-`resolveModificationDocumentLineItems` sends the single line on any failure
+`resolveModificationDocumentLineItems` sends the single line
 (`NARRATION_UNAVAILABLE`): narration never fails an edit or a document.
 
 A Xero document is itemised only when `selectModificationDocumentLines` finds
 the lines explain exactly what it bills: Σ lines = `priceDiffCents` and the
-figure = `priceDiffCents + changeFeeCents` (negated on a credit note). Otherwise — none,
-unreadable, a restate (`INV-PAY-070`), a second ask, a policy-retained refund —
+figure = `priceDiffCents + changeFeeCents` (negated on a credit note). Otherwise — none, unreadable,
+a restate (`INV-PAY-070`), a second ask, a refund that is not the reduction —
 today's single line, the reason under `requestPayload.priceLines`. Never a
 partial set.
 

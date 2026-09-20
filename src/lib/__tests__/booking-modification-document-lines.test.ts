@@ -139,6 +139,18 @@ describe("selectModificationDocumentLines", () => {
     ).toEqual({ source: "FALLBACK_SINGLE_LINE", reason: "SECOND_ASK", storedSumCents: null, billedCents: 8000 });
   });
 
+  it("REFUND_EXCEEDS_REDUCTION: a credit note that returns more than the reduction is not 'retained'", () => {
+    expect(
+      selectModificationDocumentLines({
+        storedPriceLines: [removed],
+        priceDiffCents: -32000,
+        changeFeeCents: 0,
+        billedCents: 40000,
+        document: "MODIFICATION_CREDIT_NOTE",
+      }),
+    ).toMatchObject({ source: "FALLBACK_SINGLE_LINE", reason: "REFUND_EXCEEDS_REDUCTION", storedSumCents: -32000 });
+  });
+
   it("POLICY_RETAINED: a credit note that returns less than the reduction", () => {
     expect(
       selectModificationDocumentLines({
