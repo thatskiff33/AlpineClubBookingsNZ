@@ -260,10 +260,24 @@ describe("the setup-file ordering the whole design rests on", () => {
     "utf8"
   );
 
-  it("lists the clock setup file before the general one", () => {
-    expect(config).toMatch(
-      /setupFiles:\s*\[\s*"\.\/vitest\.clock-setup\.ts"\s*,\s*"\.\/vitest\.setup\.ts"\s*\]/
-    );
+  // The contract is the ORDER, not the length. The list has since gained
+  // `vitest.async-local-storage-setup.ts` between the two (#3419), which is
+  // there for the same class of reason as the freeze — a value Next captures at
+  // module evaluation, so it has to be in place before the general setup file's
+  // imports run. Pinning the exact two-element array would have made every such
+  // addition look like a regression, while pinning "clock first, general last"
+  // is what the design actually rests on: anything added in between still
+  // evaluates after the freeze and before the imports that could capture a
+  // clock.
+  it("lists the clock setup file first and the general one last", () => {
+    const listed = [
+      ...(config
+        .match(/setupFiles:\s*\[([\s\S]*?)\]/)?.[1]
+        .matchAll(/"\.\/([^"]+)"/g) ?? []),
+    ].map((match) => match[1]);
+    expect(listed.length).toBeGreaterThanOrEqual(2);
+    expect(listed.at(0)).toBe("vitest.clock-setup.ts");
+    expect(listed.at(-1)).toBe("vitest.setup.ts");
   });
 
   it("pins the setup files to sequential evaluation", () => {
