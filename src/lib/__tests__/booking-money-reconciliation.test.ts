@@ -8,6 +8,9 @@ import {
 } from "@/lib/booking-money-reconciliation";
 
 const NIGHT = new Date("2026-08-01T00:00:00.000Z");
+// A second lodge night, for the case where only SOME of a guest's nights
+// carry a price. Future relative to the frozen clock, like NIGHT.
+const SECOND_NIGHT = new Date("2026-08-02T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-02T00:00:00.000Z");
 
 function booking(
@@ -166,13 +169,69 @@ describe("reconcileBookingMoney", () => {
     expect(disagrees).toContain("STRAND_TOTAL_DISAGREES");
     expect(disagrees).not.toContain("STRAND_EVIDENCE_UNREADABLE");
 
-    // Note what is NOT here. An even-share price source is the third cause the
-    // underlying reader can return, but reconciliation reads at WHOLE_GUEST
-    // grain, where an even-share row that sums correctly is EXACT and the
-    // booking reconciles — pinned already by "accepts an evenly split row at
-    // whole-guest grain when it reconciles" above. So only two of the three
-    // causes ever reach these reasons, which is why the wording names one
-    // cause each rather than listing all three.
+    // Only SOME nights priced is a third cause, and it belongs with the
+    // never-recorded ones. The first draft of this change forgot it and told
+    // the officer "no nightly prices recorded at all" for a guest who had one
+    // night priced at $50 — which is why the wording now says "some or all".
+    const partiallyRecorded = reconcileBookingMoney(
+      booking({
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: 5_000, priceSource: "SOLD" as const },
+              { stayDate: SECOND_NIGHT, priceCents: null, priceSource: "UNKNOWN" as const },
+            ],
+          },
+        ],
+      }),
+    ).reasons;
+    expect(partiallyRecorded).toContain("STRAND_EVIDENCE_UNREADABLE");
+    expect(partiallyRecorded).not.toContain("STRAND_TOTAL_DISAGREES");
+
+    // An even-share source is a fourth cause and reaches NEITHER: reconciliation
+    // reads at WHOLE_GUEST grain, where an even-share row that sums correctly is
+    // EXACT and the booking reconciles — pinned by "accepts an evenly split row
+    // at whole-guest grain when it reconciles" above.
+  });
+
+  // Two guests, one of each cause. Every single-guest case above would pass a
+  // build that emitted only the first reason it met, so this is the one that
+  // proves both survive — and that the officer-facing verdict is the loud one.
+  it("keeps both reasons when two guests fail for different causes", () => {
+    const reasons = reconcileBookingMoney(
+      booking({
+        totalPriceCents: 20_000,
+        finalPriceCents: 18_000,
+        guests: [
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: null, priceSource: "UNKNOWN" as const },
+            ],
+          },
+          {
+            priceCents: 10_000,
+            stayStart: null,
+            stayEnd: null,
+            nights: [
+              { stayDate: NIGHT, priceCents: 9_000, priceSource: "SOLD" as const },
+            ],
+          },
+        ],
+      }),
+    ).reasons;
+    expect(reasons).toContain("STRAND_EVIDENCE_UNREADABLE");
+    expect(reasons).toContain("STRAND_TOTAL_DISAGREES");
+    // Published order, and each reason once however many guests produced it.
+    expect(reasons.indexOf("STRAND_EVIDENCE_UNREADABLE")).toBeLessThan(
+      reasons.indexOf("STRAND_TOTAL_DISAGREES"),
+    );
+    expect(new Set(reasons).size).toBe(reasons.length);
   });
 
   it("retains every simultaneous reason in the approved deterministic order", () => {

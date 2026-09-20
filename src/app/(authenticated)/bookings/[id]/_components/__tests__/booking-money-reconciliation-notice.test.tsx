@@ -86,7 +86,7 @@ describe("BookingMoneyReconciliationNotice", () => {
     // And it says WHY, per reason — without the cause the reader cannot tell
     // whether it is theirs to fix.
     expect(note.textContent).toContain(
-      "no nightly prices recorded at all",
+      "some or all of the nights have no price recorded",
     );
     expect(note.textContent).toContain(
       "stored as a single figure, without the per-night breakdown",
@@ -114,6 +114,12 @@ describe("BookingMoneyReconciliationNotice", () => {
     expect(alert.textContent).toContain("needs officer review");
     expect(alert.textContent).not.toContain("cannot be checked");
     expect(screen.queryByRole("note")).toBeNull();
+    // The sentence itself, not just the kind: a reason can be on the right side
+    // of the partition and still describe the wrong thing to the officer, which
+    // is how the first draft of this change went wrong.
+    expect(alert.textContent).toContain(
+      "do not add up to that guest's own recorded total",
+    );
   });
 
   // The case that decides the rule: one actionable reason must not be muted by

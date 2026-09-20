@@ -10,13 +10,14 @@ import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidenc
 export const BOOKING_MONEY_RECONCILIATION_REASON_ORDER = [
   "NO_SURVIVING_STRANDS",
   "STRAND_EVIDENCE_UNREADABLE",
-  // #3547. Split out of `STRAND_EVIDENCE_UNREADABLE`, which was covering three
+  // #3547. Split out of `STRAND_EVIDENCE_UNREADABLE`, which was covering
   // causes with opposite answers to "can anybody do something about this?".
-  // Prices recorded as an even share, and prices never recorded at all, mean
-  // the figures do not exist — nobody can check those, today or ever. But
-  // prices that do not add up to that guest's OWN recorded total is a
-  // disagreement between two numbers that are both on file, which is exactly
-  // the finding this reconciliation exists to surface. Bundled together, the
+  // Three of them reach here, at WHOLE_GUEST grain: no night prices recorded
+  // at all, only some recorded, and prices that are all recorded but do not
+  // add up to that guest's OWN recorded total. The first two mean the figures
+  // were never written down and nobody can check them, today or ever. The
+  // third is a disagreement between two numbers both on file — exactly the
+  // finding this reconciliation exists to surface. Bundled together, the
   // actionable one wore the quiet "cannot be checked" wording and nobody
   // looked.
   "STRAND_TOTAL_DISAGREES",
@@ -33,10 +34,24 @@ export type BookingMoneyReconciliationReason =
 /**
  * The two #3257 decline spellings remain part of its stored audit contract.
  * This map is their one route into Stage 4's canonical reason vocabulary.
+ *
+ * `strand-evidence-unreadable` maps to the DISAGREEMENT side, which is not the
+ * reason its name resembles (#3547). The decline is raised when
+ * `readStrandNightPrices` returns null, and one of the ways that happens is
+ * `if (sum !== guest.priceCents) return null` — exactly the actionable case
+ * this issue split out. The rebase also runs at INDIVIDUAL_NIGHT grain, where
+ * an inexact price source is reachable too, so the one decline spelling covers
+ * both kinds at once and cannot be mapped to a single quiet reason honestly.
+ *
+ * Mapping it to the quiet one would have let a real disagreement reach an
+ * officer wearing "there is nothing to action here", which is the whole defect
+ * #3547 exists to remove. Mapping it to the loud one can at worst ask somebody
+ * to look at a booking nobody can fix — the cheaper mistake, and the same
+ * direction the mixed-set rule already takes.
  */
 export const BOOKING_REBASE_DECLINE_RECONCILIATION_REASON = {
   "no-surviving-strands": "NO_SURVIVING_STRANDS",
-  "strand-evidence-unreadable": "STRAND_EVIDENCE_UNREADABLE",
+  "strand-evidence-unreadable": "STRAND_TOTAL_DISAGREES",
 } as const satisfies Record<string, BookingMoneyReconciliationReason>;
 
 export type BookingPriceRebaseDeclineReason =

@@ -11,8 +11,8 @@
   shown with the quiet "cannot be checked" wording, so nobody looked.
 
   It is now its own finding, worded as one. The reason that remains on the quiet
-  side covers what it actually describes: a guest with no nightly prices
-  recorded at all.
+  side covers what it actually describes: a guest with some or all of their
+  nights carrying no recorded price.
 
   Officers may see a few more bookings asking for review as a result, and those
   are ones where there is genuinely something to resolve.
