@@ -28,9 +28,9 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  * is that sentence, enforced.
  *
  * It is a DISK-SCANNING census, so `vitest related` reaches it only through its
- * one import (`stripComments`) and not through any file it reads. Run it
- * explicitly when you add a route group, a layout, or a page outside one; CI
- * catches it either way.
+ * two support imports (`provider-mount-census`, `strip-comments`) and not
+ * through any file it reads. Run it explicitly when you add a route group, a
+ * layout, or a page outside one; CI catches it either way.
  *
  * ## What it checks
  *

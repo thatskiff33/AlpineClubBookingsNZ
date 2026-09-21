@@ -282,9 +282,13 @@ describe("club-format provider mount census (#3564)", () => {
             "from it include the ones listed above, which call " +
             "useClubFormat(). That hook THROWS without a provider, so this " +
             "surface is now a thrown error on a live route. Either mount a " +
-            "provider on it (as display-screen.tsx does for the lobby " +
-            `display, which is why this walk stopped at ${boundaries.length} ` +
-            "boundary file(s)) or take the format read back out.",
+            "provider on it or take the format read back out. The worked " +
+            "example is the lobby display, whose mount is in " +
+            "src/app/display/page.tsx - the SERVER page, because that is " +
+            "where the persisted setting can be read, and deliberately not " +
+            "in display-screen.tsx, which is at its size budget. This walk " +
+            `stopped at ${boundaries.length} file(s) that mount a provider ` +
+            "of their own.",
         ).toEqual([]);
       });
     }

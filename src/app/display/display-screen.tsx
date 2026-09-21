@@ -610,8 +610,8 @@ function MinimalDisplayShell() {
  * The lobby screen, with the club's timezone supplied by its server page.
  *
  * See `page.tsx` for why the zone arrives as a prop rather than through the
- * shared provider, and why the club's currency and locale instead arrive as a
- * `ClubFormatProvider` it mounts around this component (#3564).
+ * shared provider, and why the club's currency and locale instead arrive via
+ * a `ClubFormatProvider` that `page.tsx` mounts around this one (#3564).
  */
 export function DisplayScreen({ zone }: { zone: string }) {
   return (
