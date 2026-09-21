@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 
-import { APP_LOCALE } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   asClubTimeZone,
   bindClubTime,
@@ -171,7 +171,14 @@ export function HeaderClock({
   windowStart: string;
 }) {
   const club = useDisplayClubTime();
-  const shortWeekdayDay = useShortWeekdayDayFormatter(APP_LOCALE);
+  /*
+    THE CLUB'S RECORDED LOCALE, NOT THE BUILD'S (#3564; INV-CONFIG-006). This
+    was `APP_LOCALE` — `NEXT_PUBLIC_LOCALE` inlined at build time, and therefore
+    `undefined` in the published image — so the wall wrote its date the New
+    Zealand way for every club on earth. `DisplayScreen` mounts the shared
+    `ClubFormatProvider` from the values `page.tsx` resolves on the server.
+  */
+  const shortWeekdayDay = useShortWeekdayDayFormatter(useClubFormat().locale);
   const [now, setNow] = useState<Date | null>(null);
   const [preview, setPreview] = useState(() => ({
     isPreview: false,

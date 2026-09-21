@@ -5,6 +5,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DisplayScreen } from "@/app/display/display-screen";
 import { clubIdentity } from "@/config/club-identity";
 
+import {
+  CLUB_CURRENCY_FALLBACK,
+  CLUB_LOCALE_FALLBACK,
+  type ClubFormat,
+} from "@/lib/club-format";
+
+/**
+ * The club's format, as the New Zealand defaults, so every expectation in this
+ * file means exactly what it meant before #3564 handed `DisplayScreen` this
+ * prop. The shipped constants rather than two literals, so there is one home
+ * for what "the default" is.
+ *
+ * A TEST USING THIS DEFAULT PROVES NOTHING ABOUT FORMAT AUTHORITY, which is
+ * worth saying rather than leaving for a reader to assume: under `en-NZ` the
+ * recorded locale and the build-time constant agree, so the migrated code and
+ * the code it replaced give the identical answer. The suite that means to
+ * assert the club's locale is the authority is
+ * `display-club-format.test.tsx`, which passes one the environment does not
+ * hold and demands an answer only that locale produces.
+ */
+const CLUB_FORMAT: ClubFormat = {
+  currencyCode: CLUB_CURRENCY_FALLBACK,
+  locale: CLUB_LOCALE_FALLBACK,
+};
+
 /**
  * The club timezone these renders are about (CT-4, #2870).
  *
@@ -132,7 +157,7 @@ describe("DisplayScreen lifecycle", () => {
       body: { code: "ABCDEF", expiresAt: "2026-04-13T00:15:00.000Z" },
     });
 
-    render(<DisplayScreen zone={CLUB_ZONE} />);
+    render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -191,7 +216,7 @@ describe("DisplayScreen lifecycle", () => {
   it("drives the active-board tick and staleness from the payload's pollSeconds (LTV-039)", async () => {
     // First good payload advertises a fast 20s cadence.
     enqueue(isState, { status: 200, body: { ...PAYLOAD, pollSeconds: 20 } });
-    render(<DisplayScreen zone={CLUB_ZONE} />);
+    render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -241,7 +266,7 @@ describe("DisplayScreen lifecycle", () => {
 
       // 1. not signed in as an admin → denied prompt, NO pairing start
       enqueue(isPreviewState, { status: 401, body: { error: "Unauthorised" } });
-      render(<DisplayScreen zone={CLUB_ZONE} />);
+      render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10);
       });
@@ -266,7 +291,7 @@ describe("DisplayScreen lifecycle", () => {
       const isPreviewState = (url: string) =>
         url.includes("/api/display/state?previewDevice=dev-9");
       enqueue(isPreviewState, { status: 200, body: PAYLOAD });
-      const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
+      const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10);
       });
@@ -306,7 +331,7 @@ describe("DisplayScreen lifecycle", () => {
       const isPreviewState = (url: string) =>
         url.includes("/api/display/state?previewDevice=dev-9");
       enqueue(isPreviewState, { status: 200, body: PAYLOAD });
-      const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
+      const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10);
       });
@@ -337,7 +362,7 @@ describe("DisplayScreen lifecycle", () => {
 
   it("renders no date picker and no simulated state in real (non-preview) mode", async () => {
     enqueue(isState, { status: 200, body: PAYLOAD });
-    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -365,7 +390,7 @@ describe("DisplayScreen lifecycle", () => {
         },
       },
     });
-    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -428,7 +453,7 @@ function layoutPayload(layoutRender: Record<string, unknown>) {
 
 async function renderLayout(layoutRender: Record<string, unknown>) {
   enqueue(isState, { status: 200, body: layoutPayload(layoutRender) });
-  const result = render(<DisplayScreen zone={CLUB_ZONE} />);
+  const result = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10);
   });
@@ -781,7 +806,7 @@ describe("DisplayScreen render-branch error boundaries (issue #176)", () => {
         },
       },
     });
-    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -805,7 +830,7 @@ describe("DisplayScreen render-branch error boundaries (issue #176)", () => {
         template: { key: "legacy", name: "Legacy", regions: null },
       },
     });
-    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -834,7 +859,7 @@ describe("DisplayScreen render-branch error boundaries (issue #176)", () => {
       status: 200,
       body: { ...PAYLOAD, window: null, layoutRenderError: true },
     });
-    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -862,7 +887,7 @@ describe("InfoFooter custodian slot (#2286)", () => {
     custodian: { label: string | null; count: number } | null,
   ) {
     enqueue(isState, { status: 200, body: { ...PAYLOAD, custodian } });
-    const result = render(<DisplayScreen zone={CLUB_ZONE} />);
+    const result = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });

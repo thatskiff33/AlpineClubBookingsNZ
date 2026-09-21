@@ -28,6 +28,8 @@ import {
   type LayoutRenderPayload,
   type SlotContent,
 } from "@/lib/lodge-display/layout-registry";
+import { ClubFormatProvider } from "@/components/club-format-provider";
+import type { ClubFormat } from "@/lib/club-format";
 import { DISPLAY_AUTHORED_ROOT_CLASS } from "@/lib/lodge-display/css-tokens";
 import type { DisplayModuleName } from "@/lib/lodge-display/template-registry";
 import { evaluateDisplayCondition } from "@/lib/lodge-display/conditions";
@@ -607,17 +609,36 @@ function MinimalDisplayShell() {
 }
 
 /**
- * The lobby screen, with the club's timezone supplied by its server page.
+ * The lobby screen, with the club's timezone, currency and locale supplied by
+ * its server page.
  *
- * See `page.tsx` for why the zone arrives as a prop rather than through the
- * application's shared provider, and `display-header-clock.tsx` for the binding
- * and the one component that consumes it.
+ * See `page.tsx` for why all three arrive as props rather than through a route
+ * group's chrome, and `display-header-clock.tsx` for the bindings and the one
+ * component that consumes them.
+ *
+ * THE FORMAT PROVIDER IS THE SHARED ONE AND THE TIME PROVIDER IS NOT, which is
+ * not an oversight — `page.tsx` records the reason. It also makes this file a
+ * MOUNT BOUNDARY for the club-format mount census: the walk from
+ * `src/app/display/page.tsx` stops here, exactly as it stops at
+ * `skifield-whakapapa-embed.tsx` under the root 404.
  */
-export function DisplayScreen({ zone }: { zone: string }) {
+export function DisplayScreen({
+  zone,
+  format,
+}: {
+  zone: string;
+  /** The club's resolved currency and locale, straight from `getClubFormat()`. */
+  format: ClubFormat;
+}) {
   return (
-    <DisplayClubTimeProvider zone={zone}>
-      <DisplayScreenBody />
-    </DisplayClubTimeProvider>
+    <ClubFormatProvider
+      currencyCode={format.currencyCode}
+      locale={format.locale}
+    >
+      <DisplayClubTimeProvider zone={zone}>
+        <DisplayScreenBody />
+      </DisplayClubTimeProvider>
+    </ClubFormatProvider>
   );
 }
 

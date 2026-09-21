@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { getClubFormat } from "@/lib/club-format-settings";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { DisplayScreen } from "./display-screen";
 import "./display.css";
@@ -47,6 +48,33 @@ export const dynamic = "force-dynamic";
   TRUE, and its import-graph walk goes on protecting the lobby television from a
   future edit that reaches for the hook.
 */
+
+/*
+  THE CLUB'S CURRENCY AND LOCALE REACH THE LOBBY TV THE SAME WAY, AND FOR THE
+  SAME REASON (#3564, stage 2 of programme #3205; INV-CONFIG-006).
+
+  The header's day line — "Wed, 1 Jul" — is written by an `Intl.DateTimeFormat`
+  that took its locale from `APP_LOCALE`, which is `NEXT_PUBLIC_LOCALE` inlined
+  at BUILD time into an image that serves every club. In the published image
+  that is `undefined`, so the wall reads New Zealand no matter what the club
+  recorded. Resolved here, on the server, where the setting lives.
+
+  ONE DIFFERENCE FROM THE ZONE ABOVE, AND IT IS DELIBERATE: this hands the
+  values to the SHARED `ClubFormatProvider`, which `DisplayScreen` mounts, where
+  the zone travels through a context private to `display-header-clock.tsx`. The
+  private one exists because it predates this seam and CT-6 (#2991) is where it
+  collapses; minting a second private copy of a context introduced in this very
+  change would be two homes for one thing on the day it was born, which is what
+  `INV-SSOT` exists to refuse. The mount census handles it exactly as it handles
+  `skifield-whakapapa-embed.tsx` under the root 404: the import-graph walk from
+  this page stops at the component that mounts its own provider, and reports it
+  as a boundary rather than a violation.
+
+  The reason `/display` still takes a PROP rather than joining a chrome mount is
+  unchanged and is stated above: its sibling `error.tsx` is held at zero data
+  dependencies, and no mount on this route could ever cover it.
+*/
 export default async function DisplayPage() {
-  return <DisplayScreen zone={await clubTimeZone()} />;
+  const [zone, format] = await Promise.all([clubTimeZone(), getClubFormat()]);
+  return <DisplayScreen zone={zone} format={format} />;
 }

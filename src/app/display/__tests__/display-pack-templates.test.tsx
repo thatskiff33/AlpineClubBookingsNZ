@@ -11,6 +11,31 @@ import type {
   DisplayStateGuest,
 } from "@/lib/lodge-display-state";
 
+import {
+  CLUB_CURRENCY_FALLBACK,
+  CLUB_LOCALE_FALLBACK,
+  type ClubFormat,
+} from "@/lib/club-format";
+
+/**
+ * The club's format, as the New Zealand defaults, so every expectation in this
+ * file means exactly what it meant before #3564 handed `DisplayScreen` this
+ * prop. The shipped constants rather than two literals, so there is one home
+ * for what "the default" is.
+ *
+ * A TEST USING THIS DEFAULT PROVES NOTHING ABOUT FORMAT AUTHORITY, which is
+ * worth saying rather than leaving for a reader to assume: under `en-NZ` the
+ * recorded locale and the build-time constant agree, so the migrated code and
+ * the code it replaced give the identical answer. The suite that means to
+ * assert the club's locale is the authority is
+ * `display-club-format.test.tsx`, which passes one the environment does not
+ * hold and demands an answer only that locale produces.
+ */
+const CLUB_FORMAT: ClubFormat = {
+  currencyCode: CLUB_CURRENCY_FALLBACK,
+  locale: CLUB_LOCALE_FALLBACK,
+};
+
 /**
  * The club timezone these renders are about (CT-4, #2870).
  *
@@ -149,7 +174,7 @@ async function renderBoard(def: Def, state: DisplayState) {
     body: { ...state, template: FALLBACK_TEMPLATE_FIELD, layoutRender },
   });
   const { DisplayScreen } = await import("@/app/display/display-screen");
-  const utils = render(<DisplayScreen zone={CLUB_ZONE} />);
+  const utils = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10);
   });
