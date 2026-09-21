@@ -240,6 +240,29 @@ describe("diffBookingPricing", () => {
     });
   });
 
+  it("an inexact before-night that CANCELS needs no provenance; one that leaves a line does (#3531 3a)", () => {
+    // Guest a is untouched with EVEN_SPLIT rows (kept at the same price and
+    // category, so no line names them); guest b is removed with SOLD rows.
+    const before = side([
+      guest("a", { nights: nights("2026-08-14", [8000, 8000], "EVEN_SPLIT") }),
+      guest("b"),
+    ]);
+    const after = side([{ ...guest("a"), nights: afterNights("2026-08-14", [8000, 8000]) }]);
+    const lines = linesOf(diffBookingPricing(before, after, -16000));
+    expect(lines.map((line) => renderModificationLineDescription(line))).toEqual([
+      "1 x Non-member Adult removed - 2 nights - 14 Aug 2026 - 16 Aug 2026",
+    ]);
+    // The same untouched guest, but this time its nights are the ones going:
+    // the line would name an even-split figure as a sold price, so no lines.
+    expect(
+      diffBookingPricing(
+        side([guest("a", { nights: nights("2026-08-14", [8000, 8000], "EVEN_SPLIT") })]),
+        side([]),
+        -16000,
+      ),
+    ).toEqual({ kind: "none", reason: "INEXACT_STORED_NIGHT_PRICE" });
+  });
+
   it("POSTCONDITION: lines that do not sum to the caller's delta are not returned", () => {
     const before = side([guest("a", { nights: nights("2026-08-14", [8000]) })]);
     const after = side([{ ...guest("a"), nights: afterNights("2026-08-14", [8000]) }, { ...guest("b"), nights: afterNights("2026-08-14", [8000]) }]);

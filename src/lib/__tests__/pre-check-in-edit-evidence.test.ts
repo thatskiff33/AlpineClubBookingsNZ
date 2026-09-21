@@ -22,6 +22,7 @@ import { describe, expect, it } from "vitest";
 import {
   editStrandEvidenceGrain,
   preCheckInEditEvidence,
+  preCheckInEditStrands,
   type PreCheckInEditStrand,
 } from "@/lib/stored-sold-price-evidence";
 import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
@@ -272,6 +273,47 @@ describe("the grain an edit needs of one strand's evidence (#3531 3a)", () => {
     // A strand with no rows at all is "untouched" only vacuously; its
     // evidence verdict, not its grain, is what parks it.
     expect(editStrandEvidenceGrain({ heldNightCount: 0, surrenderedNightCount: 0, addedNightCount: 0 })).toBe("WHOLE_GUEST");
+    // A strand the edit deliberately reprices (locks cleared) is not untouched.
+    expect(editStrandEvidenceGrain({ heldNightCount: 3, surrenderedNightCount: 0, addedNightCount: 0, repricedDeliberately: true })).toBe("INDIVIDUAL_NIGHT");
+    // ...but a whole removal is a whole removal whatever its locks say.
+    expect(editStrandEvidenceGrain({ heldNightCount: 3, surrenderedNightCount: 3, addedNightCount: 0, repricedDeliberately: true })).toBe("WHOLE_GUEST");
+  });
+
+  it("a strand the edit deliberately reprices (locks cleared) is still judged night by night, so an evenly-split one still parks", () => {
+    const stored = {
+      id: "linked",
+      priceCents: 10000,
+      nights: [
+        { stayDate: new Date("2026-08-01"), priceCents: 5000, priceSource: "EVEN_SPLIT" as const },
+        { stayDate: new Date("2026-08-02"), priceCents: 5000, priceSource: "EVEN_SPLIT" as const },
+      ],
+    };
+    const nightDates = [new Date("2026-08-01"), new Date("2026-08-02")];
+    // The modify save clears a linked placeholder's locks to `[]`; the date
+    // change passes no such field at all.
+    const cleared = preCheckInEditStrands({
+      bookingGuests: [stored],
+      guestsForPricing: [{ bookingGuestId: "linked", lockedNightPrices: [] }],
+      pricedGuests: [{ nightDates }],
+    });
+    expect(cleared[0]?.repricedDeliberately).toBe(true);
+    const kept = preCheckInEditStrands({
+      bookingGuests: [stored],
+      guestsForPricing: [{ bookingGuestId: "linked", lockedNightPrices: [{ stayDate: nightDates[0] }] }],
+      pricedGuests: [{ nightDates }],
+    });
+    expect(kept[0]?.repricedDeliberately).toBeUndefined();
+    const unstated = preCheckInEditStrands({
+      bookingGuests: [stored],
+      guestsForPricing: [{ bookingGuestId: "linked" }],
+      pricedGuests: [{ nightDates }],
+    });
+    expect(unstated[0]?.repricedDeliberately).toBeUndefined();
+
+    expect(evidenceFor(cleared).recorded.map((s) => [s.bookingGuestId, s.cause])).toEqual([
+      ["linked", "INEXACT_STORED_NIGHT_PRICES"],
+    ]);
+    expect(evidenceFor(unstated).occurrence).toBeNull();
   });
 
   it("an untouched evenly-split companion parks nothing beside a removal - the September 2026 shape", () => {

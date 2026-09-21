@@ -94,15 +94,24 @@ export type StoredSoldPriceGrain = "WHOLE_GUEST" | "INDIVIDUAL_NIGHT";
  *
  * A strand the edit MOVES - a night surrendered, a night added - needs each of
  * those nights' own sold price, so it is judged at `INDIVIDUAL_NIGHT` grain.
+ * So does a strand the edit DELIBERATELY REPRICES with its night set unchanged
+ * (the #2337 placeholder-to-member link and the other-lodge rate election, which
+ * clear its locked prices so the whole stay prices fresh): that is not
+ * "untouched" - its rows are about to be rewritten at new prices, so what they
+ * said has to be known night by night before it is overwritten. Nothing about
+ * those paths changes here; they are judged exactly as before #3531.
  */
 export function editStrandEvidenceGrain(args: {
   heldNightCount: number;
   surrenderedNightCount: number;
   addedNightCount: number;
+  /** The edit cleared this strand's locked prices to reprice it whole. */
+  repricedDeliberately?: boolean;
 }): StoredSoldPriceGrain {
   const removedWhole =
     args.surrenderedNightCount === args.heldNightCount && args.addedNightCount === 0;
-  const untouched = args.surrenderedNightCount === 0 && args.addedNightCount === 0;
+  const untouched =
+    args.surrenderedNightCount === 0 && args.addedNightCount === 0 && !args.repricedDeliberately;
   return removedWhole || untouched ? "WHOLE_GUEST" : "INDIVIDUAL_NIGHT";
 }
 
@@ -342,6 +351,12 @@ export type PreCheckInEditStrand = {
    * See `evidenceDestroyed` in `preCheckInEditEvidence`.
    */
   rowsDestroyed?: boolean;
+  /**
+   * True when the edit cleared this strand's locked night prices to reprice
+   * the whole stay (#2337 link, other-lodge tick). Its night set may not move,
+   * but it is not untouched: `editStrandEvidenceGrain` judges it night by night.
+   */
+  repricedDeliberately?: boolean;
 };
 
 /**
@@ -448,6 +463,7 @@ export function preCheckInEditEvidence(args: {
         heldNightCount: heldKeys.length,
         surrenderedNightCount: surrenderedNightDates.length,
         addedNightCount: addedNightDates.length,
+        repricedDeliberately: strand.repricedDeliberately,
       }),
     );
     storedNightPriceByGuestId.set(
@@ -591,7 +607,18 @@ export function preCheckInEditStrands(args: {
       priceSource: BookingGuestNightPriceSource;
     }> | null;
   }>;
-  guestsForPricing: ReadonlyArray<{ bookingGuestId?: string | null }>;
+  /**
+   * The pricing input, index-aligned with `pricedGuests`. `lockedNightPrices`
+   * is read only for its emptiness: the modify save and preview clear it to
+   * `[]` for a strand they deliberately reprice (#2337 link, other-lodge
+   * tick), and that is what marks the strand `repricedDeliberately`. Callers
+   * that never clear locks (the date change, the guest add) pass no such
+   * field and no strand is marked.
+   */
+  guestsForPricing: ReadonlyArray<{
+    bookingGuestId?: string | null;
+    lockedNightPrices?: ReadonlyArray<unknown> | null;
+  }>;
   /** Index-aligned with `guestsForPricing`, as the pricing pass returns it. */
   pricedGuests: ReadonlyArray<{
     nightDates?: ReadonlyArray<Date | string> | null;
@@ -616,6 +643,11 @@ export function preCheckInEditStrands(args: {
       stayEnd: stored.stayEnd,
       nights: stored.nights,
       proposedNightDates: args.pricedGuests[index]?.nightDates ?? [],
+      ...(Array.isArray(guest.lockedNightPrices) &&
+      guest.lockedNightPrices.length === 0 &&
+      (stored.nights?.length ?? 0) > 0
+        ? { repricedDeliberately: true }
+        : {}),
     });
   });
 
