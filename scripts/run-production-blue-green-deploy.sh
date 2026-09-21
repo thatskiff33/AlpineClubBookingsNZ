@@ -2418,9 +2418,29 @@ require_integer_setting_in_range() {
   # and one they have to go and read the script to understand. Callers that pass
   # nothing keep the bare bound, which is all a warm-up tunable needs.
   local reason="${5:-}"
+  local magnitude
 
   if ! printf '%s' "$value" | grep -Eq '^[0-9]+$'; then
     echo "${name} must be a non-negative integer. Got: ${value}" >&2
+    return 1
+  fi
+
+  # WELL-SHAPED IS NOT THE SAME AS COMPARABLE, and the gap between them let an
+  # unbounded value through this function entirely (#3377 review). `[ x -lt y ]`
+  # on a digit string wider than a signed 64-bit integer does not answer the
+  # question: it writes "integer expression expected" and exits **2**. Exit 2 is
+  # not "out of range" — it is false, so BOTH halves of the `||` below were false
+  # and the value was ACCEPTED. Measured with twenty digits: the deploy then ran
+  # on to the step that uses the setting and died there, after images had been
+  # pulled, which is the whole cost the step-3 placement exists to avoid.
+  #
+  # Leading zeros are stripped first so the guard is about magnitude rather than
+  # typing: `0500` is five hundred, not a suspiciously wide number. Eighteen
+  # digits is comfortably inside what every shell here compares in, and no
+  # setting this function guards is within ten orders of magnitude of it.
+  magnitude="$(printf '%s' "$value" | sed 's/^0*//')"
+  if [ "${#magnitude}" -gt 18 ]; then
+    echo "${name} is too large for this script to compare (${#magnitude} digits). It must be between ${min} and ${max}. Got: ${value}" >&2
     return 1
   fi
 
