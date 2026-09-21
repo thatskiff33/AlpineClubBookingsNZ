@@ -4263,19 +4263,41 @@ The `migrate` service in `docker-compose.yml` — the service whose `command` is
 …/tacbookings?connection_limit=2&pool_timeout=10&options=-c%20lock_timeout%3D${MIGRATION_LOCK_TIMEOUT_MS:-5000}
 ```
 
-`options` is applied at connect time, so the bound is in force for the migration
-statements, for `prisma migrate diff`'s shadow replay, and for
-`prisma migrate status`. **It is set on the service and not in the deploy
-script** because that is what reaches every path that runs a migration, rather
-than only the one the script happens to call.
+`options` is applied at connect time, so the bound is in force for everything
+that connects on **this** URL: the migration statements themselves, and the
+`prisma migrate status` the deploy script runs after them. **It is set on the
+service and not in the deploy script** because that is what reaches the
+connection migrations are applied on, rather than only the one command the
+script happens to call.
+
+It does **not** cover the shadow replay inside `prisma migrate diff`, and an
+earlier version of this passage said it did. That replay connects on
+`SHADOW_DATABASE_URL`, which `validate_prisma_schema_matches_migrations` in
+`scripts/run-production-blue-green-deploy.sh` builds without an `options`
+parameter, and which `prisma.config.ts` wires straight through. Bounding it
+would buy nothing: the shadow database is created empty for that one check and
+dropped after it, so no other session is holding a lock on anything in it.
 
 No application connection is touched: the web slots, the cron leader and every
 `PrismaClient` in `src/` still connect with no `lock_timeout`, which is why the
 member-merge helper above can still say `DEFAULT` resolves to `0`.
 
 `scripts/run-production-blue-green-deploy.sh` refuses the deploy at step 3 —
-before it pulls an image — if the option has been edited off the URL, or if the
-value in force is `0` or at/over the ceiling below. `0` is the trap worth naming:
+before it pulls an image — if the option is not on the URL the migrate service
+will actually receive, or if the value in force is `0` or at/over the ceiling
+below.
+
+It establishes that by running `docker compose config` and reading the
+`migrate` service's resolved `DATABASE_URL` out of it, rather than by parsing
+`docker-compose.yml`. That distinction is the whole of the guarantee. Compose
+does not read only the tracked file: `COMPOSE_FILE` in the deployment host's
+`.env` names an overlay as well, and a `docker-compose.override.yml` is merged
+with no configuration at all — so an overlay can take the bound off without the
+tracked file changing, and a check that reads the tracked file would report a
+bound the container never receives. Asking Compose is what makes "the value
+checked is the value the migrate container gets" true rather than aspirational.
+
+`0` is the trap worth naming:
 it is the natural way to write "turn this off", and PostgreSQL reads it as *wait
 forever* rather than as *unset*, so the most obvious disabling gesture silently
 restores the exact exposure the guard exists to remove.
@@ -4309,8 +4331,19 @@ in `docker-compose.yml` already records for advisory-lock waiters — so ten
 blocked requests exhaust a slot's pool and every further request is refused with
 Prisma `P2024` after `pool_timeout`. At 10 s or more this guard cannot fire
 before the serving colour is returning errors to members, so it would be
-decoration. `MIGRATION_LOCK_TIMEOUT_CEILING_MS` derives the ceiling from that
-`pool_timeout` rather than restating it.
+decoration.
+
+That ceiling has **one home, and it is `pool_timeout` itself**. Both things
+that enforce it derive it rather than restating it:
+`MIGRATION_LOCK_TIMEOUT_CEILING_MS` in
+`src/lib/__tests__/helpers/migration-lock-timeout-config.ts` reads it out of
+`docker-compose.yml`, and the deploy script reads it out of the same resolved
+Compose model it reads the bound from, taking the lower of the two web colours
+because a deploy does not get to choose which one is serving. So the highest
+value the script will accept is one millisecond under it — today `9999` — and
+raising `pool_timeout` moves both at once. It was briefly a hard-coded `9000`
+in the script while the helper derived `10000`, which is two homes disagreeing
+about the rule as well as the number.
 
 **5000 ms** sits at half the ceiling and about 5000x the measured floor. It is
 deliberately *tighter* than `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS` (10 s),

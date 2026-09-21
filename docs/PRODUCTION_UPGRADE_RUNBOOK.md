@@ -284,6 +284,36 @@ whose `ALTER TABLE` cannot get `ACCESS EXCLUSIVE` promptly stops rather than
 joining the lock queue, because a migration waiting on a hot table puts **every
 later reader of that table behind it**, and the old colour is still serving.
 
+**First, check WHICH lock timed out — there are two variants and only one of
+them has anything to clean up.** `lock_timeout` bounds every lock wait on the
+connection, and `prisma migrate deploy` takes a session advisory lock —
+`pg_advisory_lock(72707369)` — *before* it looks at the pending list. If the
+bound fires on that, no migration was ever started:
+
+| | A migration's lock (the common case) | Prisma's own advisory lock |
+| --- | --- | --- |
+| A migration name in the error | yes | **no** |
+| Prisma error code | `P3018` | not `P3018`; the raw database error |
+| New `_prisma_migrations` row | yes, `applied_steps_count = 0` | **none** |
+| A straight retry gives | `P3009` | the same timeout, or success |
+
+If the error names no migration, you are in the right-hand column and the rest
+of this section does not apply to you: **there is no failed row, so
+`prisma migrate resolve --rolled-back` has nothing to act on and no name to be
+given.** What holds that advisory lock is another `prisma migrate` on the same
+database — a second deploy running concurrently, a migrate container left over
+from an interrupted run, or a migrate somebody started by hand. Find it with
+
+```bash
+docker compose exec -T postgres psql -U tac -d tacbookings -c "
+  SELECT pid, granted, left(query, 80) AS query
+  FROM pg_locks JOIN pg_stat_activity USING (pid)
+  WHERE locktype = 'advisory';"
+```
+
+make sure it has finished or been stopped, and deploy again. Nothing needs
+undoing. Everything below is for the left-hand column.
+
 **What state the club is in.** Safe, and no worse than before the deploy. The
 old colour is still serving on the old schema, no traffic has moved, and the
 migration applied nothing — `_prisma_migrations` records the attempt with
@@ -338,9 +368,9 @@ the window properly rather than widening the bound: stop the old colour and its
 workers, and follow the windowed sequence in
 [§2.4](#24-windowed-migration-deploy-sequence). Raising
 `MIGRATION_LOCK_TIMEOUT_MS` is the wrong lever — the deploy script refuses
-anything at or over 9000 ms precisely because by 10 s the web slots'
-`pool_timeout` has expired and the blocked table is already refusing member
-requests with Prisma `P2024`. A longer wait does not avoid the outage, it
+anything at or over the web slots' `pool_timeout` (10 s today, so the highest it
+accepts is 9999 ms) precisely because by then that `pool_timeout` has expired and
+the blocked table is already refusing member requests with Prisma `P2024`. A longer wait does not avoid the outage, it
 guarantees it.
 
 ### 2.2 AgeTier `NOT_APPLICABLE` — deploy in a quiet window

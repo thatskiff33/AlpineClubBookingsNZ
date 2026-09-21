@@ -482,13 +482,32 @@ services:
       # that only an operator noticing can end.
       #
       # `options` is a libpq startup parameter, so the bound is in force from the
-      # moment the schema engine connects — for the migration statements, for
-      # `prisma migrate diff`, and for `prisma migrate status`. It is set HERE,
-      # on the service whose `command` IS `prisma migrate deploy`, because that is
-      # the only place it reaches every path that runs a migration. Measured
-      # against PostgreSQL 16 with Prisma 7.10: the engine really does thread it
-      # (proven by `current_setting('lock_timeout')`), and a blocked migration
-      # fails with Prisma P3018 / SQLSTATE 55P03, applied_steps_count = 0.
+      # moment the schema engine connects. It is set HERE, on the service whose
+      # `command` IS `prisma migrate deploy`, because that is the only place it
+      # reaches the connection migrations are applied on.
+      #
+      # WHAT IT COVERS, exactly, because an earlier version of this comment
+      # claimed one path too many. Every command that connects on THIS URL runs
+      # under the bound: `prisma migrate deploy` itself, and the
+      # `prisma migrate status` the deploy script runs after it. It does NOT
+      # cover the shadow replay inside `prisma migrate diff`: that connects on
+      # SHADOW_DATABASE_URL, which `validate_prisma_schema_matches_migrations`
+      # in scripts/run-production-blue-green-deploy.sh builds without an
+      # `options` parameter. Nothing is lost by that — the shadow database is
+      # created empty for the check and dropped after it, so there is nobody to
+      # contend with — but the sentence has to be true either way.
+      #
+      # Measured against PostgreSQL 16 with Prisma 7.10, and the two halves are
+      # proven by different tests in
+      # src/lib/__tests__/migration-lock-timeout.realdb.test.ts:
+      # a connection opened with this exact option string reports the bound back
+      # through `current_setting('lock_timeout')` (the `pg` driver test), and
+      # Prisma's own schema-engine binary threads the option rather than
+      # dropping it with the connector arguments it understands — its DDL against
+      # a locked table is cancelled too (the `prisma db execute` test). A blocked
+      # `migrate deploy` fails with Prisma P3018 / SQLSTATE 55P03,
+      # applied_steps_count = 0; that one was measured by hand, and the suite
+      # header says so rather than implying the suite ran it.
       #
       # WHY 5000 ms — both bounds, so the next person can re-measure rather than
       # inherit a number (src/lib/__tests__/migration-lock-timeout.realdb.test.ts

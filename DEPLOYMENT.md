@@ -71,8 +71,9 @@ readers holds a web-pool connection while it waits, so ten of them exhaust a
 slot and every further request is refused with Prisma `P2024` after that URL's
 `pool_timeout` (10 s). The lock timeout has to fire well inside that window or it
 cannot prevent anything — which is exactly why the deploy script refuses a value
-at or over 9000 ms, and refuses `0`, which PostgreSQL reads as *wait forever*
-rather than as *off*. The measurement behind the default is in
+at or over that `pool_timeout` (it derives the ceiling from the resolved Compose
+model rather than restating it, so today the highest it accepts is `9999`), and
+refuses `0`, which PostgreSQL reads as *wait forever* rather than as *off*. The measurement behind the default is in
 [`docs/CONCURRENCY_AND_LOCKING.md`](docs/CONCURRENCY_AND_LOCKING.md#the-migration-lock-timeout-3377);
 what an operator does when a deploy stops for this reason is in
 [`docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.1a](docs/PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout).
