@@ -247,11 +247,11 @@ describe("server-only boundary self-test: the two root lists", () => {
     }
   });
 
-  it("names nine roots, sorted and without duplicates", () => {
+  it("names ten roots, sorted and without duplicates", () => {
     // A non-vacuity floor for the census that consumes this list: a rename that
     // emptied it, or a copy-paste that duplicated an entry into looking full,
     // would otherwise leave that census checking nothing while staying green.
-    expect(MARKED_ROOTS).toHaveLength(9);
+    expect(MARKED_ROOTS).toHaveLength(10);
     expect(new Set(MARKED_ROOTS).size).toBe(MARKED_ROOTS.length);
     expect([...MARKED_ROOTS].sort()).toEqual(MARKED_ROOTS);
     expect(MARKER_STATEMENT).toBe('import "server-only";');

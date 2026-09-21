@@ -133,30 +133,50 @@ export function renderClubDay(value: Date, timeZone: string = APP_TIME_ZONE) {
 `;
 
 /**
- * The control, and it is a REAL call site rather than an invented one:
- * `src/lib/stripe.ts` writes exactly this twice today, on `chargePaymentMethod`
- * and `createPaymentIntent`, and both are correct.
+ * THE CURRENCY DEFAULT, WHICH THIS FILE USED TO CARRY AS THE ARM'S CONTROL AND
+ * NOW CARRIES AS A VIOLATION (#3563, owner decision D5). It is a real shape
+ * rather than an invented one: `src/lib/stripe.ts` wrote exactly this twice, on
+ * `chargePaymentMethod` and `createPaymentIntent`.
  *
- * WHY IT IS CORRECT, stated carefully because an earlier draft of this comment
- * got it wrong. It does NOT rest on the currency being single-sourced today: two
- * admin display formatters hardcode `currency: "NZD"` instead of reading
- * `APP_CURRENCY`, and `schema.prisma` gives `PaymentTransaction.currency` a
- * `"nzd"` column default. Those are a separate, pre-existing defect that this
- * arm neither addresses nor is the right instrument for. It rests on there being
- * no persisted club-currency SETTING competing with `APP_CURRENCY`, so there is
- * no wrong-source-of-two for a default to pick — and on cost: every live call
- * site relies on this default rather than passing a currency, so deleting it
- * would spread the `@/config/operational` import across those modules without
- * touching either hardcoded formatter. `INV-SSOT-003` carries the ratchet that
- * brings both names in the day a persisted club-currency setting ships.
+ * WHY IT WAS CORRECT AND IS NOT ANY MORE, because the inversion is the point
+ * and a bare flip would read as somebody changing their mind. The exclusion
+ * never rested on the currency being single-sourced — two admin display
+ * formatters hardcode `currency: "NZD"` and `schema.prisma` gives
+ * `PaymentTransaction.currency` a `"nzd"` column default, which #3567 takes. It
+ * rested on there being no persisted club-currency SETTING competing with
+ * `APP_CURRENCY`, so no wrong-source-of-two existed for a default to pick, and
+ * on cost: six live call sites relied on the default, so deleting it would have
+ * spread the `@/config/operational` import without single-sourcing anything.
+ * `INV-SSOT-003` wrote the trigger into the exclusion — the day a persisted
+ * club-currency setting exists, both names join the ban — and #3563 created
+ * `ClubFormatSettings`. So the premise is gone, the defaults are deleted, the
+ * six call sites state the currency, and this snippet now reports.
  *
- * If this ever starts reporting, the arm has stopped being about the wrong one
- * of TWO sources and has become a ban on reading configuration.
+ * IF THIS EVER STOPS REPORTING, the ratchet has been quietly unwound and the
+ * arm is back to excluding a club-facing authority for a cost reason that no
+ * longer holds.
  */
-const AUTHORITY_DEFAULT_CONTROL = `
+const CURRENCY_AUTHORITY_DEFAULT = `
 import { APP_STRIPE_CURRENCY } from "@/config/operational";
 export function createIntent(amountCents: number, currency = APP_STRIPE_CURRENCY) {
   return { amountCents, currency };
+}
+`;
+
+/**
+ * The control the arm still needs: a default that reads configuration which is
+ * NOT a club authority, so the arm is demonstrably about the wrong one of TWO
+ * sources rather than a ban on reading configuration at all.
+ *
+ * `CRON_SECRET` has exactly one source — the environment — and
+ * `isValidCronSecret(expected = process.env.CRON_SECRET)` is a live call site
+ * writing this shape today. It is also one of the seven defaults the arm's own
+ * comment measured and deliberately declined to reach, so this control is that
+ * decision asserted rather than merely written down.
+ */
+const AUTHORITY_DEFAULT_CONTROL = `
+export function checkSecret(supplied: string, expected = process.env.CRON_SECRET) {
+  return supplied === expected;
 }
 `;
 
@@ -299,14 +319,38 @@ describe("the arm is mandatory everywhere, and nothing lifts it", () => {
     expect(problems).toEqual([]);
   }, 120_000);
 
-  it("leaves the currency defaults alone — the control that makes the ban meaningful", async () => {
+  it("reports the currency defaults too — the ratchet #3563 fired", async () => {
+    // THIS ASSERTION IS THE INVERSION OF THE ONE THAT USED TO STAND HERE, and
+    // it is deliberate rather than a relaxation: `INV-SSOT-003`'s exclusion of
+    // the two currency names carried its own trigger, "the day a persisted
+    // club-currency setting exists, both names join the list", and #3563
+    // created `ClubFormatSettings`. An exclusion with a trigger nobody ever
+    // pulls is a permanent hole wearing a promise, so the pull is asserted at
+    // every production path rather than left to the config file's prose.
+    for (const entry of PRODUCTION_GUARD_ROSTER) {
+      expect(
+        await messagesFor(CURRENCY_AUTHORITY_DEFAULT, entry.file),
+        `${entry.file} (${entry.why}) accepted \`currency = APP_STRIPE_CURRENCY\`, ` +
+          "so the #3563 ratchet has been unwound at that path: the club's " +
+          "currency is a persisted setting now, and a default reading the " +
+          "environment picks the wrong one of two sources.",
+      ).toHaveLength(1);
+    }
+  }, 120_000);
+
+  it("still leaves a single-source configuration default alone", async () => {
+    // The control that keeps the arm honest in the other direction. Without it
+    // the assertion above is satisfied by an arm that bans reading
+    // configuration outright, which would be wrong seven times over — the
+    // arm's own comment measures seven live `process.env` defaults that are
+    // injection seams rather than this defect.
     for (const entry of PRODUCTION_GUARD_ROSTER) {
       expect(
         await messagesFor(AUTHORITY_DEFAULT_CONTROL, entry.file),
-        `${entry.file} (${entry.why}) rejected \`currency = APP_STRIPE_CURRENCY\`, ` +
-          "so this arm bans reading configuration rather than banning a default " +
-          "that picks the wrong one of two sources. `src/lib/stripe.ts` writes " +
-          "that exact line twice and both are correct.",
+        `${entry.file} (${entry.why}) rejected ` +
+          "`expected = process.env.CRON_SECRET`, so this arm bans reading " +
+          "configuration rather than banning a default that picks the wrong " +
+          "one of two sources. `src/lib/cron-auth.ts` writes that line today.",
       ).toEqual([]);
     }
   }, 120_000);
@@ -557,11 +601,6 @@ describe("the stated boundaries hold — each of these must stay clean", () => {
    * widens a regular expression.
    */
   const boundaries: Array<[string, string]> = [
-    [
-      "the currency pair, which INV-SSOT-003 excludes by name and with a ratchet",
-      'import { APP_CURRENCY } from "@/config/operational";\n' +
-        "export function f(currency = APP_CURRENCY) {\n  return currency;\n}",
-    ],
     [
       "a different environment variable, which has exactly one source",
       "export function f(secret: string | undefined = process.env.CRON_SECRET) {\n" +

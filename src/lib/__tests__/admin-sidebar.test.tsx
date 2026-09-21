@@ -145,8 +145,12 @@ describe("AdminSidebar", () => {
       // Club Time Zone (CT-1 #2989): the one persisted IANA club time zone.
       // Full-Admin only, like the two entries above it.
       "Club Time Zone",
+      // Club Currency & Locale (#3563, programme #3205): the one persisted
+      // currency and number/date format. Full-Admin only, like the three
+      // entries above it.
+      "Club Currency & Locale",
       // Environment Safety (ENV-SAFETY 1 #3034): is this the club's live site
-      // or a copy of it. Full-Admin only, like the three entries above it.
+      // or a copy of it. Full-Admin only, like the four entries above it.
       "Environment Safety",
       "Committee",
     ]);
@@ -221,6 +225,33 @@ describe("AdminSidebar", () => {
         true,
       ).flatMap((section) => section.items.map((item) => item.href)),
     ).toContain("/admin/club-time");
+  });
+
+  it("keeps Club Currency & Locale out of the sidebar for an admin who is not a Full Admin", () => {
+    // The same proof the two entries above carry, for the same reason (#3563):
+    // a support EDITOR satisfies the /admin/club-format prefix requirement on
+    // the matrix, so `fullAdminOnly` is the only thing keeping the entry out —
+    // and /api/admin/club-format refuses them on both verbs anyway, so showing
+    // it would be an offer the app cannot honour.
+    const scoped = {
+      overview: "view" as const,
+      bookings: "none" as const,
+      membership: "none" as const,
+      finance: "none" as const,
+      lodge: "none" as const,
+      content: "none" as const,
+      support: "edit" as const,
+    };
+    expect(
+      getVisibleAdminNavSections(CLUB_DAY, allOn, scoped, false).flatMap(
+        (section) => section.items.map((item) => item.href),
+      ),
+    ).not.toContain("/admin/club-format");
+    expect(
+      getVisibleAdminNavSections(CLUB_DAY, allOn, scoped, true).flatMap(
+        (section) => section.items.map((item) => item.href),
+      ),
+    ).toContain("/admin/club-format");
   });
 
   it("owns Lobby Display once under Lodge Operations and keeps General intact", () => {

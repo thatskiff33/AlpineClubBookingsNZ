@@ -55,6 +55,7 @@ import {
   LockKeyhole,
   Search,
   Bot,
+  Coins,
   Globe,
   ServerCog,
 } from "lucide-react";
@@ -596,6 +597,28 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
           "utc offset",
           "nzst",
           "nzdt",
+        ],
+      },
+      {
+        // The one persisted currency and locale (#3563, programme #3205). Full
+        // Admin like Club Time Zone above it, and the route enforces that
+        // itself. The keywords carry the words an operator would actually type
+        // — "currency", "dollars", "NZD", "date format" — because the label
+        // matches none of them and the command palette index is built from
+        // these entries.
+        href: "/admin/club-format",
+        label: "Club Currency & Locale",
+        icon: Coins,
+        fullAdminOnly: true,
+        keywords: [
+          "currency",
+          "dollars",
+          "nzd",
+          "money format",
+          "locale",
+          "language tag",
+          "number format",
+          "date format",
         ],
       },
       {

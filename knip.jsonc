@@ -113,6 +113,22 @@
     "src/lib/club-time/server.ts": ["files", "exports", "types"],
     "src/lib/club-time/index.ts": ["exports", "types"],
     "src/lib/club-time/bound.ts": ["exports", "types"],
+    // #3563 (programme #3205) foundation surface, the same shape as the two
+    // carve-outs above and taken for the same reason. `getClubFormat()` is the
+    // ONE function that answers "what currency does this club charge in, and
+    // how does it write numbers and dates?" — `INV-CONFIG-006` names it as
+    // such — and owner decision D1 is that stage 1 creates the authority while
+    // no reader moves onto it, in exchange for no throwaway plumbing. So it is
+    // deliberately unreferenced for exactly as long as that decision says, and
+    // the alternative was shipping the authority with a hole where its reader
+    // should be and letting #3564, #3565 and #3566 each invent one. The rest of
+    // the module's surface is already referenced by the admin route, so this
+    // covers `getClubFormat` and nothing else today.
+    //
+    // REMOVE THIS AS THE CONSUMING LANES LAND. #3567 is convergence and must
+    // find it already gone; a carve-out still here at #3567 means an export
+    // nobody ever needed.
+    "src/lib/club-format-settings.ts": ["exports"],
     // #1138 booking-modify split: this file's header comment states it is
     // "now a pure barrel" so "everything importable from @/lib/booking-modify
     // is unchanged" — a deliberate backward-compat contract. Several flagged

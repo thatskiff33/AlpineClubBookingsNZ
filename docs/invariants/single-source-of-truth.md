@@ -185,40 +185,33 @@ are permanent: never renumbered, never reused.
 - **The mechanically-guarded class is narrower than the rule, deliberately, and
   the gap is stated rather than left to be discovered.** The arm bans a
   parameter, options-object property or destructuring default whose value reads
-  the **club's civil-time authority**: `APP_TIME_ZONE`, `APP_LOCALE`, or
-  `process.env.TZ` / `NEXT_PUBLIC_TZ` in any spelling — including a
-  namespace-import or computed member access, and including the
-  `= process.env.TZ ?? "…"` and ternary forms, which are what somebody reaches
-  for the moment a bare read looks unsafe. It lives in `eslint.config.mjs` on
-  `ALWAYS_RESTRICTED_IN_SRC`, so every block picks it up including `scripts/`
-  and `prisma/`, and its failure message names this ID.
-- **Only `APP_TIME_ZONE` and the `TZ` reads have a competing persisted source**
-  — the `ClubTimeSettings` row (`INV-CONFIG-002`) — and that is the measured
-  defect: dozens of call sites could silently take a club-facing answer from the
-  container, and the counts are in the census test rather than here.
-  `APP_LOCALE` is banned on a **forward-looking** argument instead, and it
-  should be read as such: no persisted club locale exists, so `APP_LOCALE` is
-  listed _ahead of_ its second source, on the grounds that it is a club-facing
-  presentation authority of the same kind whose live default population is zero
-  — listing it costs nothing now and saves the migration later. Note that
-  "nothing competes with it" would be too strong even so: fifteen non-test files
-  hardcode `"en-NZ"` outright, which is a separate pre-existing defect this arm
-  does not address.
-- **The exclusions are judged, and the two kinds of reason are not
-  interchangeable.**
-  - `APP_CURRENCY` and `APP_STRIPE_CURRENCY` are excluded on **cost**, not on
-    kind. `src/lib/stripe.ts` has two live `currency = APP_STRIPE_CURRENCY`
-    defaults, and all **eight** production call sites in eight modules rely on
-    them. No persisted club-currency SETTING competes with them, and pushing the
-    read out would spread the `@/config/operational` import into eight more
-    modules — worse for single source of truth, not better. Two caveats, because
-    the weaker claim is the true one: `finance-fees-sections.tsx` and
-    `joining-fee-preview.tsx` hardcode `"NZD"` outright and `schema.prisma`
-    defaults a `currency` column to `"nzd"`, so currency is **not** in fact
-    single-sourced today — those are a separate pre-existing defect this arm
-    does not address. And say "cost", not "a different kind of value", because
-    `APP_LOCALE` has no competing setting either and is banned. **The day a
-    persisted club-currency setting exists, both names join the list.**
+  a **club presentation authority**: `APP_TIME_ZONE`, `APP_LOCALE`,
+  `APP_CURRENCY`, `APP_STRIPE_CURRENCY`, or the `TZ` / `CURRENCY` / `LOCALE`
+  environment variables behind them (with their `NEXT_PUBLIC_` twins) in any
+  spelling — including a namespace-import or computed member access, and
+  including the `= process.env.TZ ?? "…"` and ternary forms, which are what
+  somebody reaches for the moment a bare read looks unsafe. It lives in
+  `eslint.config.mjs` on `ALWAYS_RESTRICTED_IN_SRC`, so every block picks it up
+  including `scripts/` and `prisma/`, and its failure message names this ID.
+- **Every name on the list now has a competing persisted source**, which #3563
+  changed: the zone is `ClubTimeSettings` (`INV-CONFIG-002`), the currency and
+  locale are `ClubFormatSettings` (`INV-CONFIG-006`). `APP_LOCALE` was listed
+  _ahead of_ its second source, on the grounds that listing a club-facing
+  authority with no live defaults costs nothing and saves a migration; that bet
+  paid. Still unfixed, and #3567's: fifteen non-test files hardcode `"en-NZ"`,
+  two `"NZD"`, and `normalizeRefundCurrency` falls back to
+  `APP_STRIPE_CURRENCY` through a `??` this arm cannot see.
+- **The exclusions are judged, the two kinds of reason are not interchangeable,
+  and one of them has now expired.**
+  - `APP_CURRENCY` and `APP_STRIPE_CURRENCY` **used to be** excluded on
+    **cost**, not kind, and that exclusion carried its own trigger: *the day a
+    persisted club-currency setting exists, both names join the list.* #3563
+    created `ClubFormatSettings` and paid it in the same change (D5), deleting
+    `src/lib/stripe.ts`'s two defaults and making its six call sites state the
+    currency. **Read it as the worked example of an exclusion written WITH a
+    trigger** — the only kind that does not rot into a hole. The original
+    reasoning survives in `eslint.config.mjs` and in
+    `ssot-authority-default-guard.test.ts`, whose control inverted.
   - The rest of `process.env.*` is excluded on **measurement**. **Seven** live
     parameter defaults read it: `cron-auth.ts` (`CRON_SECRET`), plus six
     whole-environment injection seams (`admin-cron-health.ts` twice,
@@ -266,8 +259,9 @@ are permanent: never renumbered, never reused.
     where the change actually written at each site would be
     `getFinancialYearEndMonth()` **at** the call site — compliant with this
     rule's letter while reading the same cold cache, and one ambient read spread
-    across every one of those modules. That is the `APP_STRIPE_CURRENCY` argument
-    above, again. The figures live with the pending entry in `eslint.config.mjs`,
+    across every one of those modules. That is the `APP_STRIPE_CURRENCY`
+    argument above, which #3563 then paid — a cost a later change can settle,
+    not a permanent answer. The figures live with the pending entry in `eslint.config.mjs`,
     beside the pin that keeps them true.
 - **What no syntactic arm here reaches**, stated plainly rather than left as a
   discovered gap: a default that calls a **club-time** resolver
