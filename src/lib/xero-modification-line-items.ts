@@ -24,6 +24,14 @@
  * promo's own codes with the original invoice's fallback. On a credit note
  * every sign inverts: removed nights are the positive lines, added nights and
  * the change fee are negative, and the note totals what it returns.
+ *
+ * REVIEW SHARES (stage 2c). A parked edit stores no lines; what its documents
+ * bill is what an officer settled on each `EDIT_FINANCIAL_REVIEW` task. Each
+ * COMPLETED share anchored on the modification is one line,
+ * `Adjustment agreed with member: <the officer's note>`, at the task's own
+ * figure - a charge coded as today's single price-adjustment line is, a
+ * refund as a give-back. Never a guest-night line invented from the figure:
+ * the adjustment is named for what it is (owner direction on #3527).
  */
 import type { LineItem } from "xero-node";
 import { prisma } from "./prisma";
@@ -48,11 +56,23 @@ import {
   resolveHutFeeLineItemCode,
   resolvePromoLineCodes,
 } from "@/lib/xero-hut-fee-line-codes";
+import {
+  editReviewSettledShareTaskSelect,
+  editReviewSettledShareTaskWhere,
+  editReviewSettledSharesByAnchor,
+  type EditReviewSettledShare,
+} from "@/lib/edit-financial-review-charge-shape";
 
 export type ModificationDocumentKind = "SUPPLEMENTARY_INVOICE" | "MODIFICATION_CREDIT_NOTE";
 
 /** The change-fee line's words, on every document that carries one. */
 export const CHANGE_FEE_LINE_DESCRIPTION = "Late notice booking change fee";
+
+/** A settled review share's words: the officer's note, or the bare sentence. */
+export function renderEditReviewShareDescription(share: Pick<EditReviewSettledShare, "note">): string {
+  const note = share.note?.trim();
+  return note ? `Adjustment agreed with member: ${note}` : "Adjustment agreed with member";
+}
 
 /** The modification row's columns a document reads: one `select`, spread by every reader. */
 export const MODIFICATION_DOCUMENT_LINES_SELECT = {
@@ -116,11 +136,13 @@ export async function loadModificationDocumentCodingContext(
  */
 export function buildModificationDocumentLineItems(args: {
   lines: ReadonlyArray<ModificationLine>;
+  /** The settled review shares, one line each after the edit's lines (2c). */
+  shares?: ReadonlyArray<EditReviewSettledShare>;
   changeFeeCents: number;
   document: ModificationDocumentKind;
   context: ModificationDocumentCodingContext;
 }): LineItem[] {
-  const { lines, changeFeeCents, document, context } = args;
+  const { lines, shares = [], changeFeeCents, document, context } = args;
   // +1 renders the stored sign as it is (an invoice bills what was added);
   // -1 inverts it (a credit note returns what was removed).
   const orientation = document === "SUPPLEMENTARY_INVOICE" ? 1 : -1;
@@ -170,6 +192,33 @@ export function buildModificationDocumentLineItems(args: {
         });
   });
 
+  // A share is coded by its sign exactly as the single price-adjustment line
+  // it replaces: a charge to income with the flat item code, a refund as a
+  // give-back (#1356). Its sign renders under the same orientation as a line.
+  for (const share of shares) {
+    items.push(
+      applyHutFeeLineCodes(
+        {
+          description: renderEditReviewShareDescription(share),
+          quantity: 1,
+          unitAmount: (orientation * share.sign * share.amountCents) / 100,
+          taxType: "OUTPUT2",
+        },
+        share.sign > 0
+          ? {
+              itemCode: context.incomeMapping.itemCode,
+              accountCode: incomeCode,
+              accountCodeExplicitlyConfigured: context.incomeMapping.codeExplicitlyConfigured,
+            }
+          : {
+              itemCode: context.refundMapping.itemCode,
+              accountCode: refundCode,
+              accountCodeExplicitlyConfigured: context.refundMapping.codeExplicitlyConfigured,
+            },
+      ),
+    );
+  }
+
   if (changeFeeCents > 0) {
     items.push(
       applyHutFeeLineCodes(
@@ -200,9 +249,28 @@ export type ModificationDocumentLinesRecord = {
    */
   reason: ModificationDocumentLinesFallbackReason | null;
   storedSumCents: number | null;
+  /** The settled review shares' signed sum (2c); null when none. */
+  sharesSumCents: number | null;
   billedCents: number;
   lineCount: number;
+  shareCount: number;
 };
+
+/**
+ * The COMPLETED review shares settled against one modification (2c): the
+ * same rows `sumEditReviewChargeSharesCents` counts, in both directions,
+ * found by booking and filtered on the anchor through the one parser.
+ */
+export async function loadEditReviewSettledShares(
+  bookingId: string,
+  bookingModificationId: string,
+): Promise<EditReviewSettledShare[]> {
+  const tasks = await prisma.manualRefundTask.findMany({
+    where: { bookingId, ...editReviewSettledShareTaskWhere },
+    select: editReviewSettledShareTaskSelect,
+  });
+  return editReviewSettledSharesByAnchor(tasks).get(bookingModificationId) ?? [];
+}
 
 /** The modification row's columns a document reads (`select` them by id). */
 export type ModificationDocumentLinesRow = {
@@ -223,8 +291,8 @@ export type ModificationDocumentLinesRow = {
  *
  * NARRATION NEVER FAILS A DOCUMENT - the same rule 2a holds for the edit.
  * Every read this needs and did not exist before #3530 (the row, when the
- * caller did not already hold it; the codes; the season) runs inside this
- * guard, so a failure of one sends the document as its single line, logged
+ * caller did not already hold it; the settled shares; the codes; the season)
+ * runs inside this guard, so a failure of one sends the document as its single line, logged
  * and recorded as `NARRATION_UNAVAILABLE`, rather than failing an operation
  * that would have succeeded before the lines existed.
  */
@@ -232,6 +300,7 @@ export async function resolveModificationDocumentLineItems(args: {
   bookingId: string;
   /** The row's lines and figures when the caller already read them; else read here. */
   row?: ModificationDocumentLinesRow | null;
+  /** The anchor: the row is read by it when not supplied, and the shares always are. */
   bookingModificationId?: string | null;
   document: ModificationDocumentKind;
   billedCents: number;
@@ -252,8 +321,14 @@ export async function resolveModificationDocumentLineItems(args: {
       priceDiffCents: row?.priceDiffCents ?? 0,
       changeFeeCents: row?.changeFeeCents ?? 0,
     };
+    // A second ask never itemises, so its shares are not read either.
+    const shares =
+      args.bookingModificationId && !args.secondAsk
+        ? await loadEditReviewSettledShares(args.bookingId, args.bookingModificationId)
+        : [];
     const selection = selectModificationDocumentLines({
       storedPriceLines: row?.priceLines ?? null,
+      shares,
       priceDiffCents: figures.priceDiffCents,
       changeFeeCents: figures.changeFeeCents,
       billedCents: args.billedCents,
@@ -267,14 +342,17 @@ export async function resolveModificationDocumentLineItems(args: {
           source: selection.source,
           reason: selection.reason,
           storedSumCents: selection.storedSumCents,
+          sharesSumCents: selection.sharesSumCents,
           billedCents: selection.billedCents,
           lineCount: 0,
+          shareCount: 0,
         },
       };
     }
     const context = await loadModificationDocumentCodingContext(args.bookingId);
     const lineItems = buildModificationDocumentLineItems({
       lines: selection.lines,
+      shares: selection.shares,
       changeFeeCents: figures.changeFeeCents,
       document: args.document,
       context,
@@ -285,8 +363,10 @@ export async function resolveModificationDocumentLineItems(args: {
         source: "STORED",
         reason: null,
         storedSumCents: selection.storedSumCents,
+        sharesSumCents: selection.sharesSumCents,
         billedCents: selection.billedCents,
         lineCount: lineItems.length,
+        shareCount: selection.shares.length,
       },
     };
   } catch (err) {
@@ -300,8 +380,10 @@ export async function resolveModificationDocumentLineItems(args: {
         source: "FALLBACK_SINGLE_LINE",
         reason: "NARRATION_UNAVAILABLE",
         storedSumCents: null,
+        sharesSumCents: null,
         billedCents: args.billedCents,
         lineCount: 0,
+        shareCount: 0,
       },
     };
   }

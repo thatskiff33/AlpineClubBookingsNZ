@@ -188,6 +188,7 @@ export async function createXeroSupplementaryInvoice(params: {
   const itemised = await resolveModificationDocumentLineItems({
     bookingId,
     row: bookingModification,
+    bookingModificationId,
     document: "SUPPLEMENTARY_INVOICE",
     billedCents: netAmountCents,
     billedFigures: { priceDiffCents, changeFeeCents },

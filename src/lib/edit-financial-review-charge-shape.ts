@@ -44,12 +44,95 @@ import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-key
  * `bookingId` for one booking, or a `bookingId: { in: [...] }` for a repair
  * sweep.
  */
-export const editReviewChargeShareTaskWhere = {
+/**
+ * WHICH REVIEW TASKS CARRY A SETTLED SHARE IN EITHER DIRECTION (#3530 stage
+ * 2c): for the Xero document that names each as `Adjustment agreed with
+ * member: <note>`. The charge `where` below IS this one narrowed by direction
+ * - spread, not restated - so the two cannot count a different set of rows.
+ */
+export const editReviewSettledShareTaskWhere = {
   kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
   status: ManualRefundTaskStatus.COMPLETED,
-  settlementDirection: ManualRefundTaskDirection.CHARGE_TO_MEMBER,
+  settlementDirection: {
+    in: [ManualRefundTaskDirection.CHARGE_TO_MEMBER, ManualRefundTaskDirection.REFUND_TO_MEMBER],
+  },
   amountCents: { not: null },
 } as const satisfies Prisma.ManualRefundTaskWhereInput;
+
+export const editReviewChargeShareTaskWhere = {
+  ...editReviewSettledShareTaskWhere,
+  settlementDirection: ManualRefundTaskDirection.CHARGE_TO_MEMBER,
+} as const satisfies Prisma.ManualRefundTaskWhereInput;
+
+export const editReviewSettledShareTaskSelect = {
+  id: true,
+  amountCents: true,
+  settlementDirection: true,
+  note: true,
+  completedAt: true,
+  reviewContext: true,
+} as const satisfies Prisma.ManualRefundTaskSelect;
+
+/**
+ * THE SIGN A SETTLED DIRECTION TAKES as money on the booking - the one
+ * direction-to-number rule (`INV-SSOT-002`): a charge is money owed to the
+ * club (+1, the sign `priceDiffCents` carries for a price increase), a refund
+ * money owed to the member (-1). `dispatchEditReviewXeroSettlement` signs the
+ * figure it dispatches from the route the same way.
+ */
+export function editReviewSettlementSign(direction: ManualRefundTaskDirection): 1 | -1 {
+  return direction === ManualRefundTaskDirection.CHARGE_TO_MEMBER ? 1 : -1;
+}
+
+/** One settled share as a Xero document names it: signed like `priceDiffCents`. */
+export type EditReviewSettledShare = {
+  /** Which task settled it - evidence for a reader of the record, not rendered. */
+  taskId: string;
+  /** +1 money owed to the club (a charge), -1 money owed to the member (a refund). */
+  sign: 1 | -1;
+  /** The share's magnitude, the task's own `amountCents`. */
+  amountCents: number;
+  /** The officer's completion note, trimmed at completion; null when none. */
+  note: string | null;
+};
+
+/**
+ * The settled shares on each anchor, in completion order. A row with no anchor
+ * in its context, no amount, or no direction contributes nothing - a DISMISSED
+ * task never reaches here (the `where` above), and a COMPLETED one always
+ * carries all three. `sumEditReviewChargeSharesByAnchor` below walks the same
+ * rows for the charge total the invoice bills; it stays its own loop because
+ * the repair CLI pins it (#3187), and the two agree by construction on which
+ * rows count (one `where`, one parser).
+ */
+export function editReviewSettledSharesByAnchor(
+  tasks: ReadonlyArray<{
+    id: string;
+    amountCents: number | null;
+    settlementDirection: ManualRefundTaskDirection | null;
+    note: string | null;
+    completedAt: Date | null;
+    reviewContext: unknown;
+  }>,
+): Map<string, EditReviewSettledShare[]> {
+  const byAnchor = new Map<string, EditReviewSettledShare[]>();
+  const ordered = [...tasks].sort(
+    (a, b) => (a.completedAt?.getTime() ?? 0) - (b.completedAt?.getTime() ?? 0),
+  );
+  for (const task of ordered) {
+    const anchor = parseEditFinancialReviewContext(task.reviewContext)?.bookingModificationId;
+    if (!anchor || task.amountCents === null || task.settlementDirection === null) continue;
+    const shares = byAnchor.get(anchor) ?? [];
+    shares.push({
+      taskId: task.id,
+      sign: editReviewSettlementSign(task.settlementDirection),
+      amountCents: task.amountCents,
+      note: task.note,
+    });
+    byAnchor.set(anchor, shares);
+  }
+  return byAnchor;
+}
 
 export const editReviewChargeShareTaskSelect = {
   id: true,
@@ -72,6 +155,9 @@ export type EditReviewChargeShareRow = {
  * than to a fallback bucket: `parseEditFinancialReviewContext` returning null
  * means the evidence cannot be trusted, and quietly attributing that money to
  * some edit would be the guess this epic exists to refuse.
+ * `editReviewSettledSharesByAnchor` above walks the same rows in both
+ * directions for the Xero document's share lines (#3530); the anchor rule is
+ * the one parser in both.
  */
 export function sumEditReviewChargeSharesByAnchor(
   tasks: readonly EditReviewChargeShareRow[],

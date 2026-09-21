@@ -1738,9 +1738,9 @@ Five things about that re-price are load-bearing:
   without the others trades one disagreement for another — `priceDiffCents`, the
   number every settlement decision reads, is built from `finalPriceCents`;
 - **recomputed from the strands, never derived by applying the settled amount.**
-  The repair also runs on a **dismissal**, whose audit entry says in as many
-  words that nothing moved: there is no delta to apply there and the figures must
-  still come back into agreement. A delta is also wrong wherever the park left
+  The repair also runs on a **dismissal**, whose audit entry says that nothing
+  moved: there is no delta to apply there and the figures must still come back
+  into agreement. A delta is also wrong wherever the park left
   the headline out of step by more than this settlement moves — a parked guest
   REMOVAL, whose structural half commits and takes the strand away while the
   frozen headline still counts it (#3257);
@@ -1749,8 +1749,8 @@ Five things about that re-price are load-bearing:
   columns uses. Carrying the frozen adjustment through is not merely stale, it is
   unsound: two guests at $100 with a valid 75%-off code carry a $150 discount
   against a $200 total, so removing one and recording the other at $100 would
-  store MINUS $50 — a shape no other writer in this tree can produce and one the
-  money invariants have no form for. Re-applying the code to the new total gives
+  store MINUS $50 — a shape no other writer can produce and one the money
+  invariants have no form for. Re-applying the code to the new total gives
   $75 off $100 and a stored price of $25. A non-negative stored price is
   therefore structural rather than policed, and the assertion beside the write
   exists only because this is the one column shown able to go negative;
@@ -1764,7 +1764,8 @@ Five things about that re-price are load-bearing:
   re-price writes a `PRICE_REBASE` row into the booking's own history with the
   figures before and after, and why a closure that issues no Xero document
   records the resulting invoice divergence on that row and raises its audit entry
-  to `critical`;
+  to `critical`. A closure that issues one names the settled share, never the
+  re-priced strands (`INV-MOD-058`);
 - **in the same transaction as the strand write**, under the claim that write
   already holds, fenced on all four columns. This path takes no advisory lock, so
   a concurrent edit that moved any of them is a 409 that rolls the whole
@@ -1775,7 +1776,7 @@ Five things about that re-price are load-bearing:
 **The night prices are MANDATORY where the price boxes are offered** (owner
 decision D2, 5 September 2026), on a dismissal as well as a completion: a review
 whose boxes are shown cannot be closed while they are blank. "Where the boxes are
-offered" is structural rather than a carve-out list — they appear only for a
+offered" is structural, not a carve-out list — they appear only for a
 review naming a guest strand with genuine blank nights whose other nights are
 readable and whose stored total is usable money — so a total mismatch with no
 blanks, damaged rows, a removed guest whose rows the edit deleted, the "a
@@ -1787,13 +1788,13 @@ sentence the officer was already shown at the moment of decision, said once
 **Where the evidence is not there, the re-price DECLINES rather than
 approximating.** Every surviving strand must have night rows, all carrying usable
 money, summing to that strand's stored total — this invariant applied to the
-whole booking rather than to one strand. Where one does not, the booking's four
-columns are left exactly as the park set them. Asserting a booking total built
-from strands the system has said it cannot value would be a worse lie than the
-stale one, and harder to notice.
+whole booking rather than to one strand. Where one does not, the four columns
+are left exactly as the park set them. A total built from strands the system
+has said it cannot value would be a worse lie than the stale one, and harder to
+notice.
 
-Nothing else about the park changes: what a parked edit itself writes is still no
-amount at all.
+Nothing else about the park changes: a parked edit still writes no amount at
+all.
 
 **The trigger is a parked review CLOSING, not a strand being repaired** (owner
 decision, 7 September 2026; #3257). The re-price used to be invoked from the
@@ -1890,39 +1891,38 @@ status list near a booking door. Member guide:
 ## INV-MOD-058
 
 **A booking edit stores the lines its price delta is made of, and every reader
-of them reads the same rows** (#3530, programme #3527; owner direction
-20 September 2026).
+of them reads the same rows** (#3530, programme #3527; owner direction, 20
+September 2026).
 
 `BookingModification.priceLines` holds the signed lines behind
 `priceDiffCents` — per guest category × rate × unit price × nights, plus one
 promotion delta — computed at edit time by `diffBookingPricing` in
-`src/lib/booking-modification-lines.ts`, the one home for their shape, sum rule,
-parser and sentence. The audit row, the booking's history and the Xero
-supplementary invoice and modification credit notes read those rows; none
-derives its own. A line's member word is `describeGuestRateMembershipLabel`
-(#2543).
+`booking-modification-lines.ts`, the one home for their shape, sum rule, parser
+and sentence. The audit row, the booking's history and the Xero supplementary
+invoice and credit notes read those rows; none derives its own. The member word
+is `describeGuestRateMembershipLabel` (#2543).
 
 The lines are **narration**: `priceDiffCents` stays the figure settlement
 reads; no idempotency key or outbox payload carries a line; the row is
-immutable once written.
+immutable.
 
-Rules: night prices are gross and the promotion is one signed `PROMO_DELTA`
-line; a kept night at the same price and category cancels; a repriced night is
-one removed and one added, never netted; runs are cut by
-`splitNightsIntoPriceRuns`, the original invoice's cutter. Any unpriced night, or a before-night whose stored price is inexact
-(`storedNightPriceSourceIsInexact`), yields **no** lines
-(`INV-MOD-028`); lines that do not sum to `priceDiffCents` are not stored
-(`INV-MONEY-003`). NULL means "no itemisation" and is never `[]`.
+Rules: night prices are gross; the promotion is one signed `PROMO_DELTA` line;
+a kept night at the same price and category cancels; a repriced night is one
+removed and one added, never netted; runs are cut by `splitNightsIntoPriceRuns`,
+as on the invoice. An unpriced night, or a before-night whose stored price is
+inexact (`storedNightPriceSourceIsInexact`), yields **no** lines
+(`INV-MOD-028`); lines not summing to `priceDiffCents` are not stored
+(`INV-MONEY-003`). NULL means "no itemisation", never `[]`.
 `computeModificationPriceLines` stores NULL on any failure and
 `resolveModificationDocumentLineItems` sends the single line
 (`NARRATION_UNAVAILABLE`): narration never fails an edit or a document.
 
 A Xero document is itemised only when `selectModificationDocumentLines` finds
-the lines explain exactly what it bills: Σ lines = `priceDiffCents` and the
-figure = `priceDiffCents + changeFeeCents` (negated on a credit note). Otherwise — none, unreadable,
-a restate (`INV-PAY-070`), a second ask, a refund that is not the reduction —
-today's single line, the reason under `requestPayload.priceLines`. Never a
-partial set.
+the rows explain exactly what it bills: Σ lines + Σ COMPLETED review shares =
+`priceDiffCents` — each share one line, `Adjustment agreed with member:
+<note>`, never a guest-night line invented from it — and the figure =
+`priceDiffCents + changeFeeCents` (negated on a credit note). Otherwise today's
+single line, the reason under `requestPayload.priceLines`. Never a partial set.
 
 Pinned by the `booking-modification-lines`, `booking-modification-document-lines`
 and `xero-modification-line-items` suites, one sum assertion per edit site, and
