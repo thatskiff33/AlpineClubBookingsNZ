@@ -134,6 +134,15 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // members can be emailed, and a member merge has no business changing that.
   "EnvironmentSafetySettings.updatedByMemberId",
 
+  // #3563 (programme #3205): who last changed the installation's currency and
+  // locale. The same ordinary settings-audit actor column as ClubTimeSettings'
+  // and EnvironmentSafetySettings' above, and a snapshot for the same reason:
+  // the answer to "who decided what this club charges in" is the administrator
+  // who did it at the time, not whoever later absorbed their record. The
+  // AuditLog row for CLUB_FORMAT_UPDATED is the full trail; this column is the
+  // settings row's own last-writer note.
+  "ClubFormatSettings.updatedByMemberId",
+
   // #2243 review sweep — bespoke-named FK-less member-id columns the detector
   // cannot see (their names appear nowhere in the schema as a Member FK column),
   // found by hand and previously in neither block. All eight are actor/audit
