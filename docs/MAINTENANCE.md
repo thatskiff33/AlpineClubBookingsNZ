@@ -1459,7 +1459,7 @@ FULLY cut over to code that knows `RATE_DERIVED`, never during a blue/green
 window: a colour whose generated client predates the value cannot read a row
 that carries it, so a row rewritten while both colours serve would fail the old
 colour's reads of that booking. The script refuses if the database enum lacks
-the value (migration `20261005010000`); it cannot see which colours are
+the value (migration `20261005020000`); it cannot see which colours are
 serving, so the runbook is the second fence. Run it from the new image, after
 the cutover, and start with a dry run (the default) against a non-production
 copy:

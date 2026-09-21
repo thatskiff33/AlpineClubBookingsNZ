@@ -115,7 +115,7 @@ async function assertRateDerivedValueExists() {
   const [row] = decodeRawRows(returned, z.object({ present: z.boolean() }), "RATE_DERIVED enum check");
   if (!row?.present) {
     throw new Error(
-      "The database does not know the RATE_DERIVED provenance yet: apply migration 20261005010000 first, and run this only after the deploy has fully cut over.",
+      "The database does not know the RATE_DERIVED provenance yet: apply migration 20261005020000 first, and run this only after the deploy has fully cut over.",
     );
   }
 }
