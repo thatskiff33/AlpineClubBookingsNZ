@@ -25,6 +25,18 @@ const MIGRATE_COMMAND_MARKER = "prisma migrate deploy";
 export interface MigrateServiceLockTimeout {
   /** The decoded libpq startup options, e.g. `-c lock_timeout=5000`. */
   optionsParameter: string;
+  /**
+   * The same thing in the SHIPPED bytes — the `options=` query value exactly as
+   * `docker-compose.yml` writes it, with only the Compose interpolation
+   * resolved to its default: `-c%20lock_timeout%3D5000`.
+   *
+   * A probe that wants to connect the way the migrate container does has to
+   * append this rather than re-encode the decoded form. `URLSearchParams`
+   * serialises a space as `+`, so assigning `optionsParameter` through
+   * `searchParams` produces `-c+lock_timeout%3D5000` — which decodes
+   * identically, and is still not what ships.
+   */
+  encodedOptionsParameter: string;
   /** The shipped default in milliseconds, from `${MIGRATION_LOCK_TIMEOUT_MS:-NNNN}`. */
   defaultMs: number;
   /** The env var an operator overrides it with. */
@@ -118,17 +130,19 @@ export function readMigrateServiceLockTimeout(): MigrateServiceLockTimeout {
   }
   const defaultMs = Number(defaultMatch[1]);
 
-  // The decoded form, with the Compose interpolation resolved to its default —
-  // what a connection actually receives when nothing overrides it.
-  const optionsParameter = decodeURIComponent(
-    optionsRaw.replace(
-      new RegExp(String.raw`\$\{${MIGRATION_LOCK_TIMEOUT_ENV_VAR}:-\d+\}`),
-      String(defaultMs),
-    ),
+  // The shipped bytes, with the Compose interpolation resolved to its default —
+  // character for character what the migrate container's URL carries when
+  // nothing overrides it.
+  const encodedOptionsParameter = optionsRaw.replace(
+    new RegExp(String.raw`\$\{${MIGRATION_LOCK_TIMEOUT_ENV_VAR}:-\d+\}`),
+    String(defaultMs),
   );
+  // And what libpq is handed once the query value is decoded.
+  const optionsParameter = decodeURIComponent(encodedOptionsParameter);
 
   return {
     optionsParameter,
+    encodedOptionsParameter,
     defaultMs,
     overrideEnvVar: MIGRATION_LOCK_TIMEOUT_ENV_VAR,
     serviceRunsMigrateDeploy: block.includes(MIGRATE_COMMAND_MARKER),

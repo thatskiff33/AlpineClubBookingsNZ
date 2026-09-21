@@ -158,6 +158,16 @@ describe("the migrate service carries the deploy guard's lock timeout (#3377)", 
     ).toContain("lock_timeout");
   });
 
+  it("exposes the shipped bytes rather than a re-encoding of them", () => {
+    // The real-PostgreSQL probe below appends this verbatim, and says so. `%20`
+    // is what compose ships; a `+` here would mean something re-encoded the
+    // value on the way, and the probe would quietly stop being a proof about
+    // the string that actually deploys.
+    expect(wiring.encodedOptionsParameter).toContain("%20");
+    expect(wiring.encodedOptionsParameter).not.toContain("+");
+    expect(decodeURIComponent(wiring.encodedOptionsParameter)).toBe(wiring.optionsParameter);
+  });
+
   it("keeps the default bound inside the measured window", () => {
     // Above zero because PostgreSQL reads 0 as "wait forever", not as "unset" —
     // the failure mode that makes this the easiest guard in the repository to
@@ -188,12 +198,24 @@ describe("the migrate service carries the deploy guard's lock timeout (#3377)", 
 
       const wiring = readMigrateServiceLockTimeout();
       boundMs = wiring.defaultMs;
+      // The SHIPPED bytes, appended as they are written, so the probe really
+      // does connect the way the migrate container will.
+      //
+      // The first version assigned the DECODED form through
+      // `url.searchParams.set("options", …)` and claimed exactly that. It was
+      // not true: `URLSearchParams` serialises a space as `+`, so the probe
+      // connected with `options=-c+lock_timeout%3D5000` while compose ships
+      // `%20`. Both decode to the same startup options, so nothing was
+      // mis-measured — but a proof whose comment overstates what it ran is a
+      // proof nobody can rely on next time.
+      //
+      // `delete` first so a race URL that already carried an `options` value is
+      // replaced rather than doubled, which is the one thing `set` was doing
+      // for us.
       const url = new URL(RACE_DB_URL);
-      // `optionsParameter` is the decoded `-c lock_timeout=NNNN` the shipped
-      // compose URL carries. Assigning through `searchParams` re-encodes it, so
-      // the probe connects with the same bytes the migrate container gets.
-      url.searchParams.set("options", wiring.optionsParameter);
-      guardedUrl = url.toString();
+      url.searchParams.delete("options");
+      const base = url.toString();
+      guardedUrl = `${base}${base.includes("?") ? "&" : "?"}options=${wiring.encodedOptionsParameter}`;
 
       admin = new PgClientCtor({ connectionString: RACE_DB_URL });
       await admin.connect();
