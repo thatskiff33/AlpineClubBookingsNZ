@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { calculateBookingPrice, type SeasonRateData } from "@/lib/pricing";
-import { lockedNightPricesForGuest } from "@/lib/booking-modify-plan";
+import { editedGuestPricingLocks, lockedNightPricesForGuest } from "@/lib/booking-modify-plan";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 
 /**
@@ -301,5 +301,32 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
     );
 
     expect(comped).toMatchObject({ kind: "exact", totalCents: 8000 });
+  });
+});
+
+/**
+ * #3531 3a: the locks an edited guest prices with, and whether the edit cleared
+ * them, are one answer for the modify save and the modify preview.
+ */
+describe("editedGuestPricingLocks - one home for the cleared-locks fact", () => {
+  const guest = {
+    nights: [
+      { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 5000, priceSource: "EVEN_SPLIT" as const },
+      { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: 5000, priceSource: "EVEN_SPLIT" as const },
+    ],
+  };
+
+  it("keeps every booked night's price and provenance, and states nothing, for an ordinary edit", () => {
+    expect(editedGuestPricingLocks(guest, false)).toEqual({
+      lockedNightPrices: lockedNightPricesForGuest(guest),
+    });
+    expect(editedGuestPricingLocks(guest, false).lockedNightPrices).toHaveLength(2);
+  });
+
+  it("clears the locks AND says so for a strand the edit deliberately reprices", () => {
+    expect(editedGuestPricingLocks(guest, true)).toEqual({
+      lockedNightPrices: [],
+      repricedDeliberately: true,
+    });
   });
 });

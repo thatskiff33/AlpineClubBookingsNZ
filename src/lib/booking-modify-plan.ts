@@ -165,7 +165,41 @@ type ProposedGuestPricingInput = {
     priceCents: number;
     priceSource: BookingGuestNightPriceSource;
   }>;
+  /**
+   * #3531: this edit cleared the guest's locks to reprice the whole stay (a
+   * #2337 link, an other-lodge tick). Stated, never inferred from an empty
+   * `lockedNightPrices` - the evidence gate judges such a strand night by
+   * night even though its night set does not move. Set only by
+   * `editedGuestPricingLocks`, the one home for the pair.
+   */
+  repricedDeliberately?: true;
 };
+
+/**
+ * THE LOCKS AN EDITED GUEST PRICES WITH, and whether the edit cleared them -
+ * one answer for the modify save and the modify preview (`INV-SSOT`), which
+ * must price the identical strands identically or one quotes a figure the other
+ * declines to honour (#3031).
+ *
+ * #2337 LOAD-BEARING: a linked placeholder MUST clear its booked non-member
+ * locked prices, or every night stays locked to the stored non-member price
+ * and the re-rate silently does nothing - the member never gets the member
+ * rate. Clearing them reprices the whole stay at the member season rate. The
+ * other-lodge tick clears them on exactly the same argument, in BOTH
+ * directions: ticked, locked non-member prices would never reach the member
+ * rate; unticked, locked member prices would never leave it. Only a guest whose
+ * flag actually CHANGED is cleared, so an unrelated edit never silently
+ * reprices a settled stay. Everybody else keeps the booked price of every
+ * night they already bought (#1036), through the lenient reader above.
+ */
+export function editedGuestPricingLocks(
+  guest: Parameters<typeof lockedNightPricesForGuest>[0],
+  repricedDeliberately: boolean,
+): Pick<ProposedGuestPricingInput, "lockedNightPrices" | "repricedDeliberately"> {
+  return repricedDeliberately
+    ? { lockedNightPrices: [], repricedDeliberately: true }
+    : { lockedNightPrices: lockedNightPricesForGuest(guest) };
+}
 
 type ProposedRemainingGuest = {
   // #3170: `priceCents` is nullable — see `LoadedBookingForModify`, which these
@@ -988,25 +1022,12 @@ export async function prepareGuestPlan(
         stayStart: entry.stayStart,
         stayEnd: entry.stayEnd,
         nights: entry.nights,
-        // Nights the guest already bought keep their booked price (#1036);
-        // only nights outside the stored set price at current season rates.
-        //
-        // #2337 LOAD-BEARING: a linked placeholder MUST clear its booked
-        // non-member lockedNightPrices, or every night stays locked to the stored
-        // non-member price and the re-rate silently does nothing — the member
-        // never gets the member rate. Clearing them reprices the whole stay at the
-        // member season rate.
-        //
-        // The other-lodge tick clears them on exactly the same argument, and in
-        // BOTH directions: ticking somebody whose nights are locked at the
-        // non-member price would never reach the member rate, and unticking
-        // somebody whose nights are locked at the member price would never leave
-        // it. Only guests whose flag actually CHANGED are cleared, so an
-        // unrelated edit never silently reprices a settled stay.
-        lockedNightPrices:
-          link || otherLodgeElection.repriceGuestIds.has(entry.guest.id)
-            ? []
-            : lockedNightPricesForGuest(entry.guest),
+        // The locks, and whether this edit cleared them: `editedGuestPricingLocks`
+        // says why, once, for this path and the preview (#3531).
+        ...editedGuestPricingLocks(
+          entry.guest,
+          Boolean(link) || otherLodgeElection.repriceGuestIds.has(entry.guest.id),
+        ),
         // Carry the D-8 marker for a beyond-family link so the person-night guard
         // collapses exactly as it does for an added cross-family member guest.
         ...(link && linkCrossFamilyByGuestId.get(entry.guest.id)

@@ -149,9 +149,6 @@ export function diffBookingPricing(
       if (typeof night.priceCents !== "number") {
         return { kind: "none", reason: "UNPRICED_NIGHT" };
       }
-      if (storedNightPriceSourceIsInexact(night.priceSource)) {
-        return { kind: "none", reason: "INEXACT_STORED_NIGHT_PRICE" };
-      }
     }
   }
   for (const guest of after.guests) {
@@ -185,6 +182,12 @@ export function diffBookingPricing(
         night.priceCents as number,
       ]),
     );
+    const beforeSourceByDay = new Map(
+      (beforeGuest?.nights ?? []).map((night) => [
+        formatDateOnly(night.stayDate),
+        night.priceSource,
+      ]),
+    );
     const afterNights = new Map(
       (afterGuest?.nights ?? []).map((night) => [
         formatDateOnly(night.stayDate),
@@ -211,6 +214,13 @@ export function diffBookingPricing(
       // the line names a category and a rate, so a guest whose category moved
       // is re-sold night by night.
       if (sameShape && afterNights.get(day) === priceCents) continue;
+      // A night that leaves a line is described by its stored price, so that
+      // price has to be one somebody sold - the same grain the edit gate
+      // applies (#3531 D-3531-1): a kept night that cancels above needs no
+      // per-night evidence, because no line names its price.
+      if (storedNightPriceSourceIsInexact(beforeSourceByDay.get(day))) {
+        return { kind: "none", reason: "INEXACT_STORED_NIGHT_PRICE" };
+      }
       removed.push({ stayDate: parseDay(day), priceCents });
     }
     for (const [day, priceCents] of afterNights) {
