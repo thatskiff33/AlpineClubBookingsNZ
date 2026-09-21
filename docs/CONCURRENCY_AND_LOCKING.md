@@ -4294,6 +4294,14 @@ An uncontended deploy therefore pays nothing for this bound at any value above
 about a millisecond; the floor is set by contention a healthy deploy should
 survive, not by the migrations themselves.
 
+That the measurement ran against an *empty* database does not weaken it, and the
+reason is worth stating because it is the obvious objection. `lock_timeout`
+bounds only the time a statement spends **waiting** for a lock, never the time it
+spends holding one. A table rewrite on a club's real data takes longer to run,
+and that is unaffected by this setting; what it does not do is take longer to
+*acquire*, because acquisition time is a function of who else holds the lock and
+of nothing else.
+
 **Ceiling, 10 000 ms.** It comes from the web slots' own connection string:
 `connection_limit=10&pool_timeout=10`. A reader blocked behind the migration
 holds its pool connection for the whole wait — the same mechanism the pool note
