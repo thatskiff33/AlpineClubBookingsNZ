@@ -1,8 +1,8 @@
 - **The currency and number format you set in the admin panel now reach the
-  screens (#3564).** Since #3563 a Full Administrator could record the club's
-  currency and its number and date format at **Admin → Setup & Configuration →
-  Club Currency & Locale**, and nothing on any screen took any notice. Ten
-  screens now do.
+  screens (#3564).** The entry above made the club's currency and its number
+  and date format a recorded setting a Full Administrator can change, at
+  **Admin → Setup & Configuration → Club Currency & Locale**. On its own that
+  changed no screen. Ten screens now follow it.
 
   A club outside New Zealand sees its own currency code beside a hut fee, a
   nightly rate, a membership or joining fee, a promo-code amount, a monthly AI
@@ -26,11 +26,11 @@
   the page.** Every **amount** the site writes — a price, an invoice figure, a
   statement line, an email total — is still written from them, along with
   every date outside the screens listed above and the two clocks just named,
-  and those move across in the next two changes. If the two disagree you will now see your chosen currency code
-  sitting beside amounts written the old way, on the same screen. That is the
-  mismatch to avoid; the admin page, the operator guide, `CONFIGURATION.md` and
-  `.env.example` all say so, and each will stop saying it as its part becomes
-  true.
+  and those move across in the next two changes. If the two disagree you will
+  now see your chosen currency code sitting beside amounts written the old
+  way, on the same screen. That is the mismatch to avoid; the admin page, the
+  operator guide, `CONFIGURATION.md` and `.env.example` all say so, and each
+  will stop saying it as its part becomes true.
 
   Nothing already recorded is rewritten or re-converted: an amount of 8450 cents
   is still 8450 cents, and this setting only ever decides how one is written.
