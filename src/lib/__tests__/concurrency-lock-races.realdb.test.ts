@@ -110,6 +110,15 @@ import "./adult-member-hosting-group-trip-races.realdb.test";
 // triggers, canonical pair-row application protocol, direct-SQL bypass races,
 // cascade cleanup and opposing multi-pair lock orders against PostgreSQL.
 import "./member-parent-partner-exclusion-races.realdb.test";
+// #3377 reuses this guarded database to prove the deploy guard's migration
+// lock timeout: that PostgreSQL accepts the bound as a libpq startup option,
+// cancels a BLOCKED (not a running) DDL statement at it with 55P03, waits
+// indefinitely without it, and that Prisma's schema engine threads the option
+// through rather than dropping it. Eighty safety-ledger rows name that control,
+// and every one of those claims is about software this repository does not own.
+// Its describe stays skipped unless RUN_CONCURRENCY_RACE_TESTS=1 and it owns and
+// drops its own probe table.
+import "./migration-lock-timeout.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database
