@@ -435,11 +435,23 @@ export function ClubFormatPanel() {
                 </span>{" "}
                 The currency code shown beside a fee, a spend cap or a
                 booking-request total changes as soon as you save, and so do
-                the audit and health timestamps, the promo counts and the lobby
+                the audit-log timestamps, the health dashboard&apos;s{" "}
+                <em>row</em> timestamps, the promo counts and the lobby
                 display&apos;s date. The <em>amounts themselves</em> — every
                 price, invoice figure and statement line — are still written
                 from the server&apos;s settings, and move across in the changes
                 that follow this one.
+              </li>
+              <li>
+                <span className="font-semibold">
+                  Two clocks on those screens do not move yet.
+                </span>{" "}
+                The health dashboard&apos;s &ldquo;Last refresh&rdquo; line and
+                the lobby display&apos;s live clock are written by the shared
+                date machinery rather than by their own screen, so they keep
+                following the server&apos;s <code>LOCALE</code> until the next
+                change moves it. They are the only place you will see both
+                answers at once.
               </li>
               <li>
                 No amount already recorded is rewritten or re-converted. A

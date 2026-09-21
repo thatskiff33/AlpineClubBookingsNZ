@@ -41,7 +41,8 @@ the setting recorded here, as soon as you save it:
 
 - the currency code shown beside a fee, a nightly rate, a promo code amount, a
   monthly AI spend cap or a booking-request total;
-- the date and time on an audit-log entry and on the health dashboard;
+- the date and time on an audit-log entry, and on every row of the health
+  dashboard;
 - the grouped counts in a promo-code export notice;
 - the date on the lobby display.
 
@@ -51,7 +52,12 @@ These do **not** yet, and still come from `CURRENCY` and `LOCALE`:
   line, an email total. All of them go through one shared money formatter,
   which is moved in the next change;
 - every other date and time, which go through the shared date formatters moved
-  in the same change;
+  in the same change. **Two of them sit on screens listed above**, and are the
+  only places you will see the two answers side by side: the "Last refresh"
+  line at the top of the health dashboard, and the live clock on the lobby
+  display. Both are written by the shared machinery rather than by their own
+  screen, so they stay on the server's `LOCALE` while the rows and the date
+  beneath them follow this page;
 - the fee figures written into public website pages, and a handful of other
   server-side readers, which move in the change after that.
 
@@ -124,7 +130,8 @@ is older than the currency.
 | Changing `CURRENCY` on the server did not change this page | Expected. The server value seeded the setting once; this page is the authority for it now | Change it here instead |
 | Changing `CURRENCY` on the server DID change the amounts on screen | Also expected, for now. Amounts are written by a shared formatter that has not moved onto the recorded setting yet | Keep the two in step until the later stages land |
 | The currency code changed but the amounts beside it did not | Expected for now. The labels follow this page; the amounts are written by a shared formatter moved in the next change | Nothing to fix. Until then, keep the server's `CURRENCY` in step with this page |
-| Nothing at all changed after saving | Check which screen. Fees, promo codes, the AI spend cap, booking requests, the audit log, the health dashboard and the lobby display follow this page; everything else follows the server settings for now | Nothing to fix |
+| Nothing at all changed after saving | Check which screen. Fees, promo codes, the AI spend cap, booking requests, the audit log, the health dashboard's rows and the lobby display's date follow this page; everything else follows the server settings for now | Nothing to fix |
+| The health dashboard's rows changed but its "Last refresh" line did not — or the lobby display's date changed but its clock did not | Expected. Those two are written by the shared date machinery, not by their own screen, so they still follow the server's `LOCALE` | Nothing to fix. Keep `LOCALE` in step with this page and the two read the same until the next change moves them |
 | "Not usable" appears under a value | Something was written straight into the database, or restored from a backup that held a value this app cannot read | Save the value again on this page. Restarting will not repair it |
 | The currency changed but an old invoice still shows the old one | Nothing already recorded is rewritten or re-converted. An amount of 8450 cents is still 8450 cents | Nothing to fix. This setting changes how an amount is *written*, never what it is worth |
 | Card payments are still taken in the old currency | The payment provider's currency is a separate, server-side setting, and moving a club to a different currency is a conversation with the provider and the club's accountant | Raise it with the club's technical contact before changing anything here |
