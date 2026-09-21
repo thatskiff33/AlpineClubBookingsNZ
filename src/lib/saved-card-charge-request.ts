@@ -15,6 +15,7 @@
 import { PaymentStatus } from "@prisma/client";
 import type Stripe from "stripe";
 
+import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import {
@@ -265,6 +266,7 @@ export async function chargeSavedCardAttempt(params: {
     }
     return await chargePaymentMethod({
       amountCents,
+      currency: APP_STRIPE_CURRENCY,
       customerId: card.stripeCustomerId,
       paymentMethodId: card.stripePaymentMethodId,
       metadata: buildSavedCardChargeMetadata(bookingId, memberId),
