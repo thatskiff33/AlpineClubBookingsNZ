@@ -42,8 +42,13 @@ function readComposeFile(): string {
 /**
  * The `migrate:` service block: from its own key to the next top-level service
  * key or the `volumes:` section. Sliced rather than YAML-parsed on purpose —
- * the file's interpolation syntax (`${DB_PASSWORD:?...}`) is what is being
- * inspected, and a parser would either resolve it or refuse it.
+ * Compose's own interpolation syntax is what is being inspected, and a parser
+ * would either resolve it or refuse the required-variable form outright.
+ *
+ * (Deliberately no literal environment-variable name in this docblock:
+ * `env-delivery-census.test.ts` walks every non-`.test.ts` file under `src/`
+ * as one string, so a name mentioned only in a comment here joins its READ set
+ * and trips the census — measured, on the first draft of this file.)
  */
 function migrateServiceBlock(compose: string): string {
   const start = compose.indexOf("\n  migrate:\n");

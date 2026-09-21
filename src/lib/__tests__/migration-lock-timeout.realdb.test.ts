@@ -69,7 +69,6 @@
  * It needs no migrations deployed: it owns its own scratch table.
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

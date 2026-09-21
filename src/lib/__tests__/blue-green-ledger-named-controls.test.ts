@@ -176,8 +176,13 @@ describe("the migration lock timeout stays wired end to end (#3377)", () => {
     // The sentence that became false. It is load-bearing: the member-merge
     // bound's docblock reasons from it when it explains why restoring `DEFAULT`
     // rather than `0` is currently a no-op.
-    const guide = readRepoFile("docs/CONCURRENCY_AND_LOCKING.md");
-    expect(guide).not.toContain("Nothing in this repository sets\n`lock_timeout` at any level today");
+    // Whitespace-collapsed before matching: the sentence is prose and a
+    // re-wrap would otherwise make this assertion pass vacuously, which on a
+    // `not.toContain` is invisible.
+    const guide = readRepoFile("docs/CONCURRENCY_AND_LOCKING.md").replace(/\s+/g, " ");
+    expect(guide).not.toContain(
+      "Nothing in this repository sets `lock_timeout` at any level today",
+    );
     expect(guide).toContain(MIGRATION_LOCK_TIMEOUT_ENV_VAR);
   });
 });
