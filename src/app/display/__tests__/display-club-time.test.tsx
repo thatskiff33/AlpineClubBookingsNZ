@@ -4,15 +4,24 @@ import { act, render } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /*
-  THE MACHINE IS MOVED ABOVE THE IMPORTS, AND IT HAS TO BE.
+  THE MACHINE IS MOVED ABOVE THE IMPORTS.
 
-  `display-header-clock.tsx` renders the header's day line through a
-  module-level `Intl.DateTimeFormat` CONSTANT, frozen when that module loads. A
-  zone assigned in a `beforeEach` arrives after that and never reaches it — so
-  the calendar-day case at the end of this file could not tell a formatter
-  pinned to `UTC` from one that dropped the pin and renders in the runtime's own
-  zone. On CI, where `TZ` is unset and the host resolves `UTC`, those two are
-  literally the same thing.
+  What this buys is the calendar-day case at the end of this file: it can only
+  tell a formatter pinned to `UTC` from one that dropped the pin and renders in
+  the runtime's own zone if the runtime's own zone is not `UTC`. On CI, where
+  `TZ` is unset and the host resolves `UTC`, those two are literally the same
+  thing, so the case would go vacuous without a host pin.
+
+  IT USED TO BE LOAD-BEARING FOR A SECOND REASON, AND SINCE #3564 IT IS NOT.
+  `display-header-clock.tsx` built the header's day-line formatter as a
+  module-level `Intl.DateTimeFormat` CONSTANT, frozen when that module loaded,
+  so a zone assigned in a `beforeEach` arrived too late to reach it. Stage 2 of
+  programme #3205 moved that construction inside the component (it has to take
+  the club's locale, which is a React context the module scope cannot reach), so
+  a later assignment would now be seen. The hoist stays because the reason above
+  is reason enough and because `process.env.TZ` is re-derived on ASSIGNMENT:
+  pinning it once, before anything reads it, is still the least surprising
+  arrangement.
 
   The reading is taken by hand because `vi.hoisted` runs above this file's
   imports, so `captureHostTimeZone` does not exist yet; `restoreHostTimeZone`

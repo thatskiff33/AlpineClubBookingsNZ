@@ -88,13 +88,33 @@ function formatClock(club: BoundClubTime, date: Date): string {
   `club.calendarDateOf`, which is the one operation allowed to say which club day
   a moment falls on (INV-DATE-019), and the simulated one straight off the
   window's own date-only key.
+
+  BUILT PER RENDER RATHER THAN AT MODULE LOAD (#3564, stage 2 of programme
+  #3205). This was `const SHORT_WEEKDAY_DAY = new Intl.DateTimeFormat(...)` at
+  module scope, which is a constructor call at import time, in a place where no
+  React context is reachable - so the locale could only ever be the build-time
+  constant. The locale is about to become a value this component is HANDED, and
+  a formatter can only take a handed value if it is built where the value is in
+  scope. Nothing else about it changed: the same options bag, the same `UTC`
+  pin, the same locale for now.
+
+  `useMemo` rather than a bare constructor call: `HeaderClock` re-renders every
+  fifteen seconds off its own interval, and `Intl.DateTimeFormat` construction
+  is the expensive half of formatting. The dependency is the locale, so the
+  object is rebuilt only when the club's locale really changes.
 */
-const SHORT_WEEKDAY_DAY = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-});
+function useShortWeekdayDayFormatter(locale: string): Intl.DateTimeFormat {
+  return useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        timeZone: "UTC",
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      }),
+    [locale],
+  );
+}
 
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -151,6 +171,7 @@ export function HeaderClock({
   windowStart: string;
 }) {
   const club = useDisplayClubTime();
+  const shortWeekdayDay = useShortWeekdayDayFormatter(APP_LOCALE);
   const [now, setNow] = useState<Date | null>(null);
   const [preview, setPreview] = useState(() => ({
     isPreview: false,
@@ -200,7 +221,7 @@ export function HeaderClock({
   const dateSource = simulatedDay ?? club.calendarDateOf(now);
   const dateLine = (
     <>
-      {SHORT_WEEKDAY_DAY.format(dateOnlyInstantOf(dateSource))}
+      {shortWeekdayDay.format(dateOnlyInstantOf(dateSource))}
       {" · "}
       <b>updated {formatClock(club, updated).toLowerCase()}</b>
     </>
