@@ -1429,6 +1429,30 @@ transaction):
 DATABASE_URL=<non-prod copy> npm run payments:backfill-orphaned-credits -- --apply
 ```
 
+### Census the booking money verdicts, night-price provenance and edit reviews (#3278, #3531)
+
+`npm run booking-money:census` is a READ-ONLY, repeatable-read census. It
+writes nothing, repairs nothing and calls no provider. From one ordered
+snapshot it reports:
+
+- every booking's `INV-MONEY-031` verdict — `RECONCILED` or `UNRECONCILED`
+  with every applicable reason — as counts;
+- what the stored night prices are made of (#3531 3c): night rows by
+  provenance (`SOLD`, `OFFICER_PRICED`, `EVEN_SPLIT`, `UNKNOWN`, `RATE_DERIVED`)
+  and strands by class (`EXACT_NIGHTS`, `INEXACT_NIGHTS`, `UNVALUED_NIGHT`,
+  `NO_ROWS`), overall and per booking-creation month;
+- every `EDIT_FINANCIAL_REVIEW` task by status and by the cause the raise
+  recorded (`INEXACT_STORED_NIGHT_PRICES` is the one #3531 is about), overall
+  and per task-creation month.
+
+The per-month lines are the point: run it before a deploy and again after, and
+the effect of the parking gate's grain (#3531 3a) and the rate-derived backfill
+(3b) reads off as one line against another — no figure is asserted.
+
+```bash
+DATABASE_URL=<non-prod copy or, read-only, production> npm run booking-money:census
+```
+
 ### Census the booking ledger identity (#3340)
 
 `scripts/audit-booking-ledger-residual.ts` is a READ-ONLY census of
