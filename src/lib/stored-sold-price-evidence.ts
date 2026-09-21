@@ -80,6 +80,33 @@ export type HeldNightPrice = {
 export type StoredSoldPriceGrain = "WHOLE_GUEST" | "INDIVIDUAL_NIGHT";
 
 /**
+ * WHICH GRAIN AN EDIT NEEDS OF ONE STRAND'S EVIDENCE - the one rule both gates
+ * apply (#3277 D3, clarified by #3531 D-3531-1).
+ *
+ * A strand removed whole, and a strand the edit does not touch at all, are
+ * judged at `WHOLE_GUEST` grain: the removal carries the guest's total out and
+ * the untouched strand carries it forward, and in neither case does any single
+ * night's price decide an amount. An untouched strand's rows are rewritten at
+ * their stored cents with their stored provenance (`repricedNightPriceSources`),
+ * so evenly-split rows that reconcile go back byte for byte - which is what the
+ * September 2026 incident needed and did not get: four untouched guests judged
+ * night by night parked a removal whose own strand was exact.
+ *
+ * A strand the edit MOVES - a night surrendered, a night added - needs each of
+ * those nights' own sold price, so it is judged at `INDIVIDUAL_NIGHT` grain.
+ */
+export function editStrandEvidenceGrain(args: {
+  heldNightCount: number;
+  surrenderedNightCount: number;
+  addedNightCount: number;
+}): StoredSoldPriceGrain {
+  const removedWhole =
+    args.surrenderedNightCount === args.heldNightCount && args.addedNightCount === 0;
+  const untouched = args.surrenderedNightCount === 0 && args.addedNightCount === 0;
+  return removedWhole || untouched ? "WHOLE_GUEST" : "INDIVIDUAL_NIGHT";
+}
+
+/**
  * At `INDIVIDUAL_NIGHT` grain, does this row's origin disprove its own sold
  * price? The two backfill origins do (the docblock above); a live quote or an
  * officer's figure does not. A row with no origin recorded is not judged here -
@@ -417,10 +444,11 @@ export function preCheckInEditEvidence(args: {
         nights: strand.nights,
       },
       args.booking,
-      surrenderedNightDates.length === heldKeys.length &&
-        addedNightDates.length === 0
-        ? "WHOLE_GUEST"
-        : "INDIVIDUAL_NIGHT",
+      editStrandEvidenceGrain({
+        heldNightCount: heldKeys.length,
+        surrenderedNightCount: surrenderedNightDates.length,
+        addedNightCount: addedNightDates.length,
+      }),
     );
     storedNightPriceByGuestId.set(
       strand.bookingGuestId,

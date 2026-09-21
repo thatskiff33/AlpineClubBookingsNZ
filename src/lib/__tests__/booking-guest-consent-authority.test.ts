@@ -766,6 +766,63 @@ describe("consentAuthority grants nothing on the paths that already existed", ()
   });
 });
 
+describe("an untouched companion is judged by its total, not night by night (#3531 3a, D-3531-1)", () => {
+  // The September 2026 shape: the departing guest's rows are exact, the
+  // companion's are an even split from an import - integers that sum to the
+  // stored total but were never sold night by night. The companion's money
+  // does not move, and its rows are rewritten at the same cents with the same
+  // provenance, so the removal prices exactly and parks nothing.
+  function evenlySplitCompanionBooking(targetConsent: ConsentStatus) {
+    const booking = makeBooking({ targetConsent });
+    type NightRow = { stayDate: Date; priceCents: number; priceSource: "SOLD" | "EVEN_SPLIT" | "UNKNOWN" };
+    const companion = booking.guests[1] as unknown as { nights: NightRow[] };
+    companion.nights = companion.nights.map((row) => ({ ...row, priceSource: "EVEN_SPLIT" }));
+    return booking;
+  }
+
+  it("prices a removal exactly beside an evenly-split companion and raises no review", async () => {
+    const booking = evenlySplitCompanionBooking("EXPIRED");
+    const tx = makeTx(booking);
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+      consentAuthority: authority("CONSENT_EXPIRY"),
+    });
+
+    expect(result.priceDiffCents).toBe(-12000);
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+    expect(result.priceLines).toEqual([
+      expect.objectContaining({ kind: "GUEST_NIGHTS", sign: -1, amountCents: -12000 }),
+    ]);
+    // The companion's money does not move: the removal door rewrites no night
+    // row (the departing guest's go with the guest), and the companion's total
+    // is written back from the locked prices at exactly what it was.
+    expect(tx.bookingGuestNight.createMany).not.toHaveBeenCalled();
+    expect(tx.bookingGuestNight.deleteMany).not.toHaveBeenCalled();
+    const companionUpdate = (tx.bookingGuest.update as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call) => (call[0] as { where: { id: string } }).where.id === booking.guests[1].id,
+    );
+    expect((companionUpdate?.[0] as { data: { priceCents: number } }).data.priceCents).toBe(12000);
+  });
+
+  it("still parks when the companion holds a night with no known price, touched or not", async () => {
+    const booking = evenlySplitCompanionBooking("EXPIRED");
+    const companion = booking.guests[1] as unknown as { nights: Array<{ stayDate: Date; priceCents: number | null; priceSource: string }> };
+    companion.nights[1] = { ...companion.nights[1], priceCents: null, priceSource: "UNKNOWN" };
+    const tx = makeTx(booking);
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+      consentAuthority: authority("CONSENT_EXPIRY"),
+    });
+
+    expect(result.priceDiffCents).toBe(0);
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("an unpriceable removal parks its money instead of inventing it (#3032, D-14)", () => {
   // WHAT CHANGED HERE, AND WHY THE OLD ASSERTIONS ARE NOT SIMPLY DELETED.
   //

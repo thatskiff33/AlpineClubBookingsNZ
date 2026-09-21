@@ -361,10 +361,11 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   discriminator, preserve today's member-visible amounts, and record which
   source they used** (#3277, programme #3272; owner-approved D3 blueprint,
   12 September 2026). The caller names its operation because the required grain
-  differs: whole-guest removal may use a reconciling guest total even when its
-  nights are `EVEN_SPLIT`; review re-base needs exact individual-night
-  provenance; credit election verifies the booking headline; Xero verifies the
-  booking promotion aggregate.
+  differs: whole-guest removal, and a strand an edit does not touch at all
+  (#3531 D-3531-1, `editStrandEvidenceGrain`), may use a reconciling guest
+  total even when its nights are `EVEN_SPLIT`; a strand an edit moves and the
+  review re-base need exact individual-night provenance; credit election
+  verifies the booking headline; Xero verifies the booking promotion aggregate.
 
   `selectBookingMoneyBuildUp` returns `STORED`,
   `DERIVED_COMPATIBILITY_FALLBACK`, or `BASE_EVIDENCE_UNKNOWN`, with its reason,

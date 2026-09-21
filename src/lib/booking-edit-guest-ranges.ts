@@ -33,6 +33,7 @@ import {
 } from "@/lib/parked-edit-occurrence";
 import {
   classifyStoredSoldPriceEvidence,
+  editStrandEvidenceGrain,
   unusableStoredSoldPriceEvidence,
   type HeldNightPrice,
 } from "@/lib/stored-sold-price-evidence";
@@ -1437,9 +1438,7 @@ export function buildInProgressGuestRangePlan(
     const verdict = classifyStoredSoldPriceEvidence(
       heldNightPrices(entry.heldNightKeys, entry.storedNightDetailsByKey),
       entry.guest.priceCents,
-      surrendered.length === entry.heldNightKeys.length && added.length === 0
-        ? "WHOLE_GUEST"
-        : "INDIVIDUAL_NIGHT",
+      editStrandEvidenceGrain({ heldNightCount: entry.heldNightKeys.length, surrenderedNightCount: surrendered.length, addedNightCount: added.length }),
     );
     const soldNightPriceByKey: ReadonlyMap<string, number> = new Map(
       verdict.kind === "exact"

@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
  */
 
 import {
+  editStrandEvidenceGrain,
   preCheckInEditEvidence,
   type PreCheckInEditStrand,
 } from "@/lib/stored-sold-price-evidence";
@@ -235,5 +236,81 @@ describe("#3166 a parked pre-check-in edit records every exact strand whose evid
       "A",
       "B",
     ]);
+  });
+});
+
+/**
+ * #3531 3a (D-3531-1): a strand the edit does not touch is judged by its total,
+ * as a strand removed whole is; only a strand the edit MOVES needs each night's
+ * own sold price. An evenly-split import that reconciles therefore parks an
+ * edit only when that edit moves its nights.
+ */
+describe("the grain an edit needs of one strand's evidence (#3531 3a)", () => {
+  /** An evenly-split strand: integers that reconcile, never sold night by night. */
+  function evenlySplitStrand(
+    bookingGuestId: string,
+    nightDates: readonly string[],
+    perNightCents: number,
+    overrides: Partial<PreCheckInEditStrand> = {},
+  ): PreCheckInEditStrand {
+    return {
+      ...exactStrand(bookingGuestId, nightDates, perNightCents, overrides),
+      nights: nightDates.map((stayDate) => ({
+        stayDate: new Date(stayDate),
+        priceCents: perNightCents,
+        priceSource: "EVEN_SPLIT",
+      })),
+    };
+  }
+
+  it("names the rule: removed whole and untouched are whole-guest; a moved strand is night by night", () => {
+    expect(editStrandEvidenceGrain({ heldNightCount: 3, surrenderedNightCount: 3, addedNightCount: 0 })).toBe("WHOLE_GUEST");
+    expect(editStrandEvidenceGrain({ heldNightCount: 3, surrenderedNightCount: 0, addedNightCount: 0 })).toBe("WHOLE_GUEST");
+    expect(editStrandEvidenceGrain({ heldNightCount: 3, surrenderedNightCount: 1, addedNightCount: 0 })).toBe("INDIVIDUAL_NIGHT");
+    expect(editStrandEvidenceGrain({ heldNightCount: 3, surrenderedNightCount: 0, addedNightCount: 1 })).toBe("INDIVIDUAL_NIGHT");
+    expect(editStrandEvidenceGrain({ heldNightCount: 3, surrenderedNightCount: 3, addedNightCount: 1 })).toBe("INDIVIDUAL_NIGHT");
+    // A strand with no rows at all is "untouched" only vacuously; its
+    // evidence verdict, not its grain, is what parks it.
+    expect(editStrandEvidenceGrain({ heldNightCount: 0, surrenderedNightCount: 0, addedNightCount: 0 })).toBe("WHOLE_GUEST");
+  });
+
+  it("an untouched evenly-split companion parks nothing beside a removal - the September 2026 shape", () => {
+    const { occurrence, storedNightPriceByGuestId } = evidenceFor([
+      exactStrand("removed", ["2026-08-01", "2026-08-02"], 8000, { proposedNightDates: [], rowsDestroyed: true }),
+      evenlySplitStrand("untouched-a", ["2026-08-01", "2026-08-02"], 5000),
+      evenlySplitStrand("untouched-b", ["2026-08-01", "2026-08-02"], 5000),
+    ]);
+    expect(occurrence).toBeNull();
+    // The untouched strands' stored prices are handed on so the plan locks them
+    // at exactly what is stored, provenance and all.
+    expect([...(storedNightPriceByGuestId.get("untouched-a") ?? new Map()).values()]).toEqual([
+      { priceCents: 5000, priceSource: "EVEN_SPLIT" },
+      { priceCents: 5000, priceSource: "EVEN_SPLIT" },
+    ]);
+  });
+
+  it("an evenly-split strand the edit MOVES still parks, and says why", () => {
+    const shortened = evidenceFor([
+      evenlySplitStrand("shortened", ["2026-08-01", "2026-08-02", "2026-08-03"], 5000, {
+        proposedNightDates: [new Date("2026-08-01"), new Date("2026-08-02")],
+      }),
+    ]);
+    expect(shortened.recorded.map((s) => [s.bookingGuestId, s.cause])).toEqual([
+      ["shortened", "INEXACT_STORED_NIGHT_PRICES"],
+    ]);
+    const extended = evidenceFor([
+      evenlySplitStrand("extended", ["2026-08-01"], 5000, {
+        proposedNightDates: [new Date("2026-08-01"), new Date("2026-08-02")],
+      }),
+    ]);
+    expect(extended.recorded.map((s) => s.cause)).toEqual(["INEXACT_STORED_NIGHT_PRICES"]);
+  });
+
+  it("an untouched strand holding a blank night still parks: the blank rule is untouched", () => {
+    const { recorded } = evidenceFor([
+      exactStrand("removed", ["2026-08-01"], 8000, { proposedNightDates: [], rowsDestroyed: true }),
+      unreadableStrand("untouched-blank"),
+    ]);
+    expect(recorded.map((s) => s.bookingGuestId)).toContain("untouched-blank");
   });
 });
