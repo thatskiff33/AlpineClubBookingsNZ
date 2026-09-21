@@ -14,6 +14,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { StatusBadge, StatusIcon, formatUptime, formatDate } from "./_components/shared";
+import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
 import { useHealthData } from "./_components/use-health-data";
 import type { HealthCheck } from "./_components/types";
@@ -23,6 +24,7 @@ export default function AdminHealthPage() {
   // fetched — so it is shown in the club's persisted zone, not the viewer's
   // (CT-4, #2870; INV-CONFIG-002).
   const clubTime = useClubTime();
+  const clubFormat = useClubFormat();
   const { data, loading, error, lastRefresh, refresh } = useHealthData();
 
   if (loading) {
@@ -265,7 +267,7 @@ export default function AdminHealthPage() {
                   </div>
                   <div className="flex items-center gap-3 text-muted-foreground">
                     <span>{wh.durationMs}ms</span>
-                    <span>{formatDate(clubTime, wh.createdAt)}</span>
+                    <span>{formatDate(clubTime, clubFormat, wh.createdAt)}</span>
                   </div>
                 </div>
               ))}

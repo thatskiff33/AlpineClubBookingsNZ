@@ -16,7 +16,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { AiSpendCurrencyCard } from "@/components/admin/ai-spend-currency-card";
-import { APP_CURRENCY } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { isFullAdmin } from "@/lib/access-roles";
 import { useClubTime } from "@/components/club-time-provider";
@@ -263,6 +263,13 @@ function KeyCard({
 
 function BudgetCard() {
   const canEdit = useAdminAreaEditAccess("support");
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006). This
+    was `APP_CURRENCY`, which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time
+    and therefore `undefined` in the published image, so a club charging in
+    anything but New Zealand dollars was told its spend cap was in NZD.
+  */
+  const { currencyCode } = useClubFormat();
 
   const [dollars, setDollars] = useState("");
   const [savedCents, setSavedCents] = useState<number | null>(null);
@@ -333,7 +340,7 @@ function BudgetCard() {
       <CardHeader>
         <CardTitle>Monthly spend cap</CardTitle>
         <CardDescription>
-          A hard limit on paid AI spend per calendar month, in {APP_CURRENCY}.
+          A hard limit on paid AI spend per calendar month, in {currencyCode}.
           Once reached, the assistant stops answering until the next month;
           curated page help keeps working. Set it to {formatCents(0)} to switch
           paid answers off entirely.
@@ -352,7 +359,7 @@ function BudgetCard() {
         ) : (
           <>
             <div className="grid gap-2 sm:max-w-xs">
-              <Label htmlFor="ai-budget">Monthly cap ({APP_CURRENCY})</Label>
+              <Label htmlFor="ai-budget">Monthly cap ({currencyCode})</Label>
               <div className="flex items-center gap-2">
                 <Input
                   id="ai-budget"

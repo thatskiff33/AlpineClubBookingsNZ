@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   emptyAdminPermissionMatrix,

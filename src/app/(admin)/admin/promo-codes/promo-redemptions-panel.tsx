@@ -22,7 +22,7 @@ import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
-import { APP_LOCALE } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
 import {
   formatStayDateOrNull,
@@ -153,8 +153,15 @@ interface PromoSummary {
 // The truncation notice asks an operator to compare two five-figure counts, so
 // they are grouped the way the rest of the site groups numbers (and the way the
 // operator guide states the cap): "10,000 of 12,345", not "10000 of 12345".
-function formatCount(value: number): string {
-  return value.toLocaleString(APP_LOCALE);
+//
+// The locale is the club's RECORDED one, not the build's (#3564;
+// INV-CONFIG-006). It was the build-time constant, which is `undefined` in the
+// published image, so a club whose numbers group `12 345` or `12.345` was shown
+// `12,345` here. It is a parameter rather than a hook read because this is a
+// plain helper outside any component; the locale comes first so a transposed
+// call cannot type-check.
+function formatCount(locale: string, value: number): string {
+  return value.toLocaleString(locale);
 }
 
 // A downloaded file outlives the on-screen notice, so a capped export (#2244)
@@ -223,6 +230,7 @@ export function PromoRedemptionsPanel({
   onBack: () => void;
 }) {
   const clubTime = useClubTime();
+  const { locale } = useClubFormat();
   const { lodges } = useLodgeOptions("admin");
   const multiLodge = lodges.length > 1;
 
@@ -452,14 +460,14 @@ export function PromoRedemptionsPanel({
         {exportTruncation ? (
           <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
             <p className="font-medium">
-              Incomplete export: {formatCount(exportTruncation.rowCount)} of{" "}
-              {formatCount(exportTruncation.matchedRowCount)} matching
+              Incomplete export: {formatCount(locale, exportTruncation.rowCount)} of{" "}
+              {formatCount(locale, exportTruncation.matchedRowCount)} matching
               redemptions
             </p>
             <p className="mt-1">
-              A single export is capped at {formatCount(exportTruncation.limit)}{" "}
+              A single export is capped at {formatCount(locale, exportTruncation.limit)}{" "}
               rows, so the downloaded file holds only the{" "}
-              {formatCount(exportTruncation.rowCount)} most recent. Do not
+              {formatCount(locale, exportTruncation.rowCount)} most recent. Do not
               reconcile discounts from it as though it were complete — narrow
               the redeemed-date range (or the lodge) and export each window
               separately to cover every row.

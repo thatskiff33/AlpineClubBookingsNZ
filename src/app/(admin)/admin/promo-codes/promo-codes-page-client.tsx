@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { APP_CURRENCY } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   calendarDayFromPayload,
   formatPayloadCalendarDay,
@@ -156,6 +156,14 @@ export function PromoCodesPageClient({
 }: {
   permissionMatrix: AdminPermissionMatrix;
 }) {
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
+    This label was the transitional constant from `@/config/operational`,
+    which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and therefore
+    `undefined` in the published image, so a club charging in anything but
+    New Zealand dollars was shown NZD here whatever it had configured.
+  */
+  const { currencyCode } = useClubFormat();
   // The Xero reference data (chart-of-accounts + items) is finance area, fetched
   // only when the create/edit form opens. Gate it at finance `view` so a viewer
   // with promo (bookings) access but not finance never fetches into a 403; the
@@ -1152,7 +1160,7 @@ export function PromoCodesPageClient({
 
                 {type === "FIXED_AMOUNT" && (
                   <div className="space-y-2">
-                    <Label htmlFor="valueDollars">Amount off per individual ({APP_CURRENCY})</Label>
+                    <Label htmlFor="valueDollars">Amount off per individual ({currencyCode})</Label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                         $
@@ -1221,7 +1229,7 @@ export function PromoCodesPageClient({
                   <>
                     <div className="space-y-2">
                       <Label htmlFor="fixedNightlyPrice">
-                        Fixed nightly price per eligible individual ({APP_CURRENCY})
+                        Fixed nightly price per eligible individual ({currencyCode})
                       </Label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
@@ -1268,7 +1276,7 @@ export function PromoCodesPageClient({
               {type !== "FIXED_AMOUNT" && type !== "FIXED_NIGHTLY_PRICE" && (
                 <div className="space-y-2 max-w-md">
                   <Label htmlFor="maxNightlyValue">
-                    Maximum nightly value covered (optional, {APP_CURRENCY})
+                    Maximum nightly value covered (optional, {currencyCode})
                   </Label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
