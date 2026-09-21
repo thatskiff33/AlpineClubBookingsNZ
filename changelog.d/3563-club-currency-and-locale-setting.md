@@ -8,9 +8,13 @@
   upgrading, the values the installation was already using are copied into the
   new setting, so a club running in New Zealand dollars stays in New Zealand
   dollars and nobody has to do anything. From then on the recorded setting is
-  the only authority: **changing `CURRENCY` or `LOCALE` on the server will no
-  longer do anything**, which is the whole point — one place answers the
-  question, so nobody has to work out which of two is winning.
+  the authority for the setting: changing `CURRENCY` or `LOCALE` on the server
+  no longer changes what the page shows. **Keep those server settings in place
+  all the same.** The pages that display money and dates have not been moved
+  onto the new setting yet, so until they are, those two values are still what
+  every amount and date on the site is written from. Removing them because this
+  page now exists would leave the site showing New Zealand dollars while the
+  page shows your club's real choice.
 
   **No screen looks any different yet, and that is deliberate.** This change
   records the club's choice; the pages that display money and dates are moved

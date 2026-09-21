@@ -483,6 +483,19 @@ describe("PUT /api/admin/club-format — the write", () => {
       entityId: "default",
     });
     /*
+      WHO DID IT, asserted separately because the row above does not cover it
+      and the settings row's own `updatedByMemberId` is a DIFFERENT fact that
+      happens to hold the same value today (#3563 review). Without this, an
+      actor read from `before.updatedByMemberId` -- the plausible copy-paste,
+      which names the LAST person to change it rather than this one -- leaves
+      every test in this file green. The whole accountability claim for a
+      Full-Admin configuration change is that the log names the person, so it
+      is asserted where it is made.
+    */
+    expect(row.actorMemberId).toBe(ACTOR);
+    expect(row.severity).toBe("important");
+    expect(row.outcome).toBe("success");
+    /*
       `toEqual`, NOT `toMatchObject`, and that is the assertion rather than a
       style preference. The rule this pins is "the before and after pair, and
       NOTHING else" — no request echo, no settings blob, nothing about the

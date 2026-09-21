@@ -58,9 +58,17 @@ export default function ClubFormatPage() {
         </p>
         <p className="text-sm text-muted-foreground">
           These were server settings (<code>CURRENCY</code> and{" "}
-          <code>LOCALE</code>) until now. They were copied here once, and from
-          now on this page is the only thing that decides them — changing them
-          on the server will do nothing.
+          <code>LOCALE</code>) until now. They were copied here once, and this
+          page is the only thing that changes them from now on — editing them on
+          the server no longer changes <em>this setting</em>.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          <strong>Leave the server settings in place for now.</strong> The
+          screens have not moved across yet: until they do, every amount and
+          date on the site is still written using the server&rsquo;s{" "}
+          <code>CURRENCY</code> and <code>LOCALE</code>. Removing them would
+          make the whole site fall back to New Zealand dollars while this page
+          still shows your choice.
         </p>
       </div>
       <ClubFormatPanel />

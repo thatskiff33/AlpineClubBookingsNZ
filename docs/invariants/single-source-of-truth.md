@@ -196,11 +196,11 @@ are permanent: never renumbered, never reused.
 - **Every name on the list now has a competing persisted source**, which #3563
   changed: the zone is `ClubTimeSettings` (`INV-CONFIG-002`), the currency and
   locale are `ClubFormatSettings` (`INV-CONFIG-006`). `APP_LOCALE` was listed
-  _ahead of_ its second source, on the grounds that a club-facing authority with
-  a zero default population costs nothing to list now and saves a migration
-  later; that bet paid. Fifteen non-test files still hardcode `"en-NZ"` and two
-  `"NZD"` — a separate pre-existing defect this arm does not address and #3567
-  takes.
+  _ahead of_ its second source, on the grounds that listing a club-facing
+  authority with no live defaults costs nothing and saves a migration; that bet
+  paid. Still unfixed, and #3567's: fifteen non-test files hardcode `"en-NZ"`,
+  two `"NZD"`, and `normalizeRefundCurrency` falls back to
+  `APP_STRIPE_CURRENCY` through a `??` this arm cannot see.
 - **The exclusions are judged, the two kinds of reason are not interchangeable,
   and one of them has now expired.**
   - `APP_CURRENCY` and `APP_STRIPE_CURRENCY` **used to be** excluded on

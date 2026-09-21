@@ -445,9 +445,11 @@ export function ClubFormatPanel() {
                 worth.
               </li>
               <li>
-                Once saved, the server settings <code>CURRENCY</code> and{" "}
-                <code>LOCALE</code> stop mattering. Changing them will not
-                change this, and this page is where it is changed from now on.
+                Once saved, this page is where the setting is changed — editing{" "}
+                <code>CURRENCY</code> or <code>LOCALE</code> on the server will
+                not change it back. <strong>Do not remove them yet</strong>: the
+                screens still read the server values until the later stages
+                move them, so the site would fall back to New Zealand dollars.
               </li>
               <li>
                 Stripe still charges in the currency the deployment is

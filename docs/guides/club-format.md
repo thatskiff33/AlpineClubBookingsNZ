@@ -29,11 +29,19 @@ with. So while both exist, **keep the two in step**: if you change a value here,
 change the server setting to match. What is already true, and permanent: nothing
 on this page rewrites any amount already recorded.
 
-**These used to be server settings, and they are not any more.** `CURRENCY` and
-`LOCALE` were copied here once, on the first start after upgrading, so nothing
-changed for anyone. From then on this page is the authority: **editing the
-server setting does nothing at all.** That is the point of the change — one
-place answers the question, so nobody has to work out which of two is winning.
+**These used to be server settings, and this page is where they are changed
+now.** `CURRENCY` and `LOCALE` were copied here once, on the first start after
+upgrading, so nothing changed for anyone. From then on this page is the
+authority **for the setting**: editing the server value no longer changes what
+this page shows. That is the point of the change — one place will answer the
+question, so nobody has to work out which of two is winning.
+
+**It does not yet answer it for the screens, so keep the server values set.**
+Until the later stages move the display paths across, every amount and date the
+site writes still comes from `CURRENCY` and `LOCALE`. Removing them because
+this page exists is the one mistake worth warning about: the site would fall
+back to New Zealand dollars while this page went on showing your choice, and
+nothing would flag it.
 
 Changing either value is a **Full Administrator** job. It needs an explicit
 confirmation, and every such change is written to the audit log with who made it
@@ -96,7 +104,8 @@ is older than the currency.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| Changing `CURRENCY` on the server changed nothing | Expected since this page exists. The recorded setting is the authority and the server setting only ever seeded it | Change it here instead |
+| Changing `CURRENCY` on the server did not change this page | Expected. The server value seeded the setting once; this page is the authority for it now | Change it here instead |
+| Changing `CURRENCY` on the server DID change the amounts on screen | Also expected, for now. The display paths have not moved onto the recorded setting yet | Keep the two in step until the later stages land |
 | The amounts on screen are still in the old currency after saving | Expected for now. This page records the club's choice; the screens that display money are moved onto it in the changes that follow this one | Nothing to fix. Until then, keep the server's `CURRENCY` in step with this page |
 | "Not usable" appears under a value | Something was written straight into the database, or restored from a backup that held a value this app cannot read | Save the value again on this page. Restarting will not repair it |
 | The currency changed but an old invoice still shows the old one | Nothing already recorded is rewritten or re-converted. An amount of 8450 cents is still 8450 cents | Nothing to fix. This setting changes how an amount is *written*, never what it is worth |

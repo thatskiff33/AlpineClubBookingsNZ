@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -212,6 +214,37 @@ describe("the constants the schema and the form both depend on", () => {
     expect(CLUB_LOCALE_MAX_LENGTH).toBe(64);
   });
 
+  it("pins them against the SCHEMA, not just against a literal (#3563 review)", () => {
+    /*
+      The assertion above says the CONSTANTS are 3 and 64. It does not say the
+      COLUMNS are, so narrowing `locale` to VarChar(32) in a later lane would
+      keep every test here green while a 40-character tag passed validation and
+      failed at the database with P2000 - which is not a contention code, so the
+      route rethrows and the admin gets a 500 where the validator exists to give
+      a sentence. Reading the schema is what makes the two changeable in one
+      place, which is the whole of INV-SSOT.
+    */
+    const schema = readFileSync(
+      path.join(process.cwd(), "prisma/schema.prisma"),
+      "utf8",
+    );
+    const model = /model ClubFormatSettings \{([^]*?)\n\}/.exec(schema);
+    expect(
+      model,
+      "ClubFormatSettings is missing from schema.prisma",
+    ).not.toBeNull();
+    const body = model![1];
+    expect(body).toMatch(
+      new RegExp(
+        String.raw`currencyCode\s+String\s+@db\.VarChar\(${CLUB_CURRENCY_CODE_LENGTH}\)`,
+      ),
+    );
+    expect(body).toMatch(
+      new RegExp(
+        String.raw`locale\s+String\s+@db\.VarChar\(${CLUB_LOCALE_MAX_LENGTH}\)`,
+      ),
+    );
+  });
   it("ships shipped defaults that its own validators accept", () => {
     expect(isValidClubCurrencyCode(CLUB_CURRENCY_FALLBACK)).toBe(true);
     expect(isValidClubLocale(CLUB_LOCALE_FALLBACK)).toBe(true);

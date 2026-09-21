@@ -1217,9 +1217,15 @@ export const DATE_GUARD_ARMS = {
 //
 //     One thing the old note said remains true and unfixed here: two admin
 //     display formatters hardcode `currency: "NZD"` and `schema.prisma` gives
-//     `PaymentTransaction.currency` a `"nzd"` column default. Those are a
-//     separate defect this arm is not the instrument for; #3567 is the stage
-//     that takes them.
+//     `PaymentTransaction.currency` a `"nzd"` column default. A third, found
+//     in #3563's review and named here so #3567 is planned from a complete
+//     list: `normalizeRefundCurrency` in `src/lib/payment-transactions.ts`
+//     falls back `(currency ?? APP_STRIPE_CURRENCY)` and writes the result to
+//     that same column. It is the same defect in a shape this arm cannot see
+//     - the arm anchors on `AssignmentPattern`, and a `??` in a function body
+//     is a `LogicalExpression` - so it is invisible rather than excluded.
+//     Those are a separate defect this arm is not the instrument for; #3567 is
+//     the stage that takes them.
 //   * `process.env.<anything else>` as a default, which `INV-SSOT-003`'s prose
 //     describes more broadly than this arm implements. MEASURED, rather than
 //     assumed, and re-measured for #3126's review because the first measurement

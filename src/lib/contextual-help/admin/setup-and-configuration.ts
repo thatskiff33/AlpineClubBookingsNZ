@@ -583,7 +583,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         {
           name: "Not the server's settings",
           description:
-            "CURRENCY and LOCALE on the server seeded these once and have no say afterwards. Changing them on the server will do nothing; change them here.",
+            "CURRENCY and LOCALE on the server seeded these once, and changing them no longer changes this setting - change it here. Do not remove them yet: the screens still write every amount and date from the server values until the later stages of #3205 move them across.",
         },
         {
           name: "Last changed",
