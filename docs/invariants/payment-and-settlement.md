@@ -1398,16 +1398,17 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   `pg_advisory_xact_lock(hashtext("xero-supplementary-invoice"),
   hashtext(<anchor>))`, and looks for an outstanding invoice by ANCHOR rather
   than by the amount-derived correlation key — the active `SUPPLEMENTARY_INVOICE`
-  link exists only once the FIRST invoice has been created, so before that it
-  fences nothing.
+  link exists only once the FIRST invoice exists, so before that it fences
+  nothing.
 - **A restate that WRITES is a restate that goes out.**
   `processQueuedXeroOutboxOperations` re-reads `requestPayload` after its claim
   commits; RUNNING is outside the restatable set, so a restate either lands and
-  is sent or matches nothing and reports zero, with no third outcome.
-- **What the accounting leg does NOT guarantee, stated rather than implied.** A
-  restate can arrive too late to land AT ALL — once the worker has claimed the
-  operation it is RUNNING, and once the invoice has been sent the anchor carries
-  an active `SUPPLEMENTARY_INVOICE` link. The enqueue then refuses a second
+  is sent or matches nothing and reports zero, with no third outcome; it names
+  each settled share as a line (`INV-MOD-058`).
+- **What the accounting leg does NOT guarantee.** A restate can arrive too
+  late to land AT ALL — once the worker has claimed the operation it is
+  RUNNING, and once the invoice has been sent the anchor carries an active
+  `SUPPLEMENTARY_INVOICE` link. The enqueue then refuses a second
   invoice behind the first and RECORDS the shortfall:
   `outcome: "short-sent"` when the invoice exists, `"short-in-flight"` when the
   worker has merely claimed the row. What happens next is `INV-PAY-063`.

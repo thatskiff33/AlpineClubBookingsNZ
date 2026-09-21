@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   getHutFeeItemCodeMap: vi.fn(),
   getHutFeeSeasonType: vi.fn(),
   bookingFindUniqueOrThrow: vi.fn(),
+  manualRefundTaskFindMany: vi.fn(),
   retryXeroWriteWithContactRepair: vi.fn(),
   findOrCreateXeroContactForInvoicedParty: vi.fn(),
   readClubTimeZoneOutsideRequest: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock("@/lib/prisma", () => ({
     payment: { findUnique: mocks.paymentFindUnique, update: mocks.paymentUpdate },
     booking: { findUnique: mocks.bookingFindUnique, findUniqueOrThrow: mocks.bookingFindUniqueOrThrow },
     bookingModification: { findUnique: mocks.bookingModificationFindUnique },
+    manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
     xeroObjectLink: {
       findFirst: mocks.xeroObjectLinkFindFirst,
       findMany: mocks.xeroObjectLinkFindMany,
@@ -208,6 +210,7 @@ beforeEach(() => {
     createdAt: new Date("2026-08-10T00:00:00.000Z"),
   });
   mocks.readClubTimeZoneOutsideRequest.mockResolvedValue("Pacific/Auckland");
+  mocks.manualRefundTaskFindMany.mockResolvedValue([]);
   mocks.findOrCreateXeroContactForInvoicedParty.mockResolvedValue("contact_1");
   mocks.retryXeroWriteWithContactRepair.mockImplementation(
     async (options: { buildRequestPayload: (id: string) => unknown }) => {
@@ -447,7 +450,7 @@ describe("itemised modification notes (#3530)", () => {
     expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
         requestPayload: expect.objectContaining({
-          priceLines: { source: "STORED", reason: null, storedSumCents: -16000, billedCents: 16000, lineCount: 1 },
+          priceLines: { source: "STORED", reason: null, storedSumCents: -16000, sharesSumCents: null, billedCents: 16000, lineCount: 1, shareCount: 0 },
         }),
       }),
     );
