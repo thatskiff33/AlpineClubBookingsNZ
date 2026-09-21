@@ -63,6 +63,20 @@ superuser `psql` is refused. The headroom is therefore best-effort room for the
 So the real invariant is **sum(pools) + non-pool consumers ≤ `max_connections`**,
 not just the pools; steady state (one active web slot + cron leader) is far lower.
 
+The same "waiters hold their connection" property is why the **migrate**
+connection carries a 5-second `lock_timeout` (#3377, `MIGRATION_LOCK_TIMEOUT_MS`).
+A migration's `ALTER TABLE` waiting for `ACCESS EXCLUSIVE` on a hot table puts
+every later reader of that table in the lock queue behind it; each of those
+readers holds a web-pool connection while it waits, so ten of them exhaust a
+slot and every further request is refused with Prisma `P2024` after that URL's
+`pool_timeout` (10 s). The lock timeout has to fire well inside that window or it
+cannot prevent anything — which is exactly why the deploy script refuses a value
+at or over 9000 ms, and refuses `0`, which PostgreSQL reads as *wait forever*
+rather than as *off*. The measurement behind the default is in
+[`docs/CONCURRENCY_AND_LOCKING.md`](docs/CONCURRENCY_AND_LOCKING.md#the-migration-lock-timeout-3377);
+what an operator does when a deploy stops for this reason is in
+[`docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.1a](docs/PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout).
+
 `max_connections` was raised from 30 to 40 (and the `postgres` `mem_limit` from
 512m to 768m) after production transiently hit `FATAL: sorry, too many clients`:
 at 30 the deploy-window pools (27) sat one slot under the ceiling, so a single
