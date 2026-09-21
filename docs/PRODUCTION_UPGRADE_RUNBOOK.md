@@ -320,8 +320,12 @@ retry meets a second refusal under a different name.
 
    ```bash
    docker compose --profile migrate run --rm migrate \
-     npx prisma migrate resolve --rolled-back <migration_name>
+     ./node_modules/.bin/prisma migrate resolve --rolled-back <migration_name>
    ```
+
+   Run it through the `migrate` service with **no `-e DATABASE_URL` override**:
+   the service's own URL is the one carrying the lock timeout, and passing a
+   hand-written one silently removes it for that command.
 
    Never `--applied` here. That would tell Prisma the migration had run, and the
    schema change would be missing from the database forever, invisibly.
