@@ -84,7 +84,7 @@
  *     lastName              E1; E3 relatedLastName
  *     email                 E1 — the ONLY projected email address in the whole pack,
  *                           AND the erasure marker predicate behind E1
- *                           lifecycleDeleted (`deletedAccountEmailMarkerSql`).
+ *                           lifecycleDeleted (`deletedAccountSql`).
  *                           Dropping this column from the projection would NOT free
  *                           the grant: see "erasure is defined by its markers" below.
  *     ageTier               E1; E3 relatedAgeTier
@@ -231,6 +231,7 @@ import "server-only";
 import { z } from "zod";
 
 import { auditCategoriesForCorrelationDomain } from "@/lib/audit-categories";
+import { deletedAccountSql } from "@/lib/deleted-account";
 
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
 import {
@@ -243,7 +244,6 @@ import {
   aid6bRecordAuditReaderAreas,
   dateOnly,
   dateOnlyOrNull,
-  deletedAccountEmailMarkerSql,
   emailOrNull,
   nullableBoolOf,
   personNameOrNull,
@@ -359,9 +359,9 @@ const memberIdInputSchema = {
  * neither instant too — it is reversible and routine — so a shape test reported
  * every deactivated member as possibly erased. Both mistakes send an officer to the
  * wrong action; erasure is defined by its MARKERS, never by the absence of other
- * markers. The column now runs `deletedAccountEmailMarkerSql`, the SQL half of the
- * platform's own `isDeletedAccountRecord` (`INV-LIFE-013`), keyed on the anonymised
- * address the deletion writes.
+ * signals. The column now runs `deletedAccountSql`, the SQL projection of the
+ * platform's own `isDeletedAccountRecord` (`INV-LIFE-013`): structural marker
+ * first, with the reserved-address arm retained for adopter-era rows.
  *
  * SO `Member."email"` IS NOW A PREDICATE AS WELL AS A PROJECTION, and the grant
  * table above says so on its own row rather than leaving it to this paragraph.
@@ -373,10 +373,8 @@ const memberIdInputSchema = {
  * the erasure marker to the three lifecycle columns, drop the `email` grant with the
  * field, and turn the marker into a runtime 42501 on the one entry whose whole point
  * is that erasure is not inferred from inactivity.
- * `diagnostics.member_eligibility_state` is the entry
- * that tests BOTH markers — it compares the sentinel password hash inside
- * PostgreSQL, a column this role is not granted — and gives the platform's own
- * authoritative lifecycle label.
+ * `diagnostics.member_eligibility_state` uses the same predicate and gives the
+ * platform's own authoritative lifecycle label.
  *
  * A BOOLEAN RATHER THAN THE XERO CONTACT ID, on purpose. `hasXeroContact` says a
  * link exists; the id itself is FINANCE evidence, and
@@ -409,7 +407,7 @@ const MEMBER_SUMMARY_SQL = `SELECT
   m."canLogin" AS can_login,
   ${utcInstant('m."cancelledAt"')} AS cancelled_at_utc,
   ${utcInstant('m."archivedAt"')} AS archived_at_utc,
-  ${deletedAccountEmailMarkerSql('m."email"')} AS lifecycle_deleted,
+  ${deletedAccountSql('m."deletedAt"', 'm."email"')} AS lifecycle_deleted,
   ${dateOnly('m."joinedDate"')} AS joined_date,
   ${dateOnly('m."lifeMemberDate"')} AS life_member_date,
   m."requiresInduction" AS requires_induction,
@@ -927,7 +925,9 @@ const memberBookingSummary = defineDiagnosticsTool<MemberIdArgs>({
     // THREE-VALUED, so `boolOrNull` and never `boolOf`: `boolOf` maps NULL to
     // `false`, which would turn "this member holds no guest row on this booking"
     // into the specific and untrue claim "they are on it but not present".
-    memberOperationallyPresent: nullableBoolOf(row.member_operationally_present),
+    memberOperationallyPresent: nullableBoolOf(
+      row.member_operationally_present,
+    ),
     deletedAtUtc: instantOrNull(row.deleted_at_utc),
     createdAtUtc: instantOrNull(row.created_at_utc) ?? "",
   }),

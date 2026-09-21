@@ -23,13 +23,11 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 vi.mock("@/lib/member-fields-settings", () => ({
-  loadMemberFieldsFlags: vi
-    .fn()
-    .mockResolvedValue({
-      showTitle: false,
-      showGender: false,
-      showOccupation: false,
-    }),
+  loadMemberFieldsFlags: vi.fn().mockResolvedValue({
+    showTitle: false,
+    showGender: false,
+    showOccupation: false,
+  }),
 }));
 vi.mock("@/lib/age-tier", () => ({
   getAgeTierSettings: vi.fn().mockResolvedValue([]),
@@ -69,6 +67,7 @@ function baseMember(overrides: Record<string, unknown> = {}) {
     gender: null,
     occupation: null,
     email: "cora@example.com",
+    deletedAt: null,
     phoneCountryCode: null,
     phoneAreaCode: null,
     phoneNumber: null,
@@ -126,7 +125,9 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
   });
 
   it("emits the cancelled date as an NZ date-only, not a full ISO datetime", async () => {
-    vi.mocked(prisma.member.findMany).mockResolvedValue([baseMember()] as never);
+    vi.mocked(prisma.member.findMany).mockResolvedValue([
+      baseMember(),
+    ] as never);
 
     const res = await exportRequest();
     expect(res.status).toBe(200);
@@ -163,8 +164,42 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
     expect(value).toBe("");
   });
 
+  it("omits an adopter-era erased row even from the inactive export", async () => {
+    vi.mocked(prisma.member.findMany).mockResolvedValue([
+      baseMember({
+        firstName: "Deleted",
+        lastName: "Member",
+        email: "deleted-legacy@deleted.invalid",
+        deletedAt: null,
+      }),
+      baseMember({
+        firstName: "Retained",
+        lastName: "Inactive",
+        email: "retained@example.test",
+        deletedAt: null,
+      }),
+    ] as never);
+
+    const res = await exportMembers(
+      new NextRequest(
+        "http://localhost/api/admin/members/export?lifecycleStatus=inactive",
+      ),
+    );
+    const csv = await res.text();
+
+    expect(csv).not.toContain("deleted-legacy@deleted.invalid");
+    expect(csv).toContain("retained@example.test");
+    expect(vi.mocked(prisma.member.findMany)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ deletedAt: true }),
+      }),
+    );
+  });
+
   it("round-trips the exported CSV back through the member import cleanly", async () => {
-    vi.mocked(prisma.member.findMany).mockResolvedValue([baseMember()] as never);
+    vi.mocked(prisma.member.findMany).mockResolvedValue([
+      baseMember(),
+    ] as never);
 
     const res = await exportRequest();
     const csv = await res.text();

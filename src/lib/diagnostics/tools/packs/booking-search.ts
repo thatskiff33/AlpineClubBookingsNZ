@@ -91,6 +91,7 @@
 import "server-only";
 
 import { z } from "zod";
+import { deletedAccountSql } from "@/lib/deleted-account";
 
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
 import {
@@ -110,7 +111,6 @@ import {
   countOrNull,
   dateOnly,
   dateOnlyOrNull,
-  deletedAccountEmailMarkerSql,
   personNameOrNull,
 } from "./booking-shared";
 import {
@@ -248,7 +248,9 @@ const bookingSearchArgsSchema = z
     /** For `lodge_nights`. */
     lodgeId: RECORD_ID.optional(),
     nightFrom: NZ_DATE_ONLY.optional(),
-    window: z.enum(AID6B_SEARCH_WINDOW_KEYS).default(AID6B_DEFAULT_SEARCH_WINDOW),
+    window: z
+      .enum(AID6B_SEARCH_WINDOW_KEYS)
+      .default(AID6B_DEFAULT_SEARCH_WINDOW),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -257,28 +259,21 @@ const bookingSearchArgsSchema = z
     };
     refuseTermsOutsideArm(value, ctx, BOOKING_SEARCH_ARM_KEYS[value.kind]);
     if (value.kind === "booking_id" || value.kind === "owner_member_id") {
-      require(
-        value.recordId !== undefined,
-        "recordId",
-        "this search needs a record id",
-      );
+      require(value.recordId !==
+        undefined, "recordId", "this search needs a record id");
       return;
     }
     if (value.kind === "booking_reference") {
-      require(
-        value.bookingReference !== undefined &&
-          BOOKING_REFERENCE_SHAPE.test(value.bookingReference),
-        "bookingReference",
-        "expected an eight-character booking reference",
-      );
+      require(value.bookingReference !== undefined &&
+        BOOKING_REFERENCE_SHAPE.test(
+          value.bookingReference,
+        ), "bookingReference", "expected an eight-character booking reference");
       return;
     }
-    require(value.lodgeId !== undefined, "lodgeId", "this search needs a lodge id");
-    require(
-      value.nightFrom !== undefined,
-      "nightFrom",
-      "this search needs a first night",
-    );
+    require(value.lodgeId !==
+      undefined, "lodgeId", "this search needs a lodge id");
+    require(value.nightFrom !==
+      undefined, "nightFrom", "this search needs a first night");
   });
 
 type BookingSearchArgs = z.infer<typeof bookingSearchArgsSchema>;
@@ -619,7 +614,8 @@ const memberSearchArgsSchema = z
         });
       }
     };
-    if (value.kind === "member_id") need(value.recordId !== undefined, "recordId");
+    if (value.kind === "member_id")
+      need(value.recordId !== undefined, "recordId");
     if (value.kind === "email_exact") need(value.email !== undefined, "email");
     if (value.kind === "name_prefix") {
       need(value.namePrefix !== undefined, "namePrefix");
@@ -658,12 +654,9 @@ type MemberSearchArgs = z.infer<typeof memberSearchArgsSchema>;
  * owner's rule for this pack is that an inference must never be presented as a
  * confirmed fact.
  *
- * It now runs `deletedAccountEmailMarkerSql` — the SQL half of the platform's own
- * `isDeletedAccountRecord` (`INV-LIFE-013`), keyed on the anonymised address the
- * deletion actually writes. THE ADDRESS IS THE PREDICATE AND NEVER THE PROJECTION:
- * the marker crosses this boundary as one boolean, exactly as `has_email` does, and
- * the value stays behind. `member_eligibility_state` remains the entry that tests
- * both markers and gives the platform's own lifecycle label.
+ * It now runs the canonical `deletedAccountSql` projection, which checks the
+ * structural marker and the permanent adopter-compatibility address. Neither
+ * value crosses this boundary: the marker is projected as one boolean.
  */
 const MEMBER_SEARCH_COLUMNS = `m."id" AS member_ref,
   m."firstName" AS first_name,
@@ -673,7 +666,7 @@ const MEMBER_SEARCH_COLUMNS = `m."id" AS member_ref,
   m."canLogin" AS can_login,
   (m."cancelledAt" IS NOT NULL) AS is_cancelled,
   (m."archivedAt" IS NOT NULL) AS is_archived,
-  ${deletedAccountEmailMarkerSql('m."email"')} AS lifecycle_deleted,
+  ${deletedAccountSql('m."deletedAt"', 'm."email"')} AS lifecycle_deleted,
   (m."email" IS NOT NULL AND m."email" <> '') AS has_email,
   (m."phoneNumber" IS NOT NULL AND m."phoneNumber" <> '') AS has_phone,
   (m."xeroContactId" IS NOT NULL) AS has_xero_contact,
@@ -691,10 +684,10 @@ const MEMBER_SEARCH_COLUMNS = `m."id" AS member_ref,
  * `phoneNumber` — so the digits an operator reads off a message ("0274224115") are
  * spread across two columns with a leading zero that is stored nowhere. The
  * predicate therefore strips punctuation from EACH STORED fragment, then compares
-  * the normalised term against the bare number, against
+ * the normalised term against the bare number, against
  * area-plus-number, against a leading zero plus area-plus-number, and against the
  * stored country-plus-area-plus-number form used by an international `+64` input. All four are
-  * equalities against a concatenation of granted columns; no CALLER term is used as
+ * equalities against a concatenation of granted columns; no CALLER term is used as
  * a pattern. The fixed `translate(..., '+ -()', '')` expression has no pattern
  * language and only canonicalises the stored punctuation the schema permits in
  * practice: a leading plus, spaces, hyphens and parentheses.

@@ -80,6 +80,7 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   // Neither value is ever copied into the token; only the predicate's verdict
   // is used.
   email: true,
+  deletedAt: true,
   passwordHash: true,
   twoFactorEnabled: true,
   twoFactorMethod: true,
@@ -255,10 +256,8 @@ export const authConfig = {
         // restatement of `!member.active`. An approved deletion request
         // anonymises the row and leaves `active: false` as the only barrier, and
         // an admin Reactivate (or a direct column edit) flips exactly that flag.
-        // Refusing on the anonymisation markers means an erased account cannot
-        // sign in even with `active: true`. The sentinel password hash is not a
-        // bcrypt hash so a compare could never match anyway — this is here so a
-        // future credential-restoring path cannot re-open the door silently.
+        // Refusing on the structural-or-reserved-address predicate means an
+        // erased account cannot sign in even with `active: true`.
         // Still burns the dummy compare, so the refusal is timing-identical to
         // an unknown email and cannot be used to enumerate deleted accounts.
         if (!member || !member.active || isDeletedAccountRecord(member)) {
@@ -284,7 +283,7 @@ export const authConfig = {
         } catch (error) {
           logger.warn(
             { err: error, memberId: member.id },
-            "Failed to update member last login timestamp"
+            "Failed to update member last login timestamp",
           );
         }
 
@@ -366,7 +365,7 @@ export const authConfig = {
         // anonymised. Deletion does not revoke outstanding magic-link tokens
         // (Half B of #2620 will), so any unexpired link the erased member was
         // sent stays redeemable the moment `active` goes back to true. Refuse on
-        // the anonymisation markers, independently of `active`.
+        // the canonical deletion predicate, independently of `active`.
         if (!member || !member.active || isDeletedAccountRecord(member)) {
           return null;
         }
@@ -392,7 +391,7 @@ export const authConfig = {
         } catch (error) {
           logger.warn(
             { err: error, memberId: member.id },
-            "Failed to update member last login timestamp"
+            "Failed to update member last login timestamp",
           );
         }
 
@@ -802,8 +801,12 @@ export async function buildRequestAuthConfig(): Promise<NextAuthConfig> {
 // unused (the only per-request input is the DB credential state).
 const nextAuth = NextAuth(buildRequestAuthConfig);
 
-export const { handlers, signIn, signOut, unstable_update: updateSession } =
-  nextAuth;
+export const {
+  handlers,
+  signIn,
+  signOut,
+  unstable_update: updateSession,
+} = nextAuth;
 
 export async function auth() {
   const session = await nextAuth.auth();

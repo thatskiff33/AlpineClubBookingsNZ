@@ -19,6 +19,10 @@ import {
   type MemberGuestSettingsValues,
 } from "@/lib/member-guest-settings";
 import { prisma } from "@/lib/prisma";
+import {
+  isDeletedAccountRecord,
+  notDeletedAccountWhere,
+} from "@/lib/deleted-account";
 
 /**
  * The database half of MG3's member finder (#2308): the two resolution paths and
@@ -112,13 +116,25 @@ export async function resolveMemberGuestCandidatesByEmail(params: {
     where: {
       email,
       active: true,
+      AND: notDeletedAccountWhere(),
       ageTier: { in: memberGuestResolveAgeTiers() },
     },
-    select: { id: true, firstName: true, lastName: true, ageTier: true },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      ageTier: true,
+      email: true,
+      deletedAt: true,
+    },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
   });
 
-  return { candidates: rows.map(toMemberGuestCandidate) };
+  return {
+    candidates: rows
+      .filter((row) => !isDeletedAccountRecord(row))
+      .map(toMemberGuestCandidate),
+  };
 }
 
 /**
@@ -195,20 +211,43 @@ export async function searchMemberGuestCandidatesByName(params: {
         }
       : {
           AND: [
-            { firstName: { startsWith: parsed.terms.firstPrefix, ...insensitive } },
-            { lastName: { startsWith: parsed.terms.lastPrefix, ...insensitive } },
+            {
+              firstName: {
+                startsWith: parsed.terms.firstPrefix,
+                ...insensitive,
+              },
+            },
+            {
+              lastName: { startsWith: parsed.terms.lastPrefix, ...insensitive },
+            },
           ],
         };
 
   const rows = await prisma.member.findMany({
-    where: { active: true, ageTier: { in: ageTiers }, ...nameFilter },
-    select: { id: true, firstName: true, lastName: true, ageTier: true },
+    where: {
+      active: true,
+      ageTier: { in: ageTiers },
+      AND: notDeletedAccountWhere(),
+      ...nameFilter,
+    },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      ageTier: true,
+      email: true,
+      deletedAt: true,
+    },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
     // One row over the cap, so "there were more" is knowable without a COUNT.
     take: MEMBER_GUEST_SEARCH_RESULT_CAP + 1,
   });
 
-  return capMemberGuestCandidates(rows.map(toMemberGuestCandidate));
+  return capMemberGuestCandidates(
+    rows
+      .filter((row) => !isDeletedAccountRecord(row))
+      .map(toMemberGuestCandidate),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +306,8 @@ export async function auditMemberGuestResolve(params: {
     category: "privacy",
     severity: "info",
     outcome: params.outcome ?? "success",
-    summary: "A member looked up another member by email address to add as a guest",
+    summary:
+      "A member looked up another member by email address to add as a guest",
     metadata: {
       email: normalizeMemberGuestEmail(email),
       resultCount: candidates.length,

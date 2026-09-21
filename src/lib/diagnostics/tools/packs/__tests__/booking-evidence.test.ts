@@ -19,8 +19,7 @@
  * all `findUnique({ where: { id } })`, and it is NOT survivable here: this module's
  * reads are FILTERS. `bookingGuest.findMany({ where: { bookingId } })`,
  * `bookingChangeRequest.findMany({ where: { bookingId, status: "REQUESTED" } })`,
- * `bedAllocation.findMany({ where: { bookingId, stayDate, bookingGuest } })` and — the sharpest one —
- * `member.count({ where: { id, passwordHash: DELETED_ACCOUNT_PASSWORD_HASH } })`
+ * `bedAllocation.findMany({ where: { bookingId, stayDate, bookingGuest } })`
  * all mean something only because of their predicate. Under a `where`-blind mock a
  * predicate that selected the WRONG rows would return the right ones anyway, and
  * the entire suite would be blind to it. An erasure test that dropped `id` from
@@ -107,7 +106,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
-import { DELETED_ACCOUNT_PASSWORD_HASH } from "@/lib/deleted-account";
 import {
   DEFAULT_FINANCIAL_YEAR_END_MONTH,
   __setFinancialYearEndMonthForTesting,
@@ -197,13 +195,15 @@ vi.mock("@/lib/booking-exception-request-service", () => ({
     evaluatePersistedNonHostingViolationsMock,
 }));
 vi.mock("@/lib/adult-member-hosting-review", () => ({
-  evaluatePersistedBookingAdultMemberHostingReadOnly: evaluatePersistedHostingMock,
+  evaluatePersistedBookingAdultMemberHostingReadOnly:
+    evaluatePersistedHostingMock,
 }));
 vi.mock("@/lib/booking-member-night-conflicts", () => ({
   findBookingMemberNightConflicts: findBookingMemberNightConflictsMock,
 }));
 vi.mock("@/lib/membership-type-policy", () => ({
-  resolveMembershipTypePolicyForMember: resolveMembershipTypePolicyForMemberMock,
+  resolveMembershipTypePolicyForMember:
+    resolveMembershipTypePolicyForMemberMock,
 }));
 // PARTIAL mocks: both modules are imported by real code left running here
 // (`subscription-lockout-facts` reads `getAgeTierSettings`), so only the one
@@ -362,7 +362,8 @@ const MODELS: Record<ModelName, ModelSpec> = {
     columns: ["id", "bookingId", "bookingGuestId", "stayDate"],
     relations: {
       bookingGuest: (row, state) =>
-        state.bookingGuest.find((guest) => guest.id === row.bookingGuestId) ?? null,
+        state.bookingGuest.find((guest) => guest.id === row.bookingGuestId) ??
+        null,
     },
   },
   bookingChangeRequest: {
@@ -393,7 +394,7 @@ const MODELS: Record<ModelName, ModelSpec> = {
       // A real column, deliberately declared so `member.count`'s predicate can
       // be applied against it — and so a `select` that named it would be
       // visible to the test that forbids exactly that.
-      "passwordHash",
+      "deletedAt",
       "ageTier",
       "active",
       "canLogin",
@@ -465,7 +466,8 @@ function matchesWhere(
       const relatedModel = relationModel(model, key);
       return {
         related: relation(candidate, store),
-        matches: (relatedRow, nested) => matchesWhere(relatedModel, relatedRow, nested),
+        matches: (relatedRow, nested) =>
+          matchesWhere(relatedModel, relatedRow, nested),
       };
     },
   });
@@ -483,7 +485,8 @@ function shapeRow(
       if (want === false || want === undefined) continue;
       if (key === "_count") {
         const counts: Row = {};
-        const requested = (want as { select?: Record<string, boolean> }).select ?? {};
+        const requested =
+          (want as { select?: Record<string, boolean> }).select ?? {};
         for (const [name, wanted] of Object.entries(requested)) {
           if (!wanted) continue;
           const counter = spec.counts?.[name];
@@ -552,7 +555,8 @@ function shapeRow(
 }
 
 function relationModel(model: ModelName, relation: string): ModelName {
-  if (model === "bookingGuest" && relation === "nights") return "bookingGuestNight";
+  if (model === "bookingGuest" && relation === "nights")
+    return "bookingGuestNight";
   if (model === "booking" && relation === "originBookingRequest") {
     return "bookingRequest";
   }
@@ -571,7 +575,8 @@ function relationModel(model: ModelName, relation: string): ModelName {
 function compareValues(left: unknown, right: unknown): number {
   const a = comparable(left);
   const b = comparable(right);
-  if (a === null || a === undefined) return b === null || b === undefined ? 0 : -1;
+  if (a === null || a === undefined)
+    return b === null || b === undefined ? 0 : -1;
   if (b === null || b === undefined) return 1;
   if (typeof a === "number" && typeof b === "number") return a - b;
   return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
@@ -603,9 +608,12 @@ interface QueryArgs {
 }
 
 function findMany(model: ModelName, args: QueryArgs = {}): Row[] {
-  const matched = store[model].filter((row) => matchesWhere(model, row, args.where));
+  const matched = store[model].filter((row) =>
+    matchesWhere(model, row, args.where),
+  );
   const ordered = applyOrderBy(matched, args.orderBy);
-  const limited = args.take === undefined ? ordered : ordered.slice(0, args.take);
+  const limited =
+    args.take === undefined ? ordered : ordered.slice(0, args.take);
   return limited.map((row) => shapeRow(model, row, args));
 }
 
@@ -614,7 +622,9 @@ function findFirst(model: ModelName, args: QueryArgs = {}): Row | null {
 }
 
 function findUnique(model: ModelName, args: QueryArgs = {}): Row | null {
-  const matched = store[model].filter((row) => matchesWhere(model, row, args.where));
+  const matched = store[model].filter((row) =>
+    matchesWhere(model, row, args.where),
+  );
   if (matched.length > 1) {
     throw new Error(
       `booking-evidence test double: findUnique on ${model} matched ${matched.length} rows`,
@@ -624,15 +634,16 @@ function findUnique(model: ModelName, args: QueryArgs = {}): Row | null {
 }
 
 function count(model: ModelName, args: QueryArgs = {}): number {
-  return store[model].filter((row) => matchesWhere(model, row, args.where)).length;
+  return store[model].filter((row) => matchesWhere(model, row, args.where))
+    .length;
 }
 
 function wirePrisma(): void {
-  prismaMock.booking.findUnique.mockImplementation(
-    async (args: QueryArgs) => findUnique("booking", args),
+  prismaMock.booking.findUnique.mockImplementation(async (args: QueryArgs) =>
+    findUnique("booking", args),
   );
-  prismaMock.bookingGuest.findMany.mockImplementation(
-    async (args: QueryArgs) => findMany("bookingGuest", args),
+  prismaMock.bookingGuest.findMany.mockImplementation(async (args: QueryArgs) =>
+    findMany("bookingGuest", args),
   );
   prismaMock.bookingChangeRequest.findMany.mockImplementation(
     async (args: QueryArgs) => findMany("bookingChangeRequest", args),
@@ -640,11 +651,11 @@ function wirePrisma(): void {
   prismaMock.bedAllocation.findMany.mockImplementation(
     async (args: QueryArgs) => findMany("bedAllocation", args),
   );
-  prismaMock.member.findUnique.mockImplementation(
-    async (args: QueryArgs) => findUnique("member", args),
+  prismaMock.member.findUnique.mockImplementation(async (args: QueryArgs) =>
+    findUnique("member", args),
   );
-  prismaMock.member.count.mockImplementation(
-    async (args: QueryArgs) => count("member", args),
+  prismaMock.member.count.mockImplementation(async (args: QueryArgs) =>
+    count("member", args),
   );
   prismaMock.memberSubscription.findUnique.mockImplementation(
     async (args: QueryArgs) => findUnique("memberSubscription", args),
@@ -654,7 +665,8 @@ function wirePrisma(): void {
   );
   prismaMock.$executeRaw.mockResolvedValue(0);
   prismaMock.$transaction.mockImplementation(
-    async (callback: (tx: typeof txMock) => Promise<unknown>) => callback(txMock),
+    async (callback: (tx: typeof txMock) => Promise<unknown>) =>
+      callback(txMock),
   );
 }
 
@@ -823,7 +835,7 @@ interface BookingScenario {
 
 interface MemberScenario {
   email?: string;
-  passwordHash?: string;
+  deletedAt?: Date | null;
   ageTier?: string;
   active?: boolean;
   canLogin?: boolean;
@@ -928,14 +940,14 @@ function seedDecoys(): void {
     }
   }
 
-  // The decoy MEMBER carries BOTH erasure markers, an unpaid season row and an
+  // The decoy MEMBER carries both deletion signals, an unpaid season row and an
   // incomplete induction. A member-eligibility read that lost its `id` filter
   // would report the ordinary member under test as erased, unpaid and
   // un-inducted — three findings, none of them true.
   store.member.push({
     id: DECOY_MEMBER_ID,
     email: "deleted-aaaabbbb@deleted.invalid",
-    passwordHash: DELETED_ACCOUNT_PASSWORD_HASH,
+    deletedAt: day("2026-01-01"),
     ageTier: "YOUTH",
     active: false,
     canLogin: false,
@@ -1071,11 +1083,11 @@ function seedBooking(scenario: BookingScenario = {}): void {
     })),
   }));
   const preparedViolations = (scenario.violations ?? []).map((violation) => ({
-      reasonCode: violation.reasonCode,
-      capacityMode: violation.capacityMode ?? "NO_HOLD",
-      policyId: "policy-1",
-      policyVersion: 1,
-    }));
+    reasonCode: violation.reasonCode,
+    capacityMode: violation.capacityMode ?? "NO_HOLD",
+    policyId: "policy-1",
+    policyVersion: 1,
+  }));
   evaluatePersistedNonHostingViolationsMock.mockImplementation(async () =>
     preparedViolations.filter(
       (violation) => violation.reasonCode !== "ADULT_MEMBER_HOSTING_REQUIRED",
@@ -1108,7 +1120,7 @@ function seedBooking(scenario: BookingScenario = {}): void {
   store.member.push({
     id: MEMBER_ID,
     email: "owner@example.test",
-    passwordHash: "owner-hash",
+    deletedAt: null,
     ageTier: scenario.ownerAgeTier ?? "ADULT",
     active: true,
     canLogin: true,
@@ -1156,7 +1168,7 @@ function seedMember(scenario: MemberScenario = {}): void {
     store.member.push({
       id: MEMBER_ID,
       email: scenario.email ?? "ordinary.member@example.test",
-      passwordHash: scenario.passwordHash ?? "$2b$12$anOrdinaryBcryptHashValue",
+      deletedAt: scenario.deletedAt ?? null,
       ageTier: scenario.ageTier ?? "ADULT",
       active: scenario.active ?? true,
       canLogin: scenario.canLogin ?? true,
@@ -1167,7 +1179,8 @@ function seedMember(scenario: MemberScenario = {}): void {
       // `in` and not `??`: an explicit `null` is a member with no recorded joining
       // date, which is a case the projection has to answer for, and `??` would
       // quietly hand it the default instead.
-      joinedDate: "joinedDate" in scenario ? scenario.joinedDate : day("2020-01-15"),
+      joinedDate:
+        "joinedDate" in scenario ? scenario.joinedDate : day("2020-01-15"),
       firstName: "Ordinary",
       lastName: "Member",
     });
@@ -1265,7 +1278,9 @@ describe("the Prisma double actually applies its filters (#2376)", () => {
     // `mockResolvedValue` style of stub this booking would report five guests and
     // two open exception requests it does not have, and an officer would be sent
     // to an exception queue that has nothing of theirs in it.
-    seedBooking({ guests: [{ id: "guest-1", nights: [NIGHT_ONE, NIGHT_TWO] }] });
+    seedBooking({
+      guests: [{ id: "guest-1", nights: [NIGHT_ONE, NIGHT_TWO] }],
+    });
     const row = await blockStateRow();
     expect(row.guest_count).toBe(1);
     expect(row.open_exception_request_count).toBe(0);
@@ -1300,7 +1315,8 @@ describe("the Prisma double actually applies its filters (#2376)", () => {
     // ever widened its select this assertion is where it surfaces.
     seedBooking();
     await blockStateRow();
-    const select = prismaMock.booking.findUnique.mock.calls[0]?.[0]?.select as Row;
+    const select = prismaMock.booking.findUnique.mock.calls[0]?.[0]
+      ?.select as Row;
     expect(select).toBeDefined();
     for (const forbidden of [
       "notes",
@@ -1333,21 +1349,21 @@ describe("booking block state: absence and refusal (#2376)", () => {
     ["the booking read", () => prismaMock.booking.findUnique],
     ["the guest read", () => prismaMock.bookingGuest.findMany],
     ["the open-request read", () => prismaMock.bookingChangeRequest.findMany],
-  ])("REJECTS rather than returning a partial row when %s fails", async (
-    _label,
-    pick,
-  ) => {
-    // THE ROW IS ALL-OR-NOTHING. The executor turns a rejection into
-    // `evidence_unavailable`; an operator told "the evidence could not be
-    // gathered" is strictly better served than one told "no policy violations"
-    // by a calculation that never ran. Each input is failed on its own so that a
-    // future `try/catch` around any single one of them fails here.
-    seedBooking();
-    pick().mockRejectedValueOnce(new Error("database unreachable"));
-    await expect(
-      readBookingBlockStateEvidence({ bookingId: BOOKING_ID }),
-    ).rejects.toThrow();
-  });
+  ])(
+    "REJECTS rather than returning a partial row when %s fails",
+    async (_label, pick) => {
+      // THE ROW IS ALL-OR-NOTHING. The executor turns a rejection into
+      // `evidence_unavailable`; an operator told "the evidence could not be
+      // gathered" is strictly better served than one told "no policy violations"
+      // by a calculation that never ran. Each input is failed on its own so that a
+      // future `try/catch` around any single one of them fails here.
+      seedBooking();
+      pick().mockRejectedValueOnce(new Error("database unreachable"));
+      await expect(
+        readBookingBlockStateEvidence({ bookingId: BOOKING_ID }),
+      ).rejects.toThrow();
+    },
+  );
 
   it.each([
     [
@@ -1356,21 +1372,24 @@ describe("booking block state: absence and refusal (#2376)", () => {
     ],
     ["the persisted hosting evaluation", () => evaluatePersistedHostingMock],
     ["the capacity engine", () => checkCapacityMock],
-    ["the person-night conflict scan", () => findBookingMemberNightConflictsMock],
-  ])("REJECTS rather than returning a partial row when %s fails", async (
-    _label,
-    pick,
-  ) => {
-    // The three that run inside one `Promise.all`. A row that reported "no policy
-    // violations" because the evaluator threw would be the exact fabricated
-    // answer this pack is designed against, and the `Promise.all` is what makes
-    // the refusal structural rather than a habit.
-    seedBooking();
-    pick().mockRejectedValueOnce(new Error("evaluator unavailable"));
-    await expect(
-      readBookingBlockStateEvidence({ bookingId: BOOKING_ID }),
-    ).rejects.toThrow();
-  });
+    [
+      "the person-night conflict scan",
+      () => findBookingMemberNightConflictsMock,
+    ],
+  ])(
+    "REJECTS rather than returning a partial row when %s fails",
+    async (_label, pick) => {
+      // The three that run inside one `Promise.all`. A row that reported "no policy
+      // violations" because the evaluator threw would be the exact fabricated
+      // answer this pack is designed against, and the `Promise.all` is what makes
+      // the refusal structural rather than a habit.
+      seedBooking();
+      pick().mockRejectedValueOnce(new Error("evaluator unavailable"));
+      await expect(
+        readBookingBlockStateEvidence({ bookingId: BOOKING_ID }),
+      ).rejects.toThrow();
+    },
+  );
 });
 
 describe("booking block state: terminal and deleted suppression (#2376)", () => {
@@ -1395,8 +1414,8 @@ describe("booking block state: terminal and deleted suppression (#2376)", () => 
       });
       const row = await blockStateRow();
 
-    expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
-    expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
+      expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
+      expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
       expect(checkCapacityMock).not.toHaveBeenCalled();
       expect(findBookingMemberNightConflictsMock).not.toHaveBeenCalled();
 
@@ -1552,7 +1571,11 @@ const BLOCKER_FIXTURES: [string, BookingScenario, string[]][] = [
     },
     ["booking_deleted"],
   ],
-  ["booking_lifecycle_terminal", { status: "CANCELLED" }, ["booking_lifecycle_terminal"]],
+  [
+    "booking_lifecycle_terminal",
+    { status: "CANCELLED" },
+    ["booking_lifecycle_terminal"],
+  ],
   [
     "booking_waitlisted",
     { status: "WAITLISTED" },
@@ -1817,7 +1840,10 @@ describe("booking block state: every blocker code, ranked (#2376)", () => {
       lockoutMode: "NON_MEMBER_PRICING",
       violations: [
         { reasonCode: "MINIMUM_STAY", capacityMode: "NO_HOLD" },
-        { reasonCode: "PAID_UP_ADULT_MEMBER_REQUIRED", capacityMode: "NO_HOLD" },
+        {
+          reasonCode: "PAID_UP_ADULT_MEMBER_REQUIRED",
+          capacityMode: "NO_HOLD",
+        },
       ],
     });
     const row = await blockStateRow();
@@ -1909,39 +1935,45 @@ describe("booking block state: the club's HARD_BLOCK subscription refusal (#2376
   ])(
     "does not raise it on %s, whose confirm the route never reaches",
     async (_label, finalPriceCents) => {
-    /**
-     * THE OTHER HALF OF THE DOOR, and the entry read only the first half.
-     *
-     * `confirm-draft` 400s on any draft whose `finalPriceCents` is not zero — "Use
-     * the payment flow to complete non-zero bookings" — BEFORE its subscription
-     * refusal. A priced draft is completed through
-     * `POST /api/payments/create-payment-intent` (`DRAFT -> PAYMENT_PENDING ->
-     * PAID`), and the booking page renders the confirm button only for a free draft.
-     *
-     * So the club's flat refusal never stood in front of a priced draft, and raising
-     * it there told an officer the club had refused a booking the member pays for and
-     * confirms — the fabricated blocker this entry's own contract forbids in as many
-     * words. Everything else here is the shape that DOES raise it: DRAFT, HARD_BLOCK,
-     * owner owing.
-     */
-    seedBooking({
-      status: "DRAFT",
-      finalPriceCents,
-      lockoutMode: "HARD_BLOCK",
-      ownerSubscriptionStatus: "UNPAID",
-    });
-    const row = await blockStateRow();
-    expect(blockers(row)).toEqual([]);
-    expect(row.blocker_count).toBe(0);
-    // And it asks nothing about the owner, on the same short-circuit reasoning as
-    // the mode: a diagnostic that read the rows anyway would be paying for an answer
-    // it must discard.
-    expect(resolveMembershipTypePolicyForMemberMock).not.toHaveBeenCalled();
-    expect(getAgeTierSettingsMock).not.toHaveBeenCalled();
+      /**
+       * THE OTHER HALF OF THE DOOR, and the entry read only the first half.
+       *
+       * `confirm-draft` 400s on any draft whose `finalPriceCents` is not zero — "Use
+       * the payment flow to complete non-zero bookings" — BEFORE its subscription
+       * refusal. A priced draft is completed through
+       * `POST /api/payments/create-payment-intent` (`DRAFT -> PAYMENT_PENDING ->
+       * PAID`), and the booking page renders the confirm button only for a free draft.
+       *
+       * So the club's flat refusal never stood in front of a priced draft, and raising
+       * it there told an officer the club had refused a booking the member pays for and
+       * confirms — the fabricated blocker this entry's own contract forbids in as many
+       * words. Everything else here is the shape that DOES raise it: DRAFT, HARD_BLOCK,
+       * owner owing.
+       */
+      seedBooking({
+        status: "DRAFT",
+        finalPriceCents,
+        lockoutMode: "HARD_BLOCK",
+        ownerSubscriptionStatus: "UNPAID",
+      });
+      const row = await blockStateRow();
+      expect(blockers(row)).toEqual([]);
+      expect(row.blocker_count).toBe(0);
+      // And it asks nothing about the owner, on the same short-circuit reasoning as
+      // the mode: a diagnostic that read the rows anyway would be paying for an answer
+      // it must discard.
+      expect(resolveMembershipTypePolicyForMemberMock).not.toHaveBeenCalled();
+      expect(getAgeTierSettingsMock).not.toHaveBeenCalled();
     },
   );
 
-  it.each(["CONFIRMED", "PAID", "PENDING", "AWAITING_REVIEW", "PAYMENT_PENDING"])(
+  it.each([
+    "CONFIRMED",
+    "PAID",
+    "PENDING",
+    "AWAITING_REVIEW",
+    "PAYMENT_PENDING",
+  ])(
     "does not raise it on a %s booking, whose confirm the club does not gate",
     async (status) => {
       // THE SCOPING DECISION, asserted rather than left implicit. The HARD_BLOCK
@@ -1970,7 +2002,10 @@ describe("booking block state: the club's HARD_BLOCK subscription refusal (#2376
     // `MemberSubscription.status` would have got wrong.
     [
       "a NOT_REQUIRED membership type",
-      { ownerSubscriptionBehavior: "NOT_REQUIRED", ownerSubscriptionStatus: "UNPAID" },
+      {
+        ownerSubscriptionBehavior: "NOT_REQUIRED",
+        ownerSubscriptionStatus: "UNPAID",
+      },
     ],
     [
       "a BASED_ON_AGE_TIER type whose season row says NOT_REQUIRED",
@@ -2066,7 +2101,10 @@ describe("booking block state: the club's HARD_BLOCK subscription refusal (#2376
   });
 
   it.each([
-    ["deleted", { status: "CANCELLED", deletedAt: new Date("2026-06-20T00:00:00.000Z") }],
+    [
+      "deleted",
+      { status: "CANCELLED", deletedAt: new Date("2026-06-20T00:00:00.000Z") },
+    ],
     ["terminal", { status: "CANCELLED" }],
   ] satisfies [string, BookingScenario][])(
     "asks nothing about the owner's subscription on a %s booking",
@@ -2147,10 +2185,12 @@ describe("booking block state: the club's HARD_BLOCK subscription refusal (#2376
       ownerSubscriptionStatus: "UNPAID",
     });
     await blockStateRow();
-    expect(resolveMembershipTypePolicyForMemberMock.mock.calls[0]?.[0]).toBe(txMock);
-    expect(resolveMembershipTypePolicyForMemberMock.mock.calls[0]?.[0]).not.toBe(
-      prismaMock,
+    expect(resolveMembershipTypePolicyForMemberMock.mock.calls[0]?.[0]).toBe(
+      txMock,
     );
+    expect(
+      resolveMembershipTypePolicyForMemberMock.mock.calls[0]?.[0],
+    ).not.toBe(prismaMock);
     expect(getAgeTierSettingsMock.mock.calls[0]?.[0]).toBe(txMock);
   });
 });
@@ -2210,7 +2250,9 @@ describe("booking block state: waitlist, holds and the edit window (#2376)", () 
     // beds that are held, and the member's place would be given away by an officer
     // who believed nothing was reserved.
     seedBooking({
-      requests: [{ id: "legacy-hold", reservationNights: 2, holdExpiresAt: null }],
+      requests: [
+        { id: "legacy-hold", reservationNights: 2, holdExpiresAt: null },
+      ],
     });
     const row = await blockStateRow();
     expect(row.exception_held_night_count).toBe(2);
@@ -2392,7 +2434,9 @@ describe("booking block state: reviews and the party footprint (#2376)", () => {
     seedBooking({
       guests: [{ id: "zero-night", stayStart: NIGHT_ONE, stayEnd: NIGHT_ONE }],
     });
-    await expect(read({ bookingId: BOOKING_ID })).rejects.toThrow(/zero nights/);
+    await expect(read({ bookingId: BOOKING_ID })).rejects.toThrow(
+      /zero nights/,
+    );
     expect(checkCapacityMock).not.toHaveBeenCalled();
     expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
     expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
@@ -2436,7 +2480,10 @@ describe("server-owned evidence is bounded at the database, not only in JS (#237
    * the statements that establish it.
    */
   const READERS = [
-    ["block state", () => readBookingBlockStateEvidence({ bookingId: BOOKING_ID })],
+    [
+      "block state",
+      () => readBookingBlockStateEvidence({ bookingId: BOOKING_ID }),
+    ],
     ["capacity", () => readBookingCapacityEvidence({ bookingId: BOOKING_ID })],
     [
       "member eligibility",
@@ -2511,7 +2558,9 @@ describe("server-owned evidence is bounded at the database, not only in JS (#237
     expect(DIAGNOSTICS_READ_ONLY_STATEMENT_TIMEOUT_MS).toBeLessThan(
       DIAGNOSTICS_READ_ONLY_TRANSACTION_TIMEOUT_MS,
     );
-    expect(DIAGNOSTICS_READ_ONLY_TRANSACTION_TIMEOUT_MS).toBeLessThan(AID6B_EVIDENCE_DEADLINE_MS);
+    expect(DIAGNOSTICS_READ_ONLY_TRANSACTION_TIMEOUT_MS).toBeLessThan(
+      AID6B_EVIDENCE_DEADLINE_MS,
+    );
     expect(options.timeout).toBe(DIAGNOSTICS_READ_ONLY_TRANSACTION_TIMEOUT_MS);
     // And the statement's own value is the same constant, not a parallel literal.
     expect(prismaMock.$executeRaw.mock.calls[1]?.[1]).toBe(
@@ -2547,9 +2596,9 @@ describe("server-owned evidence is bounded at the database, not only in JS (#237
     expect(resolveMembershipTypePolicyForMemberMock.mock.calls[0]?.[0]).toBe(
       txMock,
     );
-    expect(resolveMembershipTypePolicyForMemberMock.mock.calls[0]?.[0]).not.toBe(
-      prismaMock,
-    );
+    expect(
+      resolveMembershipTypePolicyForMemberMock.mock.calls[0]?.[0],
+    ).not.toBe(prismaMock);
     // The strict settings readers and the induction read take a client for the same
     // reason; they are doubled here, so what is asserted is that the pack asks for
     // them at all inside the transaction rather than which client they received.
@@ -2754,7 +2803,11 @@ describe("booking capacity by night (#2376)", () => {
 
   it.each([
     ["generic pending", { status: "PENDING" }, false],
-    ["converted pending", { status: "PENDING", isRequestConverted: true }, true],
+    [
+      "converted pending",
+      { status: "PENDING", isRequestConverted: true },
+      true,
+    ],
     ["cancelled", { status: "CANCELLED" }, false],
     [
       // The shape the product actually produces: deletion is only reachable from
@@ -2785,7 +2838,9 @@ describe("booking capacity by night (#2376)", () => {
         bookingId: BOOKING_ID,
       })) as unknown as Row[];
       expect(rows[0].this_booking_has_whole_lodge_hold_flag).toBe(true);
-      expect(rows[0].this_booking_effectively_holds_whole_lodge).toBe(effective);
+      expect(rows[0].this_booking_effectively_holds_whole_lodge).toBe(
+        effective,
+      );
     },
   );
 
@@ -2836,90 +2891,102 @@ describe("booking capacity by night (#2376)", () => {
       },
     ],
     ["waitlisted", { status: "WAITLISTED" }],
-  ])("refuses an oversized %s block-state span before any population read", async (_label, state) => {
-    seedBooking({
-      ...state,
-      checkIn: "2026-07-10",
-      checkOut: "2026-08-12",
-      guests: [],
-    });
-    await expect(
-      readBookingBlockStateEvidence({ bookingId: BOOKING_ID }),
-    ).rejects.toThrow(/ceiling/);
-    expect(prismaMock.bookingGuest.findMany).not.toHaveBeenCalled();
-    expect(prismaMock.bookingChangeRequest.findMany).not.toHaveBeenCalled();
-    expect(checkCapacityMock).not.toHaveBeenCalled();
-    expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
-    expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
-    expect(findBookingMemberNightConflictsMock).not.toHaveBeenCalled();
-  });
+  ])(
+    "refuses an oversized %s block-state span before any population read",
+    async (_label, state) => {
+      seedBooking({
+        ...state,
+        checkIn: "2026-07-10",
+        checkOut: "2026-08-12",
+        guests: [],
+      });
+      await expect(
+        readBookingBlockStateEvidence({ bookingId: BOOKING_ID }),
+      ).rejects.toThrow(/ceiling/);
+      expect(prismaMock.bookingGuest.findMany).not.toHaveBeenCalled();
+      expect(prismaMock.bookingChangeRequest.findMany).not.toHaveBeenCalled();
+      expect(checkCapacityMock).not.toHaveBeenCalled();
+      expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
+      expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
+      expect(findBookingMemberNightConflictsMock).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["block state", readBookingBlockStateEvidence],
     ["capacity", readBookingCapacityEvidence],
-  ])("refuses excessive guests before authoritative helpers in %s", async (_label, read) => {
-    seedBooking({
-      guests: Array.from(
-        { length: AID6B_BOOKING_GUEST_CEILING + 1 },
-        (_, index) => ({ id: `guest-${index}`, nights: [NIGHT_ONE] }),
-      ),
-    });
-    await expect(read({ bookingId: BOOKING_ID })).rejects.toThrow(
-      /booking guests exceeds/,
-    );
-    expect(checkCapacityMock).not.toHaveBeenCalled();
-    expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
-    expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
-    expect(findBookingMemberNightConflictsMock).not.toHaveBeenCalled();
-  });
+  ])(
+    "refuses excessive guests before authoritative helpers in %s",
+    async (_label, read) => {
+      seedBooking({
+        guests: Array.from(
+          { length: AID6B_BOOKING_GUEST_CEILING + 1 },
+          (_, index) => ({ id: `guest-${index}`, nights: [NIGHT_ONE] }),
+        ),
+      });
+      await expect(read({ bookingId: BOOKING_ID })).rejects.toThrow(
+        /booking guests exceeds/,
+      );
+      expect(checkCapacityMock).not.toHaveBeenCalled();
+      expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
+      expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
+      expect(findBookingMemberNightConflictsMock).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["block state", readBookingBlockStateEvidence],
     ["capacity", readBookingCapacityEvidence],
-  ])("refuses excessive explicit guest-night rows before helpers in %s", async (_label, read) => {
-    seedBooking({
-      guests: [
-        {
-          id: "guest-corrupt-nights",
-          nights: Array.from(
-            { length: AID6B_CAPACITY_NIGHT_CEILING + 1 },
-            () => NIGHT_ONE,
-          ),
-        },
-      ],
-    });
-    await expect(read({ bookingId: BOOKING_ID })).rejects.toThrow(
-      /guest-night rows exceeds/,
-    );
-    expect(checkCapacityMock).not.toHaveBeenCalled();
-    expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
-    expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
-    expect(findBookingMemberNightConflictsMock).not.toHaveBeenCalled();
-  });
+  ])(
+    "refuses excessive explicit guest-night rows before helpers in %s",
+    async (_label, read) => {
+      seedBooking({
+        guests: [
+          {
+            id: "guest-corrupt-nights",
+            nights: Array.from(
+              { length: AID6B_CAPACITY_NIGHT_CEILING + 1 },
+              () => NIGHT_ONE,
+            ),
+          },
+        ],
+      });
+      await expect(read({ bookingId: BOOKING_ID })).rejects.toThrow(
+        /guest-night rows exceeds/,
+      );
+      expect(checkCapacityMock).not.toHaveBeenCalled();
+      expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
+      expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
+      expect(findBookingMemberNightConflictsMock).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["block state", readBookingBlockStateEvidence],
     ["capacity", readBookingCapacityEvidence],
-  ])("refuses a huge guest fallback envelope on a one-night booking in %s", async (_label, read) => {
-    seedBooking({
-      checkIn: NIGHT_ONE,
-      checkOut: NIGHT_TWO,
-      guests: [
-        {
-          id: "guest-corrupt-envelope",
-          stayStart: NIGHT_ONE,
-          stayEnd: "2026-09-30",
-        },
-      ],
-    });
-    await expect(read({ bookingId: BOOKING_ID })).rejects.toThrow(
-      /guest fallback envelope covers/,
-    );
-    expect(checkCapacityMock).not.toHaveBeenCalled();
-    expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
-    expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
-    expect(findBookingMemberNightConflictsMock).not.toHaveBeenCalled();
-  });
+  ])(
+    "refuses a huge guest fallback envelope on a one-night booking in %s",
+    async (_label, read) => {
+      seedBooking({
+        checkIn: NIGHT_ONE,
+        checkOut: NIGHT_TWO,
+        guests: [
+          {
+            id: "guest-corrupt-envelope",
+            stayStart: NIGHT_ONE,
+            stayEnd: "2026-09-30",
+          },
+        ],
+      });
+      await expect(read({ bookingId: BOOKING_ID })).rejects.toThrow(
+        /guest fallback envelope covers/,
+      );
+      expect(checkCapacityMock).not.toHaveBeenCalled();
+      expect(evaluatePersistedNonHostingViolationsMock).not.toHaveBeenCalled();
+      expect(evaluatePersistedHostingMock).not.toHaveBeenCalled();
+      expect(findBookingMemberNightConflictsMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses excessive open requests before block-state helpers", async () => {
     seedBooking({
@@ -2977,8 +3044,9 @@ describe("booking capacity by night (#2376)", () => {
     }
     // And the decoy booking's four allocations, on these same two nights, are not
     // in either figure.
-    expect(store.bedAllocation.filter((row) => row.bookingId === DECOY_BOOKING_ID))
-      .toHaveLength(4);
+    expect(
+      store.bedAllocation.filter((row) => row.bookingId === DECOY_BOOKING_ID),
+    ).toHaveLength(4);
   });
 
   it("bounds allocation rows to this booking, its stay and its own guests", async () => {
@@ -3011,8 +3079,7 @@ describe("booking capacity by night (#2376)", () => {
       },
       select: { stayDate: true },
       orderBy: [{ stayDate: "asc" }, { id: "asc" }],
-      take:
-        AID6B_BOOKING_GUEST_CEILING * AID6B_CAPACITY_NIGHT_CEILING + 1,
+      take: AID6B_BOOKING_GUEST_CEILING * AID6B_CAPACITY_NIGHT_CEILING + 1,
     });
     expect(prismaMock.$transaction).toHaveBeenCalledWith(
       expect.any(Function),
@@ -3032,8 +3099,7 @@ describe("booking capacity by night (#2376)", () => {
 
   it("refuses a corrupt in-envelope allocation population above the ceiling", async () => {
     seedBooking();
-    const ceiling =
-      AID6B_BOOKING_GUEST_CEILING * AID6B_CAPACITY_NIGHT_CEILING;
+    const ceiling = AID6B_BOOKING_GUEST_CEILING * AID6B_CAPACITY_NIGHT_CEILING;
     store.bedAllocation.push(
       ...Array.from({ length: ceiling + 1 }, (_, index) => ({
         id: `corrupt-allocation-${index}`,
@@ -3146,7 +3212,7 @@ describe("member eligibility: the erasure disjunction (#2376)", () => {
     // erased person their session and their retained roles back.
     seedMember({
       email: "deleted-12ab34cd@deleted.invalid",
-      passwordHash: "$2b$12$aStillOrdinaryHash",
+      deletedAt: null,
       active: false,
     });
     const row = await eligibilityRow();
@@ -3158,14 +3224,14 @@ describe("member eligibility: the erasure disjunction (#2376)", () => {
     expect(eligibilityCodes(row)).toEqual(["member_erased"]);
   });
 
-  it("detects a member matching ONLY the sentinel-password-hash half", async () => {
+  it("detects a member matching ONLY the structural marker", async () => {
     // The other arm, and the one that cannot be reached by reading columns into
     // JavaScript. An account erased BEFORE the address rewrite carries the
     // sentinel hash and an ordinary-looking address; an email-only test is
     // silently incomplete for it and reports the account as a live member.
     seedMember({
       email: "ordinary.member@example.test",
-      passwordHash: DELETED_ACCOUNT_PASSWORD_HASH,
+      deletedAt: new Date("2026-07-01T00:00:00.000Z"),
       active: false,
     });
     const row = await eligibilityRow();
@@ -3175,9 +3241,6 @@ describe("member eligibility: the erasure disjunction (#2376)", () => {
   });
 
   it("does not call an ORDINARY member erased", async () => {
-    // The decoy member carries BOTH markers. If the `count` predicate lost its
-    // `id` — a one-word edit — this ordinary member would be reported as erased,
-    // and an officer would be told a live member's account had been deleted.
     seedMember({});
     const row = await eligibilityRow();
     expect(row.member_erased).toBe(false);
@@ -3185,40 +3248,28 @@ describe("member eligibility: the erasure disjunction (#2376)", () => {
     expect(eligibilityCodes(row)).toEqual([]);
   });
 
-  it("runs the hash comparison INSIDE Postgres and never selects passwordHash", async () => {
-    // The one place in either tool pack where a credential column is used as a
-    // PREDICATE rather than a projection. Only a boolean crosses the boundary: no
-    // member's real hash is loaded, logged, hashed into an audit row or projected.
-    // Asserted on the arguments the double was handed, because that is the only
-    // place the distinction is visible — a `select` that named `passwordHash`
-    // would produce an identical-looking row.
-    seedMember({ passwordHash: DELETED_ACCOUNT_PASSWORD_HASH, active: false });
+  it("selects the structural marker and never reads a credential column", async () => {
+    seedMember({
+      deletedAt: new Date("2026-07-01T00:00:00.000Z"),
+      active: false,
+    });
     const row = await eligibilityRow();
 
-    const select = prismaMock.member.findUnique.mock.calls[0]?.[0]?.select as Row;
+    const select = prismaMock.member.findUnique.mock.calls[0]?.[0]
+      ?.select as Row;
     expect(select).toBeDefined();
+    expect(select.deletedAt).toBe(true);
     expect(Object.keys(select)).not.toContain("passwordHash");
     expect(Object.keys(select)).not.toContain("totpSecret");
     expect(Object.keys(select)).not.toContain("dateOfBirth");
     expect(Object.keys(select)).not.toContain("comments");
 
-    // The count is scoped to THIS member and compares against the sentinel the
-    // server itself writes — not against anything read out of a row.
-    const countArgs = prismaMock.member.count.mock.calls[0]?.[0] as {
-      where?: Row;
-      select?: Row;
-    };
-    expect(countArgs.where).toEqual({
-      id: MEMBER_ID,
-      passwordHash: DELETED_ACCOUNT_PASSWORD_HASH,
-    });
-    expect(countArgs.select).toBeUndefined();
+    expect(prismaMock.member.count).not.toHaveBeenCalled();
 
     // And nothing resembling a credential, or the email that was read as an
     // input, reaches the emitted row.
     for (const value of Object.values(row)) {
       if (typeof value !== "string") continue;
-      expect(value).not.toContain(DELETED_ACCOUNT_PASSWORD_HASH);
       expect(value).not.toContain("@");
     }
   });
@@ -3240,9 +3291,11 @@ describe("member eligibility: the erasure disjunction (#2376)", () => {
     ).rejects.toThrow();
   });
 
-  it("REJECTS rather than returning a partial row when the erasure count fails", async () => {
+  it("REJECTS rather than returning a partial row when the member read fails", async () => {
     seedMember({});
-    prismaMock.member.count.mockRejectedValueOnce(new Error("database unreachable"));
+    prismaMock.member.findUnique.mockRejectedValueOnce(
+      new Error("database unreachable"),
+    );
     await expect(
       readMemberEligibilityEvidence({ memberId: MEMBER_ID }),
     ).rejects.toThrow();
@@ -3268,8 +3321,16 @@ const ELIGIBILITY_FIXTURES: [string, MemberScenario, string[]][] = [
     { email: "deleted-99887766@deleted.invalid", active: false },
     ["member_erased"],
   ],
-  ["member_archived", { archivedAt: day("2026-03-01"), active: false }, ["member_archived"]],
-  ["member_cancelled", { cancelledAt: day("2026-04-01"), active: false }, ["member_cancelled"]],
+  [
+    "member_archived",
+    { archivedAt: day("2026-03-01"), active: false },
+    ["member_archived"],
+  ],
+  [
+    "member_cancelled",
+    { cancelledAt: day("2026-04-01"), active: false },
+    ["member_cancelled"],
+  ],
   ["member_inactive", { active: false }, ["member_inactive"]],
   [
     "membership_type_blocks_booking",
@@ -3319,7 +3380,10 @@ describe("member eligibility: every code, ranked (#2376)", () => {
       active: false,
     });
     const row = await eligibilityRow();
-    expect(eligibilityCodes(row)).toEqual(["member_archived", "member_cancelled"]);
+    expect(eligibilityCodes(row)).toEqual([
+      "member_archived",
+      "member_cancelled",
+    ]);
     expect(row.lifecycle_label).toBe("Archived");
   });
 
@@ -3404,7 +3468,9 @@ describe("member eligibility: three different subscription facts (#2376)", () =>
       seedMember({ subscriptionBehavior: "REQUIRED", subscription });
       const row = await eligibilityRow();
       seen.push(row.subscription_status as string | null);
-      expect(row.subscription_required, String(subscription?.status)).toBe(true);
+      expect(row.subscription_required, String(subscription?.status)).toBe(
+        true,
+      );
       expect(row.subscription_paid, String(subscription?.status)).toBe(false);
       expect(row.subscription_unpaid, String(subscription?.status)).toBe(true);
     }
@@ -3498,7 +3564,11 @@ describe("member eligibility: three different subscription facts (#2376)", () =>
     // The fact and the policy are deliberately separate: the same unpaid row
     // hard-blocks at one club and merely reprices at the next. A diagnostic that
     // reported only the consequence would be unusable at the other club.
-    for (const mode of ["HARD_BLOCK", "NON_MEMBER_PRICING", "NO_BLOCK"] as const) {
+    for (const mode of [
+      "HARD_BLOCK",
+      "NON_MEMBER_PRICING",
+      "NO_BLOCK",
+    ] as const) {
       store = emptyStore();
       seedDecoys();
       seedMember({
@@ -3618,22 +3688,31 @@ describe("member eligibility: the season year is the SEASON's, not the calendar'
   });
 
   it.each([
-    ["the last night of the calendar year, 2026-12-31, in season 2026", "2026-12-31T11:00:00.000Z", 2026],
+    [
+      "the last night of the calendar year, 2026-12-31, in season 2026",
+      "2026-12-31T11:00:00.000Z",
+      2026,
+    ],
     ["New Year's Day 2027 in season 2026", "2027-01-01T00:00:00.000Z", 2026],
-    ["the eve of the new season, 2027-03-31, in season 2026", "2027-03-31T00:00:00.000Z", 2026],
-    ["the first day of the new season, 2027-04-01, in season 2027", "2027-04-01T00:00:00.000Z", 2027],
-  ] as const)(
-    "puts %s",
-    async (_label, instant, expected) => {
-      // The boundary, both sides of it, with the season year written out rather
-      // than derived — a test that computed the expectation with the same helper
-      // the source uses would pass for any helper at all.
-      vi.setSystemTime(new Date(instant));
-      seedMember({});
-      const row = await eligibilityRow();
-      expect(row.season_year).toBe(expected);
-    },
-  );
+    [
+      "the eve of the new season, 2027-03-31, in season 2026",
+      "2027-03-31T00:00:00.000Z",
+      2026,
+    ],
+    [
+      "the first day of the new season, 2027-04-01, in season 2027",
+      "2027-04-01T00:00:00.000Z",
+      2027,
+    ],
+  ] as const)("puts %s", async (_label, instant, expected) => {
+    // The boundary, both sides of it, with the season year written out rather
+    // than derived — a test that computed the expectation with the same helper
+    // the source uses would pass for any helper at all.
+    vi.setSystemTime(new Date(instant));
+    seedMember({});
+    const row = await eligibilityRow();
+    expect(row.season_year).toBe(expected);
+  });
 
   it("answers from the CLUB's calendar day, not the UTC one", async () => {
     /*
@@ -3695,7 +3774,9 @@ describe("member eligibility: the season year is the SEASON's, not the calendar'
     });
     prismaMock.xeroToken.findFirst.mockResolvedValue(null);
     seedMember({});
-    await expect(eligibilityRow()).resolves.toMatchObject({ season_year: 2026 });
+    await expect(eligibilityRow()).resolves.toMatchObject({
+      season_year: 2026,
+    });
   });
 
   it("propagates a rejected persisted-settings read instead of inventing defaults", async () => {
@@ -3745,7 +3826,9 @@ describe("member eligibility: the season year is the SEASON's, not the calendar'
     });
     prismaMock.xeroToken.findFirst.mockResolvedValue(null);
     seedMember({});
-    await expect(eligibilityRow()).resolves.toMatchObject({ season_year: 2026 });
+    await expect(eligibilityRow()).resolves.toMatchObject({
+      season_year: 2026,
+    });
   });
 });
 
@@ -3777,8 +3860,10 @@ describe("booking block state: the season comes from STORED state, not the proce
 
   /** The options each evaluator was actually handed. */
   function optionsPassed(): {
-    nonHosting: { seasonYear?: number; subscriptionLockoutMode?: string } | undefined;
-    hosting: { seasonYear?: number; subscriptionLockoutMode?: string } | undefined;
+    nonHosting:
+      { seasonYear?: number; subscriptionLockoutMode?: string } | undefined;
+    hosting:
+      { seasonYear?: number; subscriptionLockoutMode?: string } | undefined;
   } {
     const nonHostingArgs = evaluatePersistedNonHostingViolationsMock.mock
       .calls[0] as [
@@ -3899,7 +3984,9 @@ describe("booking block state: the season comes from STORED state, not the proce
       seedSeasonBoundaryBooking(scenario);
       const row = await blockStateRow();
       expect(row.booking_id).toBe(BOOKING_ID);
-      expect(prismaMock.membershipLockoutSettings.findUnique).not.toHaveBeenCalled();
+      expect(
+        prismaMock.membershipLockoutSettings.findUnique,
+      ).not.toHaveBeenCalled();
       expect(prismaMock.xeroToken.findFirst).not.toHaveBeenCalled();
     },
   );
@@ -3917,7 +4004,9 @@ describe("booking block state: the season comes from STORED state, not the proce
     await blockStateRow();
     expect(peekSubscriptionLockoutModeMock).toHaveBeenCalledTimes(1);
     const passed = optionsPassed();
-    expect(passed.nonHosting?.subscriptionLockoutMode).toBe("NON_MEMBER_PRICING");
+    expect(passed.nonHosting?.subscriptionLockoutMode).toBe(
+      "NON_MEMBER_PRICING",
+    );
     expect(passed.hosting?.subscriptionLockoutMode).toBe("NON_MEMBER_PRICING");
   });
 
@@ -4101,7 +4190,9 @@ describe("member eligibility: the adult-member-host predicate (#2376)", () => {
         subscription: { status: "PAID" },
         lockoutMode,
       });
-      expect((await eligibilityRow()).qualifies_as_adult_member_host).toBe(true);
+      expect((await eligibilityRow()).qualifies_as_adult_member_host).toBe(
+        true,
+      );
     },
   );
 
@@ -4111,11 +4202,14 @@ describe("member eligibility: the adult-member-host predicate (#2376)", () => {
     ["a cancelled member", { cancelledAt: day("2026-04-01"), active: false }],
     ["an archived member", { archivedAt: day("2026-03-01"), active: false }],
     ["an inactive member", { active: false }],
-  ])("does not let %s qualify as an adult member host", async (_label, scenario) => {
-    seedMember(scenario);
-    const row = await eligibilityRow();
-    expect(row.qualifies_as_adult_member_host).toBe(false);
-  });
+  ])(
+    "does not let %s qualify as an adult member host",
+    async (_label, scenario) => {
+      seedMember(scenario);
+      const row = await eligibilityRow();
+      expect(row.qualifies_as_adult_member_host).toBe(false);
+    },
+  );
 
   it("emits the member's joined date as an NZ date-only value", async () => {
     seedMember({ joinedDate: day("2020-01-15") });

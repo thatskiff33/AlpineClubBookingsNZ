@@ -39,12 +39,10 @@ import type { ReportedContactCacheFreshness } from "./xero-contact-cache-freshne
  *   `DELETE`. That row deliberately carries no foreign key to `Member`, so it
  *   survives the row it describes.
  *
- * Deliberately NOT the anonymisation MARKERS (`isDeletedAccountRecord`).
- * `INV-LIFE-015` says in as many words that the marker predicate is a strong
- * signal and not a schema invariant: the membership-application MAP branch
- * overwrites both markers, so a mapped-over row stops being recognisable as
- * erased — and the Xero contact the erasure orphaned is no less orphaned for
- * that. A review that reads the markers would silently lose exactly those rows.
+ * Deliberately NOT the live-row predicate (`isDeletedAccountRecord`). That
+ * predicate guards operations on a Member row. This review needs durable proof
+ * of the erasure event, including a hard delete where there is no Member row to
+ * inspect, so the approved decision is the authoritative source here.
  */
 export type ErasureKind = "ANONYMISED_BY_DELETION_REQUEST" | "HARD_DELETED";
 

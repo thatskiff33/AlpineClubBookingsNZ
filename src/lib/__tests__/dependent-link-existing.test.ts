@@ -9,11 +9,15 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
-const mockRequireActiveSessionUser = vi.fn<(...args: unknown[]) => Promise<Response | null>>(async () => null);
+const mockRequireActiveSessionUser = vi.fn<
+  (...args: unknown[]) => Promise<Response | null>
+>(async () => null);
 vi.mock("@/lib/session-guards", async () => ({
   requireAdmin: (await import("./helpers/require-admin-mock"))
     .evaluateRequireAdminMock,
-  requireActiveSessionUser: (...args: Parameters<typeof mockRequireActiveSessionUser>) => mockRequireActiveSessionUser(...args),
+  requireActiveSessionUser: (
+    ...args: Parameters<typeof mockRequireActiveSessionUser>
+  ) => mockRequireActiveSessionUser(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -38,13 +42,18 @@ import {
   MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
 } from "@/lib/member-parent-partner-exclusivity";
 
-type MockAccessRole = { role: string | null; roleDefinitionId?: string | null; roleDefinition?: unknown };
+type MockAccessRole = {
+  role: string | null;
+  roleDefinitionId?: string | null;
+  roleDefinition?: unknown;
+};
 
 type MockMember = {
   id: string;
   firstName?: string;
   lastName?: string;
   email: string;
+  deletedAt: Date | null;
   // NOT_APPLICABLE is the age-EXEMPT tier (#1440, #2106), carried by
   // organisation accounts AND by age-exempt people — both of which #2282's
   // parent-side rule has to tell apart, so both appear in fixtures here.
@@ -72,17 +81,30 @@ type MockMember = {
  * while proving nothing.
  */
 
-const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
+const adminSession = {
+  user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
+} as any;
 // A Membership Officer: admin-portal access but not a Full Admin.
-const officerSession = { user: { id: "officer-1", role: "USER", accessRoles: [{ role: "ADMIN_MEMBERSHIP" }] } } as any;
-const adminAccessRoles: MockAccessRole[] = [{ role: "ADMIN", roleDefinitionId: null, roleDefinition: null }];
+const officerSession = {
+  user: {
+    id: "officer-1",
+    role: "USER",
+    accessRoles: [{ role: "ADMIN_MEMBERSHIP" }],
+  },
+} as any;
+const adminAccessRoles: MockAccessRole[] = [
+  { role: "ADMIN", roleDefinitionId: null, roleDefinition: null },
+];
 
 function makeRequest(body: Record<string, unknown>) {
-  return new NextRequest("http://localhost/api/admin/members/parent-1/dependents/link", {
-    method: "POST",
-    body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json" },
-  });
+  return new NextRequest(
+    "http://localhost/api/admin/members/parent-1/dependents/link",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 function makeParent(overrides: Partial<MockMember> = {}): MockMember {
@@ -91,6 +113,7 @@ function makeParent(overrides: Partial<MockMember> = {}): MockMember {
     firstName: "Parent",
     lastName: "Member",
     email: "parent@example.com",
+    deletedAt: null,
     ageTier: "ADULT",
     active: true,
     archivedAt: null,
@@ -102,7 +125,10 @@ function makeParent(overrides: Partial<MockMember> = {}): MockMember {
     role: "USER",
     financeAccessLevel: "NONE",
     accessRoles: [],
-    familyGroupMemberships: [{ familyGroupId: "fg-1" }, { familyGroupId: "fg-2" }],
+    familyGroupMemberships: [
+      { familyGroupId: "fg-1" },
+      { familyGroupId: "fg-2" },
+    ],
     partnerLinksAsMemberA: [],
     partnerLinksAsMemberB: [],
     ...overrides,
@@ -115,6 +141,7 @@ function makeMember(overrides: Partial<MockMember> = {}): MockMember {
     firstName: "Target",
     lastName: "Member",
     email: "target@example.com",
+    deletedAt: null,
     ageTier: "CHILD",
     active: true,
     archivedAt: null,
@@ -148,7 +175,9 @@ function setupTransaction(members: MockMember[]) {
         if (where.accessRoles) {
           return members.filter((member) => {
             if (!member.active || !member.canLogin) return false;
-            const holdsAdmin = member.accessRoles.some((r) => r.role === "ADMIN");
+            const holdsAdmin = member.accessRoles.some(
+              (r) => r.role === "ADMIN",
+            );
             if (!holdsAdmin) return false;
             if (typeof where.id === "string") return member.id === where.id;
             if (where.id?.notIn) return !where.id.notIn.includes(member.id);
@@ -156,16 +185,27 @@ function setupTransaction(members: MockMember[]) {
           }).length;
         }
         // Shared-email orphan check.
-        return members.filter((member) => member.email === where.email && member.id !== where.id.not).length;
-      }),
-      findFirst: vi.fn(async ({ where }: { where: { email: string; id: { not: string }; canLogin: boolean } }) => {
-        return members.find(
+        return members.filter(
           (member) =>
-            member.email === where.email &&
-            member.id !== where.id.not &&
-            member.canLogin === where.canLogin
-        ) ?? null;
+            member.email === where.email && member.id !== where.id.not,
+        ).length;
       }),
+      findFirst: vi.fn(
+        async ({
+          where,
+        }: {
+          where: { email: string; id: { not: string }; canLogin: boolean };
+        }) => {
+          return (
+            members.find(
+              (member) =>
+                member.email === where.email &&
+                member.id !== where.id.not &&
+                member.canLogin === where.canLogin,
+            ) ?? null
+          );
+        },
+      ),
       // #2255: the two query shapes the family-link walks issue — "these ids"
       // (walking up, and re-reading a level for email resolution) and "children
       // of these ids" (walking down). Implemented from the parent COLUMNS, so
@@ -180,35 +220,41 @@ function setupTransaction(members: MockMember[]) {
             where.OR.flatMap((clause: any) => [
               ...(clause.parentMemberId?.in ?? []),
               ...(clause.secondaryParentId?.in ?? []),
-            ])
+            ]),
           );
           return members.filter(
             (member) =>
               (member.parentMemberId && parentIds.has(member.parentMemberId)) ||
-              (member.secondaryParentId && parentIds.has(member.secondaryParentId))
+              (member.secondaryParentId &&
+                parentIds.has(member.secondaryParentId)),
           );
         }
         throw new Error(
-          `unexpected member.findMany shape: ${JSON.stringify(where)}`
+          `unexpected member.findMany shape: ${JSON.stringify(where)}`,
         );
       }),
-      update: vi.fn(async ({ where, data }: { where: { id: string }; data: any }) => {
-        const member = membersById.get(where.id);
-        if (!member) return null;
-        return {
-          id: member.id,
-          firstName: member.firstName,
-          lastName: member.lastName,
-          email: member.email,
-          ageTier: member.ageTier,
-          parentMemberId: data.parent?.connect?.id ?? member.parentMemberId,
-          secondaryParentId: data.secondaryParent?.connect?.id ?? member.secondaryParentId,
-          inheritEmailFromId: data.inheritEmailFrom?.connect?.id ?? member.inheritEmailFromId,
-          inheritEmailChoiceId:
-            data.inheritEmailChoice?.connect?.id ?? member.inheritEmailChoiceId,
-          canLogin: data.canLogin ?? member.canLogin,
-        };
-      }),
+      update: vi.fn(
+        async ({ where, data }: { where: { id: string }; data: any }) => {
+          const member = membersById.get(where.id);
+          if (!member) return null;
+          return {
+            id: member.id,
+            firstName: member.firstName,
+            lastName: member.lastName,
+            email: member.email,
+            ageTier: member.ageTier,
+            parentMemberId: data.parent?.connect?.id ?? member.parentMemberId,
+            secondaryParentId:
+              data.secondaryParent?.connect?.id ?? member.secondaryParentId,
+            inheritEmailFromId:
+              data.inheritEmailFrom?.connect?.id ?? member.inheritEmailFromId,
+            inheritEmailChoiceId:
+              data.inheritEmailChoice?.connect?.id ??
+              member.inheritEmailChoiceId,
+            canLogin: data.canLogin ?? member.canLogin,
+          };
+        },
+      ),
     },
     memberPartnerLink: {
       findUnique: vi.fn().mockResolvedValue(null),
@@ -233,7 +279,10 @@ const NO_ANCESTORS_NO_DEPENDANTS = {
   candidateDescendantGenerations: 0,
 };
 
-async function linkDependent(body: Record<string, unknown>, parentId = "parent-1") {
+async function linkDependent(
+  body: Record<string, unknown>,
+  parentId = "parent-1",
+) {
   return POST(makeRequest(body), { params: Promise.resolve({ id: parentId }) });
 }
 
@@ -245,7 +294,10 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
   });
 
   it("links a child with default side effects", async () => {
-    const tx = setupTransaction([makeParent(), makeMember({ ageTier: "CHILD" })]);
+    const tx = setupTransaction([
+      makeParent(),
+      makeMember({ ageTier: "CHILD" }),
+    ]);
 
     const res = await linkDependent({
       memberId: "target-1",
@@ -264,7 +316,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
           inheritEmailFrom: { connect: { id: "parent-1" } },
           canLogin: false,
         }),
-      })
+      }),
     );
     expect(tx.familyGroupMember.upsert).toHaveBeenCalledTimes(2);
     expect(tx.auditLog.create).toHaveBeenCalledWith(
@@ -274,14 +326,18 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
           memberId: "admin-1",
           targetId: "target-1",
         }),
-      })
+      }),
     );
   });
 
   it("links an adult with all side effects off", async () => {
     const tx = setupTransaction([
       makeParent(),
-      makeMember({ ageTier: "ADULT", canLogin: true, inheritEmailFromId: "existing-source" }),
+      makeMember({
+        ageTier: "ADULT",
+        canLogin: true,
+        inheritEmailFromId: "existing-source",
+      }),
     ]);
 
     const res = await linkDependent({
@@ -295,7 +351,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
     expect(tx.member.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: { parent: { connect: { id: "parent-1" } } },
-      })
+      }),
     );
     expect(tx.familyGroupMember.upsert).not.toHaveBeenCalled();
   });
@@ -322,14 +378,17 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
           inheritParentEmail: true,
           inheritEmailFrom: { connect: { id: "parent-1" } },
         }),
-      })
+      }),
     );
   });
 
   it("rejects a target that already has two parents", async () => {
     const tx = setupTransaction([
       makeParent(),
-      makeMember({ parentMemberId: "other-parent", secondaryParentId: "second-parent" }),
+      makeMember({
+        parentMemberId: "other-parent",
+        secondaryParentId: "second-parent",
+      }),
     ]);
 
     const res = await linkDependent({
@@ -383,7 +442,11 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
     it("links a fourth generation", async () => {
       const tx = setupTransaction([
         makeParent({ parentMemberId: "grandparent-1" }),
-        makeMember({ id: "grandparent-1", ageTier: "ADULT", parentMemberId: "great-1" }),
+        makeMember({
+          id: "grandparent-1",
+          ageTier: "ADULT",
+          parentMemberId: "great-1",
+        }),
         makeMember({ id: "great-1", ageTier: "ADULT" }),
         makeMember(),
       ]);
@@ -403,8 +466,16 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       const tx = setupTransaction([
         // parent-1 already sits three links below great-1.
         makeParent({ parentMemberId: "grandparent-1" }),
-        makeMember({ id: "grandparent-1", ageTier: "ADULT", parentMemberId: "great-1" }),
-        makeMember({ id: "great-1", ageTier: "ADULT", parentMemberId: "great-great-1" }),
+        makeMember({
+          id: "grandparent-1",
+          ageTier: "ADULT",
+          parentMemberId: "great-1",
+        }),
+        makeMember({
+          id: "great-1",
+          ageTier: "ADULT",
+          parentMemberId: "great-great-1",
+        }),
         makeMember({ id: "great-great-1", ageTier: "ADULT" }),
         makeMember(),
       ]);
@@ -428,7 +499,11 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       // outwards" used to slip through.
       const tx = setupTransaction([
         makeParent({ parentMemberId: "grandparent-1" }),
-        makeMember({ id: "grandparent-1", ageTier: "ADULT", parentMemberId: "great-1" }),
+        makeMember({
+          id: "grandparent-1",
+          ageTier: "ADULT",
+          parentMemberId: "great-1",
+        }),
         makeMember({ id: "great-1", ageTier: "ADULT" }),
         makeMember(),
         makeMember({ id: "grandchild-1", parentMemberId: "target-1" }),
@@ -451,8 +526,16 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       // walk that only read `parentMemberId` would see a lone root and accept.
       const tx = setupTransaction([
         makeParent({ secondaryParentId: "grandparent-1" }),
-        makeMember({ id: "grandparent-1", ageTier: "ADULT", secondaryParentId: "great-1" }),
-        makeMember({ id: "great-1", ageTier: "ADULT", secondaryParentId: "great-great-1" }),
+        makeMember({
+          id: "grandparent-1",
+          ageTier: "ADULT",
+          secondaryParentId: "great-1",
+        }),
+        makeMember({
+          id: "great-1",
+          ageTier: "ADULT",
+          secondaryParentId: "great-great-1",
+        }),
         makeMember({ id: "great-great-1", ageTier: "ADULT" }),
         makeMember(),
       ]);
@@ -504,7 +587,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
             disableLogin: false,
             addToFamilyGroupIds: [],
           },
-          parentId
+          parentId,
         );
 
         expect(res.status).toBe(422);
@@ -515,8 +598,16 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
 
     it("refuses a loop built entirely from SECOND parent links", async () => {
       const tx = setupTransaction([
-        makeParent({ id: "gen-3", ageTier: "ADULT", secondaryParentId: "gen-2" }),
-        makeMember({ id: "gen-2", ageTier: "ADULT", secondaryParentId: "gen-1" }),
+        makeParent({
+          id: "gen-3",
+          ageTier: "ADULT",
+          secondaryParentId: "gen-2",
+        }),
+        makeMember({
+          id: "gen-2",
+          ageTier: "ADULT",
+          secondaryParentId: "gen-1",
+        }),
         makeMember({ id: "gen-1", ageTier: "ADULT" }),
       ]);
 
@@ -527,7 +618,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
           disableLogin: false,
           addToFamilyGroupIds: [],
         },
-        "gen-3"
+        "gen-3",
       );
 
       expect(res.status).toBe(422);
@@ -540,7 +631,11 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       // second. A walk that gave up at the first missing `parentMemberId` would
       // stop at gen-2 and accept the loop.
       const tx = setupTransaction([
-        makeParent({ id: "gen-3", ageTier: "ADULT", secondaryParentId: "gen-2" }),
+        makeParent({
+          id: "gen-3",
+          ageTier: "ADULT",
+          secondaryParentId: "gen-2",
+        }),
         makeMember({ id: "gen-2", ageTier: "ADULT", parentMemberId: "gen-1" }),
         makeMember({ id: "gen-1", ageTier: "ADULT" }),
       ]);
@@ -552,7 +647,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
           disableLogin: false,
           addToFamilyGroupIds: [],
         },
-        "gen-3"
+        "gen-3",
       );
 
       expect(res.status).toBe(422);
@@ -577,7 +672,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
           disableLogin: false,
           addToFamilyGroupIds: [],
         },
-        "c"
+        "c",
       );
 
       expect(res.status).toBe(422);
@@ -646,7 +741,9 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
     });
 
     expect(res.status).toBe(422);
-    expect((await res.json()).error).toMatch(/family groups the parent belongs to/i);
+    expect((await res.json()).error).toMatch(
+      /family groups the parent belongs to/i,
+    );
     expect(tx.member.update).not.toHaveBeenCalled();
   });
 
@@ -688,14 +785,19 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       });
 
       expect(res.status).toBe(422);
-      expect((await res.json()).error).toMatch(/already linked to that parent/i);
+      expect((await res.json()).error).toMatch(
+        /already linked to that parent/i,
+      );
       expect(tx.member.update).not.toHaveBeenCalled();
     });
 
     it("rejects a target already linked to this parent as the second parent", async () => {
       const tx = setupTransaction([
         makeParent(),
-        makeMember({ parentMemberId: "other-parent", secondaryParentId: "parent-1" }),
+        makeMember({
+          parentMemberId: "other-parent",
+          secondaryParentId: "parent-1",
+        }),
       ]);
 
       const res = await linkDependent({
@@ -706,7 +808,9 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       });
 
       expect(res.status).toBe(422);
-      expect((await res.json()).error).toMatch(/already linked to that parent/i);
+      expect((await res.json()).error).toMatch(
+        /already linked to that parent/i,
+      );
       expect(tx.member.update).not.toHaveBeenCalled();
     });
 
@@ -726,10 +830,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
     ])(
       "rejects an existing partner before every parent/email/family side effect ($orientation)",
       async ({ partnerShape }) => {
-        const tx = setupTransaction([
-          makeParent(),
-          makeMember(partnerShape),
-        ]);
+        const tx = setupTransaction([makeParent(), makeMember(partnerShape)]);
 
         const res = await linkDependent({
           memberId: "target-1",
@@ -750,12 +851,16 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
           call.flat().join(" "),
         );
         expect(lockTexts).toHaveLength(5);
-        expect(lockTexts.slice(0, 2).every((text) =>
-          text.includes("member-lifecycle:"),
-        )).toBe(true);
-        expect(lockTexts.slice(2, 4).every((text) =>
-          text.includes("member-partner-link:"),
-        )).toBe(true);
+        expect(
+          lockTexts
+            .slice(0, 2)
+            .every((text) => text.includes("member-lifecycle:")),
+        ).toBe(true);
+        expect(
+          lockTexts
+            .slice(2, 4)
+            .every((text) => text.includes("member-partner-link:")),
+        ).toBe(true);
         expect(lockTexts[4]).toContain("MemberParentPartnerExclusion");
       },
     );
@@ -832,36 +937,67 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       }> = [
         { shape: {}, graph: NO_ANCESTORS_NO_DEPENDANTS },
         { shape: { active: false }, graph: NO_ANCESTORS_NO_DEPENDANTS },
-        { shape: { parentMemberId: "other-parent" }, graph: NO_ANCESTORS_NO_DEPENDANTS },
-        { shape: { secondaryParentId: "other-parent" }, graph: NO_ANCESTORS_NO_DEPENDANTS },
         {
-          shape: { parentMemberId: "other-parent", secondaryParentId: "another-parent" },
+          shape: { parentMemberId: "other-parent" },
+          graph: NO_ANCESTORS_NO_DEPENDANTS,
+        },
+        {
+          shape: { secondaryParentId: "other-parent" },
+          graph: NO_ANCESTORS_NO_DEPENDANTS,
+        },
+        {
+          shape: {
+            parentMemberId: "other-parent",
+            secondaryParentId: "another-parent",
+          },
           graph: NO_ANCESTORS_NO_DEPENDANTS,
         },
         {
           shape: {},
-          extras: [makeMember({ id: "grandchild-1", parentMemberId: "target-1" })],
-          graph: { ...NO_ANCESTORS_NO_DEPENDANTS, candidateDescendantGenerations: 1 },
+          extras: [
+            makeMember({ id: "grandchild-1", parentMemberId: "target-1" }),
+          ],
+          graph: {
+            ...NO_ANCESTORS_NO_DEPENDANTS,
+            candidateDescendantGenerations: 1,
+          },
         },
         {
           shape: {},
-          extras: [makeMember({ id: "grandchild-2", secondaryParentId: "target-1" })],
-          graph: { ...NO_ANCESTORS_NO_DEPENDANTS, candidateDescendantGenerations: 1 },
+          extras: [
+            makeMember({ id: "grandchild-2", secondaryParentId: "target-1" }),
+          ],
+          graph: {
+            ...NO_ANCESTORS_NO_DEPENDANTS,
+            candidateDescendantGenerations: 1,
+          },
         },
         {
           shape: {},
           extras: [
             makeMember({ id: "grandchild-3", parentMemberId: "target-1" }),
-            makeMember({ id: "great-grandchild-3", parentMemberId: "grandchild-3" }),
-            makeMember({ id: "great-great-3", parentMemberId: "great-grandchild-3" }),
+            makeMember({
+              id: "great-grandchild-3",
+              parentMemberId: "grandchild-3",
+            }),
+            makeMember({
+              id: "great-great-3",
+              parentMemberId: "great-grandchild-3",
+            }),
           ],
-          graph: { ...NO_ANCESTORS_NO_DEPENDANTS, candidateDescendantGenerations: 3 },
+          graph: {
+            ...NO_ANCESTORS_NO_DEPENDANTS,
+            candidateDescendantGenerations: 3,
+          },
         },
         {
           shape: { archivedAt: new Date("2026-01-01T00:00:00.000Z") },
           graph: NO_ANCESTORS_NO_DEPENDANTS,
         },
-        { shape: { parentMemberId: "parent-1" }, graph: NO_ANCESTORS_NO_DEPENDANTS },
+        {
+          shape: { parentMemberId: "parent-1" },
+          graph: NO_ANCESTORS_NO_DEPENDANTS,
+        },
       ];
 
       for (const { shape, extras = [], graph } of cases) {
@@ -877,13 +1013,17 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
           addToFamilyGroupIds: [],
         });
 
-        const label = JSON.stringify({ shape, extras: extras.map((m) => m.id) });
+        const label = JSON.stringify({
+          shape,
+          extras: extras.map((m) => m.id),
+        });
         expect({
           label,
           accepted: res.status === 200,
         }).toEqual({
           label,
-          accepted: dependentLinkBlockers("parent-1", target, graph).length === 0,
+          accepted:
+            dependentLinkBlockers("parent-1", target, graph).length === 0,
         });
       }
     });
@@ -927,7 +1067,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
             inheritEmailFrom: { connect: { id: "parent-1" } },
             inheritEmailChoice: { connect: { id: "parent-1" } },
           }),
-        })
+        }),
       );
     });
 
@@ -1013,7 +1153,11 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       // than a longer walk.
       const tx = setupTransaction([
         makeParent({ ageTier: "YOUTH", parentMemberId: "great-1" }),
-        makeMember({ id: "great-1", ageTier: "ADULT", email: "great@example.com" }),
+        makeMember({
+          id: "great-1",
+          ageTier: "ADULT",
+          email: "great@example.com",
+        }),
         makeMember(),
       ]);
 
@@ -1045,7 +1189,9 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       });
 
       expect(res.status).toBe(422);
-      expect((await res.json()).error).toMatch(/no email address the club can send to/i);
+      expect((await res.json()).error).toMatch(
+        /no email address the club can send to/i,
+      );
       expect(tx.member.update).not.toHaveBeenCalled();
     });
 
@@ -1116,7 +1262,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
           data: expect.objectContaining({
             parent: { connect: { id: "parent-1" } },
           }),
-        })
+        }),
       );
     });
 
@@ -1172,7 +1318,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
 
       expect(res.status).toBe(422);
       expect((await res.json()).error).toMatch(
-        /no email address the club can send to/i
+        /no email address the club can send to/i,
       );
       expect(tx.member.update).not.toHaveBeenCalled();
     });
@@ -1194,7 +1340,9 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       });
 
       expect(res.status).toBe(422);
-      expect((await res.json()).error).toBe(NO_INHERITABLE_EMAIL_SOURCE_MESSAGE);
+      expect((await res.json()).error).toBe(
+        NO_INHERITABLE_EMAIL_SOURCE_MESSAGE,
+      );
       expect(tx.member.update).not.toHaveBeenCalled();
     });
 
@@ -1245,7 +1393,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
 
       expect(res.status).toBe(422);
       expect((await res.json()).error).toBe(
-        DEPENDENT_PARENT_LINK_ERRORS.INACTIVE
+        DEPENDENT_PARENT_LINK_ERRORS.INACTIVE,
       );
       expect(tx.member.update).not.toHaveBeenCalled();
     });
@@ -1268,7 +1416,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
 
       expect(res.status).toBe(422);
       expect((await res.json()).error).toBe(
-        DEPENDENT_PARENT_LINK_ERRORS.ARCHIVED
+        DEPENDENT_PARENT_LINK_ERRORS.ARCHIVED,
       );
       expect(tx.member.update).not.toHaveBeenCalled();
     });
@@ -1301,7 +1449,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
 
       expect(res.status).toBe(422);
       expect((await res.json()).error).toBe(
-        DEPENDENT_PARENT_LINK_ERRORS.ORGANISATION
+        DEPENDENT_PARENT_LINK_ERRORS.ORGANISATION,
       );
       expect(tx.member.update).not.toHaveBeenCalled();
     });
@@ -1405,7 +1553,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
         expect.objectContaining({
           where: { id: "target-1" },
           data: expect.objectContaining({ canLogin: false }),
-        })
+        }),
       );
     });
 
@@ -1433,7 +1581,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       expect(tx.member.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: { parent: { connect: { id: "parent-1" } } },
-        })
+        }),
       );
     });
   });

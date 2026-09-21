@@ -42,6 +42,10 @@ import {
 } from "@/lib/member-parent-partner-exclusivity";
 import { formatDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
+import {
+  isDeletedAccountRecord,
+  notDeletedAccountWhere,
+} from "@/lib/deleted-account";
 
 // personDecisionsSchema, personDecisionSchema, refKey, resolvePersonDecisions,
 // PersonDecisionInput, and DecisionResolution used to be re-exported here too,
@@ -199,6 +203,7 @@ export type MappingTargetRecord = MemberPartnerRelationshipFacts & {
   ageTier: AgeTier;
   role: string;
   active: boolean;
+  deletedAt: Date | null;
   archivedAt: Date | null;
   canLogin: boolean;
   parentMemberId: string | null;
@@ -258,6 +263,7 @@ export async function loadApprovalMappingTargets(
       ageTier: true,
       role: true,
       active: true,
+      deletedAt: true,
       archivedAt: true,
       canLogin: true,
       parentMemberId: true,
@@ -418,7 +424,9 @@ export async function computeApprovalMappingOutcomes(params: {
   );
 
   const applicantPhone = parseApplicantPhone(application.applicantPhone);
-  const applicantAddress = parseApplicationAddress(application.applicantAddress);
+  const applicantAddress = parseApplicationAddress(
+    application.applicantAddress,
+  );
   // A DATE OF BIRTH THAT NAMES NO REAL DAY IS A BLOCKING ERROR, NOT A THROW
   // (#3082). This function is the approval PREVIEW as well as the approval's own
   // recompute, so throwing would blank the surface an admin needs in order to
@@ -644,7 +652,9 @@ function buildApplicantMapOutcome(args: {
   const errors: string[] = [];
   const notes: string[] = [];
 
-  if (!target.active || target.archivedAt) {
+  if (isDeletedAccountRecord(target)) {
+    errors.push("Cannot map to a deleted member.");
+  } else if (!target.active || target.archivedAt) {
     errors.push("Cannot map to an inactive or archived member.");
   }
   // Relax the create-path canLogin-email 409 ONLY when the login-holder IS the
@@ -797,7 +807,9 @@ function buildFamilyMapOutcome(args: {
   const errors: string[] = [];
   const notes: string[] = [];
 
-  if (!target.active || target.archivedAt) {
+  if (isDeletedAccountRecord(target)) {
+    errors.push("Cannot map to a deleted member.");
+  } else if (!target.active || target.archivedAt) {
     errors.push("Cannot map to an inactive or archived member.");
   }
   if (target.role === "ADMIN") {
@@ -888,25 +900,32 @@ function phoneDiffs(
       target.phoneAreaCode,
       phone.phoneAreaCode,
     ),
-    makeDiff("phoneNumber", "Phone number", target.phoneNumber, phone.phoneNumber),
+    makeDiff(
+      "phoneNumber",
+      "Phone number",
+      target.phoneNumber,
+      phone.phoneNumber,
+    ),
   ];
 }
 
-const ADDRESS_FIELDS: Array<{ field: keyof MappingTargetRecord; label: string }> =
-  [
-    { field: "streetAddressLine1", label: "Street address line 1" },
-    { field: "streetAddressLine2", label: "Street address line 2" },
-    { field: "streetCity", label: "Street city" },
-    { field: "streetRegion", label: "Street region" },
-    { field: "streetPostalCode", label: "Street postal code" },
-    { field: "streetCountry", label: "Street country" },
-    { field: "postalAddressLine1", label: "Postal address line 1" },
-    { field: "postalAddressLine2", label: "Postal address line 2" },
-    { field: "postalCity", label: "Postal city" },
-    { field: "postalRegion", label: "Postal region" },
-    { field: "postalPostalCode", label: "Postal postal code" },
-    { field: "postalCountry", label: "Postal country" },
-  ];
+const ADDRESS_FIELDS: Array<{
+  field: keyof MappingTargetRecord;
+  label: string;
+}> = [
+  { field: "streetAddressLine1", label: "Street address line 1" },
+  { field: "streetAddressLine2", label: "Street address line 2" },
+  { field: "streetCity", label: "Street city" },
+  { field: "streetRegion", label: "Street region" },
+  { field: "streetPostalCode", label: "Street postal code" },
+  { field: "streetCountry", label: "Street country" },
+  { field: "postalAddressLine1", label: "Postal address line 1" },
+  { field: "postalAddressLine2", label: "Postal address line 2" },
+  { field: "postalCity", label: "Postal city" },
+  { field: "postalRegion", label: "Postal region" },
+  { field: "postalPostalCode", label: "Postal postal code" },
+  { field: "postalCountry", label: "Postal country" },
+];
 
 function addressDiffs(
   target: MappingTargetRecord,
@@ -1023,7 +1042,11 @@ async function suggestCandidates(
     // search must still show the existing record so the admin does not create
     // a duplicate; selecting it recomputes the preview with the stable,
     // blocking INV-LIFE-024 reason above.
-    where: { archivedAt: null, OR: orClauses },
+    where: {
+      archivedAt: null,
+      AND: notDeletedAccountWhere(),
+      OR: orClauses,
+    },
     select: {
       id: true,
       firstName: true,
@@ -1031,12 +1054,14 @@ async function suggestCandidates(
       email: true,
       ageTier: true,
       active: true,
+      deletedAt: true,
       canLogin: true,
     },
     take: 12,
   });
 
   return rows
+    .filter((row) => !isDeletedAccountRecord(row))
     .map((row) => {
       const matchedOnEmail = Boolean(
         email && row.email.trim().toLowerCase() === email,
@@ -1096,13 +1121,18 @@ export async function buildApprovalMappingPreview(params: {
     );
   }
 
-  const familyMembers = parseApplicationFamilyMembers(application.familyMembers);
+  const familyMembers = parseApplicationFamilyMembers(
+    application.familyMembers,
+  );
   const resolution = resolvePersonDecisions(
     familyMembers.length,
     params.personDecisions,
   );
   if (!resolution.ok) {
-    return jsonResult({ error: resolution.error }, { status: resolution.status });
+    return jsonResult(
+      { error: resolution.error },
+      { status: resolution.status },
+    );
   }
 
   const applicationInput: MappingApplicationInput = {

@@ -147,9 +147,7 @@ export const createMemberSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
     .optional()
     .nullable(),
-  role: z
-    .enum(ROLE_VALUES)
-    .default("USER"),
+  role: z.enum(ROLE_VALUES).default("USER"),
   financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).default("NONE"),
   // Role tokens: enum values for system roles/seeded bundles, definition
   // ids for custom roles. Validated against the definitions table on write.
@@ -376,7 +374,9 @@ export async function listAdminMembers(
             none: { seasonYear: currentSeasonYear },
           },
         },
-        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
+        {
+          role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] },
+        },
       ],
     },
     {
@@ -435,15 +435,13 @@ export async function listAdminMembers(
                 {
                   // Annotated because a spread inside a conditional does not
                   // carry the outer contextual type into the callback.
-                  AND: queryTerms.map(
-                    (term): Prisma.MemberWhereInput => ({
-                      OR: [
-                        { firstName: { contains: term, mode: "insensitive" } },
-                        { lastName: { contains: term, mode: "insensitive" } },
-                        { email: { contains: term, mode: "insensitive" } },
-                      ],
-                    }),
-                  ),
+                  AND: queryTerms.map((term): Prisma.MemberWhereInput => ({
+                    OR: [
+                      { firstName: { contains: term, mode: "insensitive" } },
+                      { lastName: { contains: term, mode: "insensitive" } },
+                      { email: { contains: term, mode: "insensitive" } },
+                    ],
+                  })),
                 },
               ]
             : []),
@@ -516,7 +514,10 @@ export async function listAdminMembers(
     // The member's descendants are excluded outright: with the old
     // "no dependants" clause gone they are no longer incidentally filtered, and
     // offering one would be offering a cycle the write route then refuses.
-    const childSide = await describeChildSideDepth(prisma, parentLinkEligibleFor);
+    const childSide = await describeChildSideDepth(
+      prisma,
+      parentLinkEligibleFor,
+    );
     const excludedParentIds = [
       parentLinkEligibleFor,
       target?.parentMemberId,
@@ -817,6 +818,7 @@ export async function listAdminMembers(
     accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
     ageTier: true,
     active: true,
+    deletedAt: true,
     canLogin: true,
     cancelledAt: true,
     cancelledReason: true,
@@ -1097,7 +1099,9 @@ export async function listAdminMembers(
     // downward walk. Bounded to DEPENDENT_LINK_INELIGIBLE_EXPLANATION_LIMIT
     // rows on an already-empty result, which is the only path that reaches here.
     const candidateDepths = await Promise.all(
-      textMatches.map((candidate) => describeChildSideDepth(prisma, candidate.id)),
+      textMatches.map((candidate) =>
+        describeChildSideDepth(prisma, candidate.id),
+      ),
     );
 
     const explained = textMatches.flatMap((candidate, index) => {
@@ -1171,13 +1175,13 @@ export async function listAdminMembers(
     const hasCompletedAccountSetup = hasMemberCompletedAccountSetup(m);
     const latestToken = m.passwordResetTokens?.[0];
     const pendingInviteExpiresAt =
-      !hasCompletedAccountSetup &&
-      latestToken &&
-      latestToken.expiresAt > now
+      !hasCompletedAccountSetup && latestToken && latestToken.expiresAt > now
         ? latestToken.expiresAt
         : null;
-    const currentSeasonAssignment = m.seasonalMembershipAssignments?.[0] ?? null;
-    const currentMembershipType = currentSeasonAssignment?.membershipType ?? null;
+    const currentSeasonAssignment =
+      m.seasonalMembershipAssignments?.[0] ?? null;
+    const currentMembershipType =
+      currentSeasonAssignment?.membershipType ?? null;
     // #2149: role carries no subscription exemption. Membership type is the sole
     // authority via the shared derivation: the assigned season type wins, else
     // the role→default-type fallback (so a bare ADMIN/LODGE account resolves to
@@ -1202,18 +1206,15 @@ export async function listAdminMembers(
       // — exactly the "inactive" lifecycle filter above — so without this flag an
       // erased account is indistinguishable in the list from a member someone
       // deactivated yesterday, and a multi-select Reactivate to undo a mistaken
-      // bulk deactivate would sweep it up. Resolved from the email marker (the
-      // password hash is deliberately NOT selected into a list response); the
-      // predicate reads whichever markers are present, so it stays correct if the
-      // select ever widens. The list badge is the visible warning; the refusals in
+      // bulk deactivate would sweep it up. Resolved from `deletedAt` plus the
+      // permanent reserved-address compatibility arm. The list badge is the
+      // visible warning; the refusals in
       // bulk update, member edit and the login providers are the enforcement.
       deletedAccount: isDeletedAccountRecord(m),
-      subscriptionStatus:
-        subscriptionNotRequired
-          ? "NOT_REQUIRED"
-          : (m.subscriptions[0]?.status ?? null),
-      subscriptionXeroInvoiceId:
-        m.subscriptions[0]?.xeroInvoiceId ?? null,
+      subscriptionStatus: subscriptionNotRequired
+        ? "NOT_REQUIRED"
+        : (m.subscriptions[0]?.status ?? null),
+      subscriptionXeroInvoiceId: m.subscriptions[0]?.xeroInvoiceId ?? null,
       currentMembershipType: currentMembershipType
         ? {
             id: currentMembershipType.id,
@@ -1395,10 +1396,7 @@ export async function createAdminMember(
     // interactively (the admin link route, the family-group reviewer, and
     // nomination approval) all walk inside their own transaction and have no
     // such window.
-    const parentSide = await describeParentSideDepth(
-      prisma,
-      parentMember.id,
-    );
+    const parentSide = await describeParentSideDepth(prisma, parentMember.id);
     if (
       exceedsFamilyLinkGenerationLimit({
         parentAncestorGenerations: parentSide.ancestorGenerations,

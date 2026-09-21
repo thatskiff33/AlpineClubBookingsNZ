@@ -14,45 +14,45 @@ one it widens, and the questions it deliberately **cannot** answer.
 Sixteen entries. Each one re-reads its required areas from the database on every
 invocation and AND-s them.
 
-| Entry | Areas | Source |
-| --- | --- | --- |
-| `diagnostics.booking_search` | `bookings` | `select_only_sql` |
-| `diagnostics.booking_diagnostic_summary` | `bookings` | `select_only_sql` |
-| `diagnostics.booking_linked_state` | `bookings` | `select_only_sql` |
-| `diagnostics.booking_party_state` | `bookings` | `select_only_sql` |
-| `diagnostics.booking_bed_allocation_state` | `bookings` **and** `membership` | `select_only_sql` |
-| `diagnostics.booking_exception_request_state` | `bookings` | `select_only_sql` |
-| `diagnostics.booking_record_audit_history` | `bookings` | `select_only_sql` |
-| `diagnostics.member_search` | `membership` | `select_only_sql` |
-| `diagnostics.member_diagnostic_summary` | `membership` | `select_only_sql` |
-| `diagnostics.member_subscription_state` | `membership` | `select_only_sql` |
-| `diagnostics.member_family_state` | `membership` | `select_only_sql` |
-| `diagnostics.member_booking_summary` | `membership` **and** `bookings` | `select_only_sql` |
-| `diagnostics.member_record_audit_history` | `membership` | `select_only_sql` |
-| `diagnostics.booking_block_state` | `bookings` **and** `membership` | `server_owned` |
-| `diagnostics.booking_capacity_by_night` | `bookings` | `server_owned` |
-| `diagnostics.member_eligibility_state` | `membership` | `server_owned` |
+| Entry                                         | Areas                           | Source            |
+| --------------------------------------------- | ------------------------------- | ----------------- |
+| `diagnostics.booking_search`                  | `bookings`                      | `select_only_sql` |
+| `diagnostics.booking_diagnostic_summary`      | `bookings`                      | `select_only_sql` |
+| `diagnostics.booking_linked_state`            | `bookings`                      | `select_only_sql` |
+| `diagnostics.booking_party_state`             | `bookings`                      | `select_only_sql` |
+| `diagnostics.booking_bed_allocation_state`    | `bookings` **and** `membership` | `select_only_sql` |
+| `diagnostics.booking_exception_request_state` | `bookings`                      | `select_only_sql` |
+| `diagnostics.booking_record_audit_history`    | `bookings`                      | `select_only_sql` |
+| `diagnostics.member_search`                   | `membership`                    | `select_only_sql` |
+| `diagnostics.member_diagnostic_summary`       | `membership`                    | `select_only_sql` |
+| `diagnostics.member_subscription_state`       | `membership`                    | `select_only_sql` |
+| `diagnostics.member_family_state`             | `membership`                    | `select_only_sql` |
+| `diagnostics.member_booking_summary`          | `membership` **and** `bookings` | `select_only_sql` |
+| `diagnostics.member_record_audit_history`     | `membership`                    | `select_only_sql` |
+| `diagnostics.booking_block_state`             | `bookings` **and** `membership` | `server_owned`    |
+| `diagnostics.booking_capacity_by_night`       | `bookings`                      | `server_owned`    |
+| `diagnostics.member_eligibility_state`        | `membership`                    | `server_owned`    |
 
 ## What an administrator can ask it
 
-| Question | Tool | Needs |
-| --- | --- | --- |
-| Which booking is this? (a booking id, the eight-character reference on a member's confirmation, the owner's member id, or a lodge plus a first night) | `diagnostics.booking_search` | `bookings:view` |
-| What does the platform hold about this booking? | `diagnostics.booking_diagnostic_summary` | `bookings:view` |
-| Which parent or direct child bookings are linked to it? | `diagnostics.booking_linked_state` | `bookings:view` |
-| Who is on it, for which nights, and on what footing? | `diagnostics.booking_party_state` | `bookings:view` |
-| Which guest is in which bed on which night, and may the two occupants share this double? | `diagnostics.booking_bed_allocation_state` | `bookings:view` **and** `membership:view` |
-| Has anybody asked an officer to allow something, and is that request holding beds? | `diagnostics.booking_exception_request_state` | `bookings:view` |
-| What did the platform record happening to this booking? | `diagnostics.booking_record_audit_history` | `bookings:view` |
-| Which member is this? (a member id, their exact email address, the start of a name, or a mobile number) | `diagnostics.member_search` | `membership:view` |
-| What does the platform hold about this member? | `diagnostics.member_diagnostic_summary` | `membership:view` |
-| What do their season subscription rows say? | `diagnostics.member_subscription_state` | `membership:view` |
-| Who is in their family group, who are their parents, who are their dependents? | `diagnostics.member_family_state` | `membership:view` |
-| What have they booked, or been a guest on, lately? | `diagnostics.member_booking_summary` | `membership:view` **and** `bookings:view` |
-| What did the platform record happening to this member record? | `diagnostics.member_record_audit_history` | `membership:view` |
-| **What is actually blocking this booking?** | `diagnostics.booking_block_state` | `bookings:view` **and** `membership:view` |
-| Was there room, night by night? | `diagnostics.booking_capacity_by_night` | `bookings:view` |
-| **Why can this member not book, or why are they being charged non-member rates?** | `diagnostics.member_eligibility_state` | `membership:view` |
+| Question                                                                                                                                              | Tool                                          | Needs                                     |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------- |
+| Which booking is this? (a booking id, the eight-character reference on a member's confirmation, the owner's member id, or a lodge plus a first night) | `diagnostics.booking_search`                  | `bookings:view`                           |
+| What does the platform hold about this booking?                                                                                                       | `diagnostics.booking_diagnostic_summary`      | `bookings:view`                           |
+| Which parent or direct child bookings are linked to it?                                                                                               | `diagnostics.booking_linked_state`            | `bookings:view`                           |
+| Who is on it, for which nights, and on what footing?                                                                                                  | `diagnostics.booking_party_state`             | `bookings:view`                           |
+| Which guest is in which bed on which night, and may the two occupants share this double?                                                              | `diagnostics.booking_bed_allocation_state`    | `bookings:view` **and** `membership:view` |
+| Has anybody asked an officer to allow something, and is that request holding beds?                                                                    | `diagnostics.booking_exception_request_state` | `bookings:view`                           |
+| What did the platform record happening to this booking?                                                                                               | `diagnostics.booking_record_audit_history`    | `bookings:view`                           |
+| Which member is this? (a member id, their exact email address, the start of a name, or a mobile number)                                               | `diagnostics.member_search`                   | `membership:view`                         |
+| What does the platform hold about this member?                                                                                                        | `diagnostics.member_diagnostic_summary`       | `membership:view`                         |
+| What do their season subscription rows say?                                                                                                           | `diagnostics.member_subscription_state`       | `membership:view`                         |
+| Who is in their family group, who are their parents, who are their dependents?                                                                        | `diagnostics.member_family_state`             | `membership:view`                         |
+| What have they booked, or been a guest on, lately?                                                                                                    | `diagnostics.member_booking_summary`          | `membership:view` **and** `bookings:view` |
+| What did the platform record happening to this member record?                                                                                         | `diagnostics.member_record_audit_history`     | `membership:view`                         |
+| **What is actually blocking this booking?**                                                                                                           | `diagnostics.booking_block_state`             | `bookings:view` **and** `membership:view` |
+| Was there room, night by night?                                                                                                                       | `diagnostics.booking_capacity_by_night`       | `bookings:view`                           |
+| **Why can this member not book, or why are they being charged non-member rates?**                                                                     | `diagnostics.member_eligibility_state`        | `membership:view`                         |
 
 Everything here is **read-only**. Nothing in this pack can create, change,
 cancel, confirm, approve, refuse, allocate, move, complete, sign off, link,
@@ -138,15 +138,15 @@ a contract test invokes every entry with empty arguments and requires a rejectio
 
 The two searches are therefore the only way in, and they are bounded:
 
-| Control | Value |
-| --- | --- |
-| Match | **Exact equality everywhere except one predicate.** The single exception is the member name search, which uses `pg_catalog.starts_with` — a function over a literal prefix with no pattern language at all. There is no `LIKE`, no `ILIKE`, no `SIMILAR TO`, no regex operator and no wildcard character in any statement in the pack. |
-| Blank / wildcard | Rejected by the argument schema. A `%` or `_` in a term would be compared as a character, and the character classes do not admit quotes or angle brackets. |
-| Minimum term | 3 characters for a name prefix; 6 for an email address or a phone number; exactly 8 for a booking reference; a full record id otherwise. |
-| Rows | 10 on both searches — #2376's recommended default, and half its absolute maximum of 20. |
-| Date range | A closed enum: `1d`, `7d` (default), `30d`. There is no unrestricted range to ask for, because the type has no way to express one. |
-| Ordering | Total, always ending in the record's own id, so identical evidence hashes identically for the audit trail. |
-| Ambiguity | Reported, never resolved. A booking reference is the uppercase first eight characters of a cuid and is **not** unique; a name prefix matches families. Both searches return every match up to the cap and tell the model to make the operator choose. |
+| Control          | Value                                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Match            | **Exact equality everywhere except one predicate.** The single exception is the member name search, which uses `pg_catalog.starts_with` — a function over a literal prefix with no pattern language at all. There is no `LIKE`, no `ILIKE`, no `SIMILAR TO`, no regex operator and no wildcard character in any statement in the pack. |
+| Blank / wildcard | Rejected by the argument schema. A `%` or `_` in a term would be compared as a character, and the character classes do not admit quotes or angle brackets.                                                                                                                                                                             |
+| Minimum term     | 3 characters for a name prefix; 6 for an email address or a phone number; exactly 8 for a booking reference; a full record id otherwise.                                                                                                                                                                                               |
+| Rows             | 10 on both searches — #2376's recommended default, and half its absolute maximum of 20.                                                                                                                                                                                                                                                |
+| Date range       | A closed enum: `1d`, `7d` (default), `30d`. There is no unrestricted range to ask for, because the type has no way to express one.                                                                                                                                                                                                     |
+| Ordering         | Total, always ending in the record's own id, so identical evidence hashes identically for the audit trail.                                                                                                                                                                                                                             |
+| Ambiguity        | Reported, never resolved. A booking reference is the uppercase first eight characters of a cuid and is **not** unique; a name prefix matches families. Both searches return every match up to the cap and tell the model to make the operator choose.                                                                                  |
 
 ### What actually bounds enumeration, stated honestly
 
@@ -182,13 +182,13 @@ key". The substrate's `argsHash` is an unkeyed SHA-256 of the canonical accepted
 arguments, and that is non-reversible only where the argument has entropy. **Five
 of the two entries' eight arms** have almost none:
 
-| Entry | Arm | Candidate space a reader of the audit metadata can walk |
-| --- | --- | --- |
-| `member_search` | `name_prefix` | three letters — 17,576 strings, and a club's real surname list is far shorter |
-| `member_search` | `mobile` | normalised to digits; a New Zealand mobile is under ten million candidates |
-| `member_search` | `email_exact` | not enumerated but **guessed**: `firstname.lastname@` against a few local domains |
+| Entry            | Arm                 | Candidate space a reader of the audit metadata can walk                                                                                                                                                                        |
+| ---------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `member_search`  | `name_prefix`       | three letters — 17,576 strings, and a club's real surname list is far shorter                                                                                                                                                  |
+| `member_search`  | `mobile`            | normalised to digits; a New Zealand mobile is under ten million candidates                                                                                                                                                     |
+| `member_search`  | `email_exact`       | not enumerated but **guessed**: `firstname.lastname@` against a few local domains                                                                                                                                              |
 | `booking_search` | `booking_reference` | eight characters, but the reference is `left(Booking."id", 8)` upper-cased and the id is a cuid — so it is `C` plus seven base-36 characters of the cuid **timestamp** block, ~2.6e9 over a three-year history rather than 36⁸ |
-| `booking_search` | `lodge_nights` | a handful of club lodge cuids × a 20xx calendar date × a three-value window enum — tens of thousands |
+| `booking_search` | `lodge_nights`      | a handful of club lodge cuids × a 20xx calendar date × a three-value window enum — tens of thousands                                                                                                                           |
 
 So both entries declare their low-entropy keys (`lowEntropyArgKeys` in
 `booking-search.ts`), and `invoke.ts` records the sentinel
@@ -203,7 +203,7 @@ object, and declaring it would redact the whole entry.
 **The cuid arms keep their digest by construction, not by good manners**, and that
 took a second fix. Redaction is decided by key **presence** on the accepted
 argument object, and both schemas are flat `.strict()` objects holding every arm's
-key — so while each `superRefine` only *required* its own arm's terms, an
+key — so while each `superRefine` only _required_ its own arm's terms, an
 invocation could carry an inert one belonging to another arm.
 `{kind: "booking_id", recordId, nightFrom}` parsed, the extra key changed no
 predicate (`$1` gates the arm) and the evidence returned byte-identical — and the
@@ -278,30 +278,30 @@ Every classification below has exactly one definition in this codebase already.
 Re-deriving any of them in SQL would create a second definition that can drift
 from the screen a Booking Officer trusts.
 
-| What it decides | Function | Module |
-| --- | --- | --- |
-| Which persisted minimum-stay and paid-up-adult policies a party breaks | `evaluatePersistedBookingNonHostingPolicyViolations` | `booking-exception-request-service.ts` |
-| Whether the persisted party satisfies adult-member hosting | `evaluatePersistedBookingAdultMemberHostingReadOnly` | `adult-member-hosting-review.ts` |
-| Why a booking is in admin review | `bookingReviewReasonCodes` | `booking-review.ts` |
-| Whether a pending review blocks check-in | `isCheckinBlockedByPendingReview` | `booking-review.ts` |
-| Per-night occupancy and beds left | `checkCapacity` | `capacity.ts` |
-| Whether a member is double-booked on a night | `findBookingMemberNightConflicts` | `booking-member-night-conflicts.ts` |
-| Whether the member may still edit the booking | `getBookingEditPolicy` | `booking-edit-policy.ts` |
-| The member's lifecycle label | `getLifecycleStatusConfig` | `admin-member-badges.ts` |
-| Whether an account has been erased | `isDeletedAccountRecord` | `deleted-account.ts` |
-| The membership type for the season, and what it does | `resolveMembershipTypePolicyForMember` | `membership-type-policy.ts` |
-| Whether a season subscription is owed and settled | `resolveMemberSubscriptionSettlement`, `subscriptionIsUnpaid` | `subscription-lockout-facts.ts` |
-| What an unsettled subscription costs the member | `peekSubscriptionLockoutMode` | `member-subscription-eligibility.ts` |
-| Whether the age-tier rule requires a subscription | `getAgeTierSettingsStrict` (the pack's reader, threaded into the rules) | `age-tier.ts` |
-| Whether a member qualifies as the adult-member host | `participantQualifiesAsHost` | `policies/adult-member-hosting.ts` |
-| The status of the member's newest induction | `getInductionStatusForMember` | `induction.ts` |
-| Which membership SEASON a stored calendar day falls in | `seasonYearOfStoredDate` | `financial-year.ts` |
-| Which membership SEASON the club is in NOW | `clubSeasonYear` | `financial-year.ts` |
-| Whether a guest counts as operationally present | `OPERATIONALLY_PRESENT_GUEST_WHERE` | `member-guest-consent.ts` |
-| What a combination of consent columns means | `MEMBER_GUEST_CONSENT_SUB_STATES` | `member-guest-consent.ts` |
-| The eight-character booking reference | `formatBookingReference` | `booking-reference.ts` |
-| A New Zealand calendar day from a stored value | `formatDateOnly` | `date-only.ts` |
-| Which audit categories a domain owns | `auditCategoriesForCorrelationDomain` | `audit-categories.ts` |
+| What it decides                                                        | Function                                                                | Module                                 |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------- |
+| Which persisted minimum-stay and paid-up-adult policies a party breaks | `evaluatePersistedBookingNonHostingPolicyViolations`                    | `booking-exception-request-service.ts` |
+| Whether the persisted party satisfies adult-member hosting             | `evaluatePersistedBookingAdultMemberHostingReadOnly`                    | `adult-member-hosting-review.ts`       |
+| Why a booking is in admin review                                       | `bookingReviewReasonCodes`                                              | `booking-review.ts`                    |
+| Whether a pending review blocks check-in                               | `isCheckinBlockedByPendingReview`                                       | `booking-review.ts`                    |
+| Per-night occupancy and beds left                                      | `checkCapacity`                                                         | `capacity.ts`                          |
+| Whether a member is double-booked on a night                           | `findBookingMemberNightConflicts`                                       | `booking-member-night-conflicts.ts`    |
+| Whether the member may still edit the booking                          | `getBookingEditPolicy`                                                  | `booking-edit-policy.ts`               |
+| The member's lifecycle label                                           | `getLifecycleStatusConfig`                                              | `admin-member-badges.ts`               |
+| Whether an account has been erased                                     | `isDeletedAccountRecord`                                                | `deleted-account.ts`                   |
+| The membership type for the season, and what it does                   | `resolveMembershipTypePolicyForMember`                                  | `membership-type-policy.ts`            |
+| Whether a season subscription is owed and settled                      | `resolveMemberSubscriptionSettlement`, `subscriptionIsUnpaid`           | `subscription-lockout-facts.ts`        |
+| What an unsettled subscription costs the member                        | `peekSubscriptionLockoutMode`                                           | `member-subscription-eligibility.ts`   |
+| Whether the age-tier rule requires a subscription                      | `getAgeTierSettingsStrict` (the pack's reader, threaded into the rules) | `age-tier.ts`                          |
+| Whether a member qualifies as the adult-member host                    | `participantQualifiesAsHost`                                            | `policies/adult-member-hosting.ts`     |
+| The status of the member's newest induction                            | `getInductionStatusForMember`                                           | `induction.ts`                         |
+| Which membership SEASON a stored calendar day falls in                 | `seasonYearOfStoredDate`                                                | `financial-year.ts`                    |
+| Which membership SEASON the club is in NOW                             | `clubSeasonYear`                                                        | `financial-year.ts`                    |
+| Whether a guest counts as operationally present                        | `OPERATIONALLY_PRESENT_GUEST_WHERE`                                     | `member-guest-consent.ts`              |
+| What a combination of consent columns means                            | `MEMBER_GUEST_CONSENT_SUB_STATES`                                       | `member-guest-consent.ts`              |
+| The eight-character booking reference                                  | `formatBookingReference`                                                | `booking-reference.ts`                 |
+| A New Zealand calendar day from a stored value                         | `formatDateOnly`                                                        | `date-only.ts`                         |
+| Which audit categories a domain owns                                   | `auditCategoriesForCorrelationDomain`                                   | `audit-categories.ts`                  |
 
 The last five are used by the SQL entries as well: `booking_party_state` evaluates
 the platform's own consent discriminator table and its own operational-presence
@@ -433,7 +433,7 @@ SELECT pg_catalog.set_config('statement_timeout', $1, true)
   party assembled at one instant against a capacity figure measured at another.
   Being inside a transaction is not enough on its own: PostgreSQL's default
   `READ COMMITTED` takes a fresh snapshot per statement, and `SET TRANSACTION
-  READ ONLY` is orthogonal to isolation and implies no snapshot. It is deliberately
+READ ONLY` is orthogonal to isolation and implies no snapshot. It is deliberately
   not `Serializable` — that would add predicate locking and a 40001 retry contract
   an evidence read has no business carrying, and a transaction that writes nothing
   cannot raise a serialization failure anyway. The caveat that genuinely remains is
@@ -543,17 +543,13 @@ exports `getInductionStatusForMember`, which is the same record (newest by
 own test double **refuses an `include` outright**, so a later edit that reaches for
 the wide function fails the suite rather than passing it.
 
-**One credential column is used as a predicate and never as a projection**, and it
-is the only place in any tool pack where that pattern is applied to a secret.
-`isDeletedAccountRecord` is the single definition of the erasure test and it is a
-disjunction: the anonymised email address **or** the sentinel password hash.
-Reading a real password hash into a diagnostics module, even to compare it, is not
-something this pack will do — so the hash comparison happens **inside PostgreSQL**,
-as a `count` on an equality against the server-written sentinel, and only the
-boolean crosses the boundary before being handed back to the authoritative
-predicate. No member's real hash is loaded, logged, hashed into an audit row or
-projected. The column is not in the SELECT allowlist either, so no SQL entry could
-name it.
+**The structural deletion timestamp is used as a predicate and never as a
+projection.** `isDeletedAccountRecord` is the single definition of the erasure
+test: `deletedAt` is set, or the address uses the permanently reserved
+`@deleted.invalid` suffix retained for adopter-era rows. The diagnostics role may
+read both lifecycle fields, but every SQL entry reduces them to one boolean before
+the row crosses the boundary. No credential column is read, granted, logged or
+projected.
 
 The sources bound their own **work** as well as the executor's wait: each carries a
 own deadline below the executor's outer race, and it **refuses** rather than
@@ -596,42 +592,42 @@ from thirteen to **twenty-six** — and **widens `Member`** from the two columns
 AID-6C granted to twenty-three. Every relation on the allowlist is granted **by
 column**, never wholesale.
 
-| Relation | Granted | Added by | Why |
-| --- | --- | --- | --- |
-| `AuditLog` | 9 columns | AID-6A, `entityId` by AID-6C | Stable codes and an instant for the two per-record audit-history entries. `entityId` is a predicate only. |
-| `Payment` | 22 columns | AID-6C | The finance pack's spine. |
-| `PaymentTransaction` | 12 columns | AID-6C | Charge attempts. |
-| `PaymentRefund` | 10 columns | AID-6C | Refunds Stripe actually made. |
-| `PaymentRecoveryOperation` | 10 columns | AID-6C | The platform's queued refund debt. |
-| `ManualRefundTask` | 6 columns | AID-6C | Money a person must hand back. |
-| `RefundRequest` | 7 columns | AID-6C | The member's refund appeal. |
-| `ProcessedWebhookEvent` | 6 columns | AID-6C | The webhook idempotency lease. |
-| `WebhookLog` | 7 columns | AID-6C | One row per delivery attempt. |
-| `XeroInboundEvent` | 9 columns | AID-6C | Xero's inbound ledger. |
-| `XeroObjectLink` | 10 columns | AID-6C | What is linked in Xero. |
-| `XeroSyncOperation` | 17 columns | AID-6C | What the platform tried in Xero. |
-| `Member` | 23 columns | AID-6C (2), **widened by AID-6B** | Identity and membership lifecycle for a selected member; the name on a family row; the search predicates, including predicate-only country/area/number mobile parts. Argued below. |
-| `Booking` | 25 columns | **AID-6B** | The pack's booking spine: searched by `booking_search`, returned by `booking_diagnostic_summary`, and the two legs of `member_booking_summary`. |
-| `Lodge` | 2 columns (`id`, `name`) | **AID-6B** | The lodge **name** beside a booking. Nothing else about a lodge — its capacity numbers, settings, instructions or door codes — is a question this pack has. |
-| `BookingGuest` | 15 columns | **AID-6B** | The party, guest counts, member-booking leg and canonical consent/double-sharing inputs. Responder and expiry values are never projected. |
-| `MemberPartnerLink` | 3 columns | **AID-6B** | Canonical pair and current status for the double-bed-sharing verdict; raw pair ids are never projected by that entry. |
-| `BookingGuestNight` | 2 columns (`bookingGuestId`, `stayDate`) | **AID-6B** | The authoritative per-night footprint. A guest may stay **non-contiguous** nights inside one booking, so these rows and not the envelope are the presence. |
-| `BedAllocation` | 8 columns | **AID-6B** | Which guest is in which bed on which night, plus the denormalised bed type the index guard enforces on. The live `LodgeBed` type, not this copy, governs the sharing verdict. `approvedByMemberId` names the officer and is not granted. |
-| `LodgeRoom` | 2 columns (`id`, `name`) | **AID-6B** | The room label on an allocation row. `notes` is officer free text and is not granted. |
-| `LodgeBed` | 4 columns | **AID-6B** | The bed label and its live type, which authoritatively governs the double-sharing verdict. A missing live bed is unavailable evidence, not `not_double_bed`; divergence from the allocation copy remains a defect. `bunkGroup` is a free label and is not granted. |
-| `BookingChangeRequest` | 16 columns | **AID-6B** | Locked-period and policy-exception requests on one booking. The relation with the most free text in the pack. Argued below. |
-| `PolicyExceptionReservationNight` | 1 column (`changeRequestId`) | **AID-6B** | The narrowest grant in the pack, and the only reliable test of whether an open request is holding beds. `night` and `beds` are not granted: the entry reports how many nights are held, never which or how many beds. |
-| `MemberSubscription` | 11 columns | **AID-6B** | One row per season. `xeroInvoiceId` is a presence test only; `manualPaymentNote`, `xeroOnlineInvoiceUrl` and `manuallyMarkedPaidByMemberId` are not granted. |
-| `FamilyGroupMember` | 4 explicitly named columns — all current columns | **AID-6B** | The authoritative family-group membership join. It has only four columns and **no `role` column**, but remains a column ACL: table-wide SELECT is refused so a future column cannot become readable silently. |
-| `FamilyGroup` | 2 columns (`id`, `name`) | **AID-6B** | The group's name beside a co-member. Member-supplied text, stripped and bounded on the way out. Nothing on `FamilyGroupJoinRequest` is granted at all — it carries requester free text and children's dates of birth. |
+| Relation                          | Granted                                          | Added by                          | Why                                                                                                                                                                                                                                                                |
+| --------------------------------- | ------------------------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AuditLog`                        | 9 columns                                        | AID-6A, `entityId` by AID-6C      | Stable codes and an instant for the two per-record audit-history entries. `entityId` is a predicate only.                                                                                                                                                          |
+| `Payment`                         | 22 columns                                       | AID-6C                            | The finance pack's spine.                                                                                                                                                                                                                                          |
+| `PaymentTransaction`              | 12 columns                                       | AID-6C                            | Charge attempts.                                                                                                                                                                                                                                                   |
+| `PaymentRefund`                   | 10 columns                                       | AID-6C                            | Refunds Stripe actually made.                                                                                                                                                                                                                                      |
+| `PaymentRecoveryOperation`        | 10 columns                                       | AID-6C                            | The platform's queued refund debt.                                                                                                                                                                                                                                 |
+| `ManualRefundTask`                | 6 columns                                        | AID-6C                            | Money a person must hand back.                                                                                                                                                                                                                                     |
+| `RefundRequest`                   | 7 columns                                        | AID-6C                            | The member's refund appeal.                                                                                                                                                                                                                                        |
+| `ProcessedWebhookEvent`           | 6 columns                                        | AID-6C                            | The webhook idempotency lease.                                                                                                                                                                                                                                     |
+| `WebhookLog`                      | 7 columns                                        | AID-6C                            | One row per delivery attempt.                                                                                                                                                                                                                                      |
+| `XeroInboundEvent`                | 9 columns                                        | AID-6C                            | Xero's inbound ledger.                                                                                                                                                                                                                                             |
+| `XeroObjectLink`                  | 10 columns                                       | AID-6C                            | What is linked in Xero.                                                                                                                                                                                                                                            |
+| `XeroSyncOperation`               | 17 columns                                       | AID-6C                            | What the platform tried in Xero.                                                                                                                                                                                                                                   |
+| `Member`                          | 24 columns                                       | AID-6C (2), **widened by AID-6B** | Identity and membership lifecycle for a selected member; the name on a family row; the deleted-account predicate; the search predicates, including predicate-only country/area/number mobile parts. Argued below.                                                  |
+| `Booking`                         | 25 columns                                       | **AID-6B**                        | The pack's booking spine: searched by `booking_search`, returned by `booking_diagnostic_summary`, and the two legs of `member_booking_summary`.                                                                                                                    |
+| `Lodge`                           | 2 columns (`id`, `name`)                         | **AID-6B**                        | The lodge **name** beside a booking. Nothing else about a lodge — its capacity numbers, settings, instructions or door codes — is a question this pack has.                                                                                                        |
+| `BookingGuest`                    | 15 columns                                       | **AID-6B**                        | The party, guest counts, member-booking leg and canonical consent/double-sharing inputs. Responder and expiry values are never projected.                                                                                                                          |
+| `MemberPartnerLink`               | 3 columns                                        | **AID-6B**                        | Canonical pair and current status for the double-bed-sharing verdict; raw pair ids are never projected by that entry.                                                                                                                                              |
+| `BookingGuestNight`               | 2 columns (`bookingGuestId`, `stayDate`)         | **AID-6B**                        | The authoritative per-night footprint. A guest may stay **non-contiguous** nights inside one booking, so these rows and not the envelope are the presence.                                                                                                         |
+| `BedAllocation`                   | 8 columns                                        | **AID-6B**                        | Which guest is in which bed on which night, plus the denormalised bed type the index guard enforces on. The live `LodgeBed` type, not this copy, governs the sharing verdict. `approvedByMemberId` names the officer and is not granted.                           |
+| `LodgeRoom`                       | 2 columns (`id`, `name`)                         | **AID-6B**                        | The room label on an allocation row. `notes` is officer free text and is not granted.                                                                                                                                                                              |
+| `LodgeBed`                        | 4 columns                                        | **AID-6B**                        | The bed label and its live type, which authoritatively governs the double-sharing verdict. A missing live bed is unavailable evidence, not `not_double_bed`; divergence from the allocation copy remains a defect. `bunkGroup` is a free label and is not granted. |
+| `BookingChangeRequest`            | 16 columns                                       | **AID-6B**                        | Locked-period and policy-exception requests on one booking. The relation with the most free text in the pack. Argued below.                                                                                                                                        |
+| `PolicyExceptionReservationNight` | 1 column (`changeRequestId`)                     | **AID-6B**                        | The narrowest grant in the pack, and the only reliable test of whether an open request is holding beds. `night` and `beds` are not granted: the entry reports how many nights are held, never which or how many beds.                                              |
+| `MemberSubscription`              | 11 columns                                       | **AID-6B**                        | One row per season. `xeroInvoiceId` is a presence test only; `manualPaymentNote`, `xeroOnlineInvoiceUrl` and `manuallyMarkedPaidByMemberId` are not granted.                                                                                                       |
+| `FamilyGroupMember`               | 4 explicitly named columns — all current columns | **AID-6B**                        | The authoritative family-group membership join. It has only four columns and **no `role` column**, but remains a column ACL: table-wide SELECT is refused so a future column cannot become readable silently.                                                      |
+| `FamilyGroup`                     | 2 columns (`id`, `name`)                         | **AID-6B**                        | The group's name beside a co-member. Member-supplied text, stripped and bounded on the way out. Nothing on `FamilyGroupJoinRequest` is granted at all — it carries requester free text and children's dates of birth.                                              |
 
-Twenty-six relations, 243 granted columns, and every omitted column is a
+Twenty-six relations, 244 granted columns, and every omitted column is a
 decision. The operator CLI prints the declared grants, columns and all, on every
 run and on `--dry-run`. The canonical exact per-relation column sets are published
 in the [deployment guide](deployment.md#what-the-diagnostics-role-may-read-today),
 not just their counts. `provision-role.test.ts` parses that reviewed block and
 compares it bidirectionally with `SELECT_GRANTS`, so replacing one documented
-column with another while preserving 26 / 243 fails.
+column with another while preserving 26 / 244 fails.
 
 **Both directions of that claim are tested, and one of them against PostgreSQL
 itself.** `provision-role.test.ts` reconciles the allowlist against every
@@ -668,14 +664,14 @@ server (`42501`) rather than merely unprojected.
 A boolean is not worth trading that for, so **six presence booleans #2376's plan
 asked for are not projected**, and none of the columns behind them is granted:
 
-| Dropped flag | The column it would have needed |
-| --- | --- |
-| `hasNotes` | `Booking."notes"` |
-| `hasAdminReviewNotes` | `Booking."adminReviewNotes"` |
-| `hasMemberReviewJustification` | `Booking."memberReviewJustification"` |
-| `hasHostingReviewSnapshot` | `Booking."adultMemberHostingReview"` (raw JSON) |
-| `hasLastConflictReason` | `BookingChangeRequest."lastConflictReason"` |
-| `hasProposalSnapshot` | `BookingChangeRequest."proposalSnapshot"` (raw JSON) |
+| Dropped flag                   | The column it would have needed                      |
+| ------------------------------ | ---------------------------------------------------- |
+| `hasNotes`                     | `Booking."notes"`                                    |
+| `hasAdminReviewNotes`          | `Booking."adminReviewNotes"`                         |
+| `hasMemberReviewJustification` | `Booking."memberReviewJustification"`                |
+| `hasHostingReviewSnapshot`     | `Booking."adultMemberHostingReview"` (raw JSON)      |
+| `hasLastConflictReason`        | `BookingChangeRequest."lastConflictReason"`          |
+| `hasProposalSnapshot`          | `BookingChangeRequest."proposalSnapshot"` (raw JSON) |
 
 And **one predicate grant was removed during review on the same grounds**:
 `MemberSubscription."manualPaymentNote"`, a `VarChar(500)` operator note, had been
@@ -906,16 +902,16 @@ model reads as "there is no problem" — is the failure mode the whole
 - **Three of #2376's requested membership audit subjects were dropped, because
   they could never have matched.** The predicate is
   `entityType = ANY(...) AND entityId = ... AND category = ANY(membership
-  categories)`, so a subject only works if a production writer pairs that entity
+categories)`, so a subject only works if a production writer pairs that entity
   type with a category in the **membership** correlation domain (`account`,
   `family`, `communication`, `privacy`). Each was verified at its real write
   sites:
 
-  | Dropped subject | Entity type | The category its writers actually record | Where the events are readable |
-  | --- | --- | --- | --- |
-  | `induction` | `MemberInduction` | `lodge` (five write sites in `induction.ts`) | the lodge correlation entry |
-  | `subscription` | `MemberSubscription` | `payment` (both write sites in `manual-subscription-payment.ts`) | `diagnostics.finance_record_audit_history`, subject `membership_subscription` |
-  | `lifecycle_request` | `MemberLifecycleActionRequest` | `admin` (all six write sites in `member-lifecycle-actions.ts`) | the system correlation entry, which needs `support:view` |
+  | Dropped subject     | Entity type                    | The category its writers actually record                         | Where the events are readable                                                 |
+  | ------------------- | ------------------------------ | ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+  | `induction`         | `MemberInduction`              | `lodge` (five write sites in `induction.ts`)                     | the lodge correlation entry                                                   |
+  | `subscription`      | `MemberSubscription`           | `payment` (both write sites in `manual-subscription-payment.ts`) | `diagnostics.finance_record_audit_history`, subject `membership_subscription` |
+  | `lifecycle_request` | `MemberLifecycleActionRequest` | `admin` (all six write sites in `member-lifecycle-actions.ts`)   | the system correlation entry, which needs `support:view`                      |
 
   Each would have returned zero rows for ever, from a tool whose own scope line
   says "nothing in **those categories** matched" — which reads as evidence of
@@ -964,7 +960,7 @@ a model could otherwise narrate an absence as an answer:
 
   The row now carries the platform's own presence predicate for this member's rows on
   that booking, evaluated in SQL — the same `consentStatus IS NULL OR consentStatus =
-  'CONFIRMED'` text `booking_party_state` precomputes, on both union legs. It is
+'CONFIRMED'` text `booking_party_state` precomputes, on both union legs. It is
   **three-valued**, on the same discipline as `nightsAreContiguous`: true means at
   least one of their rows counts them as an occupant, false means none does (though a
   pending invitation may still be holding a bed), and **null means they hold no guest
@@ -974,6 +970,7 @@ a model could otherwise narrate an absence as an answer:
   still returned, because "why is this booking in their list" is exactly the question
   being asked and the answer is now on the row. No `BookingGuest` column value is
   projected here; what crosses is a predicate's answer, not a column.
+
 - **`updatedAtUtc` is when any column on the row last changed.** It is not when
   anything was verified, and this schema stores no such instant.
 
@@ -1028,6 +1025,7 @@ The property holds by construction rather than by care, in four places:
   the expansion would already have materialised whatever a corrupt envelope asked
   for. A pack test asserts the routing and bans the day-loop shape outright, which
   is the guard the tree-wide census structurally cannot be.
+
 - **A date is re-validated on the way out.** `dateOnlyOrNull` reports the shared
   `(unparseable)` sentinel for anything that is not day-shaped, rather than
   shipping a full ISO instant into a field a model would read as a moment and
@@ -1075,23 +1073,23 @@ The order is the product. Several can be true at once, and telling a Booking
 Officer that a minimum-stay policy is broken when the real problem is that the
 member is double-booked sends them to the wrong screen.
 
-| # | Code | Why it sits here |
-| --- | --- | --- |
-| 1 | `booking_deleted` | **Existence first.** A deleted or terminal booking makes every other question moot. Reporting a policy failure on a cancelled booking is the "confidently wrong about a healthy record" failure in its purest form: the booking is not broken, it is over. |
-| 2 | `booking_lifecycle_terminal` | As above — `CANCELLED` or `BUMPED`. Raised only when the deletion is **not** what makes the booking terminal: see "one code, not two" below. |
-| 3 | `booking_waitlisted` | **The waitlist next**, because it explains the capacity shortfall that would otherwise be reported as the primary fault. A waitlisted booking does not fit by definition. |
-| 4 | `member_night_conflict` | **The hard stops.** A member already staying that night under another booking; the platform refuses to double-book a member's night. |
-| 5 | `capacity_exceeded` | A party that needs more beds than the lodge has left on an ordinary-capacity night. Only a deliberate admin over-capacity confirmation can admit it; an exclusive whole-lodge hold is deliberately excluded and reported only by the next code. |
-| 6 | `whole_lodge_held` | Another booking holds sole occupancy of a night — and this one is **not** bypassable by the admin over-capacity override, which is why it sits with the hard stops. |
-| 7 | `admin_review_pending` | **The child-safety gate.** A pending Booking Officer review blocks arrival at the door, which is more urgent than a membership rule. Today its only cause is a party of under-18s with no adult. |
-| 8 | `hosting_review_pending` | **The hosting review**, which deliberately does **not** block arrival: it is a club membership rule an administrator may accept, and it clears itself the moment an adult member covers the nights. |
-| 9 | `policy_minimum_stay` | **The soft policies that are not about a subscription**, in the order the platform's own `sortPolicyExceptionViolations` already puts them. Each is exception-eligible, which is what makes it softer than a hard stop. |
-| 10 | `policy_adult_member_hosting` | As above. |
-| 11 | `subscription_unpaid_hard_block` | **The club's own refusal**, and the only code here the soft-policy evaluator structurally cannot produce. Under `HARD_BLOCK` an owner who owes an unpaid season subscription cannot confirm their own **zero-price** draft, and there is no exception request for it — the two remedies are payment and **an administrator confirming on the member's behalf**, which the route deliberately allows. It therefore outranks the exception-eligible rule below, and sits adjacent to it so the difference is legible. See "the blocker the evaluator cannot produce". |
-| 12 | `policy_paid_up_adult_member` | As above (rows 9-10). An adult member whose season subscription is unsettled does not count. A `NON_MEMBER_PRICING`-only rule, so it and row 11 are mutually exclusive in practice. |
-| 13 | `exception_request_open` | **The officer's own queue.** The ball is with an officer and nothing has been granted. |
-| 14 | `exception_hold_expiring` | An open request is holding real beds with a deadline; if nobody decides, the reaper releases them and the member loses their place. Urgent — but only after the reason they asked. |
-| 15 | `edit_window_locked` | **Last**, because it constrains **how** a fix is applied rather than whether the booking is sound. |
+| #   | Code                             | Why it sits here                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `booking_deleted`                | **Existence first.** A deleted or terminal booking makes every other question moot. Reporting a policy failure on a cancelled booking is the "confidently wrong about a healthy record" failure in its purest form: the booking is not broken, it is over.                                                                                                                                                                                                                                                                                                          |
+| 2   | `booking_lifecycle_terminal`     | As above — `CANCELLED` or `BUMPED`. Raised only when the deletion is **not** what makes the booking terminal: see "one code, not two" below.                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 3   | `booking_waitlisted`             | **The waitlist next**, because it explains the capacity shortfall that would otherwise be reported as the primary fault. A waitlisted booking does not fit by definition.                                                                                                                                                                                                                                                                                                                                                                                           |
+| 4   | `member_night_conflict`          | **The hard stops.** A member already staying that night under another booking; the platform refuses to double-book a member's night.                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 5   | `capacity_exceeded`              | A party that needs more beds than the lodge has left on an ordinary-capacity night. Only a deliberate admin over-capacity confirmation can admit it; an exclusive whole-lodge hold is deliberately excluded and reported only by the next code.                                                                                                                                                                                                                                                                                                                     |
+| 6   | `whole_lodge_held`               | Another booking holds sole occupancy of a night — and this one is **not** bypassable by the admin over-capacity override, which is why it sits with the hard stops.                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 7   | `admin_review_pending`           | **The child-safety gate.** A pending Booking Officer review blocks arrival at the door, which is more urgent than a membership rule. Today its only cause is a party of under-18s with no adult.                                                                                                                                                                                                                                                                                                                                                                    |
+| 8   | `hosting_review_pending`         | **The hosting review**, which deliberately does **not** block arrival: it is a club membership rule an administrator may accept, and it clears itself the moment an adult member covers the nights.                                                                                                                                                                                                                                                                                                                                                                 |
+| 9   | `policy_minimum_stay`            | **The soft policies that are not about a subscription**, in the order the platform's own `sortPolicyExceptionViolations` already puts them. Each is exception-eligible, which is what makes it softer than a hard stop.                                                                                                                                                                                                                                                                                                                                             |
+| 10  | `policy_adult_member_hosting`    | As above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 11  | `subscription_unpaid_hard_block` | **The club's own refusal**, and the only code here the soft-policy evaluator structurally cannot produce. Under `HARD_BLOCK` an owner who owes an unpaid season subscription cannot confirm their own **zero-price** draft, and there is no exception request for it — the two remedies are payment and **an administrator confirming on the member's behalf**, which the route deliberately allows. It therefore outranks the exception-eligible rule below, and sits adjacent to it so the difference is legible. See "the blocker the evaluator cannot produce". |
+| 12  | `policy_paid_up_adult_member`    | As above (rows 9-10). An adult member whose season subscription is unsettled does not count. A `NON_MEMBER_PRICING`-only rule, so it and row 11 are mutually exclusive in practice.                                                                                                                                                                                                                                                                                                                                                                                 |
+| 13  | `exception_request_open`         | **The officer's own queue.** The ball is with an officer and nothing has been granted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 14  | `exception_hold_expiring`        | An open request is holding real beds with a deadline; if nobody decides, the reaper releases them and the member loses their place. Urgent — but only after the reason they asked.                                                                                                                                                                                                                                                                                                                                                                                  |
+| 15  | `edit_window_locked`             | **Last**, because it constrains **how** a fix is applied rather than whether the booking is sound.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 **On a terminal or deleted booking every other check is suppressed and no blocker
 survives.** No policy is evaluated, no capacity is read and no conflict is scanned
@@ -1149,8 +1147,8 @@ Xero module is effectively off.
 **It is scoped to a ZERO-PRICE `DRAFT`, and that scope is the fix rather than a
 detail of it.** `confirm-draft` is a two-condition door and the code originally read
 only the first. It 400s on any status but `DRAFT`; then, before its subscription
-refusal, it 400s again on any draft whose `finalPriceCents` is not zero — *"Use the
-payment flow to complete non-zero bookings"*. A priced draft is completed through
+refusal, it 400s again on any draft whose `finalPriceCents` is not zero — _"Use the
+payment flow to complete non-zero bookings"_. A priced draft is completed through
 `POST /api/payments/create-payment-intent`, which takes it `DRAFT ->
 PAYMENT_PENDING -> PAID`, and the booking page renders the confirm button only for a
 free draft and the Stripe component for every other one. So the club's flat refusal
@@ -1166,7 +1164,7 @@ code only where the gate is.
 **Two remedies, not one.** The route's refusal carries `!isAdmin`, and an
 administrator may act on any member's booking, so an administrator confirming on the
 member's behalf is a real second remedy beside settling the subscription. There is
-no *exception request* for this code — that is what makes it harder than row 12 —
+no _exception request_ for this code — that is what makes it harder than row 12 —
 but "no exception door" is not "no way through", and the blocker's own description
 and the row above both name the bypass so an officer is never told a booking is
 stuck when their own account can complete it.
@@ -1191,7 +1189,7 @@ and there is no restore path — so on every deleted row `booking_deleted` and
 Emitting both reported one fact twice, put `blockerCount: 2` on a booking with one
 problem, and sent an operator to two screens when only one has a next step: the
 deleted-bookings view. So `booking_lifecycle_terminal` is raised only when the
-booking is terminal *and* not deleted. The deletion is the wider fact, its
+booking is terminal _and_ not deleted. The deletion is the wider fact, its
 sentence says explicitly that the cancellation is not repeated beside it, and the
 ordinary cancelled booking — much the more common record — still reports
 `booking_lifecycle_terminal` exactly as before.
@@ -1305,42 +1303,37 @@ possibly erased, up to ten at a time on a single search. An officer told a membe
 have been erased does not reactivate them, and the owner's rule for this pack is that
 an inference must never be presented as a confirmed fact.
 
-Erasure is defined by its **markers**, never by the absence of other markers.
-`isDeletedAccountRecord` (`INV-LIFE-013`) is the platform's one definition and it is
-an OR over the two things the anonymisation writes together: a sentinel
-`passwordHash` and an `email` rewritten onto the reserved `@deleted.invalid` domain.
-Both entries now run `deletedAccountEmailMarkerSql` — that second marker, as a
-`select_only_sql` predicate, with the domain taken from the same constant so the two
-cannot drift.
+Erasure is defined by one canonical predicate, never by the absence of unrelated
+markers. `isDeletedAccountRecord` (`INV-LIFE-013`) answers true when the structural
+`Member.deletedAt` marker is set or the address uses the reserved
+`@deleted.invalid` domain. The address arm is permanent compatibility for adopter
+rows erased before the structural field existed. Both SQL entries use
+`deletedAccountSql`, the canonical SQL projection of those same two signals.
 
 Three properties are worth stating:
 
-- **The address is the predicate and never the projection.** The marker crosses the
-  boundary as one boolean, exactly as `hasEmail` does. A search row is still a page
-  of names, not of contactable addresses.
-- **The credential half is deliberately absent.** `Member."passwordHash"` is not
-  granted to the diagnostics role and must never be. The two markers are written in
-  one `update` and nothing else writes either, so the email half is decisive on any
-  row the current code can produce — and `member_eligibility_state` is the entry that
-  tests both, comparing the sentinel inside PostgreSQL as a count so no hash ever
-  crosses the boundary.
-- **The marker reads no lifecycle column at all**, which is the property that makes
-  this a fix rather than a better guess: nothing about being inactive, cancelled or
-  archived can trip it, however those columns are set.
+- **The search projects only the boolean.** Its rows remain names, not contactable
+  addresses or deletion timestamps. The single-record summary already projects the
+  email under its existing personal-data contract; it still exposes no timestamp.
+- **No credential column participates.** `Member."passwordHash"` remains ungranted
+  to the diagnostics role. The narrow grant adds only `deletedAt`, which the SQL
+  folds with the already-granted address into one boolean.
+- **Reversible lifecycle state cannot trip the marker.** `active`, `cancelledAt`,
+  `archivedAt` and `canLogin` do not contribute to the deletion decision.
 
 ### The member eligibility codes
 
-| # | Code | Why it sits here |
-| --- | --- | --- |
-| 1 | `member_erased` | An anonymised account is not a member, and it is **invisible** to the three-column read every other surface would do: erasure sets `active: false` and stamps neither a cancellation nor an archival instant. An officer told the member is merely inactive will try to reactivate them. This entry tests BOTH anonymisation markers, so it is the authority the two `lifecycleDeleted` surfaces point at — see "Deactivation is not deletion". |
-| 2 | `member_archived` | **Lifecycle, outermost first.** The order matches `getLifecycleStatusConfig`'s own precedence exactly, because a diagnostic that ranked them differently from the badge an officer is looking at would be describing a different member. |
-| 3 | `member_cancelled` | As above. |
-| 4 | `member_inactive` | Raised **only** when nothing more specific explains it, so the list reads as one problem rather than two. |
-| 5 | `membership_type_blocks_booking` | A club-configured refusal that no subscription payment fixes. |
-| 6 | `subscription_unpaid` | A **fact** whose consequence depends on the club's lockout mode, reported beside it. |
-| 7 | `not_adult_age_tier` | Why they cannot act as the responsible adult member for a party. |
-| 8 | `cannot_log_in` | Why they cannot act for themselves. |
-| 9 | `induction_outstanding` | **Last, and a warning rather than a booking blocker** — see "What this pack cannot answer". It is the member's **newest** induction record of **any** kind that decides, matching the member's own dashboard card: an earlier completed induction does not clear the code once a later one is under way. The code's own sentence says so, because "no completed induction exists" did not. |
+| #   | Code                             | Why it sits here                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `member_erased`                  | An anonymised account is not a member, and it is **invisible** to the three-column read every other surface would do: erasure sets `active: false` and stamps neither a cancellation nor an archival instant. An officer told the member is merely inactive will try to reactivate them. This entry uses the structural-or-reserved-address predicate, so it is the authority the two `lifecycleDeleted` surfaces point at — see "Deactivation is not deletion". |
+| 2   | `member_archived`                | **Lifecycle, outermost first.** The order matches `getLifecycleStatusConfig`'s own precedence exactly, because a diagnostic that ranked them differently from the badge an officer is looking at would be describing a different member.                                                                                                                                                                                                                         |
+| 3   | `member_cancelled`               | As above.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 4   | `member_inactive`                | Raised **only** when nothing more specific explains it, so the list reads as one problem rather than two.                                                                                                                                                                                                                                                                                                                                                        |
+| 5   | `membership_type_blocks_booking` | A club-configured refusal that no subscription payment fixes.                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 6   | `subscription_unpaid`            | A **fact** whose consequence depends on the club's lockout mode, reported beside it.                                                                                                                                                                                                                                                                                                                                                                             |
+| 7   | `not_adult_age_tier`             | Why they cannot act as the responsible adult member for a party.                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 8   | `cannot_log_in`                  | Why they cannot act for themselves.                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 9   | `induction_outstanding`          | **Last, and a warning rather than a booking blocker** — see "What this pack cannot answer". It is the member's **newest** induction record of **any** kind that decides, matching the member's own dashboard card: an earlier completed induction does not clear the code once a later one is under way. The code's own sentence says so, because "no completed induction exists" did not.                                                                       |
 
 **The fact and the consequence are separate fields, and conflating them is the
 most likely way to get this wrong.** `subscriptionUnpaid` is the fact that a
@@ -1385,9 +1378,9 @@ This entry computed it as the calendar year until #2679's review, which was righ
 for nine months of every year and wrong for the other three — and the three did not
 degrade gracefully. `resolveMembershipTypePolicyForMember` found no assignment for
 a season that had not started, so `membershipTypeSource` fell back to a default,
-which this entry's own scope line tells the model means *no assignment exists*; the
+which this entry's own scope line tells the model means _no assignment exists_; the
 `memberId_seasonYear` lookup missed the row, so `subscriptionStatus` went null,
-which the same scope line calls *no season row exists at all*; and the settlement
+which the same scope line calls _no season row exists at all_; and the settlement
 rule then raised `subscription_unpaid`, and with it `qualifiesAsAdultMemberHost:
 false`, against a fully paid-up adult member. It also made two entries in this pack
 contradict each other for a quarter of the year: `booking_block_state` reaches the
@@ -1478,7 +1471,7 @@ So the lattice is now the source and the divergence is a single subtraction,
 `aid6bRecordAuditReaderAreas` (`booking-shared.ts`), asserted from both directions
 by the pack's contract test: what remains matches the domain's declared areas, and
 the only thing removed is `support`. **Why the carve-out is right:** a correlation
-entry sweeps a *window* of recent events across a whole domain with no record to
+entry sweeps a _window_ of recent events across a whole domain with no record to
 anchor it — that is the Admin > Audit Log question, and Admin > Audit Log is a
 support screen. A record-scoped entry is keyed to one exact record id supplied by
 an operator who already holds the domain area, projects strictly fewer columns (no
@@ -1510,26 +1503,26 @@ record's history is per-record evidence whether or not the row carries a name.
 
 ## Bounds
 
-| Control | Value |
-| --- | --- |
-| Search rows | 10 on both searches (absolute maximum permitted: 20) |
-| Search window | Closed enum: `1d`, `7d` (default), `30d` |
-| Party rows | 30 — a whole-lodge school group, so a truncation means something |
-| Bed-allocation rows | 60 — a guest-night is a row, so six guests over ten nights is the whole limit |
-| Capacity allocation inputs | 930 — 30 guests × 31 nights, selected only inside the booking envelope and refused at ceiling plus one |
-| Capacity nights | 31 — a longer stay is **refused**, never clipped. Every night row carries `bookingLifecycleState`, because this entry does **not** suppress on a cancelled booking (what room there was is a fair question about one) and `fitsThisNight: true` with nothing saying the booking is over reads as an invitation to confirm it |
-| Exception-request, audit-history and member-booking rows | 18 each, newest first, truncation reported |
-| Subscription rows | 6 seasons (a row **is** a season, by unique constraint) |
-| Family-relationship rows | 20, across all five union arms |
-| Single-row entries | `booking_diagnostic_summary`, `member_diagnostic_summary`, `booking_block_state`, `member_eligibility_state` |
-| Fields a row | 24, the substrate's hard ceiling — gate 8 refuses a wider row rather than trimming one. `booking_diagnostic_summary`, `booking_block_state` and `member_eligibility_state` sit **exactly** at it, so adding a field to any of them means removing one |
-| Bytes, multi-row entries | 16 384, except the three measured/guarded at 24 576 below |
-| Bytes, single-row entries | 4 096 |
-| Person's name on the way out | 60 characters, clipping marked |
-| Room and bed label on the way out | 24 characters, clipping marked |
-| Rendered block | 8 000 characters — smaller than the byte ceilings, so three entries cannot list a **full** result inside it |
-| Server-owned read | The executor's outer race bounds the **wait**; each source carries its own deadline on the **work**, and refuses rather than returning a partial row. Both derive from the one ladder in `types.ts` (#2804) — see `tools.md` -> "The read-only seam" for the current values |
-| Per session | 16 tool calls, 4 per provider round |
+| Control                                                  | Value                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search rows                                              | 10 on both searches (absolute maximum permitted: 20)                                                                                                                                                                                                                                                                         |
+| Search window                                            | Closed enum: `1d`, `7d` (default), `30d`                                                                                                                                                                                                                                                                                     |
+| Party rows                                               | 30 — a whole-lodge school group, so a truncation means something                                                                                                                                                                                                                                                             |
+| Bed-allocation rows                                      | 60 — a guest-night is a row, so six guests over ten nights is the whole limit                                                                                                                                                                                                                                                |
+| Capacity allocation inputs                               | 930 — 30 guests × 31 nights, selected only inside the booking envelope and refused at ceiling plus one                                                                                                                                                                                                                       |
+| Capacity nights                                          | 31 — a longer stay is **refused**, never clipped. Every night row carries `bookingLifecycleState`, because this entry does **not** suppress on a cancelled booking (what room there was is a fair question about one) and `fitsThisNight: true` with nothing saying the booking is over reads as an invitation to confirm it |
+| Exception-request, audit-history and member-booking rows | 18 each, newest first, truncation reported                                                                                                                                                                                                                                                                                   |
+| Subscription rows                                        | 6 seasons (a row **is** a season, by unique constraint)                                                                                                                                                                                                                                                                      |
+| Family-relationship rows                                 | 20, across all five union arms                                                                                                                                                                                                                                                                                               |
+| Single-row entries                                       | `booking_diagnostic_summary`, `member_diagnostic_summary`, `booking_block_state`, `member_eligibility_state`                                                                                                                                                                                                                 |
+| Fields a row                                             | 24, the substrate's hard ceiling — gate 8 refuses a wider row rather than trimming one. `booking_diagnostic_summary`, `booking_block_state` and `member_eligibility_state` sit **exactly** at it, so adding a field to any of them means removing one                                                                        |
+| Bytes, multi-row entries                                 | 16 384, except the three measured/guarded at 24 576 below                                                                                                                                                                                                                                                                    |
+| Bytes, single-row entries                                | 4 096                                                                                                                                                                                                                                                                                                                        |
+| Person's name on the way out                             | 60 characters, clipping marked                                                                                                                                                                                                                                                                                               |
+| Room and bed label on the way out                        | 24 characters, clipping marked                                                                                                                                                                                                                                                                                               |
+| Rendered block                                           | 8 000 characters — smaller than the byte ceilings, so three entries cannot list a **full** result inside it                                                                                                                                                                                                                  |
+| Server-owned read                                        | The executor's outer race bounds the **wait**; each source carries its own deadline on the **work**, and refuses rather than returning a partial row. Both derive from the one ladder in `types.ts` (#2804) — see `tools.md` -> "The read-only seam" for the current values                                                  |
+| Per session                                              | 16 tool calls, 4 per provider round                                                                                                                                                                                                                                                                                          |
 
 Both byte ceilings are **measured, not estimated**, and the measuring has to be
 done with the canonical serialiser, which pretty-prints with a two-space indent:
@@ -1542,7 +1535,7 @@ ceiling is unachievable.
 
 **Three entries carry a wider ceiling because their own widest result does not fit
 under 16 384, and gate 9 REFUSES rather than trims.** `booking_party_state` at its
-30-row limit, every guest carrying a given *and* a family name at the 60-character
+30-row limit, every guest carrying a given _and_ a family name at the 60-character
 cap, serialises to **18 123** bytes; `booking_capacity_by_night` at its 31-night
 limit, every night carrying four-figure bed counts and a full instant, serialises
 to **16 929**. Leaving them at 16 384 would not have shortened either result — it
@@ -1724,7 +1717,7 @@ apply here, and a reviewer should hold the next author to all six.
    to the catalogue, interpolate the catalogue into the entry's `description`, and
    let the test that pins every code against its sentence fail until you do. The
    test asserts the code and its sentence appear in the entry's model-facing text —
-   description *or* scope — so it survives that placement decision instead of
+   description _or_ scope — so it survives that placement decision instead of
    pinning one field. A catalogue read only by its own test does no work.
 6. **If an argument would change which permissions apply, it is a second entry.**
    `requiredAreas` is fixed on the entry and authorisation runs before argument

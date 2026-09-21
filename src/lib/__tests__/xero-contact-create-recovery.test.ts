@@ -108,7 +108,7 @@ describe("unresolved member Xero contact-create recovery proof", () => {
     const memberFindUnique = vi.fn().mockResolvedValue({
       id: "member-1",
       email: "member@example.test",
-      passwordHash: null,
+      deletedAt: null,
       xeroContactId: null,
     });
     const operationFindFirst = vi.fn().mockResolvedValue({ id: "operation-1" });
@@ -141,7 +141,7 @@ describe("unresolved member Xero contact-create recovery proof", () => {
     const memberFindUnique = vi.fn().mockResolvedValue({
       id: "member-1",
       email: "deleted-member@deleted.invalid",
-      passwordHash: "DELETED_ACCOUNT",
+      deletedAt: null,
       xeroContactId: null,
     });
     const operationFindFirst = vi.fn();
@@ -165,7 +165,12 @@ describe("unresolved member Xero contact-create recovery proof", () => {
   it.each([
     [
       "running",
-      { id: "running", status: "RUNNING", lastErrorCode: null, responsePayload: null },
+      {
+        id: "running",
+        status: "RUNNING",
+        lastErrorCode: null,
+        responsePayload: null,
+      },
     ],
     [
       "stale orphaned",
@@ -188,27 +193,30 @@ describe("unresolved member Xero contact-create recovery proof", () => {
         },
       },
     ],
-  ])("blocks deletion on the complete %s recovery proof", async (_label, operation) => {
-    const operationFindFirst = vi.fn().mockResolvedValue(operation);
+  ])(
+    "blocks deletion on the complete %s recovery proof",
+    async (_label, operation) => {
+      const operationFindFirst = vi.fn().mockResolvedValue(operation);
 
-    await expect(
-      assertNoMemberContactCreateBlockerForDeletion("member-1", {
-        xeroSyncOperation: { findFirst: operationFindFirst } as never,
-      }),
-    ).rejects.toMatchObject({
-      code: "XERO_CONTACT_CREATE_BLOCKS_DELETION",
-      statusCode: 409,
-    });
-    expect(operationFindFirst).toHaveBeenCalledWith({
-      where: memberContactCreateMergeBlockerWhere("member-1"),
-      select: {
-        id: true,
-        status: true,
-        lastErrorCode: true,
-        responsePayload: true,
-      },
-    });
-  });
+      await expect(
+        assertNoMemberContactCreateBlockerForDeletion("member-1", {
+          xeroSyncOperation: { findFirst: operationFindFirst } as never,
+        }),
+      ).rejects.toMatchObject({
+        code: "XERO_CONTACT_CREATE_BLOCKS_DELETION",
+        statusCode: 409,
+      });
+      expect(operationFindFirst).toHaveBeenCalledWith({
+        where: memberContactCreateMergeBlockerWhere("member-1"),
+        select: {
+          id: true,
+          status: true,
+          lastErrorCode: true,
+          responsePayload: true,
+        },
+      });
+    },
+  );
 
   it("accepts actual provider creation and rejects matched-existing phases", () => {
     expect(
@@ -244,9 +252,9 @@ describe("unresolved member Xero contact-create recovery proof", () => {
         responsePayload: null,
       });
 
-    await expect(
-      hasMemberContactCreateMergeBlocker("member-1"),
-    ).resolves.toBe(true);
+    await expect(hasMemberContactCreateMergeBlocker("member-1")).resolves.toBe(
+      true,
+    );
     await expect(
       hasUnresolvedMemberContactCreateRecovery("member-1"),
     ).resolves.toBe(false);
@@ -264,9 +272,9 @@ describe("unresolved member Xero contact-create recovery proof", () => {
   it("blocks merge and deletion on a RUNNING member CONTACT UPDATE only", async () => {
     findFirst.mockResolvedValueOnce({ id: "operation-update-running" });
 
-    await expect(
-      hasMemberContactChangeMergeBlocker("member-1"),
-    ).resolves.toBe(true);
+    await expect(hasMemberContactChangeMergeBlocker("member-1")).resolves.toBe(
+      true,
+    );
     // #2623 T7: the blocker read now also returns what the refusal has to name.
     expect(findFirst).toHaveBeenCalledWith({
       where: memberContactChangeMergeBlockerWhere("member-1"),
@@ -308,9 +316,9 @@ describe("unresolved member Xero contact-create recovery proof", () => {
     await expect(
       hasUnresolvedMemberContactCreateRecovery("member-1"),
     ).resolves.toBe(true);
-    await expect(
-      hasMemberContactCreateMergeBlocker("member-1"),
-    ).resolves.toBe(true);
+    await expect(hasMemberContactCreateMergeBlocker("member-1")).resolves.toBe(
+      true,
+    );
     expect(unresolvedMemberContactCreateRecoveryWhere("member-1")).toEqual(
       expect.objectContaining({
         OR: expect.arrayContaining([
@@ -331,8 +339,7 @@ describe("unresolved member Xero contact-create recovery proof", () => {
                   expect.objectContaining({
                     responsePayload: {
                       path: ["phase"],
-                      equals:
-                        "provider_contact_created_local_link_pending",
+                      equals: "provider_contact_created_local_link_pending",
                     },
                   }),
                 ]),
@@ -390,9 +397,9 @@ describe("unresolved member Xero contact-create recovery proof", () => {
         ],
       }),
     );
-    await expect(
-      hasMemberContactCreateMergeBlocker("member-1"),
-    ).resolves.toBe(true);
+    await expect(hasMemberContactCreateMergeBlocker("member-1")).resolves.toBe(
+      true,
+    );
   });
 
   it("retains the stronger state for stale-reset provider-created proof", async () => {
@@ -715,9 +722,9 @@ describe("the blocker refusal and the member display read one predicate (#2623 T
         xeroContactId: "contact-linked",
       }),
     ).resolves.toBeNull();
-    await expect(
-      hasMemberContactChangeMergeBlocker("member-1"),
-    ).resolves.toBe(true);
+    await expect(hasMemberContactChangeMergeBlocker("member-1")).resolves.toBe(
+      true,
+    );
     await expect(
       findMemberContactChangeMergeBlocker("member-1"),
     ).resolves.toMatchObject({ operationId: "operation-blocking" });
@@ -731,7 +738,7 @@ describe("the inbound contact patch takes the two-homes refusal (#2939)", () => 
     patchMocks.memberFindUnique.mockResolvedValue({
       id: "member-1",
       email: "teacher@example.com",
-      passwordHash: "hash",
+      deletedAt: null,
       xeroContactId: null,
       dateOfBirth: null,
       joinedDate: null,
@@ -805,7 +812,7 @@ describe("the inbound contact patch takes the two-homes refusal (#2939)", () => 
     patchMocks.memberFindUnique.mockResolvedValue({
       id: "member-1",
       email: "teacher@example.com",
-      passwordHash: "hash",
+      deletedAt: null,
       xeroContactId: "contact-1",
       dateOfBirth: null,
       joinedDate: null,

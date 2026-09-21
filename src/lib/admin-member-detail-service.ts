@@ -9,7 +9,11 @@ import {
   isHostingCoverageParticipantRetry,
 } from "@/lib/adult-member-hosting-queue-participants";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { clubToday, dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
+import {
+  clubToday,
+  dateOnlyInstantOf,
+  parseCalendarDate,
+} from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import {
@@ -314,10 +318,7 @@ function resolveWriteAccessRoleTokens(input: {
   });
 }
 
-function sameAccessRoleSet(
-  a: ReadonlyArray<string>,
-  b: ReadonlyArray<string>,
-) {
+function sameAccessRoleSet(a: ReadonlyArray<string>, b: ReadonlyArray<string>) {
   return a.length === b.length && a.every((role) => b.includes(role));
 }
 
@@ -402,6 +403,7 @@ export async function getAdminMemberDetail(params: {
         accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
         ageTier: true,
         active: true,
+        deletedAt: true,
         // Member profile photo (MP4, epic #171) — surfaced so an admin can
         // view/manage it on the member-detail page; spread through `...member`
         // into the response body below.
@@ -743,16 +745,19 @@ export async function getAdminMemberDetail(params: {
       if (!current) return null;
       return membershipTypeAgeExemption(
         (
-          (current.membershipType as { allowedAgeTiers?: Array<{ ageTier: AgeTier }> })
-            .allowedAgeTiers ?? []
+          (
+            current.membershipType as {
+              allowedAgeTiers?: Array<{ ageTier: AgeTier }>;
+            }
+          ).allowedAgeTiers ?? []
         ).map((tier) => tier.ageTier),
       );
     })(),
     seasonalMembershipAssignments: (
       member.seasonalMembershipAssignments ?? []
     ).map((assignment) => serializeSeasonalMembershipAssignment(assignment)),
-    committeeAssignments: (member.committeeAssignments ?? []).map((assignment) =>
-      serializeCommitteeAssignment(assignment),
+    committeeAssignments: (member.committeeAssignments ?? []).map(
+      (assignment) => serializeCommitteeAssignment(assignment),
     ),
     bookings,
     promoCodes: assignedPromoCodes,
@@ -1218,8 +1223,7 @@ export async function updateAdminMember(params: {
   // Handle DOB. The resulting age tier is resolved by the shared enforcement
   // helper below (#2106) so org force, a FORCED/ALLOWED/DISALLOWED membership
   // type, an explicit manual N/A, and DOB-derived restore apply in one order.
-  const dobProvided =
-    data.dateOfBirth !== undefined && data.dateOfBirth !== "";
+  const dobProvided = data.dateOfBirth !== undefined && data.dateOfBirth !== "";
   if (data.dateOfBirth !== undefined) {
     if (dobProvided) {
       // `parseCalendarDate`, not `new Date` + `isNaN` (#3082 fix round). The old
@@ -1245,8 +1249,7 @@ export async function updateAdminMember(params: {
   {
     const tokensAfterUpdate =
       nextAccessRoles ?? resolveAccessRoleTokens(existing);
-    const legacyRoleAfterUpdate = (updateData.role ??
-      existing.role) as string;
+    const legacyRoleAfterUpdate = (updateData.role ?? existing.role) as string;
     const isOrg = isOrganisationMember({
       accessRoleTokens: tokensAfterUpdate,
       legacyRole: legacyRoleAfterUpdate,
@@ -1357,7 +1360,11 @@ export async function updateAdminMember(params: {
     );
     const updated = await prisma.$transaction(async (tx) => {
       if (deactivatesTarget || tierLeavesAdult) {
-        await acquireFuturePartnerSharedAllocationLocks(tx, [id], clubTodayDateOnly);
+        await acquireFuturePartnerSharedAllocationLocks(
+          tx,
+          [id],
+          clubTodayDateOnly,
+        );
         await acquireMemberLifecycleLocks(tx, [id]);
       }
       // Last-admin guard (issue #1604): counted inside the mutation
@@ -1625,7 +1632,7 @@ export async function updateAdminMember(params: {
         defaultMembershipTypeKeyForRole(updated.role);
     const needsContactGroupSync = Boolean(
       updated.xeroContactId &&
-        (existing.ageTier !== updated.ageTier || roleDefaultTypeChanged),
+      (existing.ageTier !== updated.ageTier || roleDefaultTypeChanged),
     );
 
     if (
@@ -1667,10 +1674,7 @@ export async function updateAdminMember(params: {
       return jsonResult(HOSTING_COVERAGE_RETRY_BODY, { status: 409 });
     }
     if (error instanceof AdminAccountGuardError) {
-      return jsonResult(
-        { error: error.message },
-        { status: error.statusCode },
-      );
+      return jsonResult({ error: error.message }, { status: error.statusCode });
     }
 
     // Backstop for the race the pre-check above cannot close (#2385): the

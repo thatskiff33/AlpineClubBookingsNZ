@@ -196,6 +196,7 @@ export interface MemberDetail {
   ageTier: string;
   financeAccessLevel: FinanceAccessLevel;
   active: boolean;
+  deletedAt: string | null;
   // Member profile photo (MP4, epic #171). photoImageId present ⇒ has a photo;
   // photoUpdatedAt busts the img cache after a replace.
   photoImageId: string | null;
@@ -254,7 +255,8 @@ export interface MemberDetail {
   familyGroups: { id: string; name: string | null }[];
   // Per-member billing family selection + club billing mode (#1932, E6).
   billingFamilyGroupId: string | null;
-  familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER" | "BILL_MEMBERS_INDIVIDUALLY";
+  familyBillingMode:
+    "BILL_FAMILY_VIA_BILLING_MEMBER" | "BILL_MEMBERS_INDIVIDUALLY";
   currentSeasonYear: number;
   // #2106: age-exemption of the member's current-season membership type —
   // FORCED (N/A only), ALLOWED (N/A hand-pickable), or DISALLOWED (no N/A);

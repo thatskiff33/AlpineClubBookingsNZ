@@ -1,5 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import {
+  isDeletedAccountRecord,
+  notDeletedAccountWhere,
+} from "@/lib/deleted-account";
+import {
   MEMBER_PARTNER_RELATIONSHIP_SELECT,
   MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
   memberHasPartnerRelationshipWith,
@@ -65,6 +69,7 @@ import {
  * in this order, so `blockers[0]` is the one to show.
  */
 export const DEPENDENT_LINK_INELIGIBILITY_REASONS = [
+  "DELETED",
   "ARCHIVED",
   "SELF",
   "ALREADY_LINKED_TO_PARENT",
@@ -88,6 +93,7 @@ export const DEPENDENT_LINK_INELIGIBILITY_ERRORS: Record<
   string
 > = {
   ARCHIVED: "Archived members cannot be linked into family groups",
+  DELETED: "Deleted members cannot be linked into family groups",
   SELF: "A member cannot be their own dependant",
   ALREADY_LINKED_TO_PARENT: "This member is already linked to that parent",
   DIRECT_PARTNER: MEMBER_PARENT_PARTNER_CONFLICT_MESSAGE,
@@ -107,6 +113,7 @@ export const DEPENDENT_LINK_INELIGIBILITY_EXPLANATIONS: Record<
   string
 > = {
   ARCHIVED: "is archived",
+  DELETED: "is deleted",
   SELF: "is the member you are editing",
   ALREADY_LINKED_TO_PARENT: "is already linked to this member",
   DIRECT_PARTNER: "is already this member's partner",
@@ -180,6 +187,7 @@ export const DEPENDENT_LINK_INELIGIBILITY_EXPLANATIONS: Record<
  */
 export const DEPENDENT_PARENT_STATE_REASONS = [
   "ORGANISATION",
+  "DELETED",
   "ARCHIVED",
   "INACTIVE",
 ] as const;
@@ -208,6 +216,8 @@ export function dependentParentStateBlocker(parent: {
   /** Read only by the token resolver: `canLogin: false` clears every token. */
   canLogin: boolean | null | undefined;
   active: boolean;
+  email: string | null;
+  deletedAt: Date | string | null;
   // `string` as well as `Date` so the admin UI can pass a member straight out
   // of the JSON detail response, where dates are already serialised. One
   // predicate, both sides of the wire — the same reason #2254 made the search
@@ -222,6 +232,7 @@ export function dependentParentStateBlocker(parent: {
     legacyRole: parent.role,
   });
   if (organisation) return "ORGANISATION";
+  if (isDeletedAccountRecord(parent)) return "DELETED";
   if (parent.archivedAt) return "ARCHIVED";
   if (!parent.active) return "INACTIVE";
   return null;
@@ -238,6 +249,8 @@ export const DEPENDENT_PARENT_STATE_SELECT = {
   canLogin: true,
   accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
   active: true,
+  email: true,
+  deletedAt: true,
   archivedAt: true,
 } satisfies Prisma.MemberSelect;
 
@@ -266,6 +279,7 @@ export function dependentParentEligibleWhere(): Prisma.MemberWhereInput[] {
       },
     },
     { active: true },
+    ...notDeletedAccountWhere(),
     { archivedAt: null },
   ];
 }
@@ -289,6 +303,7 @@ export const DEPENDENT_PARENT_LINK_ERRORS: Record<
     "Dependents cannot be linked under an organisation or school account, because it is not a person.",
   ARCHIVED:
     "Dependents cannot be linked under an archived member. Archiving is permanent, so link them under another member of the family instead.",
+  DELETED: "Dependents cannot be linked under a deleted member.",
   INACTIVE:
     "Dependents can only be linked under active members. Reactivate this member first.",
 };
@@ -305,6 +320,7 @@ export const DEPENDENT_PARENT_CREATE_ERRORS: Record<
     "Dependents cannot be created under an organisation or school account, because it is not a person.",
   ARCHIVED:
     "Dependents cannot be created under an archived member. Archiving is permanent, so add them under another member of the family instead.",
+  DELETED: "Dependents cannot be created under a deleted member.",
   INACTIVE:
     "Dependents can only be created under active members. Reactivate this member first.",
 };
@@ -322,8 +338,8 @@ export const DEPENDENT_PARENT_BLOCK_EXPLANATIONS: Record<
     "This is an organisation or school account rather than a person, so it cannot be recorded as anyone's parent.",
   ARCHIVED:
     "This member is archived, and archiving cannot be undone — add the dependent under another member of the family instead.",
-  INACTIVE:
-    "This member is inactive — reactivate them to add dependents.",
+  DELETED: "This member is deleted and cannot have dependents added.",
+  INACTIVE: "This member is inactive — reactivate them to add dependents.",
 };
 
 /**
@@ -355,6 +371,8 @@ export type DependentLinkIneligibleMatch = {
  */
 export const DEPENDENT_LINK_CANDIDATE_SELECT = {
   id: true,
+  email: true,
+  deletedAt: true,
   archivedAt: true,
   parentMemberId: true,
   secondaryParentId: true,
@@ -363,6 +381,8 @@ export const DEPENDENT_LINK_CANDIDATE_SELECT = {
 
 export type DependentLinkCandidate = MemberPartnerRelationshipFacts & {
   id: string;
+  email: string | null;
+  deletedAt: Date | null;
   archivedAt: Date | null;
   parentMemberId: string | null;
   secondaryParentId: string | null;
@@ -402,6 +422,9 @@ export function dependentLinkBlockers(
 ): DependentLinkIneligibilityReason[] {
   const blockers: DependentLinkIneligibilityReason[] = [];
 
+  if (isDeletedAccountRecord(candidate)) {
+    blockers.push("DELETED");
+  }
   if (candidate.archivedAt) {
     blockers.push("ARCHIVED");
   }
@@ -495,5 +518,6 @@ export function dependentLinkCandidateWhere(
       allowedChildDescendantGenerations(graph.parentAncestorGenerations),
     ),
     { archivedAt: null },
+    ...notDeletedAccountWhere(),
   ];
 }
