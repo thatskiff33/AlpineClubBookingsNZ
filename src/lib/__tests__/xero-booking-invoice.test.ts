@@ -30,6 +30,11 @@ const mocks = vi.hoisted(() => {
     booking: {
       findUnique: vi.fn(),
     },
+    // #3530: a modification credit note reads its row's stored lines; none
+    // here, so every note in this suite renders its single line as before.
+    bookingModification: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     // #2258: the withheld-send audit row written when the booking's
     // "No emails" switch stops Xero emailing the invoice.
     emailLog: {

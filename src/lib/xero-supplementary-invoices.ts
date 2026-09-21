@@ -44,6 +44,11 @@ import {
   xeroDocumentDateForClubToday,
   xeroDocumentDateFromInstant,
 } from "@/lib/xero-provider-dates";
+import {
+  CHANGE_FEE_LINE_DESCRIPTION,
+  MODIFICATION_DOCUMENT_LINES_SELECT,
+  resolveModificationDocumentLineItems,
+} from "@/lib/xero-modification-line-items";
 
 export async function createXeroSupplementaryInvoice(params: {
   bookingId: string;
@@ -167,12 +172,34 @@ export async function createXeroSupplementaryInvoice(params: {
   const refundMapping =
     priceDiffCents < 0 ? await getResolvedAccountMapping("hutFeeRefunds") : null;
 
-  const lineItems: LineItem[] = [];
+  const bookingModification = await prisma.bookingModification.findUnique({
+    where: { id: bookingModificationId },
+    select: { createdAt: true, ...MODIFICATION_DOCUMENT_LINES_SELECT },
+  });
+
+  /**
+   * #3530 (`INV-MOD-058`): the lines the edit stored, when they explain
+   * exactly what this invoice bills - one Xero line per stored line and the
+   * fee line. Otherwise the single price-adjustment line below, exactly as
+   * before, with the reason recorded on the operation. The figures passed are
+   * THIS invoice's (a restate raises them past the row's lines, which is one
+   * of the ways the fallback is reached); a second ask never itemises.
+   */
+  const itemised = await resolveModificationDocumentLineItems({
+    bookingId,
+    row: bookingModification,
+    document: "SUPPLEMENTARY_INVOICE",
+    billedCents: netAmountCents,
+    billedFigures: { priceDiffCents, changeFeeCents },
+    secondAsk: Boolean(shortfallReviewTaskId),
+  });
+
+  const lineItems: LineItem[] = itemised.lineItems ?? [];
 
   // The price-adjustment line is SIGNED (#1356): a mixed-sign edit emits a
   // negative price line next to the positive fee line so the line items sum
   // exactly to the net charge by construction (the #1163 exact-total rule).
-  if (priceDiffCents !== 0) {
+  if (!itemised.lineItems && priceDiffCents !== 0) {
     const lineMapping = refundMapping ?? incomeMapping;
     const lineCode = lineMapping.code ?? "200";
     const li: LineItem = {
@@ -201,9 +228,9 @@ export async function createXeroSupplementaryInvoice(params: {
     lineItems.push(li);
   }
 
-  if (changeFeeCents > 0) {
+  if (!itemised.lineItems && changeFeeCents > 0) {
     const li: LineItem = {
-      description: "Late notice booking change fee",
+      description: CHANGE_FEE_LINE_DESCRIPTION,
       quantity: 1,
       unitAmount: changeFeeCents / 100,
       taxType: "OUTPUT2",
@@ -215,10 +242,6 @@ export async function createXeroSupplementaryInvoice(params: {
     lineItems.push(li);
   }
 
-  const bookingModification = await prisma.bookingModification.findUnique({
-    where: { id: bookingModificationId },
-    select: { createdAt: true },
-  });
   // Both halves of this are real instants — `BookingModification.createdAt` is a
   // `DateTime @default(now())`, and the fallback is the clock itself — so both
   // land on the previous UTC day for roughly the first half of every New Zealand
@@ -313,6 +336,9 @@ export async function createXeroSupplementaryInvoice(params: {
   const buildStoredPayload = (resolvedContactId: string) => ({
     ...(queuedRequestPayload ?? {}),
     invoices: [buildInvoice(resolvedContactId)],
+    // #3530: whether the lines above are the edit's stored lines or the
+    // single fallback line, and why - beside the document they describe.
+    priceLines: itemised.record,
   });
   const requestPayload = buildStoredPayload(contactId);
 

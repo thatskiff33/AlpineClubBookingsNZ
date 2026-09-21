@@ -517,6 +517,15 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
     const hostingEnqueueOrder =
       h.enqueueHostingCoverageReevaluationForMember.mock.invocationCallOrder[0];
     const anonymiseOrder = h.prisma.member.update.mock.invocationCallOrder[0];
+    expect(h.prisma.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: member.id },
+        data: expect.objectContaining({
+          active: false,
+          deletedAt: expect.any(Date),
+        }),
+      }),
+    );
     expect(acquireOrder).toBeLessThan(memberLockOrder);
     expect(memberLockOrder).toBeLessThan(heldSweepOrder);
     expect(heldSweepOrder).toBeLessThan(hostingEnqueueOrder);
@@ -577,6 +586,45 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
       }),
     );
     expect(h.settleHostingCoverageAfterCommit).not.toHaveBeenCalled();
+  });
+
+  it("rolls back the deletion marker when later anonymisation cleanup fails", async () => {
+    // Model just enough transaction state to make rollback observable. The
+    // member write succeeds first and stamps deletedAt, then credential cleanup
+    // fails. Because both live in the same interactive transaction, the marker
+    // must return to its pre-approval value with the rest of the anonymisation.
+    let persistedDeletedAt: Date | null = null;
+    h.prisma.member.update.mockImplementation(
+      async ({ data }: { data: { deletedAt?: Date } }) => {
+        if (data.deletedAt) persistedDeletedAt = data.deletedAt;
+        return {};
+      },
+    );
+    h.prisma.magicLinkToken.deleteMany.mockRejectedValueOnce(
+      new Error("credential cleanup failed"),
+    );
+    h.prisma.$transaction.mockImplementationOnce(
+      async (cb: (tx: typeof h.prisma) => Promise<unknown>) => {
+        const before = persistedDeletedAt;
+        try {
+          return await cb(h.tx);
+        } catch (error) {
+          persistedDeletedAt = before;
+          throw error;
+        }
+      },
+    );
+
+    const response = await POST(req({ action: "approve" }), { params });
+
+    expect(response.status).toBe(500);
+    expect(h.prisma.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+      }),
+    );
+    expect(persistedDeletedAt).toBeNull();
+    expect(h.sendAccountDeletionApprovedEmail).not.toHaveBeenCalled();
   });
 
   it("owns the approval durably before the first booking cancellation commits", async () => {

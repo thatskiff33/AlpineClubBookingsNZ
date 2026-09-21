@@ -36,6 +36,7 @@ import {
   buildRefundDocumentReference,
   type RefundMethod,
 } from "@/lib/xero-refund-method";
+import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
 
 export async function createXeroCreditNoteForModification(params: {
   bookingId: string;
@@ -106,6 +107,25 @@ export async function createXeroCreditNoteForModification(params: {
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
 
+  /**
+   * #3530 (`INV-MOD-058`): the lines the edit stored, inverted for a credit
+   * note, when they explain exactly what this note returns - which they do
+   * not when policy retained part of the reduction (`INV-PAY-019`), or the
+   * row stores none. Then the single line below, exactly as before, with the
+   * reason recorded on the operation. The method wording (`INV-PAY-101`)
+   * stays on the note's reference either way.
+   */
+  const itemised = bookingModificationId
+    ? await resolveModificationDocumentLineItems({
+        bookingId,
+        bookingModificationId,
+        document: "MODIFICATION_CREDIT_NOTE",
+        billedCents: refundAmountCents,
+      })
+    : // A legacy row anchored on the booking has no edit behind it; nothing
+      // to itemise and nothing to record, as the account-credit note does.
+      null;
+
   const modRefundLineItem: LineItem = {
     description: buildRefundDocumentDescription({
       method: refundMethod,
@@ -134,7 +154,7 @@ export async function createXeroCreditNoteForModification(params: {
     contact: { contactID: resolvedContactId },
     date: modificationCreditNoteDate,
     lineAmountTypes: LineAmountTypes.Inclusive,
-    lineItems: [modRefundLineItem],
+    lineItems: itemised?.lineItems ?? [modRefundLineItem],
     reference: buildRefundDocumentReference({ method: refundMethod, bookingId }),
     status: CreditNote.StatusEnum.AUTHORISED,
   });
@@ -154,6 +174,7 @@ export async function createXeroCreditNoteForModification(params: {
     invoiceId: originalInvoiceId,
     refundAmountCents,
     refundMethod,
+    ...(itemised ? { priceLines: itemised.record } : {}),
   };
 
   if (operationId) {
@@ -195,6 +216,7 @@ export async function createXeroCreditNoteForModification(params: {
         invoiceId: originalInvoiceId,
         refundAmountCents,
         refundMethod,
+        ...(itemised ? { priceLines: itemised.record } : {}),
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(

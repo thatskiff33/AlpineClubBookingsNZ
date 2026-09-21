@@ -945,6 +945,9 @@ export async function POST(
           postalCountry: null,
           passwordHash: DELETED_ACCOUNT_PASSWORD_HASH,
           active: false,
+          // #3541: make account erasure structural in the same row write as
+          // the anonymisation. No reader consumes this marker until #3542.
+          deletedAt: new Date(),
           // #2620: anonymisation used to leave every credential usable, so
           // `active: false` was the only thing between an erased member and a
           // working session — and Reactivate flips exactly that. Google sign-in
