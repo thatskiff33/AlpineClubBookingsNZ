@@ -46,11 +46,12 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  *    PERSISTED reader, not from `process.env` and not from the browser.
  * 3. Every page under a `src/app/(group)` route group has, at or above its own
  *    directory, a layout that really WRAPS `{children}` in one of those two.
- * 4. Every surface OUTSIDE a route group is on a short, named list, each with
- *    the reason it has no provider above it.
- * 5. And each of those surfaces is CHECKED, not just named: the census walks
- *    the import graph and proves the reason, stopping at any component that
- *    mounts a provider of its own.
+ * 4. Every surface OUTSIDE a route group is on one of two short, named lists:
+ *    the ones with no provider at all, and the ones that mount their own.
+ * 5. And each of those surfaces is CHECKED, not just named. A provider-less
+ *    surface's import graph is walked and must reach NO caller of the hook. A
+ *    self-mounting one's is walked THROUGH its mount and must reach at least
+ *    one, so the mount is load-bearing rather than decorative.
  */
 
 /** The components that mount the provider, and the source that must prove it. */
@@ -78,6 +79,29 @@ const CLUB_FORMAT_WALK = {
 } as const;
 
 /**
+ * Surfaces outside every mounting layout that mount the provider THEMSELVES,
+ * and the file that resolves the values for them.
+ *
+ * A separate category from the list below, because the two make opposite
+ * claims and want opposite checks. A provider-less surface claims nothing
+ * beneath it reaches the hook, and its walk must come back EMPTY. A
+ * self-mounting surface claims it supplies the provider itself, and the honest
+ * check there is that something beneath it really does reach the hook — a
+ * mount nothing needs is dead code wearing a green suite, and a walk that
+ * stopped at the mount would inspect nothing while passing.
+ */
+const SELF_MOUNTING_SURFACES: Record<string, string> = {
+  "src/app/display/page.tsx":
+    "The lobby TV display. It has no layout and sits in no route group, so " +
+    "neither chrome component is above it; this page resolves the club's " +
+    "format on the server and mounts the provider around the screen itself. " +
+    "Not a chrome mount because `/display` shares none of the application's " +
+    "chrome and its sibling `error.tsx` is held at zero data dependencies on " +
+    "purpose (issue #176, ADR-003 section 5), so no mount on this route could " +
+    "ever cover all three of its surfaces. See the reasoning block in the page.",
+};
+
+/**
  * Surfaces that render with NO provider above them, and why each is allowed to.
  *
  * Every entry is a decision, not a backlog. A page that reaches
@@ -92,20 +116,6 @@ const CLUB_FORMAT_WALK = {
  * than of either provider. The REASONS differ, and one of them differs sharply.
  */
 const PROVIDERLESS_SURFACES: Record<string, string> = {
-  "src/app/display/page.tsx":
-    "The lobby TV display, and the one row here whose reason is not 'nothing " +
-    "below needs it' — something below DOES need it. The header's day line is " +
-    "written by an `Intl.DateTimeFormat` that takes the club's locale, so " +
-    "`display-header-clock.tsx` really does call `useClubFormat()`. What makes " +
-    "that legitimate is that `display-screen.tsx` mounts the provider itself, " +
-    "from values this page resolves on the server and hands down as a prop — " +
-    "so the walk below stops there and reports a BOUNDARY rather than a " +
-    "consumer, exactly as it does at `skifield-whakapapa-embed.tsx` under the " +
-    "root 404. A prop rather than a chrome mount because `/display` shares " +
-    "none of the application's chrome and its sibling `error.tsx` is held at " +
-    "zero data dependencies on purpose (issue #176, ADR-003 section 5), so no " +
-    "mount on this route could ever cover all three of its surfaces. See the " +
-    "reasoning block in `src/app/display/page.tsx`.",
   "src/app/not-found.tsx":
     "The root 404, which sits outside both public route groups and therefore " +
     "outside `WebsiteChrome`. It renders `EmbeddedPageContentParts` over " +
@@ -127,7 +137,7 @@ const PROVIDERLESS_SURFACES: Record<string, string> = {
     "able to throw from its own fallback. A club-format read here would be " +
     "precisely the dependency that stance forbids, and note that Next renders " +
     "an error boundary OUTSIDE the layout whose subtree threw, so the mount " +
-    "`display-screen.tsx` makes could not cover this file even if it wanted to.",
+    "`page.tsx` makes could not cover this file even if it wanted to.",
   "src/app/error.tsx":
     "The root error boundary. Next renders an error boundary OUTSIDE the " +
     "layout whose subtree threw, so no route group's provider is above it — " +
@@ -177,32 +187,30 @@ describe("club-format provider mount census (#3564)", () => {
     }
   });
 
-  it("the lobby display resolves the format on the server too", () => {
+  it("a self-mounting surface really mounts, from the persisted reader", () => {
     /*
-      `/display` is outside both chrome components, so rule 2 above cannot see
-      it — and it is the surface where getting this wrong is least likely to be
-      noticed, because nobody is standing in front of an unattended wall
-      waiting for it to be wrong.
+      These sit outside both chrome components, so rule 2 above cannot see
+      them — and `/display` is the surface where getting this wrong is least
+      likely to be noticed, because nobody is standing in front of an
+      unattended wall waiting for it to be wrong.
     */
-    const page = stripComments(read("src/app/display/page.tsx"));
-    expect(
-      page.includes('from "@/lib/club-format-settings"'),
-      "src/app/display/page.tsx must resolve the club's format through " +
-        "@/lib/club-format-settings and hand it to DisplayScreen as a prop " +
-        "(INV-CONFIG-006).",
-    ).toBe(true);
-    expect(
-      /APP_CURRENCY|APP_LOCALE/.test(page),
-      "src/app/display/page.tsx must not read the build-time constants.",
-    ).toBe(false);
-
-    const screen = stripComments(read("src/app/display/display-screen.tsx"));
-    expect(
-      screen.includes("<ClubFormatProvider"),
-      "display-screen.tsx must mount ClubFormatProvider from the prop its " +
-        "server page resolved. It is what makes the /display row on " +
-        "PROVIDERLESS_SURFACES true, and the walk below depends on it.",
-    ).toBe(true);
+    for (const surface of Object.keys(SELF_MOUNTING_SURFACES)) {
+      const source = stripComments(read(surface));
+      expect(
+        source.includes("<ClubFormatProvider"),
+        `${surface} is on SELF_MOUNTING_SURFACES, so it must render ` +
+          "<ClubFormatProvider> itself. Nothing else covers it.",
+      ).toBe(true);
+      expect(
+        source.includes('from "@/lib/club-format-settings"'),
+        `${surface} must resolve the club's format through ` +
+          "@/lib/club-format-settings, on the server (INV-CONFIG-006).",
+      ).toBe(true);
+      expect(
+        /APP_CURRENCY|APP_LOCALE/.test(source),
+        `${surface} must not read the build-time constants.`,
+      ).toBe(false);
+    }
   });
 
   it("every page in a route group has a mounting layout above it", () => {
@@ -223,8 +231,14 @@ describe("club-format provider mount census (#3564)", () => {
       surfacesOutsideMountingLayouts(MOUNT_NAMES),
       "A surface outside every mounting layout has no ClubFormatProvider " +
         "above it. Add it to PROVIDERLESS_SURFACES with the reason nothing in " +
-        "its tree needs the club's currency or locale - or give it a provider.",
-    ).toEqual(Object.keys(PROVIDERLESS_SURFACES).sort());
+        "its tree needs the club's currency or locale, or mount one in its own " +
+        "file and add it to SELF_MOUNTING_SURFACES - or give it a provider.",
+    ).toEqual(
+      [
+        ...Object.keys(PROVIDERLESS_SURFACES),
+        ...Object.keys(SELF_MOUNTING_SURFACES),
+      ].sort(),
+    );
   });
 
   /*
@@ -276,37 +290,40 @@ describe("club-format provider mount census (#3564)", () => {
     }
 
     /*
-      AND THE WALK ITSELF WORKS. Several of the surfaces above import nothing
-      but npm packages, so their clean result says as much about the resolver as
-      about the code. `/display` is the case that exercises every part of the
-      machinery at once: a first-party graph, a file below it that really does
-      call `useClubFormat()`, and a provider mount between them that is the
-      reason the call is legitimate. If this stops holding, the six results
-      above mean nothing.
+      AND EACH SELF-MOUNTING SURFACE'S MOUNT IS LOAD-BEARING. The opposite
+      assertion to the ones above, and the reason the two are separate lists: a
+      walk that stopped at the entry's own mount would report a boundary having
+      inspected nothing, so it walks THROUGH and must find a real caller
+      beneath. That is also what proves the consumer detection behind those
+      clean results detects anything at all — several of the surfaces above
+      import nothing but npm packages, so their empty lists say as much about
+      the resolver as about the code.
     */
-    it("stops at a component's own provider, above a real consumer", () => {
-      const { boundaries, consumers } = walkImports(
-        "src/app/display/page.tsx",
-        CLUB_FORMAT_WALK,
-      );
+    for (const [surface, reason] of Object.entries(SELF_MOUNTING_SURFACES)) {
+      it(`${surface} mounts a provider something below it needs`, () => {
+        const { consumers, unresolved } = walkImports(surface, {
+          ...CLUB_FORMAT_WALK,
+          walkThroughEntry: true,
+        });
 
-      expect(boundaries).toContain("src/app/display/display-screen.tsx");
-      expect(consumers).toEqual([]);
+        expect(unresolved).toEqual([]);
+        expect(
+          consumers,
+          `${surface} mounts ClubFormatProvider, and its recorded reason is:` +
+            `\n\n  ${reason}\n\nNothing beneath it calls useClubFormat() any ` +
+            "more, so that mount is now dead weight on a live route. Remove " +
+            "it and move the surface to PROVIDERLESS_SURFACES, or put the " +
+            "read back.",
+        ).not.toEqual([]);
+      });
+    }
 
-      // The component BELOW that boundary is a real `useClubFormat()` caller,
-      // so the clean result above is the boundary working rather than the hook
-      // being absent from the tree.
-      expect(
-        /\buseClubFormat\s*\(/.test(read("src/app/display/display-header-clock.tsx")),
-      ).toBe(true);
-    });
 
     /*
-      AND THE RESOLVER REACHES A WIDE FIRST-PARTY GRAPH. `/display` stops at its
-      boundary after two files, so on its own it proves the STOP and nothing
-      about the walk's reach. The root 404 is the widest providerless tree in
-      the application, and its clean consumer list is only worth anything if the
-      walk really visited it.
+      AND THE RESOLVER REACHES A WIDE FIRST-PARTY GRAPH. `/display` reaches a
+      handful of files, so on its own it says little about the walk's reach.
+      The root 404 is the widest providerless tree in the application, and its
+      clean consumer list is only worth anything if the walk really visited it.
     */
     it("resolves a wide first-party graph", () => {
       const { visited, unresolved } = walkImports(

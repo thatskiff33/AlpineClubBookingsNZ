@@ -20,6 +20,7 @@ vi.mock("@/config/operational", async (importOriginal) => ({
 }));
 
 import { DisplayScreen } from "@/app/display/display-screen";
+import { ClubFormatProvider } from "@/components/club-format-provider";
 import { APP_LOCALE } from "@/config/operational";
 import {
   CLUB_CURRENCY_FALLBACK,
@@ -41,12 +42,12 @@ import {
  *
  * ## Why these assertions can actually fail
  *
- * `/display` sits outside both route-group chrome components, so the club's
- * format arrives as a required PROP on `DisplayScreen`, which mounts the shared
- * `ClubFormatProvider` from it. That makes the locale an INPUT to the render,
- * so this suite can supply two different clubs and demand two different
- * answers — where a component reading an ambient constant agrees with whatever
- * the environment happens to hold and passes either way.
+ * `/display` sits outside both route-group chrome components, so its server
+ * page resolves the club's format itself and mounts the shared
+ * `ClubFormatProvider` around the screen. That makes the locale an INPUT to
+ * the render, so this suite can supply two different clubs and demand two
+ * different answers — where a component reading an ambient constant agrees
+ * with whatever the environment happens to hold and passes either way.
  *
  * ## The two halves, and why both are needed
  *
@@ -152,8 +153,21 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/**
+ * The stack `src/app/display/page.tsx` builds, with the club's format supplied
+ * as the argument rather than resolved from the database. The provider mount
+ * is the page's, not `DisplayScreen`'s — see that file for why — so a test
+ * that means to exercise the real shape has to build it the same way round.
+ */
 async function renderHeaderFor(format: ClubFormat): Promise<HTMLElement> {
-  const { container } = render(<DisplayScreen zone={ZONE} format={format} />);
+  const { container } = render(
+    <ClubFormatProvider
+      currencyCode={format.currencyCode}
+      locale={format.locale}
+    >
+      <DisplayScreen zone={ZONE} />
+    </ClubFormatProvider>,
+  );
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10);
   });

@@ -57,11 +57,13 @@ import {
  * group to prove that nothing under it reaches this hook. So "every page has a
  * provider" is an enforced fact rather than a claim in a docblock.
  *
- * `/display` is the one surface that is deliberately outside that guarantee and
- * takes the values as an explicit prop instead — see `src/app/display/page.tsx`
- * for why, which is the same answer CT-4 gave for the timezone and for the same
- * reason (its sibling `error.tsx` is held at zero data dependencies, and a
- * mount here could not cover it).
+ * `/display` is the one surface deliberately outside that guarantee: it has no
+ * layout and sits in no route group, so its own server page resolves the club's
+ * format and mounts this provider around the screen. See
+ * `src/app/display/page.tsx` for why it does not simply join the chrome — the
+ * same answer CT-4 gave for the timezone, and for the same reason (its sibling
+ * `error.tsx` is held at zero data dependencies, and no mount on that route
+ * could cover it).
  *
  * ## What this stage does NOT move
  *
@@ -138,9 +140,9 @@ export function useClubFormat(): ClubFormat {
         "renders the component bare — render it through the shared test helper in " +
         "src/lib/__tests__/support/club-time-render.tsx, which mounts this provider too, " +
         "or wrap it in <ClubFormatProvider currencyCode=\"...\" locale=\"...\"> and choose " +
-        "the values the assertion is about. The lobby display (/display) mounts nothing: " +
-        "it takes the club's format as an explicit prop, so a component rendered there " +
-        "must take one too.",
+        "the values the assertion is about. The lobby display (/display) is wrapped by " +
+        "neither chrome component: its own server page resolves the club's format and " +
+        "mounts this provider around the screen.",
     );
   }
   return format;

@@ -1,7 +1,16 @@
 // @vitest-environment jsdom
 
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+/*
+  RENDERED THROUGH THE SHARED HELPER, NOT BARE (#3564). `DisplayScreen` sits
+  under a `ClubFormatProvider` that `src/app/display/page.tsx` mounts, and
+  `useClubFormat()` throws without one. The helper supplies it on the shipped
+  New Zealand defaults, so every expectation in this file means exactly what
+  it meant before - and, for that same reason, proves nothing about format
+  authority. `display-club-format.test.tsx` is the suite that does.
+*/
 
 // LTV-030 (ADR-003 §5 "Unattended surface"): a WHOLE-LayoutScreen failure must
 // drop to the known-good FallbackBoard, never a blank wall.
@@ -28,31 +37,6 @@ vi.mock("@/components/lodge-display/modules", async () => {
 });
 
 import { DisplayScreen } from "@/app/display/display-screen";
-
-import {
-  CLUB_CURRENCY_FALLBACK,
-  CLUB_LOCALE_FALLBACK,
-  type ClubFormat,
-} from "@/lib/club-format";
-
-/**
- * The club's format, as the New Zealand defaults, so every expectation in this
- * file means exactly what it meant before #3564 handed `DisplayScreen` this
- * prop. The shipped constants rather than two literals, so there is one home
- * for what "the default" is.
- *
- * A TEST USING THIS DEFAULT PROVES NOTHING ABOUT FORMAT AUTHORITY, which is
- * worth saying rather than leaving for a reader to assume: under `en-NZ` the
- * recorded locale and the build-time constant agree, so the migrated code and
- * the code it replaced give the identical answer. The suite that means to
- * assert the club's locale is the authority is
- * `display-club-format.test.tsx`, which passes one the environment does not
- * hold and demands an answer only that locale produces.
- */
-const CLUB_FORMAT: ClubFormat = {
-  currencyCode: CLUB_CURRENCY_FALLBACK,
-  locale: CLUB_LOCALE_FALLBACK,
-};
 
 /**
  * The club timezone these renders are about (CT-4, #2870).
@@ -157,7 +141,7 @@ afterEach(() => {
 describe("DisplayScreen page-level fallback (LTV-030) — client render throw", () => {
   it("drops a throwing LayoutScreen to the FallbackBoard, with no error text on a real wall", async () => {
     enqueueState({ ...PAYLOAD, layoutRender: THROWING_LAYOUT_RENDER });
-    const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -177,7 +161,7 @@ describe("DisplayScreen page-level fallback (LTV-030) — client render throw", 
   it("shows the preview marker only in preview mode", async () => {
     window.history.pushState({}, "", "/display?preview=1");
     enqueueState({ ...PAYLOAD, layoutRender: THROWING_LAYOUT_RENDER });
-    const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -190,7 +174,7 @@ describe("DisplayScreen page-level fallback (LTV-030) — client render throw", 
 describe("DisplayScreen page-level fallback (LTV-030) — server broken binding", () => {
   it("renders the FallbackBoard when the server flags layoutRenderError (no layoutRender)", async () => {
     enqueueState({ ...PAYLOAD, layoutRenderError: true });
-    const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -203,7 +187,7 @@ describe("DisplayScreen page-level fallback (LTV-030) — server broken binding"
   it("marks the broken binding in preview mode", async () => {
     window.history.pushState({}, "", "/display?previewDevice=dev-9");
     enqueueState({ ...PAYLOAD, layoutRenderError: true });
-    render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
+    render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });

@@ -271,6 +271,19 @@ export interface ProviderWalkOptions {
   hookCall: RegExp;
   /** Where the hook is DEFINED, so its own signature is not read as a call. */
   hookDefinition: string;
+  /**
+   * Walk THROUGH the entry file even though it mounts the provider itself.
+   *
+   * The default is wrong for a SELF-MOUNTING surface — one outside every
+   * chrome layout that mounts the provider in its own file. Stopping at the
+   * entry would report a boundary having inspected nothing, which is a green
+   * result that measured no code at all. Walking through it instead turns the
+   * question around, from "does anything below reach the hook?" to "does
+   * anything below reach the hook, so that the mount is load-bearing rather
+   * than decorative?" — and the surface's own test asserts the consumers are
+   * NON-empty.
+   */
+  walkThroughEntry?: boolean;
 }
 
 /**
@@ -301,7 +314,11 @@ export function walkImports(
     const stripped = stripComments(fs.readFileSync(file, "utf8"));
     const asRelative = relative(file);
 
-    if (stripped.includes(options.mountTag)) {
+    const isEntry = file === entry;
+    if (
+      stripped.includes(options.mountTag) &&
+      !(isEntry && options.walkThroughEntry === true)
+    ) {
       boundaries.push(asRelative);
       continue;
     }

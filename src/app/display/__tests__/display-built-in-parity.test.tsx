@@ -1,32 +1,16 @@
 // @vitest-environment jsdom
 
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  CLUB_CURRENCY_FALLBACK,
-  CLUB_LOCALE_FALLBACK,
-  type ClubFormat,
-} from "@/lib/club-format";
-
-/**
- * The club's format, as the New Zealand defaults, so every expectation in this
- * file means exactly what it meant before #3564 handed `DisplayScreen` this
- * prop. The shipped constants rather than two literals, so there is one home
- * for what "the default" is.
- *
- * A TEST USING THIS DEFAULT PROVES NOTHING ABOUT FORMAT AUTHORITY, which is
- * worth saying rather than leaving for a reader to assume: under `en-NZ` the
- * recorded locale and the build-time constant agree, so the migrated code and
- * the code it replaced give the identical answer. The suite that means to
- * assert the club's locale is the authority is
- * `display-club-format.test.tsx`, which passes one the environment does not
- * hold and demands an answer only that locale produces.
- */
-const CLUB_FORMAT: ClubFormat = {
-  currencyCode: CLUB_CURRENCY_FALLBACK,
-  locale: CLUB_LOCALE_FALLBACK,
-};
+/*
+  RENDERED THROUGH THE SHARED HELPER, NOT BARE (#3564). `DisplayScreen` sits
+  under a `ClubFormatProvider` that `src/app/display/page.tsx` mounts, and
+  `useClubFormat()` throws without one. The helper supplies it on the shipped
+  New Zealand defaults, so every expectation in this file means exactly what
+  it meant before - and, for that same reason, proves nothing about format
+  authority. `display-club-format.test.tsx` is the suite that does.
+*/
 
 /**
  * The club timezone these renders are about (CT-4, #2870).
@@ -165,7 +149,7 @@ describe("LTV-038 everyday-board built-in — visual parity", () => {
       body: { ...state, template: FALLBACK_TEMPLATE_FIELD, layoutRender },
     });
 
-    const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -241,7 +225,7 @@ describe("LTV-038 everyday-board built-in — visual parity", () => {
       body: { ...state, template: FALLBACK_TEMPLATE_FIELD, layoutRender },
     });
 
-    const { container } = render(<DisplayScreen zone={CLUB_ZONE} format={CLUB_FORMAT} />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });

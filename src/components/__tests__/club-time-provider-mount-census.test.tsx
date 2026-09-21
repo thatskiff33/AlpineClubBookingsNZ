@@ -171,7 +171,7 @@ const PROVIDERLESS_SURFACES: Record<string, string> = {
  */
 const CLUB_TIME_WALK = {
   mountTag: "<ClubTimeProvider",
-  hookCall: /useClubTime\s*\(/,
+  hookCall: /\buseClubTime\s*\(/,
   hookDefinition: HOOK_DEFINITION,
 } as const;
 

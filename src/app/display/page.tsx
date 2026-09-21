@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ClubFormatProvider } from "@/components/club-format-provider";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { DisplayScreen } from "./display-screen";
@@ -59,22 +60,40 @@ export const dynamic = "force-dynamic";
   that is `undefined`, so the wall reads New Zealand no matter what the club
   recorded. Resolved here, on the server, where the setting lives.
 
-  ONE DIFFERENCE FROM THE ZONE ABOVE, AND IT IS DELIBERATE: this hands the
-  values to the SHARED `ClubFormatProvider`, which `DisplayScreen` mounts, where
-  the zone travels through a context private to `display-header-clock.tsx`. The
-  private one exists because it predates this seam and CT-6 (#2991) is where it
-  collapses; minting a second private copy of a context introduced in this very
-  change would be two homes for one thing on the day it was born, which is what
-  `INV-SSOT` exists to refuse. The mount census handles it exactly as it handles
-  `skifield-whakapapa-embed.tsx` under the root 404: the import-graph walk from
-  this page stops at the component that mounts its own provider, and reports it
-  as a boundary rather than a violation.
+  TWO DIFFERENCES FROM THE ZONE ABOVE, BOTH DELIBERATE.
 
-  The reason `/display` still takes a PROP rather than joining a chrome mount is
-  unchanged and is stated above: its sibling `error.tsx` is held at zero data
-  dependencies, and no mount on this route could ever cover it.
+  FIRST, IT IS THE SHARED `ClubFormatProvider`, not a copy private to this
+  route. The zone travels through a context private to
+  `display-header-clock.tsx`, which exists because it predates this seam and
+  CT-6 (#2991) is where it collapses; minting a second private copy of a
+  context introduced in this very change would be two homes for one thing on
+  the day it was born, which is what `INV-SSOT` exists to refuse.
+
+  SECOND, THE MOUNT IS HERE RATHER THAN INSIDE `DisplayScreen`. That component
+  is the obvious home and sits at exactly its size budget, so wrapping it there
+  cost twenty-one lines it may not have; mounting from the server page costs
+  none and puts the resolve and the mount in one place. It also keeps
+  `DisplayScreen`'s signature — a zone and nothing else — which is what twenty
+  test call sites already pass.
+
+  `club-format-provider-mount-census.test.tsx` records this surface as
+  SELF-MOUNTING rather than provider-less, and checks both halves of that
+  claim: that the mount is really here, and that something below it really does
+  reach `useClubFormat()`, so the mount is load-bearing rather than decorative.
+
+  The reason `/display` still resolves its own values rather than joining a
+  chrome mount is unchanged and is stated above: its sibling `error.tsx` is
+  held at zero data dependencies, and no mount on this route could ever cover
+  it.
 */
 export default async function DisplayPage() {
   const [zone, format] = await Promise.all([clubTimeZone(), getClubFormat()]);
-  return <DisplayScreen zone={zone} format={format} />;
+  return (
+    <ClubFormatProvider
+      currencyCode={format.currencyCode}
+      locale={format.locale}
+    >
+      <DisplayScreen zone={zone} />
+    </ClubFormatProvider>
+  );
 }
