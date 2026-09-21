@@ -43,7 +43,11 @@ import {
   type SeasonRateData,
 } from "@/lib/pricing";
 import { formatDateOnly } from "@/lib/date-only";
-import { storedNightPriceSourceIsInexact } from "@/lib/stored-sold-price-evidence";
+import {
+  INEXACT_NIGHT_PRICE_SOURCES,
+  storedNightPriceSourceIsInexact,
+} from "@/lib/stored-sold-price-evidence";
+import { NON_MEMBER_RATE_HOLDER_KEY } from "@/lib/membership-type-rate-coverage";
 import {
   applyRateDerivedNightRewrites,
   RateDerivedBackfillRacedError,
@@ -84,7 +88,14 @@ export type RateDerivationResidueReason =
   /** The engine could not price a night: no active season rate covers it. */
   | "NO_SEASON_RATE"
   /** The engine's vector does not reproduce the stored total to the cent. */
-  | "RATE_TABLE_DOES_NOT_REPRODUCE_TOTAL";
+  | "RATE_TABLE_DOES_NOT_REPRODUCE_TOTAL"
+  /**
+   * A member priced at the non-member type may have been a type-forced member
+   * (no group discount) or a #2543 lockout reprice (discount-eligible); the
+   * snapshot cannot say which, and BOTH readings reproduce the total with
+   * different splits. Listed rather than guessed.
+   */
+  | "AMBIGUOUS_RATE_SOURCE";
 
 export type StrandRewritePlan = {
   bookingGuestId: string;
@@ -127,20 +138,39 @@ export function isRateDerivationCandidate(strand: StoredStrand): boolean {
 }
 
 /**
- * The sale-time rate source, read back from what was stored. It matters only
- * to the group-discount substitution, which lifts a `NON_MEMBER_DEFAULT` guest
- * to the configured type; a wrong reading here cannot invent money, because
- * the total check below refuses a vector that does not reproduce the sale.
+ * The sale-time rate source, read back from what was stored. The engine keys
+ * a night's RATE on the stored snapshot; the source decides only whether the
+ * group discount may substitute the guest's type, and it does so for
+ * `NON_MEMBER_DEFAULT` alone (`calculateBookingPrice`).
+ *
+ * ONE SHAPE IS AMBIGUOUS: a member whose snapshot is the built-in NON_MEMBER
+ * type was either a type-forced member (`TYPE_POLICY_FORCED`, no discount) or
+ * a #2543 unpaid-subscription reprice (`NON_MEMBER_DEFAULT`, discount-eligible),
+ * and the snapshot records neither. The planner evaluates such a strand under
+ * BOTH readings and accepts only a reading that reproduces the total while the
+ * other does not, or both reproducing identically; two different reproducing
+ * splits are `AMBIGUOUS_RATE_SOURCE`. A wrong reading elsewhere cannot invent
+ * money, because the total check refuses a vector that does not reproduce.
  */
 function rateSourceFromSnapshot(
   strand: StoredStrand,
   nonMemberTypeId: string | null,
+  ambiguousMemberReading: "TYPE_POLICY_FORCED" | "NON_MEMBER_DEFAULT",
 ): RateSource {
   if (strand.otherLodgeMember) return "OTHER_LODGE_MEMBER";
   if (!strand.isMember) return "NON_MEMBER_DEFAULT";
   return strand.rateMembershipTypeId !== null && strand.rateMembershipTypeId === nonMemberTypeId
-    ? "TYPE_POLICY_FORCED"
+    ? ambiguousMemberReading
     : "OWN_TYPE";
+}
+
+function isAmbiguousMember(strand: StoredStrand, nonMemberTypeId: string | null): boolean {
+  return (
+    strand.isMember &&
+    !strand.otherLodgeMember &&
+    strand.rateMembershipTypeId !== null &&
+    strand.rateMembershipTypeId === nonMemberTypeId
+  );
 }
 
 /**
@@ -187,18 +217,29 @@ export function planRateDerivedNightPrices(args: {
     priceable.push(strand);
   }
 
-  const guests: GuestInput[] = priceable.map((strand) => ({
-    ageTier: strand.ageTier,
-    isMember: strand.isMember,
-    otherLodgeMember: strand.otherLodgeMember ?? null,
-    rateMembershipTypeId: strand.rateMembershipTypeId as string,
-    rateSource: rateSourceFromSnapshot(strand, args.nonMemberTypeId),
-    nights: strand.nights.map((night) => night.stayDate),
-  }));
+  // Two engine runs at most: every ambiguous member read as type-forced, then
+  // as discount-eligible. A guest's own vector depends on its own reading only
+  // (the party count that gates the discount counts everybody regardless), so
+  // run A holds each ambiguous strand's forced vector and run B its eligible
+  // one, whatever the other strands are.
+  const guestsUnder = (reading: "TYPE_POLICY_FORCED" | "NON_MEMBER_DEFAULT"): GuestInput[] =>
+    priceable.map((strand) => ({
+      ageTier: strand.ageTier,
+      isMember: strand.isMember,
+      otherLodgeMember: strand.otherLodgeMember ?? null,
+      rateMembershipTypeId: strand.rateMembershipTypeId as string,
+      rateSource: rateSourceFromSnapshot(strand, args.nonMemberTypeId, reading),
+      nights: strand.nights.map((night) => night.stayDate),
+    }));
+  const anyAmbiguous = priceable.some((strand) => isAmbiguousMember(strand, args.nonMemberTypeId));
 
-  let breakdown: ReturnType<typeof calculateBookingPrice>;
+  let forced: ReturnType<typeof calculateBookingPrice>;
+  let eligible: ReturnType<typeof calculateBookingPrice> | null = null;
   try {
-    breakdown = calculateBookingPrice(booking.checkIn, booking.checkOut, guests, args.seasons, args.groupDiscount);
+    forced = calculateBookingPrice(booking.checkIn, booking.checkOut, guestsUnder("TYPE_POLICY_FORCED"), args.seasons, args.groupDiscount);
+    eligible = anyAmbiguous
+      ? calculateBookingPrice(booking.checkIn, booking.checkOut, guestsUnder("NON_MEMBER_DEFAULT"), args.seasons, args.groupDiscount)
+      : null;
   } catch {
     for (const strand of priceable) {
       if (candidates.includes(strand)) {
@@ -208,18 +249,39 @@ export function planRateDerivedNightPrices(args: {
     return { bookingId: booking.id, rewrite, residue };
   }
 
-  priceable.forEach((strand, index) => {
-    if (!candidates.includes(strand)) return;
-    const priced = breakdown.guests[index];
+  const reproduces = (strand: StoredStrand, priced: ReturnType<typeof calculateBookingPrice>["guests"][number] | undefined) => {
     const derivedTotalCents = priced?.perNightCents.reduce((sum, cents) => sum + cents, 0) ?? NaN;
-    const nightDates = priced?.nightDates ?? [];
-    const reproduces =
+    const ok =
       priced !== undefined &&
       priced.perNightCents.length === strand.nights.length &&
-      nightDates.length === strand.nights.length &&
+      (priced.nightDates ?? []).length === strand.nights.length &&
       priced.perNightCents.every((cents) => Number.isInteger(cents) && cents >= 0) &&
       derivedTotalCents === strand.priceCents;
-    if (!reproduces) {
+    return { ok, derivedTotalCents };
+  };
+
+  priceable.forEach((strand, index) => {
+    if (!candidates.includes(strand)) return;
+    const forcedRead = reproduces(strand, forced.guests[index]);
+    let priced = forced.guests[index];
+    if (isAmbiguousMember(strand, args.nonMemberTypeId) && eligible !== null) {
+      const eligibleRead = reproduces(strand, eligible.guests[index]);
+      if (forcedRead.ok && eligibleRead.ok) {
+        const same =
+          forced.guests[index]!.perNightCents.length === eligible.guests[index]!.perNightCents.length &&
+          forced.guests[index]!.perNightCents.every((cents, k) => cents === eligible!.guests[index]!.perNightCents[k]);
+        if (!same) {
+          residue.push({ bookingGuestId: strand.id, guestTotalCents: strand.priceCents, reason: "AMBIGUOUS_RATE_SOURCE", derivedTotalCents: strand.priceCents });
+          return;
+        }
+      } else if (eligibleRead.ok) {
+        priced = eligible.guests[index];
+      }
+    }
+    const verdict = reproduces(strand, priced);
+    const derivedTotalCents = verdict.derivedTotalCents;
+    const nightDates = priced?.nightDates ?? [];
+    if (!verdict.ok || priced === undefined) {
       residue.push({
         bookingGuestId: strand.id,
         guestTotalCents: strand.priceCents,
@@ -265,11 +327,29 @@ export async function applyRateDerivedNightPrices(
   return applyRateDerivedNightRewrites(plan.rewrite, store);
 }
 
-/** The audit row's metadata for one booking's apply: every strand, before and after. */
-export function rateDerivedBackfillAuditMetadata(plan: BookingBackfillPlan) {
-  return {
-    bookingId: plan.bookingId,
-    rewrittenStrands: plan.rewrite.map((strand) => ({
+/**
+ * The audit rows one booking's apply writes: ONE PER REWRITTEN STRAND, carrying
+ * that strand's every before/after pair, plus one for the booking with the
+ * counts and the residue. Per strand rather than one row per booking because
+ * the audit writer caps a row's metadata and drops a non-string field whole
+ * past it (`audit-structured-detail.ts`); a large imported party would lose
+ * exactly the before/after pairs that are this rewrite's reverse path. A
+ * strand's nights are a handful, so a strand row always fits.
+ */
+export function rateDerivedBackfillAuditRows(plan: BookingBackfillPlan): Array<{
+  entityType: "Booking" | "BookingGuest";
+  entityId: string;
+  summary: string;
+  details: string;
+  metadata: Record<string, unknown>;
+}> {
+  const strandRows = plan.rewrite.map((strand) => ({
+    entityType: "BookingGuest" as const,
+    entityId: strand.bookingGuestId,
+    summary: "Re-derived a guest's evenly-split night prices from the rate table; the guest's total unchanged",
+    details: `${strand.nights.length} night row(s) now RATE_DERIVED; guest total ${strand.guestTotalCents} cents unchanged`,
+    metadata: {
+      bookingId: plan.bookingId,
       bookingGuestId: strand.bookingGuestId,
       guestTotalCents: strand.guestTotalCents,
       nightPrices: strand.nights.map((night) => ({
@@ -278,9 +358,20 @@ export function rateDerivedBackfillAuditMetadata(plan: BookingBackfillPlan) {
         fromSource: night.fromSource,
         toPriceCents: night.toPriceCents,
       })),
-    })),
-    residue: plan.residue,
+    },
+  }));
+  const bookingRow = {
+    entityType: "Booking" as const,
+    entityId: plan.bookingId,
+    summary: "Re-derived a booking's evenly-split night prices from the rate table; every guest total unchanged",
+    details: `${plan.rewrite.length} strand(s) rewritten as RATE_DERIVED (one entry each); ${plan.residue.length} strand(s) listed as residue`,
+    metadata: {
+      bookingId: plan.bookingId,
+      rewrittenStrandIds: plan.rewrite.map((strand) => strand.bookingGuestId),
+      residue: plan.residue,
+    },
   };
+  return [...strandRows, bookingRow];
 }
 
 /** A human-readable report of a set of plans, for the dry run and the apply. */
@@ -333,8 +424,6 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { loadActiveSeasonRates } from "@/lib/booking-modify-plan";
 import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 
-const NON_MEMBER_MEMBERSHIP_TYPE_KEY = "NON_MEMBER";
-
 /** The bookings that hold at least one candidate strand, oldest first. */
 export async function findRateDerivationCandidateBookings(
   store: typeof prisma,
@@ -342,8 +431,10 @@ export async function findRateDerivationCandidateBookings(
 ): Promise<string[]> {
   const rows = await store.bookingGuestNight.findMany({
     where: {
-      priceSource: { in: ["EVEN_SPLIT", "UNKNOWN"] },
-      priceCents: { not: null },
+      // The same set the candidate predicate reads, so the pre-filter cannot
+      // stop finding what the planner would judge. NULL rows are kept so a
+      // strand holding one is LISTED (`UNVALUED_NIGHT`) rather than unseen.
+      priceSource: { in: [...INEXACT_NIGHT_PRICE_SOURCES] },
       ...(scope.bookingId ? { bookingGuest: { bookingId: scope.bookingId } } : {}),
     },
     select: { bookingGuest: { select: { bookingId: true, booking: { select: { createdAt: true } } } } },
@@ -397,7 +488,7 @@ export async function planBookingFromStore(
 export async function loadRateDerivationConfig(store: typeof prisma) {
   const [setting, nonMember] = await Promise.all([
     store.groupDiscountSetting.findUnique({ where: { id: "default" } }),
-    store.membershipType.findFirst({ where: { key: NON_MEMBER_MEMBERSHIP_TYPE_KEY }, select: { id: true } }),
+    store.membershipType.findFirst({ where: { key: NON_MEMBER_RATE_HOLDER_KEY }, select: { id: true } }),
   ]);
   return {
     // The FIRST-purchase mapper: the backfill reproduces what a sale priced,
@@ -438,29 +529,36 @@ export async function runRateDerivedNightPriceBackfill(args: {
     try {
       const rows = await store.$transaction(async (tx) => {
         const written = await applyRateDerivedNightPrices(plan, tx);
+        // The subject is the owner's member id, and only that: an
+        // organisation-owned booking has none, exactly as the officer repair
+        // records it (`bookingOwner` reads `memberId` alone from this shape).
         const booking = await tx.booking.findUniqueOrThrow({
           where: { id: bookingId },
-          select: { memberId: true, organisationId: true, member: { select: { id: true } }, organisation: { select: { name: true, email: true } } },
+          select: { memberId: true },
         });
-        await createAuditLog(
-          {
-            action: "booking-payment.stored-night-price.rate-derived",
-            // No session actor: an operator-run backfill. The subject is the
-            // booking's owner, as the officer repair records it.
-            memberId: null,
-            subjectMemberId: bookingOwner(booking).memberId,
-            targetId: bookingId,
-            entityType: "Booking",
-            entityId: bookingId,
-            category: "payment",
-            severity: "important",
-            outcome: "success",
-            summary: "Re-derived a booking's evenly-split night prices from the rate table; every guest total unchanged",
-            details: `${plan.rewrite.length} strand(s), ${written} night row(s) now RATE_DERIVED; ${plan.residue.length} strand(s) listed as residue`,
-            metadata: rateDerivedBackfillAuditMetadata(plan),
-          },
-          tx,
-        );
+        // One write site, several rows: a row per rewritten strand with its
+        // before/after pairs, then the booking's own with the counts.
+        for (const row of rateDerivedBackfillAuditRows(plan)) {
+          await createAuditLog(
+            {
+              action: "booking-payment.stored-night-price.rate-derived",
+              // No session actor: an operator-run backfill. The subject is the
+              // booking's owner, as the officer repair records it.
+              memberId: null,
+              subjectMemberId: bookingOwner(booking).memberId,
+              targetId: bookingId,
+              entityType: row.entityType,
+              entityId: row.entityId,
+              category: "payment",
+              severity: "important",
+              outcome: "success",
+              summary: row.summary,
+              details: row.details,
+              metadata: row.metadata,
+            },
+            tx,
+          );
+        }
         return written;
       });
       applied.push({ bookingId, rows });

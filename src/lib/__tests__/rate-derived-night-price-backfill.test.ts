@@ -15,7 +15,7 @@ import {
   isRateDerivationCandidate,
   planRateDerivedNightPrices,
   RateDerivedBackfillRacedError,
-  rateDerivedBackfillAuditMetadata,
+  rateDerivedBackfillAuditRows,
   type StoredStrand,
 } from "@/lib/rate-derived-night-price-backfill";
 
@@ -153,6 +153,69 @@ describe("planRateDerivedNightPrices", () => {
     expect(result.rewrite[0]?.nights.map((n) => n.toPriceCents)).toEqual([8000, 9000]);
   });
 
+  describe("a member priced at the non-member type: type-forced or a #2543 lockout reprice, the snapshot cannot say", () => {
+    // Group discount: parties of 2+ lift a NON_MEMBER_DEFAULT guest to the
+    // member type's rows. Only a discount-eligible reading substitutes.
+    const discount = { enabled: true as const, minGroupSize: 2, summerOnly: false, rateMembershipTypeId: MEMBER_TYPE };
+    const lockedOut = (id: string, priceCents: number, split: [number, number]) =>
+      evenlySplit(id, {
+        isMember: true,
+        rateMembershipTypeId: NON_MEMBER_TYPE,
+        priceCents,
+        nights: [
+          { id: `${id}-n1`, stayDate: D("2026-08-15"), priceCents: split[0], priceSource: "EVEN_SPLIT" },
+          { id: `${id}-n2`, stayDate: D("2026-08-16"), priceCents: split[1], priceSource: "EVEN_SPLIT" },
+        ],
+      });
+    const companion = evenlySplit("companion");
+    const withDiscount = (guests: StoredStrand[]) =>
+      planRateDerivedNightPrices({ booking: booking(guests), seasons: SEASONS, groupDiscount: discount, nonMemberTypeId: NON_MEMBER_TYPE });
+
+    it("takes the reading that reproduces the total when only one does", () => {
+      // Sold at the plain non-member rows (8000 + 9000): the type-forced reading.
+      const forced = withDiscount([companion, lockedOut("m", 17000, [8500, 8500])]);
+      expect(forced.rewrite.find((r) => r.bookingGuestId === "m")?.nights.map((n) => n.toPriceCents)).toEqual([8000, 9000]);
+      // Sold at the discounted member rows (6000 + 7000): the lockout reading.
+      const eligible = withDiscount([companion, lockedOut("m", 13000, [6500, 6500])]);
+      expect(eligible.rewrite.find((r) => r.bookingGuestId === "m")?.nights.map((n) => n.toPriceCents)).toEqual([6000, 7000]);
+      expect(eligible.residue).toEqual([]);
+    });
+
+    it("lists the strand as AMBIGUOUS_RATE_SOURCE when both readings reproduce the total with different splits", () => {
+      // A rate table where the two readings sum the same but split differently.
+      const seasons: SeasonRateData[] = [
+        { seasonId: "a", startDate: D("2026-08-01"), endDate: D("2026-08-15"), rates: [
+          { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 6000 },
+          { ageTier: "ADULT", membershipTypeId: NON_MEMBER_TYPE, pricePerNightCents: 7000 },
+        ] },
+        { seasonId: "b", startDate: D("2026-08-16"), endDate: D("2026-08-31"), rates: [
+          { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 7000 },
+          { ageTier: "ADULT", membershipTypeId: NON_MEMBER_TYPE, pricePerNightCents: 6000 },
+        ] },
+      ];
+      const result = planRateDerivedNightPrices({
+        booking: booking([companion, lockedOut("m", 13000, [6500, 6500])]),
+        seasons,
+        groupDiscount: discount,
+        nonMemberTypeId: NON_MEMBER_TYPE,
+      });
+      expect(result.rewrite.map((r) => r.bookingGuestId)).toEqual(["companion"]);
+      expect(result.residue).toEqual([
+        { bookingGuestId: "m", guestTotalCents: 13000, reason: "AMBIGUOUS_RATE_SOURCE", derivedTotalCents: 13000 },
+      ]);
+    });
+
+    it("accepts both readings when they agree to the night (no discount in play)", () => {
+      const result = planRateDerivedNightPrices({
+        booking: booking([lockedOut("m", 17000, [8500, 8500])]),
+        seasons: SEASONS,
+        groupDiscount: undefined,
+        nonMemberTypeId: NON_MEMBER_TYPE,
+      });
+      expect(result.rewrite[0]?.nights.map((n) => n.toPriceCents)).toEqual([8000, 9000]);
+    });
+  });
+
   it("does nothing for a booking with no candidate", () => {
     const sold = evenlySplit("sold", {
       nights: [{ id: "s-n1", stayDate: D("2026-08-15"), priceCents: 6000, priceSource: "SOLD" }],
@@ -196,10 +259,16 @@ describe("the report and the audit metadata", () => {
     expect(report).toContain("Strands to rewrite: 1 (2 night rows)");
     expect(report).toContain("NO_RATE_SNAPSHOT: 1");
     expect(report).toContain("rewrite guest a (total 13000c): 2026-08-15 6500->6000, 2026-08-16 6500->7000");
-    expect(rateDerivedBackfillAuditMetadata(plans[0]!)).toEqual({
-      bookingId: "bk1",
-      rewrittenStrands: [
-        {
+    // One row per rewritten strand (its before/after pairs, small enough to
+    // survive the audit writer's metadata cap), then the booking's own.
+    expect(rateDerivedBackfillAuditRows(plans[0]!)).toEqual([
+      {
+        entityType: "BookingGuest",
+        entityId: "a",
+        summary: expect.stringContaining("guest's evenly-split night prices"),
+        details: "2 night row(s) now RATE_DERIVED; guest total 13000 cents unchanged",
+        metadata: {
+          bookingId: "bk1",
           bookingGuestId: "a",
           guestTotalCents: 13000,
           nightPrices: [
@@ -207,9 +276,19 @@ describe("the report and the audit metadata", () => {
             { date: "2026-08-16", fromPriceCents: 6500, fromSource: "EVEN_SPLIT", toPriceCents: 7000 },
           ],
         },
-      ],
-      residue: [{ bookingGuestId: "no-snapshot", guestTotalCents: 13000, reason: "NO_RATE_SNAPSHOT" }],
-    });
+      },
+      {
+        entityType: "Booking",
+        entityId: "bk1",
+        summary: expect.stringContaining("booking's evenly-split night prices"),
+        details: "1 strand(s) rewritten as RATE_DERIVED (one entry each); 1 strand(s) listed as residue",
+        metadata: {
+          bookingId: "bk1",
+          rewrittenStrandIds: ["a"],
+          residue: [{ bookingGuestId: "no-snapshot", guestTotalCents: 13000, reason: "NO_RATE_SNAPSHOT" }],
+        },
+      },
+    ]);
   });
 });
 
@@ -223,12 +302,7 @@ describe("runRateDerivedNightPriceBackfill (store-facing)", () => {
     const tx = {
       bookingGuestNight: { updateMany },
       booking: {
-        findUniqueOrThrow: vi.fn().mockResolvedValue({
-          memberId: "m1",
-          organisationId: null,
-          member: { id: "m1" },
-          organisation: null,
-        }),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ memberId: "m1" }),
       },
       auditLog: { create: auditCreate },
     };
@@ -283,21 +357,25 @@ describe("runRateDerivedNightPriceBackfill (store-facing)", () => {
     expect(result.applied).toEqual([{ bookingId: "bk1", rows: 2 }]);
     expect(result.raced).toEqual([]);
     expect(updateMany).toHaveBeenCalledTimes(2);
-    const audit = auditCreate.mock.calls[0]?.[0]?.data;
-    expect(audit).toMatchObject({
+    // Two rows: the strand's, then the booking's - one write site.
+    expect(auditCreate).toHaveBeenCalledTimes(2);
+    const strandAudit = auditCreate.mock.calls[0]?.[0]?.data;
+    expect(strandAudit).toMatchObject({
       action: "booking-payment.stored-night-price.rate-derived",
       category: "payment",
       severity: "important",
       outcome: "success",
       targetId: "bk1",
-      entityType: "Booking",
+      entityType: "BookingGuest",
+      entityId: "a",
       subjectMemberId: "m1",
     });
-    const metadata = JSON.parse(typeof audit.metadata === "string" ? audit.metadata : JSON.stringify(audit.metadata));
-    expect(metadata.rewrittenStrands[0].nightPrices).toEqual([
+    const metadata = JSON.parse(typeof strandAudit.metadata === "string" ? strandAudit.metadata : JSON.stringify(strandAudit.metadata));
+    expect(metadata.nightPrices).toEqual([
       { date: "2026-08-15", fromPriceCents: 6500, fromSource: "EVEN_SPLIT", toPriceCents: 6000 },
       { date: "2026-08-16", fromPriceCents: 6500, fromSource: "EVEN_SPLIT", toPriceCents: 7000 },
     ]);
+    expect(auditCreate.mock.calls[1]?.[0]?.data).toMatchObject({ entityType: "Booking", entityId: "bk1" });
   });
 
   it("a raced row rolls the booking back and names it, and the run continues", async () => {

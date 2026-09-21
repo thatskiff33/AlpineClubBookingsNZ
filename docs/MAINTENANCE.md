@@ -1480,6 +1480,15 @@ candidate bookings, `--json` adds a machine-readable copy of the report. A
 booking whose row changed between the plan and the write is rolled back and
 named as raced; re-run to plan it again from what it then holds.
 
+**Rolling the deploy back after `--apply` has run is not safe.** A colour
+whose client predates `RATE_DERIVED` errors on every read that selects a
+night's provenance — the booking detail, every edit door, the money build-up,
+the finance exports — for each rewritten booking. Run the script only once the
+release is one you will not roll back. If a rollback becomes unavoidable
+afterwards, first reset the rewritten rows from their audit rows (each
+`booking-payment.stored-night-price.rate-derived` strand entry carries
+`fromPriceCents` and `fromSource` per night), then route back.
+
 ### Census the booking ledger identity (#3340)
 
 `scripts/audit-booking-ledger-residual.ts` is a READ-ONLY census of
