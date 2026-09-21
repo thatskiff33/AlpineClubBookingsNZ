@@ -42,7 +42,7 @@ const linkSchema = z.object({
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "edit" },
@@ -88,10 +88,7 @@ export async function POST(
 
   const parsed = linkSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "xeroContactId is required" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "xeroContactId is required" }, { status: 400 });
   }
 
   try {
@@ -115,14 +112,11 @@ export async function POST(
         resourceType: "CONTACT",
         workflow: "adminLinkMemberToXeroContact",
         context: `verifyContact(${parsed.data.xeroContactId})`,
-      },
+      }
     );
     const contact = contactRes.body.contacts?.[0];
     if (!contact) {
-      return NextResponse.json(
-        { error: "Xero contact not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Xero contact not found" }, { status: 404 });
     }
 
     await refreshXeroContactCachesFromContact(contact);
@@ -163,7 +157,7 @@ export async function POST(
             seasonYears: subscriptionSync.seasonYears,
             errors: subscriptionSync.errors,
           },
-          "Subscription history refresh completed with errors after member relink",
+          "Subscription history refresh completed with errors after member relink"
         );
       }
     } catch (historyError) {
@@ -180,7 +174,7 @@ export async function POST(
           xeroContactId: parsed.data.xeroContactId,
           flushedSubscriptionHistory,
         },
-        "Failed to refresh member subscription history after relink",
+        "Failed to refresh member subscription history after relink"
       );
     }
 
@@ -203,10 +197,7 @@ export async function POST(
       },
     });
 
-    logger.info(
-      { memberId: id, xeroContactId: parsed.data.xeroContactId },
-      "Manually linked member to Xero contact",
-    );
+    logger.info({ memberId: id, xeroContactId: parsed.data.xeroContactId }, "Manually linked member to Xero contact");
 
     return NextResponse.json({
       xeroContactId: parsed.data.xeroContactId,
@@ -254,23 +245,13 @@ export async function POST(
         status: 409,
       });
     }
-    const xeroError = getXeroApiErrorInfo(
-      err,
-      "Failed to link to Xero contact",
-    );
+    const xeroError = getXeroApiErrorInfo(err, "Failed to link to Xero contact");
     if (!xeroError.handled) {
       logger.error(
-        {
-          err,
-          memberId: id,
-          xeroDiagnosticMessage: xeroError.diagnosticMessage,
-        },
-        "Error linking member to Xero contact",
+        { err, memberId: id, xeroDiagnosticMessage: xeroError.diagnosticMessage },
+        "Error linking member to Xero contact"
       );
     }
-    return NextResponse.json(
-      { error: xeroError.clientMessage },
-      { status: xeroError.status },
-    );
+    return NextResponse.json({ error: xeroError.clientMessage }, { status: xeroError.status });
   }
 }

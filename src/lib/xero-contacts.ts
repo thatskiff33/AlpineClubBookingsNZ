@@ -9,7 +9,11 @@
  * xero-duplicate-contacts.ts.
  */
 
-import { Contact, Phone, type XeroClient } from "xero-node";
+import {
+  Contact,
+  Phone,
+  type XeroClient,
+} from "xero-node";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { buildXeroContactUrl } from "@/lib/xero-links";
@@ -70,7 +74,7 @@ export class XeroContactValidationError extends Error {
 
   constructor(missingFields: string[]) {
     super(
-      `Member is missing required fields for Xero contact creation: ${missingFields.join(", ")}`,
+      `Member is missing required fields for Xero contact creation: ${missingFields.join(", ")}`
     );
     this.name = "XeroContactValidationError";
     this.missingFields = missingFields;
@@ -109,7 +113,8 @@ export const XERO_CONTACT_PROVIDER_ANSWER_UNAVAILABLE_CODE =
  * unchanged.
  */
 export type XeroContactProviderAnswerPhase =
-  "EMAIL_SEARCH" | "DUPLICATE_NAME_RECOVERY";
+  | "EMAIL_SEARCH"
+  | "DUPLICATE_NAME_RECOVERY";
 
 export class XeroContactProviderAnswerUnavailableError extends Error {
   readonly code = XERO_CONTACT_PROVIDER_ANSWER_UNAVAILABLE_CODE;
@@ -125,12 +130,12 @@ export class XeroContactProviderAnswerUnavailableError extends Error {
     super(
       input.phase === "EMAIL_SEARCH"
         ? "Xero could not be searched for an existing contact, so nothing was " +
-            "done for this member rather than risk creating a second Xero " +
-            "customer for somebody who already has one. Try again later."
+          "done for this member rather than risk creating a second Xero " +
+          "customer for somebody who already has one. Try again later."
         : "Xero already holds an active contact with this member's name, and " +
-            "nothing here may decide whether it is the same person on the name " +
-            "alone. Link this member by hand, or give the Xero contact a name " +
-            "that tells the two apart.",
+          "nothing here may decide whether it is the same person on the name " +
+          "alone. Link this member by hand, or give the Xero contact a name " +
+          "that tells the two apart.",
     );
     this.name = "XeroContactProviderAnswerUnavailableError";
     this.phase = input.phase;
@@ -389,7 +394,7 @@ export function buildMemberFullName(member: {
 }
 
 export function buildXeroContactDisplayName(
-  contact: Pick<Contact, "name" | "firstName" | "lastName">,
+  contact: Pick<Contact, "name" | "firstName" | "lastName">
 ) {
   if (contact.name?.trim()) {
     return contact.name.trim();
@@ -404,7 +409,7 @@ export function buildXeroContactDisplayName(
 }
 
 function tokenizeXeroContactMatchValue(
-  value: string | null | undefined,
+  value: string | null | undefined
 ): string[] {
   return normalizeXeroContactMatchValue(value)
     .split(/[^a-z0-9]+/)
@@ -414,7 +419,7 @@ function tokenizeXeroContactMatchValue(
 
 export function namesLookSimilarForPotentialMatch(
   memberName: string,
-  contactName: string,
+  contactName: string
 ): boolean {
   const memberTokens = [...new Set(tokenizeXeroContactMatchValue(memberName))];
   const contactTokens = new Set(tokenizeXeroContactMatchValue(contactName));
@@ -587,9 +592,12 @@ async function linkMatchedXeroContact(
     previousXeroContactId?: string | null;
     repairExistingLink?: boolean;
     linkedVia:
-      "email_match" | "email_match_repair" | "name_match" | "name_match_repair";
+      | "email_match"
+      | "email_match_repair"
+      | "name_match"
+      | "name_match_repair";
     contactName?: string | null;
-  },
+  }
 ) {
   const existingLink = await tx.member.findFirst({
     where: {
@@ -604,7 +612,7 @@ async function linkMatchedXeroContact(
 
   if (existingLink) {
     throw new Error(
-      `Matched Xero contact is already linked to ${existingLink.firstName} ${existingLink.lastName}.`,
+      `Matched Xero contact is already linked to ${existingLink.firstName} ${existingLink.lastName}.`
     );
   }
 
@@ -666,21 +674,21 @@ export async function findExistingXeroContactByExactName(input: {
         false, // includeArchived
         true, // summaryOnly
         input.fullName.replace(/"/g, ""),
-        20, // pageSize
+        20 // pageSize
       ),
     {
       operation: "getContacts",
       resourceType: "CONTACT",
       workflow: "findOrCreateXeroContact",
       context: `${input.contextPrefix} searchByName(${input.fullName})`,
-    },
+    }
   );
 
   return (
     contactsResponse.body.contacts?.find(
       (contact) =>
         normalizeXeroContactMatchValue(buildXeroContactDisplayName(contact)) ===
-        normalizedName,
+        normalizedName
     ) ?? null
   );
 }
@@ -691,7 +699,7 @@ export async function findExistingXeroContactByExactName(input: {
 
 export async function findOrCreateXeroContact(
   memberId: string,
-  options?: FindOrCreateXeroContactOptions,
+  options?: FindOrCreateXeroContactOptions
 ): Promise<string> {
   // F7 (#1355): Xero API calls (OAuth refresh, searches, createContacts and
   // its up-to-120s retry sleeps) must NEVER run inside the advisory-locked
@@ -792,11 +800,7 @@ export async function findOrCreateXeroContact(
     | {
         kind: "matched";
         contactId: string;
-        linkedVia:
-          | "email_match"
-          | "email_match_repair"
-          | "name_match"
-          | "name_match_repair";
+        linkedVia: "email_match" | "email_match_repair" | "name_match" | "name_match_repair";
         contactName: string | null;
         operationId: string | null;
         completionInput: Parameters<typeof completeXeroSyncOperation>[1] | null;
@@ -809,83 +813,80 @@ export async function findOrCreateXeroContact(
       };
   let resolved: ResolvedContact | null = null;
 
-  // Search by email first.
-  // Email quotes are stripped to keep the OData filter syntactically valid;
-  // z.string().email() at the API boundary ensures only RFC-valid emails
-  // reach this point, so no further escaping is needed.
+    // Search by email first.
+    // Email quotes are stripped to keep the OData filter syntactically valid;
+    // z.string().email() at the API boundary ensures only RFC-valid emails
+    // reach this point, so no further escaping is needed.
   // Walk-in placeholder owners (#1935) have no real address: skip the Xero
   // email search entirely (a placeholder must never match a real contact) and
   // fall through to creating a contact with an empty email below.
-  if (!isPlaceholderContactEmail(member.email))
-    try {
-      const contactsResponse = await callXeroApi(
-        () =>
-          xero.accountingApi.getContacts(
-            tenantId,
-            undefined, // ifModifiedSince
-            `EmailAddress="${member.email.replace(/"/g, "")}"`, // where clause
-          ),
-        {
-          operation: "getContacts",
-          resourceType: "CONTACT",
-          workflow: "findOrCreateXeroContact",
-          context: `findOrCreateXeroContact searchByEmail(${member.email})`,
-        },
-      );
-      // The condition is the RESPONSE carrying a contact, not that contact being
-      // truthy — deliberately, because the two differ in the direction that
-      // matters. Falling through on a non-empty response would reach the create
-      // path and mint a SECOND Xero contact for a member who already has one, so
-      // an entry the response says is there but does not carry refuses instead.
-      // An empty response leaves `resolved` alone, exactly as before (#2800).
-      const contacts = contactsResponse.body.contacts;
-      if (contacts && contacts.length > 0) {
-        const matchedContact = contacts[0];
-        if (matchedContact === undefined) {
-          throw new Error(
-            `Xero returned ${contacts.length} contact(s) for this email but no first entry; refusing to create a second contact for a member who may already have one.`,
-          );
-        }
-        resolved = {
-          kind: "matched",
-          contactId: matchedContact.contactID!,
-          linkedVia: options?.repairExistingLink
-            ? "email_match_repair"
-            : "email_match",
-          contactName: buildXeroContactDisplayName(matchedContact),
-          operationId: null,
-          completionInput: null,
-        };
+  if (!isPlaceholderContactEmail(member.email)) try {
+    const contactsResponse = await callXeroApi(
+      () =>
+        xero.accountingApi.getContacts(
+          tenantId,
+          undefined, // ifModifiedSince
+          `EmailAddress="${member.email.replace(/"/g, "")}"` // where clause
+        ),
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "findOrCreateXeroContact",
+        context: `findOrCreateXeroContact searchByEmail(${member.email})`,
       }
-    } catch (searchErr) {
-      // Rate-limit errors must propagate — swallowing them would cause a new
-      // contact to be created and waste the daily quota further.
-      if (searchErr instanceof XeroDailyLimitError) throw searchErr;
-      /*
+    );
+    // The condition is the RESPONSE carrying a contact, not that contact being
+    // truthy — deliberately, because the two differ in the direction that
+    // matters. Falling through on a non-empty response would reach the create
+    // path and mint a SECOND Xero contact for a member who already has one, so
+    // an entry the response says is there but does not carry refuses instead.
+    // An empty response leaves `resolved` alone, exactly as before (#2800).
+    const contacts = contactsResponse.body.contacts;
+    if (contacts && contacts.length > 0) {
+      const matchedContact = contacts[0];
+      if (matchedContact === undefined) {
+        throw new Error(
+          `Xero returned ${contacts.length} contact(s) for this email but no first entry; refusing to create a second contact for a member who may already have one.`,
+        );
+      }
+      resolved = {
+        kind: "matched",
+        contactId: matchedContact.contactID!,
+        linkedVia: options?.repairExistingLink ? "email_match_repair" : "email_match",
+        contactName: buildXeroContactDisplayName(matchedContact),
+        operationId: null,
+        completionInput: null,
+      };
+    }
+  } catch (searchErr) {
+    // Rate-limit errors must propagate — swallowing them would cause a new
+    // contact to be created and waste the daily quota further.
+    if (searchErr instanceof XeroDailyLimitError) throw searchErr;
+    /*
       #2939: a caller that asked for an AUTHORITATIVE answer gets a refusal
       here rather than the fall-through. The fall-through below is right for a
       document writer and wrong for a bulk run, and the two differ only in what
       the expensive outcome is — see `requireAuthoritativeMatch`.
     */
-      if (options?.requireAuthoritativeMatch) {
-        logger.warn(
-          { err: searchErr, memberId },
-          "Xero email search failed; refusing to create rather than risk a duplicate",
-        );
-        throw new XeroContactProviderAnswerUnavailableError({
-          phase: "EMAIL_SEARCH",
-          memberId,
-          originalError: searchErr,
-        });
-      }
-      // Any other error (network timeout, transient 5xx) is logged and we
-      // fall through to contact creation. This is intentional: a failed
-      // search is recoverable, whereas failing to create the invoice is not.
+    if (options?.requireAuthoritativeMatch) {
       logger.warn(
-        { err: searchErr, memberId, email: member.email },
-        "Xero email search failed; falling through to contact creation",
+        { err: searchErr, memberId },
+        "Xero email search failed; refusing to create rather than risk a duplicate",
       );
+      throw new XeroContactProviderAnswerUnavailableError({
+        phase: "EMAIL_SEARCH",
+        memberId,
+        originalError: searchErr,
+      });
     }
+    // Any other error (network timeout, transient 5xx) is logged and we
+    // fall through to contact creation. This is intentional: a failed
+    // search is recoverable, whereas failing to create the invoice is not.
+    logger.warn(
+      { err: searchErr, memberId, email: member.email },
+      "Xero email search failed; falling through to contact creation"
+    );
+  }
 
   // #2623 T2: a repair of an EXISTING link that found no email match is one
   // step from minting a second Xero contact for a member who may already have a
@@ -939,7 +940,7 @@ export async function findOrCreateXeroContact(
       memberId,
       "contact",
       "find-or-create",
-      "v1",
+      "v1"
     );
     const {
       operation,
@@ -947,10 +948,7 @@ export async function findOrCreateXeroContact(
     } = await reserveMemberContactCreateOperation(
       memberId,
       (locked) => {
-        const contact = buildMemberXeroContactCreatePayload(
-          locked,
-          emailPolicy,
-        );
+        const contact = buildMemberXeroContactCreatePayload(locked, emailPolicy);
         return {
           input: {
             direction: "OUTBOUND",
@@ -981,14 +979,14 @@ export async function findOrCreateXeroContact(
             tenantId,
             { contacts: [contact] },
             undefined,
-            idempotencyKey,
+            idempotencyKey
           ),
         {
           operation: "createContacts",
           resourceType: "CONTACT",
           workflow: "findOrCreateXeroContact",
           context: `createContacts(findOrCreate ${memberId})`,
-        },
+        }
       );
       const createdContact = response.body.contacts?.[0];
       if (!createdContact?.contactID) {
@@ -1077,9 +1075,7 @@ export async function findOrCreateXeroContact(
                     localId: memberId,
                     xeroObjectType: "CONTACT",
                     xeroObjectId: matchedContact.contactID,
-                    xeroObjectUrl: buildXeroContactUrl(
-                      matchedContact.contactID,
-                    ),
+                    xeroObjectUrl: buildXeroContactUrl(matchedContact.contactID),
                     role: "CONTACT",
                   },
                 ],
@@ -1228,7 +1224,7 @@ export async function findOrCreateXeroContact(
       } catch (failErr) {
         logger.error(
           { err: failErr, memberId },
-          "Failed to record local-link failure on the contact operation",
+          "Failed to record local-link failure on the contact operation"
         );
       }
     }
@@ -1244,7 +1240,7 @@ export async function findOrCreateXeroContact(
     if (linkOutcome.wonWrite) {
       await completeXeroSyncOperation(
         finalResolved.operationId,
-        finalResolved.completionInput,
+        finalResolved.completionInput
       );
     } else {
       logger.warn(
@@ -1253,7 +1249,7 @@ export async function findOrCreateXeroContact(
           resolvedContactId: finalResolved.contactId,
           existingContactId: linkOutcome.contactId,
         },
-        "Concurrent resolver linked a different Xero contact first; recording the unlinked resolution",
+        "Concurrent resolver linked a different Xero contact first; recording the unlinked resolution"
       );
       await completeXeroSyncOperation(finalResolved.operationId, {
         responsePayload: {
@@ -1294,7 +1290,7 @@ export async function findOrCreateXeroContact(
 async function syncContactGroupsBestEffort(
   memberId: string,
   xeroContactId: string,
-  options?: { createdByMemberId?: string },
+  options?: { createdByMemberId?: string }
 ) {
   try {
     await syncManagedXeroContactGroupForMember(memberId, {
@@ -1303,7 +1299,7 @@ async function syncContactGroupsBestEffort(
   } catch (error) {
     logger.error(
       { err: error, memberId, xeroContactId },
-      "Failed to sync managed Xero contact groups after linking contact",
+      "Failed to sync managed Xero contact groups after linking contact"
     );
   }
 }
@@ -1314,7 +1310,8 @@ async function syncContactGroupsBestEffort(
  * contacts by email.
  */
 export type XeroContactCreatePartialSuccessPhase =
-  "PROVIDER_CONTACT_CREATED" | "LOCAL_MEMBER_LINK_COMMITTED";
+  | "PROVIDER_CONTACT_CREATED"
+  | "LOCAL_MEMBER_LINK_COMMITTED";
 
 /**
  * A fixed, typed boundary for irreversible Xero contact-create progress.
@@ -1371,7 +1368,7 @@ async function persistProviderCreatedContactProofOrThrow(
 
 export async function createXeroContactForMember(
   memberId: string,
-  options?: { createdByMemberId?: string },
+  options?: { createdByMemberId?: string }
 ): Promise<string> {
   // F7 (#1355): same restructure as findOrCreateXeroContact — the Xero
   // create (OAuth refresh + up-to-120s retry sleeps) runs OUTSIDE any
@@ -1384,12 +1381,12 @@ export async function createXeroContactForMember(
   // undeclared installation must not reach the provider at all.
   const { policy: emailPolicy } = await resolveXeroContactEmailPolicy();
   const idempotencyKey = buildXeroIdempotencyKey(
-    "member",
-    memberId,
-    "contact",
-    "create",
-    "v1",
-  );
+      "member",
+      memberId,
+      "contact",
+      "create",
+      "v1"
+    );
   const { operation, value: contact } =
     await reserveMemberContactCreateOperation(memberId, (locked) => {
       const contact = buildMemberXeroContactCreatePayload(locked, emailPolicy);
@@ -1423,14 +1420,14 @@ export async function createXeroContactForMember(
           tenantId,
           { contacts: [contact] },
           undefined,
-          idempotencyKey,
+          idempotencyKey
         ),
       {
         operation: "createContacts",
         resourceType: "CONTACT",
         workflow: "createXeroContactForMember",
         context: `createContacts(member ${memberId})`,
-      },
+      }
     );
     const createdContact = response.body.contacts?.[0];
     if (!createdContact?.contactID) {
@@ -1483,7 +1480,7 @@ export async function createXeroContactForMember(
     } catch (failErr) {
       logger.error(
         { err: failErr, memberId },
-        "Failed to record local-link failure on the contact operation",
+        "Failed to record local-link failure on the contact operation"
       );
     }
     throw new XeroContactCreatePartialSuccessError(
@@ -1570,7 +1567,7 @@ export async function createXeroContactForMember(
 export async function getContactFirstInvoiceDate(
   xero: XeroClient,
   tenantId: string,
-  contactID: string,
+  contactID: string
 ): Promise<Date | null> {
   try {
     const response = await callXeroApi(
@@ -1588,14 +1585,14 @@ export async function getContactFirstInvoiceDate(
           false, // includeArchived
           false, // createdByMyApp
           undefined, // unitdp
-          false, // summaryOnly
+          false // summaryOnly
         ),
       {
         operation: "getInvoices",
         resourceType: "INVOICE",
         workflow: "getContactFirstInvoiceDate",
         context: `getContactFirstInvoiceDate(${contactID})`,
-      },
+      }
     );
     const invoices = response.body.invoices ?? [];
     return xeroCalendarDateAsDateOnly(invoices[0]?.date);
@@ -1604,7 +1601,7 @@ export async function getContactFirstInvoiceDate(
     if (err instanceof XeroDailyLimitError) throw err;
     logger.warn(
       { err, contactID },
-      "Failed to fetch first invoice date from Xero",
+      "Failed to fetch first invoice date from Xero"
     );
     return null;
   }
@@ -1641,7 +1638,7 @@ interface RetryXeroWriteWithContactRepairOptions<T> {
   }) => Promise<T>;
   repairContactLink?: (
     memberId: string | null,
-    options?: FindOrCreateXeroContactOptions,
+    options?: FindOrCreateXeroContactOptions
   ) => Promise<string>;
   persistUpdatedOperation?: (input: {
     operationId: string;
@@ -1668,7 +1665,7 @@ async function persistUpdatedXeroOperationRequest(input: {
 }
 
 export async function retryXeroWriteWithContactRepair<T>(
-  options: RetryXeroWriteWithContactRepairOptions<T>,
+  options: RetryXeroWriteWithContactRepairOptions<T>
 ): Promise<T> {
   const initialKeys = options.buildOperationKeys?.(options.currentContactId);
 
@@ -1692,10 +1689,7 @@ export async function retryXeroWriteWithContactRepair<T>(
     // repair against whoever a search happens to return.
     const repairContactLink =
       options.repairContactLink ??
-      ((
-        memberId: string | null,
-        repairOptions?: FindOrCreateXeroContactOptions,
-      ) => {
+      ((memberId: string | null, repairOptions?: FindOrCreateXeroContactOptions) => {
         if (!memberId) {
           throw new Error(
             `Cannot repair a Xero contact for ${options.workflow}: the booking has no member, and no invoiced-party repair was supplied (#3369).`,
@@ -1727,7 +1721,7 @@ export async function retryXeroWriteWithContactRepair<T>(
         previousContactId: options.currentContactId,
         repairedContactId,
       },
-      "Retrying Xero write after repairing a stale contact link",
+      "Retrying Xero write after repairing a stale contact link"
     );
 
     return options.run({
@@ -1749,7 +1743,7 @@ export async function updateXeroContact(
     localId?: string;
     createdByMemberId?: string;
     preserveXeroName?: boolean;
-  },
+  }
 ): Promise<void> {
   // INV-CONFIG-005 (#3036): this function writes an email address onto a Xero
   // contact, so it asks the same first question as the create paths. On the
@@ -1858,7 +1852,7 @@ export async function updateXeroContact(
     if (!options?.preserveXeroName) {
       if (!contactData.firstName || !contactData.lastName) {
         throw new Error(
-          "firstName and lastName are required when updating Xero contact names",
+          "firstName and lastName are required when updating Xero contact names"
         );
       }
 
@@ -1887,7 +1881,7 @@ export async function updateXeroContact(
       contactId,
       "update",
       payloadHash,
-      "v2",
+      "v2"
     );
 
     return {
@@ -1946,9 +1940,7 @@ export async function updateXeroContact(
     authoritativeData = reservation.value;
   } else {
     if (!data) {
-      throw new Error(
-        "Xero contact update data is required outside Member scope",
-      );
+      throw new Error("Xero contact update data is required outside Member scope");
     }
     authoritativeData = data;
     operation = await startXeroSyncOperation(buildOperationInput(data));
@@ -2013,7 +2005,8 @@ export async function updateXeroContact(
       currentContactId: xeroContactId,
       workflow: "updateXeroContact",
       operationId: operation.id,
-      repairExistingLink: options?.localModel !== "Member" || !options.localId,
+      repairExistingLink:
+        options?.localModel !== "Member" || !options.localId,
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: authoritativeRequestPayload,
       buildOperationKeys: authoritativeOperationKeys,
@@ -2024,14 +2017,14 @@ export async function updateXeroContact(
               tenantId,
               contactId,
               authoritativeRequestPayload(contactId),
-              idempotencyKey ?? undefined,
+              idempotencyKey ?? undefined
             ),
           {
             operation: "updateContact",
             resourceType: "CONTACT",
             workflow: "updateXeroContact",
             context: `updateContact(${contactId})`,
-          },
+          }
         ),
     });
     const completedContactId =

@@ -22,11 +22,7 @@ import { fixedClubClock } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
 import { escapeCsvCell } from "@/lib/csv";
-import {
-  isDeletedAccountRecord,
-  notDeletedAccountWhere,
-} from "@/lib/deleted-account";
-
+import { isDeletedAccountRecord, notDeletedAccountWhere } from "@/lib/deleted-account";
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
   "PAID",
@@ -84,9 +80,7 @@ export async function GET(req: NextRequest) {
             none: { seasonYear: currentSeasonYear },
           },
         },
-        {
-          role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] },
-        },
+        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
       ],
     },
     {
@@ -286,55 +280,52 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const members = (
-      await prisma.member.findMany({
-        where,
-        orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-        select: {
-          title: true,
-          firstName: true,
-          lastName: true,
-          gender: true,
-          occupation: true,
-          email: true,
-          deletedAt: true,
-          phoneCountryCode: true,
-          phoneAreaCode: true,
-          phoneNumber: true,
-          dateOfBirth: true,
-          role: true,
-          financeAccessLevel: true,
-          ageTier: true,
-          active: true,
-          cancelledAt: true,
-          archivedAt: true,
-          xeroContactId: true,
-          createdAt: true,
-          streetAddressLine1: true,
-          streetAddressLine2: true,
-          streetCity: true,
-          streetRegion: true,
-          streetCountry: true,
-          streetPostalCode: true,
-          lifeMemberDate: true,
-          comments: true,
-          subscriptions: {
-            where: { seasonYear: currentSeasonYear },
-            select: { status: true },
-            take: 1,
-          },
-          seasonalMembershipAssignments: {
-            where: { seasonYear: currentSeasonYear },
-            select: {
-              membershipType: {
-                select: { subscriptionBehavior: true },
-              },
-            },
-            take: 1,
-          },
+    const members = (await prisma.member.findMany({
+      where,
+      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+      select: {
+        title: true,
+        firstName: true,
+        lastName: true,
+        gender: true,
+        occupation: true,
+        email: true, deletedAt: true,
+        phoneCountryCode: true,
+        phoneAreaCode: true,
+        phoneNumber: true,
+        dateOfBirth: true,
+        role: true,
+        financeAccessLevel: true,
+        ageTier: true,
+        active: true,
+        cancelledAt: true,
+        archivedAt: true,
+        xeroContactId: true,
+        createdAt: true,
+        streetAddressLine1: true,
+        streetAddressLine2: true,
+        streetCity: true,
+        streetRegion: true,
+        streetCountry: true,
+        streetPostalCode: true,
+        lifeMemberDate: true,
+        comments: true,
+        subscriptions: {
+          where: { seasonYear: currentSeasonYear },
+          select: { status: true },
+          take: 1,
         },
-      })
-    ).filter((member) => !isDeletedAccountRecord(member));
+        seasonalMembershipAssignments: {
+          where: { seasonYear: currentSeasonYear },
+          select: {
+            membershipType: {
+              select: { subscriptionBehavior: true },
+            },
+          },
+          take: 1,
+        },
+      },
+    })).filter((member) => !isDeletedAccountRecord(member));
 
     // Column descriptors. Optional fields gated by club settings are filtered
     // out below so the header row and every data row stay aligned.
@@ -349,10 +340,7 @@ export async function GET(req: NextRequest) {
               },
             ]
           : []),
-        {
-          header: "First Name",
-          value: (m: MemberRow) => csvEscape(m.firstName),
-        },
+        { header: "First Name", value: (m: MemberRow) => csvEscape(m.firstName) },
         { header: "Last Name", value: (m: MemberRow) => csvEscape(m.lastName) },
         ...(flags.showGender
           ? [
@@ -391,10 +379,7 @@ export async function GET(req: NextRequest) {
           header: "Street Address Line 2",
           value: (m: MemberRow) => csvEscape(m.streetAddressLine2 || ""),
         },
-        {
-          header: "City",
-          value: (m: MemberRow) => csvEscape(m.streetCity || ""),
-        },
+        { header: "City", value: (m: MemberRow) => csvEscape(m.streetCity || "") },
         {
           header: "Region",
           value: (m: MemberRow) => csvEscape(m.streetRegion || ""),
@@ -410,19 +395,20 @@ export async function GET(req: NextRequest) {
         {
           header: "Date of Birth",
           value: (m: MemberRow) =>
-            m.dateOfBirth ? formatDateOnly(new Date(m.dateOfBirth)) : "",
+            m.dateOfBirth
+              ? formatDateOnly(new Date(m.dateOfBirth))
+              : "",
         },
         {
           header: "Life Member Date",
           value: (m: MemberRow) =>
-            m.lifeMemberDate ? formatDateOnly(new Date(m.lifeMemberDate)) : "",
+            m.lifeMemberDate
+              ? formatDateOnly(new Date(m.lifeMemberDate))
+              : "",
         },
         { header: "Role", value: (m: MemberRow) => m.role },
         { header: "Age Tier", value: (m: MemberRow) => m.ageTier },
-        {
-          header: "Active",
-          value: (m: MemberRow) => (m.active ? "Yes" : "No"),
-        },
+        { header: "Active", value: (m: MemberRow) => (m.active ? "Yes" : "No") },
         {
           // Emitted as an NZ date-only (yyyy-MM-dd), not a full ISO datetime,
           // so the value round-trips back through the member import: the header
@@ -433,7 +419,9 @@ export async function GET(req: NextRequest) {
           // time zone matches how the app displays the cancellation date.
           header: "Cancelled At",
           value: (m: MemberRow) =>
-            m.cancelledAt ? club.calendarDateOf(new Date(m.cancelledAt)) : "",
+            m.cancelledAt
+              ? club.calendarDateOf(new Date(m.cancelledAt))
+              : "",
         },
         {
           header: "Archived At",
@@ -463,10 +451,7 @@ export async function GET(req: NextRequest) {
               ? "NOT_REQUIRED"
               : m.subscriptions[0]?.status || "NONE",
         },
-        {
-          header: "Comments",
-          value: (m: MemberRow) => csvEscape(m.comments || ""),
-        },
+        { header: "Comments", value: (m: MemberRow) => csvEscape(m.comments || "") },
         {
           header: "Created At",
           value: (m: MemberRow) => new Date(m.createdAt).toISOString(),

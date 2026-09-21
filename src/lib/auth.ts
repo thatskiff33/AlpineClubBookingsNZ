@@ -72,13 +72,8 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   forcePasswordChange: true,
   emailVerified: true,
   passwordChangedAt: true,
-  // #2620: the two markers an approved deletion request writes over the row.
-  // Read on every token refresh so an anonymised member's session dies on their
-  // NEXT request through the same kill-switch a revoking password change uses —
-  // deletion invalidates no token today, so without this a session minted
-  // before the deletion (or after a direct `active` flip) would keep working.
-  // Neither value is ever copied into the token; only the predicate's verdict
-  // is used.
+  // #2620/#3542: refresh both canonical deletion signals so a session
+  // minted before erasure dies on its next request. Neither enters the token.
   email: true,
   deletedAt: true,
   passwordHash: true,
@@ -283,7 +278,7 @@ export const authConfig = {
         } catch (error) {
           logger.warn(
             { err: error, memberId: member.id },
-            "Failed to update member last login timestamp",
+            "Failed to update member last login timestamp"
           );
         }
 
@@ -391,7 +386,7 @@ export const authConfig = {
         } catch (error) {
           logger.warn(
             { err: error, memberId: member.id },
-            "Failed to update member last login timestamp",
+            "Failed to update member last login timestamp"
           );
         }
 
@@ -801,12 +796,8 @@ export async function buildRequestAuthConfig(): Promise<NextAuthConfig> {
 // unused (the only per-request input is the DB credential state).
 const nextAuth = NextAuth(buildRequestAuthConfig);
 
-export const {
-  handlers,
-  signIn,
-  signOut,
-  unstable_update: updateSession,
-} = nextAuth;
+export const { handlers, signIn, signOut, unstable_update: updateSession } =
+  nextAuth;
 
 export async function auth() {
   const session = await nextAuth.auth();

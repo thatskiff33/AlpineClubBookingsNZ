@@ -39,18 +39,8 @@ import {
 const pushSchema = z.object({
   createEntranceFeeInvoice: z.boolean().optional().default(false),
   entranceFeeInvoiceDecision: z.enum(["CREATE", "SKIP"]).optional(),
-  entranceFeeInvoiceSkipReason: z
-    .string()
-    .trim()
-    .max(500)
-    .optional()
-    .nullable(),
-  entranceFeeInvoiceAmountCents: z
-    .number()
-    .int()
-    .positive()
-    .max(1_000_000)
-    .optional(),
+  entranceFeeInvoiceSkipReason: z.string().trim().max(500).optional().nullable(),
+  entranceFeeInvoiceAmountCents: z.number().int().positive().max(1_000_000).optional(),
   entranceFeeInvoiceNarration: z.string().trim().max(500).optional().nullable(),
   forceCreate: z.boolean().optional().default(false),
 });
@@ -71,7 +61,7 @@ function scheduleAfterResponse(task: () => Promise<void>) {
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "edit" },
@@ -108,10 +98,7 @@ export async function POST(
   }
 
   if (member.xeroContactId) {
-    return NextResponse.json(
-      { error: "Member already linked to Xero" },
-      { status: 409 },
-    );
+    return NextResponse.json({ error: "Member already linked to Xero" }, { status: 409 });
   }
 
   let createdXeroContactId: string | null = null;
@@ -129,10 +116,7 @@ export async function POST(
 
     const parsed = pushSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request body" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
     }
 
     const entranceFeeDecision = parsed.data.entranceFeeInvoiceDecision;
@@ -146,11 +130,8 @@ export async function POST(
 
     if (entranceFeeDecision === "SKIP" && !entranceFeeSkipReason) {
       return NextResponse.json(
-        {
-          error:
-            "A reason is required when not raising the joining fee invoice.",
-        },
-        { status: 422 },
+        { error: "A reason is required when not raising the joining fee invoice." },
+        { status: 422 }
       );
     }
 
@@ -163,7 +144,7 @@ export async function POST(
               "Potential matching Xero contacts already exist. Link one of those contacts or confirm that you want to create a new contact anyway.",
             suggestedContacts,
           },
-          { status: 409 },
+          { status: 409 }
         );
       }
     }
@@ -205,7 +186,7 @@ export async function POST(
             seasonYears: subscriptionSync.seasonYears,
             errors: subscriptionSync.errors,
           },
-          "Subscription history refresh completed with errors after creating Xero contact",
+          "Subscription history refresh completed with errors after creating Xero contact"
         );
       }
     } catch (historyErr) {
@@ -222,7 +203,7 @@ export async function POST(
           xeroContactId,
           flushedSubscriptionHistory,
         },
-        "Failed to refresh member subscription history after creating Xero contact",
+        "Failed to refresh member subscription history after creating Xero contact"
       );
     }
 
@@ -254,7 +235,7 @@ export async function POST(
           });
 
         entranceFeeInvoiceQueued = Boolean(
-          queuedEntranceFeeInvoice.queueOperationId,
+          queuedEntranceFeeInvoice.queueOperationId
         );
         entranceFeeInvoiceMessage = queuedEntranceFeeInvoice.message;
 
@@ -265,7 +246,7 @@ export async function POST(
             } catch (xeroErr) {
               logger.error(
                 { err: xeroErr, memberId: id },
-                "Failed to kick Xero entrance fee outbox worker after contact creation",
+                "Failed to kick Xero entrance fee outbox worker after contact creation"
               );
             }
           });
@@ -273,13 +254,11 @@ export async function POST(
       } catch (xeroErr) {
         logger.error(
           { err: xeroErr, memberId: id },
-          "Failed to queue entrance fee invoice after contact creation",
+          "Failed to queue entrance fee invoice after contact creation"
         );
         const entranceFeeWarning =
           "Xero contact created, but joining fee invoice could not be queued. Retry from the member's Xero actions.";
-        warning = warning
-          ? `${warning} ${entranceFeeWarning}`
-          : entranceFeeWarning;
+        warning = warning ? `${warning} ${entranceFeeWarning}` : entranceFeeWarning;
       }
     } else if (entranceFeeSkipReason) {
       await logAudit({
@@ -321,10 +300,7 @@ export async function POST(
       },
     });
 
-    logger.info(
-      { memberId: id, xeroContactId },
-      "Pushed member to Xero as new contact",
-    );
+    logger.info({ memberId: id, xeroContactId }, "Pushed member to Xero as new contact");
 
     return NextResponse.json({
       xeroContactId,
@@ -381,14 +357,11 @@ export async function POST(
           error: `Complete these fields before creating in Xero: ${err.missingFields.join(", ")}`,
           missingFields: err.missingFields,
         },
-        { status: 422 },
+        { status: 422 }
       );
     }
     if (err instanceof XeroContactAlreadyLinkedError) {
-      return NextResponse.json(
-        { error: err.message },
-        { status: err.statusCode },
-      );
+      return NextResponse.json({ error: err.message }, { status: err.statusCode });
     }
     if (err instanceof XeroContactCreateInProgressError) {
       return NextResponse.json(
@@ -406,17 +379,10 @@ export async function POST(
     const xeroError = getXeroApiErrorInfo(err, "Failed to create Xero contact");
     if (!xeroError.handled) {
       logger.error(
-        {
-          err,
-          memberId: id,
-          xeroDiagnosticMessage: xeroError.diagnosticMessage,
-        },
-        "Error pushing member to Xero",
+        { err, memberId: id, xeroDiagnosticMessage: xeroError.diagnosticMessage },
+        "Error pushing member to Xero"
       );
     }
-    return NextResponse.json(
-      { error: xeroError.clientMessage },
-      { status: xeroError.status },
-    );
+    return NextResponse.json({ error: xeroError.clientMessage }, { status: xeroError.status });
   }
 }

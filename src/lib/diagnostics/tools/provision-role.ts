@@ -376,15 +376,7 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
   {
     schema: "public",
     relation: "WebhookLog",
-    columns: [
-      "id",
-      "source",
-      "eventType",
-      "eventId",
-      "status",
-      "durationMs",
-      "createdAt",
-    ],
+    columns: ["id", "source", "eventType", "eventId", "status", "durationMs", "createdAt"],
   },
   {
     schema: "public",
@@ -497,9 +489,7 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
      */
     columns: [
       "id",
-      "email",
-      // Predicate-only: canonical erased-member state. Never projected.
-      "deletedAt",
+      "email", "deletedAt", // predicate-only; never projected
       "firstName",
       "lastName",
       "ageTier",
@@ -904,10 +894,7 @@ export function buildAiDiagnosticsRoleSql(
   const roleLiteral = quoteLiteral(input.roleName);
   const passwordLiteral = quoteLiteral(input.password);
 
-  if (
-    !Number.isInteger(input.statementTimeoutMs) ||
-    input.statementTimeoutMs <= 0
-  ) {
+  if (!Number.isInteger(input.statementTimeoutMs) || input.statementTimeoutMs <= 0) {
     throw new Error("statementTimeoutMs must be a positive integer.");
   }
   if (!Number.isInteger(input.connectionLimit) || input.connectionLimit <= 0) {

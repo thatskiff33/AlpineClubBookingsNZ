@@ -267,7 +267,7 @@ async function recheckCancellationFailure(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "edit" },
@@ -286,10 +286,7 @@ export async function POST(
     const raw = await request.json();
     body = actionSchema.parse(raw);
   } catch {
-    return NextResponse.json(
-      { error: "Invalid request body" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
   const ip =
@@ -317,10 +314,7 @@ export async function POST(
     });
 
     if (!deletionRequest) {
-      return NextResponse.json(
-        { error: "Deletion request not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Deletion request not found" }, { status: 404 });
     }
 
     const claimIsHeld = deletionRequest.status === "APPROVAL_IN_PROGRESS";
@@ -340,7 +334,7 @@ export async function POST(
           completedBookingCancellations,
           DELETION_REQUEST_ALREADY_REVIEWED_CODE,
         ),
-        { status: 409 },
+        { status: 409 }
       );
     }
 
@@ -616,12 +610,9 @@ export async function POST(
         sendAccountDeletionRejectedEmail(
           member.email,
           member.firstName,
-          body.note ?? "",
+          body.note ?? ""
         ).catch((err) =>
-          logger.error(
-            { err, memberId: member.id },
-            "Failed to send deletion rejected email",
-          ),
+          logger.error({ err, memberId: member.id }, "Failed to send deletion rejected email")
         );
       }
 
@@ -709,7 +700,7 @@ export async function POST(
       const paidBookingIds = futurePaidBookings.map((booking) => booking.id);
       logger.warn(
         { memberId: member.id, paidBookingIds },
-        "Blocked account deletion approval because future paid bookings remain active",
+        "Blocked account deletion approval because future paid bookings remain active"
       );
       logAudit({
         action: "member.deletion_approval_blocked",
@@ -728,7 +719,7 @@ export async function POST(
             "Account deletion cannot be approved while this member has future paid bookings. Cancel or refund the paid bookings first.",
           paidBookingIds,
         },
-        { status: 409 },
+        { status: 409 }
       );
     }
 
@@ -769,7 +760,12 @@ export async function POST(
     for (const booking of futureBookings) {
       let result;
       try {
-        result = await cancelBooking(booking.id, session.user.id, "ADMIN", ip);
+        result = await cancelBooking(
+          booking.id,
+          session.user.id,
+          "ADMIN",
+          ip,
+        );
       } catch (err) {
         const cancellationFact = await recheckCancellationFailure(booking.id);
         if (
@@ -791,10 +787,7 @@ export async function POST(
           reviewBookingId:
             cancellationFact.state === "PENDING" ? null : booking.id,
         });
-        const hostingRetry = hostingCoverageParticipantRetryResponse(
-          err,
-          recovery,
-        );
+        const hostingRetry = hostingCoverageParticipantRetryResponse(err, recovery);
         if (hostingRetry) return hostingRetry;
         logger.error(
           { err, memberId: member.id, bookingId: booking.id },
@@ -816,7 +809,7 @@ export async function POST(
         }
         logger.warn(
           { bookingId: booking.id, memberId: member.id, result },
-          "Failed to cancel booking during account deletion",
+          "Failed to cancel booking during account deletion"
         );
         logAudit({
           action: "member.deletion_cleanup_failed",
@@ -847,10 +840,7 @@ export async function POST(
     // Capture the destination before anonymisation, but send only after commit.
     // A participant retry must not send a false approval receipt, and provider
     // calls must remain outside lifecycle/participant lock transactions.
-    const approvalReceipt = {
-      email: member.email,
-      firstName: member.firstName,
-    };
+    const approvalReceipt = { email: member.email, firstName: member.firstName };
 
     // 4-7: Anonymise atomically in a single transaction
     const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@deleted.invalid`;
@@ -864,11 +854,7 @@ export async function POST(
     // affected lodge key and the member lifecycle keys are held.
     const clubTodayForSweep = await clubTodayDateOnlyInstant();
     await prisma.$transaction(async (tx) => {
-      await acquireFuturePartnerSharedAllocationLocks(
-        tx,
-        [member.id],
-        clubTodayForSweep,
-      );
+      await acquireFuturePartnerSharedAllocationLocks(tx, [member.id], clubTodayForSweep);
       await acquireMemberLifecycleLocks(tx, [member.id]);
       // Race-safe re-check of the last-admin invariant inside the mutation
       // transaction (issue #1604): the fail-fast check above ran before the
@@ -907,24 +893,16 @@ export async function POST(
 
       // Record the exact bounded fan-out before deactivation and guest unlinking
       // remove the evidence. It commits or rolls back with anonymisation.
-      await enqueueHostingCoverageReevaluationForMember(
-        member.id,
-        tx,
-        clubTodayForSweep,
-        {
-          cause: "SYSTEM_CHANGE",
-          actorMemberId: session.user.id,
-        },
-      );
+      await enqueueHostingCoverageReevaluationForMember(member.id, tx, clubTodayForSweep, {
+        cause: "SYSTEM_CHANGE",
+        actorMemberId: session.user.id,
+      });
 
       // The standing fan-out above holds this exact Member row FOR UPDATE.
       // Re-check the complete contact-create recovery set while that fence is
       // held so deletion cannot anonymise a member whose PII may already be in
       // flight to Xero or whose provider-created contact still needs linking.
-      const fencedMember = await lockMemberForAccountDeletionXeroFence(
-        tx,
-        member.id,
-      );
+      const fencedMember = await lockMemberForAccountDeletionXeroFence(tx, member.id);
 
       // 3. Anonymise the member record
       await tx.member.update({
@@ -1130,6 +1108,7 @@ export async function POST(
           memberId: null,
         },
       });
+
     });
     memberAnonymised = true;
 
@@ -1139,10 +1118,7 @@ export async function POST(
         approvalReceipt.firstName,
       );
     } catch (err) {
-      logger.error(
-        { err, memberId: member.id },
-        "Failed to send deletion approved email",
-      );
+      logger.error({ err, memberId: member.id }, "Failed to send deletion approved email");
       // Continue — email failure should not undo the committed deletion.
     }
     await settleHostingCoverageAfterCommit({ limit: 25 });
@@ -1158,12 +1134,8 @@ export async function POST(
         nights: partnerShareSweepNights(sweptShares),
       }).catch((alertErr) => {
         logger.error(
-          {
-            err: alertErr,
-            memberId: member.id,
-            sweptCount: sweptShares.length,
-          },
-          "Failed to send partner share sweep alert",
+          { err: alertErr, memberId: member.id, sweptCount: sweptShares.length },
+          "Failed to send partner share sweep alert"
         );
       });
     }
@@ -1305,9 +1277,6 @@ export async function POST(
     if (completedBookingCancellations > 0 && !memberAnonymised) {
       return NextResponse.json(recovery, { status: 500 });
     }
-    return NextResponse.json(
-      { error: "Failed to process deletion request" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to process deletion request" }, { status: 500 });
   }
 }

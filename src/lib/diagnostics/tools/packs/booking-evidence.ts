@@ -185,10 +185,7 @@ import {
   getExplicitGuestBedNightKeys,
 } from "@/lib/booking-guest-stay-ranges";
 import { formatBookingReference } from "@/lib/booking-reference";
-import {
-  bookingReviewReasonCodes,
-  isCheckinBlockedByPendingReview,
-} from "@/lib/booking-review";
+import { bookingReviewReasonCodes, isCheckinBlockedByPendingReview } from "@/lib/booking-review";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { checkCapacity } from "@/lib/capacity";
 import { formatDateOnly } from "@/lib/date-only";
@@ -196,7 +193,10 @@ import { isDeletedAccountRecord } from "@/lib/deleted-account";
 import { getInductionStatusForMember } from "@/lib/induction";
 import { asClubTimeZone } from "@/lib/club-time";
 import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
-import { clubSeasonYear, seasonYearOfStoredDate } from "@/lib/financial-year";
+import {
+  clubSeasonYear,
+  seasonYearOfStoredDate,
+} from "@/lib/financial-year";
 import { getStoredFinancialYearResolution } from "@/lib/financial-year-server";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import { peekSubscriptionLockoutModeStrict } from "@/lib/member-subscription-eligibility";
@@ -354,18 +354,11 @@ function dateOnlyNightSpan(start: Date, end: Date): number {
     start.getUTCMonth(),
     start.getUTCDate(),
   );
-  const endUtc = Date.UTC(
-    end.getUTCFullYear(),
-    end.getUTCMonth(),
-    end.getUTCDate(),
-  );
+  const endUtc = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
   return (endUtc - startUtc) / UTC_DAY_MS;
 }
 
-function assertCapacitySpanWithinCeiling(
-  checkIn: Date,
-  checkOut: Date,
-): number {
+function assertCapacitySpanWithinCeiling(checkIn: Date, checkOut: Date): number {
   const nights = dateOnlyNightSpan(checkIn, checkOut);
   if (
     !Number.isSafeInteger(nights) ||
@@ -1286,7 +1279,8 @@ async function readBookingBlockState(
     capacity,
     conflicts,
     ownerSubscriptionHardBlocked,
-  ] = await Promise.all([
+  ] =
+    await Promise.all([
     // Terminal and deleted bookings skip the policy evaluation entirely. It is not
     // an optimisation: evaluating a cancelled booking's party would produce
     // violations that are true of the rows and false of the world, and the
@@ -1298,8 +1292,8 @@ async function readBookingBlockState(
           booking.lodgeId,
           party,
           {
-            requestedByMemberId: bookingOwner(booking).memberId,
-            bookingId: booking.id,
+          requestedByMemberId: bookingOwner(booking).memberId,
+          bookingId: booking.id,
           },
           {
             // The paid-up-adult rule reads `MemberSubscription` by
@@ -1432,12 +1426,12 @@ async function readBookingBlockState(
         bookingOwner(booking).memberId === null
         ? Promise.resolve(false)
         : readOwnerSubscriptionHardBlock(tx, {
-            memberId: bookingOwner(booking).memberId as string,
-            seasonYear: requireResolvedSeasonYear(seasonYear),
-            ageTier: bookingOwner(booking).member?.ageTier ?? null,
-            readAgeTierSettings,
-          }),
-  ]);
+          memberId: bookingOwner(booking).memberId as string,
+          seasonYear: requireResolvedSeasonYear(seasonYear),
+          ageTier: bookingOwner(booking).member?.ageTier ?? null,
+          readAgeTierSettings,
+        }),
+    ]);
 
   if (!deleted && !terminal && hostingEvaluation === null) {
     throw new Error(
@@ -1509,12 +1503,9 @@ async function readBookingBlockState(
     // a column the projection must never carry.
     adminReviewReason: null,
   });
-  const hostingReviewPending =
-    booking.adultMemberHostingReviewStatus === "PENDING";
+  const hostingReviewPending = booking.adultMemberHostingReviewStatus === "PENDING";
 
-  const reasonCodes = new Set(
-    violations.map((violation) => violation.reasonCode),
-  );
+  const reasonCodes = new Set(violations.map((violation) => violation.reasonCode));
 
   /** Per-night demand from the live footprint, and the tightest night. */
   const demandByNight = new Map<string, number>();
@@ -1597,9 +1588,7 @@ async function readBookingBlockState(
     admin_review_pending: adminReviewPending,
     hosting_review_pending: hostingReviewPending,
     policy_minimum_stay: reasonCodes.has("MINIMUM_STAY"),
-    policy_adult_member_hosting: reasonCodes.has(
-      "ADULT_MEMBER_HOSTING_REQUIRED",
-    ),
+    policy_adult_member_hosting: reasonCodes.has("ADULT_MEMBER_HOSTING_REQUIRED"),
     /**
      * THE ONE BLOCKER THE POLICY EVALUATOR STRUCTURALLY CANNOT PRODUCE.
      *
@@ -1611,9 +1600,7 @@ async function readBookingBlockState(
      * silence as "nothing is blocking" is what this entry did before.
      */
     subscription_unpaid_hard_block: ownerSubscriptionHardBlocked,
-    policy_paid_up_adult_member: reasonCodes.has(
-      "PAID_UP_ADULT_MEMBER_REQUIRED",
-    ),
+    policy_paid_up_adult_member: reasonCodes.has("PAID_UP_ADULT_MEMBER_REQUIRED"),
     exception_request_open: openRequests.length > 0,
     exception_hold_expiring: nextHoldExpiresAt !== null,
     edit_window_locked: !editPolicy.canModify,
@@ -1656,16 +1643,11 @@ async function readBookingBlockState(
        * ground: `booking_lifecycle_terminal` is not raised beside
        * `booking_deleted`.
        */
-      booking_lifecycle_state: deleted
-        ? "deleted"
-        : terminal
-          ? "terminal"
-          : "live",
+      booking_lifecycle_state: deleted ? "deleted" : terminal ? "terminal" : "live",
       // The ADMIN review gate, as the platform's own check-in predicate answers it.
       admin_review_pending: adminReviewPending,
       hosting_review_pending: hostingReviewPending,
-      review_reason_codes:
-        reviewCodes.length > 0 ? reviewCodes.join(",") : null,
+      review_reason_codes: reviewCodes.length > 0 ? reviewCodes.join(",") : null,
       policy_violation_codes:
         violations.length > 0
           ? [...new Set(violations.map((violation) => violation.reasonCode))]
@@ -1696,8 +1678,7 @@ async function readBookingBlockState(
        * `null` here means "not measured", exactly as it does two lines down, and
        * the entry's scope line says so in as many words.
        */
-      member_night_conflict_count:
-        deleted || terminal ? null : conflicts.length,
+      member_night_conflict_count: deleted || terminal ? null : conflicts.length,
       shortfall_night_count: capacity === null ? null : shortfallNights,
       whole_lodge_held_night_count:
         capacity === null ? null : wholeLodgeHeldNights,
@@ -1792,9 +1773,7 @@ export async function readBookingCapacityEvidence(args: {
   bookingId: string;
 }): Promise<readonly DiagnosticsToolRawRow[]> {
   return withDeadline(
-    withBoundedReadOnlyTransaction((tx) =>
-      readBookingCapacity(args.bookingId, tx),
-    ),
+    withBoundedReadOnlyTransaction((tx) => readBookingCapacity(args.bookingId, tx)),
     "booking capacity",
   );
 }
@@ -1893,7 +1872,7 @@ async function readBookingCapacity(
       ? "deleted"
       : TERMINAL_BOOKING_STATUSES.includes(booking.status)
         ? "terminal"
-        : "live";
+         : "live";
   const rawWholeLodgeHold = booking.wholeLodgeHold;
   const effectiveWholeLodgeHold =
     booking.deletedAt === null &&
@@ -1943,7 +1922,8 @@ async function readBookingCapacity(
       spare_beds_after_this_booking: wholeLodgeHeld
         ? null
         : detail.availableBeds - demand,
-      fits_this_night: !wholeLodgeHeld && detail.availableBeds - demand >= 0,
+      fits_this_night:
+        !wholeLodgeHeld && detail.availableBeds - demand >= 0,
       whole_lodge_held_by_another_booking: wholeLodgeHeld,
       this_booking_effectively_holds_whole_lodge: effectiveWholeLodgeHold,
       this_booking_has_whole_lodge_hold_flag: rawWholeLodgeHold,
@@ -2063,54 +2043,49 @@ async function readMemberEligibility(
   });
   if (!member) return [];
 
-  const [
-    typePolicy,
-    subscription,
-    ageTierSettings,
-    lockoutMode,
-    inductionStatus,
-  ] = await Promise.all([
-    resolveMembershipTypePolicyForMember(tx, { memberId, seasonYear }),
-    tx.memberSubscription.findUnique({
-      where: { memberId_seasonYear: { memberId, seasonYear } },
-      select: { status: true, paidAt: true, manuallyMarkedPaidAt: true },
-    }),
-    /**
-     * THE STRICT READERS, and this is an evidence path's whole difference from a
-     * product path. `getAgeTierSettings` swallows a database failure into
-     * `AGE_TIER_DEFAULTS`, and `peekSubscriptionLockoutMode` reads through two
-     * functions that each turn one into a safe-looking default -- composed,
-     * `NO_BLOCK`. Both are right for a booking screen and wrong here: on a cold
-     * cache one transient failure would report a club's own configured tier rule
-     * and lockout policy as observed when nothing observed them, and those two are
-     * the qualifiers on every subscription finding this row makes. The strict
-     * variants let the rejection through so the executor says
-     * `evidence_unavailable`; a genuinely absent row still resolves to the
-     * platform's documented default, which is what actually governs such a club.
-     */
-    getAgeTierSettingsStrict(tx),
-    peekSubscriptionLockoutModeStrict(tx),
-    /**
-     * THE NARROW READ, and not `getInductionForMember`, which is the wide one.
-     *
-     * Both return the newest `MemberInduction` for the member by `createdAt`,
-     * across every `InductionKind`. The difference is what comes back with it:
-     * `getInductionForMember` is built for the member's own induction page and
-     * its `include` materialises `finalComments`, `voidedReason`, every
-     * sign-off's `comments` and `signerName`, the template's `competencyPrompt`,
-     * `notesPrompt` and `legacySourceText`, the assigned signers' names and the
-     * inductee's own name — health, safety and competency text, pulled into this
-     * process on the application's FULL-PRIVILEGE connection, in the one module
-     * whose header says the named `select` clauses ARE the boundary.
-     *
-     * Nothing ever leaked: only `.status` is read, twice, and the projection has
-     * no field for any of the rest. But an unread wide read is the same defect
-     * with none of the friction, exactly as the nine dropped columns on
-     * `BLOCK_STATE_BOOKING_SELECT` were — one field name away from a projected
-     * row, in a file where that distance is the whole control.
-     */
-    getInductionStatusForMember(memberId, tx),
-  ]);
+  const [typePolicy, subscription, ageTierSettings, lockoutMode, inductionStatus] =
+    await Promise.all([
+      resolveMembershipTypePolicyForMember(tx, { memberId, seasonYear }),
+      tx.memberSubscription.findUnique({
+        where: { memberId_seasonYear: { memberId, seasonYear } },
+        select: { status: true, paidAt: true, manuallyMarkedPaidAt: true },
+      }),
+      /**
+       * THE STRICT READERS, and this is an evidence path's whole difference from a
+       * product path. `getAgeTierSettings` swallows a database failure into
+       * `AGE_TIER_DEFAULTS`, and `peekSubscriptionLockoutMode` reads through two
+       * functions that each turn one into a safe-looking default -- composed,
+       * `NO_BLOCK`. Both are right for a booking screen and wrong here: on a cold
+       * cache one transient failure would report a club's own configured tier rule
+       * and lockout policy as observed when nothing observed them, and those two are
+       * the qualifiers on every subscription finding this row makes. The strict
+       * variants let the rejection through so the executor says
+       * `evidence_unavailable`; a genuinely absent row still resolves to the
+       * platform's documented default, which is what actually governs such a club.
+       */
+      getAgeTierSettingsStrict(tx),
+      peekSubscriptionLockoutModeStrict(tx),
+      /**
+       * THE NARROW READ, and not `getInductionForMember`, which is the wide one.
+       *
+       * Both return the newest `MemberInduction` for the member by `createdAt`,
+       * across every `InductionKind`. The difference is what comes back with it:
+       * `getInductionForMember` is built for the member's own induction page and
+       * its `include` materialises `finalComments`, `voidedReason`, every
+       * sign-off's `comments` and `signerName`, the template's `competencyPrompt`,
+       * `notesPrompt` and `legacySourceText`, the assigned signers' names and the
+       * inductee's own name — health, safety and competency text, pulled into this
+       * process on the application's FULL-PRIVILEGE connection, in the one module
+       * whose header says the named `select` clauses ARE the boundary.
+       *
+       * Nothing ever leaked: only `.status` is read, twice, and the projection has
+       * no field for any of the rest. But an unread wide read is the same defect
+       * with none of the friction, exactly as the nine dropped columns on
+       * `BLOCK_STATE_BOOKING_SELECT` were — one field name away from a projected
+       * row, in a file where that distance is the whole control.
+       */
+      getInductionStatusForMember(memberId, tx),
+    ]);
 
   const settlement = resolveMemberSubscriptionSettlement({
     subscriptionBehavior: typePolicy?.subscriptionBehavior ?? null,
@@ -2120,20 +2095,7 @@ async function readMemberEligibility(
   });
   const unpaid = subscriptionIsUnpaid(settlement);
 
-  /**
-   * The lifecycle label, from the resolver every admin badge uses — and
-   * `deletedAccount` computed rather than left `false`.
-   *
-   * Erasure sets `active: false` and stamps NEITHER `cancelledAt` NOR
-   * `archivedAt`, so a caller that omits this flag gets "Inactive" for an
-   * anonymised account. That is not a cosmetic difference: an officer told a member
-   * is merely inactive will try to reactivate them.
-   *
-   * `isDeletedAccountRecord` is the single definition of the erasure test: the
-   * structural marker, or the reserved address retained for adopter-era rows.
-   * Both are ordinary lifecycle fields selected for this one member; no
-   * credential column is read or projected.
-   */
+  /** Canonical structural-or-reserved-address deletion verdict. */
   const erased = isDeletedAccountRecord({
     email: member.email,
     deletedAt: member.deletedAt,
@@ -2189,8 +2151,7 @@ async function readMemberEligibility(
       !erased &&
       member.archivedAt === null &&
       member.cancelledAt === null,
-    membership_type_blocks_booking:
-      typePolicy?.bookingBehavior === "BLOCK_BOOKING",
+    membership_type_blocks_booking: typePolicy?.bookingBehavior === "BLOCK_BOOKING",
     subscription_unpaid: unpaid,
     not_adult_age_tier: member.ageTier !== "ADULT",
     cannot_log_in: !member.canLogin,
@@ -2211,8 +2172,7 @@ async function readMemberEligibility(
       membership_type_key: typePolicy?.membershipType?.key ?? null,
       membership_type_source: typePolicy?.source ?? null,
       membership_booking_behavior: typePolicy?.bookingBehavior ?? null,
-      membership_subscription_behavior:
-        typePolicy?.subscriptionBehavior ?? null,
+      membership_subscription_behavior: typePolicy?.subscriptionBehavior ?? null,
       // `null` and not a status string when no row exists: NOT_INVOICED is a real
       // stored state meaning "nobody has billed them", and a member with no row at
       // all is a different fact.

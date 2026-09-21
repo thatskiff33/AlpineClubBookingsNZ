@@ -62,23 +62,18 @@ import {
   isDeletedAccountRecord,
 } from "@/lib/deleted-account";
 
-const bulkUpdateSchema = z
-  .object({
-    ids: z
-      .array(z.string())
-      .min(1, "At least one member ID is required")
-      .max(100),
-    action: z.enum(["deactivate", "reactivate", "set-role"]),
-    role: z.enum(ROLE_VALUES).optional(),
-    accessRoles: z.array(z.string().trim().min(1).max(120)).optional(),
-  })
-  .refine(
-    (data) =>
-      data.action !== "set-role" ||
-      data.role !== undefined ||
-      data.accessRoles !== undefined,
-    { message: "Role is required for set-role action", path: ["role"] },
-  );
+const bulkUpdateSchema = z.object({
+  ids: z.array(z.string()).min(1, "At least one member ID is required").max(100),
+  action: z.enum(["deactivate", "reactivate", "set-role"]),
+  role: z.enum(ROLE_VALUES).optional(),
+  accessRoles: z.array(z.string().trim().min(1).max(120)).optional(),
+}).refine(
+  (data) =>
+    data.action !== "set-role" ||
+    data.role !== undefined ||
+    data.accessRoles !== undefined,
+  { message: "Role is required for set-role action", path: ["role"] }
+);
 
 /**
  * POST /api/admin/members/bulk-update
@@ -98,11 +93,8 @@ export async function POST(req: NextRequest) {
   const parsed = bulkUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      {
-        error: "Validation failed",
-        details: parsed.error.flatten().fieldErrors,
-      },
-      { status: 422 },
+      { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
+      { status: 422 }
     );
   }
 
@@ -134,7 +126,7 @@ export async function POST(req: NextRequest) {
   if (action === "deactivate" && ids.includes(currentUserId)) {
     return NextResponse.json(
       { error: "You cannot deactivate your own account" },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
@@ -145,7 +137,7 @@ export async function POST(req: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "You cannot demote your own admin account" },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
@@ -165,8 +157,8 @@ export async function POST(req: NextRequest) {
         archivedAt: true,
         ageTier: true,
         dateOfBirth: true,
-        // Structural marker for current erasures; `email` above retains the
-        // permanent compatibility arm for adopter-era rows.
+        // #2620/#3542: read the structural marker plus the reserved
+        // adopter-compatibility address selected above.
         deletedAt: true,
         accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
       },
@@ -230,12 +222,7 @@ export async function POST(req: NextRequest) {
     // Filter out current user for self-protection
     let idsToUpdate = [...existingIds].filter((id) => {
       if (action === "deactivate" && id === currentUserId) return false;
-      if (
-        action === "set-role" &&
-        !selfAdminAccessPreserved &&
-        id === currentUserId
-      )
-        return false;
+      if (action === "set-role" && !selfAdminAccessPreserved && id === currentUserId) return false;
       return true;
     });
 
@@ -442,11 +429,7 @@ export async function POST(req: NextRequest) {
     // Perform update in transaction
     const result = await prisma.$transaction(async (tx) => {
       if (sweepLockMemberIds.length > 0) {
-        await acquireFuturePartnerSharedAllocationLocks(
-          tx,
-          sweepLockMemberIds,
-          clubTodayForBulk,
-        );
+        await acquireFuturePartnerSharedAllocationLocks(tx, sweepLockMemberIds, clubTodayForBulk);
         await acquireMemberLifecycleLocks(tx, sweepLockMemberIds);
       }
       // Last-admin end-state guard (issue #1604): evaluate the whole set, not
@@ -550,13 +533,12 @@ export async function POST(req: NextRequest) {
             member.ageTier === "ADULT" &&
             reconciledAgeTier !== "ADULT"
           ) {
-            const swept =
-              await sweepFuturePartnerSharedAllocationsWithLocksHeld({
-                memberId: member.id,
-                reason: "member_age_tier_changed",
-                db: tx,
-                today: clubTodayForBulk,
-              });
+            const swept = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
+              memberId: member.id,
+              reason: "member_age_tier_changed",
+              db: tx,
+              today: clubTodayForBulk,
+            });
             if (swept.length > 0) {
               sweptSharesByMember.push({
                 memberId: member.id,
@@ -593,10 +575,7 @@ export async function POST(req: NextRequest) {
         // Billing-family removal sweep (#1932, E6): deactivated members leave all
         // families in this transaction, so clear any billing-family selection.
         await tx.member.updateMany({
-          where: {
-            id: { in: idsToUpdate },
-            billingFamilyGroupId: { not: null },
-          },
+          where: { id: { in: idsToUpdate }, billingFamilyGroupId: { not: null } },
           data: { billingFamilyGroupId: null },
         });
         // #1756: deactivation breaks the double-bed sharing precondition, so
@@ -756,9 +735,6 @@ export async function POST(req: NextRequest) {
       );
     }
     logger.error({ err: error }, "Failed to bulk update members");
-    return NextResponse.json(
-      { error: "Failed to bulk update members" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to bulk update members" }, { status: 500 });
   }
 }

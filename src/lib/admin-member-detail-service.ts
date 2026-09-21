@@ -9,11 +9,7 @@ import {
   isHostingCoverageParticipantRetry,
 } from "@/lib/adult-member-hosting-queue-participants";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import {
-  clubToday,
-  dateOnlyInstantOf,
-  parseCalendarDate,
-} from "@/lib/club-time";
+import { clubToday, dateOnlyInstantOf, parseCalendarDate, } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import {
@@ -318,7 +314,10 @@ function resolveWriteAccessRoleTokens(input: {
   });
 }
 
-function sameAccessRoleSet(a: ReadonlyArray<string>, b: ReadonlyArray<string>) {
+function sameAccessRoleSet(
+  a: ReadonlyArray<string>,
+  b: ReadonlyArray<string>
+) {
   return a.length === b.length && a.every((role) => b.includes(role));
 }
 
@@ -745,19 +744,16 @@ export async function getAdminMemberDetail(params: {
       if (!current) return null;
       return membershipTypeAgeExemption(
         (
-          (
-            current.membershipType as {
-              allowedAgeTiers?: Array<{ ageTier: AgeTier }>;
-            }
-          ).allowedAgeTiers ?? []
+          (current.membershipType as { allowedAgeTiers?: Array<{ ageTier: AgeTier }>; })
+            .allowedAgeTiers ?? []
         ).map((tier) => tier.ageTier),
       );
     })(),
     seasonalMembershipAssignments: (
       member.seasonalMembershipAssignments ?? []
     ).map((assignment) => serializeSeasonalMembershipAssignment(assignment)),
-    committeeAssignments: (member.committeeAssignments ?? []).map(
-      (assignment) => serializeCommitteeAssignment(assignment),
+    committeeAssignments: (member.committeeAssignments ?? []).map((assignment) =>
+      serializeCommitteeAssignment(assignment),
     ),
     bookings,
     promoCodes: assignedPromoCodes,
