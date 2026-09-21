@@ -123,7 +123,7 @@ import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   calculateModificationSettlementOptions,
   GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,
-  lockedNightPricesForGuest,
+  editedGuestPricingLocks,
   resolveGuestMemberLinks,
   resolveGuestNameUpdates,
   EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE,
@@ -1099,18 +1099,10 @@ export async function POST(
         stayStart: entry.stayStart,
         stayEnd: entry.stayEnd,
         nights: entry.nights,
-        // Preview with the same locked booked-night prices the mutating
-        // endpoints charge (#1036) — but a linked placeholder CLEARS them, exactly
-        // as the apply path does, so the preview's re-rate delta equals the save's.
-        //
-        // A guest whose other-lodge tick CHANGED clears them for the same reason,
-        // in both directions: ticked, the locked non-member prices would pin every
-        // night and the member rate would never apply; unticked, the locked member
-        // prices would pin it the other way and the rate would never come back.
-        lockedNightPrices:
-          link || otherLodgeRateChanged
-            ? []
-            : lockedNightPricesForGuest(entry.guest),
+        // The same locks the save prices with, cleared for the same reasons,
+        // from the one home (#3531): the preview's re-rate delta equals the
+        // save's by construction rather than by two agreeing comments.
+        ...editedGuestPricingLocks(entry.guest, Boolean(link) || otherLodgeRateChanged),
       };
     }),
     ...(normalizedAddGuestsWithRanges ?? []).map((g) => ({

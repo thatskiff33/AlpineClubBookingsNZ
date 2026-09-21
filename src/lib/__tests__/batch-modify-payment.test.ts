@@ -1573,21 +1573,24 @@ describe("PUT /api/bookings/[id]/modify", () => {
     mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
       fn(tx)
     );
+    // #3531: the breakdown carries the nights it priced, so the evidence gate
+    // judges Alice as UNTOUCHED (kept nights) rather than as removed.
+    const nightDates = [new Date("2026-08-20T00:00:00.000Z"), new Date("2026-08-21T00:00:00.000Z")];
     mockCalculateBookingPrice
       .mockReturnValueOnce({
         totalPriceCents: 15000,
         guests: [
-          { priceCents: 5000, perNightCents: [2500, 2500] },
-          { priceCents: 10000, perNightCents: [5000, 5000] },
+          { priceCents: 5000, perNightCents: [2500, 2500], nightDates },
+          { priceCents: 10000, perNightCents: [5000, 5000], nightDates },
         ],
       })
       .mockReturnValueOnce({
         totalPriceCents: 5000,
-        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500], nightDates }],
       })
       .mockReturnValueOnce({
         totalPriceCents: 10000,
-        guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+        guests: [{ priceCents: 10000, perNightCents: [5000, 5000], nightDates }],
       });
 
     const { PUT } = await import("@/app/api/bookings/[id]/modify/route");

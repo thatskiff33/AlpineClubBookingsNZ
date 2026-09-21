@@ -289,17 +289,17 @@ describe("the grain an edit needs of one strand's evidence (#3531 3a)", () => {
       ],
     };
     const nightDates = [new Date("2026-08-01"), new Date("2026-08-02")];
-    // The modify save clears a linked placeholder's locks to `[]`; the date
-    // change passes no such field at all.
+    // The modify save and preview state the fact through
+    // `editedGuestPricingLocks`; the date change passes no such field at all.
     const cleared = preCheckInEditStrands({
       bookingGuests: [stored],
-      guestsForPricing: [{ bookingGuestId: "linked", lockedNightPrices: [] }],
+      guestsForPricing: [{ bookingGuestId: "linked", repricedDeliberately: true }],
       pricedGuests: [{ nightDates }],
     });
     expect(cleared[0]?.repricedDeliberately).toBe(true);
     const kept = preCheckInEditStrands({
       bookingGuests: [stored],
-      guestsForPricing: [{ bookingGuestId: "linked", lockedNightPrices: [{ stayDate: nightDates[0] }] }],
+      guestsForPricing: [{ bookingGuestId: "linked", repricedDeliberately: false }],
       pricedGuests: [{ nightDates }],
     });
     expect(kept[0]?.repricedDeliberately).toBeUndefined();

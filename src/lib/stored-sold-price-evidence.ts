@@ -100,6 +100,12 @@ export type StoredSoldPriceGrain = "WHOLE_GUEST" | "INDIVIDUAL_NIGHT";
  * "untouched" - its rows are about to be rewritten at new prices, so what they
  * said has to be known night by night before it is overwritten. Nothing about
  * those paths changes here; they are judged exactly as before #3531.
+ *
+ * The consent/expiry removal door (`booking-guest-removal-service.ts`) asks
+ * `storedSoldPriceEvidenceForGuest` at `WHOLE_GUEST` grain for every strand
+ * without coming through here: it removes one guest whole and touches nobody
+ * else, and clears no locks, so that is what this rule would say for each of
+ * its strands.
  */
 export function editStrandEvidenceGrain(args: {
   heldNightCount: number;
@@ -608,16 +614,15 @@ export function preCheckInEditStrands(args: {
     }> | null;
   }>;
   /**
-   * The pricing input, index-aligned with `pricedGuests`. `lockedNightPrices`
-   * is read only for its emptiness: the modify save and preview clear it to
-   * `[]` for a strand they deliberately reprice (#2337 link, other-lodge
-   * tick), and that is what marks the strand `repricedDeliberately`. Callers
-   * that never clear locks (the date change, the guest add) pass no such
-   * field and no strand is marked.
+   * The pricing input, index-aligned with `pricedGuests`. `repricedDeliberately`
+   * is the fact as `editedGuestPricingLocks` states it for the modify save and
+   * preview (a #2337 link, an other-lodge tick); callers that never clear
+   * locks (the date change, the guest add) carry no such field and no strand
+   * is marked.
    */
   guestsForPricing: ReadonlyArray<{
     bookingGuestId?: string | null;
-    lockedNightPrices?: ReadonlyArray<unknown> | null;
+    repricedDeliberately?: boolean;
   }>;
   /** Index-aligned with `guestsForPricing`, as the pricing pass returns it. */
   pricedGuests: ReadonlyArray<{
@@ -643,11 +648,7 @@ export function preCheckInEditStrands(args: {
       stayEnd: stored.stayEnd,
       nights: stored.nights,
       proposedNightDates: args.pricedGuests[index]?.nightDates ?? [],
-      ...(Array.isArray(guest.lockedNightPrices) &&
-      guest.lockedNightPrices.length === 0 &&
-      (stored.nights?.length ?? 0) > 0
-        ? { repricedDeliberately: true }
-        : {}),
+      ...(guest.repricedDeliberately ? { repricedDeliberately: true } : {}),
     });
   });
 
