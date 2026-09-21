@@ -59,6 +59,10 @@ const SCANNED_DIRS = ["src", "scripts", "prisma"];
  * an opt-out below.
  */
 const RAW_READ_INVENTORY: Record<string, number> = {
+  // The #3531 rate-derived backfill's refusal to run before its enum value
+  // exists: one `EXISTS` over `pg_enum`, which no Prisma model exposes, and its
+  // one boolean is schema-decoded through `decodeRawRows` before it decides.
+  "scripts/backfill-night-prices-from-rates.ts": 1,
   // The Sentry/observability bootstrap's connectivity probe. `SELECT 1` returns
   // one anonymous column that nothing reads; the call is awaited purely to see
   // whether the database answers at all.

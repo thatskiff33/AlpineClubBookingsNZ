@@ -537,7 +537,12 @@ export const AUDIT_CENSUS_TOTALS = {
   // reverses, and `important` because it is the only place the withdrawal
   // shows: the task stays COMPLETED and the columns it zeroed read as if no
   // request had existed.
-  writeSites: 485,
+  // 485 -> 486 (#3531 3b): `booking-payment.stored-night-price.rate-derived`,
+  // the record that the operator-run backfill re-derived a booking's evenly-split
+  // night prices from the rate table, every guest total unchanged. `payment`
+  // beside the officer night-price repair it mirrors. MEASURED with
+  // `npm run audit:census` on that branch.
+  writeSites: 486,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -697,7 +702,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // record of that change should not be able to be the part that quietly
     // failed.
     // 131 -> 132 (#3498): the manual-refund-task reopen record.
-    createAuditLog: { total: 133, uncategorised: 0 },
+    createAuditLog: { total: 134, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -860,7 +865,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // category those siblings already use.
     // 45 -> 46 (#3498): the reopen record, which is a money decision being
     // undone and belongs with the closure it reverses.
-    payment: 47,
+    payment: 48,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

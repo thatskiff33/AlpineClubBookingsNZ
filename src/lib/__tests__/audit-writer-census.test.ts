@@ -1388,7 +1388,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 355 -> 356 (#3498): the manual-refund-task reopen record, which is a new
     // unpinned writer and joins neither map.
     // 356 -> 357 (#3528): the additional-payment withdrawal record, likewise.
-    ).toEqual({ pinned: 128, unpinned: 357 });
+    // 357 -> 358 (#3531 3b): the rate-derived night-price backfill record,
+    // `payment` at the site, unpinned like every other new feature's writer.
+    ).toEqual({ pinned: 128, unpinned: 358 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

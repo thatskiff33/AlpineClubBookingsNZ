@@ -1429,6 +1429,57 @@ transaction):
 DATABASE_URL=<non-prod copy> npm run payments:backfill-orphaned-credits -- --apply
 ```
 
+### Re-derive evenly-split night prices from the rate table (#3531)
+
+`scripts/backfill-night-prices-from-rates.ts` is an operator-run, idempotent,
+local-only rewrite of the per-night split of guest totals that two earlier
+backfills (#1098, #2739) divided evenly across the nights. Those rows reconcile
+to each guest's total but no night among them was ever sold at its own figure,
+so [`INV-MOD-028`](invariants/booking-modifications.md) refuses to read one as a
+night's price and an edit that moves such a night goes to a person.
+
+It runs the pricing engine once over each booking's party **as it was sold** —
+every guest's stored rate-type snapshot, age tier and membership, over the
+nights their rows hold, against the lodge's rate table and the club's
+booking-time group-discount setting — and rewrites a strand's rows **only when
+the engine's per-night vector reproduces that strand's stored total to the
+cent**. The rewritten rows carry the provenance `RATE_DERIVED`, distinct from a
+night somebody sold (`SOLD`) or an officer valued (`OFFICER_PRICED`). Every
+other candidate strand is LISTED in the report with one reason —
+`NO_RATE_SNAPSHOT`, `UNVALUED_NIGHT`, `NO_SEASON_RATE`,
+`RATE_TABLE_DOES_NOT_REPRODUCE_TOTAL` — and never priced. No guest total,
+booking total or figure a member sees changes; only the split and its
+provenance. Each booking is written in its own transaction, every row a
+compare-and-set on the price and provenance it was planned from, with one
+`booking-payment.stored-night-price.rate-derived` audit row carrying every
+strand's before and after. Zero live-provider calls.
+
+**When it may run — this is the load-bearing rule.** Only after a deploy has
+FULLY cut over to code that knows `RATE_DERIVED`, never during a blue/green
+window: a colour whose generated client predates the value cannot read a row
+that carries it, so a row rewritten while both colours serve would fail the old
+colour's reads of that booking. The script refuses if the database enum lacks
+the value (migration `20261005010000`); it cannot see which colours are
+serving, so the runbook is the second fence. Run it from the new image, after
+the cutover, and start with a dry run (the default) against a non-production
+copy:
+
+```bash
+DATABASE_URL=<non-prod copy> npm run bookings:backfill-night-prices-from-rates
+```
+
+Only after reviewing the dry-run report — the strands it would rewrite and the
+residue it lists — apply:
+
+```bash
+DATABASE_URL=<non-prod copy> npm run bookings:backfill-night-prices-from-rates -- --apply
+```
+
+`--booking <id>` scopes a run to one booking, `--limit <n>` to the n oldest
+candidate bookings, `--json` adds a machine-readable copy of the report. A
+booking whose row changed between the plan and the write is rolled back and
+named as raced; re-run to plan it again from what it then holds.
+
 ### Census the booking ledger identity (#3340)
 
 `scripts/audit-booking-ledger-residual.ts` is a READ-ONLY census of

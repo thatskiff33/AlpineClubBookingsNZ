@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  485
+row-producing sites:  486
 uncategorised:        0
-category values: admin 107, booking 104, xero 37, family 35, payment 47,
+category values: admin 107, booking 104, xero 37, family 35, payment 48,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -697,6 +697,14 @@ nobody has to act - but an officer opening the earlier change finds its request
 gone with no explanation on it, and a member sees one larger figure where they
 expected two. `payment` for the same audience reason as the review-charge rows
 beside it.
+
+#3531 3b added one more (`payment` 47 -> 48, 485 -> 486, MEASURED with
+`npm run audit:census` on that branch): `booking-payment.stored-night-price.rate-derived`,
+the record that the operator-run backfill re-derived a booking's evenly-split
+night prices from the rate table, every guest total unchanged. `payment` beside
+the officer night-price repair it mirrors, and `important` because it is the
+only place the per-night rewrite shows; it carries every strand's before and
+after vectors.
 
 #3528 then added one more (`payment` 46 -> 47, 484 -> 485, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):
