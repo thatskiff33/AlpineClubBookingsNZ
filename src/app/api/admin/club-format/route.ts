@@ -9,10 +9,7 @@ import {
   normaliseClubCurrencyCode,
   normaliseClubLocale,
 } from "@/lib/club-format";
-import {
-  stateFromResolved,
-  stateFromRow,
-} from "@/lib/club-format-admin-state";
+import { stateFromResolved, stateFromRow } from "@/lib/club-format-admin-state";
 import {
   CLUB_FORMAT_SETTINGS_ID,
   CLUB_FORMAT_SETTINGS_SELECT,

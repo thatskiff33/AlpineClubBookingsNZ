@@ -1,9 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 import { clubConfigSource, type ClubConfigSource } from "@/config/club";
+import { clubFormatSelfHealStepDefinition } from "@/lib/config-self-heal-club-format";
 import {
   ageTierSelfHealStepDefinition,
   clubFacebookUrlSelfHealStepDefinition,
-  clubFormatSelfHealStepDefinition,
   clubIdentitySelfHealStepDefinition,
   clubTimeZoneSelfHealStepDefinition,
   lodgeCapacitySelfHealStepDefinition,
@@ -64,8 +64,10 @@ import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
  *   a third one cannot arrive by copy-paste without somebody justifying it.
  *
  * ## Registering a new step (C3/C4/C5)
- * The step DEFINITIONS live in `config-self-heal-steps.ts`; this module holds the
- * contract, the registry and the runner. Add another typed
+ * The step DEFINITIONS live in `config-self-heal-steps.ts` — except the
+ * club-format one, which the file-size ratchet moved on into
+ * `config-self-heal-club-format.ts` (#3563); that module's docblock says why.
+ * This module holds the contract, the registry and the runner. Add another typed
  * `ConfigSelfHealStep` there, erase it with `defineSelfHealStep` below, and add
  * it to `SELF_HEAL_STEPS`. A step describes exactly three things:
  *   - `isPresent(db)`  — is the DB value already populated? (guard the write)
@@ -188,7 +190,10 @@ export function stepRequiresPrimaryClubConfig(
 //
 // The definitions themselves live in `config-self-heal-steps.ts` (the ratchet
 // in scripts/lib/file-size-base.ts would not let this module grow further, and
-// "what a step is" and "what each step copies" were the natural seam). They are
+// "what a step is" and "what each step copies" were the natural seam) — except
+// the club-format one, which the same ratchet moved on again into
+// `config-self-heal-club-format.ts` (#3563); that module's docblock says why it
+// is the club-format step that moved and not the timezone one. They are
 // erased into registry steps here, under the SAME export names they have always
 // had, so every importer and every doc or schema comment pointing at
 // `config-self-heal.ts` still resolves.
