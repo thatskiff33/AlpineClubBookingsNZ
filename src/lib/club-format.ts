@@ -135,10 +135,18 @@ export function normaliseClubCurrencyCode(
 
   let resolved: string | undefined;
   try {
-    // Pinned by construction: `currency` is the value under test. The locale is
-    // irrelevant — nothing here formats anything, the probe exists only to make
-    // the runtime accept or reject the code and report its canonical spelling.
-    resolved = new Intl.NumberFormat("en-NZ", {
+    /*
+      THE LOCALE ARGUMENT IS `undefined` ON PURPOSE, and it is not an evasion of
+      the house ban on `Intl.NumberFormat(<literal locale>, { style: "currency" })`
+      (INV-CONFIG-001, #3325). That ban exists because a RENDERING formatter must
+      take the club's locale rather than one this codebase picked. This
+      constructs no rendering formatter: nothing is formatted, no string is
+      produced, and the currency under test is a variable. Passing a literal
+      locale here would be the very mistake the ban names — asserting a club's
+      locale from inside a validator — so the probe states that it has no
+      opinion about the locale instead, which is what `undefined` means.
+    */
+    resolved = new Intl.NumberFormat(undefined, {
       style: "currency",
       currency: candidate,
     }).resolvedOptions().currency;
@@ -189,7 +197,17 @@ export function normaliseClubLocale(
     // instance). Nothing is formatted — the probe exists to make the runtime
     // accept or reject the tag.
     new Intl.NumberFormat(canonical).resolvedOptions();
-    new Intl.DateTimeFormat(canonical).resolvedOptions();
+    /*
+      `timeZone: undefined` is the spelling INV-DATE-015's own guard message
+      names for a formatter that is not pinning a zone, and it is the honest
+      one here: this probe asks whether the runtime will accept the TAG, and
+      says nothing about which zone anything is rendered in. No date is
+      produced. Every real date rendering goes through `@/lib/club-time`,
+      which owns the only formatter factory in the tree.
+    */
+    new Intl.DateTimeFormat(canonical, {
+      timeZone: undefined,
+    }).resolvedOptions();
   } catch {
     return null;
   }

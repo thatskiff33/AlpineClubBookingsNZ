@@ -26,6 +26,7 @@ import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 import {
   ageTierSelfHealStep,
   clubFacebookUrlSelfHealStep,
+  clubFormatSelfHealStep,
   clubIdentitySelfHealStep,
   clubTimeZoneSelfHealStep,
   defineSelfHealStep,
@@ -51,10 +52,11 @@ const silentLog = { info: vi.fn(), warn: vi.fn() };
  * the set the primary-config fallback guard covers.
  *
  * `SELF_HEAL_STEPS` is deliberately NOT the same list: since CT-1 (#2989) it also
- * holds `clubTimeZoneSelfHealStep`, whose value comes from the ENVIRONMENT and
- * which therefore runs whatever state `config/club.json` is in. The guard tests
- * below pass this list explicitly so they keep testing the guard, and the
- * partial-run behaviour of the real registry gets its own tests further down.
+ * holds `clubTimeZoneSelfHealStep`, and since #3563 `clubFormatSelfHealStep`,
+ * whose values come from the ENVIRONMENT and which therefore run whatever state
+ * `config/club.json` is in. The guard tests below pass this list explicitly so
+ * they keep testing the guard, and the partial-run behaviour of the real
+ * registry gets its own tests further down.
  */
 const CLUB_CONFIG_STEPS: readonly RegisteredSelfHealStep[] = [
   clubIdentitySelfHealStep,
@@ -1152,7 +1154,7 @@ describe("registry", () => {
     expect(SELF_HEAL_STEPS).toContain(lodgeCapacitySelfHealStep);
     expect(lodgeCapacitySelfHealStep.name).toBe("lodge-capacity");
     // A future step must consciously extend this pin.
-    expect(SELF_HEAL_STEPS).toHaveLength(5);
+    expect(SELF_HEAL_STEPS).toHaveLength(6);
   });
 
   it("registers the club-time-zone step (CT-1, #2989)", () => {
@@ -1160,14 +1162,32 @@ describe("registry", () => {
     expect(clubTimeZoneSelfHealStep.name).toBe("club-time-zone");
   });
 
-  it("exempts ONLY the club-time-zone step from the primary-config guard", () => {
-    // The exemption is the dangerous part of this change, so it is pinned by
-    // name: if a future step is written with requiresPrimaryClubConfig: false by
-    // copy-paste, this fails and its author has to justify it.
+  it("registers the club-format step (#3563)", () => {
+    expect(SELF_HEAL_STEPS).toContain(clubFormatSelfHealStep);
+    expect(clubFormatSelfHealStep.name).toBe("club-format");
+  });
+
+  it("exempts ONLY the two environment-sourced steps from the primary-config guard", () => {
+    /*
+      The exemption is the dangerous part of either change, so it is pinned by
+      NAME rather than by count: if a future step is written with
+      requiresPrimaryClubConfig: false by copy-paste, this fails and its author
+      has to justify it.
+
+      IT WENT FROM ONE NAME TO TWO AND THE RULE DID NOT MOVE (#3563). What earns
+      the exemption is unchanged and is the only thing that ever earned it: the
+      step's value comes from the ENVIRONMENT rather than from
+      `config/club.json`, so gating it on that file's provenance would protect
+      nothing and would strand the backfill on every DB-first install, where an
+      absent club.json has been normal since #1987. `club-format` copies
+      CURRENCY / LOCALE exactly as `club-time-zone` copies TZ. A third name here
+      still has to make that argument; a step that reads club.json and appears
+      in this list is still the defect this assertion exists to catch.
+    */
     const exempt = SELF_HEAL_STEPS.filter(
       (step) => !stepRequiresPrimaryClubConfig(step),
     ).map((step) => step.name);
-    expect(exempt).toEqual(["club-time-zone"]);
+    expect(exempt).toEqual(["club-time-zone", "club-format"]);
     for (const step of CLUB_CONFIG_STEPS) {
       expect(stepRequiresPrimaryClubConfig(step)).toBe(true);
     }
@@ -1429,9 +1449,50 @@ function makeClubTimeDb(seedRow?: Record<string, unknown>) {
  * `SELF_HEAL_STEPS` can be asserted on both halves at once: which steps touched
  * the database and which did not.
  */
+/**
+ * The same one-row create-if-absent fake as `makeClubTimeDb`, for the
+ * `ClubFormatSettings` singleton (#3563). Written out rather than shared with
+ * that helper because the two return differently-named delegates and the
+ * duplication is four lines of `Map` bookkeeping, where a shared generic would
+ * hide which delegate a failing assertion is about.
+ */
+function makeClubFormatDb(seedRow?: Record<string, unknown>) {
+  const rows = new Map<string, Record<string, unknown>>();
+  if (seedRow) rows.set("default", { id: "default", ...seedRow });
+
+  const clubFormatSettings = {
+    findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+      return rows.get(where.id) ?? null;
+    }),
+    upsert: vi.fn(
+      async ({
+        where,
+        create,
+        update,
+      }: {
+        where: { id: string };
+        create: Record<string, unknown>;
+        update?: Record<string, unknown>;
+      }) => {
+        const existing = rows.get(where.id);
+        if (existing) {
+          const merged = { ...existing, ...(update ?? {}) };
+          rows.set(where.id, merged);
+          return merged;
+        }
+        rows.set(where.id, { ...create });
+        return rows.get(where.id);
+      },
+    ),
+  };
+
+  return { rows, clubFormatSettings };
+}
+
 function makeWholeRegistryDb() {
   const identity = makeIdentityDb();
   const clubTime = makeClubTimeDb();
+  const clubFormat = makeClubFormatDb();
   const lodgeRows = new Map<string, Record<string, unknown>>();
 
   const ageTierSetting = {
@@ -1467,6 +1528,7 @@ function makeWholeRegistryDb() {
   const db = {
     clubIdentitySettings: identityDelegate,
     clubTimeSettings: clubTimeDelegate,
+    clubFormatSettings: clubFormat.clubFormatSettings,
     ageTierSetting,
     lodgeSettings,
     $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
@@ -1474,9 +1536,11 @@ function makeWholeRegistryDb() {
 
   return {
     clubTimeRows: clubTime.rows,
+    clubFormatRows: clubFormat.rows,
     identityRows: identity.rows,
     identity: identityDelegate,
     clubTime: clubTimeDelegate,
+    clubFormat: clubFormat.clubFormatSettings,
     ageTierSetting,
     lodgeSettings,
     db: db as unknown as SelfHealDb,
@@ -1925,12 +1989,12 @@ describe("clubTimeZoneSelfHealStep — the upgrade keeps the zone already in use
     "runs on a %s config provenance while every config/club.json step does NOT",
     async (provenance) => {
       // BOTH halves, in one assertion set, because either half alone is
-      // misleading. The timezone step must run — its value comes from the
-      // environment, and since #1987 an absent config/club.json is normal for a
-      // DB-first install, so gating it would strand exactly those installs on
-      // the generic default for ever. The four club.json steps must NOT run,
-      // because freezing "Example Mountain Club" into a DB-first row is the
-      // outage class epic #1943 exists to prevent.
+      // misleading. The timezone and club-format steps must run — their values
+      // come from the environment, and since #1987 an absent config/club.json
+      // is normal for a DB-first install, so gating them would strand exactly
+      // those installs on the generic defaults for ever. The four club.json
+      // steps must NOT run, because freezing "Example Mountain Club" into a
+      // DB-first row is the outage class epic #1943 exists to prevent.
       pinEnvironmentZone("Australia/Sydney");
       const harness = makeWholeRegistryDb();
       const log = { info: vi.fn(), warn: vi.fn() };
@@ -1941,13 +2005,18 @@ describe("clubTimeZoneSelfHealStep — the upgrade keeps the zone already in use
         provenance,
       });
 
-      // Half one: the environment-sourced step ran and wrote.
+      // Half one: both environment-sourced steps ran and wrote.
       expect(summary.results).toEqual([
         { name: "club-time-zone", outcome: "healed" },
+        { name: "club-format", outcome: "healed" },
       ]);
-      expect(summary.healed).toBe(1);
+      expect(summary.healed).toBe(2);
       expect(harness.clubTimeRows.get("default")).toMatchObject({
         timeZone: "Australia/Sydney",
+      });
+      expect(harness.clubFormatRows.get("default")).toMatchObject({
+        currencyCode: expect.stringMatching(/^[A-Z]{3}$/),
+        locale: expect.any(String),
       });
 
       // Half two: nothing from config/club.json was read OR written — not even a
@@ -1968,7 +2037,7 @@ describe("clubTimeZoneSelfHealStep — the upgrade keeps the zone already in use
       expect(log.warn.mock.calls[0][0]).toMatchObject({
         scope: "config-self-heal",
         provenance,
-        ranSteps: ["club-time-zone"],
+        ranSteps: ["club-time-zone", "club-format"],
       });
       const message = String(log.warn.mock.calls[0][1]);
       expect(message).toMatch(/self-heal skipped/i);
