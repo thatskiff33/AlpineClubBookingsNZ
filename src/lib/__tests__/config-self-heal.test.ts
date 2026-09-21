@@ -22,6 +22,10 @@ vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 
 import { clubConfig } from "@/config/club";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import {
+  CLUB_CURRENCY_FALLBACK,
+  CLUB_LOCALE_FALLBACK,
+} from "@/lib/club-format";
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 import {
   ageTierSelfHealStep,
@@ -1136,6 +1140,274 @@ describe("lodgeCapacitySelfHealStep — E3 log honesty on a 0-bed config", () =>
   });
 });
 
+
+/**
+ * The club-format backfill (#3563, stage 1 of programme #3205) — the ONLY thing
+ * standing between an existing deployment and a silent change of currency on
+ * upgrade.
+ *
+ * A production upgrade runs `prisma migrate deploy` and nothing else: the seed
+ * does not run, and SQL cannot read `process.env.CURRENCY`. So this step is the
+ * whole of the upgrade path, and the properties that matter are that it copies
+ * the environment's values when nothing is stored, that it can NEVER overwrite
+ * values that already are, that it judges the two fields separately, and that
+ * it says so out loud when it invents one.
+ *
+ * Environment variables are restored by assignment and then deletion, never by
+ * deleting alone (#2485).
+ */
+describe("clubFormatSelfHealStep — the upgrade keeps the currency already in use (#3563)", () => {
+  const originalCurrency = process.env.CURRENCY;
+  const originalLocale = process.env.LOCALE;
+  const originalPublicCurrency = process.env.NEXT_PUBLIC_CURRENCY;
+  const originalPublicLocale = process.env.NEXT_PUBLIC_LOCALE;
+
+  function pinEnvironmentFormat(
+    currency: string | null,
+    locale: string | null,
+  ) {
+    for (const [name, value] of [
+      ["CURRENCY", currency],
+      ["LOCALE", locale],
+    ] as const) {
+      if (value === null) {
+        process.env[name] = "placeholder";
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+    // The second half of each seed's precedence, cleared so the bare variable
+    // is unambiguously what the environment says, on CI as well as here.
+    delete process.env.NEXT_PUBLIC_CURRENCY;
+    delete process.env.NEXT_PUBLIC_LOCALE;
+  }
+
+  function restoreEnvironment(name: string, value: string | undefined) {
+    if (value === undefined) {
+      process.env[name] = "placeholder";
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
+  }
+
+  afterEach(() => {
+    restoreEnvironment("CURRENCY", originalCurrency);
+    restoreEnvironment("LOCALE", originalLocale);
+    restoreEnvironment("NEXT_PUBLIC_CURRENCY", originalPublicCurrency);
+    restoreEnvironment("NEXT_PUBLIC_LOCALE", originalPublicLocale);
+  });
+
+  it("copies the environment's currency and locale when the row is absent", async () => {
+    pinEnvironmentFormat("CHF", "de-CH");
+    const { rows, clubFormatSettings } = makeClubFormatDb();
+
+    const summary = await runConfigSelfHeal({
+      db: { clubFormatSettings } as unknown as SelfHealDb,
+      steps: [clubFormatSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    expect(summary.healed).toBe(1);
+    expect(summary.failed).toBe(0);
+    expect(rows.get("default")).toMatchObject({
+      id: "default",
+      currencyCode: "CHF",
+      locale: "de-CH",
+      // A boot has no actor.
+      updatedByMemberId: null,
+    });
+  });
+
+  it("stores the canonical spelling, not the one the environment used", async () => {
+    pinEnvironmentFormat("chf", "DE-ch");
+    const { rows, clubFormatSettings } = makeClubFormatDb();
+
+    await runConfigSelfHeal({
+      db: { clubFormatSettings } as unknown as SelfHealDb,
+      steps: [clubFormatSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    expect(rows.get("default")).toMatchObject({
+      currencyCode: "CHF",
+      locale: "de-CH",
+    });
+  });
+
+  it("NEVER overwrites a row the club already has", async () => {
+    // The whole of what makes CURRENCY seed-only (owner decision D3 on #3205).
+    pinEnvironmentFormat("AUD", "en-AU");
+    const { rows, clubFormatSettings } = makeClubFormatDb({
+      currencyCode: "CHF",
+      locale: "de-CH",
+      updatedByMemberId: "member_1",
+    });
+
+    const summary = await runConfigSelfHeal({
+      db: { clubFormatSettings } as unknown as SelfHealDb,
+      steps: [clubFormatSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    expect(summary.healed).toBe(0);
+    expect(summary.alreadyPresent).toBe(1);
+    expect(clubFormatSettings.upsert).not.toHaveBeenCalled();
+    expect(rows.get("default")).toMatchObject({
+      currencyCode: "CHF",
+      locale: "de-CH",
+      updatedByMemberId: "member_1",
+    });
+  });
+
+  it("judges the two fields SEPARATELY", async () => {
+    // A row-level decision would hand an install that had configured only its
+    // currency the shipped default for it as well.
+    pinEnvironmentFormat("CHF", null);
+    const { rows, clubFormatSettings } = makeClubFormatDb();
+
+    await runConfigSelfHeal({
+      db: { clubFormatSettings } as unknown as SelfHealDb,
+      steps: [clubFormatSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    expect(rows.get("default")).toMatchObject({
+      currencyCode: "CHF",
+      locale: CLUB_LOCALE_FALLBACK,
+    });
+  });
+
+  it("records the shipped defaults, silently, for a truly unset install", async () => {
+    pinEnvironmentFormat(null, null);
+    const { rows, clubFormatSettings } = makeClubFormatDb();
+
+    await runConfigSelfHeal({
+      db: { clubFormatSettings } as unknown as SelfHealDb,
+      steps: [clubFormatSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    expect(rows.get("default")).toMatchObject({
+      currencyCode: CLUB_CURRENCY_FALLBACK,
+      locale: CLUB_LOCALE_FALLBACK,
+    });
+    // Nobody is being moved, so there is nothing to warn about.
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it("records the default AND WARNS when the environment names nothing usable", async () => {
+    /*
+      `defaulted` is a different answer from `absent` even though both write the
+      same string, and this is the assertion that keeps them apart. A club whose
+      CURRENCY reads "dollars" has just been handed NZD; if that is wrong it is
+      wrong about money, and the deploy log is where an operator meets it.
+    */
+    pinEnvironmentFormat("dollars", "English");
+    const { rows, clubFormatSettings } = makeClubFormatDb();
+
+    await runConfigSelfHeal({
+      db: { clubFormatSettings } as unknown as SelfHealDb,
+      steps: [clubFormatSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    expect(rows.get("default")).toMatchObject({
+      currencyCode: CLUB_CURRENCY_FALLBACK,
+      locale: CLUB_LOCALE_FALLBACK,
+    });
+    expect(mockLogger.warn).toHaveBeenCalledTimes(2);
+    const warnings = mockLogger.warn.mock.calls.map((call) => String(call[1]));
+    expect(warnings.some((text) => text.includes("dollars"))).toBe(true);
+    expect(warnings.some((text) => text.includes("English"))).toBe(true);
+    // And it must say the environment is no longer the authority, because an
+    // operator's first instinct is to correct the variable.
+    expect(
+      warnings.every((text) => /will NOT change it/i.test(text)),
+    ).toBe(true);
+  });
+
+  it("cannot overwrite an existing row even when the presence check is bypassed", async () => {
+    /*
+      `isPresent` is the first line of defence and the previous test covers it.
+      THIS ONE COVERS THE WRITE ITSELF, because the docblock's claim is about
+      the write: `update: {}` is what makes the upsert create-if-absent. The
+      distinction is not academic — the runner reaches `write` with a row
+      already there whenever two blue/green slots boot together and the loser's
+      presence check ran before the winner's insert. Driving `heal` directly is
+      the only way to exercise that ordering, and without this the `update`
+      clause could be filled in and every other assertion here would still
+      pass.
+    */
+    pinEnvironmentFormat("AUD", "en-AU");
+    const { rows, clubFormatSettings } = makeClubFormatDb({
+      currencyCode: "CHF",
+      locale: "de-CH",
+      updatedByMemberId: "member_1",
+    });
+
+    await clubFormatSelfHealStep.heal({
+      clubFormatSettings,
+    } as unknown as SelfHealDb);
+
+    expect(rows.get("default")).toMatchObject({
+      currencyCode: "CHF",
+      locale: "de-CH",
+      updatedByMemberId: "member_1",
+    });
+  });
+
+  it("treats a raced blue/green insert (P2002) as already-present, not failed", async () => {
+    pinEnvironmentFormat("CHF", "de-CH");
+    const db = {
+      clubFormatSettings: {
+        findUnique: vi.fn(async () => null),
+        upsert: vi.fn(async () => {
+          throw Object.assign(new Error("Unique constraint failed"), {
+            code: "P2002",
+          });
+        }),
+      },
+    } as unknown as SelfHealDb;
+
+    const summary = await runConfigSelfHeal({
+      db,
+      steps: [clubFormatSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    expect(summary.failed).toBe(0);
+    expect(summary.healed).toBe(0);
+    expect(summary.alreadyPresent).toBe(1);
+  });
+
+  it("runs on a non-primary config provenance, because its source is the environment", async () => {
+    // Since #1987 an absent config/club.json is NORMAL on a DB-first install,
+    // so gating this step on that file would strand exactly the installs it
+    // exists for.
+    pinEnvironmentFormat("CHF", "de-CH");
+    const { rows, clubFormatSettings } = makeClubFormatDb();
+
+    const summary = await runConfigSelfHeal({
+      db: { clubFormatSettings } as unknown as SelfHealDb,
+      steps: [clubFormatSelfHealStep],
+      log: { info: vi.fn(), warn: vi.fn() },
+      provenance: "safe-default",
+    });
+
+    expect(summary.skipped).toBe(true);
+    expect(summary.healed).toBe(1);
+    expect(rows.get("default")).toMatchObject({ currencyCode: "CHF" });
+  });
+});
 
 describe("registry", () => {
   it("registers the identity step first and the facebookUrl step alongside it", () => {

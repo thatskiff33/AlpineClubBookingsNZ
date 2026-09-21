@@ -94,18 +94,28 @@ export const CLUB_LOCALE_MAX_LENGTH = 64;
 const CURRENCY_CODE_SHAPE = /^[A-Za-z]{3}$/;
 
 /**
- * A BCP 47 language tag SHAPE — a primary subtag of two to eight ASCII letters
- * (or the `x`/`i` singletons a private-use or grandfathered tag opens with),
- * followed by hyphen-separated subtags of one to eight alphanumerics.
+ * A BCP 47 language tag SHAPE — a primary subtag of two or three ASCII letters,
+ * then hyphen-separated subtags of one to eight alphanumerics.
  *
- * It is deliberately looser than the full BCP 47 grammar, because the runtime
- * probe below IS the full grammar: `Intl.getCanonicalLocales` is the engine's
- * own parser and throws `RangeError` on anything it cannot read. The shape rule
- * exists to refuse the obviously-wrong before the probe sees it — an empty
- * string, a sentence, a path, something with a `_` where a `-` belongs — and to
- * bound the length against the column.
+ * It is deliberately looser than the full BCP 47 grammar AFTER the primary
+ * subtag, because the runtime probe below is the grammar:
+ * `Intl.getCanonicalLocales` is the engine's own parser and throws
+ * `RangeError` on anything it cannot read. The shape rule exists to refuse the
+ * obviously-wrong before the probe sees it, and to bound the length against the
+ * column.
+ *
+ * WHY THE PRIMARY SUBTAG IS PINNED AT TWO OR THREE LETTERS, which is the one
+ * place this rule is STRICTER than the parser. RFC 5646 allows `2*3ALPHA`, a
+ * reserved `4ALPHA`, and `5*8ALPHA` for a registered language subtag — and
+ * `getCanonicalLocales` checks the grammar, not the registry, so it accepts
+ * `english` and `deutsch` happily. Those are exactly the mistake an operator
+ * types into this field, and accepting one would record a locale that formats
+ * nothing the way the club expects while looking deliberate. Every ISO 639
+ * language code is two or three letters, so requiring that refuses the mistake
+ * without refusing any real language. It also refuses the `x-` private-use and
+ * `i-` grandfathered families, which name no language a club formats in.
  */
-const BCP47_TAG_SHAPE = /^[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*$/;
+const BCP47_TAG_SHAPE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*$/;
 
 function hasCurrencyCodeShape(value: string): boolean {
   return value.length === CLUB_CURRENCY_CODE_LENGTH && CURRENCY_CODE_SHAPE.test(value);
