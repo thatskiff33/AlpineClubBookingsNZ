@@ -47,6 +47,27 @@ import {
  * files in a change whose subject is production code. It is a fair thing for a
  * later lane to do; it is not worth doing inside this one.
  *
+ * ## And a FORMAT-ONLY render, because one real surface has only that provider
+ *
+ * {@link renderWithClubFormat} mounts the club-format provider and nothing
+ * else. It exists for `/display`, which is the one shipped surface whose
+ * production tree has a `ClubFormatProvider` above it and NO `ClubTimeProvider`
+ * — the lobby television carries its zone down a context private to
+ * `display-header-clock.tsx` instead, which is why `/display` is on the
+ * club-time census's `PROVIDERLESS_SURFACES` list.
+ *
+ * A display suite rendered through {@link render} would therefore be standing
+ * under a provider the wall never has, and a display module that started
+ * calling `useClubTime()` would go green in every one of those suites and throw
+ * on an unattended screen. The disk-scanning census still catches that, but
+ * `vitest related` structurally cannot reach a census, so the lane's local gate
+ * would not — and the suite that is SUPPOSED to notice is the one that renders
+ * the component. Hence a second wrapper rather than a convenient default: a
+ * test harness whose shape is wrong is not neutral, it is a false witness.
+ *
+ * Both wrappers supply the same two constants below, so there is still one
+ * answer to "what does a test club look like".
+ *
  * ## Import it INSTEAD of `@testing-library/react`
  *
  * It re-exports the whole module, so `screen`, `fireEvent`, `waitFor` and the
@@ -99,14 +120,27 @@ export const CLUB_TIME_TEST_ZONE = "Pacific/Auckland";
 const CLUB_FORMAT_TEST_CURRENCY = CLUB_CURRENCY_FALLBACK;
 const CLUB_FORMAT_TEST_LOCALE = CLUB_LOCALE_FALLBACK;
 
-export function ClubTimeTestProvider({ children }: { children: ReactNode }) {
+/**
+ * The club's currency and locale in scope, and nothing else — the shape
+ * `/display` really renders in. See "a FORMAT-ONLY render" above for why that
+ * is a separate wrapper rather than a default.
+ */
+export function ClubFormatTestProvider({ children }: { children: ReactNode }) {
   return (
     <ClubFormatProvider
       currencyCode={CLUB_FORMAT_TEST_CURRENCY}
       locale={CLUB_FORMAT_TEST_LOCALE}
     >
-      <ClubTimeProvider zone={CLUB_TIME_TEST_ZONE}>{children}</ClubTimeProvider>
+      {children}
     </ClubFormatProvider>
+  );
+}
+
+export function ClubTimeTestProvider({ children }: { children: ReactNode }) {
+  return (
+    <ClubFormatTestProvider>
+      <ClubTimeProvider zone={CLUB_TIME_TEST_ZONE}>{children}</ClubTimeProvider>
+    </ClubFormatTestProvider>
   );
 }
 
@@ -115,6 +149,18 @@ export function render(
   options?: Parameters<typeof rtlRender>[1],
 ): ReturnType<typeof rtlRender> {
   return rtlRender(ui, { wrapper: ClubTimeTestProvider, ...options });
+}
+
+/**
+ * Render with ONLY the club-format provider above the tree, matching
+ * `src/app/display/page.tsx`. Use it for `/display`; use {@link render}
+ * everywhere else.
+ */
+export function renderWithClubFormat(
+  ui: ReactElement,
+  options?: Parameters<typeof rtlRender>[1],
+): ReturnType<typeof rtlRender> {
+  return rtlRender(ui, { wrapper: ClubFormatTestProvider, ...options });
 }
 
 export function renderHook<Result, Props>(
