@@ -9,6 +9,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import type Stripe from "stripe";
+import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import {
@@ -2754,6 +2755,7 @@ async function processCreateAdditionalPaymentIntentOperation(
       : stripeIdempotencyKeyForAskAmount(operation.paymentIntentId, askCents);
   const pi = await createPaymentIntent({
     amountCents: askCents,
+    currency: APP_STRIPE_CURRENCY,
     customerId,
     metadata: {
       bookingId: operation.bookingId,

@@ -126,6 +126,19 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "naming who did it. A fresh import keeps the target's own configured zone, and " +
     "a target that has none keeps resolving the zone it is already effectively " +
     "using (INV-CONFIG-002) — instance-local",
+  ClubFormatSettings:
+    "the installation's ONE currency and locale (#3563, programme #3205): the " +
+    "ISO 4217 code this club charges in and the BCP 47 tag its numbers and " +
+    "dates are written with. It does not travel for the same reason it is " +
+    "Full-Admin-only, confirmation-gated and audited in the first place - a " +
+    "bundle apply is none of those things, so importing it would re-denominate " +
+    "every amount a target club displays, and re-write every date it shows, " +
+    "with no acknowledgement of the consequences and no before/after audit row " +
+    "naming who did it. A currency is also the one setting a club is least " +
+    "likely to share with the club it copied a configuration from. A fresh " +
+    "import keeps the target's own currency and locale, and a target that has " +
+    "none keeps resolving the values it is already effectively using " +
+    "(INV-CONFIG-006) - instance-local",
   EnvironmentSafetySettings:
     "the safer environment override (ENV-SAFETY 1, #3034; epic #2986): whether " +
     "THIS installation has been forced to behave as a copy rather than as the " +

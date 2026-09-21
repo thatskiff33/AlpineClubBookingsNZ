@@ -194,6 +194,8 @@ authority and changing them does not change the club's time. See
 
 - [Site & Setup guides index](../adopters/README.md) — the operator hub for
   configuration pages.
+- Sibling guides: [Club Currency & Locale](club-format.md) — the same shape of
+  setting for the club's currency and its number/date format.
 - [`CONFIGURATION.md`](../../CONFIGURATION.md) — the `TZ` / `NEXT_PUBLIC_TZ`
   environment variables and what they still do.
 - [`docs/invariants/product-configuration.md`](../invariants/product-configuration.md)

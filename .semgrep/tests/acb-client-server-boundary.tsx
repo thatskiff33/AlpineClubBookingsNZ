@@ -63,6 +63,17 @@ import { getXeroClient } from "@/lib/xero";
 // ruleid: acb-client-server-boundary
 import { classifyEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 
+// The club's currency and locale seed (#3563, programme #3205). Marked
+// `server-only` on arrival, and a fixture here for the same reason as its
+// timezone sibling above — plus a sharper one. `NEXT_PUBLIC_CURRENCY` and
+// `NEXT_PUBLIC_LOCALE` have no `Dockerfile` build argument at all, so in the
+// published image a client-side read does not merely answer from the build:
+// it inlines `undefined`, falls through to the shipped New Zealand defaults,
+// and every non-NZ club silently reads NZD. That is the defect programme
+// #3205 exists to fix (INV-CONFIG-006).
+// ruleid: acb-client-server-boundary
+import { readEnvironmentClubFormatSeed } from "@/lib/club-format-env";
+
 // The environment-role declaration and its resolver (#3034, epic #2986). Both
 // carry the marker since #3204, and both stay fixtures here for the same reason
 // as above: `setup-readiness-db.ts` reaches the resolver from the

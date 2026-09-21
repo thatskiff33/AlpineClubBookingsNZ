@@ -87,9 +87,9 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-CONFIG-004` | 1304 |
 | `INV-OPS-012` | 1219 |
 | `INV-PAY-047` | 1211 |
-| `INV-SSOT-003` | 1161 |
 | `INV-MOD-055` | 1157 |
 | `INV-ADDPAY-036` | 1137 |
+| `INV-SSOT-003` | 1094 |
 | `INV-ADDPAY-038` | 1032 |
 | `INV-HOST-052` | 1010 |
 | `INV-HOST-043` | 1003 |

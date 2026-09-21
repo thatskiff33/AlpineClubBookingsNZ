@@ -134,7 +134,9 @@ export const MARKER_STATEMENT = 'import "server-only";';
  * change reds the REQUIRED `verify` check with nothing actually broken. What
  * planting does buy for a root — noticing that its marker is gone — is bought
  * here instead by the retention assertion, which is mutation-proven and costs
- * no build. So: two planted, nine retained.
+ * no build. So: two planted, ten retained — `club-format-env.ts` (#3563) is
+ * the tenth, added on the same reasoning as the three environment readers
+ * before it.
  *
  * Adding a root here is the whole cost of marking a new module. Removing one is
  * a deliberate act that has to be argued for in review, because the module it
@@ -143,6 +145,7 @@ export const MARKER_STATEMENT = 'import "server-only";';
 export const MARKED_ROOTS = [
   "./src/lib/audit.ts",
   "./src/lib/auth.ts",
+  "./src/lib/club-format-env.ts",
   "./src/lib/club-time-zone-env.ts",
   "./src/lib/email.ts",
   "./src/lib/environment-role-declaration.ts",
