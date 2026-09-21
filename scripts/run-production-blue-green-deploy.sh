@@ -672,6 +672,17 @@ BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
 BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED="${BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED:-0}"
 MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv}"
 
+# The deploy guard's lock timeout (#3377). The VALUE is not declared here: its
+# one home is the `${MIGRATION_LOCK_TIMEOUT_MS:-NNNN}` default on the migrate
+# service's DATABASE_URL in docker-compose.yml, which is the only place that can
+# put it where migrations actually run. This script reads that default back out
+# rather than restating it, so the number cannot drift between the two files —
+# and an empty read (the wiring deleted or reshaped) is refused below rather than
+# quietly treated as "no override". The checks live in
+# `validate_migration_lock_timeout_contract`.
+MIGRATION_LOCK_TIMEOUT_OPTION_PATTERN='options=-c%20lock_timeout%3D${MIGRATION_LOCK_TIMEOUT_MS:-'
+MIGRATION_LOCK_TIMEOUT_MS_EFFECTIVE=""
+
 # Pre-cutover warm-up gate (#2566). The defaults are the owner's: bounded
 # concurrency of three, and a tolerance of at most ONE failed non-critical CMS page
 # AND at most 10% of those discovered — both conditions, so a club with fewer than
@@ -1096,6 +1107,63 @@ require_env_key() {
     echo "Missing required .env entry: $key" >&2
     return 1
   fi
+}
+
+# The deploy guard's lock timeout, refused rather than assumed (#3377).
+#
+# Eighty rows of docs/BLUE_GREEN_MIGRATION_SAFETY.tsv end their lock-impact plan
+# with "let the deploy guard stop on lock timeout". This function is what makes
+# that sentence true on the host: it refuses to deploy at all if the wiring that
+# puts the bound where migrations run has gone missing, or if the value in force
+# would remove the guard instead of relaxing it.
+#
+# Two failures it exists to catch, and both are silent without it:
+#   - the `options=-c lock_timeout=...` parameter edited off the migrate
+#     service's DATABASE_URL. Every migration then waits forever again and no
+#     deploy output says so.
+#   - MIGRATION_LOCK_TIMEOUT_MS=0. PostgreSQL reads 0 as "wait forever", not as
+#     "unset", so the most natural way to write "turn this off" is also the most
+#     dangerous, and it looks like a configured value in every log.
+validate_migration_lock_timeout_contract() {
+  local compose_default
+  local value
+
+  # The shipped default, read out of the file that actually configures the
+  # migrate service, so this script never restates the number.
+  compose_default="$(
+    sed -n 's/.*lock_timeout%3D\${MIGRATION_LOCK_TIMEOUT_MS:-\([0-9]\{1,\}\)}.*/\1/p' \
+      docker-compose.yml | head -1
+  )"
+  if [ -z "$compose_default" ]; then
+    echo "docker-compose.yml no longer sets lock_timeout on the migrate service's DATABASE_URL." >&2
+    echo "Every migration would wait forever for a lock it cannot get, which is the outage" >&2
+    echo "the blue/green safety ledger says this deploy is protected from. Restore" >&2
+    echo "'${MIGRATION_LOCK_TIMEOUT_OPTION_PATTERN}<ms>}' on that URL before deploying (#3377)." >&2
+    return 1
+  fi
+
+  # Compose's own precedence: a variable exported into this shell beats .env,
+  # which beats the default above. Resolved in that order so the value checked
+  # here is the value the migrate container will receive.
+  value="${MIGRATION_LOCK_TIMEOUT_MS:-}"
+  if [ -z "$value" ]; then
+    value="$(trim_whitespace "$(get_env_file_value MIGRATION_LOCK_TIMEOUT_MS)")"
+  fi
+  if [ -z "$value" ]; then
+    value="$compose_default"
+  fi
+
+  # The bounds are the ones docker-compose.yml records the measurement for. The
+  # low end is a typo guard, not the measured floor (the uncontended migration
+  # history logs no lock wait over about a millisecond). The high end is the web
+  # slots' pool_timeout=10s: at or beyond it a blocked table is already refusing
+  # member requests with Prisma P2024, so the guard could not fire in time to
+  # prevent anything.
+  require_integer_setting_in_range MIGRATION_LOCK_TIMEOUT_MS "$value" 100 9000 \
+    "0 means wait forever to PostgreSQL rather than unset, and 10000+ reaches the web slots' pool_timeout, by which point a blocked table is already failing member requests" \
+    || return 1
+
+  MIGRATION_LOCK_TIMEOUT_MS_EFFECTIVE="$value"
 }
 
 require_one_of_env_keys() {
@@ -2346,6 +2414,10 @@ require_integer_setting_in_range() {
   local value="$2"
   local min="$3"
   local max="$4"
+  # Optional, and it is the difference between a refusal an operator can act on
+  # and one they have to go and read the script to understand. Callers that pass
+  # nothing keep the bare bound, which is all a warm-up tunable needs.
+  local reason="${5:-}"
 
   if ! printf '%s' "$value" | grep -Eq '^[0-9]+$'; then
     echo "${name} must be a non-negative integer. Got: ${value}" >&2
@@ -2353,7 +2425,11 @@ require_integer_setting_in_range() {
   fi
 
   if [ "$value" -lt "$min" ] || [ "$value" -gt "$max" ]; then
-    echo "${name} must be between ${min} and ${max} (the warm-up endpoint refuses anything else). Got: ${value}" >&2
+    if [ -n "$reason" ]; then
+      echo "${name} must be between ${min} and ${max}: ${reason}. Got: ${value}" >&2
+    else
+      echo "${name} must be between ${min} and ${max} (the warm-up endpoint refuses anything else). Got: ${value}" >&2
+    fi
     return 1
   fi
 }
@@ -2869,7 +2945,12 @@ info "Host has the required deployment commands."
 step "3/20" "Validating deployment environment contract"
 validate_env_contract
 validate_image_reference_contract
+# Checked HERE, at the cheapest possible point, and not at step 13 where it is
+# used: a mistyped or removed lock-timeout bound should stop the deploy before
+# it pulls an image, never after a migration has already started waiting (#3377).
+validate_migration_lock_timeout_contract
 info ".env contains the required production settings."
+info "Migrations will wait at most ${MIGRATION_LOCK_TIMEOUT_MS_EFFECTIVE}ms for any lock."
 
 step "4/20" "Validating repository deployment files"
 validate_repo_contract
@@ -2916,6 +2997,11 @@ step "13/20" "Running Prisma migrations"
 # either release, and the terminal is not a record. Armed BEFORE the migrate
 # runs, because a migrate that dies part-way is the case this exists for.
 MIGRATE_STEP_REACHED=1
+# Restated on the step it governs, because this is the line an operator reads
+# back when a migration stops: it says the bound was in force and what it was,
+# so "canceling statement due to lock timeout" a few lines later is a guard
+# firing rather than a mystery. Recovery: PRODUCTION_UPGRADE_RUNBOOK 2.1a.
+info "Lock timeout in force for this migrate: ${MIGRATION_LOCK_TIMEOUT_MS_EFFECTIVE}ms (a migration that cannot get its lock in that time stops the deploy, having applied nothing)."
 docker compose --profile "$MIGRATE_SERVICE" run --rm "$MIGRATE_SERVICE"
 verify_prisma_migration_status
 info "Prisma migration status reports the database is up to date."
