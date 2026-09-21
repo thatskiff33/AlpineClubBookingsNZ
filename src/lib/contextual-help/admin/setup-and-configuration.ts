@@ -559,6 +559,46 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
+    "/admin/club-format",
+    help(
+      "Club Currency & Locale",
+      "Club Currency & Locale is the currency this club charges in and the way it writes numbers and dates. Both used to be server settings that only somebody with access to the machine could change; they were copied here once, and from now on this page is the only thing that decides them.",
+      [
+        "Check both before launch, and again if the club ever changes what it charges in.",
+        "Choose the three-letter code for the currency, such as NZD or CHF - not a symbol and not a name.",
+        "Write the number and date format as a language tag: the language, then the country, separated by a hyphen, such as en-NZ or de-CH.",
+        "Read the consequences and tick the acknowledgement before saving; only a Full Admin can change these, and every change is recorded in the audit log with the old and new values.",
+      ],
+      [
+        {
+          name: "Currency",
+          description:
+            "The three-letter code for the currency the club charges in, such as NZD. It decides how an amount is written - it never converts one. An amount already recorded is worth exactly what it was worth before.",
+        },
+        {
+          name: "Number and date format",
+          description:
+            "A language tag such as en-NZ, which decides whether a date reads 14/03/2026 or 3/14/2026 and whether a thousand is written 1,000 or 1 000. It is not the language the site is written in.",
+        },
+        {
+          name: "Not the server's settings",
+          description:
+            "CURRENCY and LOCALE on the server seeded these once and have no say afterwards. Changing them on the server will do nothing; change them here.",
+        },
+        {
+          name: "Last changed",
+          description:
+            "When the currency and format were last saved, and who saved it. The name is blank when nobody chose them by hand - the values recorded automatically on the first start after upgrading have no administrator behind them.",
+        },
+      ],
+      [
+        "Saving here changes no screen yet. This records the club's choice; the pages that show money and dates are moved onto it in the changes that follow, and until then they still use the server settings.",
+        "No amount already recorded is rewritten or re-converted. A payment of 8450 cents is still 8450 cents; only the way an amount is written follows this setting.",
+        "Stripe still charges in the currency the deployment is configured with. Moving the club to a different currency is a conversation with the payment provider and the club's accountant before it is a setting here.",
+      ],
+    ),
+  ),
+  entry(
     "/admin/access-roles",
     help(
       "Access roles and admin areas",

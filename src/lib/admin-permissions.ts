@@ -370,6 +370,15 @@ const ROUTE_AREA_PREFIXES: Array<{
       // routes), exactly like the backups credential + destination writes below.
       "/admin/club-time",
       "/api/admin/club-time-zone",
+      // Club Format — the one persisted currency and locale (#3563, programme
+      // #3205). Registered under support for the same reason as
+      // /admin/club-time above: so an unregistered path never falls back to
+      // the overview catch-all and the sidebar's matrix check resolves. The
+      // AREA only decides who can reach the surface; reading AND changing the
+      // club's currency and locale remain Full Admin regardless of area level,
+      // enforced in the route itself.
+      "/admin/club-format",
+      "/api/admin/club-format",
       // Environment safety — whether this installation is the club's live site
       // or a copy (ENV-SAFETY 1 #3034, epic #2986). Registered under support for
       // the same reason as /admin/club-time and /admin/backups: so an
