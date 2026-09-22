@@ -702,9 +702,6 @@ model Member {
   familyGroupInvitations                     FamilyGroupJoinRequest[]                   @relation("FamilyGroupInvitedMember")
   familyGroupLinkedRequests                  FamilyGroupJoinRequest[]                   @relation("FamilyGroupLinkedMember")
   familyGroupSubjectRequests                 FamilyGroupJoinRequest[]                   @relation("FamilyGroupSubjectMember")
-  /// #3580: ledger lines this member's own decision posted (a mark-paid, a
-  /// review completion). NULL on every line the system posted.
-  bookingLedgerLinesPosted                   BookingLedgerLine[]                        @relation("BookingLedgerPostedBy")
   partnerInviteTokensCreated                 PartnerInviteToken[]                       @relation("PartnerInviteTokenCreatedBy")
   partnerLinksAsMemberA                      MemberPartnerLink[]                        @relation("PartnerLinkMemberA")
   partnerLinksAsMemberB                      MemberPartnerLink[]                        @relation("PartnerLinkMemberB")
@@ -2134,8 +2131,6 @@ model BookingGuest {
 
   // Relations
   booking                     Booking                      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  /// #3580: the charge lines posted for this strand's nights.
-  ledgerLines                 BookingLedgerLine[]
   member                      Member?                      @relation(fields: [memberId], references: [id], onDelete: SetNull)
   choreAssignments            ChoreAssignment[]
   choreTokens                 GuestChoreToken[]
@@ -8205,6 +8200,12 @@ model BookingLedgerLine {
   amountCents Int
 
   /// CHARGE lines only: whose nights, which nights, at what rate.
+  ///
+  /// A PLAIN COLUMN for the same reason `anchorId` is one: a line outlives the
+  /// rows it was posted from, and a foreign key's `SET NULL` would rewrite a
+  /// posted line when a guest row goes — which is the one thing this table
+  /// does not allow. The strand is resolved by id at render time, and a line
+  /// whose guest is gone still carries `guestNames` (D-3532-3).
   bookingGuestId       String?
   nightStart           DateTime? @db.Date
   /// The morning after the last night this line covers (half-open, as every
@@ -8235,6 +8236,11 @@ model BookingLedgerLine {
   postedAt DateTime @default(now())
   /// The person whose decision this line records; NULL when the system posted
   /// it in the ordinary course of a settle or an edit.
+  ///
+  /// A PLAIN COLUMN, NOT A FOREIGN KEY, exactly as `AuditLog.actorMemberId`
+  /// is: an append-only record names the person as data, not as a live
+  /// reference. A foreign key would have to be re-pointed when two members
+  /// merge, and re-pointing is an UPDATE of a line that may never be updated.
   postedByMemberId String?
 
   /// What a person reads. Narration only: no reader may take money from it.
@@ -8242,16 +8248,18 @@ model BookingLedgerLine {
 
   lodgeId String @default(dbgenerated("default_lodge_id()"))
 
-  booking      Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  bookingGuest BookingGuest?      @relation(fields: [bookingGuestId], references: [id], onDelete: SetNull)
-  postedBy     Member?            @relation("BookingLedgerPostedBy", fields: [postedByMemberId], references: [id], onDelete: SetNull)
-  reverses     BookingLedgerLine? @relation("BookingLedgerReversal", fields: [reversesLineId], references: [id], onDelete: SetNull)
-  reversedBy   BookingLedgerLine? @relation("BookingLedgerReversal")
-  lodge        Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  booking    Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  /// `Restrict`, not `SetNull`: deleting a line is already forbidden, and a
+  /// cascade that blanked another line's pointer would be that forbidden
+  /// mutation arriving through the database instead of through code.
+  reverses   BookingLedgerLine? @relation("BookingLedgerReversal", fields: [reversesLineId], references: [id], onDelete: Restrict)
+  reversedBy BookingLedgerLine? @relation("BookingLedgerReversal")
+  lodge      Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
   @@index([bookingId, postedAt])
   @@index([anchorKind, anchorId])
   @@index([bookingGuestId])
+  @@index([postedByMemberId])
   @@index([lodgeId])
 }
 

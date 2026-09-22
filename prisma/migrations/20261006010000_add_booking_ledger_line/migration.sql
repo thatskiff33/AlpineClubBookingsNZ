@@ -1,8 +1,8 @@
 -- #3580 (programme #3527 stage 4, child C1) — the booking money ledger's table.
 --
 -- ONE STATEMENT GROUP, ALL ADDITIVE: four new enum types, one new table, its
--- indexes, its foreign keys and three CHECK constraints. Nothing existing is
--- altered, and no row anywhere is written or read by this migration.
+-- indexes, its three foreign keys and four CHECK constraints. Nothing existing
+-- is altered, and no row anywhere is written or read by this migration.
 --
 -- PHASE: expand. OLD_CODE_COMPATIBLE: yes, in the strongest sense available —
 -- the draining colour has never heard of this table, and nothing in the new
@@ -10,11 +10,12 @@
 -- table only one colour writes cannot break the other.
 --
 -- LOCK IMPACT: CREATE TYPE locks only the new types. CREATE TABLE locks only
--- the new table. The foreign keys take a SHARE ROW EXCLUSIVE on the referenced
--- tables (Booking, BookingGuest, Member, Lodge) for the duration of the
--- constraint's creation only; they are NOT VALID-free because the table is
--- empty, so validation scans nothing. The whole migration is DDL on an empty
--- table and runs in the ordinary deploy window.
+-- the new table. The three foreign keys take a SHARE ROW EXCLUSIVE on the
+-- referenced tables (Booking, Lodge, and this table itself) for the duration
+-- of each constraint's creation only, and validate against an empty table, so
+-- they scan nothing. BookingGuest and Member are NOT touched: the strand and
+-- acting-member columns carry no key, for the reason stated beside them. The
+-- whole migration is DDL on an empty table and runs in the ordinary window.
 --
 -- REVERSE: drop the table, then the four types. Nothing else is touched and no
 -- data can be lost, because this migration creates the only rows that would
@@ -75,19 +76,23 @@ CREATE INDEX "BookingLedgerLine_anchorKind_anchorId_idx" ON "BookingLedgerLine"(
 CREATE INDEX "BookingLedgerLine_bookingGuestId_idx" ON "BookingLedgerLine"("bookingGuestId");
 
 -- CreateIndex
+CREATE INDEX "BookingLedgerLine_postedByMemberId_idx" ON "BookingLedgerLine"("postedByMemberId");
+
+-- CreateIndex
 CREATE INDEX "BookingLedgerLine_lodgeId_idx" ON "BookingLedgerLine"("lodgeId");
 
 -- AddForeignKey
 ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_bookingId_fkey" FOREIGN KEY ("bookingId") REFERENCES "Booking"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- AddForeignKey
-ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_bookingGuestId_fkey" FOREIGN KEY ("bookingGuestId") REFERENCES "BookingGuest"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- `bookingGuestId` and `postedByMemberId` carry NO foreign key, exactly as
+-- `AuditLog.actorMemberId` does: an append-only record names a row as DATA,
+-- not as a live reference. A key would bring `SET NULL` with it, and a cascade
+-- that blanked a posted line is the one mutation this table does not allow —
+-- arriving through the database rather than through code, where the census
+-- cannot see it. It would also have to be re-pointed when two members merge.
 
 -- AddForeignKey
-ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_postedByMemberId_fkey" FOREIGN KEY ("postedByMemberId") REFERENCES "Member"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_reversesLineId_fkey" FOREIGN KEY ("reversesLineId") REFERENCES "BookingLedgerLine"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_reversesLineId_fkey" FOREIGN KEY ("reversesLineId") REFERENCES "BookingLedgerLine"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_lodgeId_fkey" FOREIGN KEY ("lodgeId") REFERENCES "Lodge"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -106,8 +111,13 @@ ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_sign_is_a_dire
 --    figure, so a rounding or a sign mistake cannot be stored (INV-MONEY-001).
 ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_amount_is_derived" CHECK ("amountCents" = "sign" * "unitCents" * "quantity" AND "unitCents" >= 0 AND "quantity" >= 0);
 
--- 3. A charge line says whose nights it prices; a settlement or adjustment
---    line does not, because the money it moves belongs to the booking rather
---    than to one strand. A charge that is not a guest-night (a change fee, a
---    promotion, a group discount) belongs to the booking too.
+-- 3. A guest-night line names the strand AND the nights it prices; nothing
+--    else names any of the three. Two constraints rather than one, because
+--    one equality left a gap: a settlement line carrying a strand id and no
+--    night fields satisfied `(kind = 'GUEST_NIGHT') = (all three present)`
+--    while still claiming a strand it has no business naming (review of
+--    #3580). The money a settlement moves belongs to the booking, not to one
+--    guest, and so does a change fee, a promotion or a group discount.
 ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_guest_nights_name_their_strand" CHECK (("kind" = 'GUEST_NIGHT') = ("bookingGuestId" IS NOT NULL AND "nightStart" IS NOT NULL AND "nightEndExclusive" IS NOT NULL));
+
+ALTER TABLE "BookingLedgerLine" ADD CONSTRAINT "BookingLedgerLine_only_guest_nights_name_a_strand" CHECK ("kind" = 'GUEST_NIGHT' OR ("bookingGuestId" IS NULL AND "nightStart" IS NULL AND "nightEndExclusive" IS NULL));

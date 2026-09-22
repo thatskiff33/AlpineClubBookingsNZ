@@ -104,11 +104,21 @@ function assertPostable(posting: BookingLedgerPosting): void {
     posting.bookingGuestId != null &&
     posting.nightStart != null &&
     posting.nightEndExclusive != null;
-  if ((posting.kind === "GUEST_NIGHT") !== namesStrand) {
+  const namesAnyStrandField =
+    posting.bookingGuestId != null ||
+    posting.nightStart != null ||
+    posting.nightEndExclusive != null;
+  if (posting.kind === "GUEST_NIGHT" && !namesStrand) {
     throw new BookingLedgerPostingError(
-      posting.kind === "GUEST_NIGHT"
-        ? "a GUEST_NIGHT line must name the strand and the nights it prices"
-        : `a ${posting.kind} line prices no strand, so it carries no guest or nights`,
+      "a GUEST_NIGHT line must name the strand and the nights it prices",
+    );
+  }
+  // Two checks rather than one equality: a line carrying a strand id and no
+  // night fields satisfied the equality while still claiming a strand it has
+  // no business naming (review of #3580). The database holds the same pair.
+  if (posting.kind !== "GUEST_NIGHT" && namesAnyStrandField) {
+    throw new BookingLedgerPostingError(
+      `a ${posting.kind} line prices no strand, so it names no guest and no nights`,
     );
   }
   if ((posting.side === "SETTLEMENT") !== (posting.settlementMethod != null)) {
@@ -154,18 +164,41 @@ function toCreateInput(posting: BookingLedgerPosting): Prisma.BookingLedgerLineC
 }
 
 /**
- * Post lines, inside the caller's transaction.
+ * Validate and build the rows, touching no database.
  *
- * Returns the number written, which is always `postings.length` — a partial
- * write is impossible because `createMany` is one statement and the caller's
- * transaction is the boundary.
+ * SEPARATE FROM THE WRITE ON PURPOSE. A caller inside a transaction that must
+ * survive a bad plan can call this first: a `BookingLedgerPostingError` thrown
+ * here is an ordinary JavaScript throw, so the transaction is untouched and
+ * the caller may carry on. Once a statement has reached Postgres and been
+ * refused, the transaction is aborted (`25P02`) and no `catch` in JavaScript
+ * can bring it back — which is why the write below is never the thing a
+ * caller is invited to swallow.
+ */
+export function buildBookingLedgerRows(
+  postings: readonly BookingLedgerPosting[],
+): Prisma.BookingLedgerLineCreateManyInput[] {
+  return postings.map(toCreateInput);
+}
+
+/** Write already-built rows. One statement, inside the caller's transaction. */
+export async function writeBookingLedgerRows(
+  store: BookingLedgerWriteStore,
+  rows: readonly Prisma.BookingLedgerLineCreateManyInput[],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const result = await store.bookingLedgerLine.createMany({ data: [...rows] });
+  return result.count;
+}
+
+/**
+ * Validate, build and write, inside the caller's transaction.
+ *
+ * Returns the number written. A partial write is impossible: `createMany` is
+ * one statement and the caller's transaction is the boundary.
  */
 export async function postBookingLedgerLines(
   store: BookingLedgerWriteStore,
   postings: readonly BookingLedgerPosting[],
 ): Promise<number> {
-  if (postings.length === 0) return 0;
-  const data = postings.map(toCreateInput);
-  const result = await store.bookingLedgerLine.createMany({ data });
-  return result.count;
+  return writeBookingLedgerRows(store, buildBookingLedgerRows(postings));
 }

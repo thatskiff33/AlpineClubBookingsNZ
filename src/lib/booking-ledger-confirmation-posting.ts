@@ -23,7 +23,8 @@
  * that is never edited again. C4's census (#3583) reports the coverage gap.
  */
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
-import type { BookingLedgerPosting } from "@/lib/booking-ledger-write";
+import { ledgerLineAmountCents, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
+import { addDaysDateOnly } from "@/lib/date-only";
 
 export type ConfirmationPostingBooking = {
   id: string;
@@ -51,13 +52,6 @@ export type ConfirmationPostingPlan = {
    */
   reconciles: boolean;
 };
-
-/** The morning after the last night, half-open like every stay range here. */
-function morningAfter(lastNight: Date): Date {
-  const next = new Date(lastNight);
-  next.setUTCDate(next.getUTCDate() + 1);
-  return next;
-}
 
 export function planConfirmationChargeLines(
   booking: ConfirmationPostingBooking,
@@ -92,7 +86,7 @@ export function planConfirmationChargeLines(
         anchorId: booking.id,
         bookingGuestId: guest.id,
         nightStart: night.stayDate,
-        nightEndExclusive: morningAfter(night.stayDate),
+        nightEndExclusive: addDaysDateOnly(night.stayDate, 1),
         rateMembershipTypeId: guest.rateMembershipTypeId,
         ageTier: guest.ageTier,
         guestNames: guestName ? [guestName] : [],
@@ -118,10 +112,8 @@ export function planConfirmationChargeLines(
     });
   }
 
-  const posted = postings.reduce(
-    (sum, posting) => sum + posting.sign * posting.unitCents * posting.quantity,
-    0,
-  );
+  // Through the one home for a line's arithmetic, not a second copy of it.
+  const posted = postings.reduce((sum, posting) => sum + ledgerLineAmountCents(posting), 0);
   return {
     postings,
     unpricedStrandIds,

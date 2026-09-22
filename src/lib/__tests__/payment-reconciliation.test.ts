@@ -320,23 +320,48 @@ describe("markBookingPaymentSucceeded", () => {
     expect(rows.reduce((sum, row) => sum + (row.amountCents as number), 0)).toBe(10000);
   });
 
-  it("settles anyway when the charge lines cannot be posted, and says so (#3580)", async () => {
-    // A projection that carries no night rows cannot be priced. The money is
-    // already captured, so refusing here would be the worst outcome in this
-    // file; the gap is C4's census to report (#3583), not this settle's to
-    // fail on.
-    mocks.ledgerCreateMany.mockRejectedValue(new Error("ledger is down"));
+  it("settles anyway when the charge lines cannot be BUILT, and writes none (#3580)", async () => {
+    /*
+      The half that is genuinely safe to swallow, and the only half.
+
+      A projection carrying no night rows cannot be priced. That throws in pure
+      JavaScript, before any statement reaches Postgres, so the transaction is
+      untouched and the settle — whose capture has already taken the member's
+      money — stands. The booking simply has no lines, which is the coverage
+      gap C4's census (#3583) exists to report.
+
+      THE OTHER HALF IS DELIBERATELY NOT TESTED HERE, because it cannot be:
+      a `createMany` that Postgres refuses aborts the transaction (`25P02`),
+      and no mock of a plain object can reproduce that — a test asserting the
+      settle survived a rejected mock would pass for the wrong reason and say
+      something false about production. So the write is not wrapped at all, on
+      the same rule this file's neighbours state explicitly (see
+      `adult-member-hosting-system-cancellation.ts`: "there is no `try` here on
+      purpose"). Review of #3580 is where that was caught.
+    */
+    const booking = makeStaggeredBooking();
+    mocks.bookingFindUnique.mockResolvedValue({
+      ...booking,
+      lodgeId: "lodge-1",
+      totalPriceCents: 10000,
+      promoAdjustmentCents: 0,
+      // No `nights` at all: the planner cannot price this strand.
+      guests: booking.guests.map((guest) => ({ ...guest, nights: undefined })),
+    });
     mocks.bookingFindMany.mockResolvedValue([]);
 
     const result = await markBookingPaymentSucceeded({
       bookingId: "booking-1",
-      paymentIntentId: "pi_ledger_down",
+      paymentIntentId: "pi_ledger_unbuildable",
       amountCents: 10000,
       paymentMethodId: "pm_1",
     });
 
     expect(result.outcome).toBe("paid");
     expect(mocks.bookingUpdateMany).toHaveBeenCalled();
+    // Nothing was written, rather than something wrong being written.
+    const rows = mocks.ledgerCreateMany.mock.calls[0]?.[0]?.data as unknown[] | undefined;
+    expect(rows ?? []).toEqual([]);
   });
 
   it("clears a stale credit election on the PAID claim and reports it (#2265)", async () => {

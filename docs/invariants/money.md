@@ -429,26 +429,28 @@ records). Three facets, not three statements of one rule (#2707, owner decision
 - **A booking's money ledger is append-only, and one module writes it**
   (#3580, programme #3527 stage 4; design
   [`design/booking-ledger.md`](../design/booking-ledger.md)).
-  `BookingLedgerLine` records what happened to a booking's money as posted
-  lines: charge, settlement or adjustment, each with a sign, a quantity, a
-  unit price and the event that anchored it. A line is never updated and never
-  deleted; a correction is a new line naming the one it reverses, and
-  `reversesLineId` is unique so a line is reversed at most once.
+  `BookingLedgerLine` records a booking's money as posted lines: charge,
+  settlement or adjustment, each with a sign, a quantity, a unit price and the
+  event that anchored it. A line is never updated or deleted; a correction is
+  a new line naming the one it reverses, and `reversesLineId` is unique.
 
   **The balance is derived, never stored.** `booking-ledger-balance.ts` is the
-  one place charged, settled, adjusted and owed are summed. There is no
-  running-total column and no status: a stored copy of a derived figure is the
-  mirror this table exists to retire.
+  one place charged, settled, adjusted and owed are summed. No running total
+  and no status: a stored copy of a derived figure is the mirror this table
+  retires.
 
   **`booking-ledger-write.ts` is the only door**, it exposes creation alone,
   and every posting goes inside the transaction of the writer whose act it
-  records — a settle that rolls back leaves no line saying it did not. The
-  database holds the shape rules the writer must never get wrong: a sign is
-  1 or -1, `amountCents` IS `sign * unitCents * quantity` with a non-negative
-  unit and quantity, and a `GUEST_NIGHT` line names its strand and its nights
-  while nothing else does. `booking-ledger-append-only-census.test.ts` reads
-  the tree and fails a second writer, or any update, upsert or delete of a
-  line, anywhere — including in the door.
+  records — a settle that rolls back leaves no line saying it did not.
+  Building rows is pure and may be refused safely; writing them is a statement
+  and is never wrapped, because a refused statement has already aborted the
+  transaction. The database holds the shape rules: a sign is 1 or -1,
+  `amountCents` IS `sign * unitCents * quantity` with a non-negative unit and
+  quantity, a `GUEST_NIGHT` line names its strand and its nights, and nothing
+  else names any of them. The strand and the acting member are plain columns,
+  not keys, so no cascade can rewrite a posted line.
+  `booking-ledger-append-only-census.test.ts` fails a second writer, or any
+  update, upsert or delete of a line, anywhere — including in the door.
 
   Stage C1 posts charge lines at confirmation, from the night rows, and
   nothing reads them: `INV-PAY-047`'s mirror is still the answer until the

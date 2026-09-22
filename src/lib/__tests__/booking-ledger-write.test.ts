@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import {
+  buildBookingLedgerRows,
+  writeBookingLedgerRows,
   BookingLedgerPostingError,
   ledgerLineAmountCents,
   postBookingLedgerLines,
@@ -40,6 +42,21 @@ function store() {
   return { store: { bookingLedgerLine: { createMany } } as never, createMany };
 }
 
+describe("buildBookingLedgerRows", () => {
+  it("throws in pure JavaScript, before any statement reaches the database", async () => {
+    // The distinction the settle door depends on: a bad PLAN is safe to
+    // swallow inside a transaction because nothing has been sent yet. A
+    // refused STATEMENT is not, and is deliberately never wrapped.
+    const { store: s, createMany } = store();
+    expect(() => buildBookingLedgerRows([guestNight({ unitCents: -1 })])).toThrow(
+      BookingLedgerPostingError,
+    );
+    expect(createMany).not.toHaveBeenCalled();
+    expect(await writeBookingLedgerRows(s, [])).toBe(0);
+    expect(createMany).not.toHaveBeenCalled();
+  });
+});
+
 describe("postBookingLedgerLines", () => {
   it("computes the amount from the parts, so a caller cannot hand over a figure that disagrees", () => {
     expect(ledgerLineAmountCents({ sign: 1, unitCents: 6500, quantity: 2 })).toBe(13_000);
@@ -69,6 +86,27 @@ describe("postBookingLedgerLines", () => {
     ["a guest-night naming no strand", guestNight({ bookingGuestId: null })],
     ["a guest-night naming no nights", guestNight({ nightStart: null })],
     ["a change fee that names a strand", guestNight({ kind: "CHANGE_FEE" })],
+    // Review of #3580: the equality alone let this through — a line naming a
+    // strand and no nights satisfied it while still claiming a guest.
+    [
+      "a settlement that names a strand but no nights",
+      guestNight({
+        side: "SETTLEMENT",
+        kind: "CARD_CAPTURE",
+        settlementMethod: "CARD",
+        nightStart: null,
+        nightEndExclusive: null,
+      }),
+    ],
+    [
+      "an adjustment that names only a night",
+      guestNight({
+        side: "ADJUSTMENT",
+        kind: "AGREED_ADJUSTMENT",
+        bookingGuestId: null,
+        nightEndExclusive: null,
+      }),
+    ],
     [
       "a settlement with no method",
       guestNight({

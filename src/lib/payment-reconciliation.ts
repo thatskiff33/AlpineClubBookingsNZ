@@ -73,7 +73,10 @@ import {
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
-import { postBookingLedgerLines } from "@/lib/booking-ledger-write";
+import {
+  buildBookingLedgerRows,
+  writeBookingLedgerRows,
+} from "@/lib/booking-ledger-write";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -1539,45 +1542,58 @@ async function settleBookingPaymentInTransaction(
     // #3580 (programme #3527, C1): post the booking's charge lines to the
     // append-only money ledger, in THIS transaction and under THIS claim, so a
     // settle that rolls back leaves no line saying it did not. Nothing reads
-    // these rows — the mirror columns are still the answer until C5 (#3584) —
-    // which is why a posting failure must not be able to fail a settle that
-    // has already taken the member's money. It cannot: the planner is pure,
-    // the write is one `createMany` of rows nothing references, and the
-    // strands it cannot price (`INV-MOD-028`: a blank night is not evidence)
-    // are simply not posted, for C4's census (#3583) to report as coverage.
+    // these rows — the mirror columns are still the answer until C5 (#3584).
     //
-    // AND IT CANNOT, BY CONSTRUCTION: the posting is wrapped, because "must
-    // not be able to" is a claim a comment cannot keep. A throw here would
-    // roll back a settle whose money is already captured — the worst outcome
-    // in this file — to protect rows nobody reads. What catches a swallowed
-    // failure instead is C4's census (#3583): a booking with money columns
-    // and no lines is a coverage gap, and coverage must reach zero before any
-    // read moves. So the failure is recorded, not lost.
-    try {
-      const ledgerPlan = planConfirmationChargeLines({
-        id: booking.id,
-        lodgeId: booking.lodgeId,
-        totalPriceCents: booking.totalPriceCents,
-        promoAdjustmentCents: booking.promoAdjustmentCents,
-        guests: booking.guests,
-      });
-      await postBookingLedgerLines(tx, ledgerPlan.postings);
-      if (!ledgerPlan.reconciles) {
-        logger.warn(
-          {
-            bookingId: booking.id,
-            unpricedStrandIds: ledgerPlan.unpricedStrandIds,
-            postedLines: ledgerPlan.postings.length,
-          },
-          "Booking ledger: posted charge lines do not add up to the booking's final price (#3580)"
+    // THE SPLIT BELOW IS THE WHOLE POINT, and review of #3580 is why it exists.
+    // An earlier cut wrapped the write in a `try`/`catch` and claimed a posting
+    // failure could never fail the settle. That claim was false for exactly the
+    // failures worth worrying about: once Postgres has refused a statement the
+    // transaction is aborted (`25P02`), and a JavaScript `catch` does not bring
+    // it back — every later statement in this same `tx` would throw, and the
+    // settle would roll back anyway, through the guard meant to prevent it.
+    // This file's neighbours already know that: see
+    // `adult-member-hosting-system-cancellation.ts`, which says in as many
+    // words that there is no `try` there on purpose.
+    //
+    // So the two halves are treated differently, honestly:
+    //
+    //   * BUILDING the rows is pure. A bad plan — a malformed projection, a
+    //     shape the ledger refuses — throws an ordinary JavaScript error with
+    //     no database involved, and THAT is safe to swallow: the settle is
+    //     untouched and the booking simply has no lines, which is a coverage
+    //     gap C4's census (#3583) reports and must drive to zero before any
+    //     read moves.
+    //   * WRITING them is a statement. If Postgres refuses it, this settle is
+    //     already lost and pretending otherwise would only hide why.
+    const ledgerRows = (() => {
+      try {
+        const plan = planConfirmationChargeLines({
+          id: booking.id,
+          lodgeId: booking.lodgeId,
+          totalPriceCents: booking.totalPriceCents,
+          promoAdjustmentCents: booking.promoAdjustmentCents,
+          guests: booking.guests,
+        });
+        if (!plan.reconciles) {
+          logger.warn(
+            {
+              bookingId: booking.id,
+              unpricedStrandIds: plan.unpricedStrandIds,
+              postedLines: plan.postings.length,
+            },
+            "Booking ledger: the charge lines for a settled booking do not add up to its final price (#3580)"
+          );
+        }
+        return buildBookingLedgerRows(plan.postings);
+      } catch (error) {
+        logger.error(
+          { err: error, bookingId: booking.id },
+          "Booking ledger: could not build charge lines for a settled booking; the settle stands and the gap is the census's to report (#3580)"
         );
+        return [];
       }
-    } catch (error) {
-      logger.error(
-        { err: error, bookingId: booking.id },
-        "Booking ledger: failed to post charge lines for a settled booking; the settle stands and the gap is the census's to report (#3580)"
-      );
-    }
+    })();
+    await writeBookingLedgerRows(tx, ledgerRows);
 
     // #2576 §9. THE SINGLE SETTLE DOOR IS A CONFIRMING PATH, and §9 names "payment
     // completion" among the routes that must run the shared hosting evaluator
