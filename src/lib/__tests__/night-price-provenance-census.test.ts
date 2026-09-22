@@ -15,54 +15,92 @@ import { requireClubTimeZone } from "@/lib/club-time";
 
 const ZONE = requireClubTimeZone("Pacific/Auckland");
 const D = (value: string) => new Date(`${value}T00:00:00.000Z`);
+let stayDay = 0;
 const night = (priceCents: number | null, priceSource: BookingGuestNightPriceSource) => ({
+  // Distinct, real stay dates: the classifier keys evidence by calendar day.
+  stayDate: new Date(Date.UTC(2026, 7, 1 + (stayDay++ % 20))),
   priceCents,
   priceSource,
 });
+/** A strand whose stored total is the sum of its rows, unless `total` says otherwise. */
+const strand = (nights: ReturnType<typeof night>[], total?: number) => ({
+  priceCents: total ?? nights.reduce((sum, n) => sum + (n.priceCents ?? 0), 0),
+  nights,
+});
+const CLASSES = {
+  EXACT: 0,
+  NO_STORED_NIGHT_PRICES: 0,
+  PARTIAL_STORED_NIGHT_PRICES: 0,
+  STORED_TOTAL_MISMATCH: 0,
+  INEXACT_STORED_NIGHT_PRICES: 0,
+  COUNTERPART_STRAND_UNREADABLE: 0,
+};
 
 describe("classifyStrandProvenance", () => {
-  it("classes a strand by its weakest row", () => {
-    expect(classifyStrandProvenance([])).toBe("NO_ROWS");
-    expect(classifyStrandProvenance([night(5000, "SOLD"), night(5000, "OFFICER_PRICED")])).toBe("EXACT_NIGHTS");
-    expect(classifyStrandProvenance([night(5000, "SOLD"), night(5000, "EVEN_SPLIT")])).toBe("INEXACT_NIGHTS");
-    expect(classifyStrandProvenance([night(5000, "UNKNOWN")])).toBe("INEXACT_NIGHTS");
-    expect(classifyStrandProvenance([night(5000, "SOLD"), night(null, "UNKNOWN")])).toBe("UNVALUED_NIGHT");
-    // A comped night is a real sold price, not a blank.
-    expect(classifyStrandProvenance([night(0, "SOLD")])).toBe("EXACT_NIGHTS");
+  it("is INV-MOD-028's own verdict at individual-night grain: EXACT, or the cause the gate would park with", () => {
+    expect(classifyStrandProvenance(strand([night(5000, "SOLD"), night(5000, "OFFICER_PRICED")]))).toBe("EXACT");
+    // A comped night is a real sold price, not a blank; no rows and no money is exact too.
+    expect(classifyStrandProvenance(strand([night(0, "SOLD")]))).toBe("EXACT");
+    expect(classifyStrandProvenance(strand([]))).toBe("EXACT");
+    expect(classifyStrandProvenance(strand([], 5000))).toBe("NO_STORED_NIGHT_PRICES");
+    expect(classifyStrandProvenance(strand([night(null, "UNKNOWN")], 5000))).toBe("NO_STORED_NIGHT_PRICES");
+    expect(classifyStrandProvenance(strand([night(5000, "SOLD"), night(null, "UNKNOWN")], 10000))).toBe(
+      "PARTIAL_STORED_NIGHT_PRICES",
+    );
+    expect(classifyStrandProvenance(strand([night(5000, "SOLD"), night(5000, "EVEN_SPLIT")]))).toBe(
+      "INEXACT_STORED_NIGHT_PRICES",
+    );
+    expect(classifyStrandProvenance(strand([night(5000, "UNKNOWN")]))).toBe("INEXACT_STORED_NIGHT_PRICES");
+  });
+
+  it("counts an exact-looking strand whose rows do not sum, or which holds a negative row, where the gate parks it", () => {
+    // Both were invisible to a provenance-only reading (review lens B on #3576).
+    expect(classifyStrandProvenance(strand([night(5000, "SOLD"), night(5000, "SOLD")], 9999))).toBe(
+      "STORED_TOTAL_MISMATCH",
+    );
+    expect(classifyStrandProvenance(strand([night(-100, "SOLD"), night(5100, "SOLD")], 5000))).toBe(
+      "PARTIAL_STORED_NIGHT_PRICES",
+    );
   });
 });
 
 describe("summarizeNightPriceProvenance", () => {
   it("counts rows by provenance and strands by class, overall and per creation month", () => {
     const result = summarizeNightPriceProvenance([
-      { createdAt: D("2026-05-03"), guests: [{ nights: [night(5000, "EVEN_SPLIT"), night(5000, "EVEN_SPLIT")] }] },
-      { createdAt: D("2026-05-20"), guests: [{ nights: [night(5000, "SOLD")] }, { nights: [] }] },
-      { createdAt: D("2026-07-01"), guests: [{ nights: [night(null, "UNKNOWN"), night(5000, "SOLD")] }] },
+      { createdAt: D("2026-05-03"), guests: [strand([night(5000, "EVEN_SPLIT"), night(5000, "EVEN_SPLIT")])] },
+      { createdAt: D("2026-05-20"), guests: [strand([night(5000, "SOLD")]), strand([], 700)] },
+      { createdAt: D("2026-07-01"), guests: [strand([night(null, "UNKNOWN"), night(5000, "SOLD")], 10000)] },
     ], ZONE);
     expect(result.nightRowsBySource).toEqual({ EVEN_SPLIT: 2, SOLD: 2, UNKNOWN: 1 });
-    expect(result.strandsByClass).toEqual({ EXACT_NIGHTS: 1, INEXACT_NIGHTS: 1, UNVALUED_NIGHT: 1, NO_ROWS: 1 });
+    expect(result.strandsByClass).toEqual({
+      ...CLASSES,
+      EXACT: 1,
+      INEXACT_STORED_NIGHT_PRICES: 1,
+      PARTIAL_STORED_NIGHT_PRICES: 1,
+      NO_STORED_NIGHT_PRICES: 1,
+    });
     expect(result.byMonth).toEqual([
       {
         month: "2026-05",
         bookings: 2,
         nightRowsBySource: { EVEN_SPLIT: 2, SOLD: 1 },
-        strandsByClass: { EXACT_NIGHTS: 1, INEXACT_NIGHTS: 1, UNVALUED_NIGHT: 0, NO_ROWS: 1 },
+        strandsByClass: { ...CLASSES, EXACT: 1, INEXACT_STORED_NIGHT_PRICES: 1, NO_STORED_NIGHT_PRICES: 1 },
       },
       {
         month: "2026-07",
         bookings: 1,
         nightRowsBySource: { UNKNOWN: 1, SOLD: 1 },
-        strandsByClass: { EXACT_NIGHTS: 0, INEXACT_NIGHTS: 0, UNVALUED_NIGHT: 1, NO_ROWS: 0 },
+        strandsByClass: { ...CLASSES, PARTIAL_STORED_NIGHT_PRICES: 1 },
       },
     ]);
   });
 
-  it("classes a rate-derived night (#3531 3b) as exact, through INV-MOD-028's own predicate", () => {
+  it("classes a rate-derived night (#3531 3b) as exact, through INV-MOD-028's own classifier", () => {
     const result = summarizeNightPriceProvenance([
-      { createdAt: D("2026-05-03"), guests: [{ nights: [{ priceCents: 5000, priceSource: "RATE_DERIVED" }] }] },
+      { createdAt: D("2026-05-03"), guests: [strand([night(5000, "RATE_DERIVED")])] },
     ], ZONE);
     expect(result.nightRowsBySource).toEqual({ RATE_DERIVED: 1 });
-    expect(result.strandsByClass.EXACT_NIGHTS).toBe(1);
+    expect(result.strandsByClass.EXACT).toBe(1);
   });
 
   it("months are the club's calendar month of the stored instant, oldest first", () => {

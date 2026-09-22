@@ -15,24 +15,29 @@
  * month at the club belongs to that month, not to the UTC day it was still.
  */
 import type { BookingGuestNightPriceSource } from "@prisma/client";
-import { calendarMonthOf, clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
-import { storedNightPriceSourceIsInexact } from "@/lib/stored-sold-price-evidence";
+import {
+  calendarDateOfDateOnlyInstant,
+  calendarMonthOf,
+  clubCalendarDateOf,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import { classifyStoredSoldPriceEvidence } from "@/lib/stored-sold-price-evidence";
 import {
   EDIT_FINANCIAL_REVIEW_CAUSES,
   parseEditFinancialReviewContext,
   type EditFinancialReviewCause,
 } from "@/lib/edit-financial-review-context";
 
-/** How a strand's rows read as a whole, the classes `INV-MOD-028` cares about. */
-export type StrandProvenanceClass =
-  /** Every row exact under `INV-MOD-028`: sold, officer-valued or rate-derived. */
-  | "EXACT_NIGHTS"
-  /** Every row an integer, at least one only an even split or of unknown origin. */
-  | "INEXACT_NIGHTS"
-  /** At least one row NULL: a parked edit's blank. */
-  | "UNVALUED_NIGHT"
-  /** No night rows at all. */
-  | "NO_ROWS";
+/**
+ * How a strand's rows read as a whole: `INV-MOD-028`'s own verdict on the
+ * strand at individual-night grain — the grain an edit that moves one of its
+ * nights needs — so a class here is either `EXACT` or the cause the edit gate
+ * would park with. The same vocabulary as the review tasks the second summary
+ * counts, which is what lets the two summaries be read against each other.
+ */
+export type StrandProvenanceClass = "EXACT" | EditFinancialReviewCause;
+// (3b's `RateDerivationResidueReason.UNVALUED_NIGHT` names a different, narrower
+// fact — a NULL row on a strand the backfill would otherwise have priced.)
 
 export type NightPriceProvenanceCensus = {
   /** Every night row, by its provenance value as stored. */
@@ -48,25 +53,46 @@ export type NightPriceProvenanceCensus = {
   }>;
 };
 
-export type ProvenanceCensusBookingRow = {
-  createdAt: Date;
-  guests: ReadonlyArray<{
-    nights: ReadonlyArray<{ priceCents: number | null; priceSource: BookingGuestNightPriceSource }>;
+export type ProvenanceCensusStrandRow = {
+  /** `BookingGuest.priceCents` as stored: what the rows must reconcile to. */
+  priceCents: number;
+  nights: ReadonlyArray<{
+    stayDate: Date;
+    priceCents: number | null;
+    priceSource: BookingGuestNightPriceSource;
   }>;
 };
 
-export function classifyStrandProvenance(
-  nights: ReadonlyArray<{ priceCents: number | null; priceSource: BookingGuestNightPriceSource }>,
-): StrandProvenanceClass {
-  if (nights.length === 0) return "NO_ROWS";
-  if (nights.some((night) => night.priceCents === null)) return "UNVALUED_NIGHT";
-  // Exactness is `INV-MOD-028`'s own predicate, imported (`INV-SSOT`): a sixth
-  // provenance value is classed here exactly as the edit gate would class it.
-  return nights.some((night) => storedNightPriceSourceIsInexact(night.priceSource)) ? "INEXACT_NIGHTS" : "EXACT_NIGHTS";
+export type ProvenanceCensusBookingRow = {
+  createdAt: Date;
+  guests: ReadonlyArray<ProvenanceCensusStrandRow>;
+};
+
+/**
+ * The one classifier (`INV-SSOT`): `classifyStoredSoldPriceEvidence` judges
+ * the rows against the stored total exactly as the edit gate does, so a strand
+ * whose exact-looking rows do not sum (`STORED_TOTAL_MISMATCH`), or which holds
+ * a negative row, is counted where the gate would park it rather than as exact.
+ */
+export function classifyStrandProvenance(strand: ProvenanceCensusStrandRow): StrandProvenanceClass {
+  const verdict = classifyStoredSoldPriceEvidence(
+    strand.nights.map((night) => ({
+      date: calendarDateOfDateOnlyInstant(night.stayDate),
+      priceCents: night.priceCents,
+      priceSource: night.priceSource,
+    })),
+    strand.priceCents,
+    "INDIVIDUAL_NIGHT",
+  );
+  return verdict.kind === "exact" ? "EXACT" : verdict.cause;
 }
 
 function emptyClasses(): Record<StrandProvenanceClass, number> {
-  return { EXACT_NIGHTS: 0, INEXACT_NIGHTS: 0, UNVALUED_NIGHT: 0, NO_ROWS: 0 };
+  const causes = Object.fromEntries(EDIT_FINANCIAL_REVIEW_CAUSES.map((cause) => [cause, 0])) as Record<
+    EditFinancialReviewCause,
+    number
+  >;
+  return { EXACT: 0, ...causes };
 }
 
 export function monthOf(instant: Date, zone: ClubTimeZone): string {
@@ -85,7 +111,7 @@ export function summarizeNightPriceProvenance(
     const bucket = months.get(month) ?? { month, bookings: 0, nightRowsBySource: {}, strandsByClass: emptyClasses() };
     bucket.bookings += 1;
     for (const guest of booking.guests) {
-      const cls = classifyStrandProvenance(guest.nights);
+      const cls = classifyStrandProvenance(guest);
       strandsByClass[cls] += 1;
       bucket.strandsByClass[cls] += 1;
       for (const night of guest.nights) {
@@ -96,10 +122,21 @@ export function summarizeNightPriceProvenance(
     months.set(month, bucket);
   }
   return {
-    nightRowsBySource,
+    nightRowsBySource: sortedKeys(nightRowsBySource),
     strandsByClass,
-    byMonth: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)),
+    byMonth: [...months.values()]
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .map((bucket) => ({ ...bucket, nightRowsBySource: sortedKeys(bucket.nightRowsBySource) })),
   };
+}
+
+/**
+ * Key order follows the value, not the row order the database happened to
+ * return (the nested selects carry no ORDER BY), so two runs over the same
+ * data print byte-identical JSON and a diff between them shows only change.
+ */
+function sortedKeys(counts: Record<string, number>): Record<string, number> {
+  return Object.fromEntries(Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 export type EditFinancialReviewCensus = {
@@ -150,7 +187,7 @@ export function summarizeEditFinancialReviews(
   }
   return {
     total: tasks.length,
-    byStatus,
+    byStatus: sortedKeys(byStatus),
     byCause,
     byMonth: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)),
   };

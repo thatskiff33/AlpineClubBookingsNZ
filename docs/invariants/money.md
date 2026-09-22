@@ -401,7 +401,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   promotion build-up not known, promotion build-up mismatch,
   discount-component mismatch, and final-price relation mismatch.
 
-  It checks recorded facts only: `Booking.totalPriceCents` against readable
+  It checks recorded facts: `Booking.totalPriceCents` against readable
   whole-guest sold-price evidence; `promoAdjustmentCents` against the
   `INV-MONEY-029` adjustment build-up when known; `discountCents` against
   `max(0, -promoAdjustmentCents)`; and `finalPriceCents` through
@@ -418,9 +418,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   exports and per-booking Xero reconciliation input carry the same state and
   ordered reasons; the Xero invoice shape and every displayed or settled amount
   are unchanged. A read-only repeatable-read census
-  (`npm run booking-money:census`) reports state/reason counts and, per club
-  creation month, night rows by provenance, strands by class and edit reviews
-  by cause (#3531 3c), from one ordered snapshot, writing nothing. The mutation-verified `booking-money-writer-census.test.ts`
+  (`npm run booking-money:census`) reports state/reason counts, night rows by
+  provenance and strands by `INV-MOD-028` verdict per booking month, and edit
+  reviews by cause per task month (#3531 3c), from one snapshot, read-only. The mutation-verified `booking-money-writer-census.test.ts`
   names direct headline/component writers and rejects raw-SQL or
   forwarded-delegate bypasses. A partly-refunded guest-add mismatch is
   therefore visible for #3244 to repair separately; this rule chooses no card,

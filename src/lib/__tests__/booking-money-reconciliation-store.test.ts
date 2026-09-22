@@ -151,7 +151,10 @@ describe("booking money reconciliation store", () => {
     expect(reviewFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { kind: "EDIT_FINANCIAL_REVIEW" } }),
     );
-    expect(result.nightPriceProvenance.strandsByClass).toMatchObject({ INEXACT_NIGHTS: 1, UNVALUED_NIGHT: 1 });
+    expect(result.nightPriceProvenance.strandsByClass).toMatchObject({
+      INEXACT_STORED_NIGHT_PRICES: 1,
+      NO_STORED_NIGHT_PRICES: 1,
+    });
     expect(result.editFinancialReviews).toMatchObject({ total: 1, byStatus: { OPEN: 1 }, byCause: { UNREADABLE_CONTEXT: 1 } });
     expect(result).toMatchObject({
       totalBookings: 9,

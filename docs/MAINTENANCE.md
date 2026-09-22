@@ -1499,11 +1499,15 @@ snapshot it reports:
   with every applicable reason — as counts;
 - what the stored night prices are made of (#3531 3c): night rows by
   provenance (`SOLD`, `OFFICER_PRICED`, `EVEN_SPLIT`, `UNKNOWN`, `RATE_DERIVED`)
-  and strands by class (`EXACT_NIGHTS`, `INEXACT_NIGHTS`, `UNVALUED_NIGHT`,
-  `NO_ROWS`), overall and per booking-creation month;
+  and strands by class — `INV-MOD-028`'s own verdict on the strand at
+  individual-night grain, so `EXACT` or the cause an edit moving one of its
+  nights would park with (`INEXACT_STORED_NIGHT_PRICES`,
+  `STORED_TOTAL_MISMATCH`, `PARTIAL_STORED_NIGHT_PRICES`,
+  `NO_STORED_NIGHT_PRICES`) — overall and per booking-creation month;
 - every `EDIT_FINANCIAL_REVIEW` task by status and by the cause the raise
-  recorded (`INEXACT_STORED_NIGHT_PRICES` is the one #3531 is about), overall
-  and per task-creation month.
+  recorded, overall and per task-creation month. The two summaries share one
+  cause vocabulary on purpose: strands by cause is what the gate WOULD park;
+  tasks by cause is what it DID park.
 
 The per-month lines are the point: run it before a deploy and again after, and
 the effect of the parking gate's grain (#3531 3a) and the rate-derived backfill
