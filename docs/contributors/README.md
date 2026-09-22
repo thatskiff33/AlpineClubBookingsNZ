@@ -63,6 +63,10 @@ in. Cite rules by id, never by line number.
   times turn into each other: the calendar-date / instant / club-local-scheduled
   distinction, where the club's zone comes from, and why a wall time may not
   exist or may exist twice.
+- [`../CLUB_FORMAT_KERNEL.md`](../CLUB_FORMAT_KERNEL.md) — the one place an
+  amount, a proportion or a count becomes a string: where the club's currency
+  and locale come from, the bound API a server and a browser both call, and the
+  migration window while the call sites move.
 - [`../CAPACITY_MODEL.md`](../CAPACITY_MODEL.md) — how each lodge's bookable
   capacity is decided in every configuration.
 - [`../CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md) — the
