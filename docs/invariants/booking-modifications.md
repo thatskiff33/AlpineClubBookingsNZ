@@ -1891,8 +1891,8 @@ status list near a booking door. Member guide:
 ## INV-MOD-058
 
 **A booking edit stores the lines its price delta is made of, and every reader
-of them reads the same rows** (#3530, programme #3527; owner direction, 20
-September 2026).
+of them reads the same rows** (#3530, programme #3527; owner direction, 20 Sep
+2026).
 
 `BookingModification.priceLines` holds the signed lines behind
 `priceDiffCents` — per guest category × rate × unit price × nights, plus one
@@ -1909,13 +1909,13 @@ immutable.
 Rules: night prices are gross; the promotion is one signed `PROMO_DELTA` line;
 a kept night at the same price and category cancels; a repriced night is one
 removed and one added, never netted; runs are cut by `splitNightsIntoPriceRuns`,
-as on the invoice. An unpriced night, or a before-night whose stored price is
-inexact (`storedNightPriceSourceIsInexact`), yields **no** lines
-(`INV-MOD-028`); lines not summing to `priceDiffCents` are not stored
+as on the invoice. An unpriced night, or a line-leaving before-night whose stored price is
+inexact (`storedNightPriceSourceIsInexact`; a cancelling kept night needs
+none), yields **no** lines (`INV-MOD-028`); lines not summing to `priceDiffCents` are not stored
 (`INV-MONEY-003`). NULL means "no itemisation", never `[]`.
 `computeModificationPriceLines` stores NULL on any failure and
 `resolveModificationDocumentLineItems` sends the single line
-(`NARRATION_UNAVAILABLE`): narration never fails an edit or a document.
+(`NARRATION_UNAVAILABLE`): narration never fails an edit or document.
 
 A Xero document is itemised only when `selectModificationDocumentLines` finds
 the rows explain exactly what it bills: Σ lines + Σ COMPLETED review shares =

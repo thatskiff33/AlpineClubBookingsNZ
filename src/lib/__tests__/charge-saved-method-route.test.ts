@@ -476,6 +476,9 @@ describe("POST /api/payments/charge-saved-method", () => {
 
       expect(mockChargePaymentMethod).toHaveBeenCalledWith({
         amountCents: 12500,
+        // #3563 (INV-SSOT-003, D5): the currency default is gone and every
+        // caller states it. Same value the default supplied.
+        currency: "nzd",
         customerId: "cus_123",
         paymentMethodId: "pm_123",
         metadata: { bookingId: "booking-1", memberId: "member-1" },

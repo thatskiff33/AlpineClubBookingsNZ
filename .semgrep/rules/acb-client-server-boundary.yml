@@ -26,7 +26,8 @@ rules:
       # server-only its own docblock says it is. Every `@/lib` module in it that
       # EXISTS now carries `import "server-only"` as well — the last three,
       # `club-time-zone-env` (#2989), `environment-role-declaration` and
-      # `environment-role` (#3034), were marked by #3204 — and they stay listed
+      # `environment-role` (#3034), were marked by #3204, and `club-format-env`
+      # (#3563) was marked on arrival — and they stay listed
       # here anyway. `@/lib/session` and `@/lib/env` name no file, so there is
       # nothing to mark and this list is the ONLY thing standing between a module
       # created at either path and the browser: do not delete an entry on the
@@ -36,12 +37,16 @@ rules:
       # cheap always-on check for a slower one. The one home for the reasoning is
       # docs/invariants/operations.md -> INV-OPS-013.
       #
-      # Why these three are in the list at all: Next inlines `NEXT_PUBLIC_*`, so
+      # Why these four are in the list at all: Next inlines `NEXT_PUBLIC_*`, so
       # importing `club-time-zone-env` from a
       # client component answers from the BUILD-TIME `NEXT_PUBLIC_TZ` instead of
       # from the running server: the split-brain `INV-CONFIG-002` forbids. Its
       # pure sibling `club-time-zone` is NOT in the list, on purpose — the admin
-      # panel needs its zone list. `environment-role-declaration` and
+      # panel needs its zone list. `club-format-env` (#3563) is the same pair
+      # for the same reason, and worse: NEXT_PUBLIC_CURRENCY has no Dockerfile
+      # build argument, so a client-side read inlines `undefined` in the
+      # published image and every club silently falls back to NZD. Its pure
+      # sibling `club-format` is NOT in the list either. `environment-role-declaration` and
       # `environment-role` join it on sharper grounds: the declaration module
       # reads `process.env.APP_ENVIRONMENT_ROLE`, and a non-public variable
       # inlines as `undefined` in a browser — so a client import would read
@@ -77,7 +82,7 @@ rules:
               - metavariable-regex:
                   metavariable: $MOD
                   regex: >-
-                    ^(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero|stripe|env|club-time-zone-env|environment-role-declaration|environment-role)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)$
+                    ^(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero|stripe|env|club-time-zone-env|club-format-env|environment-role-declaration|environment-role)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)$
           # DYNAMIC forms. `await import("@/lib/prisma")` and
           # `require("@/lib/auth")` are not statements the static regex above
           # can see, and both put the module in the client bundle — `import()`
@@ -94,7 +99,7 @@ rules:
                   # quotes, so the quotes are optional-matched here rather than
                   # stripped.
                   regex: >-
-                    ^["']?(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero|stripe|env|club-time-zone-env|environment-role-declaration|environment-role)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)["']?$
+                    ^["']?(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero|stripe|env|club-time-zone-env|club-format-env|environment-role-declaration|environment-role)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)["']?$
     paths:
       exclude:
         # Fixtures for this rule are deliberate violations. Anchored with a

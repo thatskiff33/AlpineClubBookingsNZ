@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  485
+row-producing sites:  486
 uncategorised:        0
-category values: admin 107, booking 104, xero 37, family 35, payment 47,
+category values: admin 108, booking 104, xero 37, family 35, payment 47,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -707,6 +707,15 @@ the same audience reason as the request it reverses, and `important` rather than
 COMPLETED and the booking's columns read as if no request had existed, so the
 row carries who withdrew it, how much, the card request and its provider status
 after the cancel, the review task it came from, and what was retired.
+
+#3563 then added one more (`admin` 107 -> 108, 485 -> 486, MEASURED with
+`npm run audit:census` on that branch rather than added to the literal):
+`CLUB_FORMAT_UPDATED`, the record that a Full Admin changed the installation's
+currency or locale. `admin` for exactly the reason `CLUB_TIME_ZONE_UPDATED` and
+`CLUB_IDENTITY_SETTINGS_UPDATED` are - it is installation configuration, read
+by the same administrators who can already see those - so it widens nobody's
+readership. The row carries the actor and the before/after pair and nothing
+else: no request echo and no settings blob.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

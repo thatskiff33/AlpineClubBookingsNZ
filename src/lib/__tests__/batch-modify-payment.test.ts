@@ -1573,21 +1573,24 @@ describe("PUT /api/bookings/[id]/modify", () => {
     mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
       fn(tx)
     );
+    // #3531: the breakdown carries the nights it priced, so the evidence gate
+    // judges Alice as UNTOUCHED (kept nights) rather than as removed.
+    const nightDates = [new Date("2026-08-20T00:00:00.000Z"), new Date("2026-08-21T00:00:00.000Z")];
     mockCalculateBookingPrice
       .mockReturnValueOnce({
         totalPriceCents: 15000,
         guests: [
-          { priceCents: 5000, perNightCents: [2500, 2500] },
-          { priceCents: 10000, perNightCents: [5000, 5000] },
+          { priceCents: 5000, perNightCents: [2500, 2500], nightDates },
+          { priceCents: 10000, perNightCents: [5000, 5000], nightDates },
         ],
       })
       .mockReturnValueOnce({
         totalPriceCents: 5000,
-        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500], nightDates }],
       })
       .mockReturnValueOnce({
         totalPriceCents: 10000,
-        guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+        guests: [{ priceCents: 10000, perNightCents: [5000, 5000], nightDates }],
       });
 
     const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
@@ -1617,6 +1620,90 @@ describe("PUT /api/bookings/[id]/modify", () => {
         guestNames: ["Bob Guest"],
         amountCents: 10000,
       }),
+    ]);
+  });
+
+  it("an untouched guest with evenly-split rows does not park an edit that adds another guest (#3531 3a)", async () => {
+    // Alice's two rows are an even split from an import - integers that sum to
+    // her stored total but were never sold night by night. She is not touched:
+    // the edit adds Bob. Her money does not move and her rows are rewritten at
+    // the same cents with the same provenance, so nothing parks (D-3531-1).
+    const booking = makeBooking({
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Alice",
+          lastName: "Member",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "m1",
+          priceCents: 5000,
+          rateMembershipTypeId: "rt-member",
+          nights: [
+            { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 2500, priceSource: "EVEN_SPLIT" },
+            { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: 2500, priceSource: "EVEN_SPLIT" },
+          ],
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+    const writtenRows = [
+      { id: "g1", firstName: "Alice", lastName: "Member", ageTier: "ADULT", isMember: true, rateMembershipTypeId: "rt-member",
+        nights: [
+          { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 2500 },
+          { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: 2500 },
+        ] },
+      { id: "g2", firstName: "Bob", lastName: "Guest", ageTier: "ADULT", isMember: false, rateMembershipTypeId: "rt-non-member",
+        nights: [
+          { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 5000 },
+          { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: 5000 },
+        ] },
+    ];
+    (tx.bookingGuest.findMany as ReturnType<typeof vi.fn>).mockImplementation(
+      async (args: { select?: { nights?: unknown } }) =>
+        args?.select?.nights ? writtenRows : [],
+    );
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) => fn(tx));
+    // The breakdown carries the nights it priced: the evidence gate reads each
+    // guest's proposed night set off it to decide what an edit surrenders or
+    // adds, so a breakdown without them would make Alice look REMOVED.
+    const nightDates = [new Date("2026-08-20T00:00:00.000Z"), new Date("2026-08-21T00:00:00.000Z")];
+    mockCalculateBookingPrice
+      .mockReturnValueOnce({
+        totalPriceCents: 15000,
+        guests: [
+          { priceCents: 5000, perNightCents: [2500, 2500], nightDates },
+          { priceCents: 10000, perNightCents: [5000, 5000], nightDates },
+        ],
+      })
+      .mockReturnValueOnce({ totalPriceCents: 5000, guests: [{ priceCents: 5000, perNightCents: [2500, 2500], nightDates }] })
+      .mockReturnValueOnce({ totalPriceCents: 10000, guests: [{ priceCents: 10000, perNightCents: [5000, 5000], nightDates }] });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        addGuests: [{ firstName: "Bob", lastName: "Guest", ageTier: "ADULT", isMember: false }],
+      }),
+    });
+    const response = await PUT(request, { params: Promise.resolve({ id: "bk1" }) });
+    expect(response.status).toBe(200);
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+
+    const created = (tx.bookingModification.create as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]?.data;
+    expect(created.priceDiffCents).toBe(10000);
+    expect(created.priceLines).toEqual([
+      expect.objectContaining({ kind: "GUEST_NIGHTS", sign: 1, guestNames: ["Bob Guest"], amountCents: 10000 }),
+    ]);
+    // Alice's rows are rewritten exactly as they were.
+    type NightWrite = { bookingGuestId: string; priceCents: number; priceSource: string };
+    const nightWrites = (tx.bookingGuestNight.createMany as ReturnType<typeof vi.fn>).mock.calls.flatMap(
+      (call): NightWrite[] => (call[0] as { data: NightWrite[] }).data,
+    );
+    expect(nightWrites.filter((row) => row.bookingGuestId === "g1").map((row) => [row.priceCents, row.priceSource])).toEqual([
+      [2500, "EVEN_SPLIT"],
+      [2500, "EVEN_SPLIT"],
     ]);
   });
 

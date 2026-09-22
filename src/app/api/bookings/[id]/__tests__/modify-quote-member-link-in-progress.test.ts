@@ -103,6 +103,8 @@ vi.mock("@/lib/booking-modify", async () => {
     resolveGuestMemberLinks: h.resolveGuestMemberLinks,
     resolveGuestNameUpdates: vi.fn().mockReturnValue([]),
     lockedNightPricesForGuest: vi.fn().mockReturnValue(null),
+    // #3531: the wrapper the route reaches the reader through; answers as the reader stub does.
+    editedGuestPricingLocks: vi.fn().mockReturnValue({ lockedNightPrices: null }),
     calculateModificationSettlementOptions: vi.fn().mockResolvedValue(null),
     QUOTE_PRICED_EDIT_BLOCK_MESSAGE: "quote-priced",
     GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,

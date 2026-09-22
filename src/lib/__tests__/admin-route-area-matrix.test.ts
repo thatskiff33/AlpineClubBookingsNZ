@@ -216,6 +216,11 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/chores": "lodge",
   "/api/admin/chores/[id]": "lodge",
   "/api/admin/club-contact": "content",
+  // #3563 (programme #3205): the club currency and locale maintenance API.
+  // `support` for route-map resolution only; BOTH verbs enforce Full Admin in
+  // the route itself with `requireAdmin({ permission: false })`, exactly like
+  // club-time-zone below.
+  "/api/admin/club-format": "support",
   "/api/admin/club-identity": "content",
   // CT-1 (#2989): the club-timezone maintenance API. `support` is the area — it
   // is installation configuration, alongside /api/admin/modules and

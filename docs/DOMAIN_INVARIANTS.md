@@ -891,6 +891,7 @@ headings the index keeps verbatim.
 | `INV-CONFIG-003` | One explicit `APP_ENVIRONMENT_ROLE` decides production; nothing inferred, missing is UNKNOWN, deploy blocked |
 | `INV-CONFIG-004` | Every application-controlled send passes one environment-aware boundary; four outcomes, all distinguishable |
 | `INV-CONFIG-005` | Every application-managed Xero contact write consumes the canonical role; copies contained |
+| `INV-CONFIG-006` | One persisted currency and locale; the environment seeds them once |
 
 ## Single Source Of Truth
 

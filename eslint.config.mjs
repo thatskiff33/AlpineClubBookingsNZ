@@ -1187,40 +1187,45 @@ export const DATE_GUARD_ARMS = {
 //
 // THE LOCALE IS ON THE LIST AHEAD OF ITS SECOND SOURCE, and that is worth saying
 // out loud rather than leaving a reader to infer a criterion the list does not
-// satisfy. There is no persisted club locale in `schema.prisma` today, so
-// nothing yet competes with `APP_LOCALE`, and its live default population is
-// zero. It is banned anyway because it is the same KIND of value — how this club
-// answers a display question — and listing it while the population is zero costs
-// nothing, where adding it after a club-locale setting ships would cost a
-// migration and a census of whatever had been written in the meantime. That is
-// the cheap direction to be wrong in.
+// satisfy. `APP_LOCALE` was listed here while there was no persisted club locale
+// at all and its live default population was zero — banned ahead of its second
+// source because it is the same KIND of value, on the reasoning that listing it
+// early costs nothing where adding it late costs a migration and a census. That
+// bet is now settled: #3563 created `ClubFormatSettings.locale`, so the second
+// source exists and the arm covers it from the day it arrived rather than from
+// whenever somebody noticed.
 //
 // WHAT IS DELIBERATELY NOT BANNED, because stating the boundary is half of this
 // arm's value:
 //
-//   * `APP_CURRENCY` and `APP_STRIPE_CURRENCY`. `src/lib/stripe.ts` carries two
-//     live `currency = APP_STRIPE_CURRENCY` parameter defaults, on
-//     `chargePaymentMethod` and `createPaymentIntent`, and they are CORRECT
-//     rather than tolerated. THE REASON IS COST, NOT KIND, and it is worth
-//     saying precisely because an earlier draft of this comment claimed the
-//     currency was single-sourced today and it is not: two admin display
-//     formatters hardcode `currency: "NZD"` rather than reading `APP_CURRENCY`,
-//     and `schema.prisma` gives `PaymentTransaction.currency` a `"nzd"` column
-//     default. Those are a separate, pre-existing defect that this arm does not
-//     address and is not the right instrument for. What IS true, and is what
-//     the exclusion rests on: no persisted club-currency SETTING competes with
-//     `APP_CURRENCY`, so there is no wrong-source-of-two to pick — and every one
-//     of the eight live call sites, in eight distinct modules, relies on the
-//     default rather than passing a currency, so deleting it would spread the
-//     `@/config/operational` import to eight more modules without touching
-//     either hardcoded formatter. That is strictly worse for single source of
-//     truth than leaving the read in the one boundary that owns the Stripe wire
-//     format. THE DAY A PERSISTED CLUB-CURRENCY SETTING EXISTS, both names join
-//     the list above and `stripe.ts` becomes a real violation. That sentence is
-//     the ratchet; without it the exclusion rots into a permanent hole. Being a
-//     cost argument rather than a kind argument — the currency is as club-facing
-//     as the locale — it is the one exclusion here a reader should expect to be
-//     revisited.
+//   * `APP_CURRENCY` and `APP_STRIPE_CURRENCY` used to be excluded here, and
+//     THE RATCHET THAT EXCLUSION CARRIED HAS NOW FIRED (#3563, owner decision
+//     D5). The exclusion rested on one fact — no persisted club-currency
+//     SETTING competed with `APP_CURRENCY`, so there was no wrong-source-of-two
+//     to pick — and on a cost: `src/lib/stripe.ts`'s two
+//     `currency = APP_STRIPE_CURRENCY` defaults had six live call sites that
+//     relied on them, so deleting the defaults would have spread the
+//     `@/config/operational` import without single-sourcing anything. It said
+//     in terms that the day a persisted club-currency setting existed, both
+//     names would join the list and `stripe.ts` would become a real violation.
+//     #3563 created `ClubFormatSettings`, so that day arrived: both names are
+//     in `CLUB_AUTHORITY_DEFAULT_NAMES` above, both defaults are deleted, and
+//     each of the six call sites states the currency. This entry is kept rather
+//     than removed because the boundary it drew is still worth reading — it is
+//     the worked example of an exclusion written WITH a trigger, which is the
+//     only kind that does not rot into a permanent hole.
+//
+//     One thing the old note said remains true and unfixed here: two admin
+//     display formatters hardcode `currency: "NZD"` and `schema.prisma` gives
+//     `PaymentTransaction.currency` a `"nzd"` column default. A third, found
+//     in #3563's review and named here so #3567 is planned from a complete
+//     list: `normalizeRefundCurrency` in `src/lib/payment-transactions.ts`
+//     falls back `(currency ?? APP_STRIPE_CURRENCY)` and writes the result to
+//     that same column. It is the same defect in a shape this arm cannot see
+//     - the arm anchors on `AssignmentPattern`, and a `??` in a function body
+//     is a `LogicalExpression` - so it is invisible rather than excluded.
+//     Those are a separate defect this arm is not the instrument for; #3567 is
+//     the stage that takes them.
 //   * `process.env.<anything else>` as a default, which `INV-SSOT-003`'s prose
 //     describes more broadly than this arm implements. MEASURED, rather than
 //     assumed, and re-measured for #3126's review because the first measurement
@@ -1241,9 +1246,13 @@ export const DATE_GUARD_ARMS = {
 //     and not the role. A guard that is wrong every time it fires trains its
 //     reader to switch it off, and #3126's own risk note says the one live
 //     hazard here is an arm too broad to live with. So the environment half of
-//     the arm is scoped to the variables behind the zone. Widening it later is a
-//     decision with seven named call sites attached, which is the shape a
-//     decision should have.
+//     the arm is scoped to the NAMED variables behind the club authorities it
+//     covers — `TZ` and `NEXT_PUBLIC_TZ` for the zone, and since #3563
+//     `CURRENCY`, `LOCALE` and their `NEXT_PUBLIC_` twins for the format,
+//     measured to have zero live defaults between them so the widening adds no
+//     false positive. Widening it FURTHER, to `process.env.<anything>`, is
+//     still a decision with the seven named call sites above attached, which is
+//     the shape a decision should have.
 //   * A default that CALLS a club authority resolver — `= await clubTimeZone()`,
 //     `= readClubTimeZoneOutsideRequest()`. Those return the CLUB's answer, so
 //     they are not this defect at all. Population zero; recorded so a later
@@ -1259,11 +1268,13 @@ export const DATE_GUARD_ARMS = {
 //     a large legitimate population at genuine boundaries. The second instrument
 //     is `ssot-authority-default-guard.test.ts`, which censuses the source
 //     directly.
-const CLUB_AUTHORITY_DEFAULT_NAMES = "^(APP_TIME_ZONE|APP_LOCALE)$";
-const CLUB_AUTHORITY_DEFAULT_ENV = "^(TZ|NEXT_PUBLIC_TZ)$";
+const CLUB_AUTHORITY_DEFAULT_NAMES =
+  "^(APP_TIME_ZONE|APP_LOCALE|APP_CURRENCY|APP_STRIPE_CURRENCY)$";
+const CLUB_AUTHORITY_DEFAULT_ENV =
+  "^(TZ|NEXT_PUBLIC_TZ|CURRENCY|NEXT_PUBLIC_CURRENCY|LOCALE|NEXT_PUBLIC_LOCALE)$";
 
 const AUTHORITY_DEFAULT_MESSAGE =
-  "INV-SSOT-003: This parameter DEFAULTS to a club authority, so it answers for every caller that did not pass one — and it answers from the environment rather than from the club. The club's civil time is the persisted `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1 #2989); `APP_TIME_ZONE`, `APP_LOCALE`, `TZ` and `NEXT_PUBLIC_TZ` are the ENVIRONMENT's claim, which seeds that row at setup and has no say afterwards. THE REMEDY IS TO DELETE THE DEFAULT and let the compiler enumerate the call sites: a required argument beats a lint rule, one exported symbol beats an allowlist, and a deleted default beats a counted ratchet. That is a worked precedent rather than a proposal — `getTodayDateOnly(timeZone = APP_TIME_ZONE)` cost a hand-counted census of every call site that left the zone unstated, ratcheted down lane by lane, until #3123 deleted the six `= APP_TIME_ZONE` defaults from @/lib/date-only and turned the whole class into a compile error. Those figures are recorded in exactly one place, `club-time-escape-hatch-census.test.ts`, and a number restated in prose is a number that drifts. Then pass the club's zone in: clubTimeZone() / clubTime() from @/lib/club-time/server in a server component or route, readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime in a cron tick or a CLI, and ClubTimeProvider data in a client component, which never decides it.";
+  "INV-SSOT-003: This parameter DEFAULTS to a club authority, so it answers for every caller that did not pass one — and it answers from the environment rather than from the club. The club's currency and locale are the persisted `ClubFormatSettings` row (`INV-CONFIG-006`, #3563) and its civil time is the persisted `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1 #2989); `APP_TIME_ZONE`, `APP_LOCALE`, `APP_CURRENCY`, `APP_STRIPE_CURRENCY` and the `TZ` / `CURRENCY` / `LOCALE` variables behind them (with their `NEXT_PUBLIC_` twins) are the ENVIRONMENT's claim, which seeds those rows once and has no say afterwards. THE REMEDY IS TO DELETE THE DEFAULT and let the compiler enumerate the call sites: a required argument beats a lint rule, one exported symbol beats an allowlist, and a deleted default beats a counted ratchet. That is a worked precedent rather than a proposal — `getTodayDateOnly(timeZone = APP_TIME_ZONE)` cost a hand-counted census of every call site that left the zone unstated, ratcheted down lane by lane, until #3123 deleted the six `= APP_TIME_ZONE` defaults from @/lib/date-only and turned the whole class into a compile error. Those figures are recorded in exactly one place, `club-time-escape-hatch-census.test.ts`, and a number restated in prose is a number that drifts. Then pass the club's zone in: clubTimeZone() / clubTime() from @/lib/club-time/server in a server component or route, readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime in a cron tick or a CLI, and ClubTimeProvider data in a client component, which never decides it.";
 
 // `AssignmentPattern` is the default in EVERY position it can be written, which
 // is why the arm anchors on it rather than on a function's parameter list: a

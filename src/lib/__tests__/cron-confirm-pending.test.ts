@@ -751,6 +751,9 @@ describe("Cron: Confirm Pending Bookings", () => {
 
     expect(mockChargePaymentMethod).toHaveBeenCalledWith({
       amountCents: 10000,
+      // #3563 (INV-SSOT-003, D5): the currency default is gone and every
+      // caller states it. Same value the default supplied.
+      currency: "nzd",
       customerId: "cus_b1",
       paymentMethodId: "pm_b1",
       metadata: { bookingId: "b1", memberId: "member_b1" },
