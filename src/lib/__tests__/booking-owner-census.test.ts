@@ -519,8 +519,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1434",
   "src/lib/member-guest-consent-service.ts:1156",
-  "src/lib/payment-recovery.ts:2498",
-  "src/lib/payment-recovery.ts:2549",
+  "src/lib/payment-recovery.ts:2499",
+  "src/lib/payment-recovery.ts:2550",
   "src/lib/xero-admin-health.ts:324",
 ];
 
@@ -790,7 +790,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:111",
   "src/lib/payment-link.ts:74",
-  "src/lib/payment-reconciliation.ts:81",
+  "src/lib/payment-reconciliation.ts:86",
   "src/lib/stuck-state-dashboard.ts:619",
   "src/lib/xero-booking-repair-types.ts:172",
   "src/lib/xero-inbound/invoice-paid-effects.ts:263",

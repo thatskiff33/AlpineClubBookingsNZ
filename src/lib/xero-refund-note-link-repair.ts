@@ -123,7 +123,7 @@ import {
   recoverRefundCreditNoteLinkAmountCents,
   sumCoveredRefundCreditNoteCents,
 } from "@/lib/xero-sync";
-import { formatCentsPlain } from "@/lib/utils";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
 
 export type StripeRefundNoteLinkPlannedAction =
   | "keep-active"
@@ -426,8 +426,8 @@ function buildPlan(
   } else if (plannedCoveredCents < target) {
     const remainderCents = target - plannedCoveredCents;
     manualReviewReason = repairable
-      ? `Planned coverage still lands ${remainderCents} cents short of the provider-backed cash refund target; no recoverable local note fills it. The planned changes are safe to apply — once the ledger is honest, the daily credit-reconciliation self-heal issues one note for exactly the uncovered remainder. Never void anything to force an exact landing.`
-      : `Active coverage is ${remainderCents} cents short of the provider-backed cash refund target and no recoverable inactive note fills it. If the notes exist in Xero, record their statuses (--record-statuses) and re-run; otherwise the daily credit-reconciliation self-heal issues the missing note.`;
+      ? `Planned coverage still lands ${formatCents(remainderCents)} short of the provider-backed cash refund target; no recoverable local note fills it. The planned changes are safe to apply — once the ledger is honest, the daily credit-reconciliation self-heal issues one note for exactly the uncovered remainder. Never void anything to force an exact landing.`
+      : `Active coverage is ${formatCents(remainderCents)} short of the provider-backed cash refund target and no recoverable inactive note fills it. If the notes exist in Xero, record their statuses (--record-statuses) and re-run; otherwise the daily credit-reconciliation self-heal issues the missing note.`;
   }
 
   return {
@@ -741,7 +741,7 @@ export async function applyStripeRefundNoteLinkRepairs(options?: {
           );
           if (verifiedCoveredCents !== freshPlan.plannedCoveredCents) {
             throw new Error(
-              `Coverage verification after the claims found ${verifiedCoveredCents} cents where the plan promised ${freshPlan.plannedCoveredCents}; a concurrent writer changed the links, rolled back.`
+              `Coverage verification after the claims found ${formatCents(verifiedCoveredCents)} where the plan promised ${formatCents(freshPlan.plannedCoveredCents)}; a concurrent writer changed the links, rolled back.`
             );
           }
 

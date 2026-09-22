@@ -266,7 +266,7 @@ describe("the report and the audit metadata", () => {
         entityType: "BookingGuest",
         entityId: "a",
         summary: expect.stringContaining("guest's evenly-split night prices"),
-        details: "2 night row(s) now RATE_DERIVED; guest total 13000 cents unchanged",
+        details: "2 night row(s) now RATE_DERIVED; guest total $130.00 unchanged",
         metadata: {
           bookingId: "bk1",
           bookingGuestId: "a",

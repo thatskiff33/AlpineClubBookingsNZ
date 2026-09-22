@@ -22,6 +22,7 @@ import {
 } from "../import-types";
 import { RowValidator, nz, readCsvRows } from "../values";
 import { formatDateOnly } from "@/lib/date-only";
+import { formatCents } from "@/lib/utils";
 
 // membership-fees category (#1941, follow-up to #1931/#1932): the first-class
 // transfer of the MEMBERSHIP FEE SCHEDULES — joining fees (JoiningFee, #1931/E5)
@@ -671,7 +672,7 @@ function validateComponentInvariant(parsed: ParsedFees, errors: string[]): void 
     const sum = comps.reduce((total, c) => total + c.data.amountCents, 0);
     if (sum !== fee.data.amountCents) {
       errors.push(
-        `${ANNUAL_FEE_COMPONENTS_FILE}: components for annual fee "${fee.parentKey}" sum to ${sum} cents but the fee amount is ${fee.data.amountCents} cents`,
+        `${ANNUAL_FEE_COMPONENTS_FILE}: components for annual fee "${fee.parentKey}" sum to ${formatCents(sum)} but the fee amount is ${formatCents(fee.data.amountCents)}`,
       );
     }
   }
@@ -775,11 +776,11 @@ function validatePostMergeComponentInvariant(
     if (sum !== effectiveTotal) {
       if (leftoverLabels.length > 0) {
         errors.push(
-          `${ANNUAL_FEE_COMPONENTS_FILE}: importing annual fee "${fee.parentKey}" would leave orphaned component(s) ${quoteLabels(leftoverLabels)} already on the target that the bundle does not carry (upsert-only import never deletes), so its post-merge components sum to ${sum} cents but the fee total is ${effectiveTotal} cents — remove or rename those component(s) on the Fees page before importing`,
+          `${ANNUAL_FEE_COMPONENTS_FILE}: importing annual fee "${fee.parentKey}" would leave orphaned component(s) ${quoteLabels(leftoverLabels)} already on the target that the bundle does not carry (upsert-only import never deletes), so its post-merge components sum to ${formatCents(sum)} but the fee total is ${formatCents(effectiveTotal)} — remove or rename those component(s) on the Fees page before importing`,
         );
       } else {
         errors.push(
-          `${ANNUAL_FEE_COMPONENTS_FILE}: after merge the components for annual fee "${fee.parentKey}" sum to ${sum} cents but the fee total would be ${effectiveTotal} cents`,
+          `${ANNUAL_FEE_COMPONENTS_FILE}: after merge the components for annual fee "${fee.parentKey}" sum to ${formatCents(sum)} but the fee total would be ${formatCents(effectiveTotal)}`,
         );
       }
     }

@@ -52,6 +52,7 @@ import {
   applyRateDerivedNightRewrites,
   RateDerivedBackfillRacedError,
 } from "@/lib/stored-night-price-repair-store";
+import { formatCents } from "@/lib/utils";
 
 /** A stored night row as the planner reads it. */
 export type StoredNightRow = {
@@ -347,7 +348,7 @@ export function rateDerivedBackfillAuditRows(plan: BookingBackfillPlan): Array<{
     entityType: "BookingGuest" as const,
     entityId: strand.bookingGuestId,
     summary: "Re-derived a guest's evenly-split night prices from the rate table; the guest's total unchanged",
-    details: `${strand.nights.length} night row(s) now RATE_DERIVED; guest total ${strand.guestTotalCents} cents unchanged`,
+    details: `${strand.nights.length} night row(s) now RATE_DERIVED; guest total ${formatCents(strand.guestTotalCents)} unchanged`,
     metadata: {
       bookingId: plan.bookingId,
       bookingGuestId: strand.bookingGuestId,

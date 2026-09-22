@@ -13,6 +13,7 @@ import {
   Search,
   X,
 } from "lucide-react";
+import { formatAuditMetadataJson } from "@/lib/audit-metadata-amounts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
@@ -1077,7 +1078,7 @@ export default function AuditLogPage() {
                                       Metadata
                                     </p>
                                     <pre className="max-h-72 overflow-auto rounded-md bg-card p-3 leading-relaxed text-muted-foreground">
-                                      {JSON.stringify(entry.metadata, null, 2)}
+                                      {formatAuditMetadataJson(entry.metadata)}
                                     </pre>
                                   </div>
                                 ) : null}

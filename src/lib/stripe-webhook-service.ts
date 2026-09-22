@@ -51,6 +51,7 @@ import {
 } from "@/lib/group-settlement";
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { formatCents } from "@/lib/utils";
 
 type JsonRouteResult = {
   body: unknown;
@@ -1174,7 +1175,7 @@ async function alertPaymentAmountMismatch(
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       amountCents: receivedCents,
-      errorMessage: `${paymentType} amount mismatch. Expected ${expectedCents} cents but Stripe reported ${receivedCents} cents. The booking was not auto-updated and needs manual review.`,
+      errorMessage: `${paymentType} amount mismatch. Expected ${formatCents(expectedCents)} but Stripe reported ${formatCents(receivedCents)}. The booking was not auto-updated and needs manual review.`,
       paymentIntentId,
     });
   } catch (err) {
