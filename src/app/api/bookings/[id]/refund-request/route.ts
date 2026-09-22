@@ -9,7 +9,7 @@ import { sendAdminRefundRequestAlert } from "@/lib/email";
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { deletedBookingRefusalResponse } from "@/lib/deleted-booking-refusal";
-import { formatCents } from "@/lib/utils";
+import { clubFormat } from "@/lib/club-format-server";
 
 const createSchema = z.object({
   reason: z.string().min(10).max(2000),
@@ -28,6 +28,7 @@ export async function POST(
   if (inactiveResponse) return inactiveResponse;
 
   const { id: bookingId } = await params;
+  const money = await clubFormat();
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -148,7 +149,7 @@ export async function POST(
   if (requestedAmountCents && requestedAmountCents > maxRefundable) {
     return NextResponse.json(
       {
-        error: `Requested amount exceeds maximum refundable amount of ${formatCents(maxRefundable)}`,
+        error: `Requested amount exceeds maximum refundable amount of ${money.cents(maxRefundable)}`,
       },
       { status: 400 }
     );
@@ -173,7 +174,7 @@ export async function POST(
     category: "payment",
     outcome: "success",
     summary: "Refund appeal submitted",
-    details: `Refund appeal submitted${requestedAmountCents ? ` for ${formatCents(requestedAmountCents)}` : ""}`,
+    details: `Refund appeal submitted${requestedAmountCents ? ` for ${money.cents(requestedAmountCents)}` : ""}`,
     metadata: {
       bookingId,
       requestedAmountCents: requestedAmountCents ?? null,

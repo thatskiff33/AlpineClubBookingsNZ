@@ -458,7 +458,7 @@ describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
 /** Measured, not counted by hand. Re-measure by running this test. */
 const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
-  "src/app/(authenticated)/bookings/[id]/page.tsx:187",
+  "src/app/(authenticated)/bookings/[id]/page.tsx:189",
   "src/app/(authenticated)/bookings/page.tsx:183",
   "src/app/api/bookings/[id]/additional-payment-secret/route.ts:52",
   "src/app/api/bookings/[id]/arrival-time/route.ts:140",
@@ -476,8 +476,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/guests/route.ts:333",
   "src/app/api/bookings/[id]/modify-quote/route.ts:333",
   "src/app/api/bookings/[id]/notes/route.ts:48",
-  "src/app/api/bookings/[id]/refund-request/route.ts:226",
-  "src/app/api/bookings/[id]/refund-request/route.ts:42",
+  "src/app/api/bookings/[id]/refund-request/route.ts:227",
+  "src/app/api/bookings/[id]/refund-request/route.ts:43",
   "src/app/api/bookings/[id]/requested-room/options/route.ts:85",
   "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:66",
   "src/app/api/payments/create-payment-intent/route.ts:137",

@@ -27,7 +27,7 @@ import { enqueueRefundRequestRefundRecovery } from "@/lib/payment-recovery";
 import { buildRefundRequestRefundMetadata } from "@/lib/payment-recovery-keys";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { calendarDateOfDateOnlyInstant, formatClubDate } from "@/lib/club-time";
-import { formatCents } from "@/lib/utils";
+import { clubFormat } from "@/lib/club-format-server";
 import { renderEmailHtml } from "@/lib/email-theme";
 
 const reviewSchema = z.object({
@@ -51,6 +51,7 @@ export async function PUT(
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const { id } = await params;
+  const money = await clubFormat();
 
   const refundRequest = await prisma.refundRequest.findUnique({
     where: { id },
@@ -119,7 +120,7 @@ export async function PUT(
     if (approvedAmountCents > maxRefundable) {
       return NextResponse.json(
         {
-          error: `Amount exceeds maximum refundable of ${formatCents(maxRefundable)}`,
+          error: `Amount exceeds maximum refundable of ${money.cents(maxRefundable)}`,
         },
         { status: 400 }
       );
@@ -304,7 +305,7 @@ export async function PUT(
       category: "payment",
       outcome: "success",
       summary: "Refund appeal approved",
-      details: `Approved refund appeal for ${formatCents(approvedAmountCents)} on booking ${booking.id}`,
+      details: `Approved refund appeal for ${money.cents(approvedAmountCents)} on booking ${booking.id}`,
       metadata: {
         bookingId: booking.id,
         approvedAmountCents,
@@ -336,7 +337,7 @@ export async function PUT(
           firstName: refundRequest.member.firstName,
           // #2321: {{status}} is gone — the template name carries the
           // outcome, and a flat body could never have branched on it.
-          amount: formatCents(approvedAmountCents),
+          amount: money.cents(approvedAmountCents),
           adminNotes: adminNotes ?? "",
           // #2268: pre-composed optional line — the flat body has no
           // conditional syntax, so a resolution with no admin note must not

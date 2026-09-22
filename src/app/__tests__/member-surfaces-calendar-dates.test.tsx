@@ -127,6 +127,7 @@ vi.mock("@/config/operational", async (importOriginal) => ({
 }));
 
 import { NonMemberGuestsSection } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
+import { bindClubFormat } from "@/lib/club-format-bound";
 import { KioskWeekView } from "@/app/(lodge)/lodge/kiosk/_components/kiosk-week-view";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { restoreHostTimeZone } from "@/lib/__tests__/helpers/timezone";
@@ -232,6 +233,7 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
   it("a linked non-member child's stay names its own nights", () => {
     render(
       <NonMemberGuestsSection
+        money={bindClubFormat({ currencyCode: "NZD", locale: "en-NZ" })}
         nonOwnerAdminViewer={false}
         guests={[
           {
