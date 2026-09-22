@@ -315,7 +315,7 @@ The script also does not create the database, the app role, or any view.
 The allowlist lives in `SELECT_GRANTS` (`src/lib/diagnostics/tools/provision-role.ts`),
 in public code, so "which relations — and which columns of them — can Diagnostics
 read" is answerable by reading one file. As of AID-6B (#2376) it names
-**twenty-six** relations and **243 columns**, and **every one of them is granted by
+**twenty-six** relations and **244 columns**, and **every one of them is granted by
 column, never wholesale**:
 
 | Relation | Granted | Read by |
@@ -332,7 +332,7 @@ column, never wholesale**:
 | `public."XeroInboundEvent"` | 9 columns | the webhook timeline |
 | `public."XeroObjectLink"` | 10 columns | the Xero invoice and contact linkage tools |
 | `public."XeroSyncOperation"` | 17 columns | the Xero invoice and contact linkage tools |
-| `public."Member"` | **23 columns** — widened by AID-6B from the two AID-6C granted. `email` is projected by one entry and is a search predicate; `phoneCountryCode`, `phoneAreaCode` and `phoneNumber` are predicates only and are projected by nothing | the Xero contact linkage tool, the member search, the member summary, the family relationships ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
+| `public."Member"` | **24 columns** — widened by AID-6B from the two AID-6C granted. `email` is projected by one entry and is a search predicate; `deletedAt` is a deleted-account predicate only; `phoneCountryCode`, `phoneAreaCode` and `phoneNumber` are predicates only and are projected by nothing | the Xero contact linkage tool, the member search, the member summary, the family relationships ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
 | `public."Booking"` | 25 columns | the booking search, the booking summary, a member's booking involvement ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
 | `public."Lodge"` | **2 columns**: `id`, `name` | the booking search, a member's booking involvement |
 | `public."BookingGuest"` | 15 columns (a guest's given and family name included; consent responder and expiry are classifier inputs only) | booking party state, guest counts, member-booking involvement and double-sharing evidence |
@@ -367,7 +367,7 @@ public."WebhookLog": id, source, eventType, eventId, status, durationMs, created
 public."XeroInboundEvent": id, eventCategory, eventType, resourceId, correlationKey, status, eventCreatedAt, processedAt, createdAt
 public."XeroObjectLink": id, localModel, localId, xeroObjectType, xeroObjectId, xeroObjectNumber, role, active, createdAt, updatedAt
 public."XeroSyncOperation": id, direction, operationType, localModel, localId, status, attemptCount, replayable, lastErrorCode, xeroObjectType, xeroObjectId, xeroObjectNumber, manuallyResolvedAt, startedAt, completedAt, createdAt, updatedAt
-public."Member": id, email, firstName, lastName, ageTier, active, canLogin, cancelledAt, archivedAt, joinedDate, lifeMemberDate, requiresInduction, hutLeaderEligible, parentMemberId, secondaryParentId, familyGroupId, billingFamilyGroupId, phoneAreaCode, phoneNumber, phoneCountryCode, xeroContactId, createdAt, updatedAt
+public."Member": id, email, deletedAt, firstName, lastName, ageTier, active, canLogin, cancelledAt, archivedAt, joinedDate, lifeMemberDate, requiresInduction, hutLeaderEligible, parentMemberId, secondaryParentId, familyGroupId, billingFamilyGroupId, phoneAreaCode, phoneNumber, phoneCountryCode, xeroContactId, createdAt, updatedAt
 public."Booking": id, memberId, lodgeId, status, checkIn, checkOut, totalPriceCents, discountCents, promoAdjustmentCents, finalPriceCents, creditElectionCents, hasNonMembers, nonMemberHoldUntil, parentBookingId, draftExpiresAt, requiresAdminReview, adminReviewStatus, adultMemberHostingReviewStatus, waitlistPosition, wholeLodgeHold, adminCapacityHoldAt, capacityOverriddenAt, deletedAt, createdAt, updatedAt
 public."Lodge": id, name
 public."BookingGuest": id, bookingId, firstName, lastName, ageTier, isMember, memberId, stayStart, stayEnd, priceCents, consentStatus, consentRequestedAt, consentRespondedAt, consentRespondedByMemberId, consentExpiresAt
@@ -416,7 +416,7 @@ ran — the finance pack's suite built a correctly-keyed set of granted columns 
 never passed it to an assertion. `provision-role.test.ts` now reconciles the
 allowlist against **every registered statement in both directions**, with
 `alias -> relation` resolved per statement, and pins the census (twenty-six
-relations, 243 columns) so this page and the pack pages cannot drift from it again.
+relations, 244 columns) so this page and the pack pages cannot drift from it again.
 
 **And the same property is now proved a second time against PostgreSQL itself.**
 The real-database suite
@@ -446,7 +446,7 @@ The operator CLI prints the declared grants, columns and all, on every run and o
 
 **Upgrading to the AID-6B release is a two-step operation: deploy, then re-run
 `npm run diagnostics:provision-role`.** This release adds thirteen relations and
-widens `Member` from two columns to twenty-three, so until it is re-run the
+widens `Member` from two columns to twenty-four, so until it is re-run the
 *previous* release's grants no longer match the declared allowlist and **every
 SQL-backed tool refuses, by design**.
 
@@ -504,7 +504,7 @@ control. Enabling the module alone authorises no spend and no read.
 So on an upgrade the **grant is still the production change to reason about**: after
 `npm run diagnostics:provision-role`, `ai_diagnostics_ro` holds SELECT on the
 thirteen relations AID-6B added and on a `Member` widened from two columns to
-twenty-three. The difference from the earlier note is only that a provisioned,
+twenty-four. The difference from the earlier note is only that a provisioned,
 enabled deployment can now *use* that grant through the shipped UI — which is the
 whole point of the release — rather than holding it against a feature that cannot
 yet reach it.

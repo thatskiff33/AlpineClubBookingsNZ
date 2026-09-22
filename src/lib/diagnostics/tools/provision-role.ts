@@ -489,7 +489,7 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
      */
     columns: [
       "id",
-      "email",
+      "email", "deletedAt", // predicate-only; never projected
       "firstName",
       "lastName",
       "ageTier",

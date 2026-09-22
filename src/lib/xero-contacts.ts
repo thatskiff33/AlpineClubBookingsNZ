@@ -196,7 +196,7 @@ const MEMBER_CONTACT_UPDATE_RESERVATION_SELECT = {
   firstName: true,
   lastName: true,
   email: true,
-  passwordHash: true,
+  deletedAt: true,
   xeroContactId: true,
   dateOfBirth: true,
   phoneCountryCode: true,

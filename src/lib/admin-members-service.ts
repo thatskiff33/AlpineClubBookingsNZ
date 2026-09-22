@@ -376,7 +376,7 @@ export async function listAdminMembers(
             none: { seasonYear: currentSeasonYear },
           },
         },
-        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
+        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] }, },
       ],
     },
     {
@@ -442,7 +442,7 @@ export async function listAdminMembers(
                         { lastName: { contains: term, mode: "insensitive" } },
                         { email: { contains: term, mode: "insensitive" } },
                       ],
-                    }),
+                    })
                   ),
                 },
               ]
@@ -516,7 +516,7 @@ export async function listAdminMembers(
     // The member's descendants are excluded outright: with the old
     // "no dependants" clause gone they are no longer incidentally filtered, and
     // offering one would be offering a cycle the write route then refuses.
-    const childSide = await describeChildSideDepth(prisma, parentLinkEligibleFor);
+    const childSide = await describeChildSideDepth(prisma, parentLinkEligibleFor,);
     const excludedParentIds = [
       parentLinkEligibleFor,
       target?.parentMemberId,
@@ -817,6 +817,7 @@ export async function listAdminMembers(
     accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
     ageTier: true,
     active: true,
+    deletedAt: true,
     canLogin: true,
     cancelledAt: true,
     cancelledReason: true,
@@ -1097,7 +1098,7 @@ export async function listAdminMembers(
     // downward walk. Bounded to DEPENDENT_LINK_INELIGIBLE_EXPLANATION_LIMIT
     // rows on an already-empty result, which is the only path that reaches here.
     const candidateDepths = await Promise.all(
-      textMatches.map((candidate) => describeChildSideDepth(prisma, candidate.id)),
+      textMatches.map((candidate) => describeChildSideDepth(prisma, candidate.id),),
     );
 
     const explained = textMatches.flatMap((candidate, index) => {
@@ -1202,10 +1203,9 @@ export async function listAdminMembers(
       // — exactly the "inactive" lifecycle filter above — so without this flag an
       // erased account is indistinguishable in the list from a member someone
       // deactivated yesterday, and a multi-select Reactivate to undo a mistaken
-      // bulk deactivate would sweep it up. Resolved from the email marker (the
-      // password hash is deliberately NOT selected into a list response); the
-      // predicate reads whichever markers are present, so it stays correct if the
-      // select ever widens. The list badge is the visible warning; the refusals in
+      // bulk deactivate would sweep it up. Resolved from `deletedAt` plus the
+      // permanent reserved-address compatibility arm. The list badge is the
+      // visible warning; the refusals in
       // bulk update, member edit and the login providers are the enforcement.
       deletedAccount: isDeletedAccountRecord(m),
       subscriptionStatus:
@@ -1395,10 +1395,7 @@ export async function createAdminMember(
     // interactively (the admin link route, the family-group reviewer, and
     // nomination approval) all walk inside their own transaction and have no
     // such window.
-    const parentSide = await describeParentSideDepth(
-      prisma,
-      parentMember.id,
-    );
+    const parentSide = await describeParentSideDepth(prisma, parentMember.id);
     if (
       exceedsFamilyLinkGenerationLimit({
         parentAncestorGenerations: parentSide.ancestorGenerations,

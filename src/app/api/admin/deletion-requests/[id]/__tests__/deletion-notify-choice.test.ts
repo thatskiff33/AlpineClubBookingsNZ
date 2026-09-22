@@ -99,10 +99,10 @@ vi.mock("@/lib/access-roles", () => ({
   memberHoldsPrivilegedRole: h.memberHoldsPrivilegedRole,
 }));
 vi.mock("@/lib/admin-account-guards", async () => {
-  const actual = (await vi.importActual("@/lib/admin-account-guards")) as typeof import("@/lib/admin-account-guards");
+  const actual = (await vi.importActual("@/lib/admin-account-guards",)) as typeof import("@/lib/admin-account-guards");
   return { ...actual, wouldRemoveLastFullAdmin: h.wouldRemoveLastFullAdmin };
 });
-vi.mock("@/lib/access-role-definitions", () => ({ MEMBER_ACCESS_ROLE_SELECT: {} }));
+vi.mock("@/lib/access-role-definitions", () => ({ MEMBER_ACCESS_ROLE_SELECT: {}, }));
 vi.mock("@/lib/email", () => ({
   sendAccountDeletionApprovedEmail: h.sendAccountDeletionApprovedEmail,
   sendAccountDeletionRejectedEmail: h.sendAccountDeletionRejectedEmail,
@@ -161,7 +161,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.requireAdmin.mockResolvedValue({
     ok: true,
-    session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
+    session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] }, },
   });
   h.prisma.deletionRequest.findUnique.mockResolvedValue({
     id: "req-1",
@@ -323,10 +323,11 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
         status: "APPROVED",
         member: {
           ...member,
-          firstName: "Deleted",
-          lastName: "Member",
+          // Adopter-era shape: only the permanent reserved address signal is
+          // present. The retired five-field copy would report this as live.
           email: "deleted-m1@deleted.invalid",
-          active: false,
+          deletedAt: null,
+          active: true,
         },
       });
 
@@ -476,7 +477,7 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
       blocker: {
         code: "LAST_FULL_ADMIN_GUARD",
         message: expect.stringContaining("last Full Admin"),
-        remedy: expect.stringContaining("another active account Full Admin access"),
+        remedy: expect.stringContaining("another active account Full Admin access",),
       },
     });
     expect(h.prisma.member.update).not.toHaveBeenCalled();
@@ -647,7 +648,7 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
     });
     const claimOrder =
       h.prisma.deletionRequest.updateMany.mock.invocationCallOrder[0];
-    expect(claimOrder).toBeLessThan(h.cancelBooking.mock.invocationCallOrder[0]);
+    expect(claimOrder).toBeLessThan(h.cancelBooking.mock.invocationCallOrder[0],);
   });
 
   it("refuses to start an approval a rejection already won, cancelling nothing", async () => {
@@ -1231,8 +1232,8 @@ describe("POST /api/admin/deletion-requests/[id] deciding a released request (#2
     // part of it rather than of a preceding read.
     expect(h.prisma.deletionRequest.updateMany).toHaveBeenCalledTimes(1);
     expect(
-      h.prisma.deletionRequest.updateMany.mock.calls[0][0].where,
-    ).toEqual({ id: "req-1", status: "PENDING", reviewedAt: null });
+      h.prisma.deletionRequest.updateMany.mock.calls[0][0].where
+    ).toEqual({ id: "req-1", status: "PENDING", reviewedAt: null, });
     // Nothing decided and nothing said: the member is not emailed a rejection
     // that did not happen.
     expect(h.sendAccountDeletionRejectedEmail).not.toHaveBeenCalled();
