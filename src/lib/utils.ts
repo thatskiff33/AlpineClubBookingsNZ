@@ -1,15 +1,13 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { APP_CURRENCY, APP_LOCALE } from "@/config/operational";
+import { clubMoneyFormatter } from "@/lib/club-format-intl";
+import { TRANSITIONAL_CLUB_FORMAT } from "@/lib/club-format-transitional";
+
+import type { ClubFormat } from "@/lib/club-format";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
-
-const centsFormatter = new Intl.NumberFormat(APP_LOCALE, {
-  style: "currency",
-  currency: APP_CURRENCY,
-});
 
 /**
  * The one home (#3302, `INV-SSOT-001`) for turning an integer-cent amount into
@@ -42,9 +40,28 @@ const centsFormatter = new Intl.NumberFormat(APP_LOCALE, {
  * function rather than an option on this one, so calling the wrong rendering
  * is a different import, not a different argument silently defaulting to the
  * wrong shape.
+ *
+ * THE `format` ARGUMENT IS THE CLUB'S RESOLVED CURRENCY AND LOCALE (#3565), and
+ * it is explicit for the reason the club-time kernel gives for its `zone`:
+ * explicit is right at a boundary, and a component rendering fifteen amounts
+ * binds once with `bindClubFormat` instead of repeating it. A server caller
+ * obtains one from `clubFormat()`; a client caller from the format it was handed
+ * as data.
  */
-export function formatCents(cents: number): string {
-  return centsFormatter.format((cents === 0 ? 0 : cents) / 100);
+export function formatCents(cents: number, format: ClubFormat): string;
+/**
+ * @deprecated TEMPORARY, AND DUE TO BE DELETED BY #3567 — the last group of
+ * stage #3565, which retires `club-format-transitional.ts` and with it this
+ * overload. Without a format it renders in the ENVIRONMENT's currency and
+ * locale, which is what every call site rendered in before this stage and is NOT
+ * the club's persisted setting. Pass the format. `club-format-transitional.ts`
+ * states the cost this buys and why the overload exists at all.
+ */
+export function formatCents(cents: number): string;
+export function formatCents(cents: number, format?: ClubFormat): string {
+  return clubMoneyFormatter(format ?? TRANSITIONAL_CLUB_FORMAT, "cents").format(
+    (cents === 0 ? 0 : cents) / 100,
+  );
 }
 
 /**
@@ -60,6 +77,13 @@ export function formatCents(cents: number): string {
  * review): the wrong rendering is then a different import a reviewer sees at
  * the top of the file, not a different argument a reviewer has to notice was
  * left off.
+ *
+ * IT TAKES NO `format`, PERMANENTLY, and that is not an oversight of #3565:
+ * there is no currency symbol, no grouping and no locale in `toFixed(2)`, so a
+ * club's format has nothing here to change. An editable amount box wants exactly
+ * that — a value the browser's number control will accept back — which is why
+ * localising it would be a defect rather than an improvement. #3567 leaves this
+ * function alone.
  */
 export function formatCentsPlain(cents: number): string {
   return (cents / 100).toFixed(2);
@@ -76,11 +100,18 @@ export function formatCentsPlain(cents: number): string {
  * locale's thousands separator and ignored `APP_CURRENCY`. Every caller now
  * derives from `formatCents`, which is where the locale and currency live.
  */
-export function formatSignedCents(cents: number): string {
+export function formatSignedCents(cents: number, format: ClubFormat): string;
+/**
+ * @deprecated TEMPORARY, AND DUE TO BE DELETED BY #3567 — see
+ * {@link formatCents}'s one-argument overload, which this one mirrors exactly.
+ */
+export function formatSignedCents(cents: number): string;
+export function formatSignedCents(cents: number, format?: ClubFormat): string {
+  const resolved = format ?? TRANSITIONAL_CLUB_FORMAT;
   if (cents === 0) {
-    return formatCents(0);
+    return formatCents(0, resolved);
   }
-  return `${cents > 0 ? "+" : "-"}${formatCents(Math.abs(cents))}`;
+  return `${cents > 0 ? "+" : "-"}${formatCents(Math.abs(cents), resolved)}`;
 }
 
 // `getSeasonYear(date = new Date())` USED TO LIVE HERE and is deliberately gone

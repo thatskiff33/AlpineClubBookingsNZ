@@ -5,66 +5,132 @@
  * thousands separators — cents are visual noise at dashboard altitude. Exact
  * cent-precision strings (reconciliation, CSV/PDF export rows) keep using
  * `formatCents` from utils. Client-safe: no server imports.
+ *
+ * EVERY FUNCTION HERE TAKES THE CLUB'S RESOLVED `format` (#3565, stage 3 of
+ * programme #3205). The four module-level `Intl.NumberFormat` constants this file
+ * used to hold were built at import from `APP_LOCALE` / `APP_CURRENCY`, which a
+ * persisted, admin-editable setting cannot reach — the whole reason that stage
+ * exists. They now come from the one memoised factory in `club-format-intl.ts`,
+ * and a caller rendering several of them binds once with `bindClubFormat` rather
+ * than repeating the argument. Each function also keeps a deprecated
+ * one-argument overload for the call sites the migration has not reached;
+ * `club-format-transitional.ts` records what that renders with, what it costs and
+ * which issue deletes it.
  */
 
-import { APP_CURRENCY, APP_LOCALE } from "@/config/operational";
+import {
+  clubDecimalFormatter,
+  clubMoneyFormatter,
+  clubNumberFormatter,
+} from "@/lib/club-format-intl";
+import { TRANSITIONAL_CLUB_FORMAT } from "@/lib/club-format-transitional";
 
-const dollarsDisplayFormatter = new Intl.NumberFormat(APP_LOCALE, {
-  style: "currency",
-  currency: APP_CURRENCY,
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 0,
-});
-
-const percentFormatter = new Intl.NumberFormat(APP_LOCALE, {
-  style: "percent",
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
-});
-
-// Ratios (the current ratio, for one) are not integers; two decimal places so
-// 1.35 is not rounded to "1". Lives here rather than in the chart theme so the
-// dashboard has one home for every number shape it renders (#3325).
-const ratioFormatter = new Intl.NumberFormat(APP_LOCALE, {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+import type { ClubFormat } from "@/lib/club-format";
 
 /** Whole-dollar display value with separators, e.g. 44667484 -> "$446,675". */
-export function formatDollarsDisplay(cents: number): string {
-  return dollarsDisplayFormatter.format(Math.round(cents / 100));
+export function formatDollarsDisplay(cents: number, format: ClubFormat): string;
+/** @deprecated TEMPORARY — see `formatCents`'s one-argument overload. #3567. */
+export function formatDollarsDisplay(cents: number): string;
+export function formatDollarsDisplay(
+  cents: number,
+  format?: ClubFormat,
+): string {
+  return clubMoneyFormatter(
+    format ?? TRANSITIONAL_CLUB_FORMAT,
+    "dollars",
+  ).format(Math.round(cents / 100));
 }
 
 /** Signed whole-dollar delta, e.g. "+$1,204" / "-$310"; zero stays "$0". */
-export function formatSignedDollarsDisplay(cents: number): string {
+export function formatSignedDollarsDisplay(
+  cents: number,
+  format: ClubFormat,
+): string;
+/** @deprecated TEMPORARY — see `formatCents`'s one-argument overload. #3567. */
+export function formatSignedDollarsDisplay(cents: number): string;
+export function formatSignedDollarsDisplay(
+  cents: number,
+  format?: ClubFormat,
+): string {
+  const formatter = clubMoneyFormatter(
+    format ?? TRANSITIONAL_CLUB_FORMAT,
+    "dollars",
+  );
   const rounded = Math.round(cents / 100);
   if (rounded === 0) {
-    return dollarsDisplayFormatter.format(0);
+    return formatter.format(0);
   }
-  return `${rounded > 0 ? "+" : "-"}${dollarsDisplayFormatter.format(Math.abs(rounded))}`;
+  return `${rounded > 0 ? "+" : "-"}${formatter.format(Math.abs(rounded))}`;
 }
 
+/**
+ * A plain count with the club's grouping, capped at `maximumFractionDigits`.
+ *
+ * `format` sits BEFORE the digit count in the explicit signature, so that every
+ * function in this module and in `@/lib/utils` takes it in the same position and
+ * a reader never has to check. The deprecated overload keeps the old
+ * `(value, digits?)` shape, and the two are told apart by the second argument's
+ * type rather than by its position.
+ */
 export function formatFinanceNumber(
   value: number,
-  maximumFractionDigits = 0
+  format: ClubFormat,
+  maximumFractionDigits?: number,
+): string;
+/** @deprecated TEMPORARY — see `formatCents`'s one-argument overload. #3567. */
+export function formatFinanceNumber(
+  value: number,
+  maximumFractionDigits?: number,
+): string;
+export function formatFinanceNumber(
+  value: number,
+  formatOrDigits?: ClubFormat | number,
+  maximumFractionDigits = 0,
 ): string {
-  return new Intl.NumberFormat(APP_LOCALE, {
-    maximumFractionDigits,
-  }).format(value);
+  const format =
+    typeof formatOrDigits === "object" ? formatOrDigits : TRANSITIONAL_CLUB_FORMAT;
+  const digits =
+    typeof formatOrDigits === "number" ? formatOrDigits : maximumFractionDigits;
+  return clubDecimalFormatter(format, digits).format(value);
 }
 
-export function formatFinanceSignedNumber(value: number): string {
+export function formatFinanceSignedNumber(
+  value: number,
+  format: ClubFormat,
+): string;
+/** @deprecated TEMPORARY — see `formatCents`'s one-argument overload. #3567. */
+export function formatFinanceSignedNumber(value: number): string;
+export function formatFinanceSignedNumber(
+  value: number,
+  format?: ClubFormat,
+): string {
   if (value === 0) return "0";
-  return `${value > 0 ? "+" : "-"}${formatFinanceNumber(Math.abs(value))}`;
+  const resolved = format ?? TRANSITIONAL_CLUB_FORMAT;
+  return `${value > 0 ? "+" : "-"}${formatFinanceNumber(Math.abs(value), resolved)}`;
 }
 
-export function formatFinancePercent(value: number): string {
-  return percentFormatter.format(value);
+export function formatFinancePercent(value: number, format: ClubFormat): string;
+/** @deprecated TEMPORARY — see `formatCents`'s one-argument overload. #3567. */
+export function formatFinancePercent(value: number): string;
+export function formatFinancePercent(
+  value: number,
+  format?: ClubFormat,
+): string {
+  return clubNumberFormatter(
+    format ?? TRANSITIONAL_CLUB_FORMAT,
+    "percent",
+  ).format(value);
 }
 
 /** Two-decimal ratio, e.g. 1.35 -> "1.35". */
-export function formatFinanceRatio(value: number): string {
-  return ratioFormatter.format(value);
+export function formatFinanceRatio(value: number, format: ClubFormat): string;
+/** @deprecated TEMPORARY — see `formatCents`'s one-argument overload. #3567. */
+export function formatFinanceRatio(value: number): string;
+export function formatFinanceRatio(value: number, format?: ClubFormat): string {
+  return clubNumberFormatter(
+    format ?? TRANSITIONAL_CLUB_FORMAT,
+    "ratio",
+  ).format(value);
 }
 
 /**
@@ -83,7 +149,16 @@ export function formatFinanceRatio(value: number): string {
  * `1.234.567 €`. Deliberate: byte-identical for the default configuration,
  * and a localised compact number is a visible change no one has asked for.
  */
-export function formatCompactDollarsDisplay(cents: number): string {
+export function formatCompactDollarsDisplay(
+  cents: number,
+  format: ClubFormat,
+): string;
+/** @deprecated TEMPORARY — see `formatCents`'s one-argument overload. #3567. */
+export function formatCompactDollarsDisplay(cents: number): string;
+export function formatCompactDollarsDisplay(
+  cents: number,
+  format?: ClubFormat,
+): string {
   const dollars = cents / 100;
   const abs = Math.abs(dollars);
   const compact =
@@ -93,7 +168,7 @@ export function formatCompactDollarsDisplay(cents: number): string {
         ? `${Math.round(dollars / 1_000)}k`
         : `${Math.round(dollars)}`;
   let placed = false;
-  return dollarsDisplayFormatter
+  return clubMoneyFormatter(format ?? TRANSITIONAL_CLUB_FORMAT, "dollars")
     .formatToParts(0)
     .map((part) => {
       if (part.type === "currency" || part.type === "literal") return part.value;
