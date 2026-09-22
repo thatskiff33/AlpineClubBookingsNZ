@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, CheckCircle, XCircle } from "lucide-react";
-import { APP_LOCALE } from "@/config/operational";
+import type { ClubFormat } from "@/lib/club-format";
 import { parseInstant, type BoundClubTime, type ClubTimeZone } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
@@ -72,34 +72,59 @@ export function formatUptime(seconds: number) {
 //
 // Every value passed here is a real INSTANT — a cron run, a bounce, an
 // escalation — never a calendar day.
+//
+// #3564 did to the LOCALE what CT-4 did to the zone. `APP_LOCALE` is
+// `NEXT_PUBLIC_LOCALE` inlined at BUILD time, so in the published image it is
+// `undefined` and every club's health dashboard wrote its stamps the New
+// Zealand way; the club's recorded locale reaches a `"use client"` file only as
+// data (INV-CONFIG-006). The memo is therefore keyed on the PAIR, because two
+// clubs can share a zone and differ in locale.
 const HEALTH_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
 
-function healthFormatter(zone: ClubTimeZone): Intl.DateTimeFormat {
-  const cached = HEALTH_FORMATTERS.get(zone);
+function healthFormatter(
+  locale: string,
+  zone: ClubTimeZone,
+): Intl.DateTimeFormat {
+  const key = `${locale}|${zone}`;
+  const cached = HEALTH_FORMATTERS.get(key);
   if (cached) return cached;
-  const created = new Intl.DateTimeFormat(APP_LOCALE, {
+  const created = new Intl.DateTimeFormat(locale, {
     timeZone: zone,
     day: "2-digit",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
   });
-  HEALTH_FORMATTERS.set(zone, created);
+  HEALTH_FORMATTERS.set(key, created);
   return created;
 }
 
-export function formatDate(clubTime: BoundClubTime, dateStr: string) {
+/**
+ * `format` is the whole `ClubFormat` rather than a bare locale STRING, and that
+ * is a deliberate choice about the call sites: `dateStr` is also a string, so a
+ * bare locale parameter beside it would let a transposed call compile and
+ * render nonsense. An object argument makes the transposition a type error.
+ */
+export function formatDate(
+  clubTime: BoundClubTime,
+  format: ClubFormat,
+  dateStr: string,
+) {
   // Guarded, unlike the `new Date()` this replaces: a health payload is read
   // from a live system and a row with an unparseable stamp must not blank the
   // dashboard. An offset-less ISO string is refused rather than read in the
   // host's zone, which is the defect class this epic closes.
   const instant = parseInstant(dateStr);
   if (instant === null) return "unknown";
-  return healthFormatter(clubTime.zone).format(instant);
+  return healthFormatter(format.locale, clubTime.zone).format(instant);
 }
 
-export function formatOptionalDate(clubTime: BoundClubTime, dateStr: string | null) {
-  return dateStr ? formatDate(clubTime, dateStr) : "Not recorded";
+export function formatOptionalDate(
+  clubTime: BoundClubTime,
+  format: ClubFormat,
+  dateStr: string | null,
+) {
+  return dateStr ? formatDate(clubTime, format, dateStr) : "Not recorded";
 }
 
 export function CronError({ error }: { error: string }) {

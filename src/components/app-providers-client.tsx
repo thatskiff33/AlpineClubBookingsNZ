@@ -3,6 +3,7 @@
 import { SessionProvider } from "next-auth/react";
 import type { ReactNode } from "react";
 import { AppThemeProvider } from "@/components/app-theme-provider";
+import { ClubFormatProvider } from "@/components/club-format-provider";
 import { ClubIdentityProvider } from "@/components/club-identity-provider";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { CspNonceProvider } from "@/components/security/csp-nonce-provider";
@@ -23,6 +24,13 @@ import type { ClubIdentity } from "@/config/club-identity-types";
  * outside `SessionProvider`, and wrapping the `Toaster` as well as the page: a
  * toast can carry a timestamp, and a component that renders in one place and
  * not the other is exactly the class of bug the context exists to remove.
+ *
+ * `ClubFormatProvider` (#3564) sits immediately outside it, on the same
+ * argument and covering the same subtree: a toast can carry an amount too.
+ * Currency and locale travel the same way the zone does and for the same
+ * reason — `NEXT_PUBLIC_*` is inlined at build time into an image that serves
+ * every club, so the values are resolved on the server one level up and handed
+ * down as data. See `club-format-provider.tsx`.
  */
 
 interface AppProvidersClientProps {
@@ -30,6 +38,10 @@ interface AppProvidersClientProps {
   clubIdentity: ClubIdentity;
   /** The club's PERSISTED timezone, resolved on the server. Never the viewer's. */
   clubTimeZone: string;
+  /** The club's PERSISTED ISO 4217 currency code, resolved on the server. */
+  clubCurrencyCode: string;
+  /** The club's PERSISTED BCP 47 locale, resolved on the server. */
+  clubLocale: string;
   nonce?: string;
 }
 
@@ -37,16 +49,23 @@ export function AppProvidersClient({
   children,
   clubIdentity,
   clubTimeZone,
+  clubCurrencyCode,
+  clubLocale,
   nonce,
 }: AppProvidersClientProps) {
   return (
     <CspNonceProvider nonce={nonce}>
       <AppThemeProvider nonce={nonce}>
         <ClubIdentityProvider value={clubIdentity}>
-          <ClubTimeProvider zone={clubTimeZone}>
-            <SessionProvider>{children}</SessionProvider>
-            <Toaster richColors position="top-right" />
-          </ClubTimeProvider>
+          <ClubFormatProvider
+            currencyCode={clubCurrencyCode}
+            locale={clubLocale}
+          >
+            <ClubTimeProvider zone={clubTimeZone}>
+              <SessionProvider>{children}</SessionProvider>
+              <Toaster richColors position="top-right" />
+            </ClubTimeProvider>
+          </ClubFormatProvider>
         </ClubIdentityProvider>
       </AppThemeProvider>
     </CspNonceProvider>

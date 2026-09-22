@@ -21,15 +21,21 @@ import { isFullAdmin } from "@/lib/access-roles";
  * both verbs of `/api/admin/club-format` — and this check exists so the screen
  * does not offer an action it knows will be refused.
  *
- * THE BLURB SAYS WHAT IS TRUE TODAY, WHICH IS LESS THAN IT WILL SAY. Stage 1
- * records the currency and locale; no production code path reads them yet, so
- * the amounts and dates the site shows still come from the deployment's
- * `CURRENCY` and `LOCALE`. Owner decision D1 on #3205 accepted that in exchange
- * for no throwaway plumbing. Saying otherwise here would have an operator
- * change this setting expecting the screens to follow, and then find they had
- * not — so the panel says so in as many words. The disclaimer goes when the
- * readers arrive (#3564 to #3566): the change that makes the claim true is the
- * change that gets to make it.
+ * THE BLURB SAYS WHAT IS TRUE TODAY, WHICH IS STILL LESS THAN IT WILL SAY.
+ * Stage 1 recorded the setting and no screen read it. Stage 2 (#3564) moved the
+ * ten `"use client"` screens onto it — the currency label beside a fee or a
+ * spend cap, the audit and health stamps, the promo counts, the lobby
+ * display's date — so the setting now visibly does something.
+ *
+ * WHAT IT STILL DOES NOT DO, and the blurb has to keep saying so: every
+ * AMOUNT is written by `formatCents` and the finance formatters, and every
+ * date by the club-time kernel, all of which build their `Intl` objects at
+ * module load from `CURRENCY` and `LOCALE`. Those are #3565; the remaining
+ * server-side readers are #3566. So an operator who removes the server
+ * variables today gets a page showing `CHF` beside amounts written in New
+ * Zealand dollars, which is worse than either answer alone — and is exactly
+ * why "keep them in step" is still the instruction. Each disclaimer goes with
+ * the stage that makes its claim true; this one shrank rather than vanished.
  */
 export default function ClubFormatPage() {
   const { data: session } = useSession();
@@ -63,12 +69,15 @@ export default function ClubFormatPage() {
           the server no longer changes <em>this setting</em>.
         </p>
         <p className="text-sm text-muted-foreground">
-          <strong>Leave the server settings in place for now.</strong> The
-          screens have not moved across yet: until they do, every amount and
-          date on the site is still written using the server&rsquo;s{" "}
-          <code>CURRENCY</code> and <code>LOCALE</code>. Removing them would
-          make the whole site fall back to New Zealand dollars while this page
-          still shows your choice.
+          <strong>Leave the server settings in place, and in step.</strong> The
+          admin screens now show the currency you choose here, and the lobby
+          display writes its date your way. What is still written from the
+          server&rsquo;s <code>CURRENCY</code> and <code>LOCALE</code> is every{" "}
+          <em>amount</em> — every price, invoice figure and statement line —
+          and every date the rest of the site prints. Those move across in the
+          changes that follow. If the two disagree, you will see your chosen
+          code beside amounts written the old way, so keep them the same until
+          this note goes.
         </p>
       </div>
       <ClubFormatPanel />

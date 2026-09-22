@@ -2,7 +2,12 @@
 
 import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { ClubFormatProvider } from "@/components/club-format-provider";
 import { ClubTimeProvider } from "@/components/club-time-provider";
+import {
+  CLUB_CURRENCY_FALLBACK,
+  CLUB_LOCALE_FALLBACK,
+} from "@/lib/club-format";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
@@ -366,8 +371,16 @@ describe("fee configuration page", () => {
 
     stubFetch(response(true, editableData));
     render(<FeeConfigurationPage />, {
+      // A custom `wrapper` REPLACES the helper's, so this stack has to mount
+      // both providers itself — the format one on the shipped defaults, since
+      // this case is about the zone and nothing here reads a currency.
       wrapper: ({ children }) => (
-        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        <ClubFormatProvider
+          currencyCode={CLUB_CURRENCY_FALLBACK}
+          locale={CLUB_LOCALE_FALLBACK}
+        >
+          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        </ClubFormatProvider>
       ),
     });
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
@@ -663,12 +676,27 @@ describe("fee configuration page", () => {
     expect(screen.queryByText("Prorate n/a")).toBeNull();
   });
 
-  // The amount labels used to hard-code "(NZD)"; they now read the club's
-  // configured currency code (#3325). The literal "(NZD)" pins above are the
-  // byte-identical proof under the default configuration; this case is what
-  // makes the code path discriminate — a fresh import under a different
-  // configured currency must label the inputs with THAT code.
-  it("labels the amount inputs with the configured currency code, not a hard-coded NZD (#3325)", async () => {
+  /*
+    THE AMOUNT LABELS FOLLOW THE CLUB'S RECORDED CURRENCY (#3564), AND THIS CASE
+    WAS INVERTED TO SAY SO.
+
+    #3325 took these labels off a hard-coded `"(NZD)"` and onto `APP_CURRENCY`,
+    and this case proved it by importing the section under a mocked
+    `@/config/operational` and demanding `(AUD)`. That was as far as #3325 could
+    go — and it pinned the very defect programme #3205 exists to remove, because
+    `APP_CURRENCY` is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and is
+    `undefined` in the published image, so on a real deployment the label never
+    moved at all.
+
+    Now the recorded setting is the authority (INV-CONFIG-006), so the
+    environment mock stays exactly where it was and its answer must be IGNORED.
+    Three currencies are in play and only one may appear: the club's recorded
+    `CHF`, the environment's `AUD`, and the shipped default `NZD`. Demanding
+    `CHF` while refusing the other two is what makes this discriminating — a
+    component still reading the environment renders `AUD`, and one that fell
+    back renders `NZD`, and each fails on its own line.
+  */
+  it("labels the amount inputs with the club's RECORDED currency, not the environment's and not NZD (#3564)", async () => {
     vi.resetModules();
     vi.doMock("@/config/operational", () => ({
       APP_CURRENCY: "AUD",
@@ -678,18 +706,22 @@ describe("fee configuration page", () => {
     }));
     try {
       const { FinanceFeesSections } = await import("@/app/(admin)/admin/fees/_components/finance-fees-sections");
-      // The fresh module tree has its own club-time context object, so the
-      // render helper's (static) provider would not be seen; wrap with the
-      // freshly imported one.
+      // The fresh module tree has its own context objects, so the render
+      // helper's (static) providers would not be seen; wrap with the freshly
+      // imported ones.
       const { ClubTimeProvider: FreshClubTimeProvider } = await import("@/components/club-time-provider");
+      const { ClubFormatProvider: FreshClubFormatProvider } = await import("@/components/club-format-provider");
       stubFetch(response(true, editableData));
       render(<FinanceFeesSections />, {
         wrapper: ({ children }) => (
-          <FreshClubTimeProvider zone="Australia/Sydney">{children}</FreshClubTimeProvider>
+          <FreshClubFormatProvider currencyCode="CHF" locale="de-CH">
+            <FreshClubTimeProvider zone="Australia/Sydney">{children}</FreshClubTimeProvider>
+          </FreshClubFormatProvider>
         ),
       });
       fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-      expect(screen.getByLabelText("Annual amount (AUD)")).toBeTruthy();
+      expect(screen.getByLabelText("Annual amount (CHF)")).toBeTruthy();
+      expect(screen.queryByLabelText("Annual amount (AUD)")).toBeNull();
       expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
     } finally {
       vi.doUnmock("@/config/operational");

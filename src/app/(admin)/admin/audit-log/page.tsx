@@ -46,7 +46,8 @@ import {
 import { auditCategoryBadgeClass } from "@/lib/audit-category-badges";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { memberName } from "@/lib/member-serialization";
-import { APP_LOCALE } from "@/config/operational";
+import type { ClubFormat } from "@/lib/club-format";
+import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
 import { parseInstant, type BoundClubTime, type ClubTimeZone } from "@/lib/club-time";
 
@@ -87,12 +88,22 @@ const emptyFacets: AuditFacets = {
 // club's PERSISTED zone (INV-CONFIG-002), which a `"use client"` file receives
 // as data — so the formatter is memoised per zone rather than frozen at module
 // scope against APP_TIME_ZONE.
+// #3564 did to the LOCALE what CT-4 did to the zone: `APP_LOCALE` is
+// `NEXT_PUBLIC_LOCALE` inlined at BUILD time, so in the published image it is
+// `undefined` and every club's audit trail was stamped the New Zealand way. The
+// club's recorded locale reaches a `"use client"` file only as data
+// (INV-CONFIG-006), so the memo is keyed on the PAIR — two clubs can share a
+// zone and differ in locale.
 const AUDIT_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
 
-function auditFormatter(zone: ClubTimeZone): Intl.DateTimeFormat {
-  const cached = AUDIT_FORMATTERS.get(zone);
+function auditFormatter(
+  locale: string,
+  zone: ClubTimeZone,
+): Intl.DateTimeFormat {
+  const key = `${locale}|${zone}`;
+  const cached = AUDIT_FORMATTERS.get(key);
   if (cached) return cached;
-  const created = new Intl.DateTimeFormat(APP_LOCALE, {
+  const created = new Intl.DateTimeFormat(locale, {
     timeZone: zone,
     day: "numeric",
     month: "short",
@@ -101,14 +112,24 @@ function auditFormatter(zone: ClubTimeZone): Intl.DateTimeFormat {
     minute: "2-digit",
     second: "2-digit",
   });
-  AUDIT_FORMATTERS.set(zone, created);
+  AUDIT_FORMATTERS.set(key, created);
   return created;
 }
 
-function formatDateTime(clubTime: BoundClubTime, value: string) {
+/*
+  `format` is the whole `ClubFormat` rather than a bare locale STRING: `value`
+  is also a string, so a bare locale parameter beside it would let a transposed
+  call compile and render nonsense, where an object argument makes the
+  transposition a type error.
+*/
+function formatDateTime(
+  clubTime: BoundClubTime,
+  format: ClubFormat,
+  value: string,
+) {
   const instant = parseInstant(value);
   if (instant === null) return value;
-  return auditFormatter(clubTime.zone).format(instant);
+  return auditFormatter(format.locale, clubTime.zone).format(instant);
 }
 
 function titleCase(value: string) {
@@ -378,6 +399,7 @@ function MemberSearchFilter({
 
 export default function AuditLogPage() {
   const clubTime = useClubTime();
+  const clubFormat = useClubFormat();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [eventType, setEventType] = useState(searchParams.get("eventType") || "all");
@@ -912,7 +934,7 @@ export default function AuditLogPage() {
                           ) : null}
                         </TableCell>
                         <TableCell className="align-top text-xs text-muted-foreground">
-                          {formatDateTime(clubTime, entry.createdAt)}
+                          {formatDateTime(clubTime, clubFormat, entry.createdAt)}
                         </TableCell>
                         <TableCell className="align-top">
                           <div className="space-y-1">

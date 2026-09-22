@@ -15,7 +15,11 @@
  * separately pinned here.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DiagnosticsBudgetCard } from "../_components/diagnostics-budget-card";

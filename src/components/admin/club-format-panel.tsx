@@ -431,12 +431,27 @@ export function ClubFormatPanel() {
             <ul className="list-disc space-y-1 pl-5 text-sm">
               <li>
                 <span className="font-semibold">
-                  No screen changes yet, on purpose.
+                  Some screens follow this straight away; amounts do not yet.
                 </span>{" "}
-                This records the club&apos;s choice. The pages that show money
-                and dates are moved onto it in the changes that follow this one,
-                so today saving here changes nothing a member or an officer can
-                see.
+                The currency code shown beside a fee, a spend cap or a
+                booking-request total changes as soon as you save, and so do
+                the audit-log timestamps, the health dashboard&apos;s{" "}
+                <em>row</em> timestamps, the promo counts and the lobby
+                display&apos;s date. The <em>amounts themselves</em> — every
+                price, invoice figure and statement line — are still written
+                from the server&apos;s settings, and move across in the changes
+                that follow this one.
+              </li>
+              <li>
+                <span className="font-semibold">
+                  Two clocks on those screens do not move yet.
+                </span>{" "}
+                The health dashboard&apos;s &ldquo;Last refresh&rdquo; line and
+                the lobby display&apos;s live clock are written by the shared
+                date machinery rather than by their own screen, so they keep
+                following the server&apos;s <code>LOCALE</code> until the next
+                change moves it. They are the only place you will see both
+                answers at once.
               </li>
               <li>
                 No amount already recorded is rewritten or re-converted. A
@@ -447,9 +462,10 @@ export function ClubFormatPanel() {
               <li>
                 Once saved, this page is where the setting is changed — editing{" "}
                 <code>CURRENCY</code> or <code>LOCALE</code> on the server will
-                not change it back. <strong>Do not remove them yet</strong>: the
-                screens still read the server values until the later stages
-                move them, so the site would fall back to New Zealand dollars.
+                not change it back. <strong>Do not remove them yet</strong>, and
+                keep them matching what you choose here: amounts are still
+                written from them, so a mismatch shows your chosen code beside
+                figures written the old way.
               </li>
               <li>
                 Stripe still charges in the currency the deployment is
@@ -467,8 +483,9 @@ export function ClubFormatPanel() {
               <Label htmlFor={acknowledgeId} className="text-sm font-normal">
                 I understand that this records the club&apos;s currency and
                 number format, that no amount already recorded is changed or
-                re-converted, that no screen shows anything different yet, and
-                that the server settings stop deciding these once this is saved.
+                re-converted, that amounts are still written from the
+                server&apos;s settings for now, and that the server settings
+                stop deciding this one once this is saved.
               </Label>
             </div>
           </div>
