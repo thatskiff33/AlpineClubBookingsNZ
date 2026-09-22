@@ -21,13 +21,13 @@ Both are properties of the **club**, not of the server the software runs on and
 not of whoever is looking. A member reading the site from another country sees
 the club's currency, not their own.
 
-**Recorded here now; in force as the rest of this work ships.** This page is
-where the club's currency and format are *recorded*, and it is the setting the
-whole product is moving onto. Today the amounts and dates the site shows are
-still worked out from the `CURRENCY` and `LOCALE` values the server was started
-with. So while both exist, **keep the two in step**: if you change a value here,
-change the server setting to match. What is already true, and permanent: nothing
-on this page rewrites any amount already recorded.
+**Recorded here, and in force on the screens so far moved onto it.** This page
+is where the club's currency and format are *recorded*, and it is the setting
+the whole product is moving onto, screen by screen. The **amounts themselves**
+are the part still worked out from the `CURRENCY` and `LOCALE` values the
+server was started with. So while both exist, **keep the two in step**: if you
+change a value here, change the server setting to match. What is already true,
+and permanent: nothing on this page rewrites any amount already recorded.
 
 **These used to be server settings, and this page is where they are changed
 now.** `CURRENCY` and `LOCALE` were copied here once, on the first start after
@@ -36,12 +36,35 @@ authority **for the setting**: editing the server value no longer changes what
 this page shows. That is the point of the change — one place will answer the
 question, so nobody has to work out which of two is winning.
 
-**It does not yet answer it for the screens, so keep the server values set.**
-Until the later stages move the display paths across, every amount and date the
-site writes still comes from `CURRENCY` and `LOCALE`. Removing them because
-this page exists is the one mistake worth warning about: the site would fall
-back to New Zealand dollars while this page went on showing your choice, and
-nothing would flag it.
+**What already follows this page, and what does not yet.** These now come from
+the setting recorded here, as soon as you save it:
+
+- the currency code shown beside a fee, a nightly rate, a promo code amount, a
+  monthly AI spend cap or a booking-request total;
+- the date and time on an audit-log entry, and on every row of the health
+  dashboard;
+- the grouped counts in a promo-code export notice;
+- the date on the lobby display.
+
+These do **not** yet, and still come from `CURRENCY` and `LOCALE`:
+
+- **every amount** the site writes — a price, an invoice figure, a statement
+  line, an email total. All of them go through one shared money formatter,
+  which is moved in the next change;
+- every other date and time, which go through the shared date formatters moved
+  in the same change. **Two of them sit on screens listed above**, and are the
+  only places you will see the two answers side by side: the "Last refresh"
+  line at the top of the health dashboard, and the live clock on the lobby
+  display. Both are written by the shared machinery rather than by their own
+  screen, so they stay on the server's `LOCALE` while the rows and the date
+  beneath them follow this page;
+- the fee figures written into public website pages, and a handful of other
+  server-side readers, which move in the change after that.
+
+**So keep the server values set, and keep them matching this page.** Removing
+them is the one mistake worth warning about, and a mismatch is the other: you
+would see the currency code you chose sitting beside amounts written the old
+way, on the same screen, with nothing flagging it.
 
 Changing either value is a **Full Administrator** job. It needs an explicit
 confirmation, and every such change is written to the audit log with who made it
@@ -105,8 +128,10 @@ is older than the currency.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Changing `CURRENCY` on the server did not change this page | Expected. The server value seeded the setting once; this page is the authority for it now | Change it here instead |
-| Changing `CURRENCY` on the server DID change the amounts on screen | Also expected, for now. The display paths have not moved onto the recorded setting yet | Keep the two in step until the later stages land |
-| The amounts on screen are still in the old currency after saving | Expected for now. This page records the club's choice; the screens that display money are moved onto it in the changes that follow this one | Nothing to fix. Until then, keep the server's `CURRENCY` in step with this page |
+| Changing `CURRENCY` on the server DID change the amounts on screen | Also expected, for now. Amounts are written by a shared formatter that has not moved onto the recorded setting yet | Keep the two in step until the later stages land |
+| The currency code changed but the amounts beside it did not | Expected for now. The labels follow this page; the amounts are written by a shared formatter moved in the next change | Nothing to fix. Until then, keep the server's `CURRENCY` in step with this page |
+| Nothing at all changed after saving | Check which screen. Fees, promo codes, the AI spend cap, booking requests, the audit log, the health dashboard's rows and the lobby display's date follow this page; everything else follows the server settings for now | Nothing to fix |
+| The health dashboard's rows changed but its "Last refresh" line did not — or the lobby display's date changed but its clock did not | Expected. Those two are written by the shared date machinery, not by their own screen, so they still follow the server's `LOCALE` | Nothing to fix. Keep `LOCALE` in step with this page and the two read the same until the next change moves them |
 | "Not usable" appears under a value | Something was written straight into the database, or restored from a backup that held a value this app cannot read | Save the value again on this page. Restarting will not repair it |
 | The currency changed but an old invoice still shows the old one | Nothing already recorded is rewritten or re-converted. An amount of 8450 cents is still 8450 cents | Nothing to fix. This setting changes how an amount is *written*, never what it is worth |
 | Card payments are still taken in the old currency | The payment provider's currency is a separate, server-side setting, and moving a club to a different currency is a conversation with the provider and the club's accountant | Raise it with the club's technical contact before changing anything here |

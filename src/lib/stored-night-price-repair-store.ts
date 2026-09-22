@@ -1,5 +1,5 @@
 import "server-only";
-import { Prisma } from "@prisma/client";
+import { Prisma, type BookingGuestNightPriceSource } from "@prisma/client";
 
 import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -520,4 +520,60 @@ export async function applyStrandNightPriceReconcile({
     );
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// #3531 3b: the rate-derived backfill's write, here because THIS is the module
+// that rewrites a night row in place (`stored-night-price-repair-census`).
+// ---------------------------------------------------------------------------
+
+/** Thrown when a planned row no longer holds what it was planned from. */
+export class RateDerivedBackfillRacedError extends Error {
+  constructor(bookingGuestId: string, nightId: string) {
+    super(`Night ${nightId} of guest ${bookingGuestId} changed since it was planned; booking rolled back`);
+    this.name = "RateDerivedBackfillRacedError";
+  }
+}
+
+export type RateDerivedNightRewrite = {
+  bookingGuestId: string;
+  nights: ReadonlyArray<{
+    id: string;
+    fromPriceCents: number;
+    fromSource: BookingGuestNightPriceSource;
+    toPriceCents: number;
+  }>;
+};
+
+/**
+ * Rewrite planned rows as `RATE_DERIVED`, every one a compare-and-set on the
+ * price and provenance it was planned from - the same single-flight rule as
+ * the officer repair above, and the same refusal: a row that no longer holds
+ * what it was read holding matches nothing, and the caller's transaction rolls
+ * back. Never fills a NULL: the planner lists such a strand instead
+ * (`INV-MOD-028`), and the fence's `fromPriceCents` is an integer.
+ */
+export async function applyRateDerivedNightRewrites(
+  rewrites: ReadonlyArray<RateDerivedNightRewrite>,
+  store: Pick<Prisma.TransactionClient, "bookingGuestNight">,
+): Promise<number> {
+  let rows = 0;
+  for (const strand of rewrites) {
+    for (const night of strand.nights) {
+      const written = await store.bookingGuestNight.updateMany({
+        where: {
+          id: night.id,
+          bookingGuestId: strand.bookingGuestId,
+          priceCents: night.fromPriceCents,
+          priceSource: night.fromSource,
+        },
+        data: { priceCents: night.toPriceCents, priceSource: "RATE_DERIVED" },
+      });
+      if (written.count !== 1) {
+        throw new RateDerivedBackfillRacedError(strand.bookingGuestId, night.id);
+      }
+      rows += 1;
+    }
+  }
+  return rows;
 }

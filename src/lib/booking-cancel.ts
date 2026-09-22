@@ -1275,7 +1275,7 @@ async function performBookingCancellation(
       details: freshPaymentCaptured
         ? "Confirmed booking cancelled; previously captured payment keeps its refund history (status preserved, no Xero clearing note queued)"
         : xeroClearingAmountCents > 0
-          ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${xeroClearingAmountCents} cents to clear the outstanding invoice`
+          ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${formatCents(xeroClearingAmountCents)} to clear the outstanding invoice`
           : "Confirmed booking cancelled, no payment to refund",
       ipAddress,
       metadata: {
@@ -1812,8 +1812,8 @@ async function performBookingCancellation(
       sessionUserId,
       details:
         payment.changeFeeCents > 0
-          ? `Manual refund task for ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents`
-          : `Manual refund task for ${refundPercentage}% = ${refundAmountCents} cents`,
+          ? `Manual refund task for ${refundPercentage}% of ${formatCents(refundableBaseCents)} (excluding ${formatCents(payment.changeFeeCents)} change fee) = ${formatCents(refundAmountCents)}`
+          : `Manual refund task for ${refundPercentage}% = ${formatCents(refundAmountCents)}`,
       ipAddress,
       metadata: {
         refundMethod: "manual",
@@ -1923,8 +1923,8 @@ async function performBookingCancellation(
       bookingId,
       sessionUserId,
       details: payment.changeFeeCents > 0
-        ? `Credit ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents as account credit`
-        : `Credit ${refundPercentage}% = ${refundAmountCents} cents as account credit`,
+        ? `Credit ${refundPercentage}% of ${formatCents(refundableBaseCents)} (excluding ${formatCents(payment.changeFeeCents)} change fee) = ${formatCents(refundAmountCents)} as account credit`
+        : `Credit ${refundPercentage}% = ${formatCents(refundAmountCents)} as account credit`,
       ipAddress,
       metadata: {
         refundMethod: "credit",
@@ -2088,8 +2088,8 @@ async function performBookingCancellation(
       bookingId,
       sessionUserId,
       details: payment.changeFeeCents > 0
-        ? `Refund ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents`
-        : `Refund ${refundPercentage}% = ${refundAmountCents} cents`,
+        ? `Refund ${refundPercentage}% of ${formatCents(refundableBaseCents)} (excluding ${formatCents(payment.changeFeeCents)} change fee) = ${formatCents(refundAmountCents)}`
+        : `Refund ${refundPercentage}% = ${formatCents(refundAmountCents)}`,
       ipAddress,
       metadata: {
         refundMethod: "card",

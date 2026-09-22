@@ -1391,7 +1391,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 357 -> 358 (#3563): the club currency and locale record, likewise - a new
     // unpinned writer under `/api/admin/club-format/`, which no per-site map
     // covers. RE-MEASURED with `npm run audit:census`, not incremented.
-    ).toEqual({ pinned: 128, unpinned: 358 });
+    // 358 -> 359 (#3531 3b): the rate-derived night-price backfill record,
+    // `payment` at the site, unpinned like every other new feature's writer.
+    ).toEqual({ pinned: 128, unpinned: 359 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

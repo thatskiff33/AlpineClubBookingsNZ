@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 
-import { APP_LOCALE } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   asClubTimeZone,
   bindClubTime,
@@ -88,13 +88,33 @@ function formatClock(club: BoundClubTime, date: Date): string {
   `club.calendarDateOf`, which is the one operation allowed to say which club day
   a moment falls on (INV-DATE-019), and the simulated one straight off the
   window's own date-only key.
+
+  BUILT PER RENDER RATHER THAN AT MODULE LOAD (#3564, stage 2 of programme
+  #3205). This was `const SHORT_WEEKDAY_DAY = new Intl.DateTimeFormat(...)` at
+  module scope, which is a constructor call at import time, in a place where no
+  React context is reachable - so the locale could only ever be the build-time
+  constant. The locale is about to become a value this component is HANDED, and
+  a formatter can only take a handed value if it is built where the value is in
+  scope. Nothing else about it changed: the same options bag, the same `UTC`
+  pin, the same locale for now.
+
+  `useMemo` rather than a bare constructor call: `HeaderClock` re-renders every
+  fifteen seconds off its own interval, and `Intl.DateTimeFormat` construction
+  is the expensive half of formatting. The dependency is the locale, so the
+  object is rebuilt only when the club's locale really changes.
 */
-const SHORT_WEEKDAY_DAY = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-});
+function useShortWeekdayDayFormatter(locale: string): Intl.DateTimeFormat {
+  return useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        timeZone: "UTC",
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      }),
+    [locale],
+  );
+}
 
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -151,6 +171,14 @@ export function HeaderClock({
   windowStart: string;
 }) {
   const club = useDisplayClubTime();
+  /*
+    THE CLUB'S RECORDED LOCALE, NOT THE BUILD'S (#3564; INV-CONFIG-006). This
+    was `APP_LOCALE` — `NEXT_PUBLIC_LOCALE` inlined at build time, and therefore
+    `undefined` in the published image — so the wall wrote its date the New
+    Zealand way for every club on earth. `DisplayScreen` mounts the shared
+    `ClubFormatProvider` from the values `page.tsx` resolves on the server.
+  */
+  const shortWeekdayDay = useShortWeekdayDayFormatter(useClubFormat().locale);
   const [now, setNow] = useState<Date | null>(null);
   const [preview, setPreview] = useState(() => ({
     isPreview: false,
@@ -200,7 +228,7 @@ export function HeaderClock({
   const dateSource = simulatedDay ?? club.calendarDateOf(now);
   const dateLine = (
     <>
-      {SHORT_WEEKDAY_DAY.format(dateOnlyInstantOf(dateSource))}
+      {shortWeekdayDay.format(dateOnlyInstantOf(dateSource))}
       {" · "}
       <b>updated {formatClock(club, updated).toLowerCase()}</b>
     </>

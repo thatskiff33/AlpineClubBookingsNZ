@@ -78,6 +78,7 @@ import {
 } from "./cancellation";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
 import { bookingOwner } from "@/lib/booking-owner";
+import { formatCents } from "@/lib/utils";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
@@ -648,7 +649,7 @@ export async function settleGroupBookingOnOrganiserCancel(
       summary: "Group joiner booking cancelled with organiser cancel",
       details:
         refundForChild > 0
-          ? `Group organiser cancelled; refunded ${refundForChild} cents of the settled beds to the organiser`
+          ? `Group organiser cancelled; refunded ${formatCents(refundForChild)} of the settled beds to the organiser`
           : "Group organiser cancelled; released the held spot (no payment taken)",
       metadata: {
         groupBookingId: group.id,
@@ -890,7 +891,7 @@ export async function executeGroupSettlementRefundPlan(
       severity: "critical",
       outcome: "success",
       summary: "Group settlement refund recovered",
-      details: `Recovered the organiser's settlement refund for this cancelled group joiner: ${nextRefunded} cents (frozen plan replay).`,
+      details: `Recovered the organiser's settlement refund for this cancelled group joiner: ${formatCents(nextRefunded)} (frozen plan replay).`,
       metadata: {
         settlementId,
         groupBookingId: settlement.groupBookingId,

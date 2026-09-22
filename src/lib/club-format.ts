@@ -208,15 +208,29 @@ export function normaliseClubLocale(
     // accept or reject the tag.
     new Intl.NumberFormat(canonical).resolvedOptions();
     /*
-      `timeZone: undefined` is the spelling INV-DATE-015's own guard message
-      names for a formatter that is not pinning a zone, and it is the honest
-      one here: this probe asks whether the runtime will accept the TAG, and
-      says nothing about which zone anything is rendered in. No date is
-      produced. Every real date rendering goes through `@/lib/club-time`,
-      which owns the only formatter factory in the tree.
+      THE ZONE IS PINNED TO `UTC`, AND IT HAS TO BE — #3564 CORRECTED THIS.
+
+      Stage 1 wrote `timeZone: undefined` here and argued it was the honest
+      spelling: this probe asks whether the runtime will accept the TAG and has
+      no opinion about zones, no date is produced, and the result is discarded.
+      That reasoning held while this module only ever ran on the server. Stage 2
+      (#3564) mounts `ClubFormatProvider` in the browser, which re-validates
+      what it is handed, which runs this function in every page's render — and
+      an `Intl.DateTimeFormat` built with no `timeZone` resolves to the VIEWER's
+      clock, which `INV-DATE-015` bans outright because
+      `resolvedOptions().timeZone` is exactly how a page learns that zone.
+      Measured: it turned `club-time-zone-panel.test.tsx`'s runtime watch red
+      with two unzoned constructions.
+
+      `UTC` asserts nothing about the club. It is the fixed zone the kernel's
+      own calendar-day formatters pin for the same reason — it always exists, on
+      every runtime — so the probe still answers only the question it is asking,
+      and answers it without building the one object this application is not
+      allowed to build. Every real date rendering still goes through
+      `@/lib/club-time`, which owns the only formatter factory in the tree.
     */
     new Intl.DateTimeFormat(canonical, {
-      timeZone: undefined,
+      timeZone: "UTC",
     }).resolvedOptions();
   } catch {
     return null;

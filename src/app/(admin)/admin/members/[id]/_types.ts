@@ -196,6 +196,7 @@ export interface MemberDetail {
   ageTier: string;
   financeAccessLevel: FinanceAccessLevel;
   active: boolean;
+  deletedAt: string | null;
   // Member profile photo (MP4, epic #171). photoImageId present ⇒ has a photo;
   // photoUpdatedAt busts the img cache after a replace.
   photoImageId: string | null;

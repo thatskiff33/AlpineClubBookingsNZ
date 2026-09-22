@@ -1,0 +1,16 @@
+-- #3531 stage 3b (programme #3527; owner decision D-3531-2): a fifth night-price
+-- provenance, RATE_DERIVED, for an evenly-split or unknown-origin row that the
+-- operator-run backfill (scripts/backfill-night-prices-from-rates.ts) rewrites
+-- because the rate table, run over the strand as it was sold, reproduces the
+-- strand's stored total to the cent.
+--
+-- Purely additive EXPAND: one enum value, catalog-only, no table lock, no DML.
+-- NOTHING WRITES IT AT DEPLOY. No migration, trigger or runtime writer sets
+-- RATE_DERIVED; only the script does, and it must run AFTER the cutover, never
+-- during the blue/green window: a colour whose generated client predates this
+-- value cannot deserialise a row that carries it, so a row rewritten while
+-- both colours serve would fail the old colour's reads of that booking. Until
+-- the script runs, every row is byte-identical and both colours read it as
+-- before. PostgreSQL cannot drop an enum value; the reverse is to leave it
+-- unused (and, if the rows must be discarded, reset them to UNKNOWN).
+ALTER TYPE "BookingGuestNightPriceSource" ADD VALUE IF NOT EXISTS 'RATE_DERIVED';

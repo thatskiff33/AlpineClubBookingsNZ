@@ -185,6 +185,7 @@ import {
   DELETED_ACCOUNT_PASSWORD_HASH,
   isDeletedAccountEmail,
   isDeletedAccountRecord,
+  notDeletedAccountWhere,
 } from "@/lib/deleted-account";
 
 const mockedPrisma = vi.mocked(prisma, true);
@@ -220,6 +221,7 @@ function liveMember(overrides: Record<string, unknown> = {}) {
     twoFactorMethod: null,
     postLoginLanding: null,
     googleSub: "google-sub-jane",
+    deletedAt: null,
     cancelledAt: null,
     archivedAt: null,
     xeroContactId: null,
@@ -288,7 +290,7 @@ async function captureAnonymisationPayload(): Promise<Record<string, unknown>> {
         // pre-anonymisation row and allow the write through.
         findUnique: vi.fn().mockResolvedValue(liveMember()),
       },
-      familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }), },
       bookingGuest: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       bedAllocation: {
         findMany: vi.fn().mockResolvedValue([]),
@@ -380,13 +382,14 @@ function deletedMemberRow(
   return { ...liveMember(), ...anonymisation, ...overrides };
 }
 
-/** A hand-built equivalent for the focused tests, pinned by the combination test. */
+/** An adopter-era erased row: reserved address present, structural marker absent. */
 function deletedMemberFixture(overrides: Record<string, unknown> = {}) {
   return liveMember({
     firstName: "Deleted",
     lastName: "Member",
     email: "deleted-m1abcdef@deleted.invalid",
     passwordHash: DELETED_ACCOUNT_PASSWORD_HASH,
+    deletedAt: null,
     active: false,
     ...overrides,
   });
@@ -630,7 +633,9 @@ describe("#2620 reactivation refusals, one path at a time", () => {
       fn({
         $executeRaw: vi.fn().mockResolvedValue(1),
         member: { updateMany, count: vi.fn().mockResolvedValue(2) },
-        familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        familyGroupMember: {
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
         bedAllocation: {
           findMany: vi.fn().mockResolvedValue([]),
           deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -775,9 +780,11 @@ describe("#2620 login refusals, one path at a time", () => {
 });
 
 describe("isDeletedAccountRecord", () => {
-  it("recognises either marker on its own", () => {
+  it("recognises the structural marker or adopter-compatibility address on its own", () => {
     expect(
-      isDeletedAccountRecord({ passwordHash: DELETED_ACCOUNT_PASSWORD_HASH }),
+      isDeletedAccountRecord({
+        deletedAt: new Date("2026-07-01T00:00:00.000Z"),
+      }),
     ).toBe(true);
     expect(
       isDeletedAccountRecord({ email: "deleted-abcdef12@deleted.invalid" }),
@@ -787,15 +794,40 @@ describe("isDeletedAccountRecord", () => {
     expect(
       isDeletedAccountRecord({
         email: "deleted-abcdef12@deleted.invalid",
-        passwordHash: null,
+        deletedAt: null,
       }),
     ).toBe(true);
   });
 
   it("is case- and whitespace-insensitive on the address", () => {
-    expect(
-      isDeletedAccountEmail("  Deleted-ABCDEF12@Deleted.Invalid  "),
-    ).toBe(true);
+    expect(isDeletedAccountEmail("  Deleted-ABCDEF12@Deleted.Invalid  ")).toBe(
+      true,
+    );
+  });
+
+  it("prefilters padded adopter addresses before capped Prisma queries", () => {
+    const clauses = notDeletedAccountWhere();
+    const addressFilters = (
+      clauses[1] as {
+        NOT: {
+          OR: Array<{
+            email: { endsWith?: string; contains?: string; mode: string };
+          }>;
+        };
+      }
+    ).NOT.OR;
+
+    expect(addressFilters[0]).toEqual({
+      email: { endsWith: "@deleted.invalid", mode: "insensitive" },
+    });
+    const paddedSuffixes = addressFilters
+      .slice(1)
+      .map((filter) => filter.email.contains);
+    expect(paddedSuffixes).toContain("@deleted.invalid ");
+    expect(paddedSuffixes).toContain("@deleted.invalid\t");
+    expect(paddedSuffixes).toContain("@deleted.invalid\u00a0");
+    expect(paddedSuffixes).toContain("@deleted.invalid\ufeff");
+    expect(paddedSuffixes).not.toContain("@deleted.invalid.example");
   });
 
   it("does not fire on a live member, a walk-in placeholder, or nothing at all", () => {
@@ -804,7 +836,7 @@ describe("isDeletedAccountRecord", () => {
     expect(
       isDeletedAccountRecord({
         email: "walk-in-2f1c@no-email.invalid",
-        passwordHash: "$2b$12$whatever",
+        deletedAt: null,
       }),
     ).toBe(false);
     expect(isDeletedAccountRecord(null)).toBe(false);

@@ -543,17 +543,13 @@ exports `getInductionStatusForMember`, which is the same record (newest by
 own test double **refuses an `include` outright**, so a later edit that reaches for
 the wide function fails the suite rather than passing it.
 
-**One credential column is used as a predicate and never as a projection**, and it
-is the only place in any tool pack where that pattern is applied to a secret.
-`isDeletedAccountRecord` is the single definition of the erasure test and it is a
-disjunction: the anonymised email address **or** the sentinel password hash.
-Reading a real password hash into a diagnostics module, even to compare it, is not
-something this pack will do — so the hash comparison happens **inside PostgreSQL**,
-as a `count` on an equality against the server-written sentinel, and only the
-boolean crosses the boundary before being handed back to the authoritative
-predicate. No member's real hash is loaded, logged, hashed into an audit row or
-projected. The column is not in the SELECT allowlist either, so no SQL entry could
-name it.
+**The structural deletion timestamp is used as a predicate and never as a
+projection.** `isDeletedAccountRecord` is the single definition of the erasure
+test: `deletedAt` is set, or the address uses the permanently reserved
+`@deleted.invalid` suffix retained for adopter-era rows. The diagnostics role may
+read both lifecycle fields, but every SQL entry reduces them to one boolean before
+the row crosses the boundary. No credential column is read, granted, logged or
+projected.
 
 The sources bound their own **work** as well as the executor's wait: each carries a
 own deadline below the executor's outer race, and it **refuses** rather than
@@ -593,7 +589,7 @@ timestamps where present.
 
 This pack adds **thirteen** relations to the `SELECT_GRANTS` allowlist — taking it
 from thirteen to **twenty-six** — and **widens `Member`** from the two columns
-AID-6C granted to twenty-three. Every relation on the allowlist is granted **by
+AID-6C granted to twenty-four. Every relation on the allowlist is granted **by
 column**, never wholesale.
 
 | Relation | Granted | Added by | Why |
@@ -610,7 +606,7 @@ column**, never wholesale.
 | `XeroInboundEvent` | 9 columns | AID-6C | Xero's inbound ledger. |
 | `XeroObjectLink` | 10 columns | AID-6C | What is linked in Xero. |
 | `XeroSyncOperation` | 17 columns | AID-6C | What the platform tried in Xero. |
-| `Member` | 23 columns | AID-6C (2), **widened by AID-6B** | Identity and membership lifecycle for a selected member; the name on a family row; the search predicates, including predicate-only country/area/number mobile parts. Argued below. |
+| `Member` | 24 columns | AID-6C (2), **widened by AID-6B** | Identity and membership lifecycle for a selected member; the name on a family row; the deleted-account predicate; the search predicates, including predicate-only country/area/number mobile parts. Argued below. |
 | `Booking` | 25 columns | **AID-6B** | The pack's booking spine: searched by `booking_search`, returned by `booking_diagnostic_summary`, and the two legs of `member_booking_summary`. |
 | `Lodge` | 2 columns (`id`, `name`) | **AID-6B** | The lodge **name** beside a booking. Nothing else about a lodge — its capacity numbers, settings, instructions or door codes — is a question this pack has. |
 | `BookingGuest` | 15 columns | **AID-6B** | The party, guest counts, member-booking leg and canonical consent/double-sharing inputs. Responder and expiry values are never projected. |
@@ -625,13 +621,13 @@ column**, never wholesale.
 | `FamilyGroupMember` | 4 explicitly named columns — all current columns | **AID-6B** | The authoritative family-group membership join. It has only four columns and **no `role` column**, but remains a column ACL: table-wide SELECT is refused so a future column cannot become readable silently. |
 | `FamilyGroup` | 2 columns (`id`, `name`) | **AID-6B** | The group's name beside a co-member. Member-supplied text, stripped and bounded on the way out. Nothing on `FamilyGroupJoinRequest` is granted at all — it carries requester free text and children's dates of birth. |
 
-Twenty-six relations, 243 granted columns, and every omitted column is a
+Twenty-six relations, 244 granted columns, and every omitted column is a
 decision. The operator CLI prints the declared grants, columns and all, on every
 run and on `--dry-run`. The canonical exact per-relation column sets are published
 in the [deployment guide](deployment.md#what-the-diagnostics-role-may-read-today),
 not just their counts. `provision-role.test.ts` parses that reviewed block and
 compares it bidirectionally with `SELECT_GRANTS`, so replacing one documented
-column with another while preserving 26 / 243 fails.
+column with another while preserving 26 / 244 fails.
 
 **Both directions of that claim are tested, and one of them against PostgreSQL
 itself.** `provision-role.test.ts` reconciles the allowlist against every
@@ -709,7 +705,7 @@ in the schema. "An operator wrote something down" does not clear that bar.
 
 ### The three grants to scrutinise hardest on any future edit
 
-**`Member`, widened from two columns to twenty-three.** `provision-role.ts` called
+**`Member`, widened from two columns to twenty-four.** `provision-role.ts` called
 the two-column version "the narrowest grant in the file and the one to scrutinise
 hardest on any future edit". This is that edit, so here is the argument rather
 than a diff. #2376's owner decision authorises a member's **name, email address
@@ -888,7 +884,7 @@ model reads as "there is no problem" — is the failure mode the whole
   nothing happened.** A row recorded with no category at all is matched by no
   diagnostics tool anywhere. Re-measured by RUNNING the census on the merged tree
   (`npm run audit:census`, pinned by `src/lib/__tests__/audit-writer-census.test.ts`),
-  it counts **486 row-producing production audit write sites**, and **zero** of
+  it counts **487 row-producing production audit write sites**, and **zero** of
   them record no category. That zero is new and it is narrower than it sounds. This page said
   425, then 426-of-which-82, and the merge with `main` that brought #2676 in
   classified all 82 remaining sites at the source — so **no new audit row is born
@@ -1305,34 +1301,29 @@ possibly erased, up to ten at a time on a single search. An officer told a membe
 have been erased does not reactivate them, and the owner's rule for this pack is that
 an inference must never be presented as a confirmed fact.
 
-Erasure is defined by its **markers**, never by the absence of other markers.
-`isDeletedAccountRecord` (`INV-LIFE-013`) is the platform's one definition and it is
-an OR over the two things the anonymisation writes together: a sentinel
-`passwordHash` and an `email` rewritten onto the reserved `@deleted.invalid` domain.
-Both entries now run `deletedAccountEmailMarkerSql` — that second marker, as a
-`select_only_sql` predicate, with the domain taken from the same constant so the two
-cannot drift.
+Erasure is defined by one canonical predicate, never by the absence of unrelated
+markers. `isDeletedAccountRecord` (`INV-LIFE-013`) answers true when the structural
+`Member.deletedAt` marker is set or the address uses the reserved
+`@deleted.invalid` domain. The address arm is permanent compatibility for adopter
+rows erased before the structural field existed. Both SQL entries use
+`deletedAccountSql`, the canonical SQL projection of those same two signals.
 
 Three properties are worth stating:
 
-- **The address is the predicate and never the projection.** The marker crosses the
-  boundary as one boolean, exactly as `hasEmail` does. A search row is still a page
-  of names, not of contactable addresses.
-- **The credential half is deliberately absent.** `Member."passwordHash"` is not
-  granted to the diagnostics role and must never be. The two markers are written in
-  one `update` and nothing else writes either, so the email half is decisive on any
-  row the current code can produce — and `member_eligibility_state` is the entry that
-  tests both, comparing the sentinel inside PostgreSQL as a count so no hash ever
-  crosses the boundary.
-- **The marker reads no lifecycle column at all**, which is the property that makes
-  this a fix rather than a better guess: nothing about being inactive, cancelled or
-  archived can trip it, however those columns are set.
+- **The search projects only the boolean.** Its rows remain names, not contactable
+  addresses or deletion timestamps. The single-record summary already projects the
+  email under its existing personal-data contract; it still exposes no timestamp.
+- **No credential column participates.** `Member."passwordHash"` remains ungranted
+  to the diagnostics role. The narrow grant adds only `deletedAt`, which the SQL
+  folds with the already-granted address into one boolean.
+- **Reversible lifecycle state cannot trip the marker.** `active`, `cancelledAt`,
+  `archivedAt` and `canLogin` do not contribute to the deletion decision.
 
 ### The member eligibility codes
 
 | # | Code | Why it sits here |
 | --- | --- | --- |
-| 1 | `member_erased` | An anonymised account is not a member, and it is **invisible** to the three-column read every other surface would do: erasure sets `active: false` and stamps neither a cancellation nor an archival instant. An officer told the member is merely inactive will try to reactivate them. This entry tests BOTH anonymisation markers, so it is the authority the two `lifecycleDeleted` surfaces point at — see "Deactivation is not deletion". |
+| 1 | `member_erased` | An anonymised account is not a member, and it is **invisible** to the three-column read every other surface would do: erasure sets `active: false` and stamps neither a cancellation nor an archival instant. An officer told the member is merely inactive will try to reactivate them. This entry uses the structural-or-reserved-address predicate, so it is the authority the two `lifecycleDeleted` surfaces point at — see "Deactivation is not deletion". |
 | 2 | `member_archived` | **Lifecycle, outermost first.** The order matches `getLifecycleStatusConfig`'s own precedence exactly, because a diagnostic that ranked them differently from the badge an officer is looking at would be describing a different member. |
 | 3 | `member_cancelled` | As above. |
 | 4 | `member_inactive` | Raised **only** when nothing more specific explains it, so the list reads as one problem rather than two. |
@@ -1689,7 +1680,7 @@ audit row — which now also records whether consent was granted or refused.
 | `member_eligibility_state` alone is unavailable | The persisted financial-year settings read failed, or a connected Xero tenant's year-end month is not stored locally | Retry the database read or inspect Membership Lockout settings; Diagnostics will not substitute the March default for a failed read or call Xero |
 | The party looks smaller than the operator expects | The result was refused as `result_too_large`, or the rendered block listed only some rows | The header says how many of how many were listed; Admin > Booking detail shows the whole party |
 | A guest's stay range looks wrong | The envelope is not the stay — a guest may occupy non-contiguous nights | Read `nightsAreContiguous`: true means no gap, false means there is one, and null means the guest has no per-night rows at all |
-| An audit history is empty for something an operator watched happen | A historical pre-categorisation event lacks category, or the event is filed under another entity type or another domain. Current exact-head production writers have 486 row-producing sites and zero uncategorised sites. | Admin > Audit Log lists historical uncategorised rows and every category and entity type together |
+| An audit history is empty for something an operator watched happen | A historical pre-categorisation event lacks category, or the event is filed under another entity type or another domain. Current exact-head production writers have 487 row-producing sites and zero uncategorised sites. | Admin > Audit Log lists historical uncategorised rows and every category and entity type together |
 | `booking_block_state` reports no blockers on a booking the member cannot see | The booking is soft-deleted or terminal, so every other check is suppressed by design | Read `bookingLifecycleState` on the same row; its money may still need finance attention |
 
 Incident response is unchanged from AID-6A: the audit trail for tool use is

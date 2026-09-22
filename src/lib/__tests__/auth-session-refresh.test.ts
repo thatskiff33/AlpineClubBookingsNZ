@@ -143,18 +143,12 @@ describe("auth session refresh", () => {
         // Joined definitions (#1367) so the refresh can compute the merged
         // admin-permission matrix over definition-backed roles.
         accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
-        // #2620: the refresh invalidates a deleted account's session, and the
-        // deleted-account predicate keys on both anonymisation markers — the
-        // reserved email domain and the placeholder password hash — so both
-        // come back with the row. This is what also kills a session minted
-        // BEFORE the deletion, which would otherwise outlive it.
-        //
-        // Selecting `passwordHash` here is a marker comparison, not a
-        // credential use: it is compared against the literal placeholder and
-        // never verified against an input. The alternative — a dedicated
-        // deleted flag on the row — would avoid reading it at all and is worth
-        // considering if this select grows any further.
+        // #2620/#3542: the refresh invalidates a deleted account's session.
+        // The canonical predicate needs the structural timestamp plus the
+        // permanently reserved address for adopter-era rows. This also kills a
+        // session minted BEFORE deletion, which would otherwise outlive it.
         email: true,
+        deletedAt: true,
         passwordHash: true,
         forcePasswordChange: true,
         emailVerified: true,

@@ -624,8 +624,13 @@ const CENSUS_CEILING = {
    * nights by their date-only string and stores them as calendar days; the
    * sentence a person reads goes through `club-time`'s `formatClubDate`, not
    * this adapter. Re-measured by RUNNING this suite on this tree.
+   *
+   * 225 -> 226 (#3531 3b): `rate-derived-night-price-backfill.ts`, `formatDateOnly`
+   * alone and the zone-free direction: it keys a strand's stored night rows
+   * (`@db.Date` lodge nights) by their date-only string to pair each with the
+   * engine's `nightDates`. Re-measured by RUNNING this suite on this tree.
    */
-  dateOnlyImporters: 225,
+  dateOnlyImporters: 226,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

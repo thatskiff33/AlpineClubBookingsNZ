@@ -55,7 +55,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { compareOrdinal } from "@/lib/ordinal-order";
 import { stableDigest } from "@/lib/stable-digest";
-import { isDeletedAccountMarker } from "@/lib/xero-contact-create-recovery";
+import { isDeletedAccountRecord } from "@/lib/deleted-account";
 import {
   isInheritanceLostEmail,
   isPlaceholderContactEmail,
@@ -103,7 +103,7 @@ type MemberRow = {
   firstName: string;
   lastName: string;
   email: string;
-  passwordHash: string;
+  deletedAt: Date | null;
   role: string;
   xeroContactId: string | null;
 };
@@ -352,7 +352,7 @@ export async function getXeroMissingContactSnapshot(options?: {
         firstName: true,
         lastName: true,
         email: true,
-        passwordHash: true,
+        deletedAt: true,
         role: true,
         xeroContactId: true,
       },
@@ -451,9 +451,13 @@ export async function getXeroMissingContactSnapshot(options?: {
       the same record arriving on the other axis, which is agreement rather than
       collision.
     */
-    const sameName = (cachedByName.get(normalisedMemberName(member)) ?? []).filter(
+    const sameName = (
+      cachedByName.get(normalisedMemberName(member)) ?? []
+    ).filter(
       (contact) =>
-        !candidates.some((candidate) => candidate.contactId === contact.contactId),
+        !candidates.some(
+          (candidate) => candidate.contactId === contact.contactId,
+        ),
     );
     if (sameName.length > 0) {
       ambiguousRows.push({
@@ -575,7 +579,7 @@ function classifyExclusion(
 ): MissingContactExclusion | null {
   if (member.role === "SCHOOL") return "SCHOOL_MEMBER_RECORD";
   if (schoolContactIds.has(member.id)) return "SCHOOL_BOOKING_CONTACT";
-  if (isDeletedAccountMarker(member)) return "ANONYMISED_ACCOUNT";
+  if (isDeletedAccountRecord(member)) return "ANONYMISED_ACCOUNT";
   /*
     The SPECIFIC placeholder before the general one, which is the rule
     `placeholder-contact-email.ts` states at `isInheritanceLostEmail`: the

@@ -7,7 +7,7 @@ import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
-import { APP_CURRENCY } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
 import { centsToDollars } from "@/app/(admin)/admin/ai-assistant/budget";
@@ -88,6 +88,14 @@ export function DiagnosticsBudgetCard({
    */
   moduleEnabled: boolean | null;
 }) {
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
+    This label was the transitional constant from `@/config/operational`,
+    which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and therefore
+    `undefined` in the published image, so a club charging in anything but
+    New Zealand dollars was shown NZD here whatever it had configured.
+  */
+  const { currencyCode } = useClubFormat();
   const [state, setState] = useState<BudgetState>({ kind: "loading" });
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -305,7 +313,7 @@ export function DiagnosticsBudgetCard({
       </div>
 
       <p id={hintId} className="mt-2 text-xs text-muted-foreground">
-        In {APP_CURRENCY}, up to {formatCents(state.maxMonthlyBudgetCents)}.
+        In {currencyCode}, up to {formatCents(state.maxMonthlyBudgetCents)}.
         Zero switches off every paid Diagnostics question without touching the
         module.
       </p>

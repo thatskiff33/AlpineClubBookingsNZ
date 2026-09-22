@@ -22,6 +22,7 @@ import { fixedClubClock } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
 import { escapeCsvCell } from "@/lib/csv";
+import { isDeletedAccountRecord, notDeletedAccountWhere } from "@/lib/deleted-account";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
@@ -112,10 +113,9 @@ export async function GET(req: NextRequest) {
       : []),
   ];
 
-  // Build where clause (same logic as list endpoint)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: Record<string, any> = {};
-  const andConditions: Record<string, unknown>[] = [];
+  const andConditions: Record<string, unknown>[] = notDeletedAccountWhere();
 
   if (q) {
     andConditions.push({
@@ -280,7 +280,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const members = await prisma.member.findMany({
+    const members = (await prisma.member.findMany({
       where,
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       select: {
@@ -290,6 +290,7 @@ export async function GET(req: NextRequest) {
         gender: true,
         occupation: true,
         email: true,
+        deletedAt: true,
         phoneCountryCode: true,
         phoneAreaCode: true,
         phoneNumber: true,
@@ -325,10 +326,9 @@ export async function GET(req: NextRequest) {
           take: 1,
         },
       },
-    });
+    })).filter((member) => !isDeletedAccountRecord(member));
 
-    // Column descriptors. Optional fields gated by club settings are filtered
-    // out below so the header row and every data row stay aligned.
+    // Optional fields are filtered so the header and data rows stay aligned.
     type MemberRow = (typeof members)[number];
     const columns: Array<{ header: string; value: (m: MemberRow) => string }> =
       [

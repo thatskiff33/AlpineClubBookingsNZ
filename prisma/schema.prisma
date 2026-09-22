@@ -1950,6 +1950,9 @@ model Booking {
   promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
   nightAdjustments            BookingGuestNightAdjustment[]
   modifications               BookingModification[]
+  // #3580 (programme #3527, C1): the append-only money ledger. Nothing reads
+  // these rows yet; `docs/design/booking-ledger.md` is the design.
+  ledgerLines                 BookingLedgerLine[]
   changeRequests              BookingChangeRequest[]
   creditsFromCancellation     MemberCredit[]                  @relation("CreditSource")
   creditsApplied              MemberCredit[]                  @relation("CreditApplied")
@@ -2169,11 +2172,18 @@ enum MemberGuestConsentStatus {
 // draining colour and for history whose origin cannot be proved. The #3275
 // migration trigger recognises only its two transactional officer-repair audit
 // actions. Readers do not act on this value until stage 3 of programme #3272.
+// RATE_DERIVED (#3531 3b, D-3531-2): an EVEN_SPLIT or UNKNOWN row rewritten by
+// the operator-run backfill because the rate table, over the strand as sold,
+// reproduces the strand's stored total to the cent. Exact at individual-night
+// grain; distinct from SOLD so a reader can always tell a derivation from a
+// sale. Written by that script only, after a deploy has fully cut over: a
+// colour whose client predates the value cannot read a row that carries it.
 enum BookingGuestNightPriceSource {
   SOLD
   OFFICER_PRICED
   EVEN_SPLIT
   UNKNOWN
+  RATE_DERIVED
 }
 
 // #3276: what kind of adjustment a BookingGuestNightAdjustment row records.
@@ -4980,6 +4990,7 @@ model Lodge {
   lockers                  Locker[]
   seasons                  Season[]
   bookings                 Booking[]
+  bookingLedgerLines       BookingLedgerLine[]
   choreTemplates           ChoreTemplate[]
   cancellationPolicies     CancellationPolicy[]
   bookingPeriods           BookingPeriod[]
@@ -8146,4 +8157,165 @@ model SchoolMemberClassification {
   member Member @relation("SchoolMemberClassificationMember", fields: [memberId], references: [id], onDelete: Cascade)
 
   @@index([classification])
+}
+
+/// ONE BOOKING'S MONEY, AS AN APPEND-ONLY LIST OF POSTED LINES (#3580,
+/// programme #3527 stage 4; design: `docs/design/booking-ledger.md`).
+///
+/// Every money fact about a booking is a line here: what kind of fact, its
+/// sign, its quantity and unit price, which guest strand and which nights,
+/// what event posted it, how it settled, when, and which earlier line it
+/// reverses. Charge lines (a guest-night at a rate, a change fee, a promotion)
+/// and settlement lines (a capture, a receipt, credit applied, a refund) share
+/// the table, because the balance is ONE sum over it.
+///
+/// THE BALANCE IS DERIVED AND NEVER STORED. There is deliberately no running
+/// total and no status column: a stored copy of a derived figure is the defect
+/// this table exists to retire (`INV-PAY-047`'s mirror, and the bug class
+/// #2397 / #2902 / #3170 / #3340 all share).
+///
+/// A LINE IS NEVER UPDATED OR DELETED. A correction is a new line that names
+/// the one it reverses. Application code reaches this table only through
+/// `src/lib/booking-ledger-write.ts`, which exposes creation and nothing else;
+/// `booking-ledger-append-only-census.test.ts` is the guard.
+///
+/// C1 posts charge lines at confirmation and nothing reads them. The reading
+/// switch is C5 (#3584) and the mirror columns go at C7 (#3586).
+model BookingLedgerLine {
+  id String @id @default(cuid())
+
+  bookingId String
+  /// Which half of the booking's money this line is: what the stay COST, what
+  /// SETTLED it, or what a person DECIDED (`INV-MONEY-007`).
+  side      LedgerSide
+  kind      LedgerLineKind
+  /// +1 or -1. Checked in the database, so a zero or a 2 is unrepresentable.
+  sign      Int
+  /// Guest-nights for a `GUEST_NIGHT` line; 1 for everything else.
+  quantity  Int
+  /// The price of ONE unit, always >= 0. The direction lives in `sign`.
+  unitCents Int
+  /// `sign * unitCents * quantity`, checked in the database. Stored rather
+  /// than derived in SQL so a sum is one column read.
+  amountCents Int
+
+  /// CHARGE lines only: whose nights, which nights, at what rate.
+  ///
+  /// A PLAIN COLUMN for the same reason `anchorId` is one: a line outlives the
+  /// rows it was posted from, and a foreign key's `SET NULL` would rewrite a
+  /// posted line when a guest row goes — which is the one thing this table
+  /// does not allow. The strand is resolved by id at render time, and a line
+  /// whose guest is gone still carries `guestNames` (D-3532-3).
+  bookingGuestId       String?
+  nightStart           DateTime? @db.Date
+  /// The morning after the last night this line covers (half-open, as every
+  /// stay range in this schema is — `INV-DATE-010`).
+  nightEndExclusive    DateTime? @db.Date
+  rateMembershipTypeId String?
+  ageTier              AgeTier?
+  /// The guests this line is for, as named when it was posted (owner decision
+  /// D-3532-3): a document rendered from a line reads the same years later.
+  /// A name in an immutable row is corrected by a reversal and a re-post, not
+  /// in place, and `INV-PRIV` retention applies to it as to the guest row.
+  guestNames           String[]
+
+  /// What posted the line — the booking's own confirmation, a modification, a
+  /// review task, a payment transaction, a refund, a member-credit row or a
+  /// cancellation — and that row's id. Not a foreign key: the anchor's model
+  /// varies, and a line outlives rows that are deleted with their booking.
+  anchorKind LedgerAnchorKind
+  anchorId   String
+
+  /// SETTLEMENT lines only: how the money actually moved, as the settlement
+  /// decided it (`INV-PAY-101`) rather than as a reader infers it later.
+  settlementMethod SettlementMethod?
+
+  /// The line this one reverses. Unique, so a line is reversed at most once.
+  reversesLineId String? @unique
+
+  postedAt DateTime @default(now())
+  /// The person whose decision this line records; NULL when the system posted
+  /// it in the ordinary course of a settle or an edit.
+  ///
+  /// A PLAIN COLUMN, NOT A FOREIGN KEY, exactly as `AuditLog.actorMemberId`
+  /// is: an append-only record names the person as data, not as a live
+  /// reference. A foreign key would have to be re-pointed when two members
+  /// merge, and re-pointing is an UPDATE of a line that may never be updated.
+  postedByMemberId String?
+
+  /// What a person reads. Narration only: no reader may take money from it.
+  narration String
+
+  lodgeId String @default(dbgenerated("default_lodge_id()"))
+
+  booking    Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  /// `Restrict`, not `SetNull`: deleting a line is already forbidden, and a
+  /// cascade that blanked another line's pointer would be that forbidden
+  /// mutation arriving through the database instead of through code.
+  reverses   BookingLedgerLine? @relation("BookingLedgerReversal", fields: [reversesLineId], references: [id], onDelete: Restrict)
+  reversedBy BookingLedgerLine? @relation("BookingLedgerReversal")
+  lodge      Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+
+  @@index([bookingId, postedAt])
+  @@index([anchorKind, anchorId])
+  @@index([bookingGuestId])
+  @@index([postedByMemberId])
+  @@index([lodgeId])
+}
+
+/// A line prices the stay, moves money, or records a person's decision.
+enum LedgerSide {
+  CHARGE
+  SETTLEMENT
+  ADJUSTMENT
+}
+
+enum LedgerLineKind {
+  /// CHARGE: one guest, one or more nights, one rate tier.
+  GUEST_NIGHT
+  /// CHARGE: the fee an edit charged.
+  CHANGE_FEE
+  /// CHARGE, negative: the promotion's adjustment (`INV-MONEY-029`).
+  PROMOTION
+  /// CHARGE, negative: the group discount.
+  GROUP_DISCOUNT
+  /// SETTLEMENT, positive: a card capture.
+  CARD_CAPTURE
+  /// SETTLEMENT, positive: an Internet Banking receipt, Xero-reconciled.
+  BANK_RECEIPT
+  /// SETTLEMENT, positive: account credit consumed (`INV-PAY-002`).
+  CREDIT_APPLIED
+  /// SETTLEMENT, positive: cash or bank transfer recorded by hand
+  /// (`INV-PAY-001`).
+  CASH_RECORDED
+  /// SETTLEMENT, negative: a card refund.
+  CARD_REFUND
+  /// SETTLEMENT, negative: money handed back outside the card rails.
+  BANK_REFUND
+  /// SETTLEMENT, negative: account credit minted to the member.
+  CREDIT_ISSUED
+  /// ADJUSTMENT: a figure a person agreed, with their reason in `narration`.
+  AGREED_ADJUSTMENT
+}
+
+/// What posted a line. The anchor row is where the provider's own identity
+/// lives (`PaymentTransaction.stripePaymentIntentId`, `MemberCredit
+/// .xeroCreditNoteId`); a line never carries a provider id of its own.
+enum LedgerAnchorKind {
+  CONFIRMATION
+  MODIFICATION
+  REVIEW_TASK
+  PAYMENT_TRANSACTION
+  PAYMENT_REFUND
+  MEMBER_CREDIT
+  CANCELLATION
+}
+
+/// How money moved on a settlement line. Stripe and Internet Banking stay
+/// distinct here as everywhere (`INV-PAY-013`).
+enum SettlementMethod {
+  CARD
+  INTERNET_BANKING
+  ACCOUNT_CREDIT
+  CASH
 }
