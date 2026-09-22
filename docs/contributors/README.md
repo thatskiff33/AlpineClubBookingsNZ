@@ -169,6 +169,11 @@ Larger subsystems keep their own hub, and each links back here.
 - **Operational Xero** — [`../xero/ARCHITECTURE.md`](../xero/ARCHITECTURE.md):
   the module map, the reconciliation-ledger data model, and sequence diagrams
   for the outbound, inbound and repair flows.
+- **The booking ledger (design)** —
+  [`../design/booking-ledger.md`](../design/booking-ledger.md): the append-only
+  `BookingLedgerLine` design from programme #3527 — the model, every money
+  event's posting rule, the projection guard, the cut-over order, and the
+  invariant gap analysis (#3532). A design, not yet an implementation.
 - **Finance dashboard** —
   [`../finance-dashboard/README.md`](../finance-dashboard/README.md): reporting
   contracts, architecture decisions, data contracts, and the test plan.

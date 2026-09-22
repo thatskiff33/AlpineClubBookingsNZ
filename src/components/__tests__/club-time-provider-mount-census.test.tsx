@@ -1,8 +1,17 @@
-import fs from "node:fs";
-import path from "node:path";
-
 import { describe, expect, it } from "vitest";
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+import {
+  mountingLayoutDirectories,
+  pagesInRouteGroups,
+  pagesWithoutMountingLayout,
+  read,
+  ROOT,
+  surfacesOutsideMountingLayouts,
+  walkImports,
+} from "@/lib/__tests__/support/provider-mount-census";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /**
@@ -19,9 +28,9 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  * is that sentence, enforced.
  *
  * It is a DISK-SCANNING census, so `vitest related` reaches it only through its
- * one import (`stripComments`) and not through any file it reads. Run it
- * explicitly when you add a route group, a layout, or a page outside one; CI
- * catches it either way.
+ * two support imports (`provider-mount-census`, `strip-comments`) and not
+ * through any file it reads. Run it explicitly when you add a route group, a
+ * layout, or a page outside one; CI catches it either way.
  *
  * ## What it checks
  *
@@ -70,67 +79,14 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  * wrongly, and the fix is to write `{children}`.
  */
 
-const ROOT = process.cwd();
-const APP = path.join(ROOT, "src", "app");
-const SRC = path.join(ROOT, "src");
-
-/** The Next.js file extensions a route or component may be written in. */
-const CODE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mjs"];
-
-/** Imported for a side effect or a URL, never for a component. */
-const ASSET_EXTENSIONS = new Set([
-  ".css",
-  ".scss",
-  ".json",
-  ".svg",
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".webp",
-  ".woff",
-  ".woff2",
-]);
-
-/**
- * A route file, in every extension Next.js accepts.
- *
- * NOT `name === "page.tsx"`. Next resolves `page.jsx` and `page.js` exactly as it
- * resolves `page.tsx`, and both were invisible to this census — a page added in
- * either would have had neither a mounting layout nor a row on the reviewed list,
- * and nothing here would have said so.
- */
-function isRouteFile(name: string, base: string): boolean {
-  return CODE_EXTENSIONS.some((extension) => name === `${base}${extension}`);
-}
-
-function read(relative: string): string {
-  return fs.readFileSync(path.join(ROOT, relative), "utf8");
-}
-
-/** A repository-relative posix path, which is what every message here prints. */
-function relative(absolute: string): string {
-  return path.relative(ROOT, absolute).split(path.sep).join("/");
-}
-
-function walk(dir: string, match: (name: string) => boolean): string[] {
-  const found: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === "__tests__" || entry.name === "node_modules") continue;
-      found.push(...walk(full, match));
-    } else if (match(entry.name)) {
-      found.push(full);
-    }
-  }
-  return found;
-}
-
 /** The components that mount the provider, and the source that must prove it. */
 const MOUNT_POINTS = {
   AppProviders: "src/components/app-providers-client.tsx",
   WebsiteChrome: "src/components/website/website-chrome.tsx",
 } as const;
+
+/** The component names a layout must WRAP `{children}` in. */
+const MOUNT_NAMES = Object.keys(MOUNT_POINTS);
 
 /** Where `useClubTime` is DEFINED, so its own signature is not read as a call. */
 const HOOK_DEFINITION = "src/components/club-time-provider.tsx";
@@ -203,134 +159,21 @@ const PROVIDERLESS_SURFACES: Record<string, string> = {
 };
 
 /**
- * Files that mount their own provider and so END the walk.
+ * The walk's provider-specific inputs, handed to the shared machinery in
+ * `@/lib/__tests__/support/provider-mount-census` (extracted by #3564, when a
+ * second census needed the identical walk — see that module for why it is not
+ * copied).
  *
- * A component that renders `<ClubTimeProvider>` covers everything beneath it, so
- * reaching one is a correct answer rather than a violation. Detected from the
- * source rather than listed, so a new one needs no edit here.
+ * A component that renders `<ClubTimeProvider>` covers everything beneath it,
+ * so reaching one ENDS the walk: it is a correct answer rather than a
+ * violation, and it is detected from the source rather than listed, so a new
+ * one needs no edit here.
  */
-function mountsProviderItself(strippedSource: string): boolean {
-  return strippedSource.includes("<ClubTimeProvider");
-}
-
-/**
- * Resolve one import specifier to a tracked file under `src/`, or `null`.
- *
- * Only `@/` and relative specifiers are followed: a bare specifier is a package,
- * and no package in this application renders a club-time component.
- */
-function resolveImport(fromFile: string, specifier: string): string | null {
-  let base: string;
-  if (specifier.startsWith("@/")) {
-    base = path.join(SRC, specifier.slice(2));
-  } else if (specifier.startsWith(".")) {
-    base = path.resolve(path.dirname(fromFile), specifier);
-  } else {
-    return null;
-  }
-
-  for (const extension of CODE_EXTENSIONS) {
-    const candidate = `${base}${extension}`;
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      return candidate;
-    }
-  }
-  if (fs.existsSync(base) && fs.statSync(base).isDirectory()) {
-    for (const extension of CODE_EXTENSIONS) {
-      const candidate = path.join(base, `index${extension}`);
-      if (fs.existsSync(candidate)) return candidate;
-    }
-  }
-  if (fs.existsSync(base) && fs.statSync(base).isFile()) return base;
-  return null;
-}
-
-/** Every specifier a file imports, static and dynamic. */
-function importSpecifiers(strippedSource: string): string[] {
-  const found: string[] = [];
-  const pattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["']([^"']+)["']/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(strippedSource)) !== null) found.push(match[1]);
-  return found;
-}
-
-interface WalkResult {
-  /** Files reached, as repository-relative posix paths. */
-  visited: string[];
-  /** Files that CALL `useClubTime()` and are not below a provider of their own. */
-  consumers: string[];
-  /** Files that mounted their own provider, so their subtree was not walked. */
-  boundaries: string[];
-  /**
-   * First-party specifiers the resolver could not turn into a file, as
-   * `importer -> specifier`.
-   *
-   * THIS IS THE ANTI-VACUITY, and it is the one that fits. "The walk reached
-   * more than one file" would be the obvious check and is wrong here: three of
-   * the five surfaces import nothing but packages, which is not a broken walk
-   * but the strongest possible evidence that nothing below them needs a zone. A
-   * resolver that quietly failed on `@/...` would instead report an empty
-   * consumer list having inspected nothing, and that is what this catches.
-   */
-  unresolved: string[];
-}
-
-/**
- * Everything an entry file can reach, stopping at any file that mounts its own
- * `ClubTimeProvider`.
- *
- * The stop is the whole reason a plain "nothing in this tree names the hook"
- * scan would be wrong: `src/app/not-found.tsx` really does reach the Whakapapa
- * widget, which really does call `useClubTime()`, and that is correct because
- * `skifield-whakapapa-embed.tsx` wraps it in a provider of its own.
- */
-function walkImports(entryRelative: string): WalkResult {
-  const entry = path.join(ROOT, entryRelative);
-  const seen = new Set<string>();
-  const consumers: string[] = [];
-  const boundaries: string[] = [];
-  const unresolved: string[] = [];
-  const queue = [entry];
-
-  while (queue.length > 0) {
-    const file = queue.pop() as string;
-    if (seen.has(file)) continue;
-    seen.add(file);
-
-    const stripped = stripComments(fs.readFileSync(file, "utf8"));
-    const asRelative = relative(file);
-
-    if (mountsProviderItself(stripped)) {
-      boundaries.push(asRelative);
-      continue;
-    }
-    if (asRelative !== HOOK_DEFINITION && /\buseClubTime\s*\(/.test(stripped)) {
-      consumers.push(asRelative);
-    }
-
-    for (const specifier of importSpecifiers(stripped)) {
-      // A stylesheet or an image imported for its side effect carries no
-      // components, so it is neither walked nor counted as a resolution failure.
-      if (ASSET_EXTENSIONS.has(path.extname(specifier))) continue;
-
-      const resolved = resolveImport(file, specifier);
-      if (resolved === null) {
-        if (specifier.startsWith("@/") || specifier.startsWith(".")) {
-          unresolved.push(`${asRelative} -> ${specifier}`);
-        }
-        continue;
-      }
-      if (!seen.has(resolved)) queue.push(resolved);
-    }
-  }
-
-  return {
-    visited: [...seen].map(relative).sort(),
-    consumers: consumers.sort(),
-    boundaries: boundaries.sort(),
-    unresolved: unresolved.sort(),
-  };
-}
+const CLUB_TIME_WALK = {
+  mountTag: "<ClubTimeProvider",
+  hookCall: /\buseClubTime\s*\(/,
+  hookDefinition: HOOK_DEFINITION,
+} as const;
 
 describe("club-time provider mount census (CT-4, #2870)", () => {
   it("both mount points really mount ClubTimeProvider", () => {
@@ -366,45 +209,13 @@ describe("club-time provider mount census (CT-4, #2870)", () => {
   });
 
   it("every page in a route group has a mounting layout above it", () => {
-    const pages = walk(APP, (name) => isRouteFile(name, "page")).filter((file) =>
-      path.relative(APP, file).startsWith("("),
-    );
-    expect(pages.length).toBeGreaterThan(20);
-
-    // Directories whose layout really WRAPS the page in a mount point.
-    const mounting = new Set(
-      walk(APP, (name) => isRouteFile(name, "layout"))
-        .filter((file) => {
-          const source = stripComments(fs.readFileSync(file, "utf8"));
-          return Object.keys(MOUNT_POINTS).some((name) => {
-            const opened = source.indexOf(`<${name}`);
-            const closed = source.indexOf(`</${name}>`);
-            if (opened === -1 || closed <= opened) return false;
-            const wrapped = source.slice(opened, closed);
-            // The page has to be INSIDE the mount, and rendered nowhere else:
-            // a second `{children}` is the conditional-mount shape, where one
-            // branch wraps the page and another renders it bare.
-            return (
-              wrapped.includes("{children}") &&
-              source.split("{children}").length === 2
-            );
-          });
-        })
-        .map((file) => path.dirname(file)),
-    );
-    expect(mounting.size).toBeGreaterThan(0);
-
-    const uncovered = pages.filter((page) => {
-      let dir = path.dirname(page);
-      while (dir.startsWith(APP)) {
-        if (mounting.has(dir)) return false;
-        dir = path.dirname(dir);
-      }
-      return true;
-    });
+    expect(pagesInRouteGroups().length).toBeGreaterThan(20);
+    expect(
+      mountingLayoutDirectories(MOUNT_NAMES).size,
+    ).toBeGreaterThan(0);
 
     expect(
-      uncovered.map(relative),
+      pagesWithoutMountingLayout(MOUNT_NAMES),
       "Every page in a route group must render under a layout that wraps " +
         "{children} in AppProviders or WebsiteChrome. Without one, any client " +
         "component that renders an instant or derives the club's today throws on " +
@@ -413,53 +224,11 @@ describe("club-time provider mount census (CT-4, #2870)", () => {
   });
 
   it("the surfaces outside a route group are exactly the reviewed list", () => {
-    /*
-      PAGES, plus the three special files Next renders OUTSIDE every route
-      group's layout. `not-found.tsx` and `error.tsx` at the app root, and
-      `global-error.tsx`, are real rendered surfaces with no `page.tsx` of their
-      own, so a walk that collected only pages could not see them — and one of
-      them, `(finance)/not-found.tsx`, is inside a route group that has no
-      group-root layout at all, so being in a group does not make it covered.
-    */
-    const outside = walk(APP, (name) => isRouteFile(name, "page"))
-      .map(relative)
-      .filter(
-        (file) => !path.relative(APP, path.join(ROOT, file)).startsWith("("),
-      )
-      .concat(
-        walk(APP, (name) => isRouteFile(name, "not-found") || isRouteFile(name, "error") || isRouteFile(name, "global-error"))
-          .map(relative)
-          .filter((file) => {
-            // A not-found/error file IS covered when a mounting layout sits at
-            // or above its own directory, which is why (admin), (authenticated)
-            // and (lodge) do not appear on the reviewed list and (finance) does.
-            let dir = path.dirname(path.join(ROOT, file));
-            while (dir.startsWith(APP)) {
-              for (const extension of CODE_EXTENSIONS) {
-                const layout = path.join(dir, `layout${extension}`);
-                if (fs.existsSync(layout)) {
-                  const source = stripComments(fs.readFileSync(layout, "utf8"));
-                  if (
-                    Object.keys(MOUNT_POINTS).some((name) =>
-                      source.includes(`<${name}`),
-                    )
-                  ) {
-                    return false;
-                  }
-                }
-              }
-              dir = path.dirname(dir);
-            }
-            return true;
-          }),
-      )
-      .sort();
-
     expect(
-      outside,
+      surfacesOutsideMountingLayouts(MOUNT_NAMES),
       "A surface outside every mounting layout has no ClubTimeProvider above " +
         "it. Add it to PROVIDERLESS_SURFACES with the reason nothing in its " +
-        "tree needs the club's zone — or give it a provider.",
+        "tree needs the club's zone - or give it a provider.",
     ).toEqual(Object.keys(PROVIDERLESS_SURFACES).sort());
   });
 
@@ -479,14 +248,16 @@ describe("club-time provider mount census (CT-4, #2870)", () => {
     for (const [surface, reason] of Object.entries(PROVIDERLESS_SURFACES)) {
       it(`${surface} really does not need one`, () => {
         expect(
-          fs.existsSync(path.join(ROOT, surface)),
+          existsSync(join(ROOT, surface)),
           `${surface} is on PROVIDERLESS_SURFACES but does not exist. Remove the ` +
             "row, or point it at wherever the surface moved to — a row for a " +
             "missing file makes this walk inspect nothing while still passing.",
         ).toBe(true);
 
-        const { visited, consumers, boundaries, unresolved } =
-          walkImports(surface);
+        const { visited, consumers, boundaries, unresolved } = walkImports(
+          surface,
+          CLUB_TIME_WALK,
+        );
 
         expect(
           unresolved,
@@ -523,6 +294,7 @@ describe("club-time provider mount census (CT-4, #2870)", () => {
     it("resolves a wide graph, and stops at a component's own provider", () => {
       const { visited, boundaries, consumers } = walkImports(
         "src/app/not-found.tsx",
+        CLUB_TIME_WALK,
       );
 
       expect(visited.length).toBeGreaterThan(20);

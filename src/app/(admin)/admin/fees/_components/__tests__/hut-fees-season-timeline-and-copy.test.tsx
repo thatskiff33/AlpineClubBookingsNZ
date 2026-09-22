@@ -64,7 +64,12 @@ vi.mock("@/components/lodge-select", async (importOriginal) => {
   };
 });
 
+import { ClubFormatProvider } from "@/components/club-format-provider";
 import { ClubTimeProvider } from "@/components/club-time-provider";
+import {
+  CLUB_CURRENCY_FALLBACK,
+  CLUB_LOCALE_FALLBACK,
+} from "@/lib/club-format";
 import { HutFeesSection } from "../hut-fees-section";
 
 const FULL = {
@@ -138,9 +143,17 @@ function mockApi(seasons: SeasonPayload[]) {
 
 function renderSection() {
   return render(
-    <ClubTimeProvider zone="Pacific/Auckland">
-      <HutFeesSection canEdit={true} />
-    </ClubTimeProvider>,
+    // #3564: the club's currency reaches the nightly-rate labels through a
+    // provider, so the stack this suite builds by hand mounts both. The
+    // shipped defaults, so every `(NZD)` pin below means what it meant before.
+    <ClubFormatProvider
+      currencyCode={CLUB_CURRENCY_FALLBACK}
+      locale={CLUB_LOCALE_FALLBACK}
+    >
+      <ClubTimeProvider zone="Pacific/Auckland">
+        <HutFeesSection canEdit={true} />
+      </ClubTimeProvider>
+    </ClubFormatProvider>,
   );
 }
 

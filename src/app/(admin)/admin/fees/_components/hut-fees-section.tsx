@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { APP_CURRENCY } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import {
@@ -145,6 +145,14 @@ function withoutKey(
 }
 
 export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
+    This label was the transitional constant from `@/config/operational`,
+    which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and therefore
+    `undefined` in the published image, so a club charging in anything but
+    New Zealand dollars was shown NZD here whatever it had configured.
+  */
+  const { currencyCode } = useClubFormat();
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [ageTiers, setAgeTiers] = useState<AgeTierSetting[]>(FALLBACK_TIERS);
   const [rateTypes, setRateTypes] = useState<RateType[]>([]);
@@ -1034,7 +1042,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                     </div>
 
                     <div className="space-y-4">
-                      <Label className="text-base font-semibold">Nightly Rates ({APP_CURRENCY})</Label>
+                      <Label className="text-base font-semibold">Nightly Rates ({currencyCode})</Label>
                       <p className="text-sm text-muted-foreground">
                         Set the price per night for each membership type. Types with age
                         groups get a rate per age tier; flat types get a single rate.
@@ -1144,7 +1152,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                     */}
                     <div className="space-y-2">
                       <Label htmlFor="flat-whole-lodge-rate" className="text-base font-semibold">
-                        Flat whole-lodge night rate ({APP_CURRENCY}, optional)
+                        Flat whole-lodge night rate ({currencyCode}, optional)
                       </Label>
                       <p className="text-sm text-muted-foreground">
                         A single price per night for the whole building, regardless of how many
