@@ -24,7 +24,11 @@
  */
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { ledgerLineAmountCents, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
-import { addDaysDateOnly } from "@/lib/date-only";
+import {
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
 
 export type ConfirmationPostingBooking = {
   id: string;
@@ -52,6 +56,21 @@ export type ConfirmationPostingPlan = {
    */
   reconciles: boolean;
 };
+
+/**
+ * The morning after a stored night, half-open like every stay range here.
+ *
+ * Through `club-time` rather than through `date-only`'s adapter (CT-6): the
+ * stored value is a `@db.Date`, so it is DECODED to the calendar day it
+ * encodes (`INV-DATE-010`), stepped as a day, and re-encoded. Review of #3580
+ * first routed this to `addDaysDateOnly`, which is the same arithmetic but
+ * adds an importer to the escape-hatch census that may only ever shrink.
+ */
+function morningAfter(storedNight: Date): Date {
+  return dateOnlyInstantOf(
+    addCalendarDays(calendarDateOfDateOnlyInstant(storedNight), 1),
+  );
+}
 
 export function planConfirmationChargeLines(
   booking: ConfirmationPostingBooking,
@@ -86,7 +105,7 @@ export function planConfirmationChargeLines(
         anchorId: booking.id,
         bookingGuestId: guest.id,
         nightStart: night.stayDate,
-        nightEndExclusive: addDaysDateOnly(night.stayDate, 1),
+        nightEndExclusive: morningAfter(night.stayDate),
         rateMembershipTypeId: guest.rateMembershipTypeId,
         ageTier: guest.ageTier,
         guestNames: guestName ? [guestName] : [],
