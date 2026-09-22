@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { APP_CURRENCY, APP_LOCALE } from "@/config/operational";
 import { bindClubFormat } from "@/lib/club-format-bound";
 import { clubMoneyFormatter, clubNumberFormatter } from "@/lib/club-format-intl";
-import { TRANSITIONAL_CLUB_FORMAT } from "@/lib/club-format-transitional";
+import { transitionalClubFormat } from "@/lib/club-format-transitional";
 import {
   formatCompactDollarsDisplay,
   formatDollarsDisplay,
@@ -97,7 +97,7 @@ describe("#3565 kernel: nil behaviour change on the configured defaults", () => 
       const expected = referenceCents.format((cents === 0 ? 0 : cents) / 100);
       expect(formatCents(cents), `formatCents(${cents}) unmigrated`).toBe(expected);
       expect(
-        formatCents(cents, TRANSITIONAL_CLUB_FORMAT),
+        formatCents(cents, transitionalClubFormat()),
         `formatCents(${cents}) migrated`,
       ).toBe(expected);
     }
@@ -116,7 +116,7 @@ describe("#3565 kernel: nil behaviour change on the configured defaults", () => 
           ? referenceCents.format(0)
           : `${cents > 0 ? "+" : "-"}${referenceCents.format(Math.abs(cents) / 100)}`;
       expect(formatSignedCents(cents)).toBe(expected);
-      expect(formatSignedCents(cents, TRANSITIONAL_CLUB_FORMAT)).toBe(expected);
+      expect(formatSignedCents(cents, transitionalClubFormat())).toBe(expected);
     }
   });
 
@@ -125,7 +125,7 @@ describe("#3565 kernel: nil behaviour change on the configured defaults", () => 
       expect(formatDollarsDisplay(cents)).toBe(
         referenceDollars.format(Math.round(cents / 100)),
       );
-      expect(formatDollarsDisplay(cents, TRANSITIONAL_CLUB_FORMAT)).toBe(
+      expect(formatDollarsDisplay(cents, transitionalClubFormat())).toBe(
         formatDollarsDisplay(cents),
       );
 
@@ -135,11 +135,11 @@ describe("#3565 kernel: nil behaviour change on the configured defaults", () => 
           ? referenceDollars.format(0)
           : `${rounded > 0 ? "+" : "-"}${referenceDollars.format(Math.abs(rounded))}`,
       );
-      expect(formatSignedDollarsDisplay(cents, TRANSITIONAL_CLUB_FORMAT)).toBe(
+      expect(formatSignedDollarsDisplay(cents, transitionalClubFormat())).toBe(
         formatSignedDollarsDisplay(cents),
       );
 
-      expect(formatCompactDollarsDisplay(cents, TRANSITIONAL_CLUB_FORMAT)).toBe(
+      expect(formatCompactDollarsDisplay(cents, transitionalClubFormat())).toBe(
         formatCompactDollarsDisplay(cents),
       );
     }
@@ -155,10 +155,10 @@ describe("#3565 kernel: nil behaviour change on the configured defaults", () => 
     for (const value of [0, 1, 7, 1234, -1234, 1234.567, -0.5]) {
       expect(formatFinanceNumber(value)).toBe(referenceNumber(value));
       expect(formatFinanceNumber(value, 2)).toBe(referenceNumber(value, 2));
-      expect(formatFinanceNumber(value, TRANSITIONAL_CLUB_FORMAT)).toBe(
+      expect(formatFinanceNumber(value, transitionalClubFormat())).toBe(
         referenceNumber(value),
       );
-      expect(formatFinanceNumber(value, TRANSITIONAL_CLUB_FORMAT, 2)).toBe(
+      expect(formatFinanceNumber(value, transitionalClubFormat(), 2)).toBe(
         referenceNumber(value, 2),
       );
 
@@ -167,17 +167,17 @@ describe("#3565 kernel: nil behaviour change on the configured defaults", () => 
           ? "0"
           : `${value > 0 ? "+" : "-"}${referenceNumber(Math.abs(value))}`,
       );
-      expect(formatFinanceSignedNumber(value, TRANSITIONAL_CLUB_FORMAT)).toBe(
+      expect(formatFinanceSignedNumber(value, transitionalClubFormat())).toBe(
         formatFinanceSignedNumber(value),
       );
 
       expect(formatFinancePercent(value)).toBe(referencePercent.format(value));
-      expect(formatFinancePercent(value, TRANSITIONAL_CLUB_FORMAT)).toBe(
+      expect(formatFinancePercent(value, transitionalClubFormat())).toBe(
         referencePercent.format(value),
       );
 
       expect(formatFinanceRatio(value)).toBe(referenceRatio.format(value));
-      expect(formatFinanceRatio(value, TRANSITIONAL_CLUB_FORMAT)).toBe(
+      expect(formatFinanceRatio(value, transitionalClubFormat())).toBe(
         referenceRatio.format(value),
       );
     }
@@ -189,8 +189,23 @@ describe("#3565 kernel: nil behaviour change on the configured defaults", () => 
   });
 
   it("resolves the transitional format from the same environment as before", () => {
-    expect(TRANSITIONAL_CLUB_FORMAT.currencyCode).toBe(APP_CURRENCY);
-    expect(TRANSITIONAL_CLUB_FORMAT.locale).toBe(APP_LOCALE);
+    expect(transitionalClubFormat().currencyCode).toBe(APP_CURRENCY);
+    expect(transitionalClubFormat().locale).toBe(APP_LOCALE);
+  });
+
+  it("resolves the transitional format at most once per process", () => {
+    /*
+      IDENTITY, not equality, and the difference is the whole point. This module
+      is on `@/lib/utils`'s import graph, which around 170 modules reach and
+      about half of them in the browser, so resolving it at module load put four
+      Intl operations on every first render — `normaliseClubCurrencyCode` builds
+      an `Intl.NumberFormat`, `normaliseClubLocale` calls `getCanonicalLocales`
+      and builds a `NumberFormat` and a `DateTimeFormat`, all discarded after
+      `resolvedOptions()`. It is deferred to first use instead. A deep-equality
+      assertion would pass just as happily if every call re-resolved, which is
+      exactly the regression this guards.
+    */
+    expect(transitionalClubFormat()).toBe(transitionalClubFormat());
   });
 });
 

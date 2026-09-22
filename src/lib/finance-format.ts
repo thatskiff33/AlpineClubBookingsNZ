@@ -23,7 +23,7 @@ import {
   clubMoneyFormatter,
   clubNumberFormatter,
 } from "@/lib/club-format-intl";
-import { TRANSITIONAL_CLUB_FORMAT } from "@/lib/club-format-transitional";
+import { transitionalClubFormat } from "@/lib/club-format-transitional";
 
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -36,7 +36,7 @@ export function formatDollarsDisplay(
   format?: ClubFormat,
 ): string {
   return clubMoneyFormatter(
-    format ?? TRANSITIONAL_CLUB_FORMAT,
+    format ?? transitionalClubFormat(),
     "dollars",
   ).format(Math.round(cents / 100));
 }
@@ -53,7 +53,7 @@ export function formatSignedDollarsDisplay(
   format?: ClubFormat,
 ): string {
   const formatter = clubMoneyFormatter(
-    format ?? TRANSITIONAL_CLUB_FORMAT,
+    format ?? transitionalClubFormat(),
     "dollars",
   );
   const rounded = Math.round(cents / 100);
@@ -88,7 +88,7 @@ export function formatFinanceNumber(
   maximumFractionDigits = 0,
 ): string {
   const format =
-    typeof formatOrDigits === "object" ? formatOrDigits : TRANSITIONAL_CLUB_FORMAT;
+    typeof formatOrDigits === "object" ? formatOrDigits : transitionalClubFormat();
   const digits =
     typeof formatOrDigits === "number" ? formatOrDigits : maximumFractionDigits;
   return clubDecimalFormatter(format, digits).format(value);
@@ -105,7 +105,7 @@ export function formatFinanceSignedNumber(
   format?: ClubFormat,
 ): string {
   if (value === 0) return "0";
-  const resolved = format ?? TRANSITIONAL_CLUB_FORMAT;
+  const resolved = format ?? transitionalClubFormat();
   return `${value > 0 ? "+" : "-"}${formatFinanceNumber(Math.abs(value), resolved)}`;
 }
 
@@ -117,7 +117,7 @@ export function formatFinancePercent(
   format?: ClubFormat,
 ): string {
   return clubNumberFormatter(
-    format ?? TRANSITIONAL_CLUB_FORMAT,
+    format ?? transitionalClubFormat(),
     "percent",
   ).format(value);
 }
@@ -128,7 +128,7 @@ export function formatFinanceRatio(value: number, format: ClubFormat): string;
 export function formatFinanceRatio(value: number): string;
 export function formatFinanceRatio(value: number, format?: ClubFormat): string {
   return clubNumberFormatter(
-    format ?? TRANSITIONAL_CLUB_FORMAT,
+    format ?? transitionalClubFormat(),
     "ratio",
   ).format(value);
 }
@@ -168,7 +168,7 @@ export function formatCompactDollarsDisplay(
         ? `${Math.round(dollars / 1_000)}k`
         : `${Math.round(dollars)}`;
   let placed = false;
-  return clubMoneyFormatter(format ?? TRANSITIONAL_CLUB_FORMAT, "dollars")
+  return clubMoneyFormatter(format ?? transitionalClubFormat(), "dollars")
     .formatToParts(0)
     .map((part) => {
       if (part.type === "currency" || part.type === "literal") return part.value;

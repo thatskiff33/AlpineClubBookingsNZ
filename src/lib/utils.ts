@@ -1,7 +1,7 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { clubMoneyFormatter } from "@/lib/club-format-intl";
-import { TRANSITIONAL_CLUB_FORMAT } from "@/lib/club-format-transitional";
+import { transitionalClubFormat } from "@/lib/club-format-transitional";
 
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -59,7 +59,7 @@ export function formatCents(cents: number, format: ClubFormat): string;
  */
 export function formatCents(cents: number): string;
 export function formatCents(cents: number, format?: ClubFormat): string {
-  return clubMoneyFormatter(format ?? TRANSITIONAL_CLUB_FORMAT, "cents").format(
+  return clubMoneyFormatter(format ?? transitionalClubFormat(), "cents").format(
     (cents === 0 ? 0 : cents) / 100,
   );
 }
@@ -107,7 +107,7 @@ export function formatSignedCents(cents: number, format: ClubFormat): string;
  */
 export function formatSignedCents(cents: number): string;
 export function formatSignedCents(cents: number, format?: ClubFormat): string {
-  const resolved = format ?? TRANSITIONAL_CLUB_FORMAT;
+  const resolved = format ?? transitionalClubFormat();
   if (cents === 0) {
     return formatCents(0, resolved);
   }

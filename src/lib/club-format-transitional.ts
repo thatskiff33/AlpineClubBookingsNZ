@@ -55,12 +55,42 @@ import { resolveClubFormat, type ClubFormat } from "@/lib/club-format";
  * seed, and the alternative is the two halves of one migration formatting the
  * same amount differently.
  *
- * Resolved once at module load. That is safe HERE and nowhere else: these are
- * `process.env` reads that Next inlines at build time on the client anyway, so
- * freezing them adds no staleness that was not already there. The persisted
- * setting is never frozen — `clubFormat()` re-reads it every render pass.
+ * RESOLVED ON FIRST USE, NOT AT IMPORT, and the difference is measured rather
+ * than stylistic. This module is on `@/lib/utils`'s import graph, and `utils.ts`
+ * also exports `cn` — so it is reached by around 170 non-test modules, about
+ * half of them `"use client"`, which puts it on the browser's first-render path.
+ * `resolveClubFormat` is not free: `normaliseClubCurrencyCode` constructs one
+ * `Intl.NumberFormat`, and `normaliseClubLocale` calls
+ * `Intl.getCanonicalLocales` and constructs an `Intl.NumberFormat` AND an
+ * `Intl.DateTimeFormat`, every one of them only to read `resolvedOptions()` and
+ * throw the instance away. Resolving that at module load traded the ONE
+ * `Intl.NumberFormat` `utils.ts` used to build at import for four Intl
+ * operations, on every page.
+ *
+ * Deferring costs nothing and changes no output. The result is memoised on first
+ * call, so a process still resolves it at most once; the values it reads are
+ * module constants, so a later call cannot see a different answer; and a call
+ * site that has been migrated never reaches it at all, because every caller
+ * spells it `format ?? transitionalClubFormat()` and `??` does not evaluate its
+ * right-hand side. When the last group lands, this whole module goes and so does
+ * the cost.
+ *
+ * THE VALIDATION IS NOT SKIPPED, which was the other way to pay the same debt.
+ * It could have been: `APP_CURRENCY` and `APP_LOCALE` are byte-for-byte what
+ * `Intl` consumed before this stage, so on every configuration that works today
+ * validating them changes nothing. It is kept because of the configurations that
+ * do NOT work today. A `CURRENCY` of `NZ` reached `new Intl.NumberFormat(…,
+ * { currency: "NZ" })` and threw `RangeError` at render; validated, it falls
+ * back to the documented `NZD`. That fallback is the documented behaviour this
+ * module describes above, and deferring keeps it exactly while skipping would
+ * not.
  */
-export const TRANSITIONAL_CLUB_FORMAT: ClubFormat = resolveClubFormat(null, {
-  currencyCode: APP_CURRENCY,
-  locale: APP_LOCALE,
-});
+let memoised: ClubFormat | null = null;
+
+export function transitionalClubFormat(): ClubFormat {
+  memoised ??= resolveClubFormat(null, {
+    currencyCode: APP_CURRENCY,
+    locale: APP_LOCALE,
+  });
+  return memoised;
+}
