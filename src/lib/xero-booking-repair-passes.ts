@@ -16,6 +16,7 @@ import type {
 } from "./xero-booking-repair-types";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { createCountMap } from "./xero-booking-repair-utils";
+import { formatCents } from "@/lib/utils";
 
 export function buildPassReport(pass: number, bookings: BookingXeroRepairBookingSummary[]): BookingXeroRepairPassReport {
   const bookingsWithFindings = bookings.filter((booking) => booking.findings.length > 0);
@@ -363,7 +364,7 @@ async function releaseRepairedSupplementaryInvoiceIfAlreadyPaid(params: {
 
   if (capture === "short-of-ask") {
     action.status = "manual_review";
-    action.resultMessage = `${action.resultMessage} The member's card was captured while this sweep ran, but for ${request.amountCents} cents against an ask of ${params.expectedNetAmountCents} cents. The queued invoice was deliberately NOT released - releasing it would book the full ask as received - so it will be retired unsent, and the difference has to be collected by hand.`;
+    action.resultMessage = `${action.resultMessage} The member's card was captured while this sweep ran, but for ${formatCents(request.amountCents)} against an ask of ${formatCents(params.expectedNetAmountCents)}. The queued invoice was deliberately NOT released - releasing it would book the full ask as received - so it will be retired unsent, and the difference has to be collected by hand.`;
     return;
   }
 

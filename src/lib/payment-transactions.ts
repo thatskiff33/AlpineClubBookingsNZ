@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { processRefund } from "@/lib/stripe";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
+import { formatCents } from "@/lib/utils";
 
 export type PaymentStore = Prisma.TransactionClient | typeof prisma;
 
@@ -923,7 +924,7 @@ export class PartialRefundError extends Error {
     cause: unknown;
   }) {
     super(
-      `Refund failed after ${completedRefundCents} cents were refunded and recorded: ${
+      `Refund failed after ${formatCents(completedRefundCents)} was refunded and recorded: ${
         cause instanceof Error ? cause.message : String(cause)
       }`
     );

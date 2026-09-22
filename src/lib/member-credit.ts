@@ -962,9 +962,9 @@ export async function reviewAdminAdjustmentRequest(
         // Written out rather than reusing `details` above, and that is the
         // point: `details` is the officers' record. It names the credit row and
         // the member who asked for the adjustment, and NEITHER reaches any
-        // member surface (`INV-PRIV-012`). And `formatAdjustmentAmount` renders
-        // raw cents (`+2500 cents`) for an operator; a member reads money, so
-        // the direction is a word and the amount unsigned.
+        // member surface (`INV-PRIV-012`). And `formatAdjustmentAmount` renders the
+        // officers' amount SIGNED (`+$25.00`, #3533); a member reads the
+        // direction as a word, with the amount unsigned.
         //
         // The claim is the free text only, on purpose: the adjustment REQUEST's
         // id is this row's `entityId`, which the timeline returns to both

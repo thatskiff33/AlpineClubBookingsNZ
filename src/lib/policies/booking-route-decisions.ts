@@ -21,6 +21,7 @@ import {
   daysUntilDate,
   type CancellationRule,
 } from "./cancellation";
+import { formatCents } from "@/lib/utils";
 
 export type { CancellationRule };
 
@@ -410,7 +411,7 @@ export function calculateBookingCreditApplication(input: {
 
   if (requestedCreditCents > creditBalanceCents) {
     throw new Error(
-      `Insufficient credit: ${creditBalanceCents} cents available, ${requestedCreditCents} requested`
+      `Insufficient credit: ${formatCents(creditBalanceCents)} available, ${formatCents(requestedCreditCents)} requested`
     );
   }
   if (requestedCreditCents > finalPriceCents) {

@@ -940,7 +940,7 @@ describe("member-credit helpers", () => {
           "admin-1",
           "9a13b0af-7ffc-451b-a50b-81f6fb8630f4"
         )
-      ).rejects.toThrow("Cannot deduct 2000 cents: only 1000 cents available");
+      ).rejects.toThrow("Cannot deduct $20.00: only $10.00 available");
 
       expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
@@ -1302,7 +1302,7 @@ describe("member-credit helpers", () => {
         (result) => result.status === "rejected"
       ) as PromiseRejectedResult;
       expect(rejectedResult.reason.message).toBe(
-        "Cannot deduct 700 cents: only 300 cents available"
+        "Cannot deduct $7.00: only $3.00 available"
       );
 
       const approvedRequests = Object.values(state.requests).filter(

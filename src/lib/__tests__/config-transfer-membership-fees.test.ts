@@ -355,7 +355,7 @@ describe("config-transfer membership-fees validation (#1941)", () => {
       "membership-fees/annual-fee-components.csv": AC_HEADER + "FULL,2026-01-01,Base,10000,true,,,0\n",
     });
     const plan = await membershipFeesImporter.plan(planCtx(files, makeStore().db as unknown as ReadDb));
-    expect(plan.errors.join(" ")).toMatch(/sum to 10000 cents but the fee amount is 12000/i);
+    expect(plan.errors.join(" ")).toMatch(/sum to \$100\.00 but the fee amount is \$120\.00/i);
   });
 
   it("rejects a NO_INVOICE fee that carries components, and a non-zero no-invoice amount", async () => {
@@ -527,7 +527,7 @@ describe("config-transfer membership-fees post-merge component invariant (#1941)
     });
     const plan = await membershipFeesImporter.plan(planCtx(files, target.db as unknown as ReadDb, "overwrite"));
     expect(plan.errors.join(" ")).toMatch(/"Base fee"/);
-    expect(plan.errors.join(" ")).toMatch(/22000 cents but the fee total is 12000/);
+    expect(plan.errors.join(" ")).toMatch(/\$220\.00 but the fee total is \$120\.00/);
     expect(plan.errors.join(" ")).toMatch(/Fees page/i);
   });
 

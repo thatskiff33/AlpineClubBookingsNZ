@@ -351,6 +351,24 @@ const MONEY_HELPER_MODULES = MONEY_GUARD_EXEMPTIONS.map((entry) => entry.file);
 const CENTS_DISPLAY_MESSAGE =
   "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — for an editable dollars input, or a report line that already reads as a delta), both from @/lib/utils. Seeding an EDITABLE input's plain value, or a raw numeric export cell (CSV, a JSON report row) that must carry no currency symbol, is a different, legitimate concept — add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason; that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
 
+// #3533 — the OTHER way a person is shown the storage form: not a bad
+// division, but no division at all. `${refundAmountCents} cents` in an audit
+// `details` string, a thrown Error, a repair report line or a cron summary
+// hands a booking officer "8450 cents" to convert in their head, and a
+// factor-of-a-hundred misread is easy. A census on 20 Sep 2026 found 26 of
+// them under `src/`, seven in `booking-cancel.ts` alone.
+//
+// The selector keys on a template quasi that BEGINS WITH A SPACE and then the
+// word: in `` `${x} cents` `` the second quasi's raw value is exactly
+// `" cents"`, and a leading space can only come from text that follows an
+// interpolation. That is what keeps `` `cents: ${x}` `` — a label, not an
+// amount — out of it, and it is why the space is load-bearing rather than
+// cosmetic, and why the word must not run on into a longer noun
+// (`" cents-per-night rows"` is a row count, not an amount). The negative
+// fixtures in `cents-in-prose-guard.test.ts` pin every one of those shapes.
+const CENTS_IN_PROSE_MESSAGE =
+  "INV-SSOT-001 / #3533: do not write `${someCents} cents` into text a person reads. An audit `details` string, a thrown Error, an operator report line and a cron summary are all read by a booking officer or the treasurer reconstructing a booking's money, and every amount there must read as $84.50 — use formatCents (or formatSignedCents where the sign is the point) from @/lib/utils. The STORED value stays integer cents; this is about the sentence. Rendering into a raw numeric export cell, or text no person reads? Add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason — that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
+
 const CENTS_DISPLAY_RESTRICTIONS = [
   {
     selector:
@@ -358,6 +376,35 @@ const CENTS_DISPLAY_RESTRICTIONS = [
     message: CENTS_DISPLAY_MESSAGE,
   },
 ];
+
+/**
+ * ITS OWN GROUP, and that is the whole point of the separation.
+ *
+ * The first cut appended this selector to `CENTS_DISPLAY_RESTRICTIONS`, which
+ * made it inherit that group's exemptions - ten files excused for seeding an
+ * editable input's plain value or writing a raw export cell, none of which is
+ * a reason to write the storage form into a sentence. That is exactly the
+ * hazard this file warns about two groups above for the raw-SQL set and again
+ * for the money set: an exemption written for one rule silently lifting
+ * another it was never weighed against. Review of #3533 caught it before it
+ * shipped; keeping the array separate is what makes the mistake unavailable
+ * rather than merely noticed.
+ *
+ * It therefore has NO exemptions. If a legitimate one turns up it gets its own
+ * list, weighed on its own terms.
+ */
+const CENTS_IN_PROSE_RESTRICTIONS = [
+  {
+    selector:
+      'TemplateLiteral:not(TaggedTemplateExpression > TemplateLiteral) > TemplateElement[value.raw=/^ cents(?![-\\w])/i]',
+    message: CENTS_IN_PROSE_MESSAGE,
+  },
+];
+
+/** Bare selectors, for `cents-in-prose-guard.test.ts`, same mirror as above. */
+export const CENTS_IN_PROSE_GUARD_ARM = CENTS_IN_PROSE_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
 
 /**
  * The one arm as a bare selector array, for `money-cents-guard.test.ts` —
@@ -2513,6 +2560,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...DATE_FNS_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
   ...CENTS_DISPLAY_RESTRICTIONS,
+  ...CENTS_IN_PROSE_RESTRICTIONS,
   ...CURRENCY_LOCALE_RESTRICTIONS,
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
 ];

@@ -10,6 +10,7 @@ import "server-only";
 
 import Stripe from "stripe";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
+import { formatCents } from "@/lib/utils";
 
 // DB-only credential resolution (#2082): the secret key lives in the encrypted
 // IntegrationCredential store, so client construction is now ASYNC. We memoize
@@ -75,7 +76,7 @@ export async function createPaymentIntent({
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
   if (amountCents > 0 && amountCents < STRIPE_MINIMUM_AMOUNT_CENTS) {
-    throw new Error(`Amount ${amountCents} cents is below Stripe minimum (${STRIPE_MINIMUM_AMOUNT_CENTS} cents)`);
+    throw new Error(`Amount ${formatCents(amountCents)} is below the Stripe minimum (${formatCents(STRIPE_MINIMUM_AMOUNT_CENTS)})`);
   }
   const stripe = await getStripe();
   return stripe.paymentIntents.create(
@@ -133,7 +134,7 @@ export async function chargePaymentMethod({
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
   if (amountCents > 0 && amountCents < STRIPE_MINIMUM_AMOUNT_CENTS) {
-    throw new Error(`Amount ${amountCents} cents is below Stripe minimum (${STRIPE_MINIMUM_AMOUNT_CENTS} cents)`);
+    throw new Error(`Amount ${formatCents(amountCents)} is below the Stripe minimum (${formatCents(STRIPE_MINIMUM_AMOUNT_CENTS)})`);
   }
   const stripe = await getStripe();
   return stripe.paymentIntents.create(
