@@ -2169,11 +2169,18 @@ enum MemberGuestConsentStatus {
 // draining colour and for history whose origin cannot be proved. The #3275
 // migration trigger recognises only its two transactional officer-repair audit
 // actions. Readers do not act on this value until stage 3 of programme #3272.
+// RATE_DERIVED (#3531 3b, D-3531-2): an EVEN_SPLIT or UNKNOWN row rewritten by
+// the operator-run backfill because the rate table, over the strand as sold,
+// reproduces the strand's stored total to the cent. Exact at individual-night
+// grain; distinct from SOLD so a reader can always tell a derivation from a
+// sale. Written by that script only, after a deploy has fully cut over: a
+// colour whose client predates the value cannot read a row that carries it.
 enum BookingGuestNightPriceSource {
   SOLD
   OFFICER_PRICED
   EVEN_SPLIT
   UNKNOWN
+  RATE_DERIVED
 }
 
 // #3276: what kind of adjustment a BookingGuestNightAdjustment row records.

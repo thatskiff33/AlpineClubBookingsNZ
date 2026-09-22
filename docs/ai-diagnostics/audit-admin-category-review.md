@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  486
+row-producing sites:  487
 uncategorised:        0
-category values: admin 108, booking 104, xero 37, family 35, payment 47,
+category values: admin 108, booking 104, xero 37, family 35, payment 48,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -716,6 +716,15 @@ currency or locale. `admin` for exactly the reason `CLUB_TIME_ZONE_UPDATED` and
 by the same administrators who can already see those - so it widens nobody's
 readership. The row carries the actor and the before/after pair and nothing
 else: no request echo and no settings blob.
+
+#3531 3b then added one more (`payment` 47 -> 48, 486 -> 487, RE-MEASURED with
+`npm run audit:census` on the tree composed with #3563, not incremented):
+`booking-payment.stored-night-price.rate-derived`,
+the record that the operator-run backfill re-derived a booking's evenly-split
+night prices from the rate table, every guest total unchanged. `payment` beside
+the officer night-price repair it mirrors, and `important` because it is the
+only place the per-night rewrite shows; it carries every strand's before and
+after vectors.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):
