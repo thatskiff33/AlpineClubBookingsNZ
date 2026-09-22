@@ -1556,8 +1556,9 @@ describe("AID-6B booking/membership pack: the search argument schemas (#2376)", 
  * against a database.
  */
 const ALLOWED_PG_CATALOG_FUNCTIONS = [
-  // Space-folds an address before the anonymised-account suffix comparison, the
-  // way the canonical `isDeletedAccountEmail` calls `.trim()` before `endsWith`.
+  // Trims the explicitly supplied ECMAScript whitespace set before the
+  // anonymised-account suffix comparison, matching the canonical
+  // `isDeletedAccountEmail(...).trim()` contract.
   "btrim",
   "concat",
   "count",
@@ -1729,12 +1730,31 @@ describe("AID-6B booking/membership pack: deactivation is NOT deletion (#2376)",
     // for the domain itself: the domain must follow `placeholder-contact-email.ts`
     // automatically, while a change to the comparison's shape has to be looked at.
     const suffix = `@${DELETED_CONTACT_EMAIL_DOMAIN}`;
-    expect(deletedAccountSql('m."deletedAt"', 'm."email"')).toBe(
-      `(m."deletedAt" IS NOT NULL OR (pg_catalog.right(pg_catalog.lower(pg_catalog.btrim(m."email")), ${suffix.length}) = '${suffix}'))`,
+    const marker = deletedAccountSql('m."deletedAt"', 'm."email"');
+    expect(marker).toContain(
+      `(m."deletedAt" IS NOT NULL OR (pg_catalog.right(pg_catalog.lower(pg_catalog.btrim(m."email", U&'`,
     );
+    expect(marker).toContain(`${suffix.length}) = '${suffix}'))`);
     // The length is the suffix's, so a longer or shorter reserved domain cannot
     // leave the comparison reading the wrong number of characters.
     expect(suffix.length).toBe("@deleted.invalid".length);
+  });
+
+  it("gives SQL exactly the whitespace characters ECMAScript trim removes", () => {
+    const marker = deletedAccountSql('m."deletedAt"', 'm."email"');
+    const escaped = marker.match(/U&'((?:\\[0-9a-f]{4})+)'/i)?.[1];
+    expect(escaped).toBeDefined();
+
+    const sqlTrimCodePoints = [
+      ...(escaped ?? "").matchAll(/\\([0-9a-f]{4})/gi),
+    ].map((match) => Number.parseInt(match[1], 16));
+    const runtimeTrimCodePoints: number[] = [];
+    for (let codePoint = 0; codePoint <= 0xffff; codePoint += 1) {
+      const character = String.fromCodePoint(codePoint);
+      if (`x${character}`.trim() === "x") runtimeTrimCodePoints.push(codePoint);
+    }
+
+    expect(sqlTrimCodePoints).toEqual(runtimeTrimCodePoints);
   });
 
   it("reads only the structural marker and reserved address", () => {

@@ -68,6 +68,11 @@ const DELETED_ACCOUNT_TRAILING_WHITESPACE = [
   "\ufeff",
 ] as const;
 
+const DELETED_ACCOUNT_SQL_TRIM_CHARACTERS =
+  `U&'${DELETED_ACCOUNT_TRAILING_WHITESPACE.map((character) =>
+    `\\${character.codePointAt(0)!.toString(16).padStart(4, "0")}`,
+  ).join("")}'`;
+
 /**
  * The sentinel written over `Member.passwordHash` when a deletion request is
  * approved. Not a bcrypt hash, so `bcrypt.compare` can never match it.
@@ -166,7 +171,8 @@ export function deletedAccountSql(
 ): string {
   const suffix = DELETED_ACCOUNT_EMAIL_SUFFIX;
   const legacyAddress =
-    `(pg_catalog.right(pg_catalog.lower(pg_catalog.btrim(${emailColumn})), ` +
+    `(pg_catalog.right(pg_catalog.lower(pg_catalog.btrim(${emailColumn}, ` +
+    `${DELETED_ACCOUNT_SQL_TRIM_CHARACTERS})), ` +
     `${suffix.length}) = '${suffix}')`;
   return `(${deletedAtColumn} IS NOT NULL OR ${legacyAddress})`;
 }
