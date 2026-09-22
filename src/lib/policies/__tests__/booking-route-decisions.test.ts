@@ -358,7 +358,7 @@ describe("booking route policy decisions", () => {
         finalPriceCents: 4000,
         status: BookingStatus.PAYMENT_PENDING,
       })
-    ).toThrow("Insufficient credit: 3000 cents available, 5000 requested");
+    ).toThrow("Insufficient credit: $30.00 available, $50.00 requested");
 
     expect(
       calculateBookingCreditApplication({

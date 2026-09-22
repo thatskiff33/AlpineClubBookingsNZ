@@ -98,6 +98,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-029` | Promo adjustment rows reconcile to the promo total; unknown is never zero |
 | `INV-MONEY-030` | Stored money readers preserve current amounts and record their source |
 | `INV-MONEY-031` | Stored booking totals carry a derived reconciliation state |
+| `INV-MONEY-032` | A booking's money ledger is append-only, written through one door |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |

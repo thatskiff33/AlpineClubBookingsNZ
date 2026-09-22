@@ -6,6 +6,7 @@ import {
   dateOnlyInstantOf,
 } from "@/lib/club-time";
 import logger from "@/lib/logger";
+import { formatCents } from "@/lib/utils";
 
 /**
  * #3276 (stage 2 of programme #3272): THE ONE WRITER OF AN AMOUNT into
@@ -150,13 +151,13 @@ function findReconciliationMismatch(params: {
     const recorded = allocationByMember.has(memberId) ? allocationByMember.get(memberId)! : 0;
     const summed = sums.get(memberId) ?? 0;
     if (summed !== recorded) {
-      return `adjustment rows for member ${memberId} sum to ${summed} cents but the recorded allocation is ${recorded} cents`;
+      return `adjustment rows for member ${memberId} sum to ${formatCents(summed)} but the recorded allocation is ${formatCents(recorded)}`;
     }
   }
   if (unknown.size === 0) {
     const total = [...sums.values()].reduce((sum, cents) => sum + cents, 0);
     if (total !== priceAdjustmentCents) {
-      return `adjustment rows sum to ${total} cents but the recorded redemption adjustment is ${priceAdjustmentCents} cents`;
+      return `adjustment rows sum to ${formatCents(total)} but the recorded redemption adjustment is ${formatCents(priceAdjustmentCents)}`;
     }
   }
   return null;

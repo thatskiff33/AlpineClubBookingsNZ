@@ -84,6 +84,37 @@ and machine `action`, the actor, the affected member (subject), the entity, and
 primary drill-down links. Expanding a row reveals the request ID, IP, user
 agent, **retention class**, raw details, and JSON metadata.
 
+### Amounts read as amounts (#3533)
+
+Money is stored as a whole number of cents — `2275`, not `22.75` — because
+storing it any other way is how rounding errors get in
+([`INV-MONEY-003`](../invariants/money.md)). That is right for the database and
+wrong for a screen, so until this release an officer reconstructing a booking's
+money read `"refundAmountCents": 2275` in the metadata panel and sentences like
+`Manual refund task for 50% of 8450 cents`, and converted each one in their
+head. A misread by a factor of a hundred was easy.
+
+Now:
+
+- **Every sentence a person reads states the amount**: `$84.50`, never
+  `8450 cents`. That covers the audit trail's own details, operator report
+  lines, cron summaries and error messages.
+- **The metadata panel annotates every cents key** with the amount beside it —
+  `"refundAmountCents": 2275,  // $22.75`. The stored number is still there,
+  unchanged and still the thing repair and census tooling reads; the comment is
+  a display annotation added by the screen, not a value in the database.
+
+Nothing about the stored rows changed, and the two halves age differently
+because of it:
+
+- **A sentence is baked in when the row is written**, so entries written
+  before this release still read `8450 cents` for ever. A written audit row is
+  never rewritten ([`INV-OPS-012`](../invariants/operations.md)) — the trail
+  would stop being a trail if it were.
+- **The metadata annotation is added when you look**, so it applies to every
+  entry however old. An entry from last year shows `// $22.75` beside its
+  stored `2275` the next time it is expanded.
+
 ### Very large entries, and the older ones that look broken (#2704)
 
 Some entries record structured evidence — a before-and-after snapshot, a list of
