@@ -1356,11 +1356,7 @@ export async function updateAdminMember(params: {
     );
     const updated = await prisma.$transaction(async (tx) => {
       if (deactivatesTarget || tierLeavesAdult) {
-        await acquireFuturePartnerSharedAllocationLocks(
-          tx,
-          [id],
-          clubTodayDateOnly,
-        );
+        await acquireFuturePartnerSharedAllocationLocks(tx, [id], clubTodayDateOnly);
         await acquireMemberLifecycleLocks(tx, [id]);
       }
       // Last-admin guard (issue #1604): counted inside the mutation

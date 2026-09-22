@@ -32,7 +32,7 @@
  * arm (INV-SSOT-001).
  */
 import type { Prisma } from "@prisma/client";
-import { DELETED_CONTACT_EMAIL_DOMAIN } from "./placeholder-contact-email";
+import { DELETED_CONTACT_EMAIL_DOMAIN } from "./deleted-account-email";
 
 const DELETED_ACCOUNT_EMAIL_SUFFIX = `@${DELETED_CONTACT_EMAIL_DOMAIN}`;
 
