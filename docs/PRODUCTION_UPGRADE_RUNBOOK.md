@@ -216,7 +216,12 @@ matter for this upgrade:
   This is the gate. It must pass green (see [§2.1](#21-the-validator-gate-is-expected-green)).
 - **Step 13/20 — "Running Prisma migrations".** `prisma migrate deploy` runs
   through the `migrate` service, applying the pending migrations to the shared
-  Postgres **while the old color can still be serving traffic**.
+  Postgres **while the old color can still be serving traffic**. Since #3377 that
+  connection carries a **5-second lock timeout**: a migration that cannot get its
+  lock in that time stops the deploy having applied nothing, rather than queueing
+  on a hot table and taking every later read down with it. The step prints the
+  bound in force before it runs. See
+  [§2.1a](#21a-step-1320-stopped-on-a-lock-timeout) for what to do when it fires.
 - **Step 14/20 / Step 15/20 — starts the new (target) web color and refreshes
   the cron leader on the new release, both before cutover.**
 - **Step 16/20 — "Warming the new release and verifying its page cache before
@@ -258,6 +263,115 @@ that flag only bypasses the *potentially-breaking-SQL* warning
 `origin/main` — reconcile the checkout against the release tag rather than
 editing the ledger on the host. The gate fails **safe**: the old color keeps
 serving and no schema change has been applied.
+
+### 2.1a Step 13/20 stopped on a lock timeout
+
+**What you are looking at.**
+
+```
+Error: P3018
+A migration failed to apply. New migrations cannot be applied before the error
+is recovered from.
+Database error code: 55P03
+Database error: ERROR: canceling statement due to lock timeout
+```
+
+This is a guard firing, not a broken migration. Since
+[#3377](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3377) the
+migrate connection carries `lock_timeout` (5 s by default, printed at step 13).
+Eighty rows of the safety ledger promise exactly this behaviour: a migration
+whose `ALTER TABLE` cannot get `ACCESS EXCLUSIVE` promptly stops rather than
+joining the lock queue, because a migration waiting on a hot table puts **every
+later reader of that table behind it**, and the old colour is still serving.
+
+**First, check WHICH lock timed out — there are two variants and only one of
+them has anything to clean up.** `lock_timeout` bounds every lock wait on the
+connection, and `prisma migrate deploy` takes a session advisory lock —
+`pg_advisory_lock(72707369)` — *before* it looks at the pending list. If the
+bound fires on that, no migration was ever started:
+
+| | A migration's lock (the common case) | Prisma's own advisory lock |
+| --- | --- | --- |
+| A migration name in the error | yes | **no** |
+| Prisma error code | `P3018` | not `P3018`; the raw database error |
+| New `_prisma_migrations` row | yes, `applied_steps_count = 0` | **none** |
+| A straight retry gives | `P3009` | the same timeout, or success |
+
+If the error names no migration, you are in the right-hand column and the rest
+of this section does not apply to you: **there is no failed row, so
+`prisma migrate resolve --rolled-back` has nothing to act on and no name to be
+given.** What holds that advisory lock is another `prisma migrate` on the same
+database — a second deploy running concurrently, a migrate container left over
+from an interrupted run, or a migrate somebody started by hand. Find it with
+
+```bash
+docker compose exec -T postgres psql -U tac -d tacbookings -c "
+  SELECT pid, granted, left(query, 80) AS query
+  FROM pg_locks JOIN pg_stat_activity USING (pid)
+  WHERE locktype = 'advisory';"
+```
+
+make sure it has finished or been stopped, and deploy again. Nothing needs
+undoing. Everything below is for the left-hand column.
+
+**What state the club is in.** Safe, and no worse than before the deploy. The
+old colour is still serving on the old schema, no traffic has moved, and the
+migration applied nothing — `_prisma_migrations` records the attempt with
+`applied_steps_count = 0` and a NULL `finished_at`. Nothing is half-done.
+
+**Do not simply run the deploy again.** The failed row makes every later
+`prisma migrate deploy` refuse with **`P3009`** ("found failed migrations in the
+target database") before it looks at the pending list at all, so a straight
+retry meets a second refusal under a different name.
+
+**What to do, in order.**
+
+1. **Find out what was holding the lock, before clearing anything.** This is the
+   signal the guard exists to surface, and the reason automatic retries were
+   declined. Run on the production host:
+
+   ```bash
+   docker compose exec -T postgres psql -U tac -d tacbookings -c "
+     SELECT pid, state, now() - xact_start AS xact_age, left(query, 120) AS query
+     FROM pg_stat_activity
+     WHERE datname = 'tacbookings' AND xact_start IS NOT NULL
+     ORDER BY xact_start;"
+   ```
+
+   A transaction older than a few seconds during a deploy window is the answer.
+   Typical causes: an admin report still open, a member-merge or induction
+   transaction (both budget up to 120 s), a stuck worker, or a `psql` somebody
+   left in a `BEGIN`. Record what you found in
+   [§8](#8-production-execution-record) — a deploy that hits this twice for the
+   same reason is telling you about a bug, not about bad luck.
+
+2. **Clear the failed row.** `--rolled-back` is the true statement: the
+   migration's own transaction was cancelled before it wrote anything.
+
+   ```bash
+   docker compose --profile migrate run --rm migrate \
+     ./node_modules/.bin/prisma migrate resolve --rolled-back <migration_name>
+   ```
+
+   Run it through the `migrate` service with **no `-e DATABASE_URL` override**:
+   the service's own URL is the one carrying the lock timeout, and passing a
+   hand-written one silently removes it for that command.
+
+   Never `--applied` here. That would tell Prisma the migration had run, and the
+   schema change would be missing from the database forever, invisibly.
+
+3. **Deploy again in a quieter window,** once the transaction you found in step
+   1 has finished or been dealt with. Nothing else needs undoing.
+
+**When the lock holder cannot be cleared and the deploy must go ahead**, take
+the window properly rather than widening the bound: stop the old colour and its
+workers, and follow the windowed sequence in
+[§2.4](#24-windowed-migration-deploy-sequence). Raising
+`MIGRATION_LOCK_TIMEOUT_MS` is the wrong lever — the deploy script refuses
+anything at or over the web slots' `pool_timeout` (10 s today, so the highest it
+accepts is 9999 ms) precisely because by then that `pool_timeout` has expired and
+the blocked table is already refusing member requests with Prisma `P2024`. A longer wait does not avoid the outage, it
+guarantees it.
 
 ### 2.2 AgeTier `NOT_APPLICABLE` — deploy in a quiet window
 

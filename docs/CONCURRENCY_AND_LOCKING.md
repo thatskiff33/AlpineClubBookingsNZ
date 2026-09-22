@@ -887,9 +887,14 @@ forever" rather than "whatever it was", so on a deployment that sets `lock_timeo
 at the database or role level, restoring `0` would delete the operator's bound for
 the rest of the merge. `SET LOCAL` rather than `RESET` because `RESET` is
 session-scoped and survives the commit on a pooled connection, silently clearing a
-session-level setting the caller had made. Nothing in this repository sets
-`lock_timeout` at any level today, so `DEFAULT` resolves to `0` and the behaviour is
-unchanged; it is hardening against a deployment that adds one. PostgreSQL raises a `lock_timeout` cancellation as
+session-level setting the caller had made. **On the connections this code runs
+on, `DEFAULT` still resolves to `0`**, so restoring it is byte-for-byte the old
+behaviour and remains hardening against a deployment that adds a bound rather
+than a live bug. Since #3377 one connection in this deployment DOES carry a
+`lock_timeout` — the `migrate` service's, described under
+["The migration lock timeout"](#the-migration-lock-timeout-3377) below — but
+that service runs `prisma migrate deploy` and no application code, so it never
+reaches this helper. PostgreSQL raises a `lock_timeout` cancellation as
 SQLSTATE `55P03`, the same code `NOWAIT` raises, so it lands on
 `HostingCoverageParticipantRetryError` and merge converts it into its existing
 "participants changed, nothing was saved, re-run the preview" 409. There is no
@@ -4222,6 +4227,158 @@ the invented school member, which is the other home. The overlap opens when
 [#3367](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3367) first
 links an organisation and closes there. When it does, both keys can go with it —
 but not before, and not by assumption.
+
+## The migration lock timeout (#3377)
+
+Everything above is about locks the *application* takes. This is about the one a
+**schema migration** takes, which is the most dangerous lock request this system
+ever makes and for months had no bound on it at all.
+
+### What the problem was
+
+`ALTER TABLE` needs `ACCESS EXCLUSIVE`. If any transaction from the draining
+colour still holds a conflicting lock on that table — a long report, an open
+admin session, a stuck worker — the migration joins the lock queue. PostgreSQL's
+lock queues are **ordered**, so from that moment every later reader of the table
+queues behind the migration too, including reads that would otherwise have
+succeeded instantly. The tables involved are the ones a member touches:
+`Booking`, `Member`, `Payment`.
+
+With no `lock_timeout` the setting resolves to `0`, which PostgreSQL reads as
+*wait forever*. Nothing ended that state except an operator noticing.
+
+Eighty rows of [`BLUE_GREEN_MIGRATION_SAFETY.tsv`](BLUE_GREEN_MIGRATION_SAFETY.tsv)
+had been telling operators otherwise — "let the deploy guard stop on lock
+timeout" — for months. A mitigation named in the artifact somebody reads before
+a deploy is worse than no mitigation, because it stops them planning for the
+case.
+
+### What is set, and where
+
+The `migrate` service in `docker-compose.yml` — the service whose `command` is
+`prisma migrate deploy` — carries the bound as a libpq startup parameter on its
+`DATABASE_URL`:
+
+```
+…/tacbookings?connection_limit=2&pool_timeout=10&options=-c%20lock_timeout%3D${MIGRATION_LOCK_TIMEOUT_MS:-5000}
+```
+
+`options` is applied at connect time, so the bound is in force for everything
+that connects on **this** URL: the migration statements themselves, and the
+`prisma migrate status` the deploy script runs after them. **It is set on the
+service and not in the deploy script** because that is what reaches the
+connection migrations are applied on, rather than only the one command the
+script happens to call.
+
+It does **not** cover the shadow replay inside `prisma migrate diff`, and an
+earlier version of this passage said it did. That replay connects on
+`SHADOW_DATABASE_URL`, which `validate_prisma_schema_matches_migrations` in
+`scripts/run-production-blue-green-deploy.sh` builds without an `options`
+parameter, and which `prisma.config.ts` wires straight through. Bounding it
+would buy nothing: the shadow database is created empty for that one check and
+dropped after it, so no other session is holding a lock on anything in it.
+
+No application connection is touched: the web slots, the cron leader and every
+`PrismaClient` in `src/` still connect with no `lock_timeout`, which is why the
+member-merge helper above can still say `DEFAULT` resolves to `0`.
+
+`scripts/run-production-blue-green-deploy.sh` refuses the deploy at step 3 —
+before it pulls an image — if the option is not on the URL the migrate service
+will actually receive, or if the value in force is `0` or at/over the ceiling
+below.
+
+It establishes that by running `docker compose config` and reading the
+`migrate` service's resolved `DATABASE_URL` out of it, rather than by parsing
+`docker-compose.yml`. That distinction is the whole of the guarantee. Compose
+does not read only the tracked file: `COMPOSE_FILE` in the deployment host's
+`.env` names an overlay as well, and a `docker-compose.override.yml` is merged
+with no configuration at all — so an overlay can take the bound off without the
+tracked file changing, and a check that reads the tracked file would report a
+bound the container never receives. Asking Compose is what makes "the value
+checked is the value the migrate container gets" true rather than aspirational.
+
+`0` is the trap worth naming:
+it is the natural way to write "turn this off", and PostgreSQL reads it as *wait
+forever* rather than as *unset*, so the most obvious disabling gesture silently
+restores the exact exposure the guard exists to remove.
+
+### Why 5000 ms — both bounds
+
+The value is measured rather than chosen, and both bounds are recorded so the
+next person can re-measure instead of inheriting a number.
+
+**Floor, measured.** The repository's complete migration history was applied to
+an empty PostgreSQL 16 with `log_lock_waits = on` and `deadlock_timeout = 1ms`,
+so the server logged every lock wait over a millisecond. It logged **none** —
+371 migrations, about 27 seconds of wall time, zero waits. (The instrumentation
+was proven live by the contended run below, which logged its wait at 1.102 ms.)
+An uncontended deploy therefore pays nothing for this bound at any value above
+about a millisecond; the floor is set by contention a healthy deploy should
+survive, not by the migrations themselves.
+
+That the measurement ran against an *empty* database does not weaken it, and the
+reason is worth stating because it is the obvious objection. `lock_timeout`
+bounds only the time a statement spends **waiting** for a lock, never the time it
+spends holding one. A table rewrite on a club's real data takes longer to run,
+and that is unaffected by this setting; what it does not do is take longer to
+*acquire*, because acquisition time is a function of who else holds the lock and
+of nothing else.
+
+**Ceiling, 10 000 ms.** It comes from the web slots' own connection string:
+`connection_limit=10&pool_timeout=10`. A reader blocked behind the migration
+holds its pool connection for the whole wait — the same mechanism the pool note
+in `docker-compose.yml` already records for advisory-lock waiters — so ten
+blocked requests exhaust a slot's pool and every further request is refused with
+Prisma `P2024` after `pool_timeout`. At 10 s or more this guard cannot fire
+before the serving colour is returning errors to members, so it would be
+decoration.
+
+That ceiling has **one home, and it is `pool_timeout` itself**. Both things
+that enforce it derive it rather than restating it:
+`MIGRATION_LOCK_TIMEOUT_CEILING_MS` in
+`src/lib/__tests__/helpers/migration-lock-timeout-config.ts` reads it out of
+`docker-compose.yml`, and the deploy script reads it out of the same resolved
+Compose model it reads the bound from, taking the lower of the two web colours
+because a deploy does not get to choose which one is serving. So the highest
+value the script will accept is one millisecond under it — today `9999` — and
+raising `pool_timeout` moves both at once. It was briefly a hard-coded `9000`
+in the script while the helper derived `10000`, which is two homes disagreeing
+about the rule as well as the number.
+
+**5000 ms** sits at half the ceiling and about 5000x the measured floor. It is
+deliberately *tighter* than `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS` (10 s),
+this repository's only other `lock_timeout`: merge bounds a wait inside one admin
+transaction, whereas a migration's `ACCESS EXCLUSIVE` wait queues every later
+reader of the table, so the migration bound must be the tighter of the two.
+
+### What a blocked migration actually does — measured
+
+Against PostgreSQL 16 with Prisma 7.10, with a transaction holding `ACCESS SHARE`
+on `Booking` and a pending `ALTER TABLE "Booking"`:
+
+| | Without the option | With `lock_timeout=5000` |
+| --- | --- | --- |
+| `prisma db execute` running the same DDL | waited out the blocker (10.5 s) and succeeded | cancelled at exactly 5 000 ms |
+| `prisma migrate deploy` | — | exit 1, Prisma `P3018`, SQLSTATE **`55P03`** |
+| `_prisma_migrations` row | — | present, `finished_at` NULL, `applied_steps_count = 0` |
+
+Nothing is half-applied. The next `migrate deploy` then refuses with **`P3009`**
+until the operator runs `prisma migrate resolve --rolled-back <name>`, after
+which a retry in a quieter window applies cleanly — measured end to end. The
+operator's copy of that is
+[`PRODUCTION_UPGRADE_RUNBOOK.md` 2.1a](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout).
+
+### What proves it stays true
+
+- `src/lib/__tests__/migration-lock-timeout.realdb.test.ts` — real PostgreSQL:
+  the bound is reported on a connection opened with the shipped option, a
+  blocked `ALTER TABLE` is cancelled at it with `55P03`, the same statement
+  **without** the option waits for the blocker and succeeds, and Prisma's schema
+  engine threads the option rather than dropping it.
+- `src/lib/__tests__/blue-green-ledger-named-controls.test.ts` — no ledger row
+  may name a control the repository does not implement. It fails if the option
+  is removed, if the default reaches `0` or the ceiling, or if the real-DB proof
+  is unplugged from CI.
 
 ## Rules of thumb when working here
 
