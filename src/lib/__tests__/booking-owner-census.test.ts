@@ -790,7 +790,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:111",
   "src/lib/payment-link.ts:74",
-  "src/lib/payment-reconciliation.ts:81",
+  "src/lib/payment-reconciliation.ts:86",
   "src/lib/stuck-state-dashboard.ts:619",
   "src/lib/xero-booking-repair-types.ts:172",
   "src/lib/xero-inbound/invoice-paid-effects.ts:263",
