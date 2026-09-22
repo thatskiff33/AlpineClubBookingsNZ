@@ -672,6 +672,25 @@ BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
 BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED="${BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED:-0}"
 MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv}"
 
+# The deploy guard's lock timeout (#3377). NO VALUE is declared here, and after
+# the review of the first version no FILE is parsed for one either: the script
+# asks Compose what the migrate service will actually receive. The floor below
+# is a typo guard, and the ceiling is derived from the web slots' own
+# `pool_timeout` at check time. The checks live in
+# `validate_migration_lock_timeout_contract`.
+#
+# The floor is NOT the measured minimum: the repository's whole migration
+# history, replayed against an empty PostgreSQL with `log_lock_waits` on, logged
+# no lock wait over about a millisecond. It is here to catch a value typed with
+# a digit missing, which would turn the guard into a deploy that always fails.
+MIGRATION_LOCK_TIMEOUT_MIN_MS=100
+# Named in the refusal so an operator is handed the wiring to restore rather
+# than a description of it. It is what docker-compose.yml ships; an overlay may
+# legitimately supply the same bound differently, which is why the check reads
+# the RESOLVED value and this string is only ever advice.
+MIGRATION_LOCK_TIMEOUT_OPTION_HINT='options=-c%20lock_timeout%3D${MIGRATION_LOCK_TIMEOUT_MS:-<ms>}'
+MIGRATION_LOCK_TIMEOUT_MS_EFFECTIVE=""
+
 # Pre-cutover warm-up gate (#2566). The defaults are the owner's: bounded
 # concurrency of three, and a tolerance of at most ONE failed non-critical CMS page
 # AND at most 10% of those discovered — both conditions, so a club with fewer than
@@ -1096,6 +1115,218 @@ require_env_key() {
     echo "Missing required .env entry: $key" >&2
     return 1
   fi
+}
+
+# One `environment:` entry of one service, out of the canonical YAML that
+# `docker compose config` renders.
+#
+# ANCHORED BY STRUCTURE, NOT BY A TEXT MATCH, and that is the whole point of it.
+# The render also carries the top-level `x-app-environment` anchor, and that
+# block holds a DATABASE_URL of its own -- the WEB slots' one, which has no lock
+# timeout on it. A grep for the key finds that one too, and four services'
+# besides; picking the wrong one is precisely the failure this rewrite removes.
+#
+# Compose's output is generated rather than hand-written: no comments, no blank
+# lines inside a mapping, and two spaces per level. So the four levels below are
+# exact -- `services:` at column 0, the service name at two, its keys at four,
+# and its environment entries at six -- and a line at any other depth cannot be
+# mistaken for one of them.
+compose_service_environment_value() {
+  local rendered="$1"
+  local service="$2"
+  local key="$3"
+
+  printf '%s\n' "$rendered" | awk -v service="$service" -v key="$key" '
+    BEGIN { prefix = "      " key ":" }
+    /^[^[:space:]]/ {
+      in_services = ($0 == "services:"); in_service = 0; in_env = 0; next
+    }
+    in_services && /^  [^[:space:]]/ {
+      in_service = ($0 == "  " service ":"); in_env = 0; next
+    }
+    in_service && /^    [^[:space:]]/ {
+      in_env = ($0 == "    environment:"); next
+    }
+    in_env && index($0, prefix) == 1 {
+      value = substr($0, length(prefix) + 1)
+      sub(/^[[:space:]]+/, "", value)
+      print value
+      exit
+    }
+  '
+}
+
+# The lock_timeout a connection made with this URL would run under, or nothing.
+#
+# Never echo the URL this is handed, here or in any caller: it carries
+# DB_PASSWORD. Only the extracted setting is safe to put in a refusal.
+database_url_lock_timeout_setting() {
+  local url="$1"
+  local options
+
+  # The `options=` query parameter's raw value, to the next `&` or the end.
+  options="$(printf '%s' "$url" | sed -nE 's/.*[?&]options=([^&[:space:]]*).*/\1/p')"
+  if [ -z "$options" ]; then
+    return 0
+  fi
+
+  # What libpq is actually handed. `%20` and `+` are both a space inside a query
+  # value and `%3D` is the equals sign, either case of hex digit.
+  #
+  # The leading `.*` is greedy ON PURPOSE: PostgreSQL applies the LAST `-c` for
+  # a setting given twice, so the last is the one that decides the behaviour.
+  # The captured token is `[^[:space:]]+` rather than digits because
+  # `lock_timeout=5s` is legal PostgreSQL and means five SECONDS -- capturing
+  # only the digits would silently read it as five milliseconds. Handing the
+  # whole token to the integer check refuses it by name instead.
+  printf '%s' "$options" |
+    sed -e 's/+/ /g' -e 's/%20/ /g' -e 's/%3[Dd]/=/g' |
+    sed -nE 's/.*-c[[:space:]]*lock_timeout=([^[:space:]]+).*/\1/p'
+}
+
+# The ceiling the migration bound has to stay under, in milliseconds.
+#
+# THE CEILING HAS ONE HOME AND IT IS NOT THIS SCRIPT (INV-SSOT). It was a
+# hard-coded 9000 here while `MIGRATION_LOCK_TIMEOUT_CEILING_MS` in
+# src/lib/__tests__/helpers/migration-lock-timeout-config.ts derived 10000 from
+# the same underlying fact -- so the two disagreed about the rule as well as the
+# number, and raising `pool_timeout` would have moved one and not the other.
+# Both now read the one input: the web slots' own `pool_timeout`.
+#
+# Why that is the ceiling. A reader blocked behind the migration's ACCESS
+# EXCLUSIVE request holds its Prisma pool connection while it waits, so once
+# `connection_limit` requests are queued every further one is refused with
+# Prisma P2024 after `pool_timeout`. At or past that point the serving colour is
+# already failing member requests and the guard cannot fire in time to prevent
+# anything, so it would be decoration.
+#
+# The LOWER of the two colours, because whichever is serving is the one whose
+# members see the errors, and a deploy does not get to choose which that is.
+migration_lock_timeout_ceiling_ms() {
+  local rendered="$1"
+  local service
+  local url
+  local seconds
+  local lowest=""
+
+  for service in "$BLUE_SERVICE" "$GREEN_SERVICE"; do
+    url="$(compose_service_environment_value "$rendered" "$service" DATABASE_URL)"
+    seconds="$(printf '%s' "$url" | sed -nE 's/.*[?&]pool_timeout=([0-9]+).*/\1/p')"
+    if [ -z "$seconds" ]; then
+      return 1
+    fi
+    if [ -z "$lowest" ] || [ "$seconds" -lt "$lowest" ]; then
+      lowest="$seconds"
+    fi
+  done
+
+  if [ -z "$lowest" ] || [ "$lowest" -le 0 ]; then
+    return 1
+  fi
+
+  printf '%s' "$((lowest * 1000))"
+}
+
+# The deploy guard's lock timeout, refused rather than assumed (#3377).
+#
+# Eighty rows of docs/BLUE_GREEN_MIGRATION_SAFETY.tsv end their lock-impact plan
+# with "let the deploy guard stop on lock timeout". This function is what makes
+# that sentence true on the host: it refuses to deploy at all if the bound that
+# migrations will actually run under has gone missing, or if the value in force
+# would remove the guard instead of relaxing it.
+#
+# WHY IT ASKS COMPOSE INSTEAD OF READING FILES. The first version read the
+# shipped default out of docker-compose.yml with a `sed` and resolved overrides
+# with `get_env_file_value`. Every way that can be wrong turned out to be
+# reachable, and each one leaves the deploy PRINTING a bound the container never
+# receives -- which is worse than no guard, by the same argument the ledger rows
+# make about a named-but-absent mitigation:
+#
+#   - The `sed` was anchored to none of `DATABASE_URL:`, the migrate block, or a
+#     line not commented out, and took the first match. A commented-out example
+#     above the live setting was therefore preferred to it -- and the 45-line
+#     comment this rewrite replaced made that a likely edit, not a contrived one.
+#   - Compose does not read only docker-compose.yml. `COMPOSE_FILE` in the
+#     project `.env` on the deployment host names an overlay as well, and a
+#     `docker-compose.override.yml` is merged with no configuration at all.
+#     Either can take the option off the migrate service without the tracked
+#     file changing at all, and the script passes no `-f` to say otherwise.
+#   - `get_env_file_value` misses an indented line, an `export ` prefix and
+#     spaces around the `=`, and takes the FIRST duplicate where Compose takes
+#     the LAST. This repository measured all four against real Compose in #3034
+#     and fixed them for one key only; routing a safety-critical value through
+#     the reader that was left broken put `MIGRATION_LOCK_TIMEOUT_MS=0` -- the
+#     single value this exists to refuse -- back within reach.
+#
+# `docker compose config` resolves the overlay list, the project `.env`, the
+# shell environment and `${VAR:-default}` interpolation exactly as the step-13
+# `docker compose run` will. Asking it is the only way the contract "the value
+# checked here is the value the migrate container receives" is true rather than
+# aspirational, and all three failures above stop existing rather than being
+# patched one at a time.
+#
+# It still runs at step 3, before anything is pulled. The render needs `docker
+# compose` (step 2) and a `.env` carrying DB_PASSWORD, which the
+# `validate_env_contract` call immediately above it has just required; the
+# `--profile` is what makes the migrate service present at all, exactly as at
+# step 13. Everything else it needs, it renders for itself.
+#
+# Two failures it exists to catch, and both are silent without it:
+#   - no lock_timeout on the connection migrations run on. Every migration then
+#     waits forever again and no deploy output says so.
+#   - MIGRATION_LOCK_TIMEOUT_MS=0. PostgreSQL reads 0 as "wait forever", not as
+#     "unset", so the most natural way to write "turn this off" is also the most
+#     dangerous, and it looks like a configured value in every log.
+validate_migration_lock_timeout_contract() {
+  local rendered
+  local stderr_file
+  local url
+  local value
+  local ceiling_ms
+  local max_ms
+
+  stderr_file="$(mktemp)"
+  if ! rendered="$(docker compose --profile "$MIGRATE_SERVICE" config 2>"$stderr_file")"; then
+    cat "$stderr_file" >&2
+    rm -f "$stderr_file"
+    echo "Could not render the Docker Compose configuration, so the lock timeout the migrate" >&2
+    echo "container would run under is unknown. Refusing to deploy rather than assume one (#3377)." >&2
+    return 1
+  fi
+  rm -f "$stderr_file"
+
+  url="$(compose_service_environment_value "$rendered" "$MIGRATE_SERVICE" DATABASE_URL)"
+  if [ -z "$url" ]; then
+    echo "The resolved Compose configuration has no DATABASE_URL on the '${MIGRATE_SERVICE}' service," >&2
+    echo "so nothing at all can be said about the lock timeout migrations would run under (#3377)." >&2
+    return 1
+  fi
+
+  value="$(database_url_lock_timeout_setting "$url")"
+  if [ -z "$value" ]; then
+    echo "The '${MIGRATE_SERVICE}' service's RESOLVED DATABASE_URL carries no lock_timeout." >&2
+    echo "Every migration would wait forever for a lock it cannot get, which is the outage the" >&2
+    echo "blue/green safety ledger says this deploy is protected from." >&2
+    echo "Restore '${MIGRATION_LOCK_TIMEOUT_OPTION_HINT}' on that URL. If docker-compose.yml still" >&2
+    echo "has it, check every overlay Compose is merging (COMPOSE_FILE in .env, and any" >&2
+    echo "docker-compose.override.yml): an overlay can remove it without that file changing (#3377)." >&2
+    return 1
+  fi
+
+  if ! ceiling_ms="$(migration_lock_timeout_ceiling_ms "$rendered")"; then
+    echo "Could not read a pool_timeout from both web colours in the resolved Compose" >&2
+    echo "configuration, so the ceiling the migration lock timeout has to stay under cannot be" >&2
+    echo "derived. Refusing to deploy rather than fall back to a number typed here (#3377)." >&2
+    return 1
+  fi
+  max_ms=$((ceiling_ms - 1))
+
+  require_integer_setting_in_range MIGRATION_LOCK_TIMEOUT_MS "$value" \
+    "$MIGRATION_LOCK_TIMEOUT_MIN_MS" "$max_ms" \
+    "0 means wait forever to PostgreSQL rather than unset, and at the web slots' pool_timeout (${ceiling_ms}ms) a blocked table is already refusing member requests with Prisma P2024, so the guard could not fire in time to prevent anything" \
+    || return 1
+
+  MIGRATION_LOCK_TIMEOUT_MS_EFFECTIVE="$value"
 }
 
 require_one_of_env_keys() {
@@ -2346,14 +2577,42 @@ require_integer_setting_in_range() {
   local value="$2"
   local min="$3"
   local max="$4"
+  # Optional, and it is the difference between a refusal an operator can act on
+  # and one they have to go and read the script to understand. Callers that pass
+  # nothing keep the bare bound, which is all a warm-up tunable needs.
+  local reason="${5:-}"
+  local magnitude
 
   if ! printf '%s' "$value" | grep -Eq '^[0-9]+$'; then
     echo "${name} must be a non-negative integer. Got: ${value}" >&2
     return 1
   fi
 
+  # WELL-SHAPED IS NOT THE SAME AS COMPARABLE, and the gap between them let an
+  # unbounded value through this function entirely (#3377 review). `[ x -lt y ]`
+  # on a digit string wider than a signed 64-bit integer does not answer the
+  # question: it writes "integer expression expected" and exits **2**. Exit 2 is
+  # not "out of range" — it is false, so BOTH halves of the `||` below were false
+  # and the value was ACCEPTED. Measured with twenty digits: the deploy then ran
+  # on to the step that uses the setting and died there, after images had been
+  # pulled, which is the whole cost the step-3 placement exists to avoid.
+  #
+  # Leading zeros are stripped first so the guard is about magnitude rather than
+  # typing: `0500` is five hundred, not a suspiciously wide number. Eighteen
+  # digits is comfortably inside what every shell here compares in, and no
+  # setting this function guards is within ten orders of magnitude of it.
+  magnitude="$(printf '%s' "$value" | sed 's/^0*//')"
+  if [ "${#magnitude}" -gt 18 ]; then
+    echo "${name} is too large for this script to compare (${#magnitude} digits). It must be between ${min} and ${max}. Got: ${value}" >&2
+    return 1
+  fi
+
   if [ "$value" -lt "$min" ] || [ "$value" -gt "$max" ]; then
-    echo "${name} must be between ${min} and ${max} (the warm-up endpoint refuses anything else). Got: ${value}" >&2
+    if [ -n "$reason" ]; then
+      echo "${name} must be between ${min} and ${max}: ${reason}. Got: ${value}" >&2
+    else
+      echo "${name} must be between ${min} and ${max} (the warm-up endpoint refuses anything else). Got: ${value}" >&2
+    fi
     return 1
   fi
 }
@@ -2869,7 +3128,12 @@ info "Host has the required deployment commands."
 step "3/20" "Validating deployment environment contract"
 validate_env_contract
 validate_image_reference_contract
+# Checked HERE, at the cheapest possible point, and not at step 13 where it is
+# used: a mistyped or removed lock-timeout bound should stop the deploy before
+# it pulls an image, never after a migration has already started waiting (#3377).
+validate_migration_lock_timeout_contract
 info ".env contains the required production settings."
+info "Migrations will wait at most ${MIGRATION_LOCK_TIMEOUT_MS_EFFECTIVE}ms for any lock."
 
 step "4/20" "Validating repository deployment files"
 validate_repo_contract
@@ -2916,6 +3180,11 @@ step "13/20" "Running Prisma migrations"
 # either release, and the terminal is not a record. Armed BEFORE the migrate
 # runs, because a migrate that dies part-way is the case this exists for.
 MIGRATE_STEP_REACHED=1
+# Restated on the step it governs, because this is the line an operator reads
+# back when a migration stops: it says the bound was in force and what it was,
+# so "canceling statement due to lock timeout" a few lines later is a guard
+# firing rather than a mystery. Recovery: PRODUCTION_UPGRADE_RUNBOOK 2.1a.
+info "Lock timeout in force for this migrate: ${MIGRATION_LOCK_TIMEOUT_MS_EFFECTIVE}ms (a migration that cannot get its lock in that time stops the deploy, having applied nothing)."
 docker compose --profile "$MIGRATE_SERVICE" run --rm "$MIGRATE_SERVICE"
 verify_prisma_migration_status
 info "Prisma migration status reports the database is up to date."
