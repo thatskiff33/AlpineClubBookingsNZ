@@ -372,3 +372,139 @@ describe("INV-CONFIG-006 / #3565: one module constructs the money formatters", (
     }
   });
 });
+
+/**
+ * THE THIRD ARM: the hazard the explicit-argument design MOVED rather than removed.
+ *
+ * `club-time-kernel-census.test.ts` carries a third arm the two above have no
+ * equivalent of — "freezes no formatter at module level, in any module" — with
+ * the note that re-introducing one "would put the old defect back underneath the
+ * new API". This stage retired 5 module-level `Intl.NumberFormat` constants, and
+ * the arm above is what stops a sixth. It does not stop this:
+ *
+ * ```ts
+ * const money = bindClubFormat({ currencyCode: "NZD", locale: "en-NZ" });
+ * export const line = (cents: number) => money.cents(cents);
+ * ```
+ *
+ * Which is the SAME defect wearing the new API. Walk what sees it: arm 1 is
+ * green, because no `Intl.NumberFormat` is written. Arm 2 is green, because it
+ * only inspects the declared homes. Both `INV-CONFIG-001` eslint arms are green,
+ * because they are structural checks on `Intl.NumberFormat`'s ARGUMENTS and
+ * there is no such call here. And #3567's compiler sweep is green, because a
+ * two-argument call is exactly what "migrated" looks like. The club's persisted
+ * currency is frozen out of that module for the life of the process, and every
+ * instrument reports success.
+ *
+ * So the hazard moved from a guarded CONSTRUCT to an unguarded OBJECT LITERAL,
+ * and this arm follows it there. Two halves:
+ *
+ * - **no `bindClubFormat` at module scope.** A binding is per request, because
+ *   the format it closes over is. The detector is the club-time census's own —
+ *   a `const`/`let`/`var` initialiser at column zero — with the same known
+ *   limit: it sees the shape this codebase actually writes, not every shape.
+ * - **no hand-written club format.** `currencyCode` is a REQUIRED field of
+ *   `ClubFormat`, so a literal on it is every hand-built format there can be;
+ *   `locale` is included because the pair is what a reader recognises.
+ *
+ * WHY THE TESTS ARE NOT SCANNED, and it matters that this is structural rather
+ * than an exemption: `sourceFiles()` skips `__tests__` and `*.test.ts` already,
+ * so the four `ClubFormat` literals at the top of THIS file — `NZ`, `CH`, `DE`,
+ * `JP` — are outside the population by construction. A test pinning a currency
+ * is legitimate and is the only way to prove the argument is load-bearing. The
+ * `INV-CONFIG-001` lint message says "there is no legitimate literal locale or
+ * currency code in `src/`", and after this file there is one class of them; the
+ * message is about `Intl.NumberFormat` arguments in production code, which
+ * remains true.
+ */
+
+/** Files allowed a literal on one of the two field names, with the reason. */
+const LITERAL_FORMAT_EXEMPTIONS = new Map<string, string>([
+  [
+    path.join("src", "app", "layout.tsx"),
+    "NOT A `ClubFormat`. `openGraph.locale` is an Open Graph territory tag in the UNDERSCORE form (`en_NZ`), a Next `Metadata` field consumed by link-preview crawlers — a different grammar from the BCP 47 tag this kernel validates, and nothing renders an amount or a number through it. It is a genuine `INV-CONFIG-001`-shaped hardcode of the same family and it is NOT this stage's to move: the programme's remaining server-reader stage owns it, and an entry here is what makes it visible rather than absent.",
+  ],
+]);
+
+/** `const money = bindClubFormat(...)` at column zero — a frozen binding. */
+export function findModuleScopeBindings(source: string): number {
+  return (
+    source.match(
+      /^(?:export\s+)?(?:const|let|var)\s+\w+\s*(?::[^=\n]+)?=\s*bindClubFormat\s*\(/gm,
+    ) ?? []
+  ).length;
+}
+
+/** A string literal on either `ClubFormat` field name. */
+export function findLiteralFormatFields(source: string): string[] {
+  return [...source.matchAll(/\b(currencyCode|locale)\s*:\s*["'`]/g)].map(
+    (match) => match[1],
+  );
+}
+
+describe("INV-CONFIG-006 / #3565: no module freezes the club's format", () => {
+  it("counts the shapes it claims to, and not their near misses", () => {
+    expect(
+      findModuleScopeBindings('const money = bindClubFormat({ currencyCode: "NZD", locale: "en-NZ" });'),
+    ).toBe(1);
+    expect(
+      findModuleScopeBindings("export const money = bindClubFormat(format);"),
+    ).toBe(1);
+    expect(
+      findModuleScopeBindings("let money: BoundClubFormat = bindClubFormat(f);"),
+    ).toBe(1);
+    // Inside a function, which is where a binding belongs: indented, so not at
+    // column zero. This is the limit the club-time census states for its own
+    // twin, carried over rather than quietly widened.
+    expect(
+      findModuleScopeBindings("function render() {\n  const money = bindClubFormat(format);\n}"),
+    ).toBe(0);
+    expect(findLiteralFormatFields('{ currencyCode: "NZD" }')).toEqual([
+      "currencyCode",
+    ]);
+    expect(findLiteralFormatFields("{ locale: 'de-CH' }")).toEqual(["locale"]);
+    // A field READ, a variable and a type are not a hardcoded format.
+    expect(findLiteralFormatFields("format.currencyCode")).toEqual([]);
+    expect(findLiteralFormatFields("{ currencyCode: code }")).toEqual([]);
+    expect(findLiteralFormatFields("interface X { locale: string }")).toEqual([]);
+  });
+
+  it("finds no module-scope binding and no hand-written format", () => {
+    const boundAtModuleScope: string[] = [];
+    const handWritten: string[] = [];
+    for (const file of sourceFiles(SRC)) {
+      const relative = path.relative(process.cwd(), file);
+      const code = stripComments(readFileSync(file, "utf8"));
+      if (findModuleScopeBindings(code) > 0) boundAtModuleScope.push(relative);
+      if (
+        findLiteralFormatFields(code).length > 0 &&
+        !LITERAL_FORMAT_EXEMPTIONS.has(relative)
+      ) {
+        handWritten.push(relative);
+      }
+    }
+
+    expect(
+      boundAtModuleScope,
+      `INV-CONFIG-006: these modules call \`bindClubFormat\` at module scope, which freezes the club's currency and locale for the life of the process — the exact defect #3565 retired five \`Intl.NumberFormat\` constants to remove, rebuilt on top of the new API. Bind inside the request: \`const money = await clubFormat()\` in a server component or handler, or \`bindClubFormat(props.clubFormat)\` inside a client component. Offenders: ${boundAtModuleScope.join(", ") || "(none)"}`,
+    ).toEqual([]);
+
+    expect(
+      handWritten,
+      `INV-CONFIG-006: these modules write a currency code or a locale tag as a literal into an object. The club's format is a persisted setting (#3563) and reaches a renderer as DATA — \`clubFormat()\` / \`clubFormatValues()\` on the server, \`useClubFormat()\` in the browser. A hand-written one is a second authority that the eslint arms cannot see, because they check \`Intl.NumberFormat\`'s arguments and this constructs nothing. If it is genuinely not a \`ClubFormat\`, add it to LITERAL_FORMAT_EXEMPTIONS with the reason. Offenders: ${handWritten.join(", ") || "(none)"}`,
+    ).toEqual([]);
+  });
+
+  it("keeps every exemption real and reasoned", () => {
+    for (const [relative, reason] of LITERAL_FORMAT_EXEMPTIONS) {
+      const code = stripComments(
+        readFileSync(path.join(process.cwd(), relative), "utf8"),
+      );
+      expect(
+        findLiteralFormatFields(code).length,
+        `${relative} no longer writes a literal currency code or locale — delete its exemption rather than leave a permission nobody needs.`,
+      ).toBeGreaterThan(0);
+      expect(reason.trim().length).toBeGreaterThanOrEqual(40);
+    }
+  });
+});
