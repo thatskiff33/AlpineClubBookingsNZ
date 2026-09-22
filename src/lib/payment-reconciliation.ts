@@ -72,6 +72,8 @@ import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
+import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
+import { postBookingLedgerLines } from "@/lib/booking-ledger-write";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -1531,6 +1533,49 @@ async function settleBookingPaymentInTransaction(
     if (claimed.count === 0) {
       throw new Error(
         "Booking status changed concurrently during the PAID claim (#1881)"
+      );
+    }
+
+    // #3580 (programme #3527, C1): post the booking's charge lines to the
+    // append-only money ledger, in THIS transaction and under THIS claim, so a
+    // settle that rolls back leaves no line saying it did not. Nothing reads
+    // these rows — the mirror columns are still the answer until C5 (#3584) —
+    // which is why a posting failure must not be able to fail a settle that
+    // has already taken the member's money. It cannot: the planner is pure,
+    // the write is one `createMany` of rows nothing references, and the
+    // strands it cannot price (`INV-MOD-028`: a blank night is not evidence)
+    // are simply not posted, for C4's census (#3583) to report as coverage.
+    //
+    // AND IT CANNOT, BY CONSTRUCTION: the posting is wrapped, because "must
+    // not be able to" is a claim a comment cannot keep. A throw here would
+    // roll back a settle whose money is already captured — the worst outcome
+    // in this file — to protect rows nobody reads. What catches a swallowed
+    // failure instead is C4's census (#3583): a booking with money columns
+    // and no lines is a coverage gap, and coverage must reach zero before any
+    // read moves. So the failure is recorded, not lost.
+    try {
+      const ledgerPlan = planConfirmationChargeLines({
+        id: booking.id,
+        lodgeId: booking.lodgeId,
+        totalPriceCents: booking.totalPriceCents,
+        promoAdjustmentCents: booking.promoAdjustmentCents,
+        guests: booking.guests,
+      });
+      await postBookingLedgerLines(tx, ledgerPlan.postings);
+      if (!ledgerPlan.reconciles) {
+        logger.warn(
+          {
+            bookingId: booking.id,
+            unpricedStrandIds: ledgerPlan.unpricedStrandIds,
+            postedLines: ledgerPlan.postings.length,
+          },
+          "Booking ledger: posted charge lines do not add up to the booking's final price (#3580)"
+        );
+      }
+    } catch (error) {
+      logger.error(
+        { err: error, bookingId: booking.id },
+        "Booking ledger: failed to post charge lines for a settled booking; the settle stands and the gap is the census's to report (#3580)"
       );
     }
 

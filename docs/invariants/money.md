@@ -424,6 +424,37 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   guest-add mismatch is therefore visible for #3244 to repair separately; this
   rule does not choose a card, charge, refund, credit, or invoice correction.
 
+## INV-MONEY-032
+
+- **A booking's money ledger is append-only, and one module writes it**
+  (#3580, programme #3527 stage 4; design
+  [`design/booking-ledger.md`](../design/booking-ledger.md)).
+  `BookingLedgerLine` records what happened to a booking's money as posted
+  lines: charge, settlement or adjustment, each with a sign, a quantity, a
+  unit price and the event that anchored it. A line is never updated and never
+  deleted; a correction is a new line naming the one it reverses, and
+  `reversesLineId` is unique so a line is reversed at most once.
+
+  **The balance is derived, never stored.** `booking-ledger-balance.ts` is the
+  one place charged, settled, adjusted and owed are summed. There is no
+  running-total column and no status: a stored copy of a derived figure is the
+  mirror this table exists to retire.
+
+  **`booking-ledger-write.ts` is the only door**, it exposes creation alone,
+  and every posting goes inside the transaction of the writer whose act it
+  records — a settle that rolls back leaves no line saying it did not. The
+  database holds the shape rules the writer must never get wrong: a sign is
+  1 or -1, `amountCents` IS `sign * unitCents * quantity` with a non-negative
+  unit and quantity, and a `GUEST_NIGHT` line names its strand and its nights
+  while nothing else does. `booking-ledger-append-only-census.test.ts` reads
+  the tree and fails a second writer, or any update, upsert or delete of a
+  line, anywhere — including in the door.
+
+  Stage C1 posts charge lines at confirmation, from the night rows, and
+  nothing reads them: `INV-PAY-047`'s mirror is still the answer until the
+  reads move (#3584). A strand with an unpriced night posts nothing, because
+  `INV-MOD-028` says a blank is not evidence of an amount.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and
