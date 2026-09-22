@@ -20,7 +20,7 @@ each is a candidate for a real split of its own, which is a refactor with its
 own issue rather than something to attempt inside a rendering fix.
 
 file: src/app/(admin)/admin/audit-log/page.tsx
-lines: 1102
+lines: 1124
 reason: one import of formatAuditMetadataJson, which renders the metadata panel.
   The annotation logic itself went into a new module
   (src/lib/audit-metadata-amounts.ts, inside its own budget) rather
