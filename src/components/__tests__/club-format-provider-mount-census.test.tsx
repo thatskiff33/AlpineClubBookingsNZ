@@ -165,6 +165,24 @@ describe("club-format provider mount census (#3564)", () => {
     }
   });
 
+  /**
+   * The reader a mount point must use, and why the spelling moved at #3565.
+   *
+   * Stage 2 wrote `getClubFormat()` from `@/lib/club-format-settings`, because
+   * stage 1 cached nothing and recorded that the caching contract belonged to
+   * stage 3. Stage 3 chose it: React `cache()`, in `club-format-server.ts`.
+   *
+   * REQUIRING THE WRAPPED READER IS THE POINT, not tidiness. `cache()` memoises
+   * per FUNCTION IDENTITY, so a mount point still calling the raw reader holds
+   * its own memo entry and reads the one-row table a SECOND time in any render
+   * pass where something below it renders an amount through `clubFormat()`.
+   * That is a defect nothing else in the tree can see, and it is what this
+   * assertion now holds closed. `club-format-server.ts` re-exports nothing and
+   * invents nothing: `clubFormatValues()` is `getClubFormat()` wrapped, so the
+   * persisted-not-environment property below is unchanged.
+   */
+  const PERSISTED_READER_IMPORT = 'from "@/lib/club-format-server"';
+
   it("the server half reads the PERSISTED setting, not the environment", () => {
     for (const file of [
       "src/components/app-providers.tsx",
@@ -172,11 +190,14 @@ describe("club-format provider mount census (#3564)", () => {
     ]) {
       const source = stripComments(read(file));
       expect(
-        source.includes('from "@/lib/club-format-settings"'),
+        source.includes(PERSISTED_READER_IMPORT),
         `${file} must resolve the club's format through ` +
-          "@/lib/club-format-settings, which reads ClubFormatSettings and " +
-          "consults the environment only while nothing is persisted " +
-          "(INV-CONFIG-006).",
+          "@/lib/club-format-server, whose clubFormatValues() is the " +
+          "request-scoped reader over ClubFormatSettings and consults the " +
+          "environment only while nothing is persisted (INV-CONFIG-006). The " +
+          "raw getClubFormat() is not interchangeable here: React cache() " +
+          "memoises per function identity, so the raw call reads the row a " +
+          "second time in a pass that also calls clubFormat() (#3565).",
       ).toBe(true);
       expect(
         /APP_CURRENCY|APP_LOCALE|process\.env/.test(source),
@@ -202,9 +223,10 @@ describe("club-format provider mount census (#3564)", () => {
           "<ClubFormatProvider> itself. Nothing else covers it.",
       ).toBe(true);
       expect(
-        source.includes('from "@/lib/club-format-settings"'),
+        source.includes(PERSISTED_READER_IMPORT),
         `${surface} must resolve the club's format through ` +
-          "@/lib/club-format-settings, on the server (INV-CONFIG-006).",
+          "@/lib/club-format-server, on the server (INV-CONFIG-006) — see " +
+          "PERSISTED_READER_IMPORT for why the raw reader is not interchangeable.",
       ).toBe(true);
       expect(
         /APP_CURRENCY|APP_LOCALE/.test(source),

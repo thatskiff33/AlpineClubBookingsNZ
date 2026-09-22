@@ -48,6 +48,24 @@ import "server-only";
  * `@/lib/prisma` (both carry `server-only`, so such a module is already inside
  * that boundary and adds no new reach). This module is for a render pass, where
  * the memo is the point.
+ *
+ * ## Inside a render pass, the raw reader is a SECOND read, not a synonym
+ *
+ * React `cache()` memoises per FUNCTION IDENTITY. `clubFormat()`,
+ * `clubFormatValues()` and the raw `getClubFormat()` are three identities, so a
+ * component calling the raw one in a pass where anything else calls either of
+ * these reads the same one-row table twice. The two exported here share a memo
+ * on purpose — `clubFormat()` builds its binding from `clubFormatValues()` —
+ * so a page that takes the binding and a chrome that takes the values cost one
+ * read between them.
+ *
+ * That was a real defect and not a hypothetical: the three surfaces that hand
+ * the format to the browser (`app-providers.tsx`, `website/website-chrome.tsx`,
+ * `app/display/page.tsx`) were written against the raw reader at #3564, before
+ * this contract existed, and `app-providers.tsx`'s own docblock said so in as
+ * many words. `club-format-provider-mount-census.test.tsx` now requires all
+ * three to import from this module, which is what keeps the sentence above a
+ * property rather than a claim.
  */
 
 import { cache } from "react";

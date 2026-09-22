@@ -63,8 +63,8 @@ kernel's reasoning, unchanged.
 
 ## The caching contract
 
-`clubFormat()` is wrapped in React `cache()`: request-scoped, with no
-invalidation contract at all. The admin route that changes the club's currency
+`clubFormat()` and `clubFormatValues()` are wrapped in React `cache()`:
+request-scoped, with no invalidation contract at all. The admin route that changes the club's currency
 cannot forget to bust anything, and the very next request reads the new value.
 Outside a render pass — a cron tick, a webhook, a script — `cache()` degrades to
 "no memo", which is correct: those are not requests. The `Intl` memo in
@@ -73,7 +73,15 @@ primary-key read, never a rebuilt formatter.
 
 ## Which reader a given module wants
 
-- **In a render pass or a request** — `clubFormat()`.
+- **In a render pass or a request** — `clubFormat()` for the operations, or
+  `clubFormatValues()` when what you need is the two VALUES: a prop for a
+  `"use client"` child, or an argument for a `src/lib` helper that renders
+  several amounts of its own. They share one memo, so a component that takes the
+  values and a component below it that takes the binding cost one read between
+  them. **Not the raw `getClubFormat()`** — React `cache()` memoises per function
+  identity, so a call that bypasses these two is a second read of the same
+  one-row table in the same pass. `club-format-provider-mount-census.test.tsx`
+  holds that closed for the three surfaces that hand the format to the browser.
 - **A `src/lib` module a `tsx` entry point can reach** — take
   `money: BoundClubFormat` (or `format: ClubFormat`) as a parameter, threaded
   from whoever is in the request. This is what keeps such a module off the
