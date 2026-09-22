@@ -231,6 +231,7 @@ import "server-only";
 import { z } from "zod";
 
 import { auditCategoriesForCorrelationDomain } from "@/lib/audit-categories";
+
 import { deletedAccountSql } from "@/lib/deleted-account";
 
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
@@ -407,7 +408,7 @@ const MEMBER_SUMMARY_SQL = `SELECT
   m."canLogin" AS can_login,
   ${utcInstant('m."cancelledAt"')} AS cancelled_at_utc,
   ${utcInstant('m."archivedAt"')} AS archived_at_utc,
-  ${deletedAccountSql('m."deletedAt"', 'm."email"')} AS lifecycle_deleted,
+  ${deletedAccountSql('m."deletedAt"','m."email"')} AS lifecycle_deleted,
   ${dateOnly('m."joinedDate"')} AS joined_date,
   ${dateOnly('m."lifeMemberDate"')} AS life_member_date,
   m."requiresInduction" AS requires_induction,
@@ -925,9 +926,7 @@ const memberBookingSummary = defineDiagnosticsTool<MemberIdArgs>({
     // THREE-VALUED, so `boolOrNull` and never `boolOf`: `boolOf` maps NULL to
     // `false`, which would turn "this member holds no guest row on this booking"
     // into the specific and untrue claim "they are on it but not present".
-    memberOperationallyPresent: nullableBoolOf(
-      row.member_operationally_present,
-    ),
+    memberOperationallyPresent: nullableBoolOf(row.member_operationally_present,),
     deletedAtUtc: instantOrNull(row.deleted_at_utc),
     createdAtUtc: instantOrNull(row.created_at_utc) ?? "",
   }),

@@ -289,9 +289,7 @@ async function captureAnonymisationPayload(): Promise<Record<string, unknown>> {
         // pre-anonymisation row and allow the write through.
         findUnique: vi.fn().mockResolvedValue(liveMember()),
       },
-      familyGroupMember: {
-        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
-      },
+      familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }), },
       bookingGuest: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       bedAllocation: {
         findMany: vi.fn().mockResolvedValue([]),
@@ -335,13 +333,12 @@ async function captureAnonymisationPayload(): Promise<Record<string, unknown>> {
     res.status === 200
       ? ""
       : ` | logged: ${JSON.stringify(
-          (
-            logger.error as unknown as { mock: { calls: unknown[][] } }
-          ).mock.calls.map((call) => {
-            const [context] = call as [{ err?: unknown }?];
-            const err = context?.err;
-            return err instanceof Error ? err.message : String(err);
-          }),
+          (logger.error as unknown as { mock: { calls: unknown[][] } }).mock
+            .calls.map((call) => {
+              const [context] = call as [{ err?: unknown }?];
+              const err = context?.err;
+              return err instanceof Error ? err.message : String(err);
+            }),
         )}`;
   expect(res.status, `${await res.clone().text()}${loggedCause}`).toBe(200);
   expect(memberUpdate).toHaveBeenCalledTimes(1);

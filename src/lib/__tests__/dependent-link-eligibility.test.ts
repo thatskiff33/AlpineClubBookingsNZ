@@ -135,9 +135,7 @@ function toSqliteSelect(query: CapturedQuery) {
       .concat([query.sql.length]),
   );
 
-  const body = query.sql
-    .slice(fromAt, pagingAt)
-    .replaceAll('"public".', "")
+  const body = query.sql.slice(fromAt, pagingAt).replaceAll('"public".', "")
     // Prisma expresses a case-insensitive Postgres suffix match as ILIKE.
     // SQLite's LIKE is already ASCII case-insensitive, so this preserves the
     // exact semantics needed by the reserved-address fixture.

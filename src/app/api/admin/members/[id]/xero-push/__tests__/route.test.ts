@@ -15,9 +15,7 @@ vi.mock("@/lib/session-guards", () => ({
 
 const mockMemberFindUnique = vi.fn();
 vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    member: { findUnique: (...a: unknown[]) => mockMemberFindUnique(...a) },
-  },
+  prisma: { member: { findUnique: (...a: unknown[]) => mockMemberFindUnique(...a) }, },
 }));
 
 const mockCreate = vi.fn();
@@ -169,9 +167,7 @@ describe("POST /api/admin/members/[id]/xero-push (#2089)", () => {
     expect(res.status).toBe(422);
     const body = await res.json();
     expect(body.missingFields).toEqual(["Email"]);
-    expect(body.error).toBe(
-      "Complete these fields before creating in Xero: Email",
-    );
+    expect(body.error).toBe("Complete these fields before creating in Xero: Email",);
   });
 
   it("maps a missing-name validation error to 422 listing only name fields", async () => {
@@ -232,7 +228,9 @@ describe("POST /api/admin/members/[id]/xero-push (#2089)", () => {
   ])(
     "maps an ambiguous reservation to the fixed safe 409 on the %s path",
     async (_label, body) => {
-      mockCreate.mockRejectedValueOnce(new XeroContactCreateInProgressError());
+      mockCreate.mockRejectedValueOnce(
+        new XeroContactCreateInProgressError()
+      );
 
       const response = await POST(postReq(body), { params });
 
@@ -269,9 +267,7 @@ describe("POST /api/admin/members/[id]/xero-push (#2089)", () => {
 
   it("marks a newly created contact as linked when history refresh is deferred", async () => {
     mockCreate.mockResolvedValue("contact-1");
-    mockSyncHistory.mockRejectedValue(
-      new HostingCoverageParticipantRetryError(),
-    );
+    mockSyncHistory.mockRejectedValue(new HostingCoverageParticipantRetryError(),);
 
     const res = await POST(postReq(), { params });
 

@@ -36,10 +36,7 @@ const base = {
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..", "..", "..");
 
-function documentedGrantCount(
-  document: string,
-  relation: string,
-): number | null {
+function documentedGrantCount(document: string, relation: string,): number | null {
   const rows = document
     .split(/\r?\n/)
     .filter((candidate) => candidate.trimStart().startsWith("|"))

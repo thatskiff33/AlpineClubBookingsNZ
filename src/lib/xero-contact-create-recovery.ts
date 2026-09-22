@@ -142,8 +142,8 @@ export class XeroContactCreateBlocksDeletionError extends Error {
   }
 }
 
-export type MemberContactCreateRecoveryState =
-  "CREATE_IN_PROGRESS" | "PROVIDER_CREATED_LINK_PENDING";
+export type MemberContactCreateRecoveryState = "CREATE_IN_PROGRESS"
+  | "PROVIDER_CREATED_LINK_PENDING";
 
 /**
  * The exact operation a member CONTACT lifecycle refusal is about, so merge,
@@ -165,31 +165,29 @@ export type MemberContactChangeBlocker = {
  */
 const CONTACT_CREATE_RECOVERY_CLOSE_SCAN_LIMIT = 20;
 
-const contactCreateIdentityWhere = (memberId: string) =>
-  ({
-    direction: "OUTBOUND",
-    entityType: "CONTACT",
-    operationType: "CREATE",
-    localModel: "Member",
-    localId: memberId,
-    manuallyResolvedAt: null,
-  }) satisfies Prisma.XeroSyncOperationWhereInput;
+const contactCreateIdentityWhere = (memberId: string) => ({
+  direction: "OUTBOUND",
+  entityType: "CONTACT",
+  operationType: "CREATE",
+  localModel: "Member",
+  localId: memberId,
+  manuallyResolvedAt: null,
+}) satisfies Prisma.XeroSyncOperationWhereInput;
 
-const providerCreatedPayloadWhere = (phase: string) =>
-  [
-    {
-      responsePayload: {
-        path: ["phase"],
-        equals: phase,
-      },
+const providerCreatedPayloadWhere = (phase: string) => [
+  {
+    responsePayload: {
+      path: ["phase"],
+      equals: phase,
     },
-    {
-      responsePayload: {
-        path: ["providerContactCreated"],
-        equals: true,
-      },
+  },
+  {
+    responsePayload: {
+      path: ["providerContactCreated"],
+      equals: true,
     },
-  ] satisfies Prisma.XeroSyncOperationWhereInput[];
+  },
+] satisfies Prisma.XeroSyncOperationWhereInput[];
 
 export function ambiguousMemberContactCreateReservationWhere(
   memberId: string,

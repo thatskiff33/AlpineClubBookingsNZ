@@ -23,11 +23,13 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 vi.mock("@/lib/member-fields-settings", () => ({
-  loadMemberFieldsFlags: vi.fn().mockResolvedValue({
-    showTitle: false,
-    showGender: false,
-    showOccupation: false,
-  }),
+  loadMemberFieldsFlags: vi
+    .fn()
+    .mockResolvedValue({
+      showTitle: false,
+      showGender: false,
+      showOccupation: false,
+    }),
 }));
 vi.mock("@/lib/age-tier", () => ({
   getAgeTierSettings: vi.fn().mockResolvedValue([]),
@@ -125,9 +127,7 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
   });
 
   it("emits the cancelled date as an NZ date-only, not a full ISO datetime", async () => {
-    vi.mocked(prisma.member.findMany).mockResolvedValue([
-      baseMember(),
-    ] as never);
+    vi.mocked(prisma.member.findMany).mockResolvedValue([baseMember(),] as never);
 
     const res = await exportRequest();
     expect(res.status).toBe(200);
@@ -197,9 +197,7 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
   });
 
   it("round-trips the exported CSV back through the member import cleanly", async () => {
-    vi.mocked(prisma.member.findMany).mockResolvedValue([
-      baseMember(),
-    ] as never);
+    vi.mocked(prisma.member.findMany).mockResolvedValue([baseMember(),] as never);
 
     const res = await exportRequest();
     const csv = await res.text();

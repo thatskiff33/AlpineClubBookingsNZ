@@ -99,14 +99,10 @@ vi.mock("@/lib/access-roles", () => ({
   memberHoldsPrivilegedRole: h.memberHoldsPrivilegedRole,
 }));
 vi.mock("@/lib/admin-account-guards", async () => {
-  const actual = (await vi.importActual(
-    "@/lib/admin-account-guards",
-  )) as typeof import("@/lib/admin-account-guards");
+  const actual = (await vi.importActual("@/lib/admin-account-guards",)) as typeof import("@/lib/admin-account-guards");
   return { ...actual, wouldRemoveLastFullAdmin: h.wouldRemoveLastFullAdmin };
 });
-vi.mock("@/lib/access-role-definitions", () => ({
-  MEMBER_ACCESS_ROLE_SELECT: {},
-}));
+vi.mock("@/lib/access-role-definitions", () => ({ MEMBER_ACCESS_ROLE_SELECT: {}, }));
 vi.mock("@/lib/email", () => ({
   sendAccountDeletionApprovedEmail: h.sendAccountDeletionApprovedEmail,
   sendAccountDeletionRejectedEmail: h.sendAccountDeletionRejectedEmail,
@@ -165,9 +161,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.requireAdmin.mockResolvedValue({
     ok: true,
-    session: {
-      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
-    },
+    session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] }, },
   });
   h.prisma.deletionRequest.findUnique.mockResolvedValue({
     id: "req-1",
@@ -483,9 +477,7 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
       blocker: {
         code: "LAST_FULL_ADMIN_GUARD",
         message: expect.stringContaining("last Full Admin"),
-        remedy: expect.stringContaining(
-          "another active account Full Admin access",
-        ),
+        remedy: expect.stringContaining("another active account Full Admin access",),
       },
     });
     expect(h.prisma.member.update).not.toHaveBeenCalled();
@@ -522,8 +514,7 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
       h.acquireFuturePartnerSharedAllocationLocks.mock.invocationCallOrder[0];
     const memberLockOrder = h.prisma.$executeRaw.mock.invocationCallOrder[0];
     const heldSweepOrder =
-      h.sweepFuturePartnerSharedAllocationsWithLocksHeld.mock
-        .invocationCallOrder[0];
+      h.sweepFuturePartnerSharedAllocationsWithLocksHeld.mock.invocationCallOrder[0];
     const hostingEnqueueOrder =
       h.enqueueHostingCoverageReevaluationForMember.mock.invocationCallOrder[0];
     const anonymiseOrder = h.prisma.member.update.mock.invocationCallOrder[0];
@@ -547,8 +538,7 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
       expect.any(Date),
       { cause: "SYSTEM_CHANGE", actorMemberId: "admin-1" },
     );
-    const receiptOrder =
-      h.sendAccountDeletionApprovedEmail.mock.invocationCallOrder[0];
+    const receiptOrder = h.sendAccountDeletionApprovedEmail.mock.invocationCallOrder[0];
     expect(anonymiseOrder).toBeLessThan(receiptOrder);
     expect(receiptOrder).toBeLessThan(
       h.settleHostingCoverageAfterCommit.mock.invocationCallOrder[0],
@@ -658,9 +648,7 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
     });
     const claimOrder =
       h.prisma.deletionRequest.updateMany.mock.invocationCallOrder[0];
-    expect(claimOrder).toBeLessThan(
-      h.cancelBooking.mock.invocationCallOrder[0],
-    );
+    expect(claimOrder).toBeLessThan(h.cancelBooking.mock.invocationCallOrder[0],);
   });
 
   it("refuses to start an approval a rejection already won, cancelling nothing", async () => {
@@ -1243,11 +1231,9 @@ describe("POST /api/admin/deletion-requests/[id] deciding a released request (#2
     // The guard is what refused it, in one attempt, and the marker's absence is
     // part of it rather than of a preceding read.
     expect(h.prisma.deletionRequest.updateMany).toHaveBeenCalledTimes(1);
-    expect(h.prisma.deletionRequest.updateMany.mock.calls[0][0].where).toEqual({
-      id: "req-1",
-      status: "PENDING",
-      reviewedAt: null,
-    });
+    expect(
+      h.prisma.deletionRequest.updateMany.mock.calls[0][0].where
+    ).toEqual({ id: "req-1", status: "PENDING", reviewedAt: null, });
     // Nothing decided and nothing said: the member is not emailed a rejection
     // that did not happen.
     expect(h.sendAccountDeletionRejectedEmail).not.toHaveBeenCalled();

@@ -24,12 +24,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   prisma: {
     xeroSyncCursor: { findUnique: vi.fn() },
-    member: {
-      findMany: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      updateMany: vi.fn(),
-    },
+    member: { findMany: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), },
     booking: { findMany: vi.fn() },
     bookingRequest: { findMany: vi.fn() },
     organisation: { findMany: vi.fn() },
@@ -66,8 +61,7 @@ vi.mock("@/lib/xero-environment-write-gate", async (importOriginal) => {
   (INV-SSOT) rather than a second copy written to agree with it.
 */
 vi.mock("@/lib/xero-contacts", async (importOriginal) => {
-  const actual =
-    (await importOriginal()) as typeof import("@/lib/xero-contacts");
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-contacts");
   return { ...actual, findOrCreateXeroContact: mocks.findOrCreateXeroContact };
 });
 
@@ -128,35 +122,33 @@ function givenTree(input: {
       ? null
       : { lastSuccessfulSyncAt: input.syncedAt ?? SYNCED_AT },
   );
-  mocks.prisma.member.findMany.mockImplementation(
-    async (args: {
-      where?: {
-        xeroContactId?: { in?: string[]; not?: null };
-        id?: { in?: string[] };
-      };
-    }) => {
-      // The held-by read is the only one keyed on a contact-id set.
-      if (args?.where?.xeroContactId?.in) {
-        return (input.heldByMembers ?? []).map((contactId) => ({
-          xeroContactId: contactId,
-        }));
-      }
-      /*
+  mocks.prisma.member.findMany.mockImplementation(async (args: {
+    where?: {
+      xeroContactId?: { in?: string[]; not?: null };
+      id?: { in?: string[] };
+    };
+  }) => {
+    // The held-by read is the only one keyed on a contact-id set.
+    if (args?.where?.xeroContactId?.in) {
+      return (input.heldByMembers ?? []).map((contactId) => ({
+        xeroContactId: contactId,
+      }));
+    }
+    /*
       The run's "which reviewed members already hold a contact" read, which is
       what separates ALREADY_DONE from NO_LONGER_PUSHABLE. Keyed on an id set
       plus a non-null contact, and answered from the SAME fixtures rather than
       from a second list, so the two states cannot be set independently of what
       the population actually says.
     */
-      if (args?.where?.id?.in) {
-        const ids = args.where.id.in;
-        return (input.members ?? [member()])
-          .filter((row) => ids.includes(row.id) && row.xeroContactId !== null)
-          .map((row) => ({ id: row.id }));
-      }
-      return input.members ?? [member()];
-    },
-  );
+    if (args?.where?.id?.in) {
+      const ids = args.where.id.in;
+      return (input.members ?? [member()])
+        .filter((row) => ids.includes(row.id) && row.xeroContactId !== null)
+        .map((row) => ({ id: row.id }));
+    }
+    return input.members ?? [member()];
+  },);
   mocks.prisma.booking.findMany.mockResolvedValue(
     (input.schoolBookingMemberIds ?? []).map((memberId) => ({ memberId })),
   );
@@ -166,9 +158,7 @@ function givenTree(input: {
     })),
   );
   mocks.prisma.organisation.findMany.mockResolvedValue(
-    (input.heldByOrganisations ?? []).map((xeroContactId) => ({
-      xeroContactId,
-    })),
+    (input.heldByOrganisations ?? []).map((xeroContactId) => ({ xeroContactId, })),
   );
   /*
     The `where` is APPLIED rather than ignored. A mock that hands back every
@@ -177,15 +167,14 @@ function givenTree(input: {
     unfalsifiable — measured: a mutation removing it survived until this mock
     started honouring the clause.
   */
-  mocks.prisma.xeroContactCache.findMany.mockImplementation(
-    async (args: {
-      where?: { contactStatus?: string; emailAddress?: { not?: null } };
-    }) =>
-      (input.contacts ?? []).filter(
-        (contact) =>
-          (args?.where?.contactStatus === undefined ||
-            contact.contactStatus === args.where.contactStatus) &&
-          /*
+  mocks.prisma.xeroContactCache.findMany.mockImplementation(async (args: {
+    where?: { contactStatus?: string; emailAddress?: { not?: null } };
+  }) =>
+    (input.contacts ?? []).filter(
+      (contact) =>
+        (args?.where?.contactStatus === undefined ||
+          contact.contactStatus === args.where.contactStatus) &&
+        /*
           #2939: the address narrowing is honoured too, for the same reason the
           status narrowing is. The read used to require a non-null address,
           which made every blank-email contact invisible — and a blank-email
@@ -193,9 +182,9 @@ function givenTree(input: {
           that ignored this clause could not tell the two reads apart, so
           re-adding the narrowing would survive.
         */
-          (args?.where?.emailAddress?.not !== null ||
-            contact.emailAddress !== null),
-      ),
+        (args?.where?.emailAddress?.not !== null ||
+          contact.emailAddress !== null),
+    ),
   );
   mocks.prisma.xeroGroupingSettings.findUnique.mockResolvedValue(
     input.groupingMode === undefined ? null : { mode: input.groupingMode },

@@ -195,15 +195,13 @@ vi.mock("@/lib/booking-exception-request-service", () => ({
     evaluatePersistedNonHostingViolationsMock,
 }));
 vi.mock("@/lib/adult-member-hosting-review", () => ({
-  evaluatePersistedBookingAdultMemberHostingReadOnly:
-    evaluatePersistedHostingMock,
+  evaluatePersistedBookingAdultMemberHostingReadOnly: evaluatePersistedHostingMock,
 }));
 vi.mock("@/lib/booking-member-night-conflicts", () => ({
   findBookingMemberNightConflicts: findBookingMemberNightConflictsMock,
 }));
 vi.mock("@/lib/membership-type-policy", () => ({
-  resolveMembershipTypePolicyForMember:
-    resolveMembershipTypePolicyForMemberMock,
+  resolveMembershipTypePolicyForMember: resolveMembershipTypePolicyForMemberMock,
 }));
 // PARTIAL mocks: both modules are imported by real code left running here
 // (`subscription-lockout-facts` reads `getAgeTierSettings`), so only the one
@@ -362,8 +360,7 @@ const MODELS: Record<ModelName, ModelSpec> = {
     columns: ["id", "bookingId", "bookingGuestId", "stayDate"],
     relations: {
       bookingGuest: (row, state) =>
-        state.bookingGuest.find((guest) => guest.id === row.bookingGuestId) ??
-        null,
+        state.bookingGuest.find((guest) => guest.id === row.bookingGuestId) ?? null,
     },
   },
   bookingChangeRequest: {
@@ -1942,7 +1939,7 @@ describe("booking block state: the club's HARD_BLOCK subscription refusal (#2376
        * the payment flow to complete non-zero bookings" — BEFORE its subscription
        * refusal. A priced draft is completed through
        * `POST /api/payments/create-payment-intent` (`DRAFT -> PAYMENT_PENDING ->
-       * PAID`), and the booking page renders the confirm button only for a free draft.
+     * PAID`), and the booking page renders the confirm button only for a free draft.
        *
        * So the club's flat refusal never stood in front of a priced draft, and raising
        * it there told an officer the club had refused a booking the member pays for and

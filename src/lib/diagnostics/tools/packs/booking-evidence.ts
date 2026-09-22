@@ -189,7 +189,8 @@ import { bookingReviewReasonCodes, isCheckinBlockedByPendingReview } from "@/lib
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { checkCapacity } from "@/lib/capacity";
 import { formatDateOnly } from "@/lib/date-only";
-import { isDeletedAccountRecord } from "@/lib/deleted-account";
+import { isDeletedAccountRecord
+} from "@/lib/deleted-account";
 import { getInductionStatusForMember } from "@/lib/induction";
 import { asClubTimeZone } from "@/lib/club-time";
 import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";

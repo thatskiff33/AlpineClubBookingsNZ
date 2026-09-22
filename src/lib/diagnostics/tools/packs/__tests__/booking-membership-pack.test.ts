@@ -82,8 +82,7 @@ import { describe, expect, it } from "vitest";
 import { bookingAttendanceIsTerminal } from "@/lib/adult-member-hosting-review";
 import {
   deletedAccountSql,
-  isDeletedAccountRecord,
-} from "@/lib/deleted-account";
+  isDeletedAccountRecord, } from "@/lib/deleted-account";
 import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/placeholder-contact-email";
 import {
   AUDIT_CATEGORY_CORRELATION_DOMAIN,
@@ -235,9 +234,7 @@ const packTools = DIAGNOSTICS_TOOLS.filter((tool) =>
 );
 
 const sqlEntries = packTools.filter(
-  (
-    tool,
-  ): tool is Extract<DiagnosticsToolEntry, { source: "select_only_sql" }> =>
+  (tool,): tool is Extract<DiagnosticsToolEntry, { source: "select_only_sql" }> =>
     tool.source === "select_only_sql",
 );
 
@@ -1679,9 +1676,7 @@ describe("AID-6B booking/membership pack: no pattern language (#2376)", () => {
     // the next window filter cannot reintroduce it, and the shape of the one window
     // that exists is pinned beside it.
     for (const tool of sqlEntries) {
-      expect(
-        tool.sql,
-        `${tool.id} does timestamp arithmetic on a lodge night`,
+      expect(tool.sql, `${tool.id} does timestamp arithmetic on a lodge night`,
       ).not.toMatch(/\bINTERVAL\b/i);
     }
     expect(sqlOf(DIAGNOSTICS_BOOKING_SEARCH_TOOL_ID)).toContain(
@@ -1789,7 +1784,7 @@ describe("AID-6B booking/membership pack: deactivation is NOT deletion (#2376)",
     (id) => {
       const sql = sqlOf(id);
       expect(sql).toContain(
-        `${deletedAccountSql('m."deletedAt"', 'm."email"')} AS lifecycle_deleted`,
+        `${deletedAccountSql('m."deletedAt"','m."email"')} AS lifecycle_deleted`,
       );
       // The exact shape test that used to be there, so it cannot come back
       // unnoticed beside the marker.
@@ -2284,14 +2279,11 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
 
     expect(shape({})).toBe("family_or_legacy");
     expect(
-      shape({
-        consent_status: "PENDING",
-        consent_requested_at: new Date("2026-07-01T00:00:00.000Z"),
-      }),
+      shape({ consent_status: "PENDING", consent_requested_at: new Date("2026-07-01T00:00:00.000Z"), }),
     ).toBe("unrecognised_consent_shape");
-    expect(
-      shape({ consent_responded_at: new Date("2026-07-01T00:00:00.000Z") }),
-    ).toBe("unrecognised_consent_shape");
+    expect(shape({ consent_responded_at: new Date("2026-07-01T00:00:00.000Z") }),).toBe(
+      "unrecognised_consent_shape"
+    );
     expect(
       shape({
         consent_status: "CONFIRMED",
@@ -2342,9 +2334,7 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
     expect(state({ partner_link_status: null })).toBe(
       "ineligible_partner_link_absent",
     );
-    expect(state({ member_b_active: false })).toBe(
-      "ineligible_member_inactive",
-    );
+    expect(state({ member_b_active: false })).toBe("ineligible_member_inactive",);
     expect(state({ member_b_age_tier: "YOUTH" })).toBe("ineligible_not_adult");
     expect(state({ other_occupant_count: 2 })).toBe(
       "corrupt_occupant_cardinality",
@@ -2366,16 +2356,12 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
     // claim than "nothing is recorded" — and neither is a record of credit
     // already APPLIED, which lives in a ledger this pack cannot read.
     const project = entry(DIAGNOSTICS_BOOKING_SUMMARY_TOOL_ID).project;
-    expect(
-      project({ credit_election_cents: null }).creditElectionCents,
-    ).toBeNull();
+    expect(project({ credit_election_cents: null }).creditElectionCents,).toBeNull();
     expect(project({ credit_election_cents: 0 }).creditElectionCents).toBe(0);
     expect(project({ credit_election_cents: 12_345 }).creditElectionCents).toBe(
       12_345,
     );
-    expect(
-      project({ credit_election_cents: "" }).creditElectionCents,
-    ).toBeNull();
+    expect(project({ credit_election_cents: "" }).creditElectionCents,).toBeNull();
   });
 
   it("REFUSES a non-integer amount rather than rounding it", () => {
@@ -2408,9 +2394,7 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
     expect(summary({ final_price_cents: null }).finalPriceCents).toBeNull();
     // …and the columns the schema declares `@default(0)` NOT NULL keep the zero.
     expect(summary({ discount_cents: null }).discountCents).toBe(0);
-    expect(summary({ promo_adjustment_cents: null }).promoAdjustmentCents).toBe(
-      0,
-    );
+    expect(summary({ promo_adjustment_cents: null }).promoAdjustmentCents).toBe(0,);
   });
 
   it("keeps a three-valued boolean three-valued", () => {
@@ -2420,18 +2404,12 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
     // specific, actionable and possibly untrue claims; null says "this is not
     // established", which is the honest answer.
     const party = entry(DIAGNOSTICS_BOOKING_PARTY_TOOL_ID).project;
-    expect(
-      party({ nights_are_contiguous: null }).nightsAreContiguous,
-    ).toBeNull();
-    expect(party({ nights_are_contiguous: true }).nightsAreContiguous).toBe(
-      true,
-    );
+    expect(party({ nights_are_contiguous: null }).nightsAreContiguous,).toBeNull();
+    expect(party({ nights_are_contiguous: true }).nightsAreContiguous).toBe(true,);
     expect(party({ nights_are_contiguous: false }).nightsAreContiguous).toBe(
       false,
     );
-    const allocation = entry(
-      DIAGNOSTICS_BOOKING_BED_ALLOCATION_TOOL_ID,
-    ).project;
+    const allocation = entry(DIAGNOSTICS_BOOKING_BED_ALLOCATION_TOOL_ID,).project;
     expect(
       allocation({ bed_type_matches_bed: null }).bedTypeMatchesBed,
     ).toBeNull();
@@ -2444,9 +2422,7 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
     const family = entry(DIAGNOSTICS_MEMBER_FAMILY_STATE_TOOL_ID).project;
     expect(family({ is_secondary_parent: null }).isSecondaryParent).toBeNull();
     expect(family({ is_secondary_parent: true }).isSecondaryParent).toBe(true);
-    expect(family({ is_secondary_parent: false }).isSecondaryParent).toBe(
-      false,
-    );
+    expect(family({ is_secondary_parent: false }).isSecondaryParent).toBe(false,);
     expect("isSecondaryParent" in family({})).toBe(true);
   });
 
@@ -2468,16 +2444,16 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
     expect(search({ booking_ref: "not a record id at all" }).bookingRef).toBe(
       FINANCE_UNPARSEABLE_VALUE,
     );
-    expect(
-      search({ booking_status: "a sentence, not a code" }).bookingStatus,
-    ).toBe(FINANCE_UNPARSEABLE_VALUE);
+    expect(search({ booking_status: "a sentence, not a code" }).bookingStatus,).toBe(
+      FINANCE_UNPARSEABLE_VALUE
+    );
     const summary = entry(DIAGNOSTICS_BOOKING_SUMMARY_TOOL_ID).project;
     expect(summary({ deleted_at_utc: "2026-08-09" }).deletedAtUtc).toBe(
       FINANCE_UNPARSEABLE_VALUE,
     );
-    expect(
-      summary({ deleted_at_utc: "2026-08-09T09:00:00Z" }).deletedAtUtc,
-    ).toBe("2026-08-09T09:00:00Z");
+    expect(summary({ deleted_at_utc: "2026-08-09T09:00:00Z" }).deletedAtUtc,).toBe(
+      "2026-08-09T09:00:00Z"
+    );
     // The one email address this pack projects, and the one entry that projects
     // it. It gets its own validator rather than the provider-reference class
     // because `@` is not in that class, and a silently sentinelled email would
@@ -2511,16 +2487,13 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
     expect(
       eligibility({ lifecycle_label: "<b>Archived</b>" }).lifecycleLabel,
     ).toBe(FINANCE_UNPARSEABLE_VALUE);
-    expect(eligibility({ lifecycle_label: null }).lifecycleLabel).toBe(
-      "unknown",
-    );
+    expect(eligibility({ lifecycle_label: null }).lifecycleLabel).toBe("unknown",);
     expect(
       eligibility({ eligibility_codes: "member_archived,subscription_unpaid" })
         .eligibilityCodes,
     ).toBe("member_archived,subscription_unpaid");
     expect(
-      eligibility({ eligibility_codes: "member_archived; DROP" })
-        .eligibilityCodes,
+      eligibility({ eligibility_codes: "member_archived; DROP" }).eligibilityCodes,
     ).toBe(FINANCE_UNPARSEABLE_VALUE);
   });
 
@@ -2533,10 +2506,10 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
       const empty = Object.keys(tool.project({}));
       const full = Object.keys(
         tool.project(
-          new Proxy({}, { get: () => "x", has: () => true }) as Record<
-            string,
-            unknown
-          >,
+          new Proxy(
+            {},
+            { get: () => "x", has: () => true }
+          ) as Record<string, unknown>,
         ),
       );
       expect(empty, `${tool.id} changes shape`).toEqual(full);
@@ -2569,9 +2542,7 @@ describe("AID-6B booking/membership pack: a name is untrusted text (#2376)", () 
     const projected = personNameOrNull(INJECTION);
     expect(projected).not.toBeNull();
     for (const forbidden of ['"', "<", ">", ";", "=", "\n", "\r", "\t"]) {
-      expect(
-        projected,
-        `a name kept ${JSON.stringify(forbidden)}`,
+      expect(projected, `a name kept ${JSON.stringify(forbidden)}`,
       ).not.toContain(forbidden);
     }
     // Control characters become spaces and runs of whitespace collapse, so a name
@@ -3274,9 +3245,7 @@ describe("AID-6B booking/membership pack: the code catalogues (#2376)", () => {
       ),
     };
     for (const [where, text] of Object.entries(texts)) {
-      expect(
-        text.toLowerCase(),
-        `${where} omits the zero-price scope`,
+      expect(text.toLowerCase(), `${where} omits the zero-price scope`,
       ).toContain("zero-price");
       expect(
         text.toLowerCase(),
@@ -3438,7 +3407,8 @@ describe("AID-6B booking/membership pack: the code catalogues (#2376)", () => {
       expect(
         modelFacing,
         `${code}'s meaning never reaches the model`,
-      ).toContain(meaning);
+      ).toContain(meaning
+      );
     }
     expect(modelFacing).toContain(
       "two distinct, existing, active ADULT members with a CONFIRMED partner link",
@@ -3470,10 +3440,7 @@ describe("AID-6B booking/membership pack: the terminal-status list (#2376)", () 
     const match = /const TERMINAL_BOOKING_STATUSES:[^=]*=\s*\[([^\]]*)\]/.exec(
       source,
     );
-    expect(
-      match,
-      "TERMINAL_BOOKING_STATUSES is no longer declared",
-    ).not.toBeNull();
+    expect(match, "TERMINAL_BOOKING_STATUSES is no longer declared",).not.toBeNull();
     const declared = [...match![1].matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]);
     // Non-vacuous: a regex that matched nothing would produce an empty list, and
     // an empty list would silently agree with nothing being terminal.
@@ -3540,9 +3507,7 @@ describe("AID-6B booking/membership pack: the audit subject maps (#2376)", () =>
     // this predicate is `entityType = ANY(...) AND entityId = ... AND category =
     // ANY(membership categories)`, so a subject only ever returns rows if some
     // production writer pairs that entity type with a membership-domain category.
-    expect(subjectEnum).toEqual(
-      Object.keys(MEMBERSHIP_AUDIT_SUBJECT_ENTITY_TYPES),
-    );
+    expect(subjectEnum).toEqual(Object.keys(MEMBERSHIP_AUDIT_SUBJECT_ENTITY_TYPES),);
     for (const subject of subjectEnum) {
       const params = paramsFor(DIAGNOSTICS_MEMBER_AUDIT_HISTORY_TOOL_ID, {
         subject,

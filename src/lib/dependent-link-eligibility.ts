@@ -339,7 +339,8 @@ export const DEPENDENT_PARENT_BLOCK_EXPLANATIONS: Record<
   ARCHIVED:
     "This member is archived, and archiving cannot be undone — add the dependent under another member of the family instead.",
   DELETED: "This member is deleted and cannot have dependents added.",
-  INACTIVE: "This member is inactive — reactivate them to add dependents.",
+  INACTIVE:
+    "This member is inactive — reactivate them to add dependents.",
 };
 
 /**

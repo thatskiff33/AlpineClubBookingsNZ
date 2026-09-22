@@ -81,8 +81,11 @@ export interface GoogleMemberUser {
   twoFactorMethod: "TOTP" | "EMAIL" | null;
 }
 
-export type GoogleLoginStatus =
-  "ok" | "unlinked" | "refused" | "password_change" | "failed";
+export type GoogleLoginStatus = "ok"
+  | "unlinked"
+  | "refused"
+  | "password_change"
+  | "failed";
 
 /**
  * What the provider `profile()` returns. On the eligible LOGIN path it is a full
@@ -130,9 +133,7 @@ function requireSecret(): string {
 }
 
 function sign(payload: string): string {
-  return base64url(
-    createHmac("sha256", requireSecret()).update(payload).digest(),
-  );
+  return base64url(createHmac("sha256", requireSecret()).update(payload).digest(),);
 }
 
 /**

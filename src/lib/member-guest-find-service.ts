@@ -119,22 +119,14 @@ export async function resolveMemberGuestCandidatesByEmail(params: {
       AND: notDeletedAccountWhere(),
       ageTier: { in: memberGuestResolveAgeTiers() },
     },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      ageTier: true,
+    select: { id: true, firstName: true, lastName: true, ageTier: true,
       email: true,
-      deletedAt: true,
-    },
+      deletedAt: true, },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
   });
 
-  return {
-    candidates: rows
-      .filter((row) => !isDeletedAccountRecord(row))
-      .map(toMemberGuestCandidate),
-  };
+  return { candidates: rows.filter((row) => !isDeletedAccountRecord(row))
+      .map(toMemberGuestCandidate), };
 }
 
 /**
@@ -211,43 +203,25 @@ export async function searchMemberGuestCandidatesByName(params: {
         }
       : {
           AND: [
-            {
-              firstName: {
-                startsWith: parsed.terms.firstPrefix,
-                ...insensitive,
-              },
-            },
-            {
-              lastName: { startsWith: parsed.terms.lastPrefix, ...insensitive },
-            },
+            { firstName: { startsWith: parsed.terms.firstPrefix, ...insensitive,
+              }, },
+            { lastName: { startsWith: parsed.terms.lastPrefix, ...insensitive }, },
           ],
         };
 
   const rows = await prisma.member.findMany({
-    where: {
-      active: true,
-      ageTier: { in: ageTiers },
-      AND: notDeletedAccountWhere(),
-      ...nameFilter,
-    },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      ageTier: true,
+    where: { active: true, ageTier: { in: ageTiers },
+      AND: notDeletedAccountWhere(), ...nameFilter, },
+    select: { id: true, firstName: true, lastName: true, ageTier: true,
       email: true,
-      deletedAt: true,
-    },
+      deletedAt: true, },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
     // One row over the cap, so "there were more" is knowable without a COUNT.
     take: MEMBER_GUEST_SEARCH_RESULT_CAP + 1,
   });
 
-  return capMemberGuestCandidates(
-    rows
-      .filter((row) => !isDeletedAccountRecord(row))
-      .map(toMemberGuestCandidate),
-  );
+  return capMemberGuestCandidates(rows.filter((row) => !isDeletedAccountRecord(row))
+      .map(toMemberGuestCandidate),);
 }
 
 // ---------------------------------------------------------------------------
@@ -306,8 +280,7 @@ export async function auditMemberGuestResolve(params: {
     category: "privacy",
     severity: "info",
     outcome: params.outcome ?? "success",
-    summary:
-      "A member looked up another member by email address to add as a guest",
+    summary: "A member looked up another member by email address to add as a guest",
     metadata: {
       email: normalizeMemberGuestEmail(email),
       resultCount: candidates.length,

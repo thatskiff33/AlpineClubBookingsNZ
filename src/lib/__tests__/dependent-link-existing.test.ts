@@ -9,15 +9,11 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
-const mockRequireActiveSessionUser = vi.fn<
-  (...args: unknown[]) => Promise<Response | null>
->(async () => null);
+const mockRequireActiveSessionUser = vi.fn<(...args: unknown[]) => Promise<Response | null>>(async () => null);
 vi.mock("@/lib/session-guards", async () => ({
   requireAdmin: (await import("./helpers/require-admin-mock"))
     .evaluateRequireAdminMock,
-  requireActiveSessionUser: (
-    ...args: Parameters<typeof mockRequireActiveSessionUser>
-  ) => mockRequireActiveSessionUser(...args),
+  requireActiveSessionUser: (...args: Parameters<typeof mockRequireActiveSessionUser>) => mockRequireActiveSessionUser(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -42,11 +38,7 @@ import {
   MEMBER_PARENT_PARTNER_EXCLUSION_DATABASE_MESSAGE,
 } from "@/lib/member-parent-partner-exclusivity";
 
-type MockAccessRole = {
-  role: string | null;
-  roleDefinitionId?: string | null;
-  roleDefinition?: unknown;
-};
+type MockAccessRole = { role: string | null; roleDefinitionId?: string | null; roleDefinition?: unknown; };
 
 type MockMember = {
   id: string;
@@ -81,30 +73,18 @@ type MockMember = {
  * while proving nothing.
  */
 
-const adminSession = {
-  user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
-} as any;
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] }, } as any;
 // A Membership Officer: admin-portal access but not a Full Admin.
-const officerSession = {
-  user: {
-    id: "officer-1",
-    role: "USER",
-    accessRoles: [{ role: "ADMIN_MEMBERSHIP" }],
-  },
-} as any;
-const adminAccessRoles: MockAccessRole[] = [
-  { role: "ADMIN", roleDefinitionId: null, roleDefinition: null },
-];
+const officerSession = { user: { id: "officer-1", role: "USER", accessRoles: [{ role: "ADMIN_MEMBERSHIP" }],
+  }, } as any;
+const adminAccessRoles: MockAccessRole[] = [{ role: "ADMIN", roleDefinitionId: null, roleDefinition: null },];
 
 function makeRequest(body: Record<string, unknown>) {
-  return new NextRequest(
-    "http://localhost/api/admin/members/parent-1/dependents/link",
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-      headers: { "Content-Type": "application/json" },
-    },
-  );
+  return new NextRequest("http://localhost/api/admin/members/parent-1/dependents/link", {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+  },);
 }
 
 function makeParent(overrides: Partial<MockMember> = {}): MockMember {
@@ -125,10 +105,7 @@ function makeParent(overrides: Partial<MockMember> = {}): MockMember {
     role: "USER",
     financeAccessLevel: "NONE",
     accessRoles: [],
-    familyGroupMemberships: [
-      { familyGroupId: "fg-1" },
-      { familyGroupId: "fg-2" },
-    ],
+    familyGroupMemberships: [{ familyGroupId: "fg-1" }, { familyGroupId: "fg-2" },],
     partnerLinksAsMemberA: [],
     partnerLinksAsMemberB: [],
     ...overrides,
@@ -175,9 +152,7 @@ function setupTransaction(members: MockMember[]) {
         if (where.accessRoles) {
           return members.filter((member) => {
             if (!member.active || !member.canLogin) return false;
-            const holdsAdmin = member.accessRoles.some(
-              (r) => r.role === "ADMIN",
-            );
+            const holdsAdmin = member.accessRoles.some((r) => r.role === "ADMIN",);
             if (!holdsAdmin) return false;
             if (typeof where.id === "string") return member.id === where.id;
             if (where.id?.notIn) return !where.id.notIn.includes(member.id);
@@ -185,27 +160,17 @@ function setupTransaction(members: MockMember[]) {
           }).length;
         }
         // Shared-email orphan check.
-        return members.filter(
-          (member) =>
-            member.email === where.email && member.id !== where.id.not,
-        ).length;
+        return members.filter((member) => member.email === where.email && member.id !== where.id.not,).length;
       }),
-      findFirst: vi.fn(
-        async ({
-          where,
-        }: {
-          where: { email: string; id: { not: string }; canLogin: boolean };
-        }) => {
-          return (
-            members.find(
-              (member) =>
-                member.email === where.email &&
-                member.id !== where.id.not &&
-                member.canLogin === where.canLogin,
-            ) ?? null
+      findFirst: vi.fn(async ({ where, }: { where: { email: string; id: { not: string }; canLogin: boolean }; }) => {
+        return ( members.find(
+          (member) =>
+            member.email === where.email &&
+            member.id !== where.id.not &&
+            member.canLogin === where.canLogin,
+        ) ?? null
           );
-        },
-      ),
+      },),
       // #2255: the two query shapes the family-link walks issue — "these ids"
       // (walking up, and re-reading a level for email resolution) and "children
       // of these ids" (walking down). Implemented from the parent COLUMNS, so
@@ -225,8 +190,7 @@ function setupTransaction(members: MockMember[]) {
           return members.filter(
             (member) =>
               (member.parentMemberId && parentIds.has(member.parentMemberId)) ||
-              (member.secondaryParentId &&
-                parentIds.has(member.secondaryParentId)),
+              (member.secondaryParentId && parentIds.has(member.secondaryParentId)),
           );
         }
         throw new Error(

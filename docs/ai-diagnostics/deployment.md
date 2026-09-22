@@ -51,7 +51,9 @@ content. A deployment populates a **configured location** with a **typed shape**
   ```json
   {
     "knowledge": {
-      "entries": [{ "path": "ops/runbook.md", "content": "# Runbook\n\n..." }]
+      "entries": [
+        { "path": "ops/runbook.md", "content": "# Runbook\n\n..." }
+      ]
     }
   }
   ```
@@ -188,12 +190,12 @@ The script needs a connection that may create roles: the application's own
 `DATABASE_URL` in the stock Compose stack, or `AI_DIAGNOSTICS_PROVISION_DATABASE_URL`
 for a deployment that keeps a separate DBA credential.
 
-| Variable                                | Required                  | Meaning                                                                                                                                                                                                   |
-| --------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AI_DIAGNOSTICS_DB_PASSWORD`            | yes (not for `--dry-run`) | The new role's password. Minimum 20 characters. Never printed or logged.                                                                                                                                  |
-| `AI_DIAGNOSTICS_PROVISION_DATABASE_URL` | no                        | Connection that may create roles. Defaults to `DATABASE_URL`.                                                                                                                                             |
-| `AI_DIAGNOSTICS_DB_ROLE`                | no                        | Role name. Defaults to `ai_diagnostics_ro`. Refused if it equals the provisioning role, or if it is not a supported identifier (below).                                                                   |
-| `AI_DIAGNOSTICS_DB_PRESERVE_TEMP_ROLES` | no                        | Comma-separated roles that must keep `TEMPORARY` on the database (see below). Defaults to the provisioning role, so a deployment whose **application** role name is unsupported must set this explicitly. |
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `AI_DIAGNOSTICS_DB_PASSWORD` | yes (not for `--dry-run`) | The new role's password. Minimum 20 characters. Never printed or logged. |
+| `AI_DIAGNOSTICS_PROVISION_DATABASE_URL` | no | Connection that may create roles. Defaults to `DATABASE_URL`. |
+| `AI_DIAGNOSTICS_DB_ROLE` | no | Role name. Defaults to `ai_diagnostics_ro`. Refused if it equals the provisioning role, or if it is not a supported identifier (below). |
+| `AI_DIAGNOSTICS_DB_PRESERVE_TEMP_ROLES` | no | Comma-separated roles that must keep `TEMPORARY` on the database (see below). Defaults to the provisioning role, so a deployment whose **application** role name is unsupported must set this explicitly. |
 
 **Supported identifiers.** Every role and database name the script interpolates must
 be letters, digits and underscores only, starting with a letter or underscore, at most
@@ -244,7 +246,7 @@ Diagnostics read" is answered by reading one file.
 - **Every one of those revokes names the grantor that made the grant, and the result is
   re-checked before the transaction is allowed to commit.** This is not a detail. A
   membership is recorded per grantor, and `REVOKE <role> FROM <member>` without
-  `GRANTED BY` removes only the grant the _current_ role made — even for a superuser.
+  `GRANTED BY` removes only the grant the *current* role made — even for a superuser.
   Anybody else's grant survives, and PostgreSQL reports that as a `WARNING` while still
   returning success, so the repair would have looked like it worked and left the role
   one `SET ROLE` from the privileges it was supposed to lose. The statement list
@@ -252,7 +254,7 @@ Diagnostics read" is answered by reading one file.
   if any membership is still recorded, which rolls the whole transaction back.
 - Two consequences worth knowing. First, if the provisioning credential may not revoke
   another role's grant, the run fails loudly (`permission denied to revoke privileges
-granted by role "…"`) rather than half-succeeding: that credential cannot produce a
+  granted by role "…"`) rather than half-succeeding: that credential cannot produce a
   role the runtime would accept, so the failure is the right answer. Second, the script
   now prints whatever the server said at `WARNING` level and above, and only claims
   memberships were stripped when it said nothing.
@@ -316,34 +318,34 @@ read" is answerable by reading one file. As of AID-6B (#2376) it names
 **twenty-six** relations and **244 columns**, and **every one of them is granted by
 column, never wholesale**:
 
-| Relation                                   | Granted                                                                                                                                                                                                                                                                              | Read by                                                                                                                                                                                                                                                                                 |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `public."AuditLog"`                        | **9 columns**: `id`, `action`, `category`, `severity`, `outcome`, `entityType`, `entityId`, `requestId`, `createdAt`                                                                                                                                                                 | the five audit-correlation tools ([tool-pack-support.md](tool-pack-support.md)), the finance audit-history tool ([tool-pack-finance.md](tool-pack-finance.md)), and the booking and membership audit-history tools ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
-| `public."Payment"`                         | 22 columns                                                                                                                                                                                                                                                                           | the finance searches, the payment summary, the refund state ([tool-pack-finance.md](tool-pack-finance.md))                                                                                                                                                                              |
-| `public."PaymentTransaction"`              | 12 columns                                                                                                                                                                                                                                                                           | the reference search, the attempt ledger                                                                                                                                                                                                                                                |
-| `public."PaymentRefund"`                   | 10 columns                                                                                                                                                                                                                                                                           | the reference search, the refund state                                                                                                                                                                                                                                                  |
-| `public."PaymentRecoveryOperation"`        | 10 columns                                                                                                                                                                                                                                                                           | the attempt ledger, the refund state                                                                                                                                                                                                                                                    |
-| `public."ManualRefundTask"`                | 6 columns                                                                                                                                                                                                                                                                            | the refund state                                                                                                                                                                                                                                                                        |
-| `public."RefundRequest"`                   | 7 columns                                                                                                                                                                                                                                                                            | the refund state                                                                                                                                                                                                                                                                        |
-| `public."ProcessedWebhookEvent"`           | 6 columns (its surrogate `id` is deliberately not granted)                                                                                                                                                                                                                           | the webhook timeline                                                                                                                                                                                                                                                                    |
-| `public."WebhookLog"`                      | 7 columns                                                                                                                                                                                                                                                                            | the webhook timeline                                                                                                                                                                                                                                                                    |
-| `public."XeroInboundEvent"`                | 9 columns                                                                                                                                                                                                                                                                            | the webhook timeline                                                                                                                                                                                                                                                                    |
-| `public."XeroObjectLink"`                  | 10 columns                                                                                                                                                                                                                                                                           | the Xero invoice and contact linkage tools                                                                                                                                                                                                                                              |
-| `public."XeroSyncOperation"`               | 17 columns                                                                                                                                                                                                                                                                           | the Xero invoice and contact linkage tools                                                                                                                                                                                                                                              |
-| `public."Member"`                          | **24 columns** — widened by AID-6B from the two AID-6C granted. `email` is projected by one entry and is a search predicate; `deletedAt` is a deleted-account predicate only; `phoneCountryCode`, `phoneAreaCode` and `phoneNumber` are predicates only and are projected by nothing | the Xero contact linkage tool, the member search, the member summary, the family relationships ([tool-pack-booking-membership.md](tool-pack-booking-membership.md))                                                                                                                     |
-| `public."Booking"`                         | 25 columns                                                                                                                                                                                                                                                                           | the booking search, the booking summary, a member's booking involvement ([tool-pack-booking-membership.md](tool-pack-booking-membership.md))                                                                                                                                            |
-| `public."Lodge"`                           | **2 columns**: `id`, `name`                                                                                                                                                                                                                                                          | the booking search, a member's booking involvement                                                                                                                                                                                                                                      |
-| `public."BookingGuest"`                    | 15 columns (a guest's given and family name included; consent responder and expiry are classifier inputs only)                                                                                                                                                                       | booking party state, guest counts, member-booking involvement and double-sharing evidence                                                                                                                                                                                               |
-| `public."MemberPartnerLink"`               | 3 columns: canonical pair ids and status                                                                                                                                                                                                                                             | the canonical double-bed-sharing verdict; raw pair ids are not projected                                                                                                                                                                                                                |
-| `public."BookingGuestNight"`               | **2 columns**: `bookingGuestId`, `stayDate`                                                                                                                                                                                                                                          | the booking party state's per-night footprint                                                                                                                                                                                                                                           |
-| `public."BedAllocation"`                   | 8 columns (`approvedByMemberId` is deliberately not granted)                                                                                                                                                                                                                         | the bed allocation state                                                                                                                                                                                                                                                                |
-| `public."LodgeRoom"`                       | **2 columns**: `id`, `name` (`notes` is not granted)                                                                                                                                                                                                                                 | the bed allocation state                                                                                                                                                                                                                                                                |
-| `public."LodgeBed"`                        | 4 columns                                                                                                                                                                                                                                                                            | the bed allocation state                                                                                                                                                                                                                                                                |
-| `public."BookingChangeRequest"`            | 16 columns (no free text, no raw JSON, no reviewing officer)                                                                                                                                                                                                                         | the booking change and exception request state                                                                                                                                                                                                                                          |
-| `public."PolicyExceptionReservationNight"` | **1 column**: `changeRequestId` — the narrowest grant in the file                                                                                                                                                                                                                    | the booking change and exception request state                                                                                                                                                                                                                                          |
-| `public."MemberSubscription"`              | 11 columns (`manualPaymentNote` is **not** granted)                                                                                                                                                                                                                                  | the member subscription state                                                                                                                                                                                                                                                           |
-| `public."FamilyGroupMember"`               | **4 explicitly named columns** — all current columns, but not a table-wide grant; the relation has no `role` column                                                                                                                                                                  | the member family relationships                                                                                                                                                                                                                                                         |
-| `public."FamilyGroup"`                     | **2 columns**: `id`, `name`                                                                                                                                                                                                                                                          | the member family relationships                                                                                                                                                                                                                                                         |
+| Relation | Granted | Read by |
+| --- | --- | --- |
+| `public."AuditLog"` | **9 columns**: `id`, `action`, `category`, `severity`, `outcome`, `entityType`, `entityId`, `requestId`, `createdAt` | the five audit-correlation tools ([tool-pack-support.md](tool-pack-support.md)), the finance audit-history tool ([tool-pack-finance.md](tool-pack-finance.md)), and the booking and membership audit-history tools ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
+| `public."Payment"` | 22 columns | the finance searches, the payment summary, the refund state ([tool-pack-finance.md](tool-pack-finance.md)) |
+| `public."PaymentTransaction"` | 12 columns | the reference search, the attempt ledger |
+| `public."PaymentRefund"` | 10 columns | the reference search, the refund state |
+| `public."PaymentRecoveryOperation"` | 10 columns | the attempt ledger, the refund state |
+| `public."ManualRefundTask"` | 6 columns | the refund state |
+| `public."RefundRequest"` | 7 columns | the refund state |
+| `public."ProcessedWebhookEvent"` | 6 columns (its surrogate `id` is deliberately not granted) | the webhook timeline |
+| `public."WebhookLog"` | 7 columns | the webhook timeline |
+| `public."XeroInboundEvent"` | 9 columns | the webhook timeline |
+| `public."XeroObjectLink"` | 10 columns | the Xero invoice and contact linkage tools |
+| `public."XeroSyncOperation"` | 17 columns | the Xero invoice and contact linkage tools |
+| `public."Member"` | **24 columns** — widened by AID-6B from the two AID-6C granted. `email` is projected by one entry and is a search predicate; `deletedAt` is a deleted-account predicate only; `phoneCountryCode`, `phoneAreaCode` and `phoneNumber` are predicates only and are projected by nothing | the Xero contact linkage tool, the member search, the member summary, the family relationships ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
+| `public."Booking"` | 25 columns | the booking search, the booking summary, a member's booking involvement ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
+| `public."Lodge"` | **2 columns**: `id`, `name` | the booking search, a member's booking involvement |
+| `public."BookingGuest"` | 15 columns (a guest's given and family name included; consent responder and expiry are classifier inputs only) | booking party state, guest counts, member-booking involvement and double-sharing evidence |
+| `public."MemberPartnerLink"` | 3 columns: canonical pair ids and status | the canonical double-bed-sharing verdict; raw pair ids are not projected |
+| `public."BookingGuestNight"` | **2 columns**: `bookingGuestId`, `stayDate` | the booking party state's per-night footprint |
+| `public."BedAllocation"` | 8 columns (`approvedByMemberId` is deliberately not granted) | the bed allocation state |
+| `public."LodgeRoom"` | **2 columns**: `id`, `name` (`notes` is not granted) | the bed allocation state |
+| `public."LodgeBed"` | 4 columns | the bed allocation state |
+| `public."BookingChangeRequest"` | 16 columns (no free text, no raw JSON, no reviewing officer) | the booking change and exception request state |
+| `public."PolicyExceptionReservationNight"` | **1 column**: `changeRequestId` — the narrowest grant in the file | the booking change and exception request state |
+| `public."MemberSubscription"` | 11 columns (`manualPaymentNote` is **not** granted) | the member subscription state |
+| `public."FamilyGroupMember"` | **4 explicitly named columns** — all current columns, but not a table-wide grant; the relation has no `role` column | the member family relationships |
+| `public."FamilyGroup"` | **2 columns**: `id`, `name` | the member family relationships |
 
 The table above explains why each relation is present. The following block is the
 canonical exact column declaration for operators and reviewers. It is intentionally
@@ -352,7 +354,6 @@ column in both directions with `SELECT_GRANTS`, so replacing one column with ano
 while keeping the same count fails CI.
 
 <!-- ai-diagnostics-exact-grants:start -->
-
 ```text
 public."AuditLog": id, action, category, severity, outcome, entityType, entityId, requestId, createdAt
 public."Payment": id, bookingId, status, source, amountCents, refundedAmountCents, changeFeeCents, additionalAmountCents, creditAppliedCents, additionalPaymentStatus, reference, stripePaymentIntentId, additionalPaymentIntentId, xeroInvoiceId, xeroInvoiceNumber, xeroRefundCreditNoteId, internetBankingHoldSlots, internetBankingHoldUntil, internetBankingHoldReleasedAt, manuallyMarkedPaidAt, createdAt, updatedAt
@@ -381,7 +382,6 @@ public."MemberSubscription": id, memberId, seasonYear, status, xeroInvoiceId, xe
 public."FamilyGroupMember": id, familyGroupId, memberId, joinedAt
 public."FamilyGroup": id, name
 ```
-
 <!-- ai-diagnostics-exact-grants:end -->
 
 Every other relation in the schema is unreadable — including `IntegrationCredential`
@@ -422,7 +422,7 @@ relations, 244 columns) so this page and the pack pages cannot drift from it aga
 The real-database suite
 (`src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts`, run by the
 Migration drift check) asks the server, column by column, whether the provisioned
-role may read it, and requires that answer to match _both_ the allowlist _and_ the
+role may read it, and requires that answer to match *both* the allowlist *and* the
 statements: **this credential may read a column if and only if a registered
 statement reads that column.** The forward half is what a missing grant breaks at
 runtime with `42501`; the reverse half is the one that catches reach nobody argued
@@ -431,13 +431,13 @@ for. Both suites share one `alias -> relation` resolver
 and server-side halves cannot drift into answering different questions.
 
 One consequence is worth stating because it replaced a weaker check. The suite used
-to require that every granted relation withhold at least one column — a _proxy_ for
+to require that every granted relation withhold at least one column — a *proxy* for
 "granted by column, not wholesale". That proxy is wrong for a relation that is
 simply small: `FamilyGroupMember` has four columns and the family-relationships
 statement reads all four, so there is nothing left to withhold and narrowing the
 grant would break the tool. Relations in that state are now **enumerated** in the
 suite with the argument for each, and the enumeration is asserted as an exact set —
-so a _second_ relation becoming fully granted fails by name, while the
+so a *second* relation becoming fully granted fails by name, while the
 if-and-only-if check above independently proves that every column of a fully granted
 relation is one a shipped statement actually reads.
 
@@ -446,8 +446,8 @@ The operator CLI prints the declared grants, columns and all, on every run and o
 
 **Upgrading to the AID-6B release is a two-step operation: deploy, then re-run
 `npm run diagnostics:provision-role`.** This release adds thirteen relations and
-widens `Member` from two columns to twenty-three, so until it is re-run the
-_previous_ release's grants no longer match the declared allowlist and **every
+widens `Member` from two columns to twenty-four, so until it is re-run the
+*previous* release's grants no longer match the declared allowlist and **every
 SQL-backed tool refuses, by design**.
 
 Which state readiness reports in the meantime depends on the stale role, and the
@@ -455,7 +455,7 @@ precedence is worth knowing before an operator reads it as a smaller problem tha
 is. `under_provisioned` is reported **only** when the stale role is otherwise
 exactly safe — every privilege it holds is one this release still declares, and the
 only difference is grants that are absent. If the stale role also holds anything the
-new declaration does _not_ include, **excess privilege takes precedence and the state
+new declaration does *not* include, **excess privilege takes precedence and the state
 is `over_privileged`**, because a role that can read more than the allowlist declares
 is the more serious of the two facts and must not be reported as merely
 incomplete. `checkDiagnosticsDatabaseReadiness` derives that ordering structurally:
@@ -504,8 +504,8 @@ control. Enabling the module alone authorises no spend and no read.
 So on an upgrade the **grant is still the production change to reason about**: after
 `npm run diagnostics:provision-role`, `ai_diagnostics_ro` holds SELECT on the
 thirteen relations AID-6B added and on a `Member` widened from two columns to
-twenty-three. The difference from the earlier note is only that a provisioned,
-enabled deployment can now _use_ that grant through the shipped UI — which is the
+twenty-four. The difference from the earlier note is only that a provisioned,
+enabled deployment can now *use* that grant through the shipped UI — which is the
 whole point of the release — rather than holding it against a feature that cannot
 yet reach it.
 
@@ -539,14 +539,14 @@ every restriction at the same time.
 `GET /api/admin/ai-diagnostics/readiness` reports metadata only. The
 `databaseState` field says what to do next:
 
-| `databaseState`     | Meaning                                                                                                                                                                             | Operator action                                                                                                      |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `not_configured`    | `AI_DIAGNOSTICS_DATABASE_URL` is not set. Nothing was contacted.                                                                                                                    | Provision the role and set the variable.                                                                             |
-| `misconfigured`     | Set, but unusable as configured: not a valid `postgres://` URL, no username, it names the **same role** as `DATABASE_URL`, or it carries one of the refused query parameters above. | Fix the connection string; it must be the dedicated role, with no overriding parameters.                             |
-| `unverified`        | Set, but the server could not be asked — unreachable host, bad password, connection limit, or no answer inside the probe deadline. The role is **not** trusted.                     | Fix connectivity or credentials, then re-check.                                                                      |
-| `under_provisioned` | Reachable and otherwise safe, but missing at least one declared relation or column grant.                                                                                           | Re-run `npm run diagnostics:provision-role`, then re-check readiness.                                                |
-| `over_privileged`   | Reachable, and the role holds a privilege ADR-007 forbids, can read an undeclared relation or column, or is not the configured role.                                                | Re-run provisioning and investigate privilege drift. If the role name does not match `current_user`, fix the string. |
-| `verified`          | The server itself confirmed the named role is a non-superuser that can only `SELECT`, and only from the declared allowlist.                                                         | Nothing.                                                                                                             |
+| `databaseState` | Meaning | Operator action |
+| --- | --- | --- |
+| `not_configured` | `AI_DIAGNOSTICS_DATABASE_URL` is not set. Nothing was contacted. | Provision the role and set the variable. |
+| `misconfigured` | Set, but unusable as configured: not a valid `postgres://` URL, no username, it names the **same role** as `DATABASE_URL`, or it carries one of the refused query parameters above. | Fix the connection string; it must be the dedicated role, with no overriding parameters. |
+| `unverified` | Set, but the server could not be asked — unreachable host, bad password, connection limit, or no answer inside the probe deadline. The role is **not** trusted. | Fix connectivity or credentials, then re-check. |
+| `under_provisioned` | Reachable and otherwise safe, but missing at least one declared relation or column grant. | Re-run `npm run diagnostics:provision-role`, then re-check readiness. |
+| `over_privileged` | Reachable, and the role holds a privilege ADR-007 forbids, can read an undeclared relation or column, or is not the configured role. | Re-run provisioning and investigate privilege drift. If the role name does not match `current_user`, fix the string. |
+| `verified` | The server itself confirmed the named role is a non-superuser that can only `SELECT`, and only from the declared allowlist. | Nothing. |
 
 The response never contains the connection string, the password, or the role name.
 
@@ -555,9 +555,9 @@ reports, in priority order; the meanings are declared once, in
 `src/lib/ai-diagnostics-blockers.ts`. Two of them are easy to confuse and are
 deliberately distinct:
 
-| Blocker                   | Meaning                                                                                                    | Operator action                                                                                                                                                                                                                    |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `module_off`              | The module settings were read, and AI Diagnostics is switched **off** in Admin > Modules.                  | Switch the module on.                                                                                                                                                                                                              |
+| Blocker | Meaning | Operator action |
+| --- | --- | --- |
+| `module_off` | The module settings were read, and AI Diagnostics is switched **off** in Admin > Modules. | Switch the module on. |
 | `module_flags_unreadable` | The module settings could not be **read**, so whether the module is on is unknown (`moduleEnabled: null`). | Do **not** switch anything on — it may already be on. Investigate the settings read: a transient database timeout, or a deploy window where the running code expects a `ClubModuleSettings` column the database does not have yet. |
 
 Every state except `verified` blocks readiness, and every diagnostics tool call is
@@ -608,10 +608,10 @@ must not be told a control exists when it does not. (The ADR-006 §4 **private
 knowledge overlay** shipped this release — see [above](#the-private-knowledge-overlay-adr-006-4).)
 Until the two below ship:
 
-| ADR-006 posture                                 | State in this release                                                                                                                                                                                                                                                            | What that means for an operator                                                                                                                                                                                                               |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| §2 Provider / data-residency **disclosure**     | **Not built.** There is no shipped disclosure surface on the admin configuration page, and no operator-facing statement that enabling Diagnostics sends bounded excerpts to Anthropic for processing outside New Zealand.                                                        | Enabling Diagnostics still has that data-governance consequence — it is described in this guide and the [architecture](architecture.md), but not surfaced in the product. Treat enabling it as an informed decision you make from these docs. |
-| §3 Optional **zero-retention** provider posture | **Not built.** The provider client (`src/lib/diagnostics/answer/provider.ts`) sends no no-retention / no-training header, and nothing reads a zero-retention setting. A comment in `src/lib/ai-diagnostics-config.ts` references the posture aspirationally; it is not enforced. | A deployment cannot yet require zero-retention through configuration. A club with that requirement should arrange it at the Anthropic workspace/account level for the dedicated diagnostics key, out of band, until this ships.               |
+| ADR-006 posture | State in this release | What that means for an operator |
+| --- | --- | --- |
+| §2 Provider / data-residency **disclosure** | **Not built.** There is no shipped disclosure surface on the admin configuration page, and no operator-facing statement that enabling Diagnostics sends bounded excerpts to Anthropic for processing outside New Zealand. | Enabling Diagnostics still has that data-governance consequence — it is described in this guide and the [architecture](architecture.md), but not surfaced in the product. Treat enabling it as an informed decision you make from these docs. |
+| §3 Optional **zero-retention** provider posture | **Not built.** The provider client (`src/lib/diagnostics/answer/provider.ts`) sends no no-retention / no-training header, and nothing reads a zero-retention setting. A comment in `src/lib/ai-diagnostics-config.ts` references the posture aspirationally; it is not enforced. | A deployment cannot yet require zero-retention through configuration. A club with that requirement should arrange it at the Anthropic workspace/account level for the dedicated diagnostics key, out of band, until this ships. |
 
 Neither weakens any shipped control: Diagnostics is fully functional on the
 public bundle alone, and every read still runs through the SELECT-only role and the

@@ -91,6 +91,7 @@
 import "server-only";
 
 import { z } from "zod";
+
 import { deletedAccountSql } from "@/lib/deleted-account";
 
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
@@ -248,9 +249,7 @@ const bookingSearchArgsSchema = z
     /** For `lodge_nights`. */
     lodgeId: RECORD_ID.optional(),
     nightFrom: NZ_DATE_ONLY.optional(),
-    window: z
-      .enum(AID6B_SEARCH_WINDOW_KEYS)
-      .default(AID6B_DEFAULT_SEARCH_WINDOW),
+    window: z.enum(AID6B_SEARCH_WINDOW_KEYS).default(AID6B_DEFAULT_SEARCH_WINDOW),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -259,21 +258,28 @@ const bookingSearchArgsSchema = z
     };
     refuseTermsOutsideArm(value, ctx, BOOKING_SEARCH_ARM_KEYS[value.kind]);
     if (value.kind === "booking_id" || value.kind === "owner_member_id") {
-      require(value.recordId !==
-        undefined, "recordId", "this search needs a record id");
+      require(
+        value.recordId !== undefined,
+        "recordId",
+        "this search needs a record id"
+      );
       return;
     }
     if (value.kind === "booking_reference") {
-      require(value.bookingReference !== undefined &&
-        BOOKING_REFERENCE_SHAPE.test(
-          value.bookingReference,
-        ), "bookingReference", "expected an eight-character booking reference");
+      require(
+        value.bookingReference !== undefined &&
+          BOOKING_REFERENCE_SHAPE.test(value.bookingReference,),
+        "bookingReference",
+        "expected an eight-character booking reference"
+      );
       return;
     }
-    require(value.lodgeId !==
-      undefined, "lodgeId", "this search needs a lodge id");
-    require(value.nightFrom !==
-      undefined, "nightFrom", "this search needs a first night");
+    require(value.lodgeId !== undefined, "lodgeId", "this search needs a lodge id");
+    require(
+      value.nightFrom !== undefined,
+      "nightFrom",
+      "this search needs a first night"
+    );
   });
 
 type BookingSearchArgs = z.infer<typeof bookingSearchArgsSchema>;
@@ -666,7 +672,7 @@ const MEMBER_SEARCH_COLUMNS = `m."id" AS member_ref,
   m."canLogin" AS can_login,
   (m."cancelledAt" IS NOT NULL) AS is_cancelled,
   (m."archivedAt" IS NOT NULL) AS is_archived,
-  ${deletedAccountSql('m."deletedAt"', 'm."email"')} AS lifecycle_deleted,
+  ${deletedAccountSql('m."deletedAt"','m."email"')} AS lifecycle_deleted,
   (m."email" IS NOT NULL AND m."email" <> '') AS has_email,
   (m."phoneNumber" IS NOT NULL AND m."phoneNumber" <> '') AS has_phone,
   (m."xeroContactId" IS NOT NULL) AS has_xero_contact,

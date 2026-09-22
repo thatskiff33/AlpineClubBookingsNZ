@@ -23,6 +23,7 @@ import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
 import { escapeCsvCell } from "@/lib/csv";
 import { isDeletedAccountRecord, notDeletedAccountWhere } from "@/lib/deleted-account";
+
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
   "PAID",
@@ -280,7 +281,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const members = (await prisma.member.findMany({
+    const members = ( await prisma.member.findMany({
       where,
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       select: {
