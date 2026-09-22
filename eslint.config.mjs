@@ -351,11 +351,34 @@ const MONEY_HELPER_MODULES = MONEY_GUARD_EXEMPTIONS.map((entry) => entry.file);
 const CENTS_DISPLAY_MESSAGE =
   "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — for an editable dollars input, or a report line that already reads as a delta), both from @/lib/utils. Seeding an EDITABLE input's plain value, or a raw numeric export cell (CSV, a JSON report row) that must carry no currency symbol, is a different, legitimate concept — add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason; that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
 
+// #3533 — the OTHER way a person is shown the storage form: not a bad
+// division, but no division at all. `${refundAmountCents} cents` in an audit
+// `details` string, a thrown Error, a repair report line or a cron summary
+// hands a booking officer "8450 cents" to convert in their head, and a
+// factor-of-a-hundred misread is easy. A census on 20 Sep 2026 found 26 of
+// them under `src/`, seven in `booking-cancel.ts` alone.
+//
+// The selector keys on a template quasi that BEGINS WITH A SPACE and then the
+// word: in `` `${x} cents` `` the second quasi's raw value is exactly
+// `" cents"`, and a leading space can only come from text that follows an
+// interpolation. That is what keeps `` `cents: ${x}` `` — a label, not an
+// amount — out of it, and it is why the space is load-bearing rather than
+// cosmetic, and why the word must not run on into a longer noun
+// (`" cents-per-night rows"` is a row count, not an amount). The negative
+// fixtures in `cents-in-prose-guard.test.ts` pin every one of those shapes.
+const CENTS_IN_PROSE_MESSAGE =
+  "INV-SSOT-001 / #3533: do not write `${someCents} cents` into text a person reads. An audit `details` string, a thrown Error, an operator report line and a cron summary are all read by a booking officer or the treasurer reconstructing a booking's money, and every amount there must read as $84.50 — use formatCents (or formatSignedCents where the sign is the point) from @/lib/utils. The STORED value stays integer cents; this is about the sentence. Rendering into a raw numeric export cell, or text no person reads? Add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason — that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
+
 const CENTS_DISPLAY_RESTRICTIONS = [
   {
     selector:
       'CallExpression[callee.type="MemberExpression"][callee.property.name="toFixed"][callee.object.type="BinaryExpression"][callee.object.operator="/"][callee.object.right.value=100]',
     message: CENTS_DISPLAY_MESSAGE,
+  },
+  {
+    selector:
+      'TemplateLiteral > TemplateElement[value.raw=/^ cents(?![-\\w])/i]',
+    message: CENTS_IN_PROSE_MESSAGE,
   },
 ];
 

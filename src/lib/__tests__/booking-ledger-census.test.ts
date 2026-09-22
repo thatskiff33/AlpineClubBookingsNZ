@@ -415,7 +415,8 @@ describe("INV-PAY-047: every live booking's money balances", () => {
       residualCents: residual,
     });
     expect(message).toContain("INV-PAY-047");
-    expect(message).toContain("Residual 7000 cents");
+    // #3533: the sentence states the amount, not the storage form.
+    expect(message).toContain("Residual $70.00");
     expect(message).toContain("the uncollected ask");
     expect(message).toContain("change fees");
   });

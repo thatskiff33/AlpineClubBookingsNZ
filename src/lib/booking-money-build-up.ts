@@ -6,6 +6,7 @@ import {
   memberBenefitAllocations,
 } from "@/lib/night-adjustment-write";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
+import { formatCents } from "@/lib/utils";
 
 export const BOOKING_MONEY_BUILD_UP_INVARIANT = "INV-MONEY-030";
 
@@ -420,7 +421,7 @@ export function selectBookingMoneyBuildUp(args: {
 
   if (!args.mismatchClassification) {
     refuse(
-      `${args.operation}: stored ${storedCents} cents differs from today's ${args.derivedCents} cents without a classified compatibility fallback`,
+      `${args.operation}: stored ${formatCents(storedCents)} differs from today's ${formatCents(args.derivedCents)} without a classified compatibility fallback`,
     );
   }
   const reason = "STORED_DERIVED_MISMATCH" as const;

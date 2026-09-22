@@ -682,8 +682,9 @@ describe("buildXeroReconciliationReport", () => {
       (issueSection) => issueSection.id === "stripe-refund-over-coverage"
     );
     expect(section?.severity).toBe("critical");
-    expect(section?.items?.[0]?.detail).toContain("190 cents");
-    expect(section?.items?.[0]?.detail).toContain("100 cents");
+    // #3533: coverage details state amounts.
+    expect(section?.items?.[0]?.detail).toContain("$1.90");
+    expect(section?.items?.[0]?.detail).toContain("$1.00");
   });
 
   it("flags an account-credit-only cancellation's fictitious note as over-coverage against a ZERO cash target (#2902)", async () => {
@@ -745,7 +746,7 @@ describe("buildXeroReconciliationReport", () => {
       (issueSection) => issueSection.id === "stripe-refund-over-coverage"
     );
     expect(section?.items?.[0]?.detail).toContain(
-      "cash refund target of 0 cents"
+      "cash refund target of $0.00"
     );
     expect(section?.items?.[0]?.detail).toContain("legacy-mirror");
   });
