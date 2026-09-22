@@ -113,7 +113,6 @@ export async function GET(req: NextRequest) {
       : []),
   ];
 
-  // Build where clause (same logic as list endpoint)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: Record<string, any> = {};
   const andConditions: Record<string, unknown>[] = notDeletedAccountWhere();
@@ -281,7 +280,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const members = ( await prisma.member.findMany({
+    const members = (await prisma.member.findMany({
       where,
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       select: {
@@ -290,7 +289,8 @@ export async function GET(req: NextRequest) {
         lastName: true,
         gender: true,
         occupation: true,
-        email: true, deletedAt: true,
+        email: true,
+        deletedAt: true,
         phoneCountryCode: true,
         phoneAreaCode: true,
         phoneNumber: true,
@@ -328,8 +328,7 @@ export async function GET(req: NextRequest) {
       },
     })).filter((member) => !isDeletedAccountRecord(member));
 
-    // Column descriptors. Optional fields gated by club settings are filtered
-    // out below so the header row and every data row stay aligned.
+    // Optional fields are filtered so the header and data rows stay aligned.
     type MemberRow = (typeof members)[number];
     const columns: Array<{ header: string; value: (m: MemberRow) => string }> =
       [
