@@ -1,4 +1,5 @@
 import { AnalyticsConsent } from "@/components/analytics-consent";
+import { ClubFormatProvider } from "@/components/club-format-provider";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { HelpWidgetPublic } from "@/components/help-widget/help-widget-public";
 import { SiteBanners } from "@/components/site-banners";
@@ -12,6 +13,7 @@ import {
   getCachedClubIdentity,
   getCachedWebsiteThemeRenderState,
 } from "@/lib/public-layout-config";
+import { getClubFormat } from "@/lib/club-format-settings";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
 import { SETUP_IN_PROGRESS_COPY } from "@/lib/setup-in-progress-screen";
@@ -97,7 +99,7 @@ export async function WebsiteChrome({
   nonce: string | undefined;
   children: React.ReactNode;
 }) {
-  const [theme, siteBanners, modules, clubZone] = await Promise.all([
+  const [theme, siteBanners, modules, clubZone, clubFormat] = await Promise.all([
     // Tagged cache wrapper, matching (public)/layout.tsx (#2322): this read used
     // to hit ClubTheme on every request. The `public-layout:theme` tag is
     // revalidated on theme save by the admin/site-style PUT.
@@ -113,6 +115,13 @@ export async function WebsiteChrome({
     // to the documented default, which is the same judgement every other reader
     // of this setting makes.
     clubTimeZone(),
+    // #3564: the club's PERSISTED currency and locale, for the same reason and
+    // on the same terms as the zone above. `NEXT_PUBLIC_CURRENCY` and
+    // `NEXT_PUBLIC_LOCALE` are inlined at BUILD time into an image that serves
+    // every club, so a `"use client"` component on the public site that reads
+    // them sees `undefined` and renders New Zealand. One more primary-key read
+    // of a one-row table, and it never throws (INV-CONFIG-006).
+    getClubFormat(),
     // NOTE: the club identity is NOT fetched here. It is used only by the
     // pre-setup branch below, which since #2420 is a rare fallback rather than
     // the pre-setup norm, so it is resolved inside that branch — the same
@@ -176,35 +185,40 @@ export async function WebsiteChrome({
       getCachedClubIdentity(),
     ]);
     return (
-      <ClubTimeProvider zone={clubZone}>
-        <div
-          className={`${clubThemeFontVariableClassName} website-theme min-h-screen bg-background text-foreground`}
-        >
-          {themeStyle}
-          <main className="flex min-h-screen items-center justify-center px-4 py-16">
-            <section className="mx-auto max-w-2xl text-center">
-              <p className="website-eyebrow mb-4">
-                {SETUP_IN_PROGRESS_COPY.eyebrow}
-              </p>
-              <h1 className="font-heading text-4xl font-bold text-brand-charcoal sm:text-5xl">
-                {SETUP_IN_PROGRESS_COPY.heading(clubIdentity.name)}
-              </h1>
-              <p className="mx-auto mt-5 max-w-xl text-base leading-7 text-brand-deep/80 sm:text-lg">
-                {SETUP_IN_PROGRESS_COPY.body}
-              </p>
-              <p className="mt-6 text-sm text-brand-ridge">
-                {SETUP_IN_PROGRESS_COPY.contactPrefix}{" "}
-                <a
-                  href={`mailto:${contactEmail}`}
-                  className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
-                >
-                  {contactEmail}
-                </a>
-              </p>
-            </section>
-          </main>
-        </div>
-      </ClubTimeProvider>
+      <ClubFormatProvider
+        currencyCode={clubFormat.currencyCode}
+        locale={clubFormat.locale}
+      >
+        <ClubTimeProvider zone={clubZone}>
+          <div
+            className={`${clubThemeFontVariableClassName} website-theme min-h-screen bg-background text-foreground`}
+          >
+            {themeStyle}
+            <main className="flex min-h-screen items-center justify-center px-4 py-16">
+              <section className="mx-auto max-w-2xl text-center">
+                <p className="website-eyebrow mb-4">
+                  {SETUP_IN_PROGRESS_COPY.eyebrow}
+                </p>
+                <h1 className="font-heading text-4xl font-bold text-brand-charcoal sm:text-5xl">
+                  {SETUP_IN_PROGRESS_COPY.heading(clubIdentity.name)}
+                </h1>
+                <p className="mx-auto mt-5 max-w-xl text-base leading-7 text-brand-deep/80 sm:text-lg">
+                  {SETUP_IN_PROGRESS_COPY.body}
+                </p>
+                <p className="mt-6 text-sm text-brand-ridge">
+                  {SETUP_IN_PROGRESS_COPY.contactPrefix}{" "}
+                  <a
+                    href={`mailto:${contactEmail}`}
+                    className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+                  >
+                    {contactEmail}
+                  </a>
+                </p>
+              </section>
+            </main>
+          </div>
+        </ClubTimeProvider>
+      </ClubFormatProvider>
     );
   }
 
@@ -222,30 +236,44 @@ export async function WebsiteChrome({
    * screen renders no timestamp today, but the guarantee the census enforces is
    * "every page has a provider" rather than "every page that currently needs
    * one", and a conditional guarantee is the kind that stops holding quietly.
+   *
+   * `ClubFormatProvider` (#3564, stage 2 of programme #3205) wraps both returns
+   * on exactly that argument. No public `"use client"` component reads the
+   * club's currency or locale from it TODAY — the ten converted modules are all
+   * under `(admin)` — and it is mounted here anyway, because the guarantee the
+   * format census enforces is the same one, `useClubFormat()` throws for the
+   * same reason, and #3565 brings `formatCents` (50 client files, several of
+   * them on public pages) onto this context. A mount added on the day the first
+   * consumer arrives is a mount somebody has to remember.
    */
   return (
-    <ClubTimeProvider zone={clubZone}>
-      <div
-        className={`${clubThemeFontVariableClassName} website-theme min-h-screen flex flex-col bg-background text-foreground`}
-      >
-        {themeStyle}
-        <a
-          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:ring-2 focus:ring-ring"
-          href="#main-content"
+    <ClubFormatProvider
+      currencyCode={clubFormat.currencyCode}
+      locale={clubFormat.locale}
+    >
+      <ClubTimeProvider zone={clubZone}>
+        <div
+          className={`${clubThemeFontVariableClassName} website-theme min-h-screen flex flex-col bg-background text-foreground`}
         >
-          Skip to main content
-        </a>
-        <SiteBanners banners={siteBanners} />
-        <WebsiteHeader logoUrl={theme.logoUrl} logoDataUrl={theme.logoDataUrl} />
-        <main className="flex-1" id="main-content">
-          {children}
-        </main>
-        <WebsiteFooter logoUrl={theme.logoUrl} logoDataUrl={theme.logoDataUrl} />
-        <AnalyticsConsent config={analyticsConfig} nonce={nonce} />
-        {/* Public help widget: hardcoded llmEnabled=false; hides itself while the
-            AnalyticsConsent banner occupies the same bottom corner. */}
-        <HelpWidgetPublic />
-      </div>
-    </ClubTimeProvider>
+          {themeStyle}
+          <a
+            className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:ring-2 focus:ring-ring"
+            href="#main-content"
+          >
+            Skip to main content
+          </a>
+          <SiteBanners banners={siteBanners} />
+          <WebsiteHeader logoUrl={theme.logoUrl} logoDataUrl={theme.logoDataUrl} />
+          <main className="flex-1" id="main-content">
+            {children}
+          </main>
+          <WebsiteFooter logoUrl={theme.logoUrl} logoDataUrl={theme.logoDataUrl} />
+          <AnalyticsConsent config={analyticsConfig} nonce={nonce} />
+          {/* Public help widget: hardcoded llmEnabled=false; hides itself while the
+              AnalyticsConsent banner occupies the same bottom corner. */}
+          <HelpWidgetPublic />
+        </div>
+      </ClubTimeProvider>
+    </ClubFormatProvider>
   );
 }

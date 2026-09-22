@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { AppProvidersClient } from "@/components/app-providers-client";
 import type { ClubIdentity } from "@/config/club-identity-types";
+import { getClubFormat } from "@/lib/club-format-settings";
 import { clubTimeZone } from "@/lib/club-time/server";
 
 /**
@@ -30,6 +31,23 @@ import { clubTimeZone } from "@/lib/club-time/server";
  * `club-time-provider.tsx` has the full reasoning, and
  * `club-time-provider-mount-census.test.tsx` is the guard that keeps the claim
  * true as route groups come and go.
+ *
+ * ## And, since #3564, the club's CURRENCY AND LOCALE come the same way
+ *
+ * Stage 2 of programme #3205 put `ClubFormatSettings` behind the same seam, for
+ * the same reason and through the same two mount points: `NEXT_PUBLIC_CURRENCY`
+ * and `NEXT_PUBLIC_LOCALE` are inlined at BUILD time into an image that serves
+ * every club, so a browser that reads them sees `undefined` and falls back to
+ * New Zealand. `club-format-provider.tsx` has the reasoning and
+ * `club-format-provider-mount-census.test.tsx` is its guard.
+ *
+ * BOTH READS HAPPEN ONCE PER RENDER PASS, side by side. `clubTimeZone()` is
+ * request-memoised with React `cache()`; `getClubFormat()` deliberately is not
+ * — stage 1's reader records that the caching contract belongs to #3565, which
+ * is where the hot per-format call sites arrive, and this component adds
+ * exactly one primary-key read of a one-row table to a render that already
+ * performs several. Choosing a cross-request cache here would mean inventing an
+ * invalidation contract for the admin writer a stage early.
  */
 
 interface AppProvidersProps {
@@ -43,10 +61,13 @@ export async function AppProviders({
   clubIdentity,
   nonce,
 }: AppProvidersProps) {
+  const [zone, format] = await Promise.all([clubTimeZone(), getClubFormat()]);
   return (
     <AppProvidersClient
       clubIdentity={clubIdentity}
-      clubTimeZone={await clubTimeZone()}
+      clubTimeZone={zone}
+      clubCurrencyCode={format.currencyCode}
+      clubLocale={format.locale}
       nonce={nonce}
     >
       {children}

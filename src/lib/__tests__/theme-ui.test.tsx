@@ -47,6 +47,18 @@ vi.mock("@/lib/club-time/server", () => ({
   clubTimeZone: async () => PERSISTED_CLUB_ZONE,
 }));
 
+/*
+  #3564 gave the same component a second `await`, for the club's PERSISTED
+  currency and locale, and the same treatment for the same reason. Values the
+  environment does NOT hold, so a server half that went back to `APP_CURRENCY` /
+  `APP_LOCALE` fails the hop assertion rather than agreeing with it by accident.
+*/
+const PERSISTED_CLUB_FORMAT = { currencyCode: "CHF", locale: "de-CH" };
+
+vi.mock("@/lib/club-format-settings", () => ({
+  getClubFormat: async () => PERSISTED_CLUB_FORMAT,
+}));
+
 const testClubIdentity: ClubIdentity = {
   bookingsName: "Example Bookings",
   contactEmail: "contact@example.org",
@@ -107,6 +119,8 @@ describe("AppThemeProvider", () => {
       <AppProvidersClient
         clubIdentity={testClubIdentity}
         clubTimeZone="Pacific/Auckland"
+        clubCurrencyCode="NZD"
+        clubLocale="en-NZ"
         nonce="layout-nonce"
       >
         <span>page content</span>
@@ -135,6 +149,10 @@ describe("AppThemeProvider", () => {
       nonce), a missing `clubIdentity` is a type error but a WRONG one is not, and
       a `clubTimeZone` that stopped coming from `@/lib/club-time/server` would put
       every browser in this application on the wrong civil time (INV-CONFIG-002).
+      The currency and locale (#3564) are asserted here for the same reason: a
+      server half that resolved them from `@/config/operational` instead would
+      hand the browser the BUILD's answer, which is `undefined` in the published
+      image, and nothing else in the tree would notice.
     */
     const element = await AppProviders({
       clubIdentity: testClubIdentity,
@@ -146,6 +164,8 @@ describe("AppThemeProvider", () => {
     expect(element.props).toMatchObject({
       clubIdentity: testClubIdentity,
       clubTimeZone: PERSISTED_CLUB_ZONE,
+      clubCurrencyCode: PERSISTED_CLUB_FORMAT.currencyCode,
+      clubLocale: PERSISTED_CLUB_FORMAT.locale,
       nonce: "layout-nonce",
     });
   });
