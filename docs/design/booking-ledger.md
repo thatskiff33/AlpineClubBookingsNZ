@@ -76,6 +76,11 @@ model BookingLedgerLine {
   nightEndExclusive DateTime?             @db.Date
   rateMembershipTypeId String?
   ageTier           AgeTier?
+  /// CHARGE only: the guests this line is for, as named when it was posted
+  /// (owner decision D-3532-3, 23 Sep 2026) — the same self-contained shape
+  /// `ModificationLine.guestNames` already uses, so a document rendered from a
+  /// line reads the same years later whatever happened to the guest row since.
+  guestNames        String[]
   /// What posted it. Exactly one anchor per line (checked): the booking's own
   /// confirmation, a modification, a review task, a payment transaction, a
   /// refund, a member-credit row, or a cancellation.
@@ -151,6 +156,12 @@ returns figures; it reads nothing.
   `INV-PAY-014`/`INV-PAY-015`'s concern and stays where it is.
 - **No `Money` outside cents** (`INV-MONEY-001`, `INV-MONEY-003`). Currency is
   the club's (#3563), never per line.
+- **No personal data beyond the guest names D-3532-3 puts there.** No email, no
+  member id beyond `postedByMemberId` (the officer who decided), no note except
+  the narration a person typed for an `AGREED_ADJUSTMENT`. A name on an
+  immutable row cannot be corrected later, which is the cost the owner
+  accepted for self-contained lines; a correction is a reversal and a re-post,
+  like every other correction here.
 - **No line for an *ask*.** An unpaid additional-payment request is an
   obligation the derived `owed(b)` already states; storing it as a line would
   reintroduce `additionalAmountCents` under another name (§5.3).
@@ -307,6 +318,7 @@ No row is "unknown". Codes:
 | Id | Code | Ledger reading |
 | --- | --- | --- |
 | 001, 003 | U | cents everywhere; the line's three integer columns and the check constraint |
+| — | U | `INV-PRIV` retention applies to `guestNames` on a line (D-3532-3) exactly as to the guest row it was copied from |
 | 002, 008–022 | U | membership and joining-fee billing; a different ledger (`MembershipSubscriptionCharge`), out of scope by the issue |
 | 004 | L | a flat price posts per-strand `GUEST_NIGHT` lines at the rebased figure |
 | 005, 023–027 | U | promo caps count `PromoRedemption`/allocation rows, which stay the promo authority; the `PROMOTION` line is their posting |
@@ -431,24 +443,29 @@ Taken here, on the evidence above:
   `GUEST_NIGHT` line is a posting of a night row, so `INV-MOD-028`'s evidence
   discipline is unchanged.
 
-Left to the owner (recorded on #3532 when answered; each has a recommended
-default the children are written against):
+Owner decisions (#3532, 23 Sep 2026):
 
-- **D-3532-1 Shadow period.** How long C1–C3 post in shadow with the census
-  green before C5's first read moves. Recommended: one full calendar month of
-  live bookings, or 200 bookings, whichever is later.
-- **D-3532-2 The mirror's fate.** Drop the six columns (C7), or keep them as
-  a census-guarded materialised projection forever. Recommended: drop — a
-  guarded copy is still a copy, and the fences that keep it true are the cost
-  this programme exists to remove.
-- **D-3532-3 Guest names on lines.** `ModificationLine.guestNames` narrates who
-  a run is for; a ledger line has `bookingGuestId` and could carry no name.
-  Recommended: no names on lines — the strand id resolves to the name at
-  render time, and a retained-forever money row carries no personal data it
-  does not need (`INV-PRIV`).
-- **D-3532-4 Membership money.** Whether `MembershipSubscriptionCharge` ever
-  joins this ledger. Recommended: no, and out of scope by the issue; it has
-  its own immutable-snapshot rule (`INV-MONEY-008`).
+**D-3532-2 — decided 23 Sep 2026: drop the columns.** C7 removes
+`Payment.amountCents`, `creditAppliedCents`, `refundedAmountCents`,
+`additionalAmountCents`, `changeFeeCents` and `Booking.finalPriceCents` in the
+two-step stop-writing-then-drop sequence, and deletes the fences that existed
+to keep them true. A guarded copy is still a copy.
+
+**D-3532-3 — decided 23 Sep 2026: copy the guest names onto the line.**
+`guestNames String[]` on `CHARGE` lines, as `ModificationLine.guestNames`
+already does, so a document rendered from a line reads the same years later.
+The accepted cost is that a name in an immutable row cannot be corrected in
+place; a correction is a reversal and a re-post, and `INV-PRIV`'s retention
+rules apply to the column as they do to the guest row.
+
+**D-3532-4 — decided 23 Sep 2026: bookings only.**
+`MembershipSubscriptionCharge` does not join this ledger; it keeps
+`INV-MONEY-008`'s immutable-snapshot rule.
+
+**D-3532-1 — open.** How long C1–C3 post in shadow, with the census green,
+before C5's first read moves. The children are written against "one full
+calendar month of live bookings, or 200 bookings, whichever is later" until
+the owner settles it; only C5's opening condition depends on the answer.
 
 ## 12. Provenance
 
