@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { BookingGuestNightPriceSource, Prisma } from "@prisma/client";
 
 import type { EditFinancialReviewCause } from "@/lib/edit-financial-review-context";
 import {
@@ -111,7 +111,7 @@ export type BookingMoneyBuildUpProjection = {
       id: string;
       stayDate: Date;
       priceCents: number | null;
-      priceSource: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN";
+      priceSource: BookingGuestNightPriceSource;
     }>;
   }>;
   promoRedemption: {

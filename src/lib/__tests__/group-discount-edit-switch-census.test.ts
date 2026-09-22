@@ -188,6 +188,13 @@ const MAPPER_CALL_SITES = [
     what: "the waitlist OFFER reprice: INV-MOD-005's deliberate exception re-bases the whole booking at current rates before the member confirms, and the offer email quotes that number. It buys the original nights rather than adding any, so it is not a later edit and is not gated — gating it would make the offer email disagree with the confirm",
   },
   {
+    file: "src/lib/rate-derived-night-price-backfill.ts",
+    kind: "creation",
+    creationCalls: 1,
+    editCalls: 0,
+    what: "the #3531 rate-derived backfill reproducing what a SALE priced - the first-purchase config, because a sale never went through the edit-time switch; a wrong config cannot pass its exact-total check",
+  },
+  {
     file: "src/lib/waitlist-cross-lodge.ts",
     kind: "creation",
     creationCalls: 1,
