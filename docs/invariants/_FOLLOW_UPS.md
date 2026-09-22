@@ -206,10 +206,10 @@ that one index heading, because 21 of the 27 inbound anchor links in the
 repository target the source `##` headings and keeping them byte-identical is
 what makes those links need no edit.
 
-## 7. Passages the document itself does not consider settled — filed as #2708
+## 7. Passages the document itself did not consider settled — closed
 
-These are rules whose own text says they are awaiting a decision. They moved
-verbatim and kept their flags. Somebody should schedule the confirmations.
+**Nothing outstanding here.** These rules moved with their original flags and
+were settled in the follow-up issues named below.
 
 - **`INV-LIFE-044`, `INV-LIFE-047`, `INV-LIFE-054` — DECIDED and shipped
   (#2716).** The owner walked all three on 9 August 2026 and the flags are gone
@@ -243,14 +243,14 @@ verbatim and kept their flags. Somebody should schedule the confirmations.
   new type-filtered mapping key each club points at its own expense account,
   falling back to the old destination while unset, which `INV-INT-021` now
   makes the house rule for every mapping key that follows.
-- **`INV-LIFE-013`** — a self-documented erratum rather than an open question,
-  but in the same family: "This one is NOT covered by the
-  `cancelledAt`/`archivedAt` refusal and **was wrongly documented here as if it
-  were.**" The correction is in the document; the rule around it may still be
-  worth a review.
-- **`INV-LIFE-015`** — records that stamping `cancelledAt` (or a dedicated
-  `deletedAt`) at anonymisation time "would make the state structural instead of
-  inferred; it is deliberately still open".
+- **`INV-LIFE-013` and `INV-LIFE-015` — REVIEWED, DECIDED and shipped
+  (#2718).** The historical erratum remains explicit: deletion was never
+  covered by the cancelled/archive refusal. Approved anonymisation now stamps
+  `deletedAt`, and one canonical predicate recognises that structural marker or
+  the permanent reserved-address compatibility signal for adopter-era erased
+  rows. Application mapping refuses the same predicate before it can overwrite
+  an erased identity. The owner deliberately required no historical backfill or
+  unresolved state; the decision record is linked from `INV-LIFE-015`.
 
 ## 8. Positional cross-references that crossed a file boundary — closed
 
