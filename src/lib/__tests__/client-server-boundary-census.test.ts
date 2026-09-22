@@ -78,6 +78,16 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  * no environment read and is deliberately NOT here: the admin panel needs its
  * zone list.
  *
+ * `@/lib/club-format-env` (#3563) is the same pair for the same reason, and it
+ * is the sharper case: `NEXT_PUBLIC_CURRENCY` and `NEXT_PUBLIC_LOCALE` have NO
+ * `Dockerfile` build argument, so in the published image they inline as
+ * `undefined` — a client-side read would not merely answer from the build, it
+ * would answer nothing at all and fall through to the shipped New Zealand
+ * defaults on every club. That is the defect programme #3205 exists to fix, so
+ * re-creating it in the module written to fix it would be a particular kind of
+ * absurd. Its sibling `@/lib/club-format` is pure validation and is
+ * deliberately NOT here: the admin panel needs its currency list.
+ *
  * `@/lib/environment-role-declaration` and `@/lib/environment-role` (#3034,
  * epic #2986) are here for the same reason and a sharper one. The declaration
  * module reads `process.env.APP_ENVIRONMENT_ROLE`, and a client component
@@ -107,6 +117,7 @@ const FORBIDDEN_MODULES = new Set(
     "stripe",
     "env",
     "club-time-zone-env",
+    "club-format-env",
     "environment-role-declaration",
     "environment-role",
   ].map((name) => path.join(SRC, "lib", name)),
@@ -394,7 +405,7 @@ function carriesMarker(text: string): boolean {
 }
 
 describe("INV-OPS-013: the forbidden-leaf list is the list it claims to be", () => {
-  // #3204 decided to KEEP all nine marked roots on this list rather than let
+  // #3204 decided to KEEP all ten marked roots on this list rather than let
   // the build proof replace it, because this half answers without a build and
   // covers a module before anybody marks it. That decision was enforced by
   // nothing: measured, deleting "environment-role" from `FORBIDDEN_MODULES`
@@ -428,22 +439,22 @@ describe("INV-OPS-013: the forbidden-leaf list is the list it claims to be", () 
 
     expect(
       FORBIDDEN_MODULES.size,
-      "INV-OPS-013: this list is nine marked roots plus `@/lib/session` and " +
+      "INV-OPS-013: this list is ten marked roots plus `@/lib/session` and " +
         "`@/lib/env`, which name no file. Size plus the membership checks above " +
-        "pin the set EXACTLY, so a swapped entry cannot pass. Marking a tenth " +
-        "module means adding it here and to MARKED_ROOTS, and moving this " +
-        "number on purpose (#3204).",
-    ).toBe(11);
+        "pin the set EXACTLY, so a swapped entry cannot pass. Marking an " +
+        "eleventh module means adding it here and to MARKED_ROOTS, and moving " +
+        "this number on purpose (#3204, #3563).",
+    ).toBe(12);
   });
 });
 
-describe("INV-OPS-013: the nine marked roots still carry the marker", () => {
-  it("names nine roots, all of which exist", () => {
+describe("INV-OPS-013: the ten marked roots still carry the marker", () => {
+  it("names ten roots, all of which exist", () => {
     // Non-vacuity, in the one shape that would make the assertion below pass by
     // checking nothing: a rename, a deletion, or a truncated list. The count is
     // asserted in `server-only-boundary-selftest.test.mjs` too; repeated here
     // so this file cannot be read as trusting a list it never looked at.
-    expect(MARKED_ROOTS).toHaveLength(9);
+    expect(MARKED_ROOTS).toHaveLength(10);
     for (const root of MARKED_ROOTS) {
       expect(
         existsSync(path.resolve(process.cwd(), root)),

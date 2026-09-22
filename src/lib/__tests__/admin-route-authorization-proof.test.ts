@@ -513,6 +513,18 @@ const REVIEWED_PERMISSION_DIVERGENCES: Divergence[] = [
     why: "STRICTER than the map: it discloses a non-member's contact details, which only an officer editing the booking needs.",
   },
   {
+    pathname: "/api/admin/club-format",
+    method: "GET",
+    gate: "Full Admin only",
+    why: "STRICTER than the map (#3563, INV-CONFIG-006). The installation's currency and locale decide how every amount of money in the product is denominated and written, so both verbs are Full Admin and not a support level - the same ground /api/admin/club-time-zone below is on.",
+  },
+  {
+    pathname: "/api/admin/club-format",
+    method: "PUT",
+    gate: "Full Admin only",
+    why: "STRICTER than the map, same reason as the GET above.",
+  },
+  {
     pathname: "/api/admin/club-time-zone",
     method: "GET",
     gate: "Full Admin only",

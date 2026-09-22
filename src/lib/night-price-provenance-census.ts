@@ -16,6 +16,7 @@
  */
 import type { BookingGuestNightPriceSource } from "@prisma/client";
 import { calendarMonthOf, clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
+import { storedNightPriceSourceIsInexact } from "@/lib/stored-sold-price-evidence";
 import {
   EDIT_FINANCIAL_REVIEW_CAUSES,
   parseEditFinancialReviewContext,
@@ -24,7 +25,7 @@ import {
 
 /** How a strand's rows read as a whole, the classes `INV-MOD-028` cares about. */
 export type StrandProvenanceClass =
-  /** Every row sold or officer-valued night by night (or rate-derived). */
+  /** Every row exact under `INV-MOD-028`: sold, officer-valued or rate-derived. */
   | "EXACT_NIGHTS"
   /** Every row an integer, at least one only an even split or of unknown origin. */
   | "INEXACT_NIGHTS"
@@ -54,14 +55,14 @@ export type ProvenanceCensusBookingRow = {
   }>;
 };
 
-const EXACT_SOURCES: ReadonlySet<string> = new Set(["SOLD", "OFFICER_PRICED", "RATE_DERIVED"]);
-
 export function classifyStrandProvenance(
   nights: ReadonlyArray<{ priceCents: number | null; priceSource: BookingGuestNightPriceSource }>,
 ): StrandProvenanceClass {
   if (nights.length === 0) return "NO_ROWS";
   if (nights.some((night) => night.priceCents === null)) return "UNVALUED_NIGHT";
-  return nights.every((night) => EXACT_SOURCES.has(night.priceSource)) ? "EXACT_NIGHTS" : "INEXACT_NIGHTS";
+  // Exactness is `INV-MOD-028`'s own predicate, imported (`INV-SSOT`): a sixth
+  // provenance value is classed here exactly as the edit gate would class it.
+  return nights.some((night) => storedNightPriceSourceIsInexact(night.priceSource)) ? "INEXACT_NIGHTS" : "EXACT_NIGHTS";
 }
 
 function emptyClasses(): Record<StrandProvenanceClass, number> {

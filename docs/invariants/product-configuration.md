@@ -469,3 +469,36 @@ home for that explanation and is not repeated here.
   only the rule. Operator guide:
   [`environment-role.md`](../guides/environment-role.md); Xero topology:
   [`xero/ARCHITECTURE.md`](../xero/ARCHITECTURE.md).
+
+## INV-CONFIG-006
+
+- **The club's currency and locale are one persisted pair, and the
+  installation's own configuration is the only authority for them.** One ISO
+  4217 code (`NZD`, `CHF`) and one BCP 47 tag (`en-NZ`, `de-CH`) in
+  `ClubFormatSettings` (id `"default"`), read through `getClubFormat()` in
+  [`club-format-settings.ts`](../../src/lib/club-format-settings.ts); validated
+  by [`club-format.ts`](../../src/lib/club-format.ts).
+- **`CURRENCY` and `LOCALE` (and their `NEXT_PUBLIC_` twins) are a seed, not a
+  second opinion.** They are consulted only while nothing is persisted. Once the
+  row exists, editing them changes nothing, and the operator guide and the admin
+  screen must both say so (owner decision D3 on #3205).
+- **The row is never seeded in SQL.** A migration cannot read a process
+  environment, so inserting `NZD` would silently re-denominate a club running on
+  another currency. The copy happens at boot, create-if-absent, in
+  `clubFormatSelfHealStep`, which runs even when `config/club.json` is absent.
+- **Neither column has a database default: the ROW's existence is the
+  "configured" signal.** The chain is persisted → environment → the shipped
+  `NZD` / `en-NZ`, per field, so a row with one unusable value keeps the good
+  half. The last-resort constants are not an `INV-CONFIG-001` breach, for the
+  reason `CLUB_TIME_ZONE_FALLBACK` is not.
+- **Validation is shape, runtime probe, then shape again on the canonicalised
+  value** — never membership of `Intl.supportedValuesOf`. Reasoning:
+  `club-format.ts`.
+- **Changing either re-denominates nothing.** Stored amounts stay integer cents
+  worth what they were; only how one is WRITTEN follows this.
+- **Full Admin on both verbs, confirmed, audited, and excluded from config
+  transfer as instance-local** — a bundle apply is none of those things.
+- Decided on #3563, stage 1 of programme #3205 (decisions D1-D6), which hold the
+  narrative and the rejected alternatives. Readers move onto it in #3564-#3567,
+  so nothing displays from this row yet. Operator guide:
+  [`club-format.md`](../guides/club-format.md).

@@ -746,6 +746,9 @@ describe("chargeSavedCardAttempt", () => {
     expect(intent).toBe(succeeded);
     expect(mocks.chargePaymentMethod).toHaveBeenCalledWith({
       amountCents: 10000,
+      // #3563 (INV-SSOT-003, D5): the currency default is gone and every
+      // caller states it. Same value the default supplied.
+      currency: "nzd",
       customerId: "cus_1",
       paymentMethodId: "pm_1",
       metadata: { bookingId: BOOKING, memberId: MEMBER },

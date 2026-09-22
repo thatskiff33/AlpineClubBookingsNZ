@@ -89,6 +89,7 @@
     "finance:backfill-monthly-facts": "tsx --conditions=react-server scripts/backfill-finance-monthly-facts.ts",
     "payments:backfill-cancel-flattened": "tsx --conditions=react-server scripts/backfill-cancel-flattened-payments.ts",
     "payments:backfill-orphaned-credits": "tsx --conditions=react-server scripts/backfill-orphaned-applied-credits.ts",
+    "bookings:backfill-night-prices-from-rates": "tsx --conditions=react-server scripts/backfill-night-prices-from-rates.ts",
     "payments:audit-ib-hold-clearing": "tsx --conditions=react-server scripts/audit-ib-hold-clearing.ts",
     "payments:audit-booking-ledger": "tsx --conditions=react-server scripts/audit-booking-ledger-residual.ts"
   },

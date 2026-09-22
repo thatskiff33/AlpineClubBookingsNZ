@@ -1238,23 +1238,25 @@ non-negative integer `BookingGuestNight.priceCents` and those prices sum to
 
 **`priceCents` is nullable, and a `NULL` is the column's own statement that the
 night's sold price is NOT KNOWN** (#3170, epic #2797). It joins the class this
-rule already had — an absent row, a negative row, a non-integer row — as an
-ABSENCE of usable evidence. It is never a zero: a stored `0` is a real sold price
+rule already had — an absent, negative or non-integer row — as an ABSENCE of
+usable evidence. It is never a zero: a stored `0` is a real sold price
 (a comped night) and reconciles like any other. So the definition above does not
-change shape, and that is why it can be restated in one sentence: **a strand
-holding a `NULL` night is not exact, and goes to a person.** An evenly-split
+change shape and restates in one sentence: **a strand holding a `NULL` night is
+not exact, and goes to a person.** An evenly-split
 backfilled strand carries an integer on every night, so it still reconciles and
-still prices as exact — the consequence this rule was written to preserve.
+still prices as exact — the consequence this rule was written to preserve. A
+`RATE_DERIVED` row (#3531) is exact night by night: the backfill writes it only
+where the rate table, over the strand as sold, reproduces the stored total.
 
 Only a PARKED edit writes a `NULL`, and only for a night it cannot value: one the
 strand already held whose row carried no usable money, or one the edit newly puts
 that strand on while its stored total is frozen. A night an edit BUYS at a price
-the member is charged always carries that integer.
+the member is charged carries that integer.
 
 The rest of this rule: how a blank is filled and what the repair does not
-repair `INV-MOD-036` to `INV-MOD-040`; where it holds, the five paths that park
-and every other night-price writer `INV-MOD-041` to `INV-MOD-048`; the limits it
-does not close and where all of it is pinned `INV-MOD-049` to `INV-MOD-054`.
+repair, `INV-MOD-036` to `-040`; where it holds, the five paths that park and
+every other night-price writer, `INV-MOD-041` to `-048`; the limits it does not
+close and where all of it is pinned, `INV-MOD-049` to `-054`.
 
 ## INV-MOD-036
 

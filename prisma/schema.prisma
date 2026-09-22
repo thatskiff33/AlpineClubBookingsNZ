@@ -2169,11 +2169,18 @@ enum MemberGuestConsentStatus {
 // draining colour and for history whose origin cannot be proved. The #3275
 // migration trigger recognises only its two transactional officer-repair audit
 // actions. Readers do not act on this value until stage 3 of programme #3272.
+// RATE_DERIVED (#3531 3b, D-3531-2): an EVEN_SPLIT or UNKNOWN row rewritten by
+// the operator-run backfill because the rate table, over the strand as sold,
+// reproduces the strand's stored total to the cent. Exact at individual-night
+// grain; distinct from SOLD so a reader can always tell a derivation from a
+// sale. Written by that script only, after a deploy has fully cut over: a
+// colour whose client predates the value cannot read a row that carries it.
 enum BookingGuestNightPriceSource {
   SOLD
   OFFICER_PRICED
   EVEN_SPLIT
   UNKNOWN
+  RATE_DERIVED
 }
 
 // #3276: what kind of adjustment a BookingGuestNightAdjustment row records.
@@ -5224,6 +5231,44 @@ model ClubIdentitySettings {
 model ClubTimeSettings {
   id                String   @id @default("default")
   timeZone          String   @db.VarChar(64)
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// The installation's ONE currency and locale (stage 1 of programme #3205,
+// #3563). Admin-editable singleton (id="default") holding the ISO 4217 code the
+// club charges and displays money in, and the BCP 47 tag its numbers and dates
+// are formatted with. INV-CONFIG-006.
+//
+// WHY ITS OWN MODEL rather than columns on ClubIdentitySettings. The same four
+// tests ClubTimeSettings' docblock above states, answered the same way: this is
+// Full-Admin-only, NON-NULL once written, authoritative OVER the environment,
+// and seeded from it exactly once — where ClubIdentitySettings is `content:edit`
+// branding whose every column is a nullable override over a live `club.json`
+// fallback that nothing backfills. Sharing a row would also make that row's
+// `updatedByMemberId`/`updatedAt` report the wrong actor for whichever surface
+// wrote last. Owner decision D2 on #3205.
+//
+// NEITHER COLUMN CARRIES A `@default`. The ROW's existence is the "configured"
+// signal, exactly as it is for ClubTimeSettings: a row exists only once a
+// validated pair has been written by the Full-Admin surface or by the boot-time
+// environment backfill (`clubFormatSelfHealStep` in src/lib/config-self-heal.ts,
+// which runs even when `config/club.json` is absent because the value it copies
+// comes from the environment, not from that file). A SQL migration cannot read
+// `process.env.CURRENCY`, so inserting 'NZD' here would silently re-denominate
+// every club running on another currency — which is why no default is invented.
+//
+// Reads/writes resolve through src/lib/club-format-settings.ts; the validators
+// are src/lib/club-format.ts. Stage 1 creates the authority and nothing reads it
+// for display yet (owner decision D1 on #3205) — #3564 to #3567 move the
+// readers.
+model ClubFormatSettings {
+  id                String   @id @default("default")
+  currencyCode      String   @db.VarChar(3)
+  locale            String   @db.VarChar(64)
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @default(now()) @updatedAt

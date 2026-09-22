@@ -3,6 +3,7 @@
  * prices are made of, and every edit financial review by cause - both per
  * month, so before/after a deploy is one line against another.
  */
+import type { BookingGuestNightPriceSource } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
   classifyStrandProvenance,
@@ -14,7 +15,7 @@ import { requireClubTimeZone } from "@/lib/club-time";
 
 const ZONE = requireClubTimeZone("Pacific/Auckland");
 const D = (value: string) => new Date(`${value}T00:00:00.000Z`);
-const night = (priceCents: number | null, priceSource: "SOLD" | "OFFICER_PRICED" | "EVEN_SPLIT" | "UNKNOWN") => ({
+const night = (priceCents: number | null, priceSource: BookingGuestNightPriceSource) => ({
   priceCents,
   priceSource,
 });
@@ -56,9 +57,9 @@ describe("summarizeNightPriceProvenance", () => {
     ]);
   });
 
-  it("counts a provenance value it has never seen (the next stage's) without a code change", () => {
+  it("classes a rate-derived night (#3531 3b) as exact, through INV-MOD-028's own predicate", () => {
     const result = summarizeNightPriceProvenance([
-      { createdAt: D("2026-05-03"), guests: [{ nights: [{ priceCents: 5000, priceSource: "RATE_DERIVED" as never }] }] },
+      { createdAt: D("2026-05-03"), guests: [{ nights: [{ priceCents: 5000, priceSource: "RATE_DERIVED" }] }] },
     ], ZONE);
     expect(result.nightRowsBySource).toEqual({ RATE_DERIVED: 1 });
     expect(result.strandsByClass.EXACT_NIGHTS).toBe(1);

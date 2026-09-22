@@ -537,7 +537,20 @@ export const AUDIT_CENSUS_TOTALS = {
   // reverses, and `important` because it is the only place the withdrawal
   // shows: the task stays COMPLETED and the columns it zeroed read as if no
   // request had existed.
-  writeSites: 485,
+  // 485 -> 486 (#3563): `CLUB_FORMAT_UPDATED`, the record that a Full Admin
+  // changed the installation's currency or locale - who, and the before and
+  // after pair, and nothing else. One `tx.auditLog.create` inside the route's
+  // own Serializable transaction, whose two-table contract that write is half
+  // of. Categorised `admin` at the site, like the club-timezone and
+  // environment-safety writers it is a sibling of, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. RE-MEASURED with `npm run
+  // audit:census` on the composed tree, not incremented.
+  // 486 -> 487 (#3531 3b): `booking-payment.stored-night-price.rate-derived`,
+  // the record that the operator-run backfill re-derived a booking's evenly-split
+  // night prices from the rate table, every guest total unchanged. `payment`
+  // beside the officer night-price repair it mirrors. RE-MEASURED with
+  // `npm run audit:census` on the tree composed with #3563, not incremented.
+  writeSites: 487,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -697,7 +710,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // record of that change should not be able to be the part that quietly
     // failed.
     // 131 -> 132 (#3498): the manual-refund-task reopen record.
-    createAuditLog: { total: 133, uncategorised: 0 },
+    createAuditLog: { total: 134, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -725,7 +738,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // 74 -> 75 (#3354): the AI spend currency-rate writer, above — the same
     // `tx.auditLog.create` + `buildStructuredAuditLogCreateArgs` form as the two
     // AI settings routes it is a sibling of.
-    "auditLog.create": { total: 75, uncategorised: 0 },
+    // 75 -> 76 (#3563): the club currency and locale writer - the same
+    // `tx.auditLog.create` + `buildStructuredAuditLogCreateArgs` form as the
+    // club-timezone writer two entries above, on a route that does exactly the
+    // same job, rather than a fifth form.
+    "auditLog.create": { total: 76, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -860,7 +877,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // category those siblings already use.
     // 45 -> 46 (#3498): the reopen record, which is a money decision being
     // undone and belongs with the closure it reverses.
-    payment: 47,
+    payment: 48,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
@@ -988,10 +1005,14 @@ export const AUDIT_CENSUS_TOTALS = {
     // the tempting answer, since the SIBLING lobby-display writer files it;
     // taking it would have opened exactly the split `INV-PRIV-013` exists to
     // close.
+    // 107 -> 108 (#3563): `CLUB_FORMAT_UPDATED`. An ordinary installation
+    // configuration change, classified exactly as CLUB_TIME_ZONE_UPDATED and
+    // CLUB_IDENTITY_SETTINGS_UPDATED are, so it adds no reader who could not
+    // already see the settings changes beside it.
     // 106 -> 107 (#2940): `mirotalk.settings.update`. An ordinary admin-settings
     // save, read with `support:view` like every other settings row beside it, so
     // it widens nobody's access.
-    admin: 107,
+    admin: 108,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

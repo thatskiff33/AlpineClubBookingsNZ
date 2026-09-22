@@ -82,6 +82,7 @@ describe("Stripe library", () => {
 
       const result = await createPaymentIntent({
         amountCents: 5000,
+        currency: "nzd",
         customerId: "cus_test",
         metadata: { bookingId: "booking_1" },
       });
@@ -99,10 +100,20 @@ describe("Stripe library", () => {
       expect(result.id).toBe("pi_test_123");
     });
 
-    it("defaults to NZD currency", async () => {
+    it("passes the caller's currency straight to the wire", async () => {
+      /*
+        THIS USED TO ASSERT A DEFAULT, AND THERE IS NO LONGER ONE (#3563, owner
+        decision D5). `currency = APP_STRIPE_CURRENCY` was excluded from
+        INV-SSOT-003's authority-default ban on a cost argument that carried its
+        own trigger — the day a persisted club-currency setting exists, both
+        names join the ban — and `ClubFormatSettings` is that setting. So the
+        parameter is required, every call site states it, and what is worth
+        asserting here is that this boundary passes the caller's value through
+        unaltered rather than having an opinion of its own.
+      */
       mockPaymentIntentsCreate.mockResolvedValue({ id: "pi_test" });
 
-      await createPaymentIntent({ amountCents: 1000 });
+      await createPaymentIntent({ amountCents: 1000, currency: "nzd" });
 
       expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
         expect.objectContaining({ currency: "nzd" }),
@@ -154,6 +165,7 @@ describe("Stripe library", () => {
 
       const result = await chargePaymentMethod({
         amountCents: 8000,
+        currency: "nzd",
         customerId: "cus_test",
         paymentMethodId: "pm_test",
         metadata: { bookingId: "booking_2" },

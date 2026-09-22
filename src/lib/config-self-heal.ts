@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { clubConfigSource, type ClubConfigSource } from "@/config/club";
+import { clubFormatSelfHealStepDefinition } from "@/lib/config-self-heal-club-format";
 import {
   ageTierSelfHealStepDefinition,
   clubFacebookUrlSelfHealStepDefinition,
@@ -57,12 +58,16 @@ import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
  *   on that file's provenance would protect nothing and would strand the
  *   backfill, because since #1987 an ABSENT `config/club.json` is normal for a
  *   DB-first install, so those installs would never be backfilled at all.
- *   `clubTimeZoneSelfHealStep` (CT-1, #2989) is the one such step today: its
- *   source is the ENVIRONMENT.
+ *   Two steps are such steps today and both read the ENVIRONMENT:
+ *   `clubTimeZoneSelfHealStep` (CT-1, #2989) and `clubFormatSelfHealStep`
+ *   (#3563). The exemption is pinned by NAME in `config-self-heal.test.ts`, so
+ *   a third one cannot arrive by copy-paste without somebody justifying it.
  *
  * ## Registering a new step (C3/C4/C5)
- * The step DEFINITIONS live in `config-self-heal-steps.ts`; this module holds the
- * contract, the registry and the runner. Add another typed
+ * The step DEFINITIONS live in `config-self-heal-steps.ts` — except the
+ * club-format one, which the file-size ratchet moved on into
+ * `config-self-heal-club-format.ts` (#3563); that module's docblock says why.
+ * This module holds the contract, the registry and the runner. Add another typed
  * `ConfigSelfHealStep` there, erase it with `defineSelfHealStep` below, and add
  * it to `SELF_HEAL_STEPS`. A step describes exactly three things:
  *   - `isPresent(db)`  — is the DB value already populated? (guard the write)
@@ -185,7 +190,10 @@ export function stepRequiresPrimaryClubConfig(
 //
 // The definitions themselves live in `config-self-heal-steps.ts` (the ratchet
 // in scripts/lib/file-size-base.ts would not let this module grow further, and
-// "what a step is" and "what each step copies" were the natural seam). They are
+// "what a step is" and "what each step copies" were the natural seam) — except
+// the club-format one, which the same ratchet moved on again into
+// `config-self-heal-club-format.ts` (#3563); that module's docblock says why it
+// is the club-format step that moved and not the timezone one. They are
 // erased into registry steps here, under the SAME export names they have always
 // had, so every importer and every doc or schema comment pointing at
 // `config-self-heal.ts` still resolves.
@@ -206,6 +214,9 @@ export const ageTierSelfHealStep = defineSelfHealStep(
 export const clubTimeZoneSelfHealStep = defineSelfHealStep(
   clubTimeZoneSelfHealStepDefinition,
 );
+export const clubFormatSelfHealStep = defineSelfHealStep(
+  clubFormatSelfHealStepDefinition,
+);
 
 
 /**
@@ -219,6 +230,7 @@ export const SELF_HEAL_STEPS: readonly RegisteredSelfHealStep[] = [
   ageTierSelfHealStep,
   lodgeCapacitySelfHealStep,
   clubTimeZoneSelfHealStep,
+  clubFormatSelfHealStep,
 ];
 
 // ---------------------------------------------------------------------------
@@ -245,9 +257,9 @@ export interface SelfHealSummary {
    * no `results` entry.
    *
    * It does NOT mean the run did nothing: a step that declares
-   * `requiresPrimaryClubConfig: false` — today `clubTimeZoneSelfHealStep`, whose
-   * source is the environment rather than that file — still runs, still appears
-   * in `results`, and is still counted. Read the flag as "the club-config half
+   * `requiresPrimaryClubConfig: false` — today `clubTimeZoneSelfHealStep` and
+   * `clubFormatSelfHealStep`, whose source is the environment rather than that
+   * file — still runs, still appears in `results`, and is still counted. Read the flag as "the club-config half
    * was skipped", and read `results` for what actually happened.
    */
   skipped: boolean;
