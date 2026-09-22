@@ -24,8 +24,15 @@ function isWholeCents(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value);
 }
 
+/**
+ * The repository's money convention is a camelCase `…Cents` suffix, and the
+ * boundary before the capital is what makes it a suffix rather than four
+ * letters that happen to end a word: `refundAmountCents` is money,
+ * `descents` and `accents` are not, and a bare `cents` key is the convention
+ * with nothing in front of it.
+ */
 function keyIsCents(key: string): boolean {
-  return /[Cc]ents$/.test(key);
+  return /[a-z0-9]Cents$/.test(key) || key === "cents" || key === "Cents";
 }
 
 /**

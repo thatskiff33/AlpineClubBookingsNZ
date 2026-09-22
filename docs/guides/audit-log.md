@@ -104,9 +104,16 @@ Now:
   unchanged and still the thing repair and census tooling reads; the comment is
   a display annotation added by the screen, not a value in the database.
 
-Nothing about the stored rows changed. Entries written before this release
-still read in cents, because a written audit row is never rewritten
-([`INV-OPS-012`](../invariants/operations.md)).
+Nothing about the stored rows changed, and the two halves age differently
+because of it:
+
+- **A sentence is baked in when the row is written**, so entries written
+  before this release still read `8450 cents` for ever. A written audit row is
+  never rewritten ([`INV-OPS-012`](../invariants/operations.md)) — the trail
+  would stop being a trail if it were.
+- **The metadata annotation is added when you look**, so it applies to every
+  entry however old. An entry from last year shows `// $22.75` beside its
+  stored `2275` the next time it is expanded.
 
 ### Very large entries, and the older ones that look broken (#2704)
 

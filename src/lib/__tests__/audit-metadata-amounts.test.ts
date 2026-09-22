@@ -38,6 +38,15 @@ describe("formatAuditMetadataJson", () => {
     expect(rendered).not.toContain("//");
   });
 
+  it("wants the camelCase suffix, not four letters that happen to end a word", () => {
+    // Review of #3533, lens A: `/[Cc]ents$/` also matched `descents`.
+    const rendered = formatAuditMetadataJson({ descents: 3, accents: 4, recents: 5 });
+    expect(rendered).not.toContain("//");
+    // The convention itself, with and without a prefix, still annotates.
+    expect(formatAuditMetadataJson({ changeFeeCents: 500 })).toContain("$5.00");
+    expect(formatAuditMetadataJson({ cents: 500 })).toContain("$5.00");
+  });
+
   it("is a pure annotation: every stored line survives unchanged", () => {
     const metadata = { refundAmountCents: 2275, reason: "CANCELLATION", nights: [1, 2] };
     const raw = JSON.stringify(metadata, null, 2);

@@ -741,7 +741,7 @@ export async function applyStripeRefundNoteLinkRepairs(options?: {
           );
           if (verifiedCoveredCents !== freshPlan.plannedCoveredCents) {
             throw new Error(
-              `Coverage verification after the claims found ${formatCents(verifiedCoveredCents)} where the plan promised ${freshPlan.plannedCoveredCents}; a concurrent writer changed the links, rolled back.`
+              `Coverage verification after the claims found ${formatCents(verifiedCoveredCents)} where the plan promised ${formatCents(freshPlan.plannedCoveredCents)}; a concurrent writer changed the links, rolled back.`
             );
           }
 

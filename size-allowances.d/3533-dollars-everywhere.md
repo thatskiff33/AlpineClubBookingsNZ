@@ -23,7 +23,7 @@ file: src/app/(admin)/admin/audit-log/page.tsx
 lines: 1102
 reason: one import of formatAuditMetadataJson, which renders the metadata panel.
   The annotation logic itself went into a new module
-  (src/lib/audit-metadata-amounts.ts, 56 lines, inside its own budget) rather
+  (src/lib/audit-metadata-amounts.ts, inside its own budget) rather
   than into this page, so the page gains the import and nothing else.
 
 file: src/lib/config-transfer/categories/membership-fees.ts

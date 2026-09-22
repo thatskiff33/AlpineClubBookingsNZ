@@ -98,6 +98,49 @@ describe("cents-in-prose guard: catches the shape", () => {
   });
 });
 
+describe("cents-in-prose guard: it is its own group", () => {
+  /*
+    Review of #3533 found the first cut appended this selector to
+    `CENTS_DISPLAY_RESTRICTIONS`, so it inherited that group's ten exemptions —
+    files excused for seeding an editable input or writing a raw export cell,
+    none of which is a reason to put the storage form in a sentence. The arm is
+    its own array with no exemptions of its own; these two cases are what stop
+    it being folded back in.
+  */
+  it("is exported separately from the toFixed arm", async () => {
+    const { pathToFileURL } = await import("url");
+    const config: {
+      CENTS_IN_PROSE_GUARD_ARM?: string[];
+      CENTS_DISPLAY_GUARD_ARM?: string[];
+    } = await import(
+      pathToFileURL(path.join(REPO_ROOT, "eslint.config.mjs")).href
+    );
+    expect(config.CENTS_IN_PROSE_GUARD_ARM).toHaveLength(1);
+    expect(config.CENTS_DISPLAY_GUARD_ARM).not.toContain(
+      config.CENTS_IN_PROSE_GUARD_ARM?.[0],
+    );
+  });
+
+  it("still fires inside a file the toFixed arm exempts", async () => {
+    // `finance-legacy-dashboard-export.ts` is a declared CENTS_DISPLAY
+    // exemption. Its reason — a raw numeric export cell — says nothing about
+    // sentences, so this rule must still reach it.
+    const results = await eslint.lintText(VIOLATING_CODE, {
+      filePath: path.join(REPO_ROOT, "src/lib/finance-legacy-dashboard-export.ts"),
+    });
+    const hits = results
+      .flatMap((result) => result.messages)
+      .filter(
+        (message) =>
+          message.ruleId === "no-restricted-syntax" &&
+          typeof message.message === "string" &&
+          message.message.startsWith(RULE_ID),
+      );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe(2);
+  });
+});
+
 describe("cents-in-prose guard: negative fixtures", () => {
   /*
     Each of these is a legitimate shape. If one starts failing, the selector —
@@ -110,9 +153,14 @@ describe("cents-in-prose guard: negative fixtures", () => {
     ["a count that is not money", 'export const d = `${nightCount} nights`;'],
     ["the word alone in a static string", 'export const d = "amounts are stored in cents";'],
     ["a comment", "// the column is in cents\nexport const d = 1;"],
+    // Review of #3533, lens A: a tagged template is not prose. `sql` and
+    // `styled` carry text a machine reads, and the selector excludes them
+    // rather than making a future one add an exemption for being a query.
+    ["a tagged template", "export const q = sql`WHERE paid = ${amountCents} cents`;"],
+
   ])("does not fire on %s", async (_label, code) => {
     expect(
-      await hitsIn(`const amountCents = 1, rowCount = 1, nightCount = 1, formatCents = (c: number) => "$";\n${code}\n`),
+      await hitsIn(`const amountCents = 1, rowCount = 1, nightCount = 1, formatCents = (c: number) => "$", sql = (s: TemplateStringsArray, ...v: unknown[]) => "";\n${code}\n`),
     ).toHaveLength(0);
   });
 });

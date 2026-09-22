@@ -375,12 +375,36 @@ const CENTS_DISPLAY_RESTRICTIONS = [
       'CallExpression[callee.type="MemberExpression"][callee.property.name="toFixed"][callee.object.type="BinaryExpression"][callee.object.operator="/"][callee.object.right.value=100]',
     message: CENTS_DISPLAY_MESSAGE,
   },
+];
+
+/**
+ * ITS OWN GROUP, and that is the whole point of the separation.
+ *
+ * The first cut appended this selector to `CENTS_DISPLAY_RESTRICTIONS`, which
+ * made it inherit that group's exemptions - ten files excused for seeding an
+ * editable input's plain value or writing a raw export cell, none of which is
+ * a reason to write the storage form into a sentence. That is exactly the
+ * hazard this file warns about two groups above for the raw-SQL set and again
+ * for the money set: an exemption written for one rule silently lifting
+ * another it was never weighed against. Review of #3533 caught it before it
+ * shipped; keeping the array separate is what makes the mistake unavailable
+ * rather than merely noticed.
+ *
+ * It therefore has NO exemptions. If a legitimate one turns up it gets its own
+ * list, weighed on its own terms.
+ */
+const CENTS_IN_PROSE_RESTRICTIONS = [
   {
     selector:
-      'TemplateLiteral > TemplateElement[value.raw=/^ cents(?![-\\w])/i]',
+      'TemplateLiteral:not(TaggedTemplateExpression > TemplateLiteral) > TemplateElement[value.raw=/^ cents(?![-\\w])/i]',
     message: CENTS_IN_PROSE_MESSAGE,
   },
 ];
+
+/** Bare selectors, for `cents-in-prose-guard.test.ts`, same mirror as above. */
+export const CENTS_IN_PROSE_GUARD_ARM = CENTS_IN_PROSE_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
 
 /**
  * The one arm as a bare selector array, for `money-cents-guard.test.ts` —
@@ -2536,6 +2560,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...DATE_FNS_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
   ...CENTS_DISPLAY_RESTRICTIONS,
+  ...CENTS_IN_PROSE_RESTRICTIONS,
   ...CURRENCY_LOCALE_RESTRICTIONS,
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
 ];
