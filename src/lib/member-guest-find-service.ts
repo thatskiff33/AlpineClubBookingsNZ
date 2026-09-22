@@ -1,4 +1,4 @@
-import type { AgeTier } from "@prisma/client";
+import type { AgeTier, Prisma } from "@prisma/client";
 import { createStructuredAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import logger from "@/lib/logger";
@@ -193,7 +193,7 @@ export async function searchMemberGuestCandidatesByName(params: {
   );
   const insensitive = { mode: "insensitive" } as const;
 
-  const nameFilter =
+  const nameFilter: Prisma.MemberWhereInput =
     parsed.terms.kind === "SINGLE"
       ? {
           OR: [
@@ -210,8 +210,11 @@ export async function searchMemberGuestCandidatesByName(params: {
         };
 
   const rows = await prisma.member.findMany({
-    where: { active: true, ageTier: { in: ageTiers },
-      AND: notDeletedAccountWhere(), ...nameFilter, },
+    where: {
+      active: true,
+      ageTier: { in: ageTiers },
+      AND: [...notDeletedAccountWhere(), nameFilter],
+    },
     select: { id: true, firstName: true, lastName: true, ageTier: true,
       email: true,
       deletedAt: true, },

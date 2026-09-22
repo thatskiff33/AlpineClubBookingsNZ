@@ -11,6 +11,7 @@ import {
   resolveMemberGuestCandidatesByEmail,
   searchMemberGuestCandidatesByName,
 } from "@/lib/member-guest-find-service";
+import { notDeletedAccountWhere } from "@/lib/deleted-account";
 
 const SETTINGS = {
   approvalRequired: false,
@@ -85,5 +86,35 @@ describe("member guest lookup excludes erased accounts (#3542)", () => {
       ],
       truncated: false,
     });
+  });
+
+  it("keeps the deletion prefilter when a two-token name adds its own AND", async () => {
+    findMany.mockResolvedValue([]);
+
+    await searchMemberGuestCandidatesByName({
+      q: "ada example",
+      settings: SETTINGS,
+    });
+
+    const where = findMany.mock.calls[0]?.[0]?.where;
+    expect(where.AND).toEqual([
+      ...notDeletedAccountWhere(),
+      {
+        AND: [
+          {
+            firstName: {
+              startsWith: "ada",
+              mode: "insensitive",
+            },
+          },
+          {
+            lastName: {
+              startsWith: "example",
+              mode: "insensitive",
+            },
+          },
+        ],
+      },
+    ]);
   });
 });

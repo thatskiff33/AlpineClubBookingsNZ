@@ -285,16 +285,22 @@ describe("the name search — prefix-only, capped, no count, minors excluded", (
   it("matches from the START of a name, never mid-string", async () => {
     await searchRoute(searchRequest("whit"));
     const where = h.memberFindMany.mock.calls[0]![0].where;
-    expect(JSON.stringify(where)).toContain("startsWith");
-    expect(JSON.stringify(where)).not.toContain("contains");
+    const nameFilter = where.AND.at(-1);
+    expect(JSON.stringify(nameFilter)).toContain("startsWith");
+    expect(JSON.stringify(nameFilter)).not.toContain("contains");
   });
 
   it("splits a spaced query into first-name AND last-name prefixes", async () => {
     await searchRoute(searchRequest("sam whitt"));
     const where = h.memberFindMany.mock.calls[0]![0].where;
     expect(where.AND).toEqual([
-      { firstName: { startsWith: "sam", mode: "insensitive" } },
-      { lastName: { startsWith: "whitt", mode: "insensitive" } },
+      ...notDeletedAccountWhere(),
+      {
+        AND: [
+          { firstName: { startsWith: "sam", mode: "insensitive" } },
+          { lastName: { startsWith: "whitt", mode: "insensitive" } },
+        ],
+      },
     ]);
   });
 

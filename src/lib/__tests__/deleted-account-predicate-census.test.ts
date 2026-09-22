@@ -12,7 +12,9 @@ type ViolationKind =
   | "retired-name"
   | "password-sentinel-comparison"
   | "reserved-address-suffix-copy"
+  | "reserved-address-prisma-copy"
   | "reserved-address-sql-copy"
+  | "reserved-address-sql-like-copy"
   | "retired-five-field-shape";
 
 type Violation = { kind: ViolationKind; path: string };
@@ -67,10 +69,22 @@ export function retiredDeletionPredicateViolations(
     add("reserved-address-suffix-copy");
   }
   if (
+    /\b(?:endsWith|contains|equals)\s*:/.test(code) &&
+    /(?:deleted\.invalid|DELETED_CONTACT_EMAIL_DOMAIN)/i.test(code)
+  ) {
+    add("reserved-address-prisma-copy");
+  }
+  if (
     /pg_catalog\.right\s*\(/.test(code) &&
     /(?:deleted\.invalid|DELETED_CONTACT_EMAIL_DOMAIN)/i.test(code)
   ) {
     add("reserved-address-sql-copy");
+  }
+  if (
+    /\b(?:LIKE|ILIKE)\b/i.test(code) &&
+    /(?:deleted\.invalid|DELETED_CONTACT_EMAIL_DOMAIN)/i.test(code)
+  ) {
+    add("reserved-address-sql-like-copy");
   }
   if (
     /\bactive\b\s*===?\s*false/.test(code) &&
@@ -166,5 +180,25 @@ describe("one canonical erased-member predicate (#3542)", () => {
     expect(
       retiredDeletionPredicateViolations(mutant).map((v) => v.kind),
     ).toContain("reserved-address-sql-copy");
+  });
+
+  it("mutation: rejects a copied Prisma address predicate", () => {
+    const mutant = `
+      const where = {
+        NOT: { email: { endsWith: \`@\${DELETED_CONTACT_EMAIL_DOMAIN}\` } },
+      };
+    `;
+    expect(
+      retiredDeletionPredicateViolations(mutant).map((v) => v.kind),
+    ).toContain("reserved-address-prisma-copy");
+  });
+
+  it("mutation: rejects an equivalent SQL LIKE predicate", () => {
+    const mutant = `
+      const sql = "email ILIKE '%@deleted.invalid'";
+    `;
+    expect(
+      retiredDeletionPredicateViolations(mutant).map((v) => v.kind),
+    ).toContain("reserved-address-sql-like-copy");
   });
 });

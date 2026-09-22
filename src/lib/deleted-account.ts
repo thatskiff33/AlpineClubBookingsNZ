@@ -34,6 +34,40 @@
 import type { Prisma } from "@prisma/client";
 import { DELETED_CONTACT_EMAIL_DOMAIN } from "./placeholder-contact-email";
 
+const DELETED_ACCOUNT_EMAIL_SUFFIX = `@${DELETED_CONTACT_EMAIL_DOMAIN}`;
+
+// Every character ECMAScript trim() removes. A stored email containing any of
+// these characters is invalid as an address; listing them lets Prisma exclude
+// a padded adopter-era marker before a capped query without treating a valid
+// subdomain such as `@deleted.invalid.example` as deleted.
+const DELETED_ACCOUNT_TRAILING_WHITESPACE = [
+  "\u0009",
+  "\u000a",
+  "\u000b",
+  "\u000c",
+  "\u000d",
+  "\u0020",
+  "\u00a0",
+  "\u1680",
+  "\u2000",
+  "\u2001",
+  "\u2002",
+  "\u2003",
+  "\u2004",
+  "\u2005",
+  "\u2006",
+  "\u2007",
+  "\u2008",
+  "\u2009",
+  "\u200a",
+  "\u2028",
+  "\u2029",
+  "\u202f",
+  "\u205f",
+  "\u3000",
+  "\ufeff",
+] as const;
+
 /**
  * The sentinel written over `Member.passwordHash` when a deletion request is
  * approved. Not a bcrypt hash, so `bcrypt.compare` can never match it.
@@ -69,10 +103,7 @@ export function isDeletedAccountEmail(
   email: string | null | undefined,
 ): boolean {
   if (!email) return false;
-  return email
-    .trim()
-    .toLowerCase()
-    .endsWith(`@${DELETED_CONTACT_EMAIL_DOMAIN}`);
+  return email.trim().toLowerCase().endsWith(DELETED_ACCOUNT_EMAIL_SUFFIX);
 }
 
 /**
@@ -92,17 +123,33 @@ export function isDeletedAccountRecord(
  *
  * Kept beside the runtime predicate so capped database searches can exclude
  * erased rows before applying their limit without restating the two arms at
- * each query site. Returned as `AND` clauses: both signals must be absent.
+ * each query site. Prisma cannot apply `trim()` inside a string filter, so the
+ * query rejects the suffix both at the end and immediately before every trim
+ * character. Any broader match would already be an invalid email; callers also
+ * retain the authoritative runtime predicate as a defence at the boundary.
+ * Returned as `AND` clauses: both signals must be absent.
  */
 export function notDeletedAccountWhere(): Prisma.MemberWhereInput[] {
+  const legacyAddressFilters: Prisma.MemberWhereInput[] = [
+    {
+      email: {
+        endsWith: DELETED_ACCOUNT_EMAIL_SUFFIX,
+        mode: "insensitive",
+      },
+    },
+    ...DELETED_ACCOUNT_TRAILING_WHITESPACE.map((character) => ({
+      email: {
+        contains: `${DELETED_ACCOUNT_EMAIL_SUFFIX}${character}`,
+        mode: "insensitive" as const,
+      },
+    })),
+  ];
+
   return [
     { deletedAt: null },
     {
       NOT: {
-        email: {
-          endsWith: `@${DELETED_CONTACT_EMAIL_DOMAIN}`,
-          mode: "insensitive",
-        },
+        OR: legacyAddressFilters,
       },
     },
   ];
@@ -117,7 +164,7 @@ export function deletedAccountSql(
   deletedAtColumn: string,
   emailColumn: string,
 ): string {
-  const suffix = `@${DELETED_CONTACT_EMAIL_DOMAIN}`;
+  const suffix = DELETED_ACCOUNT_EMAIL_SUFFIX;
   const legacyAddress =
     `(pg_catalog.right(pg_catalog.lower(pg_catalog.btrim(${emailColumn})), ` +
     `${suffix.length}) = '${suffix}')`;

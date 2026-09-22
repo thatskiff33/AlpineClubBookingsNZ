@@ -185,6 +185,7 @@ import {
   DELETED_ACCOUNT_PASSWORD_HASH,
   isDeletedAccountEmail,
   isDeletedAccountRecord,
+  notDeletedAccountWhere,
 } from "@/lib/deleted-account";
 
 const mockedPrisma = vi.mocked(prisma, true);
@@ -802,6 +803,31 @@ describe("isDeletedAccountRecord", () => {
     expect(isDeletedAccountEmail("  Deleted-ABCDEF12@Deleted.Invalid  ")).toBe(
       true,
     );
+  });
+
+  it("prefilters padded adopter addresses before capped Prisma queries", () => {
+    const clauses = notDeletedAccountWhere();
+    const addressFilters = (
+      clauses[1] as {
+        NOT: {
+          OR: Array<{
+            email: { endsWith?: string; contains?: string; mode: string };
+          }>;
+        };
+      }
+    ).NOT.OR;
+
+    expect(addressFilters[0]).toEqual({
+      email: { endsWith: "@deleted.invalid", mode: "insensitive" },
+    });
+    const paddedSuffixes = addressFilters
+      .slice(1)
+      .map((filter) => filter.email.contains);
+    expect(paddedSuffixes).toContain("@deleted.invalid ");
+    expect(paddedSuffixes).toContain("@deleted.invalid\t");
+    expect(paddedSuffixes).toContain("@deleted.invalid\u00a0");
+    expect(paddedSuffixes).toContain("@deleted.invalid\ufeff");
+    expect(paddedSuffixes).not.toContain("@deleted.invalid.example");
   });
 
   it("does not fire on a live member, a walk-in placeholder, or nothing at all", () => {
