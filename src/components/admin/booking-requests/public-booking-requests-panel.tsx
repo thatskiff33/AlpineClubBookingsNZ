@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { APP_CURRENCY } from "@/config/operational";
+import { useClubFormat } from "@/components/club-format-provider";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
@@ -415,6 +415,14 @@ export function PublicBookingRequestsPanel({
   showHeading = true,
   canEdit = true,
 }: PublicBookingRequestsPanelProps) {
+  /*
+    The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
+    This label was the transitional constant from `@/config/operational`,
+    which is `NEXT_PUBLIC_CURRENCY` inlined at BUILD time and therefore
+    `undefined` in the published image, so a club charging in anything but
+    New Zealand dollars was shown NZD here whatever it had configured.
+  */
+  const { currencyCode } = useClubFormat();
   const formatDateTime = useInstantFormatter();
   const { hutLeaderLabel } = useClubIdentity();
   const router = useRouter();
@@ -2040,7 +2048,7 @@ export function PublicBookingRequestsPanel({
                                 <div className="mt-2 flex flex-wrap items-end gap-3">
                                   <div className="space-y-1">
                                     <Label htmlFor={`price-${request.id}-${optionId}`}>
-                                      Total ({APP_CURRENCY})
+                                      Total ({currencyCode})
                                     </Label>
                                     <Input
                                       id={`price-${request.id}-${optionId}`}
