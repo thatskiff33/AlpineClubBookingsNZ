@@ -170,7 +170,7 @@ returns figures; it reads nothing.
 
 Each row answers the acceptance criterion *which lines are posted, and by
 whom*. "Writer" is the module that owns the transaction today and will post
-the lines inside that same transaction in the shadow child (§7, C1–C3).
+the lines inside that same transaction in its posting child (§7, C1–C3).
 
 ### 5.1 Pricing the stay (CHARGE)
 
@@ -234,52 +234,69 @@ additionalAmountCents  == max(0, owed(b)) when an ADDITIONAL PENDING row exists,
 the `censusBookingMoneyReconciliation` pattern, `INV-MONEY-031`) evaluates
 those six identities for every booking and reports, per identity, the count
 that agrees, the count that disagrees, and per disagreeing booking the six
-figures and the delta — never a repair. It runs in CI against the seeded
-database and nightly against a non-production copy; a disagreement is a
-defect in a poster, found before any read depends on the ledger. It also
-reports **coverage**: bookings with money columns and no lines at all (the
-pre-shadow population), which must trend to zero through C1–C3 and reach zero
-before C5.
+figures and the delta — never a repair. It also reports **coverage**:
+bookings with money columns and no lines at all.
+
+**This census is the cut-over gate, not a monitor** (§7, D-3532-1). Its
+load-bearing run is once, over the club's whole booking history, after the
+back-post: every booking ever made, every event kind that has ever occurred,
+compared line-against-column. Zero disagreements and zero coverage gaps is
+what permits Release 2; a disagreement is a poster bug, fixed and re-run. It
+then keeps running — in CI against the seeded database, and on the operator's
+word against production read-only — for as long as the columns exist, which
+is what makes Release 2 reversible.
 
 The census reuses `auditIbAppliedCreditStrands`'s shape (`INV-PAY-047` (3)) and
 retires it: that script's identity is one of the six.
 
 ## 7. Cut-over order
 
-Each step is one child issue (§10) and ships alone; none changes what a member
-or officer sees until C5.
+**Owner decision D-3532-1 (23 Sep 2026): prove against history, then cut over
+fast — no shadow period.** The gate between posting and reading is *evidence*,
+not elapsed time, and the strongest evidence available is the club's whole
+booking history rather than a few weeks of new traffic: a month of live
+bookings at this volume is a couple of dozen bookings and probably no
+cancellation, hand-back or late capture, while the backfill exercises every
+event kind that has ever occurred, thousands of times. So the census runs once
+over everything, the reads move as soon as it is clean, and the columns are
+dropped when the owner says so.
 
-1. **C1 — expand + shadow-post charges.** Migration adds the table (expand,
-   `old_code_compatible = yes`, ledger row in `BLUE_GREEN_MIGRATION_SAFETY.tsv`).
-   The confirmation settle posts §5.1's lines. Historical bookings are
-   back-posted by an operator script from their night rows — exactly the
-   population `INV-MOD-028` values, with `RATE_DERIVED` rows (#3531 3b)
-   posting as any exact row and inexact strands posting one `GUEST_NIGHT` per
-   strand at the strand total with `narration = "whole-guest evidence"`.
-2. **C2 — shadow-post settlements.** §5.2's writers post their lines inside
-   their existing transactions; the back-post script covers history from
-   `PaymentTransaction`, `PaymentRefund` and `MemberCredit`.
-3. **C3 — shadow-post edits, reviews and cancellations.** §5.1's edit rows,
-   §5.3's adjustments, the cancellation reversals, anchored on the
-   modification row each of them already writes.
-4. **C4 — the projection guard.** §6's census, its invariant entry, the
-   nightly run and the CI seed run; coverage at zero is the exit gate.
-5. **C5 — reads switch.** The member statement, the confirmation and
-   modification emails, the booking history narrative, the finance reports and
-   the officer money panel read `booking-ledger-balance.ts`. Each read moves in
-   its own PR with the census green before and after; `INV-PAY-020`'s
-   statement reconciliation becomes a read of `owed(b)`.
-6. **C6 — Xero renderers.** Invoice = the `CHARGE` slice at confirmation;
-   supplementary invoice = the `MODIFICATION` slice (already #3530's lines);
-   credit notes = the negative slice with `settlementMethod` naming the method
-   (`INV-PAY-101`). Idempotency keys stay amount-derived (`INV-MOD-058`).
-7. **C7 — contract.** The six columns are dropped in two migrations (stop
-   writing, then drop — `BLUE_GREEN_MIGRATION_POLICY.md`), the fences that
-   re-asserted them (`INV-PAY-047` (2)) are deleted, and §9's `P` rows retire.
+Three deploys, not three months.
 
-The order is load-bearing: a read never moves before the census has proved
-the projection over the whole population, and a column is never dropped
-before every read has moved.
+**Release 1 — post and prove (children C1–C4).** The table is added (expand,
+`old_code_compatible = yes`, ledger row in `BLUE_GREEN_MIGRATION_SAFETY.tsv`);
+every writer in §5 posts its lines inside the transaction and claim it already
+holds; an operator script back-posts every existing booking; §6's census
+compares the ledger against today's columns **for every booking ever made**.
+Nothing reads a line. The exit condition is the census: zero disagreements and
+zero coverage gaps, not a date. Anything it finds is a poster bug, fixed and
+re-run — which is the whole point of doing this over history rather than over
+next month's traffic.
+
+**Release 2 — reads switch (children C5, C6).** Statement, emails, booking
+history, finance reports, officer money panel and the Xero renderers read
+`booking-ledger-balance.ts`. Each read moves in its own PR, with the census
+green before and after; `INV-PAY-020`'s statement reconciliation becomes a
+read of `owed(b)`. The columns are still written and still compared, so this
+release is reversible by reverting the readers.
+
+**Release 3 — contract (child C7), on the owner's word.** The six columns are
+dropped, the fences that re-asserted them (`INV-PAY-047` (2)) are deleted, and
+§9's `P` rows retire. Hours or weeks after Release 2, as the owner chooses;
+the gap costs nothing but the unused columns.
+
+Two rules survive the compression, because they are what make the speed safe:
+
+- **No read moves before the census is clean over the whole population**
+  (Release 1's exit condition). This is not a soak; it is a proof, and it is
+  finished when it is finished.
+- **No column is dropped in the same release as the code that stops writing
+  it.** `BLUE_GREEN_MIGRATION_POLICY.md` forbids a child pairing an expand
+  with its own contract, and the validator enforces it; a one-release drop is
+  available only as a `windowed` row behind a maintenance window (the #2520
+  precedent, an owner directive on 3 Aug 2026) and is not worth it here,
+  because keeping the columns through Release 2 is what makes Release 2
+  reversible.
 
 ## 8. Renderings
 
@@ -419,16 +436,17 @@ to bundle.
 
 | # | Title | Ships | Risk |
 | --- | --- | --- | --- |
-| C1 | `BookingLedgerLine`: expand migration, the write-only Prisma extension, confirmation-time charge posting, the historical back-post script | a table nothing reads; a script whose dry run is the deliverable | High (schema) |
-| C2 | Shadow-post settlement lines from the capture, receipt, credit-applied, mark-paid, refund and credit-issued writers | lines nothing reads | High (money writers touched, no behaviour change) |
-| C3 | Shadow-post edit, review-share, rebase and cancellation lines | lines nothing reads | High |
-| C4 | `npm run booking-ledger:census`: the six projection identities, coverage, nightly run, invariant entry | a read-only census | Medium |
+| C1 | `BookingLedgerLine`: expand migration, the write-only Prisma extension, confirmation-time charge posting | a table nothing reads | High (schema) |
+| C2 | Posting from the settlement writers: capture, receipt, credit-applied, mark-paid, refund, credit-issued | lines nothing reads | High (money writers touched, no behaviour change) |
+| C3 | Posting from the edit, review-share, rebase and cancellation writers | lines nothing reads | High |
+| C4 | The back-post script for every existing booking, and `npm run booking-ledger:census`: the six identities, coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
 | C5 | Reads switch, one surface per PR: statement, emails, history, reports, officer panel | member-visible figures from the ledger, census-proven equal | High |
 | C6 | Xero renderers read ledger slices; `settlementMethod` names the method on every credit note | Xero documents unchanged in content | High |
-| C7 | Contract: stop writing, then drop, the six columns; delete the `INV-PAY-047` fences; retire §9's `P` rows | the mirror is gone | Critical |
+| C7 | Contract: drop the six columns; delete the `INV-PAY-047` fences; retire §9's `P` rows | the mirror is gone | Critical |
 
-C1–C3 may run as parallel lanes (distinct writers); C4 waits for all three;
-C5–C7 are strictly ordered.
+C1–C3 may run as parallel lanes (distinct writers) and compose **Release 1**
+with C4, whose census must be clean over the whole history before C5 opens.
+C5 and C6 compose **Release 2**; C7 is **Release 3**, on the owner's word.
 
 ## 11. Decisions this design takes, and the ones it leaves to the owner
 
@@ -462,10 +480,11 @@ rules apply to the column as they do to the guest row.
 `MembershipSubscriptionCharge` does not join this ledger; it keeps
 `INV-MONEY-008`'s immutable-snapshot rule.
 
-**D-3532-1 — open.** How long C1–C3 post in shadow, with the census green,
-before C5's first read moves. The children are written against "one full
-calendar month of live bookings, or 200 bookings, whichever is later" until
-the owner settles it; only C5's opening condition depends on the answer.
+**D-3532-1 — decided 23 Sep 2026: prove against history, then cut over fast.**
+No shadow period. Release 1 posts and back-posts, and the census proves the
+six identities over every booking ever made; Release 2 moves the reads as soon
+as that is clean; Release 3 drops the columns on the owner's word. §7 carries
+the reasoning and the two rules that survive the compression.
 
 ## 12. Provenance
 
