@@ -3,6 +3,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { isDeletedAccountRecord } from "@/lib/deleted-account";
+import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { checkRateLimitInMemory as checkRateLimit, _testStore, rateLimiters } from "@/lib/rate-limit";
 import {
   accountDeletionApprovedTemplate,
@@ -574,9 +576,11 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
       }),
     });
 
-    // Confirm the anonymous email ends with @deleted.invalid
+    // The writer's address agrees with the one domain the erased-member reader uses.
     const updateCall = vi.mocked(mockedPrisma.member.update).mock.calls[0][0];
-    expect((updateCall.data as any).email).toMatch(/@deleted\.invalid$/);
+    const anonymisedEmail = (updateCall.data as { email: string }).email;
+    expect(anonymisedEmail).toBe(`deleted-m1@${DELETED_CONTACT_EMAIL_DOMAIN}`);
+    expect(isDeletedAccountRecord({ email: anonymisedEmail, deletedAt: null })).toBe(true);
 
     // Booking was cancelled
     expect(cancelBooking).toHaveBeenCalledWith("bk1", "a1", "ADMIN", expect.any(String));

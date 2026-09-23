@@ -99,6 +99,24 @@ export function retiredDeletionPredicateViolations(
 }
 
 describe("one canonical erased-member predicate (#3542)", () => {
+  it("keeps the approved-deletion producer on the canonical reserved domain", () => {
+    const route = stripComments(
+      readFileSync(
+        join(SRC_DIR, "app", "api", "admin", "deletion-requests", "[id]", "route.ts"),
+        "utf8",
+      ),
+    );
+
+    expect(
+      /import\s*\{\s*DELETED_CONTACT_EMAIL_DOMAIN\s*\}\s*from\s*["']@\/lib\/deleted-account-email["']/.test(route),
+      "INV-SSOT-001: the anonymisation writer must import the one reserved email domain",
+    ).toBe(true);
+    expect(
+      /\bconst\s+anonymisedEmail\s*=\s*`[^`]*@\$\{DELETED_CONTACT_EMAIL_DOMAIN\}`/.test(route),
+      "INV-SSOT-001: the anonymised address must derive its domain, not copy it",
+    ).toBe(true);
+  });
+
   it("finds no retired shape outside the canonical module", () => {
     const violations = productionSources(SRC_DIR).flatMap((path) => {
       const repoPath = relative(SRC_DIR, path).replaceAll("\\", "/");
