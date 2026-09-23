@@ -62,6 +62,7 @@ import {
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #2328 (review): what the confirmation renders when the applied-credit read
@@ -87,6 +88,12 @@ export async function sendBookingConfirmedEmail(
   checkOut: Date,
   guestCount: number,
   totalCents: number,
+  /**
+   * The club's currency and locale (#3565), resolved ONCE by the caller before
+   * any transaction opened — never here, because a batch job would then read
+   * the setting once per email.
+   */
+  format: ClubFormat,
   options?: {
     discountCents?: number;
     promoAdjustmentCents?: number;
@@ -259,7 +266,7 @@ export async function sendBookingConfirmedEmail(
     ? totalCents - outstandingBalance.amountCents
     : 0;
   const outstandingBalanceNote = outstandingBalance
-    ? `Your payment of ${formatMoneyCents(outstandingPaidCents)} has been recorded and your booking is confirmed. ${formatMoneyCents(outstandingBalance.amountCents)} is still owing from a later change to this booking.` +
+    ? `Your payment of ${formatMoneyCents(outstandingPaidCents, format)} has been recorded and your booking is confirmed. ${formatMoneyCents(outstandingBalance.amountCents, format)} is still owing from a later change to this booking.` +
       (outstandingBalance.payableOnline
         ? " You can pay it from your booking page."
         : " The club will be in touch to arrange it.")
@@ -291,13 +298,13 @@ export async function sendBookingConfirmedEmail(
   // at its own edge.
   const paymentDueNote = paymentDue
     ? bookingPaymentDueNote({
-        amount: formatMoneyCents(unpaidNetting.toTransferCents),
+        amount: formatMoneyCents(unpaidNetting.toTransferCents, format),
         reference: paymentDue.reference,
         invoiceEmailed: paymentDue.invoiceEmailed,
         accountCredit: unpaidCreditNoteInput(
           totalCents,
           unpaidNetting,
-          formatMoneyCents,
+          (cents) => formatMoneyCents(cents, format),
         ),
       })
     : "";
@@ -368,8 +375,8 @@ export async function sendBookingConfirmedEmail(
   const paymentOutcome = paymentDue
     ? `${unpaidMoneyBlock}\n${paymentDueNote}`
     : outstandingBalance
-      ? `Booking Total: ${formatMoneyCents(totalCents)}\nPaid: ${formatMoneyCents(outstandingPaidCents)}\n${creditNote}Still Owing: ${formatMoneyCents(outstandingBalance.amountCents)}\n\n${outstandingBalanceNote}`
-      : `Total Paid: ${formatMoneyCents(totalCents)}\n${creditNote}\nPayment has been processed successfully.`;
+      ? `Booking Total: ${formatMoneyCents(totalCents, format)}\nPaid: ${formatMoneyCents(outstandingPaidCents, format)}\n${creditNote}Still Owing: ${formatMoneyCents(outstandingBalance.amountCents, format)}\n\n${outstandingBalanceNote}`
+      : `Total Paid: ${formatMoneyCents(totalCents, format)}\n${creditNote}\nPayment has been processed successfully.`;
   // Fork issue #35: the add-to-calendar links and their flat {{ical}} block —
   // built ONLY when the recipient's booking-link authority above allows the
   // booking id in outbound mail (review F1: the links carry the id in a
@@ -413,6 +420,7 @@ export async function sendBookingConfirmedEmail(
       checkOut,
       guestCount,
       totalCents,
+      format,
       {
         ...options,
         lodgeTravelNote: settings.lodgeTravelNote,
@@ -443,16 +451,16 @@ export async function sendBookingConfirmedEmail(
       // produced a dangling "Discount: -" line on surcharge promos.
       subtotal:
         promoAdjustmentCents !== 0
-          ? formatMoneyCents(totalCents - promoAdjustmentCents)
+          ? formatMoneyCents(totalCents - promoAdjustmentCents, format)
           : "",
       promoCode: options?.promoCode ?? "",
       discount:
         promoAdjustmentCents < 0
-          ? formatMoneyCents(Math.abs(promoAdjustmentCents))
+          ? formatMoneyCents(Math.abs(promoAdjustmentCents), format)
           : "",
       promoAdjustment:
         promoAdjustmentCents !== 0
-          ? `${promoAdjustmentPrefix}${formatMoneyCents(Math.abs(promoAdjustmentCents))}`
+          ? `${promoAdjustmentPrefix}${formatMoneyCents(Math.abs(promoAdjustmentCents), format)}`
           : "",
       // An unpaid confirmation must not render a "Total Paid" line at all
       // (#2263). #2397 adds the third case: a PARTLY paid confirmation carries
@@ -473,15 +481,16 @@ export async function sendBookingConfirmedEmail(
         ? ""
         : formatMoneyCents(
             outstandingBalance ? outstandingPaidCents : totalCents,
+            format,
           ),
       totalDue: paymentDue
         ? unpaidNetting.outcome === "unreconciled"
           ? ""
-          : formatMoneyCents(unpaidNetting.toTransferCents)
+          : formatMoneyCents(unpaidNetting.toTransferCents, format)
         : outstandingBalance
-          ? formatMoneyCents(outstandingBalance.amountCents)
+          ? formatMoneyCents(outstandingBalance.amountCents, format)
           : "",
-      total: formatMoneyCents(totalCents),
+      total: formatMoneyCents(totalCents, format),
       // #2328: pre-composed and ALREADY INSIDE {{paymentOutcome}} above, which
       // is what the shipped default body renders. It is supplied separately for
       // the same reason {{totalPaid}} is: an override that builds its own money
@@ -576,8 +585,9 @@ export async function sendBookingPolicyExceptionApprovedEmail(
     // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
     lodgeId?: string | null;
   },
+  format: ClubFormat,
 ) {
-  const amountDue = formatMoneyCents(args.amountDueCents);
+  const amountDue = formatMoneyCents(args.amountDueCents, format);
   // Composed by the sender, never conditionally in the body: the render path has
   // no conditional syntax, so a token that is sometimes empty must arrive as a
   // whole line or as nothing (see composeOptionalEmailLine).
@@ -808,6 +818,8 @@ export async function sendBookingCancelledEmail(
   checkIn: Date,
   checkOut: Date,
   refundCents: number,
+  /** The club's format (#3565); see sendBookingConfirmedEmail. */
+  format: ClubFormat,
   // B5 (#2262): "manual" — a cash / off-Xero settlement handed back by a person.
   refundMethod: "card" | "credit" | "manual" = "card",
   creditRestoredCents: number = 0,
@@ -822,6 +834,7 @@ export async function sendBookingCancelledEmail(
       checkIn,
       checkOut,
       refundCents,
+      format,
       refundMethod,
       creditRestoredCents,
     )),
@@ -831,22 +844,22 @@ export async function sendBookingCancelledEmail(
       firstName,
       checkIn: emailCalendarDay(checkIn),
       checkOut: emailCalendarDay(checkOut),
-      refundAmount: formatMoneyCents(refundCents),
+      refundAmount: formatMoneyCents(refundCents, format),
       refundMessage:
         refundCents > 0 && refundMethod === "manual"
-          ? `You paid for this booking in cash or by bank transfer, so there is no card payment to reverse. The club will arrange your refund of ${formatMoneyCents(refundCents)} directly and will be in touch.`
+          ? `You paid for this booking in cash or by bank transfer, so there is no card payment to reverse. The club will arrange your refund of ${formatMoneyCents(refundCents, format)} directly and will be in touch.`
           : refundCents > 0 && refundMethod === "credit"
-            ? `A credit of ${formatMoneyCents(refundCents)} has been added to your account for future bookings.`
+            ? `A credit of ${formatMoneyCents(refundCents, format)} has been added to your account for future bookings.`
             : refundCents > 0
-              ? `A refund of ${formatMoneyCents(refundCents)} has been processed to your original payment method.`
+              ? `A refund of ${formatMoneyCents(refundCents, format)} has been processed to your original payment method.`
               : "No refund was applicable based on the cancellation policy.",
       // #1164 / D7: applied account credit is restored subject to the same
       // cancellation policy as the card slice. Empty when nothing was restored
       // so the override body renders no line (mirrors the refundMessage token).
-      creditRestored: formatMoneyCents(creditRestoredCents),
+      creditRestored: formatMoneyCents(creditRestoredCents, format),
       creditRestoredMessage:
         creditRestoredCents > 0
-          ? `${formatMoneyCents(creditRestoredCents)} of previously applied account credit has been restored to your account (per the cancellation policy).`
+          ? `${formatMoneyCents(creditRestoredCents, format)} of previously applied account credit has been restored to your account (per the cancellation policy).`
           : "",
     },
     lodgeId,
@@ -1116,7 +1129,9 @@ export async function sendPreArrivalReminderEmail(params: {
   // the pre-arrival cron when the delta is uncollected; zero/omitted otherwise,
   // which leaves the message byte-for-byte as it was.
   outstandingAdditionalAmountCents?: number;
-}) {
+},
+  format: ClubFormat,
+) {
   const settings = await loadEmailMessageSettingsForLodge(params.lodgeId);
   const outstandingAdditionalAmountCents =
     params.outstandingAdditionalAmountCents ?? 0;
@@ -1198,7 +1213,7 @@ export async function sendPreArrivalReminderEmail(params: {
       // to write the conditional itself (the {{doorCodeNote}} convention).
       outstandingAdditionalNote:
         outstandingAdditionalAmountCents > 0
-          ? `There is still ${formatMoneyCents(outstandingAdditionalAmountCents)} to pay on this booking after a change to your stay. Please pay it from your booking page before you arrive.`
+          ? `There is still ${formatMoneyCents(outstandingAdditionalAmountCents, format)} to pay on this booking after a change to your stay. Please pay it from your booking page before you arrive.`
           : "",
     },
     lodgeId: params.lodgeId,
@@ -1297,7 +1312,9 @@ export async function sendAdditionalPaymentReminderEmail(params: {
   checkOut: Date;
   requestedOn: Date;
   lodgeId?: string | null;
-}) {
+},
+  format: ClubFormat,
+) {
   // Returns the outcome rather than swallowing it (#2350): both callers write a
   // stamp BEFORE sending, and that stamp is also the 60-minute cooldown, so a
   // withheld/suppressed/placeholder send — which returns, it does not throw —
@@ -1305,12 +1322,12 @@ export async function sendAdditionalPaymentReminderEmail(params: {
   return sendEmail({
     to: params.email,
     subject: `Payment Still Needed - ${EMAIL_DEFAULT_LODGE_NAME}`,
-    html: await renderEmailHtml(() => additionalPaymentReminderTemplate(params)),
+    html: await renderEmailHtml(() => additionalPaymentReminderTemplate(params, format)),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: "additional-payment-reminder",
     templateData: {
       firstName: params.firstName,
-      additionalAmount: formatMoneyCents(params.additionalAmountCents),
+      additionalAmount: formatMoneyCents(params.additionalAmountCents, format),
       requestedOn: emailClubDate(params.requestedOn),
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
@@ -1386,7 +1403,9 @@ export async function sendBookingModifiedEmail(params: {
   financialReviewPending: boolean;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
-}) {
+},
+  format: ClubFormat,
+) {
   const accountCreditAmountCents = params.accountCreditAmountCents ?? 0;
   // #2267: pre-composed {{changeSummary}} block for the admin-editable body,
   // built from the same rows as the HTML template — only what actually changed
@@ -1435,20 +1454,20 @@ export async function sendBookingModifiedEmail(params: {
     : "";
   const settlementNote =
     params.refundAmountCents > 0
-      ? `A refund of ${formatMoneyCents(params.refundAmountCents)} has been processed to your original payment method.`
+      ? `A refund of ${formatMoneyCents(params.refundAmountCents, format)} has been processed to your original payment method.`
       : accountCreditAmountCents > 0
-        ? `Account credit of ${formatMoneyCents(accountCreditAmountCents)} has been added for future bookings.`
+        ? `Account credit of ${formatMoneyCents(accountCreditAmountCents, format)} has been added for future bookings.`
         : params.additionalAmountCents > 0
           ? params.additionalPaymentMethod === "INTERNET_BANKING"
-            ? `An additional Internet Banking payment of ${formatMoneyCents(params.additionalAmountCents)} is required.${xeroInvoicePaymentContext}${paymentReferenceContext} Xero reconciliation confirms the payment before it is treated as paid.`
-            : `An additional payment of ${formatMoneyCents(params.additionalAmountCents)} is required.`
+            ? `An additional Internet Banking payment of ${formatMoneyCents(params.additionalAmountCents, format)} is required.${xeroInvoicePaymentContext}${paymentReferenceContext} Xero reconciliation confirms the payment before it is treated as paid.`
+            : `An additional payment of ${formatMoneyCents(params.additionalAmountCents, format)} is required.`
           : "";
   const paymentNote = [reviewNote, settlementNote].filter(Boolean).join(" ");
 
   await sendEmail({
     to: params.email,
     subject: `Booking Modified - ${EMAIL_DEFAULT_LODGE_NAME}`,
-    html: await renderEmailHtml(() => bookingModifiedTemplate(params)),
+    html: await renderEmailHtml(() => bookingModifiedTemplate(params, format)),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: "booking-modified",
     templateData: {
@@ -1469,12 +1488,12 @@ export async function sendBookingModifiedEmail(params: {
       newCheckOut: emailCalendarDay(params.newCheckOut),
       oldGuestCount: params.oldGuestCount,
       newGuestCount: params.newGuestCount,
-      oldTotal: formatMoneyCents(params.oldFinalPriceCents),
-      newTotal: formatMoneyCents(params.newFinalPriceCents),
-      changeFee: formatMoneyCents(params.changeFeeCents),
-      refundAmount: formatMoneyCents(params.refundAmountCents),
-      accountCreditAmount: formatMoneyCents(accountCreditAmountCents),
-      additionalAmount: formatMoneyCents(params.additionalAmountCents),
+      oldTotal: formatMoneyCents(params.oldFinalPriceCents, format),
+      newTotal: formatMoneyCents(params.newFinalPriceCents, format),
+      changeFee: formatMoneyCents(params.changeFeeCents, format),
+      refundAmount: formatMoneyCents(params.refundAmountCents, format),
+      accountCreditAmount: formatMoneyCents(accountCreditAmountCents, format),
+      additionalAmount: formatMoneyCents(params.additionalAmountCents, format),
       additionalPaymentMethod: params.additionalPaymentMethod ?? "",
       paymentReference: params.paymentReference ?? "",
       xeroInvoiceNumber: params.xeroInvoiceNumber ?? "",
@@ -1666,11 +1685,13 @@ export async function sendSupersededPaymentRefundedEmail(params: {
   refundedAmountCents: number;
   amountOwingCents: number;
   lodgeId?: string | null;
-}) {
+},
+  format: ClubFormat,
+) {
   await sendEmail({
     to: params.email,
     subject: `Payment Refunded - ${EMAIL_DEFAULT_LODGE_NAME}`,
-    html: await renderEmailHtml(() => supersededPaymentRefundedTemplate(params)),
+    html: await renderEmailHtml(() => supersededPaymentRefundedTemplate(params, format)),
     bookingContext: bookingOwnerEmailContext(
       params.bookingId,
       params.recipientMemberId,
@@ -1680,8 +1701,8 @@ export async function sendSupersededPaymentRefundedEmail(params: {
       firstName: params.firstName,
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
-      refundedAmount: formatMoneyCents(params.refundedAmountCents),
-      amountOwing: formatMoneyCents(params.amountOwingCents),
+      refundedAmount: formatMoneyCents(params.refundedAmountCents, format),
+      amountOwing: formatMoneyCents(params.amountOwingCents, format),
       // #3340 fix round: the SENTENCE, composed by the same function the coded
       // template calls, so a club that rewrites this message in the editor
       // cannot end up sending "Still owing: $0.00" as reassurance.

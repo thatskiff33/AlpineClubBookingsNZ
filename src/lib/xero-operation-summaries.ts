@@ -1,6 +1,7 @@
 import { redactSensitiveRecord } from "@/lib/redact-sensitive-json";
 import { formatCents } from "@/lib/utils";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * Plain-English summaries of Xero sync operations for the admin Xero
@@ -72,10 +73,10 @@ function readBoolean(value: unknown): boolean | null {
 }
 
 /** Integer-cent money, formatted with the shared cents helper. */
-function formatCentsValue(value: unknown): string | null {
+function formatCentsValue(value: unknown, format: ClubFormat): string | null {
   const cents = readNumberLike(value);
   if (cents === null) return null;
-  return formatCents(Math.round(cents));
+  return formatCents(Math.round(cents), format);
 }
 
 /**
@@ -83,10 +84,10 @@ function formatCentsValue(value: unknown): string | null {
  * cents-only helper renders them. This is a unit conversion, not a hand-rolled
  * currency formatter — the actual formatting still goes through `formatCents`.
  */
-function formatDollarsValue(value: unknown): string | null {
+function formatDollarsValue(value: unknown, format: ClubFormat): string | null {
   const cents = providerAmountToCents(readNumberLike(value));
   if (cents === null) return null;
-  return formatCents(cents);
+  return formatCents(cents, format);
 }
 
 function shortId(value: unknown): string | null {

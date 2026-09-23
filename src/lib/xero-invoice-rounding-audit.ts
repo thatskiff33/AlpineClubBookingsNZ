@@ -30,6 +30,7 @@ import { BookingStatus } from "@prisma/client";
 import { getStayNights } from "./pricing";
 import { formatDateOnly } from "@/lib/date-only";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -708,8 +709,8 @@ export async function scanXeroInvoiceRoundingDrift(
  * dollar part is `formatCents` (#3302), verified byte-identical for both
  * signs and zero; only the "(+/-Nc)" suffix is local to this report.
  */
-function formatDriftCents(cents: number): string {
-  return `${formatCents(cents)} (${cents >= 0 ? "+" : ""}${cents}c)`;
+function formatDriftCents(cents: number, format: ClubFormat): string {
+  return `${formatCents(cents, format)} (${cents >= 0 ? "+" : ""}${cents}c)`;
 }
 
 /** Render a plain-text operator report for a scan result. */

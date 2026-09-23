@@ -8,6 +8,7 @@ import {
 } from "@/lib/edit-financial-review-context";
 import { formatCents } from "@/lib/utils";
 import { formatClubDate, type CalendarDate } from "@/lib/club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #3191 (epic #2797): the RULE for filling in a night whose sold price is not
@@ -420,8 +421,9 @@ export function nightPriceRepairUnreadableMessage(
 function nightPriceRepairReconcileMessage(
   targetCents: number,
   enteredCents: number,
+  format: ClubFormat,
 ): string {
-  return `These nights come to ${formatCents(enteredCents)}, and they need to come to ${formatCents(targetCents)} - what this guest's stay is stored as being worth, adjusted by the amount being settled. If the amount being settled is not simply what these nights were worth - a change fee kept back, or a hand-back reduced by policy - no honest set of night prices comes to that figure: clear every box and settle without them, and take the booking coming back here next time as the cost of that. Otherwise correct whichever figure is wrong, the night amounts or the settlement, until the two agree - but do not change a night's price to make the arithmetic work, because a figure typed to close a gap is a price nobody decided.`;
+  return `These nights come to ${formatCents(enteredCents, format)}, and they need to come to ${formatCents(targetCents, format)} - what this guest's stay is stored as being worth, adjusted by the amount being settled. If the amount being settled is not simply what these nights were worth - a change fee kept back, or a hand-back reduced by policy - no honest set of night prices comes to that figure: clear every box and settle without them, and take the booking coming back here next time as the cost of that. Otherwise correct whichever figure is wrong, the night amounts or the settlement, until the two agree - but do not change a night's price to make the arithmetic work, because a figure typed to close a gap is a price nobody decided.`;
 }
 
 /**
@@ -431,8 +433,8 @@ function nightPriceRepairReconcileMessage(
  * typed away, so leaving the boxes empty is the ONLY honest answer here and the
  * sentence would be a dead end without it.
  */
-function nightPriceRepairUnreachableMessage(targetCents: number): string {
-  return `The amount being settled would leave these nights worth ${formatCents(targetCents)} in total, which cannot be shared out as prices. Check the settlement figure against what this guest's stay is stored as being worth - and if that figure is right, then these nights cannot account for it: clear every box and settle without them.`;
+function nightPriceRepairUnreachableMessage(targetCents: number, format: ClubFormat): string {
+  return `The amount being settled would leave these nights worth ${formatCents(targetCents, format)} in total, which cannot be shared out as prices. Check the settlement figure against what this guest's stay is stored as being worth - and if that figure is right, then these nights cannot account for it: clear every box and settle without them.`;
 }
 
 /**
@@ -623,9 +625,10 @@ export function unpricedNightsExplanation(
  */
 export function unreconciledStrandExplanation(
   summary: UnpricedNightsSummary,
+  format: ClubFormat,
 ): string {
   const count = summary.dates.length;
   const subject =
     count === 1 ? "the one night on this guest's stay" : `all ${count} nights on this guest's stay`;
-  return `What is on file for this guest's stay cannot be read back as a set of night prices, which is why every change to this booking has to be worked out by hand. Say what ${subject} sold for - every one of them, including any that already show a figure - and they have to come to ${formatCents(summary.storedGuestTotalCents)}, which is what this guest's stay is stored as being worth. That figure does not move: this records how the stay's price was made up, night by night, and it cannot change what anybody owes. Nothing here works an amount out for you. Once they add up, this guest's nights stop sending the booking back for review; another guest on the same booking is asked about separately.`;
+  return `What is on file for this guest's stay cannot be read back as a set of night prices, which is why every change to this booking has to be worked out by hand. Say what ${subject} sold for - every one of them, including any that already show a figure - and they have to come to ${formatCents(summary.storedGuestTotalCents, format)}, which is what this guest's stay is stored as being worth. That figure does not move: this records how the stay's price was made up, night by night, and it cannot change what anybody owes. Nothing here works an amount out for you. Once they add up, this guest's nights stop sending the booking back for review; another guest on the same booking is asked about separately.`;
 }

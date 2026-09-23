@@ -6,6 +6,7 @@ import { addDaysDateOnly } from "@/lib/date-only";
 import { emailCalendarDay, emailClubDate } from "@/lib/email-templates-club-time";
 import { escapeHtml } from "@/lib/email-templates/escape";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * The composed sentences and blocks the four member-guest emails are built from
@@ -693,11 +694,11 @@ const STILL_ON_BOOKING_REASON_BY_BLOCKER: Record<
  * yet simply reprices, and saying "credit has been added" there would be a
  * false promise, so zero cents gets its own sentence rather than "$0.00".
  */
-function composeRepricedConsequence(creditCents: number): string {
+function composeRepricedConsequence(creditCents: number, format: ClubFormat): string {
   if (creditCents > 0) {
     return (
       "Your booking has been repriced. " +
-      `${formatCents(creditCents)} has been added to your account credit and will come ` +
+      `${formatCents(creditCents, format)} has been added to your account credit and will come ` +
       "off your next booking."
     );
   }

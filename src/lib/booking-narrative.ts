@@ -60,6 +60,7 @@ import {
   FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK,
   FINANCIAL_REVIEW_WORKING_IT_OUT,
 } from "@/lib/booking-financial-review-copy";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type BookingNarrativeState =
   | "payable"
@@ -211,7 +212,8 @@ function asBumpSnapshot(value: unknown): BumpEventSnapshot | null {
 function buildPaidNarrative(
   booking: NarrativeBooking,
   events: NarrativeEvent[],
-  club: BoundClubTime
+  club: BoundClubTime,
+  format: ClubFormat,
 ): BookingNarrative {
   const paidEvent =
     events.find(
@@ -224,7 +226,7 @@ function buildPaidNarrative(
     return {
       state: "paid",
       headline: "Payment received",
-      message: `Thanks ${booking.firstName} — we've received your payment of ${formatCents(amountCents)} on ${club.instantDate(paidEvent.occurredAt)}. Your stay from ${range} is confirmed.`,
+      message: `Thanks ${booking.firstName} — we've received your payment of ${formatCents(amountCents, format)} on ${club.instantDate(paidEvent.occurredAt)}. Your stay from ${range} is confirmed.`,
       nextStep:
         "Nothing more to do — we'll see you at the lodge. You can view the full booking details any time from your bookings page.",
     };
@@ -243,7 +245,8 @@ function buildCancelledPostPaymentNarrative(
   paidEvent: NarrativeEvent,
   cancelEvent: NarrativeEvent | undefined,
   settlementEvent: NarrativeEvent | undefined,
-  club: BoundClubTime
+  club: BoundClubTime,
+  format: ClubFormat,
 ): BookingNarrative {
   const snapshot = asCancellationSnapshot(cancelEvent?.snapshot);
   const paidAmountCents = paidEvent.amountCents ?? snapshot?.paidAmountCents ?? 0;
@@ -257,7 +260,7 @@ function buildCancelledPostPaymentNarrative(
   const cancelOn = cancelEvent
     ? club.instantDate(cancelEvent.occurredAt)
     : paidOn;
-  const opening = `You cancelled this booking on ${cancelOn} after paying ${formatCents(paidAmountCents)} on ${paidOn}.`;
+  const opening = `You cancelled this booking on ${cancelOn} after paying ${formatCents(paidAmountCents, format)} on ${paidOn}.`;
 
   let settlementClause: string;
   if (settledAmountCents > 0 && settlementEvent) {
@@ -268,8 +271,8 @@ function buildCancelledPostPaymentNarrative(
         : "refunded";
     settlementClause =
       retainedAmountCents > 0
-        ? `${formatCents(settledAmountCents)} was ${verb} on ${settledOn} and ${formatCents(retainedAmountCents)} was retained`
-        : `${formatCents(settledAmountCents)} was ${verb} on ${settledOn}`;
+        ? `${formatCents(settledAmountCents, format)} was ${verb} on ${settledOn} and ${formatCents(retainedAmountCents, format)} was retained`
+        : `${formatCents(settledAmountCents, format)} was ${verb} on ${settledOn}`;
   } else if (snapshot?.refundMethod === "manual" && settledAmountCents > 0) {
     // B5 (#2262): a cash / off-Xero settlement is handed back by a person, so
     // there is no settlement event YET — one is written when the club marks the
@@ -277,10 +280,10 @@ function buildCancelledPostPaymentNarrative(
     // the member's money.
     settlementClause =
       retainedAmountCents > 0
-        ? `${formatCents(settledAmountCents)} is being refunded to you by the club directly (you paid in cash or by bank transfer, so there is no card payment to reverse) and ${formatCents(retainedAmountCents)} was retained`
-        : `${formatCents(settledAmountCents)} is being refunded to you by the club directly — you paid in cash or by bank transfer, so there is no card payment to reverse`;
+        ? `${formatCents(settledAmountCents, format)} is being refunded to you by the club directly (you paid in cash or by bank transfer, so there is no card payment to reverse) and ${formatCents(retainedAmountCents, format)} was retained`
+        : `${formatCents(settledAmountCents, format)} is being refunded to you by the club directly — you paid in cash or by bank transfer, so there is no card payment to reverse`;
   } else {
-    settlementClause = `no refund was due and the full ${formatCents(retainedAmountCents)} was retained`;
+    settlementClause = `no refund was due and the full ${formatCents(retainedAmountCents, format)} was retained`;
   }
 
   return {
@@ -390,10 +393,11 @@ function buildCancelledNarrative(
 function buildPayableNarrative(
   booking: NarrativeBooking,
   link: NarrativeLinkState | null | undefined,
-  now: Date
+  now: Date,
+  format: ClubFormat,
 ): BookingNarrative {
   const range = dateRange(booking);
-  const amountDue = formatCents(booking.finalPriceCents);
+  const amountDue = formatCents(booking.finalPriceCents, format);
 
   const linkUnusable =
     link != null &&

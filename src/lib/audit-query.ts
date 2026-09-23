@@ -11,6 +11,7 @@ import {
   recoverTruncatedStructuredDetail,
 } from "./audit-structured-detail";
 import { formatCents } from "./utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * The Admin Audit Log's category filter, DERIVED from the canonical taxonomy
@@ -451,7 +452,7 @@ function stringMetadataValue(
 // test seam (#3302): this used to be its own hard-coded "$" + toFixed(2)
 // formatter with no fixture; exported so the switch to the shared,
 // currency-aware `formatCents` is asserted rather than merely claimed.
-export function formatMetadataFragment(key: string, value: Prisma.JsonValue): string | null {
+export function formatMetadataFragment(key: string, value: Prisma.JsonValue, format: ClubFormat): string | null {
   if (value === null) {
     return null;
   }
@@ -464,7 +465,7 @@ export function formatMetadataFragment(key: string, value: Prisma.JsonValue): st
     // caller stored, and removes a rounding-MODE difference the review
     // measured between the old `.toFixed(2)` body and `Intl.NumberFormat`
     // at exactly a half-cent (1.5 rounded to 2c one way and 1c the other).
-    return `${humanizeKey(key)} ${formatCents(Math.round(value))}`;
+    return `${humanizeKey(key)} ${formatCents(Math.round(value), format)}`;
   }
   if (typeof value === "boolean") {
     return `${humanizeKey(key)} ${value ? "yes" : "no"}`;

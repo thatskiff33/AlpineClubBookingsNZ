@@ -205,7 +205,7 @@ export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
   }
   if (promo.type === "FIXED_AMOUNT") {
     return promo.valueCents !== null
-      ? `${formatCents(promo.valueCents)} off per individual`
+      ? `${formatCents(promo.valueCents, format)} off per individual`
       : "Fixed discount"
   }
   if (promo.type === "FIXED_NIGHTLY_PRICE") {
@@ -213,7 +213,7 @@ export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
       return "Fixed nightly price"
     }
     const mode = promo.fixedNightlyMode === "SET_PRICE" ? "set price" : "cap only"
-    return `${formatCents(promo.fixedNightlyPriceCents)} per eligible night · ${mode}`
+    return `${formatCents(promo.fixedNightlyPriceCents, format)} per eligible night · ${mode}`
   }
   if (promo.freeNightsPerIndividual !== null) {
     const perBooking = `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per booking`
@@ -356,7 +356,7 @@ export function formatMemberFinancePreview(input: {
   return [
     input.creditBalanceCents === null
       ? "Credit —"
-      : `Credit ${formatCents(input.creditBalanceCents)}`,
+      : `Credit ${formatCents(input.creditBalanceCents, format)}`,
     input.promoCodeCount > 0
       ? pluralize(input.promoCodeCount, "promo code")
       : null,

@@ -32,6 +32,7 @@ import {
   emailCalendarDayOrUnknown,
   emailClubDateTime,
 } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 // ---- N-04: Admin Alert — Payment Failure ----
 
@@ -74,7 +75,9 @@ export function adminPaymentFailureTemplate(data: {
    * uses it.
    */
   paymentIntentId: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Payment Failed")}
     ${alertBox("A payment has failed and may require manual attention.", "warning")}
@@ -82,7 +85,7 @@ export function adminPaymentFailureTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDayOrUnknown(data.checkIn) },
       { label: "Check-out", value: emailCalendarDayOrUnknown(data.checkOut) },
-      { label: "Amount", value: formatCents(data.amountCents) },
+      { label: "Amount", value: formatCents(data.amountCents, format) },
       { label: "Error", value: escapeHtml(data.errorMessage) },
       { label: "Reference", value: escapeHtml(data.paymentIntentId) },
     ])}
@@ -123,7 +126,9 @@ export function adminSupersededPaymentRefundTemplate(data: {
   amountOwingCents: number;
   paymentIntentId: string;
   bookingUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Superseded Payment Auto-Refunded")}
     ${alertBox(
@@ -135,8 +140,8 @@ export function adminSupersededPaymentRefundTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Amount refunded", value: formatCents(data.refundedAmountCents) },
-      { label: "Still owing", value: formatCents(data.amountOwingCents) },
+      { label: "Amount refunded", value: formatCents(data.refundedAmountCents, format) },
+      { label: "Still owing", value: formatCents(data.amountOwingCents, format) },
       { label: "Superseded Stripe PI", value: escapeHtml(data.paymentIntentId) },
     ])}
     ${button("Open Booking", data.bookingUrl)}
@@ -154,7 +159,9 @@ export function adminDuplicateCaptureRefundTemplate(data: {
   errorMessage?: string | null;
   reviewUrl: string;
   refundFailed: boolean;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const settledBy = data.settledPaymentIntentId
     ? escapeHtml(data.settledPaymentIntentId)
     : "another capture";
@@ -186,7 +193,7 @@ export function adminDuplicateCaptureRefundTemplate(data: {
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       {
         label: data.refundFailed ? "Amount to refund" : "Amount refunded",
-        value: formatCents(data.amountCents),
+        value: formatCents(data.amountCents, format),
       },
       { label: "Duplicate Stripe PI", value: escapeHtml(data.paymentIntentId) },
       { label: "Settled by", value: settledBy },
@@ -239,7 +246,9 @@ export function adminLateCaptureAutoRefundTemplate(data: {
    */
   captureKind: "modification" | "primary";
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   // #2773: sentence-initial, so the shared label is capitalised here and nowhere
   // else — the label itself stays a bare noun phrase for mid-sentence use.
   const paymentLabel = lateCapturePaymentLabel(data.captureKind);
@@ -275,7 +284,7 @@ export function adminLateCaptureAutoRefundTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Amount refunded", value: formatCents(data.amountCents) },
+      { label: "Amount refunded", value: formatCents(data.amountCents, format) },
       {
         label: "Booking status",
         value: data.bookingDeleted
@@ -339,7 +348,9 @@ export function adminLateCaptureHandBackConflictTemplate(data: {
   handBackAmountCents: number | null;
   refundSent: boolean;
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const paymentLabel = lateCapturePaymentLabel(data.captureKind);
   return layout(`
     ${heading(
@@ -365,13 +376,13 @@ export function adminLateCaptureHandBackConflictTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Amount captured", value: formatCents(data.amountCents) },
+      { label: "Amount captured", value: formatCents(data.amountCents, format) },
       ...(data.handBackAmountCents === null
         ? []
         : [
             {
               label: "Recorded as paid back by hand",
-              value: formatCents(data.handBackAmountCents),
+              value: formatCents(data.handBackAmountCents, format),
             },
           ]),
       {
@@ -407,7 +418,9 @@ export function adminManualSettlementConflictTemplate(data: {
   xeroInvoiceNumber: string | null;
   xeroInvoiceUrl: string | null;
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Cash Settlement vs Xero Payment — Reconcile By Hand")}
     ${alertBox(
@@ -426,7 +439,7 @@ export function adminManualSettlementConflictTemplate(data: {
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
       { label: "Booking status", value: escapeHtml(data.bookingStatus) },
-      { label: "Amount recorded as cash", value: formatCents(data.amountCents) },
+      { label: "Amount recorded as cash", value: formatCents(data.amountCents, format) },
       {
         label: "Xero invoice",
         value: data.xeroInvoiceNumber
@@ -456,7 +469,9 @@ export function adminManualRefundTaskTemplate(data: {
   bookingId: string;
   reason: string;
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Manual Refund Needed — Cash Booking Cancelled")}
     ${alertBox(
@@ -474,7 +489,7 @@ export function adminManualRefundTaskTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
-      { label: "Amount to refund", value: formatCents(data.refundAmountCents) },
+      { label: "Amount to refund", value: formatCents(data.refundAmountCents, format) },
       { label: "Reason", value: escapeHtml(data.reason) },
     ])}
     ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
@@ -567,7 +582,9 @@ export function adminRefundRequestTemplate(data: {
   requestedAmountCents: number | null;
   paidAmountCents: number;
   refundedAmountCents: number;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const remaining = data.paidAmountCents - data.refundedAmountCents;
   return layout(`
     ${heading("Refund Appeal Submitted")}
@@ -576,10 +593,10 @@ export function adminRefundRequestTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Paid", value: formatCents(data.paidAmountCents) },
-      { label: "Already Refunded", value: formatCents(data.refundedAmountCents) },
-      { label: "Remaining", value: formatCents(remaining) },
-      ...(data.requestedAmountCents ? [{ label: "Requested", value: formatCents(data.requestedAmountCents) }] : []),
+      { label: "Paid", value: formatCents(data.paidAmountCents, format) },
+      { label: "Already Refunded", value: formatCents(data.refundedAmountCents, format) },
+      { label: "Remaining", value: formatCents(remaining, format) },
+      ...(data.requestedAmountCents ? [{ label: "Requested", value: formatCents(data.requestedAmountCents, format) }] : []),
     ])}
     ${alertBox(escapeHtml(data.reason), "info")}
     ${button("Review Appeal", BASE_URL + "/admin/refund-requests")}

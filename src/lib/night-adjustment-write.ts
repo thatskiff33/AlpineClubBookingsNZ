@@ -7,6 +7,7 @@ import {
 } from "@/lib/club-time";
 import logger from "@/lib/logger";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #3276 (stage 2 of programme #3272): THE ONE WRITER OF AN AMOUNT into
@@ -125,7 +126,9 @@ function findReconciliationMismatch(params: {
   targets: ReadonlyArray<{ beneficiaryMemberId: string; amountCents: number | null }>;
   allocations: ReadonlyArray<{ memberId: string; priceAdjustmentCents: number }>;
   priceAdjustmentCents: number;
-}): string | null {
+},
+  format: ClubFormat,
+): string | null {
   const { targets, allocations, priceAdjustmentCents } = params;
   const sums = new Map<string, number>();
   const unknown = new Set<string>();
@@ -151,13 +154,13 @@ function findReconciliationMismatch(params: {
     const recorded = allocationByMember.has(memberId) ? allocationByMember.get(memberId)! : 0;
     const summed = sums.get(memberId) ?? 0;
     if (summed !== recorded) {
-      return `adjustment rows for member ${memberId} sum to ${formatCents(summed)} but the recorded allocation is ${formatCents(recorded)}`;
+      return `adjustment rows for member ${memberId} sum to ${formatCents(summed, format)} but the recorded allocation is ${formatCents(recorded, format)}`;
     }
   }
   if (unknown.size === 0) {
     const total = [...sums.values()].reduce((sum, cents) => sum + cents, 0);
     if (total !== priceAdjustmentCents) {
-      return `adjustment rows sum to ${formatCents(total)} but the recorded redemption adjustment is ${formatCents(priceAdjustmentCents)}`;
+      return `adjustment rows sum to ${formatCents(total, format)} but the recorded redemption adjustment is ${formatCents(priceAdjustmentCents, format)}`;
     }
   }
   return null;

@@ -337,7 +337,7 @@ export async function applyRateDerivedNightPrices(
  * exactly the before/after pairs that are this rewrite's reverse path. A
  * strand's nights are a handful, so a strand row always fits.
  */
-export function rateDerivedBackfillAuditRows(plan: BookingBackfillPlan): Array<{
+export function rateDerivedBackfillAuditRows(plan: BookingBackfillPlan, format: ClubFormat): Array<{
   entityType: "Booking" | "BookingGuest";
   entityId: string;
   summary: string;
@@ -348,7 +348,7 @@ export function rateDerivedBackfillAuditRows(plan: BookingBackfillPlan): Array<{
     entityType: "BookingGuest" as const,
     entityId: strand.bookingGuestId,
     summary: "Re-derived a guest's evenly-split night prices from the rate table; the guest's total unchanged",
-    details: `${strand.nights.length} night row(s) now RATE_DERIVED; guest total ${formatCents(strand.guestTotalCents)} unchanged`,
+    details: `${strand.nights.length} night row(s) now RATE_DERIVED; guest total ${formatCents(strand.guestTotalCents, format)} unchanged`,
     metadata: {
       bookingId: plan.bookingId,
       bookingGuestId: strand.bookingGuestId,
@@ -424,6 +424,7 @@ import { createAuditLog } from "@/lib/audit";
 import { bookingOwner } from "@/lib/booking-owner";
 import { loadActiveSeasonRates } from "@/lib/booking-modify-plan";
 import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** The bookings that hold at least one candidate strand, oldest first. */
 export async function findRateDerivationCandidateBookings(

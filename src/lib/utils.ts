@@ -1,7 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { clubMoneyFormatter } from "@/lib/club-format-intl";
-import { transitionalClubFormat } from "@/lib/club-format-transitional";
 
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -48,20 +47,8 @@ export function cn(...inputs: ClassValue[]) {
  * obtains one from `clubFormat()`; a client caller from the format it was handed
  * as data.
  */
-export function formatCents(cents: number, format: ClubFormat): string;
-/**
- * @deprecated TEMPORARY, AND DUE TO BE DELETED BY #3567 — stage 5 of #3205,
- * which retires the environment constants and with them
- * `club-format-transitional.ts` and this overload. Without a format it renders in the ENVIRONMENT's currency and
- * locale, which is what every call site rendered in before this stage and is NOT
- * the club's persisted setting. Pass the format. `club-format-transitional.ts`
- * states the cost this buys and why the overload exists at all.
- */
-export function formatCents(cents: number): string;
-export function formatCents(cents: number, format?: ClubFormat): string {
-  return clubMoneyFormatter(format ?? transitionalClubFormat(), "cents").format(
-    (cents === 0 ? 0 : cents) / 100,
-  );
+export function formatCents(cents: number, format: ClubFormat): string {
+  return clubMoneyFormatter(format, "cents").format((cents === 0 ? 0 : cents) / 100);
 }
 
 /**
@@ -100,18 +87,11 @@ export function formatCentsPlain(cents: number): string {
  * locale's thousands separator and ignored `APP_CURRENCY`. Every caller now
  * derives from `formatCents`, which is where the locale and currency live.
  */
-export function formatSignedCents(cents: number, format: ClubFormat): string;
-/**
- * @deprecated TEMPORARY, AND DUE TO BE DELETED BY #3567 — see
- * {@link formatCents}'s one-argument overload, which this one mirrors exactly.
- */
-export function formatSignedCents(cents: number): string;
-export function formatSignedCents(cents: number, format?: ClubFormat): string {
-  const resolved = format ?? transitionalClubFormat();
+export function formatSignedCents(cents: number, format: ClubFormat): string {
   if (cents === 0) {
-    return formatCents(0, resolved);
+    return formatCents(0, format);
   }
-  return `${cents > 0 ? "+" : "-"}${formatCents(Math.abs(cents), resolved)}`;
+  return `${cents > 0 ? "+" : "-"}${formatCents(Math.abs(cents), format)}`;
 }
 
 // `getSeasonYear(date = new Date())` USED TO LIVE HERE and is deliberately gone

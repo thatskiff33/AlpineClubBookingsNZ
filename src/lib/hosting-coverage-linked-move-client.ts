@@ -24,6 +24,7 @@
 
 import { formatCents } from "@/lib/utils";
 import { HOSTING_COVERAGE_STATE_KEY_PATTERN } from "@/lib/hosting-coverage-override-client";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * One booking the offer would move alongside the one the member asked about.
@@ -135,7 +136,7 @@ export function linkedMoveOtherBookingsPhrase(linkedCount: number): string {
  * sentence has to say which answer THIS club gave rather than leave the member to
  * assume they paid one fee for moving two bookings.
  */
-function linkedMoveChangeFeeSentence(facts: LinkedMoveMoneyFacts): string {
+function linkedMoveChangeFeeSentence(facts: LinkedMoveMoneyFacts, format: ClubFormat): string {
   // NO FEE AT ALL IS ITS OWN ANSWER, and both sentences below assert a figure. A
   // move outside every fee band, an unchanged check-in or a draft attracts nothing,
   // and the two branches were saying "($0.00 in all)" and "carries one change fee
@@ -152,14 +153,14 @@ function linkedMoveChangeFeeSentence(facts: LinkedMoveMoneyFacts): string {
     // directions, which is what a sentence sitting under both of them has to be.
     return (
       `A change fee applies to ${linkedMoveAllBookingsPhrase(facts.linkedCount)} ` +
-      `— ${formatCents(facts.combinedChangeFeeCents)} in all — and the figures ` +
+      `— ${formatCents(facts.combinedChangeFeeCents, format)} in all — and the figures ` +
       `above already take it into account.`
     );
   }
   return (
     `The change fee on ${linkedMoveOtherBookingsPhrase(facts.linkedCount)} ` +
     `has been waived by the club, so the figures above carry one change fee ` +
-    `only (${formatCents(facts.combinedChangeFeeCents)}).`
+    `only (${formatCents(facts.combinedChangeFeeCents, format)}).`
   );
 }
 
@@ -189,20 +190,21 @@ function linkedMoveChangeFeeSentence(facts: LinkedMoveMoneyFacts): string {
  */
 export function formatLinkedMoveMoneySentence(
   facts: LinkedMoveMoneyFacts,
+  format: ClubFormat,
 ): string {
   const all = linkedMoveAllBookingsPhrase(facts.linkedCount);
   const parts: string[] = [];
   if (facts.combinedRefundCents > 0 && facts.combinedAmountDueCents > 0) {
     parts.push(
-      `${formatCents(facts.combinedAmountDueCents)} would be payable and ` +
-        `${formatCents(facts.combinedRefundCents)} would come back to you, ` +
+      `${formatCents(facts.combinedAmountDueCents, format)} would be payable and ` +
+        `${formatCents(facts.combinedRefundCents, format)} would come back to you, ` +
         `across ${all}. Those two do not cancel each other out: each booking ` +
         `settles on its own, so the amount payable is paid on its own booking ` +
         `page and the refund comes back separately.`,
     );
   } else if (facts.combinedRefundCents > 0) {
     parts.push(
-      `${formatCents(facts.combinedRefundCents)} would come back to you across ` +
+      `${formatCents(facts.combinedRefundCents, format)} would come back to you across ` +
         `${all}.`,
     );
   } else if (facts.combinedAmountDueCents > 0) {
@@ -213,7 +215,7 @@ export function formatLinkedMoveMoneySentence(
     // hands neither a payment secret. Saying it here is the fix; the money itself
     // was never at risk.
     parts.push(
-      `${formatCents(facts.combinedAmountDueCents)} would be payable across ` +
+      `${formatCents(facts.combinedAmountDueCents, format)} would be payable across ` +
         `${all}, and each booking is paid on its own booking page.`,
     );
   } else {
@@ -226,7 +228,7 @@ export function formatLinkedMoveMoneySentence(
   if (facts.combinedPolicyRetainedCents > 0) {
     parts.push(
       `The club's cancellation policy keeps ` +
-        `${formatCents(facts.combinedPolicyRetainedCents)} of the reduction, so ` +
+        `${formatCents(facts.combinedPolicyRetainedCents, format)} of the reduction, so ` +
         `what comes back is less than the drop in price.`,
     );
   }

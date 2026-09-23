@@ -2,6 +2,8 @@
 
 import { createContext, useContext, useMemo } from "react";
 
+import { bindClubFormat, type BoundClubFormat } from "@/lib/club-format-bound";
+
 import {
   CLUB_CURRENCY_FALLBACK,
   CLUB_LOCALE_FALLBACK,
@@ -65,15 +67,18 @@ import {
  * `error.tsx` is held at zero data dependencies, and no mount on that route
  * could cover it).
  *
- * ## What this stage does NOT move
+ * ## What a client component does with it
  *
- * The shared formatters — `formatCents` in `src/lib/utils.ts`,
- * `finance-format.ts` and `club-time/intl.ts` — still build their `Intl`
- * objects at module load from `APP_LOCALE` / `APP_CURRENCY`. They are #3565,
- * and they are the reason an amount rendered through `formatCents` still shows
- * the deployment's currency after this stage while the label beside it shows
- * the club's. Do not reach for a second source here to paper over that: the fix
- * is #3565 moving those formatters onto this context.
+ * Renders money. Since #3565 every money and number rendering in
+ * `src/lib/utils.ts` and `src/lib/finance-format.ts` takes the club's format as a
+ * REQUIRED argument, so a component that renders an amount has to get one from
+ * somewhere, and in the browser this is the only place it can. Most callers want
+ * the operations rather than the values: {@link useBoundClubFormat} hands back
+ * the same `BoundClubFormat` that `clubFormat()` hands a server module, so a
+ * component that moves between server and client changes the line that obtains
+ * it and nothing else.
+ *
+ * `club-time/intl.ts`'s locale is still the environment's; it is #3566.
  */
 
 /**
@@ -146,4 +151,17 @@ export function useClubFormat(): ClubFormat {
     );
   }
   return format;
+}
+
+/**
+ * The club's money kernel with its format already bound — the browser's
+ * counterpart of `clubFormat()` (#3565).
+ *
+ * The SAME context as {@link useClubFormat}, not a second one: this binds what
+ * that returns, memoised on the provider's own memoised value, so the binding is
+ * stable across renders and safe in a hook's dependency list.
+ */
+export function useBoundClubFormat(): BoundClubFormat {
+  const format = useClubFormat();
+  return useMemo(() => bindClubFormat(format), [format]);
 }

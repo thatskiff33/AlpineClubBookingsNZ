@@ -28,6 +28,7 @@ import {
   supportContactSentence,
 } from "./layout";
 import { emailCalendarDay } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #2321 — the refund-appeal outcome emails, ONE FUNCTION PER OUTCOME.
@@ -62,12 +63,14 @@ export function refundRequestApprovedTemplate(data: {
   adminNotes: string | null;
   checkIn: Date;
   checkOut: Date;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return refundRequestOutcomeLayout({
     firstName: data.firstName,
     headingText: "Refund Appeal Approved",
     outcomeSentence:
-      "Your refund appeal for your booking (" + emailCalendarDay(data.checkIn) + " - " + emailCalendarDay(data.checkOut) + ") has been approved. A refund of " + formatCents(data.amountCents ?? 0) + " will be processed to your original payment method.",
+      "Your refund appeal for your booking (" + emailCalendarDay(data.checkIn) + " - " + emailCalendarDay(data.checkOut) + ") has been approved. A refund of " + formatCents(data.amountCents ?? 0, format) + " will be processed to your original payment method.",
     outcomeTone: "success",
     adminNotes: data.adminNotes,
   });
@@ -112,7 +115,9 @@ export function supersededPaymentRefundedTemplate(data: {
   checkOut: Date;
   refundedAmountCents: number;
   amountOwingCents: number;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const dates = `${emailCalendarDay(data.checkIn)} – ${emailCalendarDay(data.checkOut)}`;
   const owingLine = supersededRefundOwingSentence(data.amountOwingCents);
   return layout(`
@@ -120,7 +125,7 @@ export function supersededPaymentRefundedTemplate(data: {
     ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
     ${alertBox(
       "We have refunded " +
-        formatCents(data.refundedAmountCents) +
+        formatCents(data.refundedAmountCents, format) +
         " to your card. That payment was made against an earlier charge for your booking (" +
         dates +
         ") that a later change to the booking had already replaced, so it should not have been taken.",
