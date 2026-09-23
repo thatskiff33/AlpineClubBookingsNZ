@@ -48,7 +48,7 @@ import {
 import { getDefaultLodgeId } from "@/lib/lodges";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * THE LINKED MOVE: move a member's booking and the booking of theirs that was
@@ -145,6 +145,12 @@ export interface LinkedDateMoveArgs {
   input: BatchModifyInput;
   ipAddress: string;
   todayAtClub: CalendarDate;
+  /**
+   * The club's format (#3565), resolved by the route before any transaction,
+   * like `todayAtClub`: both moves price inside one transaction, and the offer
+   * renders its figures into the refusal it throws.
+   */
+  format: ClubFormat;
   hostingCoverageOverride?: HostingCoverageOverrideInput | null;
 }
 
@@ -245,6 +251,7 @@ async function runLinkedDateMove(
       input: args.input,
       ipAddress: args.ipAddress,
       todayAtClub: args.todayAtClub,
+      format: args.format,
       ...(args.hostingCoverageOverride
         ? { hostingCoverageOverride: args.hostingCoverageOverride }
         : {}),
@@ -320,6 +327,7 @@ async function runLinkedDateMove(
           },
           ipAddress: args.ipAddress,
           todayAtClub: args.todayAtClub,
+          format: args.format,
           tx,
           hostingReconcile: "CALLER",
           // THE SAME pre-transaction value, so this booking's settings, lockout
@@ -542,9 +550,7 @@ async function runLinkedDateMove(
 export async function offerLinkedDateMove(
   args: LinkedDateMoveArgs,
 ): Promise<never> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
+  const { format } = args;
   const bothChangeFeesCharged = await loadLinkedMoveChargesBothChangeFees();
   const preTransaction = await prepareLinkedMovePreTransaction(args);
   try {
@@ -581,9 +587,7 @@ export async function offerLinkedDateMove(
 export async function applyLinkedDateMove(
   args: LinkedDateMoveArgs & { linkedMove: HostingCoverageLinkedMoveInput },
 ): Promise<BatchModificationResponse> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
+  const { format } = args;
   const bothChangeFeesCharged = await loadLinkedMoveChargesBothChangeFees();
   const preTransaction = await prepareLinkedMovePreTransaction(args);
   let outcome;
