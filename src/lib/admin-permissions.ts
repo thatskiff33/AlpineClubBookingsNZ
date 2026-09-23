@@ -373,11 +373,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       // Club Format — the one persisted currency and locale (#3563, programme
       // #3205). Registered under support for the same reason as
       // /admin/club-time above: so an unregistered path never falls back to
-      // the overview catch-all. The AREA decides neither who may open the page
-      // nor who may use the API (#3596): any admitted admin opens the page,
-      // through `ANY_ADMIN_ADMISSION_PATHS` below; any admitted admin reads the
-      // setting and only a Full Admin changes it, each verb enforced by its own
-      // explicit `requireAdmin` gate in the route itself.
+      // the overview catch-all. The AREA decides nothing else (#3596): the
+      // page is opened on ADMISSION (`ANY_ADMIN_ADMISSION_PATHS`), and each
+      // API verb carries its own explicit gate — any admin reads, Full Admin writes.
       "/admin/club-format",
       "/api/admin/club-format",
       // Environment safety — whether this installation is the club's live site
@@ -781,35 +779,20 @@ export function getAdminRouteRequirement(
 }
 
 /**
- * Admin paths admitted on ADMISSION rather than on an area: any account holding
- * `view` or better on at least one admin permission area may open them. Each
- * entry is its own owner decision, and none is a precedent for the next.
+ * Admin paths admitted on ADMISSION rather than on an area: any account with
+ * `view` or better on one admin area may open them. Each is its own owner
+ * decision, never a precedent. `/admin/ai-diagnostics` (ADR-002 §1, ratified
+ * #2370): the shell exposes no evidence — its readiness panel is tiered on
+ * `support:view`, its budget card refuses without it, and every tool re-checks
+ * its own area at invocation. `/admin/club-format` (#3596): any admin may VIEW
+ * the currency and locale, read-only; `PUT /api/admin/club-format` is Full Admin.
  *
- * - `/admin/ai-diagnostics` (ADR-002 §1, owner-ratified on #2370, 2 August
- *   2026): "any account that holds `view` or better on at least one admin
- *   permission area may open the Diagnostics shell", because the shell exposes
- *   no evidence at all — its readiness panel is tiered server-side on
- *   `support:view` and its budget card refuses without it, while every tool
- *   re-checks its own area freshly at invocation.
- * - `/admin/club-format` (owner decision on #3596, 23 September 2026): any
- *   admin may VIEW the club's currency and locale; only a Full Admin may change
- *   them. The page shows the values read-only to everyone else, and the gates
- *   that matter are the API's — `GET /api/admin/club-format` is `"any-admin"`,
- *   its `PUT` is Full Admin. Its map area stays `support`; the sidebar entry
- *   applies this same rule through `orAccess`.
- *
- * The AI Diagnostics map area stays `overview`, because that is what the sidebar
- * and command palette resolve for the LINK. What changed with #2984 is that "any
- * admitted admin" and `overview:view` stopped being the same set: a finance-only
- * grid now has portal standing and does not hold `overview`, so a rule written as
- * `overview:view` had quietly become a permission carve-out instead of the
- * admission rule the owner ratified. Narrowing admission again remains possible
- * without touching any tool's gate, but requires a fresh owner decision.
+ * The Diagnostics map area stays `overview` (the LINK's area). Since #2984 "any
+ * admitted admin" and `overview:view` are different sets — a finance-only grid
+ * has standing without `overview` — so an `overview:view` rule would be a
+ * carve-out, not the admission rule. Narrowing needs a fresh owner decision.
  */
-export const ANY_ADMIN_ADMISSION_PATHS = [
-  "/admin/ai-diagnostics",
-  "/admin/club-format",
-] as const;
+export const ANY_ADMIN_ADMISSION_PATHS = ["/admin/ai-diagnostics", "/admin/club-format"] as const;
 
 export function isAnyAdminAdmissionPath(pathname: string): boolean {
   const normalized = normalizePathname(pathname);

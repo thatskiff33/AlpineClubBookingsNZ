@@ -600,19 +600,11 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         ],
       },
       {
-        // The one persisted currency and locale (#3563, programme #3205).
-        // UNLIKE Club Time Zone above it and Environment Safety below it, any
-        // admitted admin sees this entry (owner decision on #3596): any admin
-        // may VIEW the setting, and only a Full Admin may change it — the page
-        // shows everyone else the values read-only, and the API enforces the
-        // write itself. So the link follows the same admission rule
-        // `canOpenAdminPath` applies to the page (`ANY_ADMIN_ADMISSION_PATHS`),
-        // not the `support` area its href resolves to in the route map, which
-        // would hide it from a finance-only admin the page admits.
-        // The keywords carry the words an operator would actually type —
-        // "currency", "dollars", "NZD", "date format" — because the label
-        // matches none of them and the command palette index is built from
-        // these entries.
+        // The one persisted currency and locale (#3563). UNLIKE its Full-Admin
+        // neighbours, any admin sees it (#3596): all may VIEW, only a Full Admin
+        // may change, so the link follows the page's admission rule
+        // (`ANY_ADMIN_ADMISSION_PATHS`), not its `support` map area. The
+        // keywords are the words an operator would type; the label matches none.
         href: "/admin/club-format",
         label: "Club Currency & Locale",
         icon: Coins,
