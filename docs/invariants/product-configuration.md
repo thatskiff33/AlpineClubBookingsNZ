@@ -500,6 +500,6 @@ home for that explanation and is not repeated here.
   audited, and excluded from config transfer as instance-local** — a bundle
   apply is none of those things.
 - Decided on #3563, stage 1 of programme #3205 (decisions D1-D6), which hold the
-  narrative and the rejected alternatives. Readers move onto it in #3564-#3567,
-  so nothing displays from this row yet. Operator guide:
+  narrative and the rejected alternatives. #3564 moved ten screens onto it;
+  amounts and other dates follow in #3565-#3566. Operator guide:
   [`club-format.md`](../guides/club-format.md).

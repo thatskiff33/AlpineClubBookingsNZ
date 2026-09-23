@@ -67,12 +67,13 @@ import {
  * this form and never a supported-locale list: a club whose tag is not among
  * them types it and it is accepted.
  *
- * WHAT THIS SCREEN MAY CLAIM, and it is deliberately little. Stage 1 records
- * the values and nothing reads them for display yet (owner decision D1 on
- * #3205), so the panel says plainly that saving changes no screen today and
- * names the stages that will change that. The paragraph goes when the readers
- * arrive — the change that makes the claim true is the change that gets to make
- * it, exactly as CT-1's version of this comment said and CT-5 then did.
+ * WHAT THIS SCREEN MAY CLAIM, and it is deliberately little. #3564 moved ten
+ * screens onto the setting — the currency code beside a fee, the audit and
+ * health row stamps, the promo counts, the lobby display's date — so the
+ * consequences list names those, and says every AMOUNT and the remaining dates
+ * still follow the server's `CURRENCY` and `LOCALE` until #3565-#3566 move them.
+ * Each caveat goes with the change that makes it untrue — the change that makes
+ * a claim true is the change that gets to make it, as CT-1 said and CT-5 did.
  */
 
 type ClubFormatFieldSource =
@@ -213,9 +214,11 @@ export function ClubFormatPanel() {
     banner's `role="status"` region is registered from the first paint rather
     than from whenever the fetch settles — a polite live region injected
     already populated is dropped by some screen-reader/browser pairings. Every
-    branch returns a fragment with this as its first child, so React keeps the
-    same region mounted across loading -> loaded. Outside the `space-y-*`
-    stack, so an empty wrapper adds no gap for a Full Admin.
+    branch returns a plain `<div>` with this as its first child, so React keeps
+    the same region mounted across loading -> loaded. The `<div>` is also what
+    keeps the empty wrapper OUT of the page's `space-y-6` stack: returned bare
+    in a fragment it would be a stack child, and its margin would add a gap
+    above the card for every Full Admin.
   */
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
@@ -242,7 +245,7 @@ export function ClubFormatPanel() {
 
   if (loadFailed) {
     return (
-      <>
+      <div>
         {viewOnlyBanner}
         <div className="space-y-3 rounded-md border bg-card p-6">
           <p className="text-sm text-danger">
@@ -252,18 +255,18 @@ export function ClubFormatPanel() {
             Retry
           </Button>
         </div>
-      </>
+      </div>
     );
   }
 
   if (!state) {
     return (
-      <>
+      <div>
         {viewOnlyBanner}
         <p className="text-sm text-muted-foreground">
           Loading the club&apos;s currency and locale…
         </p>
-      </>
+      </div>
     );
   }
 
@@ -365,7 +368,7 @@ export function ClubFormatPanel() {
   }
 
   return (
-    <>
+    <div>
       {viewOnlyBanner}
       <div className="space-y-6 rounded-md border bg-card p-6">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -580,6 +583,6 @@ export function ClubFormatPanel() {
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
