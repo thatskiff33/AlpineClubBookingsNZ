@@ -12,7 +12,6 @@ import {
 } from "./audit-structured-detail";
 import { formatCents } from "./utils";
 import type { ClubFormat } from "@/lib/club-format";
-import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * The Admin Audit Log's category filter, DERIVED from the canonical taxonomy
@@ -1286,11 +1285,24 @@ export async function getAuditTimelinePage(params: {
   category: AuditTimelineCategory;
   audience: "admin" | "member";
   currentMemberId?: string;
+  /**
+   * The club's format (#3565), resolved once by the route. A parameter, not a
+   * read here: this module is also on the browser's import graph (the audit
+   * pages import its category options), so it must not reach a `server-only`
+   * reader.
+   */
+  format: ClubFormat;
 }): Promise<AuditTimelineResponse> {
-  const { db, where, page, pageSize, category, audience, currentMemberId } =
-    params;
-  // Once per page (#3565): every row's description renders its amounts in it.
-  const format = await clubFormatValues();
+  const {
+    db,
+    where,
+    page,
+    pageSize,
+    category,
+    audience,
+    currentMemberId,
+    format,
+  } = params;
   const [logs, total] = await Promise.all([
     db.auditLog.findMany({
       where,
